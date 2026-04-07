@@ -235,7 +235,6 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (t.kind !== "ident") return false;
     // Struct name in `is Type` context: check what follows
     const next = tok(1);
-    // If followed by a semicolon, brace, comma, or operator, it's an expression reference
     // If followed by [ or ?, it's an array/nullable type
     if (next.kind === "[" || next.kind === "?") return true;
     // Anything else (paren, ident, binary op) — treat as expression for `is y` (identity)
@@ -270,6 +269,16 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       if (at("null")) { advance(); return { kind: "is", expr: e, not: notFlag, rhs: "null", ...p }; }
       if (looksLikeTypeHere()) {
         const t = parseType();
+        // If parseType() consumed a trailing ? as a nullable suffix but it is actually the
+        // ternary operator (e.g. `s is Circle ? 1 : 0`), back up and use the inner type.
+        // Detection: last consumed token was ? AND current token looks like an expression start.
+        const isTernaryQ = t.kind === "nullable" && tokens[cur - 1]?.kind === "?" &&
+          (at("int") || at("float") || at("bool") || at("string") ||
+           at("(") || at("!") || at("~") || at("-"));
+        if (isTernaryQ) {
+          cur--; // put the ? back so parseTernary can find it
+          return { kind: "is", expr: e, not: notFlag, rhs: (t as { kind: "nullable"; inner: WacType }).inner, ...p };
+        }
         return { kind: "is", expr: e, not: notFlag, rhs: t, ...p };
       }
       const rhs = parseOr();
