@@ -34,7 +34,7 @@ export type WacVal = number | bigint | boolean | null | void;
  * Returns a WacInst with raw exports and a typed call helper.
  */
 export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
-  const { instance } = await WebAssembly.instantiate(compiled.wasm, {});
+  const { instance } = await WebAssembly.instantiate(compiled.wasm, {}) as unknown as { instance: WebAssembly.Instance };
   const rawExports = instance.exports;
 
   // Build an index from export name to its metadata

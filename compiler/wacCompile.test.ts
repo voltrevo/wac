@@ -13,7 +13,7 @@ function compile(src: string) {
 async function inst(src: string): Promise<Record<string, (...a: unknown[]) => unknown>> {
   const r = compile(src);
   if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
-  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {});
+  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {}) as unknown as { instance: WebAssembly.Instance };
   return instance.exports as Record<string, (...a: unknown[]) => unknown>;
 }
 
@@ -61,7 +61,7 @@ Deno.test("wacCompile: multi-file import chain", async () => {
   ]);
   const r = wacCompile(files, "main.wac");
   if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
-  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {});
+  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {}) as unknown as { instance: WebAssembly.Instance };
   const e = instance.exports as Record<string, (...a: unknown[]) => unknown>;
   eq(e.quadruple(3), 12, "quadruple(3)=12");
   eq(e.quadruple(7), 28, "quadruple(7)=28");
