@@ -1,7 +1,8 @@
 // Tests for wacCompile — the full wac pipeline (lex → parse → resolve → typecheck → emit).
 // Each test compiles a wac source and verifies the output or error structure.
 
-import { wacCompile } from "./wacCompile.ts";
+import { wacCompile, typeStr } from "./wacCompile.ts";
+import type { WacType } from "./wacParse.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -12,7 +13,7 @@ function compile(src: string) {
 async function inst(src: string): Promise<Record<string, (...a: unknown[]) => unknown>> {
   const r = compile(src);
   if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
-  const { instance } = await WebAssembly.instantiate(r.bytes, {});
+  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {});
   return instance.exports as Record<string, (...a: unknown[]) => unknown>;
 }
 
@@ -43,9 +44,9 @@ Deno.test("wacCompile: struct and method", async () => {
 Deno.test("wacCompile: result has ok=true and non-empty bytes", () => {
   const r = compile(`export i32 id(i32 x) { return x; }`);
   if (!r.ok) throw new Error("expected ok");
-  if (!(r.bytes instanceof Uint8Array)) throw new Error("bytes not Uint8Array");
-  if (r.bytes[0] !== 0x00) throw new Error("invalid wasm magic");
-  if (r.bytes[1] !== 0x61) throw new Error("invalid wasm magic");
+  if (!(r.compiled.wasm instanceof Uint8Array)) throw new Error("bytes not Uint8Array");
+  if (r.compiled.wasm[0] !== 0x00) throw new Error("invalid wasm magic");
+  if (r.compiled.wasm[1] !== 0x61) throw new Error("invalid wasm magic");
 });
 
 // ── Multi-file compilation ────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ Deno.test("wacCompile: multi-file import chain", async () => {
   ]);
   const r = wacCompile(files, "main.wac");
   if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
-  const { instance } = await WebAssembly.instantiate(r.bytes, {});
+  const { instance } = await WebAssembly.instantiate(r.compiled.wasm, {});
   const e = instance.exports as Record<string, (...a: unknown[]) => unknown>;
   eq(e.quadruple(3), 12, "quadruple(3)=12");
   eq(e.quadruple(7), 28, "quadruple(7)=28");
@@ -175,4 +176,64 @@ Deno.test("wacCompile: multiple type errors reported together", () => {
   if (r.ok) throw new Error("expected failure");
   if (r.errors.length < 2) throw new Error(`expected ≥2 errors, got ${r.errors.length}`);
   if (!r.errors.every(e => e.phase === "typecheck")) throw new Error("all should be typecheck");
+});
+
+// ── WacCompiled exports metadata ──────────────────────────────────────────────
+
+Deno.test("wacCompile: exports metadata — names, params, ret types", () => {
+  const r = compile(`
+    export i32 add(i32 a, i32 b) { return a + b; }
+    export f64 scale(f64 x, i32 n) { return x * n as f64; }
+    i32 internal(i32 x) { return x; }
+  `);
+  if (!r.ok) throw new Error("compile failed");
+  const exps = r.compiled.exports;
+  // Only exported functions appear
+  if (exps.length !== 2) throw new Error(`expected 2 exports, got ${exps.length}`);
+  const add = exps.find(e => e.name === "add")!;
+  if (!add) throw new Error("add not in exports");
+  if (add.params.length !== 2) throw new Error("add params count");
+  if (add.params[0].name !== "a" || add.params[0].type !== "i32") throw new Error("add param a");
+  if (add.params[1].name !== "b" || add.params[1].type !== "i32") throw new Error("add param b");
+  if (add.ret !== "i32") throw new Error("add ret");
+  const scale = exps.find(e => e.name === "scale")!;
+  if (scale.params[0].type !== "f64") throw new Error("scale param x type");
+  if (scale.ret !== "f64") throw new Error("scale ret");
+});
+
+Deno.test("wacCompile: exports metadata — void return", () => {
+  const r = compile(`export void noop() {}`);
+  if (!r.ok) throw new Error("compile failed");
+  const e = r.compiled.exports[0];
+  if (e.ret !== "void") throw new Error(`expected ret void, got ${e.ret}`);
+  if (e.params.length !== 0) throw new Error("expected no params");
+});
+
+// ── typeStr utility ───────────────────────────────────────────────────────────
+
+Deno.test("wacCompile: typeStr — primitive types", () => {
+  const p = (name: string): WacType => ({ kind: "prim", name, line: 0, col: 0 });
+  if (typeStr(p("i32"))   !== "i32")   throw new Error("i32");
+  if (typeStr(p("i64"))   !== "i64")   throw new Error("i64");
+  if (typeStr(p("f32"))   !== "f32")   throw new Error("f32");
+  if (typeStr(p("f64"))   !== "f64")   throw new Error("f64");
+  if (typeStr(p("bool"))  !== "bool")  throw new Error("bool");
+  if (typeStr(p("void"))  !== "void")  throw new Error("void");
+  if (typeStr(p("string")) !== "string") throw new Error("string");
+});
+
+Deno.test("wacCompile: typeStr — composite types", () => {
+  const p0 = (name: string): WacType => ({ kind: "prim", name, line: 0, col: 0 });
+  const arr = (elem: WacType): WacType => ({ kind: "array", elem, line: 0, col: 0 });
+  const nul = (inner: WacType): WacType => ({ kind: "nullable", inner, line: 0, col: 0 });
+  const str = (name: string): WacType => ({ kind: "struct", name, line: 0, col: 0 });
+  const fn  = (params: WacType[], ret: WacType): WacType => ({ kind: "funcref", params, ret, line: 0, col: 0 });
+
+  if (typeStr(arr(p0("i32")))        !== "i32[]")     throw new Error("i32[]");
+  if (typeStr(arr(arr(p0("f64"))))   !== "f64[][]")   throw new Error("f64[][]");
+  if (typeStr(nul(p0("i32")))        !== "i32?")      throw new Error("i32?");
+  if (typeStr(nul(arr(p0("i32"))))   !== "i32[]?")    throw new Error("i32[]?");
+  if (typeStr(str("Point"))          !== "Point")     throw new Error("Point");
+  if (typeStr(fn([], p0("void")))    !== "fn[void()]")         throw new Error("fn[void()]");
+  if (typeStr(fn([p0("i32"),p0("i32")], p0("i32"))) !== "fn[i32(i32, i32)]") throw new Error("fn[i32(i32,i32)]");
 });
