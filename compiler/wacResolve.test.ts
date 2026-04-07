@@ -179,17 +179,17 @@ Deno.test("wacResolve: import type (struct)", () => {
   if (mainScope.get("Point")!.kind !== "struct") throw new Error("Point is struct");
 });
 
-Deno.test("wacResolve: functions from imports come before entry file functions", () => {
-  // DFS: imported file functions get lower indices
+Deno.test("wacResolve: local functions registered before imported functions", () => {
+  // Local-first: entry file locals get lower indices, then imported file functions
   const r = ok("/main.wac", [
     ["/main.wac", `import { dep } from "./dep.wac"; export i32 main() { return dep(); }`],
     ["/dep.wac", `export i32 dep() { return 42; }`],
   ]);
-  // dep.wac processed first → dep$dep gets index 0, main$main gets index 1
+  // main$main registered first (local) → index 0, dep$dep registered during import phase → index 1
   const depEntry = r.fileScopes.get("/main.wac")!.get("dep")!.entry as FuncEntry;
   const mainEntry = r.fileScopes.get("/main.wac")!.get("main")!.entry as FuncEntry;
-  if (depEntry.funcIndex !== 0) throw new Error(`dep index ${depEntry.funcIndex}`);
-  if (mainEntry.funcIndex !== 1) throw new Error(`main index ${mainEntry.funcIndex}`);
+  if (mainEntry.funcIndex !== 0) throw new Error(`main index ${mainEntry.funcIndex}`);
+  if (depEntry.funcIndex !== 1) throw new Error(`dep index ${depEntry.funcIndex}`);
 });
 
 Deno.test("wacResolve: diamond imports — file visited once", () => {
@@ -244,11 +244,11 @@ Deno.test("wacResolve: multi-level imports", () => {
     ["/base.wac", `export i32 base() { return 0; }`],
   ]);
   if (r.funcs.length !== 3) throw new Error(`funcs ${r.funcs.length}`);
-  // DFS: base first (index 0), mid (1), top (2)
-  const [b, m, t] = r.funcs;
-  if (b.mangledName !== "base$base") throw new Error(`b: ${b.mangledName}`);
-  if (m.mangledName !== "mid$mid") throw new Error(`m: ${m.mangledName}`);
-  if (t.mangledName !== "top$top") throw new Error(`t: ${t.mangledName}`);
+  // Local-first: top registered first (0), then mid (1), then base (2)
+  const [top, mid, base] = r.funcs;
+  if (top.mangledName !== "top$top") throw new Error(`0: ${top.mangledName}`);
+  if (mid.mangledName !== "mid$mid") throw new Error(`1: ${mid.mangledName}`);
+  if (base.mangledName !== "base$base") throw new Error(`2: ${base.mangledName}`);
 });
 
 Deno.test("wacResolve: relative path with subdirectory", () => {
@@ -450,7 +450,7 @@ Deno.test("wacResolve: same name functions in different files have distinct mang
   if ((aEntry.mangledName as string) === (bEntry.mangledName as string)) throw new Error("same mangled names");
 });
 
-Deno.test("wacResolve: struct type indices are assigned in DFS order", () => {
+Deno.test("wacResolve: local struct indices assigned before imported struct indices", () => {
   const r = ok("/main.wac", [
     ["/main.wac", `
       import { Vec } from "./vec.wac";
@@ -458,11 +458,11 @@ Deno.test("wacResolve: struct type indices are assigned in DFS order", () => {
     `],
     ["/vec.wac", `export struct Vec { f64 x; f64 y; }`],
   ]);
-  // Vec comes first (imported) → typeIndex 0, Matrix → typeIndex 1
+  // Local-first: Matrix registered before imports → typeIndex 0, Vec → typeIndex 1
   const vecEntry = r.fileScopes.get("/main.wac")!.get("Vec")!.entry as StructEntry;
   const matEntry = r.fileScopes.get("/main.wac")!.get("Matrix")!.entry as StructEntry;
-  if (vecEntry.typeIndex !== 0) throw new Error(`Vec typeIndex ${vecEntry.typeIndex}`);
-  if (matEntry.typeIndex !== 1) throw new Error(`Matrix typeIndex ${matEntry.typeIndex}`);
+  if (matEntry.typeIndex !== 0) throw new Error(`Matrix typeIndex ${matEntry.typeIndex}`);
+  if (vecEntry.typeIndex !== 1) throw new Error(`Vec typeIndex ${vecEntry.typeIndex}`);
 });
 
 // ── Edge cases ────────────────────────────────────────────────────────────────

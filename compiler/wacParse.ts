@@ -58,6 +58,7 @@ export type Stmt =
   | ({ kind: "break" } & Pos)
   | ({ kind: "continue" } & Pos)
   | ({ kind: "trap" } & Pos)
+  | ({ kind: "block";    block: Block } & Pos)
   | ({ kind: "expr";     expr: Expr } & Pos);
 
 // else branch: another if, or a plain block (null = no else)
@@ -168,8 +169,18 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       }
       expect(")");
       expect("]");
-      const base: WacType = { kind: "funcref", params, ret, ...p };
-      return at("?") ? (advance(), { kind: "nullable", inner: base, ...p }) : base;
+      let fnBase: WacType = { kind: "funcref", params, ret, ...p };
+      // Handle [] and ? suffixes: fn[R(P)][] = array of funcref, fn[R(P)]? = nullable funcref
+      while (true) {
+        if (at("[") && at("]", 1)) {
+          const arrP = pos(); advance(); advance();
+          fnBase = { kind: "array", elem: fnBase, ...arrP };
+        } else if (at("?")) {
+          const nP = pos(); advance();
+          fnBase = { kind: "nullable", inner: fnBase, ...nP };
+        } else break;
+      }
+      return fnBase;
     }
 
     // Primitive or struct name
@@ -237,6 +248,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const next = tok(1);
     // If followed by [ or ?, it's an array/nullable type
     if (next.kind === "[" || next.kind === "?") return true;
+    // Single identifier only treated as a type if PascalCase (struct naming convention).
+    // Lowercase identifiers like `a is b` are reference equality checks.
+    if (t.text.charAt(0) !== t.text.charAt(0).toUpperCase()) return false;
     // Anything else (paren, ident, binary op) — treat as expression for `is y` (identity)
     const isExprFollow = ["(", "ident", "+", "-", "*", "/", "%", "==", "!=",
       "<", ">", "<=", ">=", "&&", "||", ".", "[", "!", "~"].includes(next.kind as string);
@@ -389,6 +403,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         // Null unwrap: expr!  (but not expr!=)
         advance();
         e = { kind: "unwrap", expr: e, ...p };
+      } else if (at("(")) {
+        // Indirect call: expr(args) — for funcref calls and inline method refs
+        advance();
+        const args = parseArgList();
+        expect(")");
+        e = { kind: "call", callee: e, args, ...p };
       } else {
         break;
       }
@@ -419,6 +439,19 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       const e = parseExpr();
       expect(")");
       return e;
+    }
+
+    // fn[R(P)][](args) — array of funcref construction
+    if (at("fn")) {
+      const fnType = parseType();
+      if (fnType.kind === "array" && at("(")) {
+        advance();
+        const args = parseArgList();
+        expect(")");
+        return { kind: "arrNew", elem: fnType.elem, size: null, fixed: args, ...p };
+      }
+      err(`expected '(' for fn type array construction`);
+      return { kind: "null", ...p };
     }
 
     // Construction or function call with a type or struct name prefix
@@ -471,7 +504,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         else if (tokens[j].kind === "]") depth--;
         j++;
       }
-      return tokens[j]?.kind === "(";
+      // For sized array construction T[N](), the () must be empty.
+      // If () has args (like arr[i](5)), it's an index+funcref-call, not construction.
+      return tokens[j]?.kind === "(" && tokens[j + 1]?.kind === ")";
     }
     return false;
   }
@@ -617,6 +652,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("break"))    { advance(); expect(";"); return { kind: "break", ...p }; }
     if (at("continue")) { advance(); expect(";"); return { kind: "continue", ...p }; }
     if (at("trap"))     { advance(); expect(";"); return { kind: "trap", ...p }; }
+    if (at("{"))        return { kind: "block", block: parseBlock(), ...p };
 
     // Variable declaration
     if (looksLikeVarDecl()) return parseVarDecl();

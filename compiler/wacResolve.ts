@@ -59,6 +59,8 @@ export type ResolveResult = {
   /** Per-file scope maps */
   fileScopes: Map<string, FileScope>;
   errors: ResolveError[];
+  /** Entry file path (only functions from this file are wasm-exported) */
+  entryPath: string;
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────
@@ -108,50 +110,20 @@ export function wacResolve(
 
   function visitFile(filePath: string): void {
     if (visited.has(filePath)) return;
-    // If currently in progress (circular import), we allow it — just don't revisit.
-    // Mark as visited immediately to break cycles.
     visited.add(filePath);
-    inProgress.add(filePath);
 
     const prog = programs.get(filePath);
     if (!prog) {
       err(`file not found in programs map: '${filePath}'`, filePath);
       fileScopes.set(filePath, new Map());
-      inProgress.delete(filePath);
       return;
     }
 
     const scope: FileScope = new Map();
+    // Set scope early so circular imports can find local declarations.
+    fileScopes.set(filePath, scope);
 
-    // ── Phase 1: process imports (DFS — visit imported files first) ───────────
-    for (const item of prog.items) {
-      if (item.tag !== "import") continue;
-      const importedPath = resolvePath(filePath, item.path);
-      visitFile(importedPath); // recursive DFS
-
-      const importedScope = fileScopes.get(importedPath);
-      if (!importedScope) continue; // file not found — already reported
-
-      for (const { name, alias, line, col } of item.items) {
-        const found = importedScope.get(name);
-        if (!found) {
-          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
-          continue;
-        }
-        // Only allow importing exported functions and structs
-        if (found.kind === "func" && found.entry.exportName === null) {
-          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
-          continue;
-        }
-        if (scope.has(alias)) {
-          err(`duplicate name '${alias}' (from import)`, filePath, line, col);
-          continue;
-        }
-        scope.set(alias, found);
-      }
-    }
-
-    // ── Phase 2: register local struct declarations ───────────────────────────
+    // ── Phase 1: register local struct declarations ───────────────────────────
     for (const item of prog.items) {
       if (item.tag !== "struct") continue;
       const { name, line, col } = item;
@@ -167,7 +139,7 @@ export function wacResolve(
       scope.set(name, { kind: "struct", entry: structEntry });
     }
 
-    // ── Phase 3: register local function declarations ─────────────────────────
+    // ── Phase 2: register local function declarations ─────────────────────────
     const fileStem = stem(filePath);
     for (const item of prog.items) {
       if (item.tag !== "func") continue;
@@ -187,8 +159,7 @@ export function wacResolve(
       scope.set(name, { kind: "func", entry });
     }
 
-    // ── Phase 4: register methods for all structs in this file ───────────────
-    // Methods are registered in a second pass so structs are in scope first.
+    // ── Phase 3: register methods for all structs in this file ───────────────
     for (const item of prog.items) {
       if (item.tag !== "struct") continue;
       const structScopeEntry = scope.get(item.name);
@@ -231,12 +202,37 @@ export function wacResolve(
       }
     }
 
-    fileScopes.set(filePath, scope);
-    inProgress.delete(filePath);
+    // ── Phase 4: process imports (DFS — after locals so circular deps find us) ─
+    for (const item of prog.items) {
+      if (item.tag !== "import") continue;
+      const importedPath = resolvePath(filePath, item.path);
+      visitFile(importedPath); // recursive DFS
+
+      const importedScope = fileScopes.get(importedPath);
+      if (!importedScope) continue; // file not found — already reported
+
+      for (const { name, alias, line, col } of item.items) {
+        const found = importedScope.get(name);
+        if (!found) {
+          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
+          continue;
+        }
+        // Only allow importing exported functions and structs
+        if (found.kind === "func" && found.entry.exportName === null) {
+          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
+          continue;
+        }
+        if (scope.has(alias)) {
+          err(`duplicate name '${alias}' (from import)`, filePath, line, col);
+          continue;
+        }
+        scope.set(alias, found);
+      }
+    }
   }
 
   visitFile(entryPath);
-  return { funcs, structs, fileScopes, errors };
+  return { funcs, structs, fileScopes, errors, entryPath };
 }
 
 // ── Helpers for consumers ─────────────────────────────────────────────────────

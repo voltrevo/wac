@@ -10,7 +10,7 @@
 
 import {
   type WacType, type FieldDecl, type StructDecl, type FuncDecl,
-  type MethodDecl,
+  type MethodDecl, type Stmt, type Expr, type Block,
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry,
@@ -93,14 +93,66 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
     else if (t.kind === "funcref") { t.params.forEach(scanType); scanType(t.ret); }
   }
 
+  function scanExpr(e: Expr): void {
+    if (e.kind === "arrNew") { scanType(e.elem); scanType({ kind: "array", elem: e.elem, line: 0, col: 0 }); }
+    else if (e.kind === "construct" && e.ctype.kind === "array") scanType(e.ctype);
+    else if (e.kind === "cast") scanType(e.type);
+    if ("args" in e) (e as { args: Expr[] }).args.forEach(scanExpr);
+    if ("left" in e) scanExpr((e as { left: Expr }).left);
+    if ("right" in e) scanExpr((e as { right: Expr }).right);
+    if ("expr" in e) scanExpr((e as { expr: Expr }).expr);
+    if ("cond" in e) scanExpr((e as { cond: Expr }).cond);
+    if ("then" in e && typeof (e as { then: unknown }).then !== "string") scanExpr((e as { then: Expr }).then);
+    if ("else_" in e) scanExpr((e as { else_: Expr }).else_);
+    if ("idx" in e) scanExpr((e as { idx: Expr }).idx);
+    if ("named" in e && Array.isArray((e as { named: unknown }).named)) {
+      for (const n of (e as { named: { name: string; val: Expr }[] }).named) scanExpr(n.val);
+    }
+  }
+
+  function scanBlock(b: Block): void {
+    for (const s of b.stmts) scanStmt(s);
+  }
+
+  function scanStmt(s: Stmt): void {
+    if (s.kind === "var") { scanType(s.type); scanExpr(s.init); }
+    else if (s.kind === "if") {
+      scanExpr(s.cond); scanBlock(s.then);
+      if (s.els?.kind === "else-if") scanStmt(s.els.stmt);
+      else if (s.els?.kind === "else-block") scanBlock(s.els.block);
+    }
+    else if (s.kind === "while" || s.kind === "dowhile") { scanExpr(s.cond); scanBlock(s.body); }
+    else if (s.kind === "for") {
+      if (s.init) scanStmt(s.init);
+      if (s.cond) scanExpr(s.cond);
+      if (s.update) scanStmt(s.update);
+      scanBlock(s.body);
+    }
+    else if (s.kind === "switch") {
+      scanExpr(s.expr);
+      for (const c of s.cases) { if (c.value !== "default") scanExpr(c.value); c.body.forEach(scanStmt); }
+    }
+    else if (s.kind === "return" && s.value) scanExpr(s.value);
+    else if (s.kind === "assign") scanExpr(s.rhs);
+    else if (s.kind === "expr") scanExpr(s.expr);
+    else if (s.kind === "block") scanBlock(s.block);
+  }
+
   // Scan all struct fields
   for (const s of result.structs) {
     for (const f of s.structDecl.fields) scanType(f.type);
+    for (const m of s.structDecl.methods) {
+      for (const p of m.params) scanType(p.type);
+      scanType(m.returnType);
+      scanBlock(m.body);
+    }
   }
-  // Scan all function params/returns
+  // Scan all function params/returns and bodies
   for (const f of result.funcs) {
     for (const p of funcParams(f)) scanType(p.type);
     scanType(funcReturnType(f));
+    if (f.origin.kind === "func") scanBlock(f.origin.decl.body);
+    else if (f.origin.kind === "method") scanBlock(f.origin.decl.body);
   }
 
   return types;
@@ -131,10 +183,33 @@ function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacTy
   }
   for (const s of result.structs) {
     for (const f of s.structDecl.fields) scanType(f.type);
+    for (const m of s.structDecl.methods) {
+      for (const p of m.params) scanType(p.type);
+      scanType(m.returnType);
+      for (const st of m.body.stmts) scanBodyStmt(st);
+    }
   }
   for (const f of result.funcs) {
     for (const p of funcParams(f)) scanType(p.type);
     scanType(funcReturnType(f));
+    const body = f.origin.kind === "func" ? f.origin.decl.body : f.origin.decl.body;
+    for (const st of body.stmts) scanBodyStmt(st);
+  }
+
+  function scanBodyStmt(s: Stmt): void {
+    if (s.kind === "var") scanType(s.type);
+    if (s.kind === "if") {
+      s.then.stmts.forEach(scanBodyStmt);
+      if (s.els?.kind === "else-if") scanBodyStmt(s.els.stmt);
+      else if (s.els?.kind === "else-block") s.els.block.stmts.forEach(scanBodyStmt);
+    }
+    if (s.kind === "while" || s.kind === "dowhile") s.body.stmts.forEach(scanBodyStmt);
+    if (s.kind === "for") {
+      if (s.init) scanBodyStmt(s.init);
+      s.body.stmts.forEach(scanBodyStmt);
+    }
+    if (s.kind === "switch") for (const c of s.cases) c.body.forEach(scanBodyStmt);
+    if (s.kind === "block") s.block.stmts.forEach(scanBodyStmt);
   }
 
   return sigs;
@@ -142,25 +217,36 @@ function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacTy
 
 // ── Build the full type context ───────────────────────────────────────────────
 
-/** Collect all field info (including inherited) for every struct. */
+/** Collect all field info (including inherited) for every struct.
+ * Keys: struct name AND "@<typeIndex>" (unique key) to handle name collisions. */
 function buildStructFields(
   structs: StructEntry[],
 ): Map<string, StructFieldInfo[]> {
   const fieldMap = new Map<string, StructFieldInfo[]>();
+  // Also build by typeIndex key for unambiguous lookup
+  const byIdx = new Map<number, StructFieldInfo[]>();
 
   // Build an ordered list: process base structs before derived
   // (structs are already in topological order from resolver)
   for (const s of structs) {
     const parent = s.structDecl.parent;
-    const parentFields = parent ? (fieldMap.get(parent) ?? []) : [];
+    // Look up parent fields by typeIndex to handle name collisions
+    const parentEntry = parent ? structs.find(x => x.name === parent && x.filePath === s.filePath)
+      ?? structs.find(x => x.name === parent) : null;
+    const parentFields = parentEntry ? (byIdx.get(parentEntry.typeIndex) ?? []) : [];
     const ownFields: StructFieldInfo[] = s.structDecl.fields.map((f, i) => ({
       name: f.name,
       type: f.type,
       isConst: f.isConst || s.structDecl.isConst,
       absIdx: parentFields.length + i,
     }));
-    fieldMap.set(s.name, [...parentFields, ...ownFields]);
+    const allFields = [...parentFields, ...ownFields];
+    fieldMap.set(s.name, allFields);  // by name (may overwrite for same-name structs)
+    byIdx.set(s.typeIndex, allFields);  // by typeIndex (always unique)
   }
+
+  // Expose byIdx entries as "@N" keys so alias code can look up by typeIndex
+  for (const [idx, fields] of byIdx) fieldMap.set(`@${idx}`, fields);
 
   return fieldMap;
 }
@@ -172,6 +258,14 @@ function buildTypeCtx(
   // 1. Struct types: indices assigned by resolver (0-based, in order)
   const structTypeIdx = new Map<string, number>();
   for (const s of result.structs) structTypeIdx.set(s.name, s.typeIndex);
+  // Also register aliases (e.g. `import { Point as Point2d }`) so the emitter can find them.
+  for (const scope of result.fileScopes.values()) {
+    for (const [alias, entry] of scope) {
+      if (entry.kind === "struct" && !structTypeIdx.has(alias)) {
+        structTypeIdx.set(alias, entry.entry.typeIndex);
+      }
+    }
+  }
   const numStructs = result.structs.length;
 
   // 2. String type: special immutable i8 array
@@ -201,6 +295,18 @@ function buildTypeCtx(
   const structParent = new Map<string, string | null>(
     result.structs.map(s => [s.name, s.structDecl.parent ?? null]),
   );
+  // Add alias entries for structFields and structParent too.
+  for (const scope of result.fileScopes.values()) {
+    for (const [alias, entry] of scope) {
+      if (entry.kind === "struct" && !structFields.has(alias)) {
+        // Use "@typeIndex" key for unambiguous lookup (handles same-name structs from different files)
+        const fields = structFields.get(`@${entry.entry.typeIndex}`) ?? [];
+        structFields.set(alias, fields);
+        const parentName = entry.entry.structDecl.parent ?? null;
+        structParent.set(alias, parentName);
+      }
+    }
+  }
 
   // 6. Function index map (by mangled name and by short name for same-file calls)
   const funcIdx = new Map<string, number>();
@@ -211,6 +317,14 @@ function buildTypeCtx(
     if (f.origin.kind === "func") {
       const shortName = f.origin.decl.name;
       if (!funcIdx.has(shortName)) funcIdx.set(shortName, f.funcIndex);
+    }
+  }
+  // Also add aliases from all file scopes (for renamed imports like `{ foo as fooB }`).
+  for (const scope of result.fileScopes.values()) {
+    for (const [alias, entry] of scope) {
+      if (entry.kind === "func" && !funcIdx.has(alias)) {
+        funcIdx.set(alias, entry.entry.funcIndex);
+      }
     }
   }
 
@@ -272,7 +386,14 @@ function encodeArrayType(elem: WacType, ctx: WasmTypeCtx): number[] {
   if (elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16")) {
     return [0x5E, packedType(elem.name), 0x01]; // array, packed type, mutable
   }
-  return [0x5E, ...wasmValType(elem, ctx), 0x01]; // array, valtype, mutable
+  // For non-nullable ref element types (struct/array/funcref), use nullable
+  // so that array.new_default can fill slots with null
+  const valBytes = wasmValType(elem, ctx);
+  if ((elem.kind === "struct" || elem.kind === "array" || elem.kind === "funcref") &&
+      valBytes[0] === 0x64) {
+    return [0x5E, 0x63, ...valBytes.slice(1), 0x01]; // array, nullable ref, mutable
+  }
+  return [0x5E, ...valBytes, 0x01]; // array, valtype, mutable
 }
 
 /** Rebuild element WacType from a typeKey string. */
@@ -311,11 +432,17 @@ function buildTypeCtxFull(
 ): WasmTypeCtxFull {
   const base = buildTypeCtx(result, programs);
 
+  // Build key → WacType map from collectArrayTypes to handle funcref element types
+  // (keyToElemType cannot reconstruct funcref types from their key strings)
+  const actualArrayElems = collectArrayTypes(result, programs);
+  const elemByKey = new Map<string, WacType>();
+  for (const t of actualArrayElems) elemByKey.set(typeKey(t), t);
+
   // Rebuild ordered arrays and sigs
   const arrEntries = [...base.arrTypeIdx.entries()].sort((a, b) => a[1] - b[1]);
   const orderedArrayElems: WacType[] = [];
   for (const [key, _] of arrEntries) {
-    const elem = keyToElemType(key, base);
+    const elem = elemByKey.get(key) ?? keyToElemType(key, base);
     if (elem) orderedArrayElems.push(elem);
   }
 
@@ -340,6 +467,26 @@ function buildTypeCtxFull(
     for (const p of funcParams(f)) scanFuncref(p.type);
     scanFuncref(funcReturnType(f));
   }
+  // Also scan var decl types in function bodies (for funcref types only in local vars)
+  function scanBodyFuncref(s: Stmt): void {
+    if (s.kind === "var") scanFuncref(s.type);
+    if (s.kind === "if") {
+      s.then.stmts.forEach(scanBodyFuncref);
+      if (s.els?.kind === "else-if") scanBodyFuncref(s.els.stmt);
+      else if (s.els?.kind === "else-block") s.els.block.stmts.forEach(scanBodyFuncref);
+    }
+    if (s.kind === "while" || s.kind === "dowhile") s.body.stmts.forEach(scanBodyFuncref);
+    if (s.kind === "for") {
+      if (s.init) scanBodyFuncref(s.init);
+      s.body.stmts.forEach(scanBodyFuncref);
+    }
+    if (s.kind === "switch") for (const c of s.cases) c.body.forEach(scanBodyFuncref);
+    if (s.kind === "block") s.block.stmts.forEach(scanBodyFuncref);
+  }
+  for (const f of result.funcs) {
+    const body = f.origin.kind === "func" ? f.origin.decl.body : f.origin.decl.body;
+    body.stmts.forEach(scanBodyFuncref);
+  }
 
   const sigEntries = [...base.sigTypeIdx.entries()].sort((a, b) => a[1] - b[1]);
   const orderedSigs: { params: WacType[]; ret: WacType }[] = [];
@@ -354,9 +501,9 @@ function buildTypeCtxFull(
 function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
   const entries: number[][] = [];
 
-  // Struct types
+  // Struct types: use "@typeIndex" key for unambiguous lookup when same-name structs exist
   for (const s of ctx.result.structs) {
-    const allFields = ctx.structFields.get(s.name) ?? [];
+    const allFields = ctx.structFields.get(`@${s.typeIndex}`) ?? ctx.structFields.get(s.name) ?? [];
     entries.push(encodeStructType(s, ctx, allFields));
   }
 
@@ -397,7 +544,8 @@ function buildFuncSection(ctx: WasmTypeCtxFull): number[] {
 // ── Export section ────────────────────────────────────────────────────────────
 
 function buildExportSection(result: ResolveResult): number[] {
-  const exported = result.funcs.filter(f => f.exportName !== null);
+  // Only export functions from the entry file (imports are internal to the module)
+  const exported = result.funcs.filter(f => f.exportName !== null && f.filePath === result.entryPath);
   const entries: number[][] = exported.map(f => {
     const nameBytes = new TextEncoder().encode(f.exportName!);
     return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex)];
