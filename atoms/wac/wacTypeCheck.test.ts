@@ -387,12 +387,13 @@ Deno.test("wacTypeCheck: unknown method is error", () => {
   export void bad(P p) { p.doThing(); }`, "no method");
 });
 
-Deno.test("wacTypeCheck: instance method via struct name is error", () => {
+Deno.test("wacTypeCheck: instance method via struct name requires receiver arg", () => {
+  // P.inc() with no args — receiver argument is missing
   fail(`struct P {
     i32 x;
     void inc(this) { this.x++; }
   }
-  export void bad() { P.inc(); }`, "instance method");
+  export void bad() { P.inc(); }`, "argument");
 });
 
 Deno.test("wacTypeCheck: struct name has no static method", () => {

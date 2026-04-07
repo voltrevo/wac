@@ -189,11 +189,12 @@ function structHasDefault(
   if (visiting.has(name)) return false;  // circular non-null ref has no default
   visiting.add(name);
   const entry = structMap.get(name);
-  if (!entry) return false;
+  if (!entry) { visiting.delete(name); return false; }
   const fields = allFields(name, structMap);
   for (const f of fields) {
-    if (!hasDefault(f.type, structMap, visiting)) return false;
+    if (!hasDefault(f.type, structMap, visiting)) { visiting.delete(name); return false; }
   }
+  visiting.delete(name);  // backtrack so sibling fields can reuse this struct
   return true;
 }
 
@@ -229,6 +230,15 @@ export function wacTypeCheck(
   // Build struct name -> StructEntry for lookups
   const structMap = new Map<string, StructEntry>();
   for (const s of result.structs) structMap.set(s.name, s);
+  // Also register imported aliases so `Point2d` (alias for `Point`) resolves correctly.
+  // Use the entry directly (by typeIndex reference) to avoid same-name struct collisions.
+  for (const scope of result.fileScopes.values()) {
+    for (const [alias, entry] of scope) {
+      if (entry.kind === "struct" && !structMap.has(alias)) {
+        structMap.set(alias, entry.entry);  // entry.entry has the right typeIndex
+      }
+    }
+  }
 
   // Per-file structural checks (packed types, override, recursive default)
   for (const [filePath, fileScope] of result.fileScopes) {
@@ -551,6 +561,11 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       return true;
     }
 
+    case "block": {
+      // Bare block — check with a child scope (new Map(env)) so vars don't leak
+      return checkBlock(stmt.block, new Map(env), ctx);
+    }
+
     case "expr": {
       inferExpr(stmt.expr, env, ctx);
       return false;
@@ -685,9 +700,14 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
     case "ident": {
       const info = env.get(expr.name);
       if (info) return info.type;
-      // Struct type names are not values
       const scopeEntry = ctx.fileScope.get(expr.name);
       if (scopeEntry) {
+        if (scopeEntry.kind === "func") {
+          // Function name used as a value — return its funcref type
+          const params = funcParams(scopeEntry.entry).map(p => p.type);
+          const ret = funcReturnType(scopeEntry.entry);
+          return { kind: "funcref", params, ret, line: expr.line, col: expr.col };
+        }
         errAt(ctx, `'${expr.name}' is a ${scopeEntry.kind}, not a variable`, expr.line, expr.col);
         return null;
       }
@@ -875,11 +895,12 @@ function inferCall(
           return null;
         }
         const mdecl = m.origin.kind === "method" ? m.origin.decl : null;
-        if (!mdecl || mdecl.hasThis) {
-          errAt(ctx,
-            `'${methodName}' is an instance method — call on an instance, not the struct name`,
-            callee.line, callee.col);
-          return null;
+        if (!mdecl) return null;
+        if (mdecl.hasThis) {
+          // Allow Counter.inc(receiver, ...args) — receiver is the this argument
+          const selfType: WacType = { kind: "struct", name: se.entry.name, line: 0, col: 0 };
+          const allParams = [selfType, ...mdecl.params.map(p => p.type)];
+          return checkArgList(args, allParams, mdecl.returnType, expr, env, ctx);
         }
         return checkArgList(args, mdecl.params.map(p => p.type), mdecl.returnType, expr, env, ctx);
       }
@@ -976,12 +997,18 @@ function inferFieldAccess(
   pos: { line: number; col: number },
   env: VarEnv, ctx: Ctx,
 ): WacType | null {
-  // Static method reference: StructName.method (used only as callee of a call)
-  // This is handled in inferCall, so if we arrive here it's a bare field read on struct type name
+  // StructName.method — either a static method ref (error) or instance method ref (funcref value)
   if (baseExpr.kind === "ident") {
     const se = ctx.fileScope.get(baseExpr.name);
     if (se?.kind === "struct") {
-      // Could be a static method reference used as a value — not supported
+      const m = lookupMethod(baseExpr.name, fieldName, ctx.structMap);
+      if (m && m.origin.kind === "method" && m.origin.decl.hasThis) {
+        // Instance method reference: Counter.inc → fn[void(Counter)] funcref
+        const mdecl = m.origin.decl;
+        const selfType: WacType = { kind: "struct", name: se.entry.name, line: 0, col: 0 };
+        const allParams = [selfType, ...mdecl.params.map(p => p.type)];
+        return { kind: "funcref", params: allParams, ret: mdecl.returnType, line: pos.line, col: pos.col };
+      }
       errAt(ctx, `cannot use static method '${baseExpr.name}.${fieldName}' as a value`,
         pos.line, pos.col);
       return null;
@@ -1057,11 +1084,9 @@ function inferConstruct(
       const ret = funcReturnType(se.entry);
       return checkArgList(args, ps, ret, expr, env, ctx);
     }
-    // If it's a struct name in scope but not in structMap — shouldn't happen
-    // Check if it's in scope as a func entry that was imported
-    if (se?.kind === "struct") {
-      // fallthrough to struct construction below (structMap should have it)
-    } else {
+    // If it's a struct name in scope but not in structMap — unresolved alias (shouldn't happen
+    // if structMap was built with aliases; treat as error)
+    if (se?.kind !== "struct") {
       errAt(ctx, `undefined function or struct '${ctype.name}'`, expr.line, expr.col);
       return null;
     }

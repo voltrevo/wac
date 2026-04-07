@@ -73,6 +73,20 @@ function sleb(n: number): number[] {
   return out;
 }
 
+/** SLEB128-encode a BigInt (for i64.const instructions). */
+function slebBig(n: bigint): number[] {
+  const out: number[] = [];
+  let more = true;
+  while (more) {
+    let b = Number(n & 0x7Fn);
+    n >>= 7n;
+    if ((n === 0n && !(b & 0x40)) || (n === -1n && !!(b & 0x40))) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
+  return out;
+}
+
 // ── Type key functions ────────────────────────────────────────────────────────
 
 /** Stable string key for an array element type (used as map key). */
@@ -142,6 +156,22 @@ export function heapTypeBytes(t: WacType, ctx: WasmTypeCtx): number[] {
     case "funcref":  return sleb(ctx.sigTypeIdx.get(sigKey(t.params, t.ret))!);
     case "nullable": return heapTypeBytes(t.inner, ctx);
   }
+}
+
+// ── Method lookup ─────────────────────────────────────────────────────────────
+
+/** Walk the struct inheritance chain to find a method (handles inherited methods). */
+function lookupMethodInChain(
+  structName: string, methodName: string, ctx: WasmTypeCtx,
+): import("./wacResolve.ts").FuncEntry | null {
+  let name: string | null | undefined = structName;
+  while (name) {
+    const entry = ctx.result.structs.find(s => s.name === name);
+    const m = entry?.methods.get(methodName);
+    if (m) return m;
+    name = ctx.structParent.get(name);
+  }
+  return null;
 }
 
 // ── Type inference ────────────────────────────────────────────────────────────
@@ -280,15 +310,19 @@ function lvalType(lv: Lvalue, env: TypeEnv, ctx: WasmTypeCtx): WacType {
 
 type LocalDecl = { name: string; type: WacType };
 
-/** Walk all statements (recursively) to collect local var declarations. */
-function collectLocals(stmts: Stmt[]): LocalDecl[] {
-  const out: LocalDecl[] = [];
-  const seen = new Set<string>();
+/** Walk all statements (recursively) to collect local var declarations with unique keys. */
+function collectLocals(stmts: Stmt[]): { decls: LocalDecl[]; keyMap: WeakMap<Stmt, string> } {
+  const decls: LocalDecl[] = [];
+  const count = new Map<string, number>(); // how many times each name has been declared
+  const keyMap = new WeakMap<Stmt, string>(); // var stmt → unique key
   function walk(ss: Stmt[]): void {
     for (const s of ss) {
-      if (s.kind === "var" && !seen.has(s.name)) {
-        out.push({ name: s.name, type: s.type });
-        seen.add(s.name);
+      if (s.kind === "var") {
+        const n = count.get(s.name) ?? 0;
+        count.set(s.name, n + 1);
+        const key = n === 0 ? s.name : `${s.name}$${n}`;
+        decls.push({ name: key, type: s.type });
+        keyMap.set(s, key);
       } else if (s.kind === "if") {
         walk(s.then.stmts);
         if (s.els?.kind === "else-block") walk(s.els.block.stmts);
@@ -300,11 +334,13 @@ function collectLocals(stmts: Stmt[]): LocalDecl[] {
         walk(s.body.stmts);
       } else if (s.kind === "switch") {
         for (const c of s.cases) walk(c.body);
+      } else if (s.kind === "block") {
+        walk(s.block.stmts);
       }
     }
   }
   walk(stmts);
-  return out;
+  return { decls, keyMap };
 }
 
 // ── String encoding ───────────────────────────────────────────────────────────
@@ -341,11 +377,17 @@ type LoopCtx = { breakTarget: number; continueTarget: number };
 class FuncEmitter {
   private out: number[] = [];
   readonly localMap: Map<string, LocalInfo> = new Map();
+  /** Maps current variable name → unique localMap key (scope-aware). */
+  readonly nameToKey: Map<string, string> = new Map();
+  /** Maps each var Stmt to its unique localMap key (from collectLocals). */
+  keyMap: WeakMap<Stmt, string> = new WeakMap();
   private ctx: WasmTypeCtx;
   private returnType: WacType;
   private loopStack: LoopCtx[] = [];
   /** Number of structured control blocks currently open. */
   private labelDepth = 0;
+  /** Scratch i64 local index for checked/saturating i64 casts (set by wacEmitFunc). */
+  tempI64Local = -1;
 
   constructor(ctx: WasmTypeCtx, returnType: WacType) {
     this.ctx = ctx;
@@ -374,12 +416,11 @@ class FuncEmitter {
   emitExpr(e: Expr, env: TypeEnv, expectType?: WacType): void {
     switch (e.kind) {
       case "int": {
-        const v = parseInt(e.value, 10);
         const isI64 = expectType?.kind === "prim" && expectType.name === "i64";
         if (isI64) {
-          this.emit(0x42, ...sleb(v)); // i64.const
+          this.emit(0x42, ...slebBig(BigInt(e.value))); // i64.const
         } else {
-          this.emit(0x41, ...sleb(v)); // i32.const
+          this.emit(0x41, ...sleb(parseInt(e.value))); // i32.const (parseInt auto-detects 0x hex)
         }
         break;
       }
@@ -411,7 +452,8 @@ class FuncEmitter {
         break;
       }
       case "ident": {
-        const loc = this.localMap.get(e.name);
+        const key = this.nameToKey.get(e.name) ?? e.name;
+        const loc = this.localMap.get(key);
         if (loc) { this.emit(0x20, ...uleb(loc.idx)); break; } // local.get
         // Named function reference
         const fIdx = this.ctx.funcIdx.get(e.name);
@@ -507,6 +549,15 @@ class FuncEmitter {
     } else {
       this.emitExpr(e.left, env);
       this.emitExpr(e.right, env);
+      // i64 << i32 / i64 >> i32: widen the rhs to i64 for the wasm instruction
+      if ((op === "<<" || op === ">>" || op === ">>>")) {
+        const lt2 = typeOfExpr(e.left, env, this.ctx);
+        const rt2 = typeOfExpr(e.right, env, this.ctx);
+        if (lt2.kind === "prim" && lt2.name === "i64" &&
+            rt2.kind === "prim" && rt2.name === "i32") {
+          this.emit(0xAC); // i64.extend_i32_s
+        }
+      }
     }
 
     const lt = typeOfExpr(e.left, env, this.ctx);
@@ -614,17 +665,63 @@ class FuncEmitter {
     }
     // Checked (as!)
     if (op === "as!") {
-      if (from === "i64" && to === "i32") { this.emit(0xA7); return; }  // i32.wrap_i64
-      if (from === "f64" && to === "i32") { this.emit(0xAA); return; }  // i32.trunc_f64_s
-      if (from === "f32" && to === "i32") { this.emit(0xA8); return; }  // i32.trunc_f32_s
-      if (from === "f64" && to === "i64") { this.emit(0xB0); return; }  // i64.trunc_f64_s
-      if (from === "f32" && to === "i64") { this.emit(0xAE); return; }  // i64.trunc_f32_s
+      if (from === "i64" && to === "i32") {
+        // Range-check then wrap: trap if outside [-2^31, 2^31-1]
+        const tmp = this.tempI64Local;
+        this.emit(0x22, ...uleb(tmp));                   // local.tee $tmp
+        this.emit(0x42, ...slebBig(2147483647n));        // i64.const MAX
+        this.emit(0x55);                                 // i64.gt_s
+        this.emit(0x04, 0x40);                           // if (void)
+        this.emit(0x00);                                 //   unreachable
+        this.emit(0x0B);                                 // end
+        this.emit(0x20, ...uleb(tmp));                   // local.get $tmp
+        this.emit(0x42, ...slebBig(-2147483648n));       // i64.const MIN
+        this.emit(0x53);                                 // i64.lt_s
+        this.emit(0x04, 0x40);                           // if (void)
+        this.emit(0x00);                                 //   unreachable
+        this.emit(0x0B);                                 // end
+        this.emit(0x20, ...uleb(tmp));                   // local.get $tmp
+        this.emit(0xA7);                                 // i32.wrap_i64
+        return;
+      }
+      if (from === "f64" && to === "i32") { this.emit(0xAA); return; }  // i32.trunc_f64_s (traps)
+      if (from === "f32" && to === "i32") { this.emit(0xA8); return; }  // i32.trunc_f32_s (traps)
+      if (from === "f64" && to === "i64") { this.emit(0xB0); return; }  // i64.trunc_f64_s (traps)
+      if (from === "f32" && to === "i64") { this.emit(0xAE); return; }  // i64.trunc_f32_s (traps)
     }
-    // Nearest (as~)
+    // Nearest (as~): round-to-nearest, clamp on overflow, never traps
     if (op === "as~") {
-      if (from === "i64" && to === "i32")  { this.emit(0xA7); return; }       // wrap
-      if (from === "f64" && to === "i32")  { this.emit(0xFC, 0x02); return; } // trunc_sat_f64_s
-      if (from === "f32" && to === "i32")  { this.emit(0xFC, 0x00); return; } // trunc_sat_f32_s
+      if (from === "i64" && to === "i32") {
+        // Clamp to i32 range, then wrap
+        const tmp = this.tempI64Local;
+        this.emit(0x22, ...uleb(tmp));                   // local.tee $tmp
+        this.emit(0x42, ...slebBig(2147483647n));        // i64.const MAX
+        this.emit(0x55);                                 // i64.gt_s
+        this.emit(0x04, 0x7E);                           // if (i64)
+        this.emit(0x42, ...slebBig(2147483647n));        //   i64.const MAX
+        this.emit(0x05);                                 // else
+        this.emit(0x20, ...uleb(tmp));                   //   local.get $tmp
+        this.emit(0x42, ...slebBig(-2147483648n));       //   i64.const MIN
+        this.emit(0x53);                                 //   i64.lt_s
+        this.emit(0x04, 0x7E);                           //   if (i64)
+        this.emit(0x42, ...slebBig(-2147483648n));       //     i64.const MIN
+        this.emit(0x05);                                 //   else
+        this.emit(0x20, ...uleb(tmp));                   //     local.get $tmp
+        this.emit(0x0B);                                 //   end
+        this.emit(0x0B);                                 // end
+        this.emit(0xA7);                                 // i32.wrap_i64
+        return;
+      }
+      if (from === "f64" && to === "i32") {
+        this.emit(0x9E);                  // f64.nearest (round to nearest, ties to even)
+        this.emit(0xFC, 0x02);            // i32.trunc_sat_f64_s (clamp on overflow, no trap)
+        return;
+      }
+      if (from === "f32" && to === "i32") {
+        this.emit(0x90);                  // f32.nearest (round to nearest, ties to even)
+        this.emit(0xFC, 0x00);            // i32.trunc_sat_f32_s (clamp on overflow, no trap)
+        return;
+      }
       if (from === "f64" && to === "f32")  { this.emit(0xB6); return; }       // f32.demote
       if (from === "i64" && to === "f64")  { this.emit(0xB9); return; }
       if (from === "i32" && to === "f32")  { this.emit(0xB2); return; }
@@ -667,6 +764,19 @@ class FuncEmitter {
     e: { kind: "field"; expr: Expr; name: string },
     env: TypeEnv,
   ): void {
+    // StructName.method used as a funcref value: emit ref.func
+    if (e.expr.kind === "ident") {
+      const exprName = (e.expr as { name: string }).name;
+      if (this.ctx.structTypeIdx.has(exprName)) {
+        const structEntry = this.ctx.result.structs.find(s => s.name === exprName);
+        const methEntry = structEntry?.methods.get(e.name);
+        if (methEntry) {
+          const fIdx = this.ctx.funcIdx.get(methEntry.mangledName)!;
+          this.emit(0xD2, ...uleb(fIdx)); // ref.func
+          return;
+        }
+      }
+    }
     const baseT = typeOfExpr(e.expr, env, this.ctx);
     const sName = structName(baseT);
     if (sName) {
@@ -699,11 +809,15 @@ class FuncEmitter {
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(elem))!;
     this.emitExpr(e.expr, env);
     this.emitExpr(e.idx, env);
-    // packed types use array.get_s
+    // packed types use array.get_u (spec: zero-extends on read)
     const isPackedI8  = elem.kind === "prim" && elem.name === "i8";
     const isPackedI16 = elem.kind === "prim" && elem.name === "i16";
-    if (isPackedI8 || isPackedI16) this.emit(0xFB, 0x0C, ...uleb(aIdx)); // array.get_s
+    if (isPackedI8 || isPackedI16) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
     else                           this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
+    // Non-nullable ref elements stored as nullable in wasm; unwrap to non-null
+    if (elem.kind === "struct" || elem.kind === "array" || elem.kind === "funcref") {
+      this.emit(0xD4); // ref.as_non_null
+    }
   }
 
   private emitCall(
@@ -729,9 +843,8 @@ class FuncEmitter {
 
       const sName = structName(baseT);
       if (sName) {
-        // Instance method call: emit receiver, then args
-        const structEntry = this.ctx.result.structs.find(s => s.name === sName);
-        const meth = structEntry?.methods.get(fe.name);
+        // Instance method call: emit receiver, then args (walk inheritance chain)
+        const meth = lookupMethodInChain(sName, fe.name, this.ctx);
         if (meth) {
           this.emitExpr(fe.expr, env); // push receiver
           for (const arg of e.args) this.emitExpr(arg, env);
@@ -806,8 +919,17 @@ class FuncEmitter {
       const fields = this.ctx.structFields.get(sName) ?? [];
 
       if (e.args.length === 0 && (!e.named || e.named.length === 0)) {
-        // struct.new_default $t
-        this.emit(0xFB, 0x01, ...uleb(tIdx));
+        // Default construction: use struct.new_default if all fields are directly defaultable,
+        // otherwise recursively emit defaults for each field and use struct.new.
+        const allDirectlyDefaultable = fields.every(f =>
+          f.type.kind !== "struct",  // struct fields need recursive default
+        );
+        if (allDirectlyDefaultable) {
+          this.emit(0xFB, 0x01, ...uleb(tIdx)); // struct.new_default $t
+        } else {
+          for (const f of fields) this.emitDefaultValue(f.type);
+          this.emit(0xFB, 0x00, ...uleb(tIdx)); // struct.new $t
+        }
         return;
       }
       if (e.named) {
@@ -833,6 +955,44 @@ class FuncEmitter {
     }
   }
 
+  /** Emit a default (zero/null) value for the given type onto the stack. */
+  private emitDefaultValue(t: WacType): void {
+    switch (t.kind) {
+      case "prim":
+        if (t.name === "i32" || t.name === "bool" || t.name === "i8" || t.name === "i16")
+          this.emit(0x41, 0x00); // i32.const 0
+        else if (t.name === "i64")
+          this.emit(0x42, 0x00); // i64.const 0
+        else if (t.name === "f32")
+          this.emit(0x43, 0x00, 0x00, 0x00, 0x00); // f32.const 0.0
+        else if (t.name === "f64")
+          this.emit(0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00); // f64.const 0.0
+        break;
+      case "nullable": {
+        // ref.null with the inner type's heap type
+        const hb = heapTypeBytes(t.inner, this.ctx);
+        this.emit(0xD0, ...hb); // ref.null $t
+        break;
+      }
+      case "struct": {
+        const idx = this.ctx.structTypeIdx.get(t.name)!;
+        const fields = this.ctx.structFields.get(t.name) ?? [];
+        const allDirectlyDefaultable = fields.every(f => f.type.kind !== "struct");
+        if (allDirectlyDefaultable) {
+          this.emit(0xFB, 0x01, ...uleb(idx)); // struct.new_default $t
+        } else {
+          for (const f of fields) this.emitDefaultValue(f.type);
+          this.emit(0xFB, 0x00, ...uleb(idx)); // struct.new $t
+        }
+        break;
+      }
+      case "array":
+      case "funcref":
+        // These should be nullable in defaultable contexts
+        break;
+    }
+  }
+
   private emitArrNew(
     e: { kind: "arrNew"; elem: WacType; size: Expr | null; fixed: Expr[] },
     env: TypeEnv,
@@ -842,8 +1002,18 @@ class FuncEmitter {
       for (const item of e.fixed) this.emitExpr(item, env, e.elem);
       this.emit(0xFB, 0x08, ...uleb(aIdx), ...uleb(e.fixed.length)); // array.new_fixed
     } else if (e.size !== null) {
-      this.emitExpr(e.size, env);
-      this.emit(0xFB, 0x07, ...uleb(aIdx)); // array.new_default $t
+      // Struct element + literal size: initialize each element with default struct
+      if (e.elem.kind === "struct" && e.size.kind === "int") {
+        const n = parseInt(e.size.value);
+        const sIdx = this.ctx.structTypeIdx.get(e.elem.name)!;
+        for (let i = 0; i < n; i++) {
+          this.emit(0xFB, 0x01, ...uleb(sIdx)); // struct.new_default $S
+        }
+        this.emit(0xFB, 0x08, ...uleb(aIdx), ...uleb(n)); // array.new_fixed N
+      } else {
+        this.emitExpr(e.size, env);
+        this.emit(0xFB, 0x07, ...uleb(aIdx)); // array.new_default $t
+      }
     } else {
       this.emit(0x41, 0x00, 0xFB, 0x07, ...uleb(aIdx)); // size=0, array.new_default
     }
@@ -861,8 +1031,26 @@ class FuncEmitter {
         const init = s.init;
         const isNull = init.kind === "null";
         this.emitExpr(init, env, isNull ? s.type : undefined);
-        this.emit(0x21, ...uleb(this.localMap.get(s.name)!.idx)); // local.set
+        const varKey = this.keyMap.get(s) ?? s.name;
+        this.emit(0x21, ...uleb(this.localMap.get(varKey)!.idx)); // local.set
+        this.nameToKey.set(s.name, varKey); // update scope: name → unique key
         env.set(s.name, s.type);
+        break;
+      }
+      case "block": {
+        // Bare block — scoped environment so inner vars don't leak
+        const savedKeys = new Map(this.nameToKey);
+        const savedEnv  = new Map(env);
+        for (const stmt of s.block.stmts) this.emitStmt(stmt, env);
+        // Restore outer scope
+        for (const k of [...this.nameToKey.keys()]) {
+          if (savedKeys.has(k)) this.nameToKey.set(k, savedKeys.get(k)!);
+          else this.nameToKey.delete(k);
+        }
+        for (const k of [...env.keys()]) {
+          if (savedEnv.has(k)) env.set(k, savedEnv.get(k)!);
+          else env.delete(k);
+        }
         break;
       }
       case "assign": this.emitAssign(s, env); break;
@@ -871,7 +1059,8 @@ class FuncEmitter {
         const is64 = t.kind === "prim" && t.name === "i64";
         // For ident: simple read-modify-write
         if (s.lval.kind === "lv-ident") {
-          const idx = this.localMap.get(s.lval.name)!.idx;
+          const key = this.nameToKey.get(s.lval.name) ?? s.lval.name;
+          const idx = this.localMap.get(key)!.idx;
           this.emit(0x20, ...uleb(idx)); // local.get
           if (is64) {
             this.emit(0x42, 0x01, s.op === "++" ? 0x7C : 0x7D); // i64.const 1; i64.add/sub
@@ -892,8 +1081,8 @@ class FuncEmitter {
       case "switch":  this.emitSwitch(s, env); break;
       case "return":
         if (s.value) {
-          const isNull = s.value.kind === "null";
-          this.emitExpr(s.value, env, isNull ? this.returnType : undefined);
+          // Pass return type as expected type so literals (int/null) are emitted correctly
+          this.emitExpr(s.value, env, this.returnType);
         }
         this.emit(0x0F); // return
         break;
@@ -924,7 +1113,8 @@ class FuncEmitter {
   ): void {
     const { lval, op, rhs } = s;
     if (lval.kind === "lv-ident") {
-      const idx = this.localMap.get(lval.name)!.idx;
+      const key = this.nameToKey.get(lval.name) ?? lval.name;
+      const idx = this.localMap.get(key)!.idx;
       if (op !== "=") {
         this.emit(0x20, ...uleb(idx)); // local.get (current value)
         this.emitExpr(rhs, env);
@@ -1038,7 +1228,10 @@ class FuncEmitter {
   /** Emit the value of an lvalue (for reading). */
   private emitLvalGet(lv: Lvalue, env: TypeEnv): void {
     switch (lv.kind) {
-      case "lv-ident": this.emit(0x20, ...uleb(this.localMap.get(lv.name)!.idx)); break;
+      case "lv-ident": {
+        const key = this.nameToKey.get(lv.name) ?? lv.name;
+        this.emit(0x20, ...uleb(this.localMap.get(key)!.idx)); break;
+      }
       case "lv-field": {
         const bt = lvalType(lv.base, env, this.ctx);
         const sn = structName(bt)!;
@@ -1119,6 +1312,9 @@ class FuncEmitter {
   }
 
   private emitFor(s: Stmt & { kind: "for" }, env: TypeEnv): void {
+    // Save outer scope — for-loop init vars are scoped to the loop
+    const savedKeys = new Map(this.nameToKey);
+    const savedEnv  = new Map(env);
     if (s.init) this.emitStmt(s.init, env);
     this.emit(0x02, 0x40); this.labelDepth++;
     const brkLevel = this.labelDepth - 1;
@@ -1148,6 +1344,15 @@ class FuncEmitter {
     this.emit(0x0C, ...uleb(this.brDepth(contLevel))); // br $cont
     this.emit(0x0B); this.labelDepth--;
     this.emit(0x0B); this.labelDepth--;
+    // Restore outer scope after for-loop
+    for (const k of [...this.nameToKey.keys()]) {
+      if (savedKeys.has(k)) this.nameToKey.set(k, savedKeys.get(k)!);
+      else this.nameToKey.delete(k);
+    }
+    for (const k of [...env.keys()]) {
+      if (savedEnv.has(k)) env.set(k, savedEnv.get(k)!);
+      else env.delete(k);
+    }
   }
 
   private emitSwitch(s: Stmt & { kind: "switch" }, env: TypeEnv): void {
@@ -1221,17 +1426,21 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
     const structName = entry.origin.structName;
     const thisType: WacType = { kind: "struct", name: structName, line: 0, col: 0 };
     emitter.localMap.set("this", { idx: localIdx++, type: thisType });
+    emitter.nameToKey.set("this", "this");
     env.set("this", thisType);
   }
 
   // Map parameters
   for (const p of params) {
     emitter.localMap.set(p.name, { idx: localIdx++, type: p.type });
+    emitter.nameToKey.set(p.name, p.name);
     env.set(p.name, p.type);
   }
 
-  // Collect and map local variables (de-duplicated; params already have indices)
-  const allLocals = collectLocals(body.stmts);
+  // Collect and map local variables (unique keys for shadowed vars)
+  const { decls: allLocals, keyMap } = collectLocals(body.stmts);
+  emitter.keyMap = keyMap;
+  const paramNames = new Set([...params.map(p => p.name), ...(entry.origin.kind === "method" && entry.origin.decl.hasThis ? ["this"] : [])]);
   for (const d of allLocals) {
     if (!emitter.localMap.has(d.name)) {
       emitter.localMap.set(d.name, { idx: localIdx++, type: d.type });
@@ -1240,7 +1449,7 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
 
   // Build the wasm locals declaration (groups of same-type locals)
   // Only non-parameter locals go here
-  const localDecls = allLocals.filter(d => !params.some(p => p.name === d.name));
+  const localDecls = allLocals.filter(d => !paramNames.has(d.name));
   const groups: { type: WacType; count: number }[] = [];
   for (const d of localDecls) {
     const key = typeKey(d.type);
@@ -1250,12 +1459,18 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
       groups.push({ type: d.type, count: 1 });
   }
 
+  // Allocate a scratch i64 local for checked/saturating i64 casts.
+  const tempI64LocalIdx = localIdx;
+  emitter.tempI64Local = tempI64LocalIdx;
+
+  // groups always gets one extra i64 scratch slot
   const localsVec: number[] = [];
-  localsVec.push(...uleb(groups.length));
+  localsVec.push(...uleb(groups.length + 1));
   for (const g of groups) {
     localsVec.push(...uleb(g.count));
     localsVec.push(...wasmValType(g.type, ctx));
   }
+  localsVec.push(0x01, 0x7E); // 1 × i64 scratch local
 
   // Emit body
   emitter.emitBlock(body, env);

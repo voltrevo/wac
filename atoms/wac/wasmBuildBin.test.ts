@@ -828,7 +828,7 @@ Deno.test("wasmBuildBin: numeric casts", async () => {
   close(e.f32toF64(1.5), 1.5, "f32toF64");
   close(e.f64toF32(2.5), 2.5, "f64toF32");
   eq(e.f32toI32(3.7), 3, "f32toI32");
-  eq(e.f64satToI32(4.9), 4, "f64satToI32");
+  eq(e.f64satToI32(4.9), 5, "f64satToI32 rounds-to-nearest: 4.9→5");
 });
 
 // ── Packed array types (i8/i16) ────────────────────────────────────────────────
@@ -1539,12 +1539,13 @@ Deno.test("wasmBuildBin: same-type cast is no-op", async () => {
 
 // ── f32 sat cast to i32 ───────────────────────────────────────────────────────
 
-Deno.test("wasmBuildBin: f32 as~ i32 (trunc_sat)", async () => {
+Deno.test("wasmBuildBin: f32 as~ i32 (round-to-nearest-then-clamp)", async () => {
+  // as~ rounds to nearest integer, then clamps to i32 range
   const e = await inst(`
     export i32 f32SatI32(f32 a) { return a as~ i32; }
   `);
-  eq(e.f32SatI32(3.7), 3, "f32 3.7 sat→i32 = 3");
-  eq(e.f32SatI32(0.0), 0, "f32 0.0 sat→i32 = 0");
+  eq(e.f32SatI32(3.7), 4, "f32 3.7 as~ i32 = 4 (nearest)");
+  eq(e.f32SatI32(0.0), 0, "f32 0.0 as~ i32 = 0");
 });
 
 // ── method reference as funcref value ────────────────────────────────────────
