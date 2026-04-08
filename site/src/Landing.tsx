@@ -418,7 +418,7 @@ export default function Landing() {
         <p style={s.p}>
           The initial unsupervised run took <strong>6 hours</strong> and produced
           the core compiler pipeline — lex, parse, resolve, typecheck, WasmGC
-          emit, binary builder, instantiation (139 tests). A follow-up run where
+          emit, binary builder, instantiation (679 tests). A follow-up run where
           the only instruction was "you missed some things, reread the spec" took{" "}
           <strong>1 hour 8 minutes</strong> and added bindgen, structured
           diagnostics, and string support (734 tests). A final pass after
