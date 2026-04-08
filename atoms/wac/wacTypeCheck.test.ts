@@ -94,7 +94,7 @@ Deno.test("wacTypeCheck: f64 arithmetic", () => {
 // ── Type mismatches ───────────────────────────────────────────────────────────
 
 Deno.test("wacTypeCheck: return type mismatch", () => {
-  fail("export i32 bad() { return true; }", "type mismatch");
+  fail("export i32 bad() { return true; }", "return:");
 });
 
 Deno.test("wacTypeCheck: var init type mismatch", () => {
@@ -455,7 +455,7 @@ Deno.test("wacTypeCheck: raw cast i64 -> i32", () => {
 });
 
 Deno.test("wacTypeCheck: lossless cast with wrong operator", () => {
-  fail("export i64 bad(i32 x) { return x as~ i64; }", "lossless");
+  fail("export i64 bad(i32 x) { return x as~ i64; }", "lossy cast not needed");
 });
 
 Deno.test("wacTypeCheck: checked cast with as (lossless op)", () => {
@@ -539,7 +539,7 @@ Deno.test("wacTypeCheck: T to T? widening is ok", () => {
 
 Deno.test("wacTypeCheck: nullable to non-null is error", () => {
   fail(`struct P { i32 x; }
-  export void bad(P? p) { P q = p; }`, "type mismatch");
+  export void bad(P? p) { P q = p; }`, "nullable");
 });
 
 Deno.test("wacTypeCheck: null to non-null is error", () => {
@@ -740,8 +740,8 @@ Deno.test("wacTypeCheck: multi-file: calling imported function with wrong type",
     export bool run() { return helper(); }`],
     ["/util.wac", `export i32 helper() { return 42; }`],
   ]);
-  if (!errs.some(e => e.message.includes("type mismatch"))) {
-    throw new Error(`Expected type mismatch, got: ${errs.map(e => e.message).join("; ")}`);
+  if (!errs.some(e => e.message.includes("return:") || e.message.includes("type mismatch"))) {
+    throw new Error(`Expected return/type error, got: ${errs.map(e => e.message).join("; ")}`);
   }
 });
 
@@ -851,7 +851,7 @@ Deno.test("wacTypeCheck: string literal type is string", () => {
 });
 
 Deno.test("wacTypeCheck: string type mismatch", () => {
-  fail(`export i32 bad() { return "hello"; }`, "type mismatch");
+  fail(`export i32 bad() { return "hello"; }`, "return:");
 });
 
 // ── void variable declaration ─────────────────────────────────────────────────

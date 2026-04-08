@@ -180,6 +180,15 @@ const EX_MATH = `export i32 gcd(i32 a, i32 b) {
   return a;
 }`;
 
+const EX_ERROR = `// What if you write while(b) instead of while(b != 0)?
+//
+// error: condition must be bool
+//   --> main.wac:2:10
+//    |
+//  2 |   while (b) {
+//    |          ^ expected bool, found i32
+//    = help: use a comparison: if (b != 0) { ... }`;
+
 const EX_STRUCT = `export struct Point {
   f64 x;
   f64 y;
@@ -314,6 +323,13 @@ export default function Landing() {
         </p>
         <Solo code={EX_MATH} lang="wac" />
 
+        <h3 style={s.h3}>Error diagnostics</h3>
+        <p style={s.p}>
+          No implicit conversions — write {fn_("while (b != 0)")} not {fn_("while (b)")}.
+          The compiler tells you exactly what went wrong:
+        </p>
+        <Solo code={EX_ERROR} lang="wac" />
+
         <h3 style={s.h3}>Structs and methods</h3>
         <p style={s.p}>
           Structs compile to WasmGC struct types. Methods use {kw("this")} (mutable)
@@ -375,48 +391,36 @@ export default function Landing() {
         <p style={s.p}>
           The language spec (~15 markdown files covering types, structs, control
           flow, imports, errors, etc.) was written collaboratively by a human and
-          AI. Then the full compiler was implemented autonomously by Claude Sonnet
-          from the spec alone — lexer, parser, name resolver, type checker,
-          WasmGC emitter, binary builder, instantiation wrapper, and bindgen — in
-          roughly 6 hours with zero user intervention.
+          AI. Then the compiler was implemented autonomously by Claude Sonnet
+          from the spec alone, with zero user intervention.
         </p>
         <p style={s.p}>
-          The first pass was mostly complete: 734 tests passing, covering the
-          spec's tagged test cases. Follow-up rounds were minimal — just "you
-          missed some things, reread the spec" and "spec updated, update the
-          implementation" — without pointing out what specifically was wrong. The
-          agent figured it out from the spec each time.
+          The initial unsupervised run took <strong>6 hours</strong> and produced
+          the core compiler pipeline — lex, parse, resolve, typecheck, WasmGC
+          emit, binary builder, instantiation (139 tests). A follow-up run where
+          the only instruction was "you missed some things, reread the spec" took{" "}
+          <strong>1 hour 8 minutes</strong> and added bindgen, structured
+          diagnostics, and string support (734 tests). A final pass after
+          updating the spec took <strong>25 minutes</strong> and fixed all
+          identified bugs (749 tests). In each case the agent was not told what
+          was wrong — it figured it out from the spec.
         </p>
         <p style={s.p}>
-          The implementation is not perfect. Known issues:
+          Grand total: <strong>~7.5 hours</strong> of Claude Sonnet compute —
+          18% of the weekly quota on Claude Max 5x ($18).
         </p>
-        <ul style={s.ul}>
-          <li>
-            <strong>Struct methods with mixed ref/primitive fields</strong> — a
-            codegen bug where {fn_("struct.get")} emits the wrong field index
-            when a struct has both nullable reference and primitive fields. This
-            blocks method-based data structures like LinkedList.
-          </li>
-          <li>
-            <strong>Null as constructor argument</strong> — passing {kw("null")} in
-            positional struct construction (e.g. {fn_("Node(42, null)")}) emits
-            an untyped ref. Workaround: default-construct then assign fields.
-          </li>
-          <li>
-            <strong>Unwrap as lvalue</strong> — the parser doesn't
-            support {fn_("p!.next = n")}. Spec has been updated; parser hasn't
-            caught up.
-          </li>
-          <li>
-            <strong>Diagnostic spans</strong> — the spec requires {fn_("span")},{" "}
-            {fn_("annotation")}, and {fn_("hint")} fields on compiler errors, but
-            the phases currently only emit position.
-          </li>
-        </ul>
         <p style={s.p}>
-          These are all fixable with targeted patches. The core compilation
-          pipeline — from source to valid WasmGC binary — works correctly for
-          the vast majority of the language.
+          The first pass had a few bugs — null as a constructor argument emitted
+          untyped refs, struct methods broke when mixing nullable reference and
+          primitive fields, and the parser didn't support unwrap ({op("!")}) on
+          the left side of assignment. All were caught by adding spec tags for
+          the expected behavior, then telling the agent "spec updated, update
+          the implementation." It fixed all of them without being told what was
+          wrong.
+        </p>
+        <p style={s.p}>
+          The compiler now produces rich structured diagnostics with span,
+          annotation, and help text — matching the spec's error format exactly.
         </p>
       </div>
 

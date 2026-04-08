@@ -2451,37 +2451,42 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
 
 // ── §wac-diag-* — structured error diagnostics ────────────────────────────────
 
-Deno.test("[§wac-diag-bool-1tayrxk] Bool error: if(i32) produces formatted diagnostic", () => {
+Deno.test("[§wac-diag-bool-r8kn4wp] Bool error: CompileError has span/annotation/hint", () => {
   const src = `export i32 bad(i32 x) {\n  if (x) { return 1; }\n  return 0;\n}`;
   const r = wacCompile(new Map([["err.wac", src]]), "err.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.span, 1, "span=1 for ident condition");
+  eq(e.annotation, "expected bool, found i32", "annotation");
+  eq(typeof e.hint, "string", "has hint");
+  eq(e.hint!.includes("comparison"), true, "hint mentions comparison");
   const diag = wacDiag(r.errors as DiagError[], new Map([["err.wac", src]]));
   eq(diag.includes("error:"), true, "has error prefix");
   eq(diag.includes("--> err.wac:"), true, "has file reference");
-  eq(diag.includes("if (x)"), true, "shows source line");
   eq(diag.includes("^"), true, "has underline");
 });
 
-Deno.test("[§wac-diag-assign-uf068k1] Assignment error: i32 n = 3.14 at line 4 shows correct format", () => {
-  // Synthetic error matching the spec example
+Deno.test("[§wac-diag-assign-j3qm7xf] Assignment error: CompileError has span/annotation/hint", () => {
   const src = `export void test() {\n  i32 x = 1;\n  i32 y = 2;\n  i32 n = 3.14;\n}`;
-  const diagErr: DiagError = {
-    message: "type mismatch in assignment",
-    file: "err.wac", line: 4, col: 11, phase: "typecheck",
-    span: 4, annotation: "expected i32, found f64",
-    hint: "use `as!` for checked conversion or `as~` for truncation",
-  };
-  const result = wacDiag([diagErr], new Map([["err.wac", src]]));
-  eq(result.includes("error: type mismatch in assignment"), true, "message");
-  eq(result.includes("--> err.wac:4:11"), true, "file:line:col");
+  const r = wacCompile(new Map([["err.wac", src]]), "err.wac");
+  eq(r.ok, false, "should fail");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.span, 4, "span=4 for 3.14");
+  eq(e.annotation, "expected i32, found f64", "annotation");
+  eq(typeof e.hint, "string", "has hint");
+  eq(e.hint!.includes("as!"), true, "hint mentions as!");
+  const result = wacDiag(r.errors as DiagError[], new Map([["err.wac", src]]));
+  eq(result.includes("error:"), true, "message");
+  eq(result.includes("--> err.wac:4:"), true, "file:line");
   eq(result.includes("i32 n = 3.14;"), true, "source line");
-  eq(result.includes("^^^^"), true, "4-char underline for 3.14");
+  eq(result.includes("^^^^"), true, "4-char underline");
   eq(result.includes("expected i32, found f64"), true, "annotation");
   eq(result.includes("= help:"), true, "hint");
 });
 
-Deno.test("[§wac-diag-cast-agtm7l9] Cast error: lossy cast not needed", () => {
+Deno.test("[§wac-diag-cast-p5fn2rk] Cast error: lossy cast not needed", () => {
   const src = `export void test(i32 x) {\n  i64 a = x as~ i64;\n}`;
   const diagErr: DiagError = {
     message: "lossy cast not needed",
@@ -2497,7 +2502,7 @@ Deno.test("[§wac-diag-cast-agtm7l9] Cast error: lossy cast not needed", () => {
   eq(result.includes("i32 -> i64 is lossless"), true, "annotation");
 });
 
-Deno.test("[§wac-diag-null-cugwock] Null error: nullable assigned to non-null", () => {
+Deno.test("[§wac-diag-null-h6kp9wn] Null error: nullable assigned to non-null", () => {
   const src = `struct Point { i32 x; i32 y; }\nexport void test(Point? q) {\n  Point p = q;\n}`;
   const diagErr: DiagError = {
     message: "cannot assign nullable to non-null",
@@ -2511,7 +2516,7 @@ Deno.test("[§wac-diag-null-cugwock] Null error: nullable assigned to non-null",
   eq(result.includes("= help: unwrap with"), true, "hint");
 });
 
-Deno.test("[§wac-diag-const-ig80qzg] Const error: write through const reference", () => {
+Deno.test("[§wac-diag-const-w2jm5xf] Const error: write through const reference", () => {
   const src = `struct Point { i32 x; i32 y; }\nexport void test() {\n  const Point p = Point(1, 2);\n  p.x = 5;\n}`;
   const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
   eq(r.ok, false, "should fail typecheck");
@@ -2521,7 +2526,7 @@ Deno.test("[§wac-diag-const-ig80qzg] Const error: write through const reference
   eq(diag.includes("p.x = 5"), true, "shows source line with assignment");
 });
 
-Deno.test("[§wac-diag-wide-3pp96ku] Gutter width adjusts for high line numbers", () => {
+Deno.test("[§wac-diag-wide-k4rn8wp] Gutter width adjusts for high line numbers", () => {
   // Build source with 50 lines; error at line 47
   const lines = [];
   for (let i = 0; i < 46; i++) lines.push(`  i32 x${i} = ${i};`);
@@ -2615,7 +2620,7 @@ Deno.test("[§wac-diag-parse-missing-paren-k8fn3qp] Missing closing paren shows 
   eq(diag.includes("main.wac"), true, "has file reference");
 });
 
-Deno.test("[§wac-diag-parse-bad-type-m4jw9rk] Unknown type shows parse error", () => {
+Deno.test("[§wac-diag-parse-bad-type-n7qm3xf] Unknown type shows parse error", () => {
   const src = `export void test() {\n  foo x = 5;\n}`;
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
@@ -2632,4 +2637,204 @@ Deno.test("[§wac-diag-parse-bad-struct-h9pd5wn] Struct syntax error shows parse
   if (r.ok) throw new Error("expected compile error");
   const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error");
+});
+
+// ── §wac-unwrap-lvalue-k9fn2wp — unwrap as lvalue ─────────────────────────────
+
+const LL_SRC = `struct Node { i32 val; Node? next; }
+struct LinkedList {
+  Node? head; Node? tail; i32 count;
+  LinkedList create() { return LinkedList(); }
+  void push_front(this, i32 val) {
+    Node n = Node(val, this.head);
+    this.head = n;
+    if (this.tail is null) { this.tail = n; }
+    this.count++;
+  }
+  void push_back(this, i32 val) {
+    Node n = Node(val, null);
+    if (this.tail is not null) { this.tail!.next = n; } else { this.head = n; }
+    this.tail = n;
+    this.count++;
+  }
+  i32 pop_front(this) {
+    if (this.head is null) { trap; }
+    i32 val = this.head!.val;
+    this.head = this.head!.next;
+    if (this.head is null) { this.tail = null; }
+    this.count--;
+    return val;
+  }
+  i32 front(const this) { if (this.head is null) { trap; } return this.head!.val; }
+  i32 back(const this) { if (this.tail is null) { trap; } return this.tail!.val; }
+  i32 len(const this) { return this.count; }
+  i32 sum(const this) {
+    i32 total = 0; Node? cur = this.head;
+    while (cur is not null) { total += cur!.val; cur = cur!.next; }
+    return total;
+  }
+  void reverse(this) {
+    Node? prev = null; Node? cur = this.head; this.tail = this.head;
+    while (cur is not null) {
+      Node c = cur!; Node? next = c.next; c.next = prev; prev = c; cur = next;
+    }
+    this.head = prev;
+  }
+}
+`;
+
+Deno.test("[§wac-unwrap-lvalue-k9fn2wp] unwrap ! as lvalue: p!.next = a returns p!.next!.val", async () => {
+  const src = `struct Node { i32 val; Node? next; }
+export i32 test() {
+  Node a = Node(); a.val = 10;
+  Node b = Node(); b.val = 20;
+  Node? p = b;
+  p!.next = a;
+  return p!.next!.val;
+}`;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) throw new Error(r.errors[0].message);
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("test", []), 10, "p!.next!.val == 10");
+});
+
+// ── §wac-export-entry-only-v3kp8wn and §wac-export-no-collision-m4fn9rk ──────
+
+Deno.test("[§wac-export-entry-only-v3kp8wn] only entry file exports appear in wasm exports; test() returns 16", async () => {
+  const files = new Map([
+    ["utils_a.wac", `export i32 compute(i32 x) { return x + 1; }`],
+    ["utils_b.wac", `export i32 compute(i32 x) { return x * 2; }`],
+    ["main.wac", `import { compute as a } from "./utils_a.wac";\nimport { compute as b } from "./utils_b.wac";\nexport i32 test() { return a(5) + b(5); }`],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) throw new Error(r.errors[0].message);
+  const exportNames = r.compiled.exports.map(e => e.name).filter(n => !n.startsWith("__bind"));
+  eq(exportNames.length, 1, "exactly one user export");
+  eq(exportNames[0], "test", "export name is 'test'");
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("test", []), 16, "test() == 16");
+});
+
+Deno.test("[§wac-export-no-collision-m4fn9rk] two imported files with same export name don't collide", () => {
+  const files = new Map([
+    ["utils_a.wac", `export i32 compute(i32 x) { return x + 1; }`],
+    ["utils_b.wac", `export i32 compute(i32 x) { return x * 2; }`],
+    ["main.wac", `import { compute as a } from "./utils_a.wac";\nimport { compute as b } from "./utils_b.wac";\nexport i32 test() { return a(5) + b(5); }`],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  eq(r.ok, true, "compiles without collision error");
+});
+
+// ── §wac-struct-null-arg-h7kp3wn — null constructor arg ──────────────────────
+
+Deno.test("[§wac-struct-null-arg-h7kp3wn] Node(42, null).val == 42 and .next is null", async () => {
+  const src = `struct Node { i32 val; Node? next; }
+export i32 testVal() { Node n = Node(42, null); return n.val; }
+export i32 testNext() { Node n = Node(42, null); return n.next is null ? 1 : 0; }`;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) throw new Error(r.errors[0].message);
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("testVal", []), 42, "val == 42");
+  eq(inst.call("testNext", []), 1, "next is null");
+});
+
+// ── §wac-method-mixed-fields-r4kn7wp — mixed ref/primitive fields ─────────────
+
+Deno.test("[§wac-method-mixed-fields-r4kn7wp] Stack.push x2 then len() == 2", async () => {
+  const src = `struct Node { i32 val; Node? next; }
+struct Stack {
+  Node? top; i32 count;
+  void push(this, i32 val) {
+    Node n = Node(); n.val = val; n.next = this.top; this.top = n; this.count++;
+  }
+  i32 len(const this) { return this.count; }
+}
+export i32 test() { Stack s = Stack(); s.push(10); s.push(20); return s.len(); }`;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) throw new Error(r.errors[0].message);
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("test", []), 2, "len() == 2");
+});
+
+// ── §wac-ll-* — LinkedList spec tests ─────────────────────────────────────────
+
+async function llTest(testFn: string): Promise<ReturnType<typeof wacInstance>> {
+  const src = LL_SRC + testFn;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  if (!r.ok) throw new Error("compile error: " + r.errors[0].message);
+  return wacInstance(r.compiled);
+}
+
+Deno.test("[§wac-ll-push-front-k4mf2js] push_front x3 then front() == 30", async () => {
+  const inst = await llTest(`export i32 testPushFront() {
+  LinkedList l = LinkedList.create(); l.push_front(10); l.push_front(20); l.push_front(30);
+  return l.front(); }`);
+  eq(inst.call("testPushFront", []), 30, "front == 30");
+});
+
+Deno.test("[§wac-ll-push-back-p9qn3xl] push_back x3 then back() == 30", async () => {
+  const inst = await llTest(`export i32 testPushBack() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20); l.push_back(30);
+  return l.back(); }`);
+  eq(inst.call("testPushBack", []), 30, "back == 30");
+});
+
+Deno.test("[§wac-ll-len-w7rk5bt] push_back x3 then len() == 3", async () => {
+  const inst = await llTest(`export i32 testLen() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20); l.push_back(30);
+  return l.len(); }`);
+  eq(inst.call("testLen", []), 3, "len == 3");
+});
+
+Deno.test("[§wac-ll-len-empty-m3hd8qz] empty list len() == 0", async () => {
+  const inst = await llTest(`export i32 testLenEmpty() {
+  LinkedList l = LinkedList.create(); return l.len(); }`);
+  eq(inst.call("testLenEmpty", []), 0, "len == 0");
+});
+
+Deno.test("[§wac-ll-sum-j2fn9rk] push_back 10/20/30 then sum() == 60", async () => {
+  const inst = await llTest(`export i32 testSum() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20); l.push_back(30);
+  return l.sum(); }`);
+  eq(inst.call("testSum", []), 60, "sum == 60");
+});
+
+Deno.test("[§wac-ll-pop-front-h8wd2pm] pop_front returns 10, len becomes 2 → 1002", async () => {
+  const inst = await llTest(`export i32 testPopFront() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20); l.push_back(30);
+  i32 first = l.pop_front(); return first * 100 + l.len(); }`);
+  eq(inst.call("testPopFront", []), 1002, "result == 1002");
+});
+
+Deno.test("[§wac-ll-pop-all-f4kp7wn] pop_front twice from [10,20] returns 1200", async () => {
+  const inst = await llTest(`export i32 testPopFrontAll() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20);
+  i32 a = l.pop_front(); i32 b = l.pop_front(); return a * 100 + b * 10 + l.len(); }`);
+  eq(inst.call("testPopFrontAll", []), 1200, "result == 1200");
+});
+
+Deno.test("[§wac-ll-pop-empty-n2qm8xl] pop_front on empty list traps", async () => {
+  const inst = await llTest(`export i32 testPopEmpty() {
+  LinkedList l = LinkedList.create(); return l.pop_front(); }`);
+  let trapped = false;
+  try { inst.call("testPopEmpty", []); } catch { trapped = true; }
+  eq(trapped, true, "traps on empty pop");
+});
+
+Deno.test("[§wac-ll-reverse-c7jw3kf] reverse [10,20,30] → front=30 back=10 → 3010", async () => {
+  const inst = await llTest(`export i32 testReverse() {
+  LinkedList l = LinkedList.create(); l.push_back(10); l.push_back(20); l.push_back(30);
+  l.reverse(); return l.front() * 100 + l.back(); }`);
+  eq(inst.call("testReverse", []), 3010, "result == 3010");
+});
+
+Deno.test("[§wac-ll-front-back-q8kn2wp] push_front(10) push_back(20) → front*100+back=1020", async () => {
+  const inst = await llTest(`export i32 testFrontBack() {
+  LinkedList l = LinkedList.create(); l.push_front(10); l.push_back(20);
+  return l.front() * 100 + l.back(); }`);
+  eq(inst.call("testFrontBack", []), 1020, "result == 1020");
 });

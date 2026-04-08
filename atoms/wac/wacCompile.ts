@@ -23,6 +23,9 @@ export type CompileError = {
   line: number;
   col: number;
   phase: "lex" | "parse" | "resolve" | "typecheck";
+  span: number;
+  annotation?: string;
+  hint?: string;
 };
 
 export type CompileResult =
@@ -51,6 +54,7 @@ function extractExports(result: ResolveResult): WacExport[] {
   const out: WacExport[] = [];
   for (const f of result.funcs) {
     if (!f.exportName) continue;
+    if (f.filePath !== result.entryPath) continue;
     const ps = funcParams(f).map(p => ({ name: p.name, type: typeStr(p.type) }));
     out.push({ name: f.exportName, params: ps, ret: typeStr(funcReturnType(f)) });
   }
@@ -76,12 +80,12 @@ export function wacCompile(
   for (const [path, src] of files) {
     const { tokens, errors: lexErrs } = wacLex(src);
     for (const e of lexErrs) {
-      errors.push({ ...e, file: path, phase: "lex" });
+      errors.push({ span: 1, ...e, file: path, phase: "lex" });
     }
     // Parse even if there were lex errors (best-effort recovery)
     const { program, errors: parseErrs } = wacParse(tokens, path);
     for (const e of parseErrs) {
-      errors.push({ ...e, phase: "parse" });
+      errors.push({ span: 1, ...e, phase: "parse" });
     }
     programs.set(path, program);
   }
@@ -91,7 +95,7 @@ export function wacCompile(
   // Phase 3: resolve import graph and build flat symbol table
   const resolveResult = wacResolve(entry, programs);
   for (const e of resolveResult.errors) {
-    errors.push({ ...e, phase: "resolve" });
+    errors.push({ span: 1, ...e, phase: "resolve" });
   }
 
   if (errors.length) return { ok: false, errors };
@@ -99,7 +103,7 @@ export function wacCompile(
   // Phase 4: type check all functions and methods
   const typeErrors = wacTypeCheck(resolveResult, programs);
   for (const e of typeErrors) {
-    errors.push({ ...e, phase: "typecheck" });
+    errors.push({ span: 1, ...e, phase: "typecheck" });
   }
 
   if (errors.length) return { ok: false, errors };
