@@ -44,8 +44,19 @@ the language, plus example programs and spec tags that define testable behaviors
 ### 5. Launch Claude
 
 ```sh
-claude --dangerously-skip-permissions
+claude --dangerously-skip-permissions --model sonnet
 ```
+
+The `--model sonnet` flag selects Claude Sonnet (the default is Opus, which
+works but is slower and uses more quota). The `--dangerously-skip-permissions`
+flag allows the agent to run shell commands, read/write files, and execute code
+without prompting for approval on each action.
+
+**Warning:** `--dangerously-skip-permissions` gives the agent full shell access
+inside the container. This is why we run inside
+[agent-sandbox](https://github.com/voltrevo/agent-sandbox) — the container
+isolates the agent from your host system. Do not run this flag outside of a
+sandboxed environment.
 
 On first run this requires interactive authentication. After that, the agent
 runs autonomously.
