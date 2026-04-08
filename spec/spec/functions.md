@@ -107,8 +107,43 @@ f64 r = sqrt(approx as f64);   // ok: explicit cast
 
 ### Export
 
-`export` marks a function as visible outside the file and exported in the wasm
-module. Non-exported functions are file-private.
+`export` marks a function as visible to other wac files via `import`.
+Non-exported functions are file-private.
+
+Only the entry file's exported functions appear in the wasm module's export
+section. Functions exported by imported files are available to wac code during
+compilation but are not wasm exports — they are internal to the module.
+
+This means exported names across different files never collide in the wasm
+output:
+
+```wac
+// utils_a.wac
+export i32 compute(i32 x) { return x + 1; }
+```
+
+```wac
+// utils_b.wac
+export i32 compute(i32 x) { return x * 2; }
+```
+
+```wac
+// main.wac (entry)
+import { compute as a } from "./utils_a.wac";
+import { compute as b } from "./utils_b.wac";
+
+export i32 test() { return a(5) + b(5); }
+```
+
+The wasm module exports only `test`. Neither `utils_a$compute` nor
+`utils_b$compute` appears in the wasm export section.
+
+`[§wac-export-entry-only-v3kp8wn]` Compiling with `main.wac` as entry produces
+a wasm module whose only export is `test`. `test()` returns `16`.
+
+`[§wac-export-no-collision-m4fn9rk]` Two imported files may export functions
+with the same name without causing a wasm export collision — only the entry
+file's exports become wasm exports.
 
 Struct types referenced by exported functions are implicitly visible to
 importers.
