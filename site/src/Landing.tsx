@@ -409,10 +409,12 @@ export default function Landing() {
       <div style={s.section}>
         <h2 style={s.h2}>How it was built</h2>
         <p style={s.p}>
-          The language spec (~15 markdown files covering types, structs, control
-          flow, imports, errors, etc.) was written collaboratively by a human and
-          AI. Then the compiler was implemented autonomously by Claude Sonnet
-          from the spec alone, with zero user intervention.
+          The <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener"
+          style={{ color: "#60a5fa", textDecoration: "none" }}>language spec</a> (21
+          markdown files covering types, structs, control flow, imports, errors,
+          etc.) was written collaboratively by a human and AI. Then the compiler
+          was implemented autonomously by Claude Sonnet from the spec alone, with
+          zero user intervention.
         </p>
         <p style={s.p}>
           The initial unsupervised run took <strong>6 hours</strong> and produced
@@ -447,6 +449,7 @@ export default function Landing() {
       {/* Footer */}
       <div style={{ borderTop: "1px solid #2e2e3e", paddingTop: 24, display: "flex", gap: 24, fontSize: 13, color: "#6b7280" }}>
         <a href="#/playground" style={{ color: "#9ca3af", textDecoration: "none" }}>Playground</a>
+        <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>Language Spec</a>
         <a href={GITHUB} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>GitHub</a>
       </div>
     </div>

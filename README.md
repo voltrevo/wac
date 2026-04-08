@@ -55,7 +55,7 @@ export f64 run() {
 
 ## How it was built
 
-The language spec (~15 markdown files) was written collaboratively by a human and AI. Then the compiler was implemented autonomously by Claude Sonnet from the spec alone, with zero user intervention.
+The [language spec](spec/) (21 markdown files) was written collaboratively by a human and AI. Then the compiler was implemented autonomously by Claude Sonnet from the spec alone, with zero user intervention.
 
 - **6 hours** — initial run: lex, parse, resolve, typecheck, WasmGC emit, binary builder, instantiation (139 tests)
 - **1 hour 8 minutes** — "you missed things, reread the spec": added bindgen, diagnostics, strings (734 tests)
