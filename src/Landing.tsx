@@ -413,8 +413,10 @@ export default function Landing() {
           style={{ color: "#60a5fa", textDecoration: "none" }}>language spec</a> (21
           markdown files covering types, structs, control flow, imports, errors,
           etc.) was written collaboratively by a human and AI. Then the compiler
-          was implemented autonomously by Claude Sonnet from the spec alone, with
-          zero user intervention.
+          was implemented autonomously by Claude Sonnet from the spec combined
+          with some general instructions, with zero user intervention.{" "}
+          <a href={`${GITHUB}/blob/master/how-to-reproduce.md`} target="_blank" rel="noopener"
+          style={{ color: "#60a5fa", textDecoration: "none" }}>Full instructions to reproduce.</a>
         </p>
         <p style={s.p}>
           The initial unsupervised run took <strong>6 hours</strong> and produced
