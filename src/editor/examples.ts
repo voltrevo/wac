@@ -466,7 +466,7 @@ export i32 testPop() {
     category: "Arrays",
     entry: e("array-sum", "main.wac"),
     files: {
-      [e("array-sum", "main.wac")]: `i32 sumArray(i32[] arr) {
+      [e("array-sum", "main.wac")]: `export i32 sumArray(i32[] arr) {
   i32 total = 0;
   for (i32 i = 0; i < arr.len(); i++) {
     total += arr[i];
