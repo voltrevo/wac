@@ -61,27 +61,22 @@ begins implementing iteratively.
 
 ## What to expect
 
-- **~6 hours**: Core compiler pipeline (lex, parse, resolve, typecheck, WasmGC
-  emit, binary builder, instantiation). 139 tests passing.
-- The agent works iteratively — one atom per iteration, with exploration,
-  testing, and coverage checks at each step.
-- It writes its own notes summarizing progress after each iteration.
+The agent works iteratively — one atom per iteration, with exploration, testing,
+and coverage checks at each step. It writes its own notes summarizing progress
+after each iteration. Expect roughly 6-8 hours of compute.
 
-## Follow-up runs
+The current spec includes fixes and clarifications from several rounds of
+iteration, so a fresh run with it may produce a more complete result than our
+original run did. Our experience was:
 
-After the initial run, you can point out gaps without specifying what they are:
-
-> "You missed some things. Go through the wac goal and make sure you cover
-> everything."
-
-This took **1 hour 8 minutes** and added bindgen, structured diagnostics, and
-string support (734 tests).
-
-After updating the spec with new requirements:
-
-> "Spec updated, update the implementation."
-
-This took **25 minutes** and fixed all identified bugs (749 tests).
+1. **6 hours** — initial run with an earlier version of the spec. Produced the
+   core compiler (lex, parse, resolve, typecheck, WasmGC emit, binary builder,
+   instantiation). 139 tests.
+2. **1 hour 8 minutes** — told the agent "you missed some things, reread the
+   spec" (without saying what). Added bindgen, diagnostics, strings. 734 tests.
+3. **25 minutes** — updated the spec with new requirements and bug-covering
+   spec tags, told the agent "spec updated, update the implementation." Fixed
+   all identified bugs. 749 tests.
 
 In each case the agent was not told what was wrong — it figured it out from the
 spec.
