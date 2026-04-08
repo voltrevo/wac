@@ -312,6 +312,11 @@ function lvalType(lv: Lvalue, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       if (bt.kind === "nullable" && bt.inner.kind === "array") return bt.inner.elem;
       return I32;
     }
+    case "lv-unwrap": {
+      const bt = lvalType(lv.base, env, ctx);
+      if (bt.kind === "nullable") return bt.inner;
+      return bt;
+    }
   }
 }
 
@@ -886,17 +891,20 @@ class FuncEmitter {
     if (e.callee.kind === "field") {
       const fe = e.callee as { kind: "field"; expr: Expr; name: string };
       const baseT = typeOfExpr(fe.expr, env, this.ctx);
-      // Built-in len() — works on arrays and strings regardless of struct
+      // Built-in len() — works on arrays and strings, but NOT on struct methods named "len"
       if (fe.name === "len") {
-        this.emitExpr(fe.expr, env);
         const elemType = baseT.kind === "array" ? baseT.elem
                        : baseT.kind === "nullable" && baseT.inner.kind === "array" ? baseT.inner.elem
                        : null;
         const isStr = baseT.kind === "prim" && baseT.name === "string";
         const aIdx2 = elemType ? (this.ctx.arrTypeIdx.get(typeKey(elemType)) ?? -1)
                     : isStr ? this.ctx.stringTypeIdx : -1;
-        if (aIdx2 >= 0) this.emit(0xFB, 0x0F); // array.len (no immediate)
-        return;
+        if (aIdx2 >= 0) {
+          this.emitExpr(fe.expr, env);
+          this.emit(0xFB, 0x0F); // array.len (no immediate)
+          return;
+        }
+        // Fall through to method dispatch if base is a struct with a len() method
       }
 
       // String method calls
@@ -1013,8 +1021,12 @@ class FuncEmitter {
           this.emitExpr(na.val, env);
         }
       } else {
-        // Positional: emit in order
-        for (const arg of e.args) this.emitExpr(arg, env);
+        // Positional: emit in order, passing field type as hint for null args
+        for (let i = 0; i < e.args.length; i++) {
+          const ft = i < fields.length ? fields[i].type : undefined;
+          const isNull = e.args[i].kind === "null";
+          this.emitExpr(e.args[i], env, isNull ? ft : undefined);
+        }
       }
       this.emit(0xFB, 0x00, ...uleb(tIdx)); // struct.new $t
       return;
@@ -1324,6 +1336,11 @@ class FuncEmitter {
         this.emitLvalGet(lv.base, env);
         this.emitExpr(lv.idx, env);
         this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
+        break;
+      }
+      case "lv-unwrap": {
+        this.emitLvalGet(lv.base, env);
+        this.emit(0xD4); // ref.as_non_null
         break;
       }
     }

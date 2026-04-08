@@ -14,14 +14,14 @@ function errorToCM(err: CompileError, doc: string, fileName: string): Diagnostic
     offset += lines[i].length + 1;
   }
   const from = offset + Math.max(0, err.col - 1);
-  // Extend highlight to end of current token (word or operator)
-  let to = from;
-  if (to < doc.length && /\w/.test(doc[to])) {
-    while (to < doc.length && /\w/.test(doc[to])) to++;
-  } else {
-    to = Math.min(doc.length, from + 1);
-  }
-  return { from, to, severity: "error", message: `[${err.phase}] ${err.message}` };
+  const span = (err as Record<string, unknown>).span as number | undefined;
+  const to = Math.min(doc.length, from + (span && span > 0 ? span : 1));
+  let message = `[${err.phase}] ${err.message}`;
+  const annotation = (err as Record<string, unknown>).annotation as string | undefined;
+  const hint = (err as Record<string, unknown>).hint as string | undefined;
+  if (annotation) message += ` — ${annotation}`;
+  if (hint) message += `\nHelp: ${hint}`;
+  return { from, to, severity: "error", message };
 }
 
 /**

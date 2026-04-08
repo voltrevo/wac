@@ -39,9 +39,10 @@ export type Expr =
 
 // lvalue — restricted subset used in assignments
 export type Lvalue =
-  | ({ kind: "lv-ident"; name: string } & Pos)
-  | ({ kind: "lv-field"; base: Lvalue; field: string } & Pos)
-  | ({ kind: "lv-index"; base: Lvalue; idx: Expr } & Pos);
+  | ({ kind: "lv-ident";   name: string } & Pos)
+  | ({ kind: "lv-field";   base: Lvalue; field: string } & Pos)
+  | ({ kind: "lv-index";   base: Lvalue; idx: Expr } & Pos)
+  | ({ kind: "lv-unwrap";  base: Lvalue } & Pos);
 
 // Statements ------------------------------------------------------------------
 
@@ -93,7 +94,7 @@ export type FuncDecl = {
 export type TopLevel = Import | StructDecl | FuncDecl;
 export type Program  = { items: TopLevel[] };
 
-export type ParseError = { message: string; file: string; line: number; col: number };
+export type ParseError = { message: string; file: string; line: number; col: number; span?: number; annotation?: string; hint?: string };
 export type ParseResult = { program: Program; errors: ParseError[] };
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -619,6 +620,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         const idx = parseExpr();
         expect("]");
         lv = { kind: "lv-index", base: lv, idx, ...pp };
+      } else if (at("!")) {
+        advance();
+        lv = { kind: "lv-unwrap", base: lv, ...pp };
       } else {
         break;
       }

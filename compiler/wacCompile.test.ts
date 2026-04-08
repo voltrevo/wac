@@ -122,7 +122,7 @@ Deno.test("wacCompile: typecheck error — wrong return type", () => {
   const r = compile(`export i32 bad() { return "hello"; }`);
   if (r.ok) throw new Error("expected failure");
   if (r.errors[0].phase !== "typecheck") throw new Error("expected typecheck, got " + r.errors[0].phase);
-  if (!r.errors[0].message.includes("mismatch")) throw new Error("expected type mismatch");
+  if (!r.errors[0].message.includes("return:")) throw new Error("expected return type error, got: " + r.errors[0].message);
 });
 
 Deno.test("wacCompile: typecheck error — argument count mismatch", () => {

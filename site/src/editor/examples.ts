@@ -315,60 +315,102 @@ export f64 run(f64 rectWidth, f64 rectHeight, f64 circleRadius) {
     category: "Nullable Refs",
     entry: e("linked-list", "main.wac"),
     files: {
-      [e("linked-list", "main.wac")]: `import { Node, makeNode, push_front, sum, len } from "./list.wac";
+      [e("linked-list", "main.wac")]: `import { LinkedList } from "./list.wac";
 
-export i32 testBuild() {
-  Node? head = null;
-  head = push_front(head, 10);
-  head = push_front(head, 20);
-  head = push_front(head, 30);
-  // list: 30 -> 20 -> 10
-  return sum(head) * 100 + len(head);
+export i32 testPushBack() {
+  LinkedList l = LinkedList.create();
+  l.push_back(10);
+  l.push_back(20);
+  l.push_back(30);
+  return l.sum() * 100 + l.len();
 }
 
-export i32 testFront() {
-  Node? head = null;
-  head = push_front(head, 10);
-  head = push_front(head, 20);
-  head = push_front(head, 30);
-  return head!.val;
+export i32 testPushFront() {
+  LinkedList l = LinkedList.create();
+  l.push_front(10);
+  l.push_front(20);
+  l.push_front(30);
+  // head is 30 -> 20 -> 10
+  return l.front() * 100 + l.back();
+}
+
+export i32 testPopFront() {
+  LinkedList l = LinkedList.create();
+  l.push_back(10);
+  l.push_back(20);
+  l.push_back(30);
+  i32 first = l.pop_front();
+  return first * 100 + l.len();
 }
 `,
-      [e("linked-list", "list.wac")]: `export struct Node {
+      [e("linked-list", "list.wac")]: `struct Node {
   i32 val;
   Node? next;
 }
 
-export Node makeNode(i32 val) {
-  Node n = Node();
-  n.val = val;
-  return n;
-}
+export struct LinkedList {
+  Node? head;
+  Node? tail;
+  i32 count;
 
-export Node push_front(Node? head, i32 val) {
-  Node n = makeNode(val);
-  n.next = head;
-  return n;
-}
-
-export i32 sum(Node? head) {
-  i32 total = 0;
-  Node? cur = head;
-  while (cur is not null) {
-    total += cur!.val;
-    cur = cur!.next;
+  LinkedList create() {
+    return LinkedList();
   }
-  return total;
-}
 
-export i32 len(Node? head) {
-  i32 count = 0;
-  Node? cur = head;
-  while (cur is not null) {
-    count++;
-    cur = cur!.next;
+  void push_back(this, i32 val) {
+    Node n = Node(val, null);
+    if (this.tail is not null) {
+      this.tail!.next = n;
+    } else {
+      this.head = n;
+    }
+    this.tail = n;
+    this.count++;
   }
-  return count;
+
+  void push_front(this, i32 val) {
+    Node n = Node(val, this.head);
+    this.head = n;
+    if (this.tail is null) {
+      this.tail = n;
+    }
+    this.count++;
+  }
+
+  i32 pop_front(this) {
+    if (this.head is null) { trap; }
+    i32 val = this.head!.val;
+    this.head = this.head!.next;
+    if (this.head is null) {
+      this.tail = null;
+    }
+    this.count--;
+    return val;
+  }
+
+  i32 front(const this) {
+    if (this.head is null) { trap; }
+    return this.head!.val;
+  }
+
+  i32 back(const this) {
+    if (this.tail is null) { trap; }
+    return this.tail!.val;
+  }
+
+  i32 len(const this) {
+    return this.count;
+  }
+
+  i32 sum(const this) {
+    i32 total = 0;
+    Node? cur = this.head;
+    while (cur is not null) {
+      total += cur!.val;
+      cur = cur!.next;
+    }
+    return total;
+  }
 }
 `,
     },

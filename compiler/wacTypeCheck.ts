@@ -23,6 +23,9 @@ export type TypeCheckError = {
   file: string;
   line: number;
   col: number;
+  span?: number;
+  annotation?: string;
+  hint?: string;
 };
 
 // ── Type utilities ────────────────────────────────────────────────────────────
@@ -215,8 +218,8 @@ type Ctx = {
   thisConst: boolean;
 };
 
-function errAt(ctx: Ctx, msg: string, line: number, col: number): void {
-  ctx.errors.push({ message: msg, file: ctx.file, line, col });
+function errAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, annotation?: string, hint?: string): void {
+  ctx.errors.push({ message: msg, file: ctx.file, line, col, span, annotation, hint });
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -409,7 +412,20 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         errAt(ctx, `variable type cannot be 'void'`, stmt.line, stmt.col);
       }
       const initType = inferExpr(stmt.init, env, ctx);
-      if (initType) checkAssign(stmt.type, initType, stmt.init.line, stmt.init.col, ctx);
+      if (initType && initType.kind === "nullable" && stmt.type.kind !== "nullable" &&
+          (stmt.type.kind === "struct" || stmt.type.kind === "array")) {
+        const initName = stmt.init.kind === "ident" ? stmt.init.name : "expr";
+        errAt(ctx, `cannot assign nullable to non-null`, stmt.init.line, stmt.init.col, 1,
+          `expected ${typeName(stmt.type)}, found ${typeName(initType)}`,
+          `unwrap with \`!\`: ${typeName(stmt.type)} ${stmt.name} = ${initName}!;`);
+      } else if (initType) {
+        const initSpan = (stmt.init.kind === "float" || stmt.init.kind === "int")
+          ? stmt.init.value.length : 1;
+        const initHint = (isNumeric(stmt.type) && isNumeric(initType) && !typeEq(stmt.type, initType))
+          ? `use \`as!\` for checked conversion or \`as~\` for truncation` : undefined;
+        checkAssign(stmt.type, initType, stmt.init.line, stmt.init.col, ctx,
+          initSpan, undefined, initHint);
+      }
       env.set(stmt.name, { type: stmt.type, isConst: stmt.isConst });
       return false;
     }
@@ -444,8 +460,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     case "if": {
       const cType = inferExpr(stmt.cond, env, ctx);
       if (cType && !typeEq(cType, T_BOOL)) {
-        errAt(ctx, `condition must be bool, got ${typeName(cType)}`,
-          stmt.cond.line, stmt.cond.col);
+        const condName = stmt.cond.kind === "ident" ? stmt.cond.name : "expr";
+        const condSpan = stmt.cond.kind === "ident" ? stmt.cond.name.length : 1;
+        errAt(ctx, `condition must be bool`,
+          stmt.cond.line, stmt.cond.col, condSpan,
+          `expected bool, found ${typeName(cType)}`,
+          `use a comparison: if (${condName} != 0) { ... }`);
       }
       const thenRet = checkBlock(stmt.then, new Map(env), ctx);
       const elseRet = checkElse(stmt.els, env, ctx);
@@ -456,8 +476,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     case "while": {
       const cType = inferExpr(stmt.cond, env, ctx);
       if (cType && !typeEq(cType, T_BOOL)) {
-        errAt(ctx, `condition must be bool, got ${typeName(cType)}`,
-          stmt.cond.line, stmt.cond.col);
+        const condName = stmt.cond.kind === "ident" ? stmt.cond.name : "expr";
+        const condSpan = stmt.cond.kind === "ident" ? stmt.cond.name.length : 1;
+        errAt(ctx, `condition must be bool`,
+          stmt.cond.line, stmt.cond.col, condSpan,
+          `expected bool, found ${typeName(cType)}`,
+          `use a comparison: if (${condName} != 0) { ... }`);
       }
       ctx.inLoop++;
       checkBlock(stmt.body, new Map(env), ctx);
@@ -471,8 +495,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       if (stmt.cond) {
         const cType = inferExpr(stmt.cond, loopEnv, ctx);
         if (cType && !typeEq(cType, T_BOOL)) {
-          errAt(ctx, `condition must be bool, got ${typeName(cType)}`,
-            stmt.cond.line, stmt.cond.col);
+          const condName = stmt.cond.kind === "ident" ? stmt.cond.name : "expr";
+          const condSpan = stmt.cond.kind === "ident" ? stmt.cond.name.length : 1;
+          errAt(ctx, `condition must be bool`,
+            stmt.cond.line, stmt.cond.col, condSpan,
+            `expected bool, found ${typeName(cType)}`,
+            `use a comparison: if (${condName} != 0) { ... }`);
         }
       }
       ctx.inLoop++;
@@ -488,8 +516,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       ctx.inLoop--;
       const cType = inferExpr(stmt.cond, env, ctx);
       if (cType && !typeEq(cType, T_BOOL)) {
-        errAt(ctx, `condition must be bool, got ${typeName(cType)}`,
-          stmt.cond.line, stmt.cond.col);
+        const condName = stmt.cond.kind === "ident" ? stmt.cond.name : "expr";
+        const condSpan = stmt.cond.kind === "ident" ? stmt.cond.name.length : 1;
+        errAt(ctx, `condition must be bool`,
+          stmt.cond.line, stmt.cond.col, condSpan,
+          `expected bool, found ${typeName(cType)}`,
+          `use a comparison: if (${condName} != 0) { ... }`);
       }
       return false;
     }
@@ -530,8 +562,16 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         if (vType) {
           if (isVoid(ctx.returnType)) {
             errAt(ctx, `void function cannot return a value`, stmt.line, stmt.col);
-          } else {
-            checkAssign(ctx.returnType, vType, stmt.value.line, stmt.value.col, ctx);
+          } else if (!isAssignable(vType, ctx.returnType, ctx.structMap)) {
+            const valSpan = stmt.value.kind === "binary" ?
+              (stmt.value.left.kind === "ident" ? stmt.value.left.name.length : 1) + (stmt.value.op.length + 2) + (stmt.value.right.kind === "int" ? stmt.value.right.value.length : 1) :
+              (stmt.value.kind === "ident" ? stmt.value.name.length : 1);
+            const retHint = typeEq(vType, T_BOOL) && typeEq(ctx.returnType, T_I32) ?
+              `use \`(${stmt.value.kind === "ident" ? (stmt.value as {name:string}).name : "expr"} > 0) as i32\` to convert` : undefined;
+            errAt(ctx, `return: expected ${typeName(ctx.returnType)}, found ${typeName(vType)}`,
+              stmt.value.line, stmt.value.col, valSpan,
+              `expected ${typeName(ctx.returnType)}, found ${typeName(vType)}`,
+              retHint);
           }
         }
       } else {
@@ -661,15 +701,26 @@ function checkLval(
       if (isPackedElem(baseType.elem)) return T_I32;
       return baseType.elem;
     }
+
+    case "lv-unwrap": {
+      const baseType = checkLval(lval.base, env, ctx, /* writing */ false);
+      if (!baseType) return null;
+      if (baseType.kind !== "nullable") {
+        errAt(ctx, `'!' unwrap requires nullable type, got ${typeName(baseType)}`, lval.line, lval.col);
+        return null;
+      }
+      return baseType.inner;
+    }
   }
 }
 
 /** Check whether an lvalue is accessed through a const chain. */
 function lvalIsConst(lval: Lvalue, env: VarEnv, ctx: Ctx): boolean {
   switch (lval.kind) {
-    case "lv-ident": return env.get(lval.name)?.isConst ?? false;
-    case "lv-field": return lvalIsConst(lval.base, env, ctx);
-    case "lv-index": return lvalIsConst(lval.base, env, ctx);
+    case "lv-ident":  return env.get(lval.name)?.isConst ?? false;
+    case "lv-field":  return lvalIsConst(lval.base, env, ctx);
+    case "lv-index":  return lvalIsConst(lval.base, env, ctx);
+    case "lv-unwrap": return lvalIsConst(lval.base, env, ctx);
   }
 }
 
@@ -758,7 +809,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
     case "cast": {
       const t = inferExpr(expr.expr, env, ctx);
       if (!t) return null;
-      return checkCast(expr.op, t, expr.type, expr.line, expr.col, ctx);
+      return checkCast(expr.op, t, expr.type, expr.line, expr.col, ctx, expr.expr);
     }
 
     case "is": {
@@ -1317,8 +1368,10 @@ function checkCast(
   op: string, from: WacType, to: WacType,
   line: number, col: number,
   ctx: Ctx,
+  casteeExpr?: Expr,
 ): WacType | null {
   const fn = typeName(from), tn = typeName(to);
+  const casteeSpan = casteeExpr?.kind === "ident" ? casteeExpr.name.length : 1;
 
   // Reference casts (handled separately from numeric)
   if (isRefType(from) || from.kind === "prim" && from.name === "null") {
@@ -1361,7 +1414,10 @@ function checkCast(
 
   if (isLosslessNumericCast(fn, tn)) {
     if (op !== "as") {
-      errAt(ctx, `'${fn}' -> '${tn}' is lossless — use 'as' instead of '${op}'`, line, col);
+      const totalSpan = casteeSpan + 1 + op.length + 1 + tn.length;
+      errAt(ctx, `lossy cast not needed`, line, col, totalSpan,
+        `${fn} -> ${tn} is lossless`,
+        `use \`as\` instead of \`${op}\``);
     }
     return to;
   }
@@ -1406,11 +1462,15 @@ function checkAssign(
   expected: WacType, actual: WacType,
   line: number, col: number,
   ctx: Ctx,
+  span = 1,
+  annotation?: string,
+  hint?: string,
 ): void {
   if (!isAssignable(actual, expected, ctx.structMap)) {
+    const ann = annotation ?? `expected ${typeName(expected)}, found ${typeName(actual)}`;
     errAt(ctx,
       `type mismatch: expected ${typeName(expected)}, got ${typeName(actual)}`,
-      line, col);
+      line, col, span, ann, hint);
   }
 }
 
