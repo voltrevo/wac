@@ -63,19 +63,36 @@ function migrate(files: FileMap): FileMap {
   return migrated;
 }
 
-export function loadFiles(): FileMap {
+export function loadFiles(exampleFiles: FileMap): FileMap {
+  let userFiles: FileMap = {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object" && Object.keys(parsed).length) {
-        return migrate(parsed as FileMap);
+        userFiles = migrate(parsed as FileMap);
       }
     }
   } catch { /* ignore corrupt data */ }
-  return { [HOME + "/main.wac"]: DEFAULT_FILE };
+
+  // Ensure user has at least one non-example file
+  const hasUserFile = Object.keys(userFiles).some((k) => !k.includes("/examples/"));
+  if (!hasUserFile) {
+    userFiles[HOME + "/main.wac"] = DEFAULT_FILE;
+  }
+
+  // Merge: examples are read-only defaults, user files override
+  return { ...exampleFiles, ...userFiles };
 }
 
+/** Save only user-authored files (not examples). */
 export function saveFiles(files: FileMap): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(files));
+  const userFiles: FileMap = {};
+  for (const [k, v] of Object.entries(files)) {
+    if (!k.includes("/examples/")) {
+      userFiles[k] = v;
+    }
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(userFiles));
 }
+
