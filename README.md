@@ -61,7 +61,7 @@ The [language spec](spec/) (21 markdown files) was written collaboratively by a 
 - **1 hour 8 minutes** — "you missed things, reread the spec": added bindgen, diagnostics, strings (734 tests)
 - **25 minutes** — spec updated, implement changes: fixed all identified bugs (749 tests)
 
-Grand total: **~7.5 hours** of Claude Sonnet compute — 18% of the weekly quota on Claude Max 5x ($18).
+Grand total: **~7.5 hours** of Claude Sonnet compute — 18% of the weekly quota on Claude Max 5x (~$4.50). On the 20x plan that would be roughly $2.25.
 
 In each case the agent was not told what was wrong — it figured it out from the spec.
 
