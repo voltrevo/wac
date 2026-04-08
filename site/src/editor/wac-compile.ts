@@ -81,11 +81,11 @@ export async function runFunction(
   }
 
   const raw = inst.rawExports;
-  const hasArrayParam = meta.params.some((p) => isArrayType(p.type));
-  const hasArrayRet = isArrayType(meta.ret);
+  const needsRaw = meta.params.some((p) => isArrayType(p.type) || p.type === "string")
+    || isArrayType(meta.ret) || meta.ret === "string";
 
-  // If no arrays involved, use the typed call() helper
-  if (!hasArrayParam && !hasArrayRet) {
+  // If no complex types involved, use the typed call() helper
+  if (!needsRaw) {
     const args = meta.params.map((p, i) => {
       const a = (argStrings[i] ?? "0").trim();
       if (p.type === "bool") return a === "true";
@@ -111,7 +111,14 @@ export async function runFunction(
       const p = meta.params[i];
       const a = (argStrings[i] ?? "").trim();
 
-      if (isArrayType(p.type)) {
+      if (p.type === "string") {
+        const bytes = new TextEncoder().encode(a);
+        const strNew = raw["__bind_str_new"] as (n: number) => unknown;
+        const strSet = raw["__bind_str_set"] as (wa: unknown, i: number, v: number) => void;
+        const wa = strNew(bytes.length);
+        for (let j = 0; j < bytes.length; j++) strSet(wa, j, bytes[j]);
+        wasmArgs.push(wa);
+      } else if (isArrayType(p.type)) {
         const prefix = ARRAY_BIND_PREFIX[p.type];
         const newFn = raw[`${prefix}_new`] as (n: number) => unknown;
         const setFn = raw[`${prefix}_set`] as (wa: unknown, i: number, v: unknown) => void;
@@ -135,7 +142,16 @@ export async function runFunction(
 
     if (meta.ret === "void") return { success: true, output: "(void)" };
 
-    if (hasArrayRet) {
+    if (meta.ret === "string") {
+      const strLen = raw["__bind_str_len"] as (wa: unknown) => number;
+      const strGet = raw["__bind_str_get"] as (wa: unknown, i: number) => number;
+      const n = strLen(resultVal);
+      const bytes = new Uint8Array(n);
+      for (let j = 0; j < n; j++) bytes[j] = strGet(resultVal, j);
+      return { success: true, output: new TextDecoder().decode(bytes) };
+    }
+
+    if (isArrayType(meta.ret)) {
       const prefix = ARRAY_BIND_PREFIX[meta.ret];
       const lenFn = raw[`${prefix}_len`] as (wa: unknown) => number;
       const getFn = raw[`${prefix}_get`] as (wa: unknown, i: number) => number | bigint;
@@ -154,6 +170,7 @@ export async function runFunction(
 
 export function placeholderFor(type: string): string {
   if (type === "bool") return "true / false";
+  if (type === "string") return "text";
   if (type === "f32" || type === "f64") return "0.0";
   if (type === "i64") return "0 (bigint)";
   if (isArrayType(type)) return "1, 2, 3 (comma-separated)";
