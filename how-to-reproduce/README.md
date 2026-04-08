@@ -92,9 +92,8 @@ The agent works iteratively — one atom per iteration, with exploration, testin
 and coverage checks at each step. It writes its own notes summarizing progress
 after each iteration. Expect roughly 6-8 hours of compute.
 
-The current spec includes fixes and clarifications from several rounds of
-iteration, so a fresh run with it may produce a more complete result than our
-original run did. Our experience was:
+The current spec includes fixes and clarifications, so a fresh run with it may
+produce a more complete result than our original run did. Our experience was:
 
 1. **6 hours** — initial run with an earlier version of the spec. Produced the
    core compiler (lex, parse, resolve, typecheck, WasmGC emit, binary builder,
