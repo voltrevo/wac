@@ -5,10 +5,10 @@ and general-purpose worker instructions. Here's how to reproduce it.
 
 ## Prerequisites
 
+- A [Claude Code](https://claude.ai/claude-code) subscription (Claude Code
+  comes pre-installed inside the sandbox container)
 - [voltrevo/agent-sandbox](https://github.com/voltrevo/agent-sandbox) — a
   Docker-based sandbox for running Claude Code agents
-- Claude Code CLI with `--dangerously-skip-permissions` (requires interactive
-  auth on first run)
 
 ## Steps
 
