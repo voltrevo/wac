@@ -192,11 +192,32 @@ if (q is null) { ... }
 if (q is not null) { ... }
 ```
 
-`!` unwraps a nullable reference — maps to `ref.as_non_null`, traps if null:
+`!` unwraps a nullable reference — maps to `ref.as_non_null`, traps if null.
+
+Unwrap works both as an rvalue and as part of an lvalue chain:
 
 ```wac
-Point p = q!;
+Point p = q!;          // rvalue: read through nullable
+q!.x = 5;             // lvalue: assign through nullable
+list.head!.next = n;   // lvalue: chained unwrap + field
 ```
+
+`[§wac-unwrap-lvalue-k9fn2wp]` Given:
+
+```wac
+struct Node { i32 val; Node? next; }
+export i32 test() {
+  Node a = Node();
+  a.val = 10;
+  Node b = Node();
+  b.val = 20;
+  Node? p = b;
+  p!.next = a;
+  return p!.next!.val;
+}
+```
+
+`test()` returns `10`.
 
 ### i31ref casts
 

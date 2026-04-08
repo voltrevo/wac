@@ -52,6 +52,16 @@ but in any order. No partial initialization.
 `[§wac-struct-partial-76iq9nc]` `Point(3)` is a compile error — must provide all
 fields.
 
+Nullable fields accept `null` as a positional argument:
+
+```wac
+struct Node { i32 val; Node? next; }
+Node n = Node(42, null);   // val=42, next=null
+```
+
+`[§wac-struct-null-arg-h7kp3wn]` `Node(42, null).val` is `42` and
+`Node(42, null).next is null` is `true`.
+
 ### Default values
 
 A struct has a default value (usable with `T()` and `T[N]()`) if all its
@@ -150,6 +160,32 @@ struct Counter {
 `[§wac-method-inc-09hcqkq]` After `c.inc()`, `c.getCount()` returns `1`.
 `[§wac-method-const-d5zjb9i]` `this.id = 5` inside `inc` is a compile error — id
 is const.
+
+Methods work correctly on structs with mixed reference and primitive fields:
+
+```wac
+struct Node { i32 val; Node? next; }
+
+struct Stack {
+  Node? top;
+  i32 count;
+
+  void push(this, i32 val) {
+    Node n = Node();
+    n.val = val;
+    n.next = this.top;
+    this.top = n;
+    this.count++;
+  }
+
+  i32 len(const this) {
+    return this.count;
+  }
+}
+```
+
+`[§wac-method-mixed-fields-r4kn7wp]` After `s.push(10); s.push(20)`,
+`s.len()` returns `2`.
 
 Note: methods must use `this.field` to access struct fields and
 `this.method()` to call methods — bare names without `this.` are not resolved
