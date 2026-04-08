@@ -504,11 +504,35 @@ export i32 testPop() {
 
   // === Arrays ===
   {
-    name: "Array Sum",
+    name: "Arrays (Sort + Sum)",
     category: "Arrays",
     entry: p("array-sum.wac"),
     files: {
-      [p("array-sum.wac")]: `export i32 sumArray(i32[] arr) {
+      [p("array-sum.wac")]: `export i32[] quicksort(i32[] arr) {
+  qsort(arr, 0, arr.len() - 1);
+  return arr;
+}
+
+void qsort(i32[] arr, i32 lo, i32 hi) {
+  if (lo >= hi) { return; }
+  i32 pivot = arr[hi];
+  i32 i = lo;
+  for (i32 j = lo; j < hi; j++) {
+    if (arr[j] <= pivot) {
+      i32 tmp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
+      i++;
+    }
+  }
+  i32 tmp = arr[i];
+  arr[i] = arr[hi];
+  arr[hi] = tmp;
+  qsort(arr, lo, i - 1);
+  qsort(arr, i + 1, hi);
+}
+
+export i32 sumArray(i32[] arr) {
   i32 total = 0;
   for (i32 i = 0; i < arr.len(); i++) {
     total += arr[i];

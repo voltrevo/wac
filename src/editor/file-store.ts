@@ -2,25 +2,8 @@ const STORAGE_KEY = "wac-files";
 
 export const HOME = "/home/wac";
 
-const DEFAULT_FILE = `export i32 gcd(i32 a, i32 b) {
-  while (b != 0) {
-    i32 t = b;
-    b = a % b;
-    a = t;
-  }
-  return a;
-}
-
-export i32 fib(i32 n) {
-  if (n < 2) { return n; }
-  i32 a = 0;
-  i32 b = 1;
-  for (i32 i = 2; i <= n; i++) {
-    i32 t = a + b;
-    a = b;
-    b = t;
-  }
-  return b;
+const DEFAULT_FILE = `export string hello() {
+  return "Hello, world!";
 }
 `;
 
