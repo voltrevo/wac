@@ -139,7 +139,7 @@ field_init      = IDENT , ":" , expr ;
 
 arg_list       = expr , { "," , expr } ;
 
-lvalue         = IDENT , { "." , IDENT | "[" , expr , "]" } ;
+lvalue         = IDENT , { "!" | "." , IDENT | "[" , expr , "]" } ;
 ```
 
 ### Types

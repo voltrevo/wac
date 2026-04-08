@@ -28,6 +28,7 @@ binary -> instantiate and call.
 - [spec/bindgen.md](spec/bindgen.md) — TypeScript bindgen: type mapping, output examples
 - [spec/errors.md](spec/errors.md) — structured error reporting format
 - [spec/buffer.md](spec/buffer.md) — Buffer: growable byte buffer example with spec tests
+- [spec/linkedlist.md](spec/linkedlist.md) — LinkedList: singly-linked list example with spec tests
 
 ## CLI
 
