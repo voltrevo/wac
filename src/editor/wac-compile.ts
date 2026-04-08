@@ -1,6 +1,7 @@
 import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../atoms/wac/wacCompile.ts";
 import { wacInstance } from "../../atoms/wac/wacInstance.ts";
 import { wacBindgen } from "../../atoms/wac/wacBindgen.ts";
+import { wacDiag } from "../../atoms/wac/wacDiag.ts";
 import type { FileMap } from "./file-store";
 
 export type EditorCompileResult =
@@ -13,11 +14,11 @@ export function compile(files: FileMap, fileName: string): EditorCompileResult {
 
   const result: CompileResult = wacCompile(fileMap, fileName);
   if (!result.ok) {
+    const sources = new Map<string, string>();
+    for (const [k, v] of Object.entries(files)) sources.set(k, v);
     return {
       ok: false,
-      errors: result.errors.map(
-        (e) => `${e.file}:${e.line}:${e.col} [${e.phase}] ${e.message}`,
-      ),
+      errors: [wacDiag(result.errors, sources)],
     };
   }
   return { ok: true, wasm: result.compiled.wasm, exports: result.compiled.exports, compiled: result.compiled };

@@ -5,6 +5,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
 import { wac as wacLang } from "./editor/wac-language";
+import InlineDemo from "./editor/InlineDemo";
 
 const GITHUB = "https://github.com/voltrevo/wac";
 
@@ -331,19 +332,20 @@ export default function Landing() {
           Functions have explicit return types. {kw("export")} makes them
           available to the host and other {tp(".wac")} files.
         </p>
-        <Solo code={EX_HELLO} lang="wac" />
+        <InlineDemo initialCode={EX_HELLO} />
 
         <h3 style={s.h3}>Primitives and control flow</h3>
         <p style={s.p}>
           Types: {tp("i32")} {tp("i64")} {tp("f32")} {tp("f64")} {tp("bool")} {tp("string")}.
           Full control flow: {kw("if")}/{kw("else")}, {kw("while")}, {kw("for")}, {kw("do")}-{kw("while")}, {kw("switch")}, ternary.
         </p>
-        <Solo code={EX_MATH} lang="wac" />
+        <InlineDemo initialCode={EX_MATH} />
 
         <h3 style={s.h3}>Error diagnostics</h3>
         <p style={s.p}>
           No implicit conversions — write {fn_("while (b != 0)")} not {fn_("while (b)")}.
-          The compiler tells you exactly what went wrong:
+          Try it — the code block above is editable! The compiler tells you
+          exactly what went wrong:
         </p>
         <Solo code={EX_ERROR} lang="wac" />
 

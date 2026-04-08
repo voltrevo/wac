@@ -9,6 +9,8 @@ const DEFAULT_FILE = `export string hello() {
 
 export type FileMap = Record<string, string>;
 
+export const DEFAULT_FILES: FileMap = { [HOME + "/main.wac"]: DEFAULT_FILE };
+
 /** Convert an absolute path to a display path relative to HOME. */
 export function displayPath(abs: string): string {
   const prefix = HOME + "/";

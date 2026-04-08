@@ -2,10 +2,11 @@ import { useState, useCallback, useEffect } from "react";
 import WacEditor from "./editor/WacEditor";
 import OutputPanel from "./editor/OutputPanel";
 import FileTree from "./editor/FileTree";
-import { loadFiles, saveFiles, displayPath, absPath, type FileMap } from "./editor/file-store";
+import { loadFiles, saveFiles, displayPath, absPath, DEFAULT_FILES, type FileMap } from "./editor/file-store";
 import { allExampleFiles } from "./editor/examples";
 
 const EXAMPLE_FILES = allExampleFiles();
+const ORIGINALS: FileMap = { ...DEFAULT_FILES, ...EXAMPLE_FILES };
 
 export default function Playground() {
   const [files, setFiles] = useState<FileMap>(() => loadFiles(EXAMPLE_FILES));
@@ -38,7 +39,7 @@ export default function Playground() {
   };
 
   const deleteFile = (name: string) => {
-    if (name.includes("/examples/")) return;
+    if (name in ORIGINALS) return;
     const userKeys = Object.keys(files).filter((k) => !k.includes("/examples/"));
     if (userKeys.length <= 1) return;
     if (!confirm(`Delete "${displayPath(name)}"?`)) return;
@@ -49,7 +50,7 @@ export default function Playground() {
   };
 
   const renameFile = (oldName: string) => {
-    if (oldName.includes("/examples/")) return;
+    if (oldName in ORIGINALS) return;
     const newName = prompt("Rename to:", displayPath(oldName));
     if (!newName) return;
     const newAbs = absPath(newName);
@@ -112,6 +113,27 @@ export default function Playground() {
       <div style={{ flex: "1 1 55%", display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", padding: "6px 12px", borderBottom: "1px solid #2e2e3e", backgroundColor: "#181825", borderRadius: "4px 4px 0 0", fontSize: 13, color: "#6b7280", flexShrink: 0 }}>
           {displayPath(active)}
+          {active in ORIGINALS && (
+            <button
+              onClick={() => {
+                const next = { ...files, [active]: ORIGINALS[active] };
+                persist(next);
+              }}
+              style={{
+                marginLeft: "auto",
+                background: "none",
+                border: "1px solid #2e2e3e",
+                borderRadius: 4,
+                color: "#6b7280",
+                cursor: "pointer",
+                fontSize: 11,
+                padding: "2px 8px",
+                visibility: files[active] !== ORIGINALS[active] ? "visible" : "hidden",
+              }}
+            >
+              Clear Changes
+            </button>
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <WacEditor key={active} value={files[active]} onChange={handleChange} files={files} fileName={active} />
