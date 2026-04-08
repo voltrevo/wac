@@ -37,7 +37,9 @@ geometry$distance  geometry$midpoint  main$perimeter
 ```
 
 Mangling is purely internal. Wasm export entries use the original unqualified
-name. Struct method mangling: `Counter$getCount`, `Counter$create`.
+name and only include functions exported by the entry file (see
+[functions.md](functions.md)). Struct method mangling:
+`Counter$getCount`, `Counter$create`.
 
 ### Diamond imports
 
