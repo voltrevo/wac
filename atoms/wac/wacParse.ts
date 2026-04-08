@@ -125,6 +125,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
 
   function at(k: string, offset = 0): boolean {
     const t = tok(offset);
+    // For literal tokens, only match by kind (so a string "!" doesn't match the "!" operator)
+    if (t.kind === "string" || t.kind === "int" || t.kind === "float") return t.kind === k;
     return t.kind === k || t.text === k;
   }
 
