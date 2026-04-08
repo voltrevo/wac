@@ -52,8 +52,12 @@ runs autonomously.
 
 ### 6. Tell it to start
 
-The agent reads `CLAUDE.md`, finds `worker-prompt.md`, reads the goal spec, and
-begins implementing. No further input needed.
+Tell the agent to implement the goal:
+
+> "Follow worker-prompt.md and implement the wac goal in goals/wac."
+
+The agent reads `CLAUDE.md` and the worker prompt, finds the goal spec, and
+begins implementing iteratively.
 
 ## What to expect
 
