@@ -120,9 +120,6 @@ function Solo({ code, label, lang }: { code: string; label?: string; lang: "wac"
   );
 }
 
-function Inline({ children }: { children: string }) {
-  return <span style={s.inline}>{children}</span>;
-}
 
 const s = {
   page: {
@@ -415,7 +412,7 @@ export default function Landing() {
           etc.) was written collaboratively by a human and AI. Then the compiler
           was implemented autonomously by Claude Sonnet from the spec combined
           with some general instructions, with zero user intervention.{" "}
-          <a href={`${GITHUB}/blob/master/how-to-reproduce.md`} target="_blank" rel="noopener"
+          <a href={`${GITHUB}/tree/master/how-to-reproduce`} target="_blank" rel="noopener"
           style={{ color: "#60a5fa", textDecoration: "none" }}>Full instructions to reproduce.</a>
         </p>
         <p style={s.p}>

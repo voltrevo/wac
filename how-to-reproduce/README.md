@@ -1,0 +1,83 @@
+# How to reproduce
+
+The wac compiler was built autonomously by Claude Sonnet from a language spec
+and general-purpose worker instructions. Here's how to reproduce it.
+
+## Prerequisites
+
+- [voltrevo/agent-sandbox](https://github.com/voltrevo/agent-sandbox) — a
+  Docker-based sandbox for running Claude Code agents
+- Claude Code CLI with `--dangerously-skip-permissions` (requires interactive
+  auth on first run)
+
+## Steps
+
+### 1. Set up the sandbox
+
+Follow the [agent-sandbox README](https://github.com/voltrevo/agent-sandbox) to
+create a container. You'll get a Docker container with a workspace directory.
+
+### 2. Add worker-prompt.md
+
+Copy [worker-prompt.md](worker-prompt.md) into the workspace root. This is a
+general-purpose set of instructions for autonomous coding agents — it covers
+atom structure, testing, iteration workflow, spec tag handling, and code quality
+expectations. It is not specific to wac.
+
+### 3. Add CLAUDE.md
+
+Create a `CLAUDE.md` in the workspace root with:
+
+```
+Read worker-prompt.md.
+Pursue goal.
+```
+
+This tells Claude Code to read the worker prompt and follow it.
+
+### 4. Copy in the spec
+
+Copy the `spec/` directory from this repo into the workspace as the goal
+directory (e.g. `goals/wac/`). The spec contains 21 markdown files describing
+the language, plus example programs and spec tags that define testable behaviors.
+
+### 5. Launch Claude
+
+```sh
+claude --dangerously-skip-permissions
+```
+
+On first run this requires interactive authentication. After that, the agent
+runs autonomously.
+
+### 6. Tell it to start
+
+The agent reads `CLAUDE.md`, finds `worker-prompt.md`, reads the goal spec, and
+begins implementing. No further input needed.
+
+## What to expect
+
+- **~6 hours**: Core compiler pipeline (lex, parse, resolve, typecheck, WasmGC
+  emit, binary builder, instantiation). 139 tests passing.
+- The agent works iteratively — one atom per iteration, with exploration,
+  testing, and coverage checks at each step.
+- It writes its own notes summarizing progress after each iteration.
+
+## Follow-up runs
+
+After the initial run, you can point out gaps without specifying what they are:
+
+> "You missed some things. Go through the wac goal and make sure you cover
+> everything."
+
+This took **1 hour 8 minutes** and added bindgen, structured diagnostics, and
+string support (734 tests).
+
+After updating the spec with new requirements:
+
+> "Spec updated, update the implementation."
+
+This took **25 minutes** and fixed all identified bugs (749 tests).
+
+In each case the agent was not told what was wrong — it figured it out from the
+spec.
