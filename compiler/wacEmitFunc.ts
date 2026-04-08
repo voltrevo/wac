@@ -36,8 +36,10 @@ export type WasmTypeCtx = {
   arrTypeIdx: Map<string, number>;
   /** sigKey(params, ret) → wasm type section index for function signature */
   sigTypeIdx: Map<string, number>;
-  /** Wasm type index for the immutable i8 string array type */
+  /** Wasm type index for the i8 string array type */
   stringTypeIdx: number;
+  /** Wasm function indices for built-in string helper functions (by name) */
+  strHelperIdx: Map<string, number>;
   /** All fields (including inherited) for each struct, in order */
   structFields: Map<string, StructFieldInfo[]>;
   /** Immediate parent name for each struct, or null */
@@ -224,6 +226,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         const fe = e.callee as { kind: "field"; expr: Expr; name: string };
         const baseT = typeOfExpr(fe.expr, env, ctx);
         if (fe.name === "len") return I32; // arr.len() / string.len()
+        // String methods
+        if (baseT.kind === "prim" && baseT.name === "string") {
+          if (fe.name === "slice") return { kind: "prim", name: "string", line: 0, col: 0 };
+          if (fe.name === "indexOf") return I32;
+        }
         const sName = structName(baseT);
         if (sName) {
           const meth = ctx.result.structs.find(s => s.name === sName)?.methods.get(fe.name);
@@ -259,6 +266,8 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     }
     case "index": {
       const t = typeOfExpr(e.expr, env, ctx);
+      // String indexing returns a string
+      if (t.kind === "prim" && t.name === "string") return { kind: "prim", name: "string", line: 0, col: 0 };
       const arr = t.kind === "array" ? t : t.kind === "nullable" && t.inner.kind === "array" ? t.inner : null;
       return arr ? arr.elem : I32;
     }
@@ -561,10 +570,52 @@ class FuncEmitter {
     }
 
     const lt = typeOfExpr(e.left, env, this.ctx);
+    const isStr = lt.kind === "prim" && lt.name === "string";
+
+    // String operations via helper functions
+    if (isStr) {
+      const cmpIdx = this.ctx.strHelperIdx.get("__str_cmp")!;
+      const concatIdx = this.ctx.strHelperIdx.get("__str_concat")!;
+      if (op === "+") {
+        this.emit(0x10, ...uleb(concatIdx)); // call __str_concat
+        return;
+      }
+      if (op === "==") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x45);                  // i32.eqz
+        return;
+      }
+      if (op === "!=") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x45, 0x45);            // i32.eqz; i32.eqz
+        return;
+      }
+      if (op === "<") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x41, 0x00, 0x48);      // i32.const 0; i32.lt_s
+        return;
+      }
+      if (op === "<=") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x41, 0x00, 0x4C);      // i32.const 0; i32.le_s
+        return;
+      }
+      if (op === ">") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x41, 0x00, 0x4A);      // i32.const 0; i32.gt_s
+        return;
+      }
+      if (op === ">=") {
+        this.emit(0x10, ...uleb(cmpIdx)); // call __str_cmp
+        this.emit(0x41, 0x00, 0x4E);      // i32.const 0; i32.ge_s
+        return;
+      }
+    }
+
     const isRef = lt.kind === "struct" || lt.kind === "array" || lt.kind === "nullable" ||
                   (lt.kind === "prim" && (lt.name === "anyref" || lt.name === "i31ref" || lt.name === "string"));
 
-    // Reference equality
+    // Reference equality (non-string refs)
     if ((op === "==" || op === "!=") && isRef) {
       this.emit(0xD3); // ref.eq (V8/Deno encoding: 0xD3)
       if (op === "!=") this.emit(0x45);
@@ -803,6 +854,13 @@ class FuncEmitter {
     env: TypeEnv,
   ): void {
     const t = typeOfExpr(e.expr, env, this.ctx);
+    // String indexing: call __str_idx helper
+    if (t.kind === "prim" && t.name === "string") {
+      this.emitExpr(e.expr, env);
+      this.emitExpr(e.idx, env);
+      this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_idx")!)); // call __str_idx
+      return;
+    }
     const elem = t.kind === "array" ? t.elem
                : t.kind === "nullable" && t.inner.kind === "array" ? t.inner.elem
                : I32;
@@ -839,6 +897,22 @@ class FuncEmitter {
                     : isStr ? this.ctx.stringTypeIdx : -1;
         if (aIdx2 >= 0) this.emit(0xFB, 0x0F); // array.len (no immediate)
         return;
+      }
+
+      // String method calls
+      if (baseT.kind === "prim" && baseT.name === "string") {
+        if (fe.name === "slice") {
+          this.emitExpr(fe.expr, env); // push string
+          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_slice")!)); // call __str_slice
+          return;
+        }
+        if (fe.name === "indexOf") {
+          this.emitExpr(fe.expr, env); // push string
+          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_indexof")!)); // call __str_indexof
+          return;
+        }
       }
 
       const sName = structName(baseT);

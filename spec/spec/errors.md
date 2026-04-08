@@ -16,7 +16,29 @@ error: <message>
 
 ### Examples
 
-`[§wac-diag-bool-1tayrxk]` Given:
+### Required CompileError fields
+
+```typescript
+type CompileError = {
+  message: string;
+  file: string;
+  line: number;
+  col: number;
+  phase: "lex" | "parse" | "resolve" | "typecheck";
+  span: number;            // number of source characters to underline
+  annotation?: string;     // text after the underline (e.g. "expected i32, found f64")
+  hint?: string;           // help text (e.g. "use `as!` for checked conversion")
+};
+```
+
+### Diagnostic spec tags
+
+Each tag below specifies the exact diagnostic the compiler must emit,
+including span width, annotation text, and help text where shown. These
+must be present on the `CompileError` objects returned by `wacCompile`,
+not just in formatted output.
+
+`[§wac-diag-bool-r8kn4wp]` Given:
 
 ```wac
 // err.wac
@@ -26,7 +48,9 @@ export i32 bad(i32 x) {
 }
 ```
 
-Output:
+The compiler must emit a `CompileError` with `span: 1`,
+`annotation: "expected bool, found i32"`,
+`hint: "use a comparison: if (x != 0) { ... }"`. Rendered:
 
 ```
 error: condition must be bool
@@ -37,7 +61,10 @@ error: condition must be bool
    = help: use a comparison: if (x != 0) { ... }
 ```
 
-`[§wac-diag-assign-uf068k1]` Given `i32 n = 3.14;` at line 4:
+`[§wac-diag-assign-j3qm7xf]` Given `i32 n = 3.14;` at line 4:
+
+The compiler must emit `span: 4`, `annotation: "expected i32, found f64"`,
+`hint: "use \`as!\` for checked conversion or \`as~\` for truncation"`. Rendered:
 
 ```
 error: type mismatch in assignment
@@ -48,7 +75,10 @@ error: type mismatch in assignment
    = help: use `as!` for checked conversion or `as~` for truncation
 ```
 
-`[§wac-diag-cast-agtm7l9]` Given `i64 a = x as~ i64;` at line 2:
+`[§wac-diag-cast-p5fn2rk]` Given `i64 a = x as~ i64;` at line 2:
+
+The compiler must emit `span: 9`, `annotation: "i32 -> i64 is lossless"`,
+`hint: "use \`as\` instead: i64 a = x as i64;"`. Rendered:
 
 ```
 error: lossy cast not needed
@@ -59,7 +89,10 @@ error: lossy cast not needed
    = help: use `as` instead: i64 a = x as i64;
 ```
 
-`[§wac-diag-null-cugwock]` Given `Point p = q;` where q is `Point?`:
+`[§wac-diag-null-h6kp9wn]` Given `Point p = q;` where q is `Point?`:
+
+The compiler must emit `span: 1`, `annotation: "expected Point, found Point?"`,
+`hint: "unwrap with \`!\`: Point p = q!;"`. Rendered:
 
 ```
 error: cannot assign nullable to non-null
@@ -70,7 +103,9 @@ error: cannot assign nullable to non-null
    = help: unwrap with `!`: Point p = q!;
 ```
 
-`[§wac-diag-const-ig80qzg]` Given `p.x = 5;` where p is `const Point`:
+`[§wac-diag-const-w2jm5xf]` Given `p.x = 5;` where p is `const Point`:
+
+The compiler must emit `span: 3`, `annotation: "p is const"`. Rendered:
 
 ```
 error: cannot write through const reference
@@ -80,8 +115,10 @@ error: cannot write through const reference
    |   ^^^ p is const
 ```
 
-`[§wac-diag-wide-3pp96ku]` When errors occur at higher line numbers, the gutter
-width adjusts so the `|` characters stay aligned:
+`[§wac-diag-wide-k4rn8wp]` When errors occur at higher line numbers, the gutter
+width adjusts so the `|` characters stay aligned. The compiler must emit
+`span: 7`, `annotation: "expected i32, found bool"`,
+`hint: "use \`(sum > 0) as i32\` to convert"`. Rendered:
 
 ```
 error: return: expected i32, found bool
@@ -151,7 +188,8 @@ error: expected ')'
    |                   ^ expected ')' to close argument list
 ```
 
-`[§wac-diag-parse-bad-type-m4jw9rk]` Invalid type:
+`[§wac-diag-parse-bad-type-n7qm3xf]` Invalid type. The compiler must emit
+`span: 3`, `annotation: "unknown type 'foo'"`. Rendered:
 
 ```
 error: expected type
@@ -173,6 +211,12 @@ error: expected field or method declaration
 
 The compiler returns an array of diagnostics — each with file, line,
 column, span length, message, and optional help text.
+
+Each `CompileError` must carry span, annotation, and help fields where
+specified by the diagnostic spec tags below. These fields are populated by
+the compiler phases (lex, parse, resolve, typecheck) — not added after the
+fact by a formatting layer. A diagnostic formatter can render them, but the
+structured data must originate from the compiler itself.
 
 ### Soundness guarantee
 

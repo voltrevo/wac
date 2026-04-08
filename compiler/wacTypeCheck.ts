@@ -644,6 +644,11 @@ function checkLval(
     case "lv-index": {
       const baseType = checkLval(lval.base, env, ctx, /* writing */ false);
       if (!baseType) return null;
+      // Strings are immutable — indexing for assignment is not allowed
+      if (typeEq(baseType, T_STR)) {
+        errAt(ctx, `strings are immutable — cannot assign to string index`, lval.line, lval.col);
+        return null;
+      }
       if (baseType.kind !== "array") {
         errAt(ctx, `type '${typeName(baseType)}' is not an array`, lval.line, lval.col);
         return null;
@@ -807,6 +812,14 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
     case "index": {
       const at = inferExpr(expr.expr, env, ctx);
       if (!at) return null;
+      // String indexing: s[i] → string (char at byte position)
+      if (typeEq(at, T_STR)) {
+        const it = inferExpr(expr.idx, env, ctx);
+        if (it && !typeEq(it, T_I32)) {
+          errAt(ctx, `string index must be i32, got ${typeName(it)}`, expr.idx.line, expr.idx.col);
+        }
+        return T_STR;
+      }
       if (at.kind !== "array") {
         errAt(ctx, `type '${typeName(at)}' is not an array`, expr.expr.line, expr.expr.col);
         return null;
@@ -910,12 +923,42 @@ function inferCall(
     const baseType = inferExpr(baseExpr, env, ctx);
     if (!baseType) return null;
 
-    // .len() on arrays
-    if (baseType.kind === "array" && methodName === "len") {
+    // .len() on arrays and strings
+    if ((baseType.kind === "array" || typeEq(baseType, T_STR)) && methodName === "len") {
       if (args.length !== 0) {
         errAt(ctx, `'len()' takes no arguments`, expr.line, expr.col);
       }
       return T_I32;
+    }
+
+    // String methods
+    if (typeEq(baseType, T_STR)) {
+      if (methodName === "slice") {
+        if (args.length !== 2) {
+          errAt(ctx, `'slice()' takes 2 arguments (start, end)`, expr.line, expr.col);
+          return null;
+        }
+        for (const arg of args) {
+          const at2 = inferExpr(arg, env, ctx);
+          if (at2 && !typeEq(at2, T_I32)) {
+            errAt(ctx, `'slice()' arguments must be i32, got ${typeName(at2)}`, arg.line, arg.col);
+          }
+        }
+        return T_STR;
+      }
+      if (methodName === "indexOf") {
+        if (args.length !== 1) {
+          errAt(ctx, `'indexOf()' takes 1 argument (needle)`, expr.line, expr.col);
+          return null;
+        }
+        const needleT = inferExpr(args[0], env, ctx);
+        if (needleT && !typeEq(needleT, T_STR)) {
+          errAt(ctx, `'indexOf()' argument must be string, got ${typeName(needleT)}`, args[0].line, args[0].col);
+        }
+        return T_I32;
+      }
+      errAt(ctx, `type 'string' has no method '${methodName}'`, callee.line, callee.col);
+      return null;
     }
 
     if (baseType.kind === "nullable") {
@@ -929,6 +972,14 @@ function inferCall(
       errAt(ctx, `type '${typeName(baseType)}' has no method '${methodName}'`,
         callee.line, callee.col);
       return null;
+    }
+
+    // Check if it's a funcref field (e.g. h.callback("arg"))
+    const fields2 = allFields(baseType.name, ctx.structMap);
+    const fnField = fields2.find(f => f.name === methodName && f.type.kind === "funcref");
+    if (fnField) {
+      const fr = fnField.type as { kind: "funcref"; params: WacType[]; ret: WacType };
+      return checkArgList(args, fr.params, fr.ret, expr, env, ctx);
     }
 
     const m = lookupMethod(baseType.name, methodName, ctx.structMap);
@@ -1170,6 +1221,25 @@ function checkBinaryOp(
   line: number, col: number,
   ctx: Ctx,
 ): WacType | null {
+  // String concatenation: string + string → string
+  if (op === "+" && typeEq(lt, T_STR)) {
+    if (!typeEq(rt, T_STR)) {
+      errAt(ctx, `type mismatch in '+': string and ${typeName(rt)} — both operands must be string`, line, col);
+      return null;
+    }
+    return T_STR;
+  }
+
+  // String comparison: string op string → bool
+  if ((op === "==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=") &&
+      typeEq(lt, T_STR)) {
+    if (!typeEq(rt, T_STR)) {
+      errAt(ctx, `type mismatch in '${op}': string and ${typeName(rt)}`, line, col);
+      return null;
+    }
+    return T_BOOL;
+  }
+
   // Arithmetic: same numeric type (not bool)
   if (op === "+" || op === "-" || op === "*" || op === "/" || op === "%") {
     if (!isNumeric(lt)) {
