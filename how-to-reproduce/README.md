@@ -71,7 +71,7 @@ original run did. Our experience was:
 
 1. **6 hours** — initial run with an earlier version of the spec. Produced the
    core compiler (lex, parse, resolve, typecheck, WasmGC emit, binary builder,
-   instantiation). 139 tests.
+   instantiation). 679 tests (139 spec tags + 540 unit tests).
 2. **1 hour 8 minutes** — told the agent "you missed some things, reread the
    spec" (without saying what). Added bindgen, diagnostics, strings. 734 tests.
 3. **25 minutes** — updated the spec with new requirements and bug-covering

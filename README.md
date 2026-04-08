@@ -57,7 +57,7 @@ export f64 run() {
 
 The [language spec](spec/) (21 markdown files) was written collaboratively by a human and AI. Then the compiler was implemented autonomously by Claude Sonnet from the spec alone, with zero user intervention.
 
-- **6 hours** — initial run: lex, parse, resolve, typecheck, WasmGC emit, binary builder, instantiation (139 tests)
+- **6 hours** — initial run: lex, parse, resolve, typecheck, WasmGC emit, binary builder, instantiation (679 tests)
 - **1 hour 8 minutes** — "you missed things, reread the spec": added bindgen, diagnostics, strings (734 tests)
 - **25 minutes** — spec updated, implement changes: fixed all identified bugs (749 tests)
 
