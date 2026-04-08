@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#11111b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="#11111b"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+
+  <!-- Syntax-colored code, left side, low opacity -->
+  <!-- indent unit: 17px (approx 2 chars in monospace 14px) -->
+  <g opacity="0.25" font-family="ui-monospace, monospace" font-size="14">
+    <text x="80" y="140"><tspan fill="#c084fc">export struct</tspan> <tspan fill="#22d3ee">Point</tspan> <tspan fill="#9ca3af">{</tspan></text>
+    <text x="97" y="162"><tspan fill="#22d3ee">f64</tspan> <tspan fill="#2dd4bf">x</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="97" y="184"><tspan fill="#22d3ee">f64</tspan> <tspan fill="#2dd4bf">y</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="97" y="216"><tspan fill="#22d3ee">f64</tspan> <tspan fill="#60a5fa" font-weight="bold">distanceSq</tspan><tspan fill="#9ca3af">(</tspan><tspan fill="#c084fc">const this</tspan><tspan fill="#9ca3af">,</tspan> <tspan fill="#22d3ee">Point</tspan> <tspan fill="#2dd4bf">other</tspan><tspan fill="#9ca3af">) {</tspan></text>
+    <text x="114" y="238"><tspan fill="#22d3ee">f64</tspan> <tspan fill="#2dd4bf">dx</tspan> <tspan fill="#fb923c">=</tspan> <tspan fill="#c084fc">this</tspan><tspan fill="#9ca3af">.</tspan><tspan fill="#e2e8f0">x</tspan> <tspan fill="#fb923c">-</tspan> <tspan fill="#e2e8f0">other</tspan><tspan fill="#9ca3af">.</tspan><tspan fill="#e2e8f0">x</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="114" y="260"><tspan fill="#22d3ee">f64</tspan> <tspan fill="#2dd4bf">dy</tspan> <tspan fill="#fb923c">=</tspan> <tspan fill="#c084fc">this</tspan><tspan fill="#9ca3af">.</tspan><tspan fill="#e2e8f0">y</tspan> <tspan fill="#fb923c">-</tspan> <tspan fill="#e2e8f0">other</tspan><tspan fill="#9ca3af">.</tspan><tspan fill="#e2e8f0">y</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="114" y="282"><tspan fill="#c084fc">return</tspan> <tspan fill="#e2e8f0">dx</tspan> <tspan fill="#fb923c">*</tspan> <tspan fill="#e2e8f0">dx</tspan> <tspan fill="#fb923c">+</tspan> <tspan fill="#e2e8f0">dy</tspan> <tspan fill="#fb923c">*</tspan> <tspan fill="#e2e8f0">dy</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="97" y="304"><tspan fill="#9ca3af">}</tspan></text>
+    <text x="80" y="326"><tspan fill="#9ca3af">}</tspan></text>
+  </g>
+
+  <!-- Right side code snippet -->
+  <g opacity="0.18" font-family="ui-monospace, monospace" font-size="14">
+    <text x="920" y="160"><tspan fill="#c084fc">struct</tspan> <tspan fill="#22d3ee">Node</tspan> <tspan fill="#9ca3af">{</tspan></text>
+    <text x="937" y="182"><tspan fill="#22d3ee">i32</tspan> <tspan fill="#2dd4bf">val</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="937" y="204"><tspan fill="#22d3ee">Node</tspan><tspan fill="#fb923c">?</tspan> <tspan fill="#2dd4bf">next</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="920" y="226"><tspan fill="#9ca3af">}</tspan></text>
+    <text x="920" y="258"><tspan fill="#c084fc">export</tspan> <tspan fill="#22d3ee">i32</tspan> <tspan fill="#60a5fa" font-weight="bold">sum</tspan><tspan fill="#9ca3af">(</tspan><tspan fill="#22d3ee">Node</tspan><tspan fill="#fb923c">?</tspan> <tspan fill="#2dd4bf">head</tspan><tspan fill="#9ca3af">) {</tspan></text>
+    <text x="937" y="280"><tspan fill="#c084fc">while</tspan> <tspan fill="#9ca3af">(</tspan><tspan fill="#e2e8f0">cur</tspan> <tspan fill="#c084fc">is not null</tspan><tspan fill="#9ca3af">) {</tspan></text>
+    <text x="954" y="302"><tspan fill="#e2e8f0">total</tspan> <tspan fill="#fb923c">+=</tspan> <tspan fill="#e2e8f0">cur</tspan><tspan fill="#fb923c">!</tspan><tspan fill="#9ca3af">.</tspan><tspan fill="#e2e8f0">val</tspan><tspan fill="#9ca3af">;</tspan></text>
+    <text x="937" y="324"><tspan fill="#9ca3af">}</tspan></text>
+    <text x="920" y="346"><tspan fill="#9ca3af">}</tspan></text>
+  </g>
+
+  <!-- Logo -->
+  <text x="640" y="280" text-anchor="middle" dominant-baseline="central"
+        font-family="ui-monospace, 'Cascadia Code', 'Fira Code', monospace"
+        font-size="120" font-weight="700" fill="#c084fc"
+        letter-spacing="-3">wac</text>
+
+  <!-- Accent bar -->
+  <rect x="490" y="345" width="300" height="4" rx="2" fill="#2e2e3e"/>
+  <rect x="490" y="345" width="150" height="4" rx="2" fill="#c084fc" opacity="0.5"/>
+
+  <!-- Tagline -->
+  <text x="640" y="395" text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="22" fill="#6b7280">
+    A C-family language for WebAssembly GC
+  </text>
+
+  <!-- Subtitle -->
+  <text x="640" y="432" text-anchor="middle"
+        font-family="system-ui, -apple-system, sans-serif"
+        font-size="15" fill="#4a4a5a">
+    pure TypeScript compiler · zero dependencies · ~6,000 lines
+  </text>
+</svg>

@@ -279,14 +279,34 @@ export function sumArray(
 export default function Landing() {
   return (
     <div style={s.page}>
+      {/* Gradient glow */}
+      <div style={{
+        position: "fixed", top: 0, left: 0, right: 0, height: 500,
+        background: "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(192,132,252,0.12) 0%, transparent 100%)",
+        pointerEvents: "none", zIndex: 0,
+      }} />
+
       {/* Hero */}
-      <h1 style={s.h1}>wac</h1>
-      <div style={s.tagline}>
+      <div style={{ textAlign: "center" }}>
+        <h1 style={{
+          display: "inline-block",
+          fontSize: 110,
+          fontWeight: 700,
+          fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', monospace",
+          margin: 0,
+          background: "linear-gradient(135deg, #d8b4fe 0%, #a855f7 30%, #6366f1 60%, #22d3ee 100%)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          letterSpacing: "-0.03em",
+        }}>wac</h1>
+      </div>
+      <div style={{ ...s.tagline, textAlign: "center" as const }}>
         A C-family language for WebAssembly GC. Structs, methods, arrays,
-        nullable refs, subtyping — compiled to real {tp(".wasm")} binaries.
+        nullable refs, subtyping.
       </div>
 
-      <div style={s.buttons}>
+      <div style={{ ...s.buttons, justifyContent: "center" }}>
         <a href="#/playground" style={s.btnPrimary}>Playground</a>
         <a href={GITHUB} target="_blank" rel="noopener" style={s.btnSecondary}>GitHub</a>
       </div>
