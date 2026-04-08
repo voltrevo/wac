@@ -430,7 +430,8 @@ export default function Landing() {
         </p>
         <p style={s.p}>
           Grand total: <strong>~7.5 hours</strong> of Claude Sonnet compute —
-          18% of the weekly quota on Claude Max 5x ($18).
+          18% of the weekly quota on Claude Max 5x (~$4.50).
+          On the 20x plan that would be roughly $2.25.
         </p>
         <p style={s.p}>
           The first pass had a few bugs — null as a constructor argument emitted
