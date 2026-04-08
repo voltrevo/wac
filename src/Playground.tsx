@@ -80,6 +80,15 @@ export default function Playground() {
     <div style={{ margin: "2rem", height: "calc(100vh - 4rem)", display: "flex", gap: 12, fontFamily: "system-ui", color: "#e2e8f0" }}>
       {treeOpen ? (
         <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+          <a href="#/" style={{
+            fontFamily: "ui-monospace, monospace",
+            fontSize: 18,
+            fontWeight: 700,
+            color: "#c084fc",
+            textDecoration: "none",
+            padding: "6px 10px",
+            flexShrink: 0,
+          }}>wac</a>
           <FileTree
             files={files}
             active={active}
