@@ -1,12 +1,12 @@
 import { HOME, type FileMap } from "./file-store";
 
-const e = (dir: string, file: string) => `${HOME}/examples/${dir}/${file}`;
+const p = (rel: string) => `${HOME}/examples/${rel}`;
 
 export type Example = {
   name: string;
   category: string;
   files: FileMap;
-  entry: string; // absolute path of the entry file
+  entry: string;
 };
 
 export const EXAMPLES: Example[] = [
@@ -14,9 +14,9 @@ export const EXAMPLES: Example[] = [
   {
     name: "Hello World",
     category: "Basics",
-    entry: e("hello-world", "main.wac"),
+    entry: p("hello-world.wac"),
     files: {
-      [e("hello-world", "main.wac")]: `export i32 answer() {
+      [p("hello-world.wac")]: `export i32 answer() {
   return 42;
 }
 `,
@@ -25,9 +25,9 @@ export const EXAMPLES: Example[] = [
   {
     name: "Arithmetic",
     category: "Basics",
-    entry: e("arithmetic", "main.wac"),
+    entry: p("arithmetic.wac"),
     files: {
-      [e("arithmetic", "main.wac")]: `export i32 compute(i32 a, i32 b) {
+      [p("arithmetic.wac")]: `export i32 compute(i32 a, i32 b) {
   return a * b + a - b;
 }
 `,
@@ -36,9 +36,9 @@ export const EXAMPLES: Example[] = [
   {
     name: "Floating Point",
     category: "Basics",
-    entry: e("floating-point", "main.wac"),
+    entry: p("floating-point.wac"),
     files: {
-      [e("floating-point", "main.wac")]: `export f64 circle_area(f64 radius) {
+      [p("floating-point.wac")]: `export f64 circle_area(f64 radius) {
   return 3.14159265358979 * radius * radius;
 }
 
@@ -53,9 +53,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "If / Else",
     category: "Control Flow",
-    entry: e("if-else", "main.wac"),
+    entry: p("if-else.wac"),
     files: {
-      [e("if-else", "main.wac")]: `export i32 classify(i32 x) {
+      [p("if-else.wac")]: `export i32 classify(i32 x) {
   if (x < 0) {
     return -1;
   } else if (x == 0) {
@@ -70,9 +70,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "While Loop",
     category: "Control Flow",
-    entry: e("while-loop", "main.wac"),
+    entry: p("while-loop.wac"),
     files: {
-      [e("while-loop", "main.wac")]: `export i32 collatz(i32 n) {
+      [p("while-loop.wac")]: `export i32 collatz(i32 n) {
   i32 steps = 0;
   while (n != 1) {
     if (n % 2 == 0) { n = n / 2; }
@@ -87,9 +87,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "For Loop",
     category: "Control Flow",
-    entry: e("for-loop", "main.wac"),
+    entry: p("for-loop.wac"),
     files: {
-      [e("for-loop", "main.wac")]: `export i32 factorial(i32 n) {
+      [p("for-loop.wac")]: `export i32 factorial(i32 n) {
   i32 result = 1;
   for (i32 i = 1; i <= n; i++) {
     result = result * i;
@@ -102,9 +102,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "Switch",
     category: "Control Flow",
-    entry: e("switch", "main.wac"),
+    entry: p("switch.wac"),
     files: {
-      [e("switch", "main.wac")]: `export i32 dayKind(i32 day) {
+      [p("switch.wac")]: `export i32 dayKind(i32 day) {
   switch (day) {
     case 0: return 0;
     case 6: return 0;
@@ -119,9 +119,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "GCD (Euclidean)",
     category: "Functions",
-    entry: e("gcd", "main.wac"),
+    entry: p("gcd.wac"),
     files: {
-      [e("gcd", "main.wac")]: `export i32 gcd(i32 a, i32 b) {
+      [p("gcd.wac")]: `export i32 gcd(i32 a, i32 b) {
   while (b != 0) {
     i32 t = b;
     b = a % b;
@@ -135,9 +135,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "Fibonacci",
     category: "Functions",
-    entry: e("fibonacci", "main.wac"),
+    entry: p("fibonacci.wac"),
     files: {
-      [e("fibonacci", "main.wac")]: `export i32 fib(i32 n) {
+      [p("fibonacci.wac")]: `export i32 fib(i32 n) {
   if (n < 2) { return n; }
   i32 a = 0;
   i32 b = 1;
@@ -154,9 +154,9 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "Power (Fast)",
     category: "Functions",
-    entry: e("power", "main.wac"),
+    entry: p("power.wac"),
     files: {
-      [e("power", "main.wac")]: `export i32 pow(i32 base, i32 exp) {
+      [p("power.wac")]: `export i32 pow(i32 base, i32 exp) {
   i32 result = 1;
   while (exp > 0) {
     if (exp % 2 == 1) { result = result * base; }
@@ -171,15 +171,15 @@ export f64 lerp(f64 a, f64 b, f64 t) {
   {
     name: "Multi-file Imports",
     category: "Functions",
-    entry: e("imports", "main.wac"),
+    entry: p("imports.wac"),
     files: {
-      [e("imports", "main.wac")]: `import { gcd, pow } from "./math.wac";
+      [p("imports.wac")]: `import { gcd, pow } from "./util/math.wac";
 
 export i32 test() {
   return gcd(48, 18) * pow(2, 3);
 }
 `,
-      [e("imports", "math.wac")]: `export i32 gcd(i32 a, i32 b) {
+      [p("util/math.wac")]: `export i32 gcd(i32 a, i32 b) {
   while (b != 0) {
     i32 t = b;
     b = a % b;
@@ -205,9 +205,9 @@ export i32 pow(i32 base, i32 exp) {
   {
     name: "Point Struct",
     category: "Structs",
-    entry: e("point", "main.wac"),
+    entry: p("point.wac"),
     files: {
-      [e("point", "main.wac")]: `export struct Point {
+      [p("point.wac")]: `export struct Point {
   f64 x;
   f64 y;
 
@@ -233,9 +233,9 @@ export f64 run() {
   {
     name: "Counter (Methods)",
     category: "Structs",
-    entry: e("counter", "main.wac"),
+    entry: p("counter.wac"),
     files: {
-      [e("counter", "main.wac")]: `export struct Counter {
+      [p("counter.wac")]: `export struct Counter {
   i32 count;
   const i32 id;
 
@@ -272,9 +272,9 @@ export i32 test() {
   {
     name: "Subtyping",
     category: "Structs",
-    entry: e("subtyping", "main.wac"),
+    entry: p("subtyping.wac"),
     files: {
-      [e("subtyping", "main.wac")]: `struct Shape { f64 x; f64 y; }
+      [p("subtyping.wac")]: `struct Shape { f64 x; f64 y; }
 
 struct Rect : Shape {
   f64 w;
@@ -313,9 +313,9 @@ export f64 run(f64 rectWidth, f64 rectHeight, f64 circleRadius) {
   {
     name: "Linked List",
     category: "Nullable Refs",
-    entry: e("linked-list", "main.wac"),
+    entry: p("linked-list.wac"),
     files: {
-      [e("linked-list", "main.wac")]: `import { LinkedList } from "./list.wac";
+      [p("linked-list.wac")]: `import { LinkedList } from "./util/list.wac";
 
 export i32 testPushBack() {
   LinkedList l = LinkedList.create();
@@ -343,7 +343,7 @@ export i32 testPopFront() {
   return first * 100 + l.len();
 }
 `,
-      [e("linked-list", "list.wac")]: `struct Node {
+      [p("util/list.wac")]: `struct Node {
   i32 val;
   Node? next;
 }
@@ -420,9 +420,9 @@ export struct LinkedList {
   {
     name: "Buffer (Growable)",
     category: "Data Structures",
-    entry: e("buffer", "main.wac"),
+    entry: p("buffer.wac"),
     files: {
-      [e("buffer", "main.wac")]: `import { Buffer } from "./buffer.wac";
+      [p("buffer.wac")]: `import { Buffer } from "./util/buffer.wac";
 
 // Push 20 bytes into a buffer starting with capacity 4.
 // It grows automatically. Returns last_value * 100 + length.
@@ -454,7 +454,7 @@ export i32 testPop() {
   return last * 100 + b.len;
 }
 `,
-      [e("buffer", "buffer.wac")]: `export struct Buffer {
+      [p("util/buffer.wac")]: `export struct Buffer {
   i8[] data;
   i32 len;
   i32 cap;
@@ -506,9 +506,9 @@ export i32 testPop() {
   {
     name: "Array Sum",
     category: "Arrays",
-    entry: e("array-sum", "main.wac"),
+    entry: p("array-sum.wac"),
     files: {
-      [e("array-sum", "main.wac")]: `export i32 sumArray(i32[] arr) {
+      [p("array-sum.wac")]: `export i32 sumArray(i32[] arr) {
   i32 total = 0;
   for (i32 i = 0; i < arr.len(); i++) {
     total += arr[i];
