@@ -1,0 +1,81 @@
+const STORAGE_KEY = "wac-files";
+
+export const HOME = "/home/wac";
+
+const DEFAULT_FILE = `export i32 gcd(i32 a, i32 b) {
+  while (b != 0) {
+    i32 t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
+}
+
+export i32 fib(i32 n) {
+  if (n < 2) { return n; }
+  i32 a = 0;
+  i32 b = 1;
+  for (i32 i = 2; i <= n; i++) {
+    i32 t = a + b;
+    a = b;
+    b = t;
+  }
+  return b;
+}
+`;
+
+export type FileMap = Record<string, string>;
+
+/** Convert an absolute path to a display path relative to HOME. */
+export function displayPath(abs: string): string {
+  const prefix = HOME + "/";
+  return abs.startsWith(prefix) ? abs.slice(prefix.length) : abs;
+}
+
+/** Convert a relative path to an absolute path under HOME. */
+export function absPath(rel: string): string {
+  return rel.startsWith("/") ? rel : HOME + "/" + rel;
+}
+
+/** Resolve a relative import path against a base file's absolute path. */
+export function resolveImport(base: string, rel: string): string {
+  const parts = base.slice(0, base.lastIndexOf("/") + 1).split("/").filter(Boolean);
+  for (const s of rel.split("/")) {
+    if (s === "..") parts.pop();
+    else if (s !== ".") parts.push(s);
+  }
+  return "/" + parts.join("/");
+}
+
+function migrate(files: FileMap): FileMap {
+  const prefix = HOME + "/";
+  const migrated: FileMap = {};
+  let needsMigration = false;
+  for (const [k, v] of Object.entries(files)) {
+    if (k.startsWith("/")) {
+      migrated[k] = v;
+    } else {
+      migrated[prefix + k] = v;
+      needsMigration = true;
+    }
+  }
+  if (needsMigration) saveFiles(migrated);
+  return migrated;
+}
+
+export function loadFiles(): FileMap {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Object.keys(parsed).length) {
+        return migrate(parsed as FileMap);
+      }
+    }
+  } catch { /* ignore corrupt data */ }
+  return { [HOME + "/main.wac"]: DEFAULT_FILE };
+}
+
+export function saveFiles(files: FileMap): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(files));
+}
