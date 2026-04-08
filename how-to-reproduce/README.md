@@ -35,13 +35,23 @@ Pursue goal.
 
 This tells Claude Code to read the worker prompt and follow it.
 
-### 4. Copy in the spec
+### 4. Initialize a git repo
+
+The worker prompt instructs the agent to make git commits, so a repo must
+exist:
+
+```sh
+cd /home/claude/workspaces/<your-workspace>
+git init && git commit --allow-empty -m "init"
+```
+
+### 5. Copy in the spec
 
 Copy the `spec/` directory from this repo into the workspace as the goal
 directory (e.g. `goals/wac/`). The spec contains 21 markdown files describing
 the language, plus example programs and spec tags that define testable behaviors.
 
-### 5. Launch Claude
+### 6. Launch Claude
 
 ```sh
 claude --dangerously-skip-permissions --model sonnet
@@ -61,7 +71,7 @@ sandboxed environment.
 On first run this requires interactive authentication. After that, the agent
 runs autonomously.
 
-### 6. Tell it to start
+### 7. Tell it to start
 
 Tell the agent to implement the goal:
 
