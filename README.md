@@ -6,7 +6,7 @@
 
 A C-family language for WebAssembly GC. Structs, methods, arrays, nullable refs, subtyping.
 
-**[Playground](https://voltrevo.github.io/wac/#/playground)** · **[Language spec](spec/)**
+**[Website](https://voltrevo.github.io/wac/)** · **[Language spec](spec/)**
 
 ## Pure TypeScript. Zero dependencies.
 
