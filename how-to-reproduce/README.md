@@ -15,7 +15,14 @@ and general-purpose worker instructions. Here's how to reproduce it.
 ### 1. Set up the sandbox
 
 Follow the [agent-sandbox README](https://github.com/voltrevo/agent-sandbox) to
-create a container. You'll get a Docker container with a workspace directory.
+create a container. Then create a workspace directory inside it:
+
+```sh
+mkdir -p /home/claude/workspaces/wac
+cd /home/claude/workspaces/wac
+```
+
+All paths below are relative to this directory.
 
 ### 2. Add worker-prompt.md
 
@@ -41,7 +48,6 @@ The worker prompt instructs the agent to make git commits, so a repo must
 exist:
 
 ```sh
-cd /home/claude/workspaces/<your-workspace>
 git init && git commit --allow-empty -m "init"
 ```
 
