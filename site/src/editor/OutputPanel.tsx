@@ -16,7 +16,7 @@ interface Props {
 function WasmView({ result }: { result: EditorCompileResult }) {
   if (!result.ok) {
     return (
-      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap" }}>
+      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
         {result.errors.join("\n")}
       </div>
     );
@@ -120,7 +120,7 @@ function BindgenView({ result }: { result: EditorCompileResult }) {
 
   if (!result.ok) {
     return (
-      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap" }}>
+      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
         {result.errors.join("\n")}
       </div>
     );
@@ -223,7 +223,7 @@ function FuncRunner({ func, files, fileName }: { func: WacExport; files: FileMap
 function RunView({ result, files, fileName }: { result: EditorCompileResult; files: FileMap; fileName: string }) {
   if (!result.ok) {
     return (
-      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap" }}>
+      <div style={{ padding: 12, color: "#f87171", fontSize: 13, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
         {result.errors.join("\n")}
       </div>
     );
