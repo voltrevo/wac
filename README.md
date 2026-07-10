@@ -53,18 +53,6 @@ export f64 run() {
 
 `wacBindgen` produces a self-contained `.ts` file with the wasm binary base64-encoded inline and typed wrapper functions. Zero runtime dependencies. Primitive arrays (`i32[]`, `f64[]`, etc.) automatically marshal between JS typed arrays and WasmGC arrays.
 
-## How it was built
-
-The [language spec](spec/) (21 markdown files) was written collaboratively by a human and AI. Then the compiler was implemented autonomously by Claude Sonnet from the spec combined with some general instructions, with zero user intervention. See [how to reproduce](how-to-reproduce/).
-
-- **6 hours** — initial run: lex, parse, resolve, typecheck, WasmGC emit, binary builder, instantiation (679 tests)
-- **1 hour 8 minutes** — "you missed things, reread the spec": added bindgen, diagnostics, strings (734 tests)
-- **25 minutes** — spec updated, implement changes: fixed all identified bugs (749 tests)
-
-Grand total: **~7.5 hours** of Claude Sonnet compute — 18% of the weekly quota on Claude Max 5x (~$4.50). On the 20x plan that would be roughly $2.25.
-
-In each case the agent was not told what was wrong — it figured it out from the spec.
-
 ## Development
 
 ```sh

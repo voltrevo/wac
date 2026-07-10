@@ -404,50 +404,6 @@ export default function Landing() {
         />
       </div>
 
-      {/* How it was built */}
-      <div style={s.section}>
-        <h2 style={s.h2}>How it was built</h2>
-        <p style={s.p}>
-          The <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener"
-          style={{ color: "#60a5fa", textDecoration: "none" }}>language spec</a> (21
-          markdown files covering types, structs, control flow, imports, errors,
-          etc.) was written collaboratively by a human and AI. Then the compiler
-          was implemented autonomously by Claude Sonnet from the spec combined
-          with some general instructions, with zero user intervention.{" "}
-          <a href={`${GITHUB}/tree/master/how-to-reproduce`} target="_blank" rel="noopener"
-          style={{ color: "#60a5fa", textDecoration: "none" }}>Full instructions to reproduce.</a>
-        </p>
-        <p style={s.p}>
-          The initial unsupervised run took <strong>6 hours</strong> and produced
-          the core compiler pipeline — lex, parse, resolve, typecheck, WasmGC
-          emit, binary builder, instantiation (679 tests). A follow-up run where
-          the only instruction was "you missed some things, reread the spec" took{" "}
-          <strong>1 hour 8 minutes</strong> and added bindgen, structured
-          diagnostics, and string support (734 tests). A final pass after
-          updating the spec took <strong>25 minutes</strong> and fixed all
-          identified bugs (749 tests). In each case the agent was not told what
-          was wrong — it figured it out from the spec.
-        </p>
-        <p style={s.p}>
-          Grand total: <strong>~7.5 hours</strong> of Claude Sonnet compute —
-          18% of the weekly quota on Claude Max 5x (~$4.50).
-          On the 20x plan that would be roughly $2.25.
-        </p>
-        <p style={s.p}>
-          The first pass had a few bugs — null as a constructor argument emitted
-          untyped refs, struct methods broke when mixing nullable reference and
-          primitive fields, and the parser didn't support unwrap ({op("!")}) on
-          the left side of assignment. All were caught by adding spec tags for
-          the expected behavior, then telling the agent "spec updated, update
-          the implementation." It fixed all of them without being told what was
-          wrong.
-        </p>
-        <p style={s.p}>
-          The compiler now produces rich structured diagnostics with span,
-          annotation, and help text — matching the spec's error format exactly.
-        </p>
-      </div>
-
       {/* Footer */}
       <div style={{ borderTop: "1px solid #2e2e3e", paddingTop: 24, display: "flex", gap: 24, fontSize: 13, color: "#6b7280" }}>
         <a href="#/playground" style={{ color: "#9ca3af", textDecoration: "none" }}>Playground</a>
