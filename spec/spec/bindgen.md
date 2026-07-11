@@ -91,14 +91,16 @@ export function fib(n: number): number {
   return (_exports.fib as CallableFunction)(n) as number;
 }
 
-export function circleArea(radius: number): number {
+export function circle_area(radius: number): number {
   return (_exports.circle_area as CallableFunction)(radius) as number;
 }
 ```
 
+Generated TypeScript names match the wac export name exactly.
+
 `[§wac-bind-prims-k4fn8wp]` Bindgen for `math.wac` produces a `.ts` file where
 `gcd(48, 18)` returns `6`, `fib(20)` returns `6765`, and
-`circleArea(5.0)` returns `78.53981633974483`.
+`circle_area(5.0)` returns `78.53981633974483`.
 
 ### Example: arrays
 
@@ -106,7 +108,7 @@ Input:
 
 ```wac
 // sort.wac
-export void bubbleSort(i32[] arr) {
+export i32[] bubbleSort(i32[] arr) {
   for (i32 i = 0; i < arr.len(); i++) {
     for (i32 j = 0; j < arr.len() - 1 - i; j++) {
       if (arr[j] > arr[j + 1]) {
@@ -116,6 +118,7 @@ export void bubbleSort(i32[] arr) {
       }
     }
   }
+  return arr;
 }
 
 export i32 sum(i32[] arr) {
@@ -139,11 +142,9 @@ const _instance = await WebAssembly.instantiate(_wasm);
 const _exports = _instance.instance.exports;
 
 export function bubbleSort(arr: Int32Array): Int32Array {
-  // copy Int32Array into wasm GC i32 array
   const wasmArr = _arrayToWasm_i32(arr);
-  (_exports.bubbleSort as CallableFunction)(wasmArr);
-  // copy back — sort mutates in place
-  return _arrayFromWasm_i32(wasmArr);
+  const result = (_exports.bubbleSort as CallableFunction)(wasmArr);
+  return _arrayFromWasm_i32(result as object);
 }
 
 export function sum(arr: Int32Array): number {
@@ -249,12 +250,21 @@ comment.
 
 ### Array copy semantics
 
-Arrays are copied at the boundary in both directions. The JS caller owns its
-typed array; the wasm module owns its GC array. Mutations inside wasm are not
-visible to JS unless the array is returned (copied back).
+Arrays are copied into wasm at the call boundary — the JS caller's typed
+array and wasm's GC array are separate copies, not a shared reference. There
+is no shared memory between JS and a wasm GC array, so bindgen never mirrors
+mutations back to the caller automatically: a `void`-returning function's
+array parameter is copied in, and whatever it does to that copy inside wasm
+is simply discarded once the call returns.
 
-For functions that mutate an array parameter (like `bubbleSort`), the bindgen
-returns the mutated copy. The original JS typed array is not modified.
+A function whose caller needs to observe a mutation must return the array
+explicitly — see `bubbleSort` above, which returns `arr` rather than being
+`void`. This applies uniformly regardless of how many array parameters a
+function takes: each array the caller needs back must appear in the return
+type, the same as any other value. (wac does not have multiple return
+values — a function needing to hand back more than one array should return
+a struct wrapping them, or expose multiple exported functions.)
 
 `[§wac-bind-arr-copy-j4wk7pm]` Array parameters are copied into wasm. The
-original typed array is not modified by wasm mutations.
+original typed array passed by the caller is never modified, regardless of
+what the wasm function does with its parameter.

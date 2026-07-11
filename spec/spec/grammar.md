@@ -39,7 +39,6 @@ block          = "{" , { statement } , "}" ;
 statement      = var_decl
                | assign_stmt
                | compound_stmt
-               | incr_stmt
                | if_stmt
                | while_stmt
                | for_stmt
@@ -58,19 +57,16 @@ assign_stmt    = lvalue , "=" , expr , ";" ;
 compound_stmt  = lvalue , compound_op , expr , ";" ;
 compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=" ;
 
-incr_stmt      = lvalue , ( "++" | "--" ) , ";" ;
-
 if_stmt        = "if" , "(" , expr , ")" , block , [ "else" , ( block | if_stmt ) ] ;
 
 while_stmt     = "while" , "(" , expr , ")" , block ;
 
 for_stmt       = "for" , "(" , [ for_init ] , ";" , [ expr ] , ";" , [ for_update ] , ")" , block ;
 for_init       = var_decl_no_semi | assign_stmt_no_semi ;
-for_update     = assign_stmt_no_semi | compound_stmt_no_semi | incr_stmt_no_semi ;
+for_update     = assign_stmt_no_semi | compound_stmt_no_semi | expr ;
 var_decl_no_semi     = [ "const" ] , type , IDENT , "=" , expr ;
 assign_stmt_no_semi  = lvalue , "=" , expr ;
 compound_stmt_no_semi = lvalue , compound_op , expr ;
-incr_stmt_no_semi    = lvalue , ( "++" | "--" ) ;
 
 do_while_stmt  = "do" , block , "while" , "(" , expr , ")" , ";" ;
 
@@ -109,12 +105,14 @@ mul_expr       = cast_expr , { ( "*" | "/" | "%" ) , cast_expr } ;
 cast_expr      = unary_expr , { ( "as" | "as!" | "as~" | "as@" ) , type } ;
 
 unary_expr     = ( "-" | "!" | "~" ) , unary_expr
+               | ( "++" | "--" ) , unary_expr                    (* prefix incr/decr: lvalue operand, evaluates to the new value *)
                | postfix_expr ;
 
 postfix_expr   = primary_expr , { postfix_op } ;
 postfix_op     = "." , IDENT , [ "(" , [ arg_list ] , ")" ]   (* method call or field access *)
                | "[" , expr , "]"                                (* index *)
-               | "!" ;                                           (* unwrap *)
+               | "!"                                             (* unwrap *)
+               | "++" | "--" ;                                   (* postfix incr/decr: lvalue operand, evaluates to the old value *)
 
 primary_expr   = INT_LITERAL
                | FLOAT_LITERAL

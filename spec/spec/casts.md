@@ -52,13 +52,36 @@ export i32 safeNarrow(i64 big) {
 `[§wac-narrow-ok-2ytx5qj]` `safeNarrow(42 as i64)` returns `42`.
 `[§wac-narrow-trap-z7te84b]` `safeNarrow(1000000000000)` traps.
 
+`as!` is defined for **every** numeric pair not covered by `as` above — the
+rule is always the same: succeed with the exact value, or trap. For
+int-to-int and float-to-int this means a range/fractional-part check; for
+int-to-float and float-to-float narrowing it means the source value must
+round-trip through the destination type unchanged (NaN is always considered
+exactly representable and never traps, regardless of payload bits):
+
+```wac
+export f32 exactNarrow(f64 x) {
+  return x as! f32;               // traps unless x has an exact f32 value
+}
+```
+
+`[§wac-narrow-f32-ok-h8fk3wq]` `exactNarrow(0.5)` returns `0.5` (0.5 is exact
+in f32). `[§wac-narrow-f32-trap-r5tn9wq]` `exactNarrow(0.1)` traps — 0.1 has
+no exact binary representation, so its nearest `f64` and nearest `f32` values
+differ.
+
 Complete checked conversions:
 
 ```
 i64  -> i32       traps if outside i32 range
 f64  -> i32       traps if fractional part or outside i32 range
-f64  -> i64       traps if fractional part or outside i64 range
 f32  -> i32       traps if fractional part or outside i32 range
+f64  -> i64       traps if fractional part or outside i64 range
+f32  -> i64       traps if fractional part or outside i64 range
+i32  -> f32       traps if the i32 value has no exact f32 representation
+i64  -> f32       traps if the i64 value has no exact f32 representation
+i64  -> f64       traps if the i64 value has no exact f64 representation
+f64  -> f32       traps if the f64 value has no exact f32 representation
 ```
 
 #### `as~` — nearest
@@ -86,22 +109,41 @@ export bool truthy(i32 x) {
 (clamped to i32 max). `saturate(-1000000000000)` returns `-2147483648`.
 `[§wac-truthy-cagp47u]` `truthy(0)` returns `false`. `truthy(42)` returns `true`.
 
+Like `as!`, `as~` is defined for every numeric pair not covered by `as` — never
+a gap, always either round-and-clamp (narrowing to an integer type) or
+round-to-nearest (narrowing to a smaller float, or widening an integer into a
+float that can't represent every value exactly):
+
+```wac
+export i64 roundBig(f64 x) {
+  return x as~ i64;
+}
+```
+
+`[§wac-round-i64-h3fm2wq]` `roundBig(3.7)` returns `4` (as `i64`).
+`roundBig(1.0e300)` returns `9223372036854775807` (clamped to `i64` max).
+
 Complete nearest conversions:
 
 ```
 i64  -> i32       clamp to i32 range
 f64  -> i32       round to nearest, clamp on overflow
 f32  -> i32       round to nearest, clamp on overflow
+f64  -> i64       round to nearest, clamp on overflow
+f32  -> i64       round to nearest, clamp on overflow
 f64  -> f32       round to nearest f32
 i64  -> f64       round to nearest f64
+i64  -> f32       round to nearest f32
 i32  -> f32       round to nearest f32
 i32  -> bool      0->false, nonzero->true
 ```
 
 #### `as@` — raw
 
-Minimum effort conversion, never traps. Truncates, keeps low bits. No rounding,
-no clamping. Using `as@` where `as` would work is a compile error.
+Minimum-effort conversion, never traps — but only defined where a genuinely
+distinct "raw" operation exists in the underlying instruction set. Using
+`as@` where `as` would work, or where no raw form exists (see below), is a
+compile error.
 
 ```wac
 export i32 truncBits(i64 big) {
@@ -109,7 +151,7 @@ export i32 truncBits(i64 big) {
 }
 
 export i32 truncFloat(f64 x) {
-  return x as@ i32;              // truncate toward zero
+  return x as@ i32;              // truncate toward zero, never traps
 }
 ```
 
@@ -117,22 +159,31 @@ export i32 truncFloat(f64 x) {
 (low 32 bits).
 `[§wac-raw-truncf-r8kf4mb]` `truncFloat(3.7)` returns `3`.
 `truncFloat(-2.3)` returns `-2`.
+`[§wac-raw-truncf-nan-w9fk2xq]` `truncFloat(0.0 / 0.0)` returns `0` — NaN never
+traps. `truncFloat(1.0e300)` returns `2147483647` — saturates to `i32` max,
+never traps.
 
 Complete raw conversions:
 
 ```
 i64  -> i32       keep low 32 bits
-f64  -> i32       truncate toward zero, wasm trunc semantics on overflow
-f32  -> i32       truncate toward zero, wasm trunc semantics on overflow
-f64  -> f32       round to nearest f32 (same as as~, no raw alternative)
-i64  -> f64       round to nearest f64 (same as as~, no raw alternative)
-i32  -> f32       round to nearest f32 (same as as~, no raw alternative)
-i32  -> bool      0->false, nonzero->true (same as as~)
+f64  -> i32       truncate toward zero, saturate to i32 min/max on overflow, 0 on NaN
+f32  -> i32       truncate toward zero, saturate to i32 min/max on overflow, 0 on NaN
 ```
 
-Where `as@` and `as~` produce the same result, either is accepted. The
-distinction matters for integer narrowing (truncate vs clamp) and float-to-int
-(truncate toward zero vs round to nearest).
+These are the only pairs with a raw form distinct from `as~`: integer
+narrowing keeps bits instead of clamping, and float-to-int truncates toward
+zero instead of rounding to nearest. Every other narrowing pair — `f64 ->
+f32`, `i64 -> f64`, `i32 -> f32`, and any conversion to `bool` — has no
+operation distinct from `as~`'s rounding, so `as@` is a compile error for
+those; use `as~` instead:
+
+```wac
+f64 x = 3.14;
+f32 y = x as@ f32;    // error: no raw conversion for f64 -> f32, use as~
+```
+
+`[§wac-raw-noalt-k3jf7wq]` `x as@ f32` is a compile error.
 
 #### Cast errors
 
@@ -241,6 +292,7 @@ The rule is simple: if it can trap, there's a `!`:
 as    — lossless: always exact, compile error if could lose info
 as!   — checked: exact or trap (numeric + reference downcast)
 as~   — nearest: best approximation, never traps (round, clamp)
-as@   — raw: minimum effort, never traps (truncate, keep low bits)
+as@   — raw: minimum effort, never traps; only int narrowing and float->int
+        truncation have a raw form — compile error elsewhere (use as~)
 !     — null unwrap, traps on null
 ```

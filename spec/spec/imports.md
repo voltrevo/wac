@@ -38,8 +38,17 @@ geometry$distance  geometry$midpoint  main$perimeter
 
 Mangling is purely internal. Wasm export entries use the original unqualified
 name and only include functions exported by the entry file (see
-[functions.md](functions.md)). Struct method mangling:
-`Counter$getCount`, `Counter$create`.
+[functions.md](functions.md)).
+
+Struct type identifiers and their method names are mangled the same way —
+prefixed with the file stem — so that two files can each declare a struct
+with the same name without colliding:
+
+```
+geometry$Point            (struct type identifier)
+geometry$Point$distanceSq  (method)
+main$Point                 (a distinct, unrelated Point declared in main.wac)
+```
 
 ### Diamond imports
 
@@ -146,3 +155,38 @@ export i32 test() {
 `[§wac-imp-coexist-p8km2v6]` `test()` returns `21` (6 + 15) — imported `compute`
 and local `compute2` coexist; imported names don't collide with same names in
 other (non-imported) files.
+
+### Same-name structs in different files
+
+Struct names follow the same rule as function names: duplicate struct names
+are only a compile error within the same file (see [naming.md](naming.md)).
+Two files that never import each other can each declare a struct with the
+same name — the mangled type identifiers and method names are kept distinct
+by the file-stem qualifier described above, so each keeps its own field
+layout and its own methods.
+
+```wac
+// a.wac
+struct Box { i32 x; i32 y; }
+```
+
+```wac
+// b.wac
+struct Box { i32 y; i32 x; }   // same name, different field order
+```
+
+```wac
+// main.wac
+import { Box as BoxA } from "./a.wac";
+import { Box as BoxB } from "./b.wac";
+
+export i32 test() {
+  BoxA a = BoxA(1, 2);   // a.x = 1, a.y = 2
+  BoxB b = BoxB(3, 4);   // b.y = 3, b.x = 4
+  return a.x * 100 + b.y;
+}
+```
+
+`[§wac-samename-struct-k7fn3wq]` `test()` returns `103` — same-name structs in
+different files don't collide; each keeps its own field layout and methods,
+mangled names are distinct.
