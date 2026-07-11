@@ -146,6 +146,38 @@ export i32 max(i32 a, i32 b) {
 
 `[§wac-ternary-bthswsh]` `max(3, 7)` returns `7`. `max(10, 2)` returns `10`.
 
+If the branches are reference types, the ternary's type is their **closest
+common ancestor** — found by walking each branch's chain of parent structs
+(`struct X : Parent`) and taking the nearest struct that appears in both
+chains. This covers the simple case where one branch's type is itself an
+ancestor of the other's (the ternary's type is just that ancestor), as well
+as sibling subtypes of a shared parent:
+
+```wac
+struct Shape { f64 x; f64 y; }
+struct Circle : Shape { f64 radius; }
+struct Rect : Shape { f64 w; f64 h; }
+
+export f64 pickParent(bool flag, Circle c, Shape s) {
+  Shape result = flag ? c : s;   // Circle's ancestor chain includes Shape directly
+  return result.x;
+}
+
+export f64 pickSiblings(bool flag, Circle c, Rect r) {
+  Shape result = flag ? c : r;   // Circle and Rect share Shape as their closest common ancestor
+  return result.x;
+}
+```
+
+`[§wac-ternary-subtype-h4jm9wq]` `pickParent(true, Circle(1.0, 2.0, 5.0), Shape(3.0, 4.0))`
+returns `1.0`. `pickParent(false, ...)` returns `3.0`.
+`[§wac-ternary-lca-q7fk3wn]` `pickSiblings(true, Circle(1.0, 2.0, 5.0), Rect(3.0, 4.0, 10.0, 20.0))`
+returns `1.0`. `pickSiblings(false, ...)` returns `3.0`.
+
+Branches with no common ancestor — including a primitive paired with a
+reference type, or two structs from entirely unrelated hierarchies — are a
+compile error.
+
 ### switch
 
 ```wac

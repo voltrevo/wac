@@ -111,17 +111,35 @@ export i32 compound() {
 
 `[§wac-compound-pw7qq7v]` `compound()` returns `40`.
 
-`++` and `--` are statements only, not expressions:
+`++` and `--` come in both prefix and postfix forms, and both are usable as
+expressions as well as standalone statements. The operand must be an lvalue
+(a variable, field, or array element) of type `i32` or `i64`. As in C:
+postfix evaluates to the value *before* the change, prefix evaluates to the
+value *after*:
 
 ```wac
-i32 x = 5;
-i32 y = x++;    // error: ++ is a statement, not an expression
+export i32 postIncr() {
+  i32 x = 5;
+  i32 y = x++;    // y = 5 (old value), x becomes 6
+  return y * 10 + x;
+}
+
+export i32 preIncr() {
+  i32 x = 5;
+  i32 z = ++x;    // x becomes 6, z = 6 (new value)
+  return z * 10 + x;
+}
 ```
 
-`[§wac-increxpr-cabck67]` `i32 y = x++` is a compile error.
+`[§wac-postincr-expr-n4kx8wq]` `postIncr()` returns `56` (`y=5`, `x=6`).
+`[§wac-preincr-expr-t8jm3wq]` `preIncr()` returns `66` (`z=6`, `x=6`).
+
+Used alone as a statement (`x++;` or `++x;`), the result value is simply
+discarded — this is the common case, e.g. in a `for` loop's update clause.
 
 Compound operators: `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `|=`,
-`^=`. Same type rules as the underlying operator.
+`^=`. Same type rules as the underlying operator. Compound assignment remains
+a statement only, not an expression.
 
 ### Full type summary
 

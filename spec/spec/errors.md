@@ -16,10 +16,16 @@ error: <message>
 
 ### Examples
 
-### Required CompileError fields
+### Required CompileDiagnostic fields
+
+Errors and warnings share one structured type, distinguished by `severity`.
+Not every diagnostic prevents compilation — a `severity: "warning"`
+diagnostic does not stop the compiler from producing a valid wasm binary;
+warnings are returned alongside a *successful* compile, not instead of one:
 
 ```typescript
-type CompileError = {
+type CompileDiagnostic = {
+  severity: "error" | "warning";
   message: string;
   file: string;
   line: number;
@@ -29,13 +35,29 @@ type CompileError = {
   annotation?: string;     // text after the underline (e.g. "expected i32, found f64")
   hint?: string;           // help text (e.g. "use `as!` for checked conversion")
 };
+
+type CompileResult =
+  | { ok: true;  compiled: WacCompiled; diagnostics: CompileDiagnostic[] }
+  | { ok: false; diagnostics: CompileDiagnostic[] };
 ```
+
+`ok` is `false` if and only if at least one diagnostic has
+`severity: "error"` — a successful compile's diagnostics are therefore
+always `severity: "warning"` (the array may be empty). `diagnostics` is
+never omitted; a clean compile with nothing to report still returns
+`diagnostics: []`.
+
+Unless a diagnostic spec tag says otherwise, every tag in this document
+describes an error-severity (`severity: "error"`) diagnostic. This spec does
+not mandate any specific warning today — individual phases may introduce
+them over time, each with its own diagnostic spec tag, following the same
+rules as errors below.
 
 ### Diagnostic spec tags
 
 Each tag below specifies the exact diagnostic the compiler must emit,
 including span width, annotation text, and help text where shown. These
-must be present on the `CompileError` objects returned by `wacCompile`,
+must be present on the `CompileDiagnostic` objects returned by `wacCompile`,
 not just in formatted output.
 
 `[§wac-diag-bool-r8kn4wp]` Given:
@@ -48,7 +70,7 @@ export i32 bad(i32 x) {
 }
 ```
 
-The compiler must emit a `CompileError` with `span: 1`,
+The compiler must emit a `CompileDiagnostic` with `span: 1`,
 `annotation: "expected bool, found i32"`,
 `hint: "use a comparison: if (x != 0) { ... }"`. Rendered:
 
@@ -142,6 +164,35 @@ error: incompatible argument type
  15 |     );
 ```
 
+### Lexical errors
+
+`[§wac-diag-lex-unterm-str-m9fk2wq]` Unterminated string literal — the
+compiler must emit a `CompileDiagnostic` with `phase: "lex"`, pointing at the
+opening quote:
+
+```
+error: unterminated string literal
+  --> main.wac:2:10
+   |
+ 2 |   return "hello;
+   |          ^ string literal is never closed
+```
+
+`[§wac-diag-lex-unterm-comment-r4jn8xq]` Unterminated block comment — the
+compiler must emit a `CompileDiagnostic` with `phase: "lex"`, pointing at the `/*`
+that opens the comment:
+
+```
+error: unterminated block comment
+  --> main.wac:2:3
+   |
+ 2 |   /* oops, forgot to close
+   |   ^ block comment is never closed
+```
+
+Both are lex-phase errors: the lexer must never emit a token for a string or
+comment that runs off the end of the file without a diagnostic.
+
 ### Parse errors
 
 `[§wac-diag-parse-unexpected-q3kn8wp]` Unexpected token:
@@ -212,7 +263,7 @@ error: expected field or method declaration
 The compiler returns an array of diagnostics — each with file, line,
 column, span length, message, and optional help text.
 
-Each `CompileError` must carry span, annotation, and help fields where
+Each `CompileDiagnostic` must carry span, annotation, and help fields where
 specified by the diagnostic spec tags below. These fields are populated by
 the compiler phases (lex, parse, resolve, typecheck) — not added after the
 fact by a formatting layer. A diagnostic formatter can render them, but the
