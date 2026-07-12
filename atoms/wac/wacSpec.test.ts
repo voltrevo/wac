@@ -2331,7 +2331,7 @@ function wasmStringToJs(exports: WebAssembly.Exports, wa: unknown): string {
   return new TextDecoder().decode(bytes);
 }
 
-Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20)=6765, circleArea(5)=~78.54", async () => {
+Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20)=6765, circle_area(5)=~78.54", async () => {
   const r = wacCompile(new Map([["math.wac", MATH_SRC]]), "math.wac");
   if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
 
@@ -2339,7 +2339,7 @@ Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function gcd(a: number, b: number): number"), true, "gcd wrapper");
   eq(ts.includes("function fib(n: number): number"), true, "fib wrapper");
-  eq(ts.includes("function circleArea(radius: number): number"), true, "circleArea wrapper");
+  eq(ts.includes("function circle_area(radius: number): number"), true, "circle_area wrapper (verbatim, no camelCase renaming)");
 
   // Verify underlying wasm behavior (same wasm embedded in bindgen output)
   const inst = await wacInstance(r.compiled);

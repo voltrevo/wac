@@ -127,8 +127,8 @@ function genWrapper(exp: WacExport): WrapperResult {
     return { skip: true, reason: `${exp.name}() — return type '${exp.ret}' not yet supported in bindgen` };
   }
 
-  // JS wrapper name uses camelCase; wasm export name stays as-is
-  const jsName = toCamelCase(exp.name);
+  // JS wrapper name matches the wac export name verbatim (no renaming)
+  const jsName = exp.name;
 
   // Build TypeScript parameter list
   const tsParams = exp.params.map(p => `${p.name}: ${tsType(p.type)!}`).join(", ");
@@ -194,11 +194,6 @@ function genWrapper(exp: WacExport): WrapperResult {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-
-/** Convert a snake_case or kebab-case name to camelCase. */
-function toCamelCase(name: string): string {
-  return name.replace(/[_-]([a-z0-9])/g, (_, c) => c.toUpperCase());
-}
 
 /**
  * Generate a self-contained TypeScript file that wraps a compiled wac module.
