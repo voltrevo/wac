@@ -179,7 +179,7 @@ function hasDefault(
   switch (t.kind) {
     case "prim":     return t.name !== "void" && t.name !== "null";
     case "nullable": return true;
-    case "array":    return true;  // array of T defaults to all-null/zero
+    case "array":    return false; // non-null array ref has no default (like a non-null struct ref)
     case "struct":   return structHasDefault(t.name, structMap, visiting);
     case "funcref":  return false;
   }

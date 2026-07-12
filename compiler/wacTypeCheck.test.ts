@@ -1085,10 +1085,17 @@ Deno.test("wacTypeCheck: lv-field unknown field on struct is error", () => {
   export void bad(P p) { p.z = 1; }`, "no field");
 });
 
-// ── struct with array field has default ──────────────────────────────────────
+// ── struct with a non-null array field has no default ────────────────────────
+// (a non-null array ref has no default value, same as a non-null struct ref —
+// see structs.md and the audit-10 regression test in wacSpec.test.ts)
 
-Deno.test("wacTypeCheck: struct with array field has default", () => {
-  ok(`struct S { i32[] items; }
+Deno.test("wacTypeCheck: struct with non-null array field has no default", () => {
+  fail(`struct S { i32[] items; }
+  export S bad() { return S(); }`, "no default");
+});
+
+Deno.test("wacTypeCheck: struct with nullable array field has default", () => {
+  ok(`struct S { i32[]? items; }
   export S ok() { return S(); }`);
 });
 
