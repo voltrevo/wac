@@ -1299,15 +1299,19 @@ Deno.test("wasmBuildBin: nested array type registration", () => {
 // ── as@ raw cast ───────────────────────────────────────────────────────────────
 
 Deno.test("wasmBuildBin: as@ raw casts", async () => {
+  // NOTE: f64 as@ f32 is intentionally not exercised here — it's no longer a
+  // valid raw cast (no raw form distinct from as~ exists for float-to-float
+  // narrowing; see casts.md and [§wac-raw-noalt-k3jf7wq]). This file's inst()
+  // helper bypasses the type checker, so it can't demonstrate the rejection
+  // itself — see wacSpec.test.ts for that.
   const e = await inst(`
     export i32 i64Raw(i64 a) { return a as@ i32; }
     export i32 f64Raw(f64 a) { return a as@ i32; }
     export i32 f32Raw(f32 a) { return a as@ i32; }
-    export f32 f64ToF32Raw(f64 a) { return a as@ f32; }
   `);
   // i64 as@ i32: takes low 32 bits
   eq(e.i64Raw(5n), 5, "i64 raw->i32");
-  // f64 raw: reinterpret bits as i32 (first 32 bits of double)
+  // f64 raw: truncate toward zero, never traps
   // Just check it doesn't crash
   const r = e.f64Raw(0.0);
   if (typeof r !== "number") throw new Error("expected number");
