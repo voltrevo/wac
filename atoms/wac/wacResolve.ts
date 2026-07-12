@@ -222,6 +222,10 @@ export function wacResolve(
           err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
           continue;
         }
+        if (found.kind === "struct" && !found.entry.structDecl.exported) {
+          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
+          continue;
+        }
         if (scope.has(alias)) {
           err(`duplicate name '${alias}' (from import)`, filePath, line, col);
           continue;
