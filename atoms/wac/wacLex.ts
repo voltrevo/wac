@@ -78,10 +78,15 @@ export function wacLex(source: string): LexResult {
         while (pos < source.length && peek() !== "\n") advance();
       } else if (ch === "/" && peek(1) === "*") {
         // Block comment
+        const startLine = line, startCol = col();
         advance(); advance();
+        let closed = false;
         while (pos < source.length) {
-          if (peek() === "*" && peek(1) === "/") { advance(); advance(); break; }
+          if (peek() === "*" && peek(1) === "/") { advance(); advance(); closed = true; break; }
           advance();
+        }
+        if (!closed) {
+          errors.push({ message: `unterminated block comment`, line: startLine, col: startCol });
         }
       } else {
         break;
@@ -96,9 +101,10 @@ export function wacLex(source: string): LexResult {
   function lexString(startLine: number, startCol: number): void {
     let result = "";
     advance(); // consume opening quote
+    let closed = false;
     while (pos < source.length) {
       const ch = peek();
-      if (ch === '"') { advance(); break; }
+      if (ch === '"') { advance(); closed = true; break; }
       if (ch === "\\") {
         advance();
         const esc = advance();
@@ -116,6 +122,9 @@ export function wacLex(source: string): LexResult {
       } else {
         result += advance();
       }
+    }
+    if (!closed) {
+      errors.push({ message: `unterminated string literal`, line: startLine, col: startCol });
     }
     emit("string", result, startLine, startCol);
   }
