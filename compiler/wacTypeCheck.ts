@@ -1445,8 +1445,13 @@ function checkCast(
   if (isNarrowingNumericCast(fn, tn)) {
     if (op === "as") {
       errAt(ctx, `'${fn}' -> '${tn}' is lossy — use 'as!', 'as~', or 'as@'`, line, col);
+    } else if (op === "as@" && !isRawNumericCast(fn, tn)) {
+      const totalSpan = casteeSpan + 1 + op.length + 1 + tn.length;
+      errAt(ctx, `no raw conversion for '${fn}' -> '${tn}'`, line, col, totalSpan,
+        `${fn} -> ${tn} has no distinct raw form`,
+        `use \`as~\` instead`);
     }
-    return to;  // as!, as~, as@ are all valid for narrowing
+    return to;  // as! and as~ are valid for all narrowing pairs; as@ only where isRawNumericCast
   }
 
   errAt(ctx, `no valid cast from '${fn}' to '${tn}'`, line, col);
@@ -1460,6 +1465,16 @@ function isLosslessNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "f32"    && tn === "f64")   ||
          (fn === "bool"   && tn === "i32")   ||
          (fn === "i31ref" && tn === "i32");   // 31 bits always fit in 32
+}
+
+/** Pairs where `as@` has a genuinely distinct raw/bit-level form from `as~`
+ *  (int narrowing keeps bits; float->int truncates toward zero). Every other
+ *  narrowing pair has no raw form — `as@` is a compile error there. */
+function isRawNumericCast(fn: string | null, tn: string | null): boolean {
+  if (!fn || !tn) return false;
+  return (fn === "i64" && tn === "i32") ||
+         (fn === "f64" && tn === "i32") ||
+         (fn === "f32" && tn === "i32");
 }
 
 function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {

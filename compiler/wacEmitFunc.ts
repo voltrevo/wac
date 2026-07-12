@@ -783,12 +783,13 @@ class FuncEmitter {
       if (from === "i32" && to === "f32")  { this.emit(0xB2); return; }
       if (from === "i32" && to === "bool") { this.emit(0x41, 0x00, 0x47); return; } // i32.const 0; i32.ne -> canonical 0/1
     }
-    // Raw (as@)
+    // Raw (as@): only where a genuinely distinct raw form exists (int narrowing
+    // keeps bits; float->int truncates toward zero) — the type checker rejects
+    // every other pair (no "same as as~" fallback; see isRawNumericCast).
     if (op === "as@") {
-      if (from === "i64" && to === "i32")  { this.emit(0xA7); return; }
-      if (from === "f64" && to === "i32")  { this.emit(0xAA); return; }
-      if (from === "f32" && to === "i32")  { this.emit(0xA8); return; }
-      if (from === "f64" && to === "f32")  { this.emit(0xB6); return; }
+      if (from === "i64" && to === "i32")  { this.emit(0xA7); return; }                 // i32.wrap_i64 (keep low bits)
+      if (from === "f64" && to === "i32")  { this.emit(0xFC, 0x02); return; }           // i32.trunc_sat_f64_s (toward zero, saturate, never traps)
+      if (from === "f32" && to === "i32")  { this.emit(0xFC, 0x00); return; }           // i32.trunc_sat_f32_s
     }
   }
 
