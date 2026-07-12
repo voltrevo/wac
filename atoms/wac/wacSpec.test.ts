@@ -2838,3 +2838,493 @@ Deno.test("[§wac-ll-front-back-q8kn2wp] push_front(10) push_back(20) → front*
   return l.front() * 100 + l.back(); }`);
   eq(inst.call("testFrontBack", []), 1020, "result == 1020");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Audit regression tests (2026-07-11)
+//
+// Added via TDD from a compiler-correctness audit, after the spec was
+// updated to resolve every design question the audit raised (see
+// notes/audit-*.md and notes/spec-changes-applied.md in the repo root).
+// Each test asserts the now-spec-compliant behavior and is EXPECTED TO FAIL
+// against the current implementation — that's intentional. Do not edit
+// these tests to make them pass; fix atoms/wac/*.ts instead, one at a time.
+//
+// A few fields referenced below (CompileDiagnostic.contextStart, .severity,
+// CompileResult.diagnostics) don't exist on the real types yet, so those
+// specific tests use `DiagError`/`any` casts to keep this file type-checking
+// while still exercising real behavior. Drop the casts once the real types
+// are migrated.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── audit-01 — same-name structs in different files must not collide ───────
+
+Deno.test("[§wac-samename-struct-k7fn3wq] same-name structs in different files don't collide", async () => {
+  // NOTE: field access alone doesn't trigger this bug — wasmBuildBin.ts's
+  // structFields lookup already has an `@<typeIndex>`-keyed fallback that
+  // happens to route around the bare-name collision for plain field access.
+  // The collision is in *method* mangling (`StructName$methodName` with no
+  // file-stem qualifier) — verified empirically against the real compiler
+  // before writing this test.
+  const files = new Map([
+    ["a.wac", `export struct Box { i32 v; i32 get(const this) { return this.v * 2; } }`],
+    ["b.wac", `export struct Box { i32 v; i32 get(const this) { return this.v * 3; } }`],
+    ["main.wac", `
+      import { Box as BoxA } from "./a.wac";
+      import { Box as BoxB } from "./b.wac";
+      export i32 test() {
+        BoxA a = BoxA(10);
+        BoxB b = BoxB(10);
+        return a.get() * 100 + b.get();
+      }
+    `],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  if (!r.ok) throw new Error(`should compile: ${r.errors.map(e => e.message).join("; ")}`);
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("test", []), 2030, "a.get()=20 (v*2), b.get()=30 (v*3) -> 20*100+30=2030, each struct keeps its own method");
+});
+
+// ── audit-02 — block-scope shadowing must not leak past if/while/switch/for ─
+
+Deno.test("(audit-02) shadowing inside an if-body doesn't corrupt the outer variable", async () => {
+  const inst = await run(`
+    export i32 shadowIf(bool flag) {
+      i32 x = 1;
+      if (flag) { i32 x = 2; x = 3; }
+      return x;
+    }
+  `);
+  eq(inst.call("shadowIf", [true]), 1, "outer x is untouched after the if block ends");
+});
+
+Deno.test("(audit-02) shadowing inside a while-body doesn't corrupt the outer variable", async () => {
+  const inst = await run(`
+    export i32 shadowWhile() {
+      i32 x = 1;
+      i32 i = 0;
+      while (i < 1) {
+        i32 x = 101;
+        x = 202;
+        i = i + 1;
+      }
+      return x;
+    }
+  `);
+  eq(inst.call("shadowWhile", []), 1, "outer x is untouched after the while block ends");
+});
+
+Deno.test("(audit-02) shadowing inside a switch-case doesn't corrupt the outer variable", async () => {
+  const inst = await run(`
+    export i32 shadowSwitch() {
+      i32 x = 1;
+      switch (0) {
+        case 0: {
+          i32 x = 1000;
+          x = 2000;
+          break;
+        }
+      }
+      return x;
+    }
+  `);
+  eq(inst.call("shadowSwitch", []), 1, "outer x is untouched after the switch ends");
+});
+
+Deno.test("(audit-02) shadowing a for-loop's own control variable inside its body doesn't corrupt the loop", async () => {
+  const inst = await run(`
+    export i32 shadowForBody() {
+      i32 count = 0;
+      for (i32 i = 0; i < 5; i++) {
+        i32 i = 100;
+        count = count + 1;
+        if (count > 20) { break; }
+      }
+      return count;
+    }
+  `);
+  eq(inst.call("shadowForBody", []), 5, "loop runs exactly 5 times, not corrupted into a runaway loop");
+});
+
+// ── audit-03 — deep const must survive an accessor chain and a local alias ──
+
+Deno.test("(audit-03) const is deep through a const-returning accessor method", () => {
+  err(`
+    struct Inner { i32 val; void mutate(this) { this.val = 1; } }
+    struct Outer {
+      Inner inner;
+      Inner getInner(const this) { return this.inner; }
+      void tryMutate(const this) { this.getInner().mutate(); }
+    }
+    export void test() {}
+  `);
+});
+
+Deno.test("(audit-03) const is deep through a local alias of this", () => {
+  err(`
+    struct Counter {
+      i32 count;
+      void mutate(this) { this.count = 99; }
+      i32 tryMutate(const this) {
+        Counter c = this;
+        c.mutate();
+        return this.count;
+      }
+    }
+    export void test() {}
+  `);
+});
+
+// ── audit-04 — ternary types to the closest common ancestor ────────────────
+
+Deno.test("[§wac-ternary-subtype-h4jm9wq] ternary widens a subtype branch to its parent", async () => {
+  const inst = await run(`
+    struct Shape { f64 x; f64 y; }
+    struct Circle : Shape { f64 radius; }
+    export f64 pickParent(bool flag, f64 cx, f64 cy, f64 r, f64 sx, f64 sy) {
+      Circle c = Circle(cx, cy, r);
+      Shape s = Shape(sx, sy);
+      Shape result = flag ? c : s;
+      return result.x;
+    }
+  `);
+  eq(inst.call("pickParent", [true, 1.0, 2.0, 5.0, 3.0, 4.0]), 1.0, "flag=true picks Circle, widened to Shape.x=1.0");
+  eq(inst.call("pickParent", [false, 1.0, 2.0, 5.0, 3.0, 4.0]), 3.0, "flag=false picks Shape directly, x=3.0");
+});
+
+Deno.test("[§wac-ternary-lca-q7fk3wn] ternary types sibling subtypes to their closest common ancestor", async () => {
+  const inst = await run(`
+    struct Shape { f64 x; f64 y; }
+    struct Circle : Shape { f64 radius; }
+    struct Rect : Shape { f64 w; f64 h; }
+    export f64 pickSiblings(bool flag, f64 cx, f64 cy, f64 r, f64 rx, f64 ry, f64 w, f64 h) {
+      Circle c = Circle(cx, cy, r);
+      Rect rect = Rect(rx, ry, w, h);
+      Shape result = flag ? c : rect;
+      return result.x;
+    }
+  `);
+  eq(inst.call("pickSiblings", [true, 1.0, 2.0, 5.0, 3.0, 4.0, 10.0, 20.0]), 1.0, "flag=true picks Circle, common ancestor Shape.x=1.0");
+  eq(inst.call("pickSiblings", [false, 1.0, 2.0, 5.0, 3.0, 4.0, 10.0, 20.0]), 3.0, "flag=false picks Rect, common ancestor Shape.x=3.0");
+});
+
+// ── audit-05 — as@ never traps where a raw form exists; compile error otherwise ─
+
+Deno.test("[§wac-raw-truncf-nan-w9fk2xq] as@ float->int never traps on NaN or overflow", async () => {
+  const inst = await run(`
+    export i32 truncFloatNaN() { return (0.0 / 0.0) as@ i32; }
+    export i32 truncFloatOverflow() { return 1.0e300 as@ i32; }
+  `);
+  eq(inst.call("truncFloatNaN", []), 0, "NaN as@ i32 == 0, never traps");
+  eq(inst.call("truncFloatOverflow", []), 2147483647, "overflow saturates to i32 max, never traps");
+});
+
+Deno.test("[§wac-raw-noalt-k3jf7wq] as@ is a compile error where no raw form exists (f64 -> f32)", () => {
+  err(`
+    export f32 noAlt(f64 x) { return x as@ f32; }
+  `);
+});
+
+// ── audit-06 — as!/as~ are complete for every non-lossless numeric pair ─────
+
+Deno.test("[§wac-narrow-f32-ok-h8fk3wq] [§wac-narrow-f32-trap-r5tn9wq] f64 as! f32 is exact-value-or-trap", async () => {
+  const inst = await run(`
+    export f32 exactNarrow(f64 x) { return x as! f32; }
+  `);
+  eq(inst.call("exactNarrow", [0.5]), 0.5, "0.5 is exact in f32, no trap");
+  traps(() => inst.call("exactNarrow", [0.1]), "0.1 has no exact f32 representation, must trap");
+});
+
+Deno.test("[§wac-round-i64-h3fm2wq] f64 as~ i64 rounds to nearest and clamps on overflow", async () => {
+  const inst = await run(`
+    export i64 roundBig(f64 x) { return x as~ i64; }
+  `);
+  eq(inst.call("roundBig", [3.7]), 4n, "rounds to nearest i64");
+  eq(inst.call("roundBig", [1.0e300]), 9223372036854775807n, "clamps to i64 max, never traps");
+});
+
+// ── audit-07 — nullable primitives must produce valid, instantiable wasm ───
+
+Deno.test("(audit-07) a boxed literal returned as a nullable primitive instantiates and runs", async () => {
+  const inst = await run(`
+    export i32? mk() { return 5; }
+  `);
+  eq(inst.call("mk", []), 5, "mk() returns the boxed value 5");
+});
+
+// ── audit-08 — a bare null call argument must not miscompile ───────────────
+
+Deno.test("(audit-08) sum(null) from spec/examples.md example 2 compiles and instantiates", async () => {
+  const inst = await run(`
+    struct Node {
+      i32 val;
+      Node? next;
+      Node create(i32 val) { Node n = Node(); n.val = val; return n; }
+    }
+    export i32 sum(Node? head) {
+      i32 total = 0;
+      Node? cur = head;
+      while (cur is not null) {
+        total += cur!.val;
+        cur = cur!.next;
+      }
+      return total;
+    }
+    export i32 testNullArg() { return sum(null); }
+  `);
+  eq(inst.call("testNullArg", []), 0, "sum(null) == 0");
+});
+
+// ── audit-09 — exporting a function with an anyref[] parameter must not corrupt the module ─
+
+Deno.test("(audit-09) sumBoxed(anyref[]) from spec/examples.md example 6 compiles and instantiates", async () => {
+  const inst = await run(`
+    export i32 sumBoxed(anyref[] items) {
+      i32 total = 0;
+      for (i32 i = 0; i < items.len(); i++) {
+        if (items[i] is i31ref) {
+          total += items[i] as! i31ref as i32;
+        }
+      }
+      return total;
+    }
+    export i32 testSumBoxed() {
+      anyref[] items = anyref[](10 as! i31ref, 20 as! i31ref, 30 as! i31ref);
+      return sumBoxed(items);
+    }
+  `);
+  eq(inst.call("testSumBoxed", []), 60, "sumBoxed({10,20,30}) == 60");
+});
+
+// ── audit-10 — a non-nullable array field has no default value ─────────────
+// NOTE: not backed by an explicit new spec tag — inferred from structs.md's
+// existing "non-null recursive reference has no default" rule applied
+// consistently to non-null array fields. Flag to the user in case a
+// different resolution (e.g. defaulting to a zero-length array) is wanted.
+
+Deno.test("(audit-10) a struct with a non-null array field has no default value", () => {
+  err(`
+    struct Foo { i32[] data; }
+    export void test() { Foo f = Foo(); }
+  `);
+});
+
+// ── audit-11 — switch break must not count as "returns a value" ────────────
+
+Deno.test("(audit-11) a switch case ending in break is still a missing return", () => {
+  err(`
+    i32 f(i32 x) {
+      switch (x) {
+        case 0: { break; }
+        default: { return 1; }
+      }
+    }
+    export void test() {}
+  `);
+});
+
+// ── audit-12 — `is Type ? ident : ident` must parse as a ternary ───────────
+
+Deno.test("(audit-12) is-test followed by a ternary with identifier branches parses correctly", async () => {
+  const inst = await run(`
+    export i32 pick(anyref x, i32 y, i32 z) {
+      return x is i31ref ? y : z;
+    }
+    export i32 testPick() { return pick(5 as! i31ref, 10, 20); }
+  `);
+  eq(inst.call("testPick", []), 10, "x is i31ref is true, so y (10) is picked");
+});
+
+// ── audit-13 / audit-14 — unterminated string/comment must be lex errors ───
+
+Deno.test("[§wac-diag-lex-unterm-str-m9fk2wq] unterminated string literal is a lex-phase error", () => {
+  const src = `export i32 f() { string s = "hello; return 1; }`;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, false, "should fail to compile");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.phase, "lex", "should be a lex-phase error");
+  eq(/unterminated/i.test(e.message) && /string/i.test(e.message), true, "message should mention unterminated string");
+});
+
+Deno.test("[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is a lex-phase error", () => {
+  const src = `export i32 f() { return 1; }\n/* oops, forgot to close`;
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, false, "should fail to compile");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.phase, "lex", "should be a lex-phase error");
+  eq(/unterminated/i.test(e.message) && /comment/i.test(e.message), true, "message should mention unterminated comment");
+});
+
+// ── audit-16 — non-exported structs must not be importable ─────────────────
+
+Deno.test("(audit-16) importing a non-exported struct is a compile error", () => {
+  const files = new Map([
+    ["geo.wac", `struct Point { i32 x; i32 y; }`],
+    ["main.wac", `import { Point } from "./geo.wac"; export void test() {}`],
+  ]);
+  errMulti(files);
+});
+
+// ── audit-17 — export visibility must not leak transitively ────────────────
+
+Deno.test("(audit-17) importing a symbol doesn't implicitly re-export it", () => {
+  const files = new Map([
+    ["a.wac", `export i32 foo() { return 42; }`],
+    ["b.wac", `import { foo } from "./a.wac";`],
+    ["main.wac", `import { foo } from "./b.wac"; export i32 test() { return foo(); }`],
+  ]);
+  errMulti(files);
+});
+
+// ── audit-18 — i32 as~ bool must normalize the value, not just pass i32 through ─
+
+Deno.test("(audit-18) i32 as~ bool normalizes to canonical true/false before comparison", async () => {
+  const inst = await run(`
+    export bool testBoolCast() {
+      i32 x = 5;
+      bool b = x as~ bool;
+      return b == true;
+    }
+  `);
+  eq(inst.call("testBoolCast", []), true, "5 as~ bool normalizes to true, compares equal to true");
+});
+
+// ── audit-19 — bindgen must not rename exports to camelCase ─────────────────
+
+Deno.test("(audit-19) bindgen keeps the wac export name verbatim, no camelCase renaming", () => {
+  const r = wacCompile(new Map([["math.wac", `
+    export f64 circle_area(f64 radius) { return 3.14159265358979 * radius * radius; }
+  `]]), "math.wac");
+  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  eq(ts.includes("function circle_area("), true, "generated wrapper keeps circle_area verbatim");
+  eq(ts.includes("function circleArea("), false, "generated wrapper must not rename to circleArea");
+});
+
+// ── audit-20 — bindgen must never mirror array mutations back automatically ─
+
+Deno.test("(audit-20) a void function's array mutation is never copied back by bindgen", () => {
+  const r = wacCompile(new Map([["m.wac", `
+    export void mutateArr(i32[] arr) { arr[0] = 999; }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  eq(ts.includes("function mutateArr(arr: Int32Array): void"), true, "void function stays void in the generated wrapper");
+  eq(ts.includes("_arrayFromWasm_i32"), false, "must not attempt to copy the array back for a void function");
+});
+
+// ── audit-21 — multi-line argument-position diagnostics need a real span/contextStart ─
+
+Deno.test("[§wac-diag-multiline-ic7x2hq] multi-line call diagnostics carry the real span and contextStart", () => {
+  const src = [
+    "export i32 compute(i32 a, i32 b) { return a; }",
+    "export void test() {",
+    "  i32 x = 1;",
+    "  i32 result = compute(",
+    "    x,",
+    "    3.14",
+    "  );",
+    "}",
+  ].join("\n");
+  const r = wacCompile(new Map([["algo.wac", src]]), "algo.wac");
+  eq(r.ok, false, "should fail to compile");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0] as DiagError;
+  eq(e.line, 6, "error reported on the 3.14 line");
+  eq(e.span, 4, "span covers the 4-character literal 3.14, not a default of 1");
+  eq(e.contextStart, 4, "contextStart points back to the compute( line, not left undefined");
+});
+
+// ── audit-22 — const-write diagnostics must carry span/annotation ──────────
+
+Deno.test('[§wac-diag-const-w2jm5xf] const-write diagnostic carries span=3 and annotation="p is const"', () => {
+  const src = `struct Point { i32 x; i32 y; }\nexport void test() {\n  const Point p = Point(1, 2);\n  p.x = 5;\n}`;
+  const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
+  eq(r.ok, false, "should fail typecheck");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.span, 3, "span=3 for 'p.x'");
+  eq(e.annotation, "p is const", "annotation identifies p as const");
+});
+
+// ── audit-23 — diagnostic hint text must reconstruct the real source, not a placeholder ─
+
+Deno.test('[§wac-diag-wide-k4rn8wp] return-type hint reconstructs the real expression, not the placeholder "expr"', () => {
+  const src = `export i32 algo(i32 sum) {\n  return sum > 0;\n}`;
+  const r = wacCompile(new Map([["algo.wac", src]]), "algo.wac");
+  eq(r.ok, false, "should fail typecheck");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.hint, "use `(sum > 0) as i32` to convert", "hint reconstructs the real source expression");
+});
+
+Deno.test("[§wac-diag-cast-p5fn2rk] lossy-cast diagnostic matches the spec's exact col and hint text", () => {
+  const src = `export void test(i32 x) {\n  i64 a = x as~ i64;\n}`;
+  const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
+  eq(r.ok, false, "should fail typecheck");
+  if (r.ok) throw new Error("expected compile error");
+  const e = r.errors[0];
+  eq(e.col, 9, "col=9 per the spec (not 11)");
+  eq(e.hint, "use `as` instead: i64 a = x as i64;", "hint matches the spec's exact required text");
+});
+
+// ── audit-24 — prefix/postfix ++/-- are full expressions ───────────────────
+
+Deno.test("[§wac-postincr-expr-n4kx8wq] postfix ++ evaluates to the old value as an expression", async () => {
+  const inst = await run(`
+    export i32 postIncr() {
+      i32 x = 5;
+      i32 y = x++;
+      return y * 10 + x;
+    }
+  `);
+  eq(inst.call("postIncr", []), 56, "y=5 (old value), x=6 -> 5*10+6=56");
+});
+
+Deno.test("[§wac-preincr-expr-t8jm3wq] prefix ++ evaluates to the new value as an expression", async () => {
+  const inst = await run(`
+    export i32 preIncr() {
+      i32 x = 5;
+      i32 z = ++x;
+      return z * 10 + x;
+    }
+  `);
+  eq(inst.call("preIncr", []), 66, "x becomes 6, z=6 (new value) -> 6*10+6=66");
+});
+
+// ── audit-25 — a switch may have at most one default clause, and it must be last ─
+
+Deno.test("(audit-25) a second default clause in a switch is a compile error", () => {
+  err(`
+    export i32 test(i32 x) {
+      switch (x) {
+        case 0: { return 1; }
+        default: { return 2; }
+        default: { return 3; }
+      }
+    }
+  `);
+});
+
+// ── audit-26 — is/as! between unrelated struct types should warn, not silently pass ─
+// NOTE: exercises the not-yet-existing CompileResult.diagnostics/severity
+// shape (see errors.md "Warnings"), so it uses `any` rather than the real
+// (not-yet-migrated) CompileResult type.
+
+Deno.test("(audit-26) is/as! between statically unrelated struct types produces a warning", () => {
+  const src = `
+    struct A { i32 a; }
+    struct B { i32 b; }
+    export void test() {
+      A x = A(1);
+      if (x is B) { }
+    }
+  `;
+  // deno-lint-ignore no-explicit-any
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac") as any;
+  eq(r.ok, true, "should still compile successfully — this is a warning, not an error");
+  eq(Array.isArray(r.diagnostics), true, "CompileResult should expose a diagnostics array (not yet migrated)");
+  const warning = (r.diagnostics ?? []).find((d: { severity?: string }) => d.severity === "warning");
+  eq(!!warning, true, "should include a warning-severity diagnostic for the unrelated is-test");
+});
