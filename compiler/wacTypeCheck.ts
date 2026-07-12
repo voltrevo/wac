@@ -179,7 +179,9 @@ function hasDefault(
   switch (t.kind) {
     case "prim":     return t.name !== "void" && t.name !== "null";
     case "nullable": return true;
-    case "array":    return false; // non-null array ref has no default (like a non-null struct ref)
+    case "array":    return true;  // non-null array defaults to an empty (zero-length) array —
+                                    // unlike T[N](), there's no size here, so the element type's
+                                    // own defaultability is irrelevant.
     case "struct":   return structHasDefault(t.name, structMap, visiting);
     case "funcref":  return false;
   }
