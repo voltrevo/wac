@@ -667,15 +667,18 @@ function checkLval(
         return null;
       }
       if (writing) {
+        const root = lvalRoot(lval);
+        const span = lvalText(lval).length;
         // Check field const
         const entry = ctx.structMap.get(baseType.name);
         const structIsConst = entry?.structDecl.isConst ?? false;
         if (structIsConst || field.isConst) {
-          errAt(ctx, `cannot write to const field '${lval.field}'`, lval.line, lval.col);
+          errAt(ctx, `cannot write to const field '${lval.field}'`, root.line, root.col, span);
         }
         // Check base is not const (deep const)
         if (lvalIsConst(lval.base, env, ctx)) {
-          errAt(ctx, `cannot write through const reference`, lval.line, lval.col);
+          errAt(ctx, `cannot write through const reference`, root.line, root.col, span,
+            `${lvalText(lval.base)} is const`);
         }
       }
       return field.type;
@@ -721,6 +724,23 @@ function lvalIsConst(lval: Lvalue, env: VarEnv, ctx: Ctx): boolean {
     case "lv-field":  return lvalIsConst(lval.base, env, ctx);
     case "lv-index":  return lvalIsConst(lval.base, env, ctx);
     case "lv-unwrap": return lvalIsConst(lval.base, env, ctx);
+  }
+}
+
+/** Position of the root identifier an lvalue chain is rooted at (e.g. `p` in `p.x`). */
+function lvalRoot(lval: Lvalue): { line: number; col: number } {
+  let cur: Lvalue = lval;
+  while (cur.kind !== "lv-ident") cur = cur.base;
+  return { line: cur.line, col: cur.col };
+}
+
+/** Reconstruct an lvalue chain's source text (e.g. `p.x`), for diagnostic span/annotation. */
+function lvalText(lval: Lvalue): string {
+  switch (lval.kind) {
+    case "lv-ident":  return lval.name;
+    case "lv-field":  return `${lvalText(lval.base)}.${lval.field}`;
+    case "lv-index":  return `${lvalText(lval.base)}[...]`;
+    case "lv-unwrap": return `${lvalText(lval.base)}!`;
   }
 }
 
