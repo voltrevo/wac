@@ -587,6 +587,7 @@ function bindElemValType(elem: WacType): number[] {
   const map: Record<string, number> = {
     i8: 0x7F, i16: 0x7F, i32: 0x7F,
     i64: 0x7E, f32: 0x7D, f64: 0x7C,
+    anyref: 0x6E, i31ref: 0x6C,
   };
   return [map[elem.name] ?? 0x7F];
 }
