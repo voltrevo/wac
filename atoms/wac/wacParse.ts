@@ -790,14 +790,18 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos(); advance(); // switch
     expect("("); const expr = parseExpr(); expect(")"); expect("{");
     const cases: SwitchCase[] = [];
+    let sawDefault = false;
     while (!at("}") && !at("eof")) {
       const cp = pos();
       if (at("case")) {
+        if (sawDefault) err(`'case' cannot appear after 'default'`);
         advance();
         const value = parseExpr(); expect(":");
         const body = parseSwitchBody();
         cases.push({ value, body, ...cp });
       } else if (at("default")) {
+        if (sawDefault) err(`switch may have at most one 'default' clause`);
+        sawDefault = true;
         advance(); expect(":");
         const body = parseSwitchBody();
         cases.push({ value: "default", body, ...cp });
