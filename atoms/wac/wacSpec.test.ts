@@ -3095,17 +3095,19 @@ Deno.test("(audit-09) sumBoxed(anyref[]) from spec/examples.md example 6 compile
   eq(inst.call("testSumBoxed", []), 60, "sumBoxed({10,20,30}) == 60");
 });
 
-// ── audit-10 — a non-nullable array field has no default value ─────────────
-// NOTE: not backed by an explicit new spec tag — inferred from structs.md's
-// existing "non-null recursive reference has no default" rule applied
-// consistently to non-null array fields. Flag to the user in case a
-// different resolution (e.g. defaulting to a zero-length array) is wanted.
+// ── audit-10 — a non-nullable array field defaults to an empty array ───────
+// Resolved: unlike a non-null recursive struct reference (which genuinely
+// has no default — constructing one would recurse forever), a non-null
+// array field has an obvious default with no size ambiguity: the empty
+// array. The element type's own defaultability is irrelevant here (it only
+// matters for T[N](), which requires N actual default elements).
 
-Deno.test("(audit-10) a struct with a non-null array field has no default value", () => {
-  err(`
+Deno.test("[§wac-arr-field-default-k9wq3fm] a struct with a non-null array field defaults to an empty array", async () => {
+  const inst = await run(`
     struct Foo { i32[] data; }
-    export void test() { Foo f = Foo(); }
+    export i32 test() { Foo f = Foo(); return f.data.len(); }
   `);
+  eq(inst.call("test", []), 0, "Foo().data is an empty array, len() == 0");
 });
 
 // ── audit-11 — switch break must not count as "returns a value" ────────────

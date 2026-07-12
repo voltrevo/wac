@@ -69,7 +69,10 @@ fields have defaults:
 
 - Primitives: `0`, `0.0`, `false`, `'\0'`
 - Nullable references (`T?`): `null`
-- Non-null references (`T`): `T()` if T itself has a default (recursive)
+- Non-null struct references (`T`): `T()` if T itself has a default (recursive)
+- Non-null array references (`T[]`): an empty (zero-length) array — always
+  defaultable regardless of whether `T` itself has a default, since no
+  elements need to be constructed
 
 Non-null recursive references have no default — the construction would be
 infinite:
@@ -88,6 +91,14 @@ struct Node {
 
 `[§wac-recursive-nodefault-1os4yl4]` A struct with a non-null recursive reference
 field is a compile error.
+
+```wac
+struct Foo {
+  i32[] data;     // ok: defaults to an empty array
+}
+```
+
+`[§wac-arr-field-default-k9wq3fm]` `Foo().data.len()` is `0`.
 
 ```wac
 struct Line {

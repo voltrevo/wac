@@ -1085,13 +1085,16 @@ Deno.test("wacTypeCheck: lv-field unknown field on struct is error", () => {
   export void bad(P p) { p.z = 1; }`, "no field");
 });
 
-// ── struct with a non-null array field has no default ────────────────────────
-// (a non-null array ref has no default value, same as a non-null struct ref —
-// see structs.md and the audit-10 regression test in wacSpec.test.ts)
+// ── struct with array field has default ──────────────────────────────────────
+// A non-null array field defaults to an empty (zero-length) array — there's
+// no size given, so the element type's own defaultability doesn't matter
+// (unlike T[N](), which does need the element type to have a default).
+// See structs.md and the audit-10 regression test in wacSpec.test.ts, which
+// checks the actual runtime value (f.data.len() == 0).
 
-Deno.test("wacTypeCheck: struct with non-null array field has no default", () => {
-  fail(`struct S { i32[] items; }
-  export S bad() { return S(); }`, "no default");
+Deno.test("wacTypeCheck: struct with non-null array field has default", () => {
+  ok(`struct S { i32[] items; }
+  export S ok() { return S(); }`);
 });
 
 Deno.test("wacTypeCheck: struct with nullable array field has default", () => {

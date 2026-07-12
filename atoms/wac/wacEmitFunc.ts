@@ -1025,8 +1025,11 @@ class FuncEmitter {
       if (e.args.length === 0 && (!e.named || e.named.length === 0)) {
         // Default construction: use struct.new_default if all fields are directly defaultable,
         // otherwise recursively emit defaults for each field and use struct.new.
+        // struct.new_default requires every field's storage type to itself be
+        // wasm-defaultable — non-null struct and array refs aren't (only
+        // numeric/packed types and nullable refs are), so those need recursion.
         const allDirectlyDefaultable = fields.every(f =>
-          f.type.kind !== "struct",  // struct fields need recursive default
+          f.type.kind !== "struct" && f.type.kind !== "array",
         );
         if (allDirectlyDefaultable) {
           this.emit(0xFB, 0x01, ...uleb(tIdx)); // struct.new_default $t
@@ -1085,7 +1088,7 @@ class FuncEmitter {
       case "struct": {
         const idx = this.ctx.structTypeIdx.get(t.name)!;
         const fields = this.ctx.structFields.get(t.name) ?? [];
-        const allDirectlyDefaultable = fields.every(f => f.type.kind !== "struct");
+        const allDirectlyDefaultable = fields.every(f => f.type.kind !== "struct" && f.type.kind !== "array");
         if (allDirectlyDefaultable) {
           this.emit(0xFB, 0x01, ...uleb(idx)); // struct.new_default $t
         } else {
@@ -1094,9 +1097,18 @@ class FuncEmitter {
         }
         break;
       }
-      case "array":
+      case "array": {
+        // Non-null array field with no size context: default to an empty
+        // (zero-length) array — the element type's own defaultability is
+        // irrelevant, since there are no elements to construct.
+        const aIdx = this.ctx.arrTypeIdx.get(typeKey(t.elem))!;
+        this.emit(0xFB, 0x08, ...uleb(aIdx), ...uleb(0)); // array.new_fixed $t, 0
+        break;
+      }
       case "funcref":
-        // These should be nullable in defaultable contexts
+        // Non-null funcref has no default at all — already rejected at
+        // typecheck (hasDefault returns false for funcref), so this case
+        // should be unreachable in practice.
         break;
     }
   }
