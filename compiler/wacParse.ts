@@ -82,7 +82,7 @@ export type MethodDecl = {
 } & Pos;
 
 export type StructDecl = {
-  tag: "struct"; isConst: boolean; name: string; parent: string | null;
+  tag: "struct"; isConst: boolean; exported: boolean; name: string; parent: string | null;
   fields: FieldDecl[]; methods: MethodDecl[];
 } & Pos;
 
@@ -838,7 +838,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return { type, name, ...p };
   }
 
-  function parseStructDecl(): StructDecl {
+  function parseStructDecl(exported: boolean): StructDecl {
     const p = pos();
     const isConst = consume("const");
     advance(); // struct
@@ -891,7 +891,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       }
     }
     expect("}");
-    return { tag: "struct", isConst, name, parent, fields, methods, ...p };
+    return { tag: "struct", isConst, exported, name, parent, fields, methods, ...p };
   }
 
   function parseFuncDecl(): FuncDecl {
@@ -914,11 +914,10 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("import")) {
       items.push(parseImport());
     } else if (at("struct") || (at("const") && at("struct", 1))) {
-      items.push(parseStructDecl());
+      items.push(parseStructDecl(false));
     } else if (at("export") && at("struct", 1)) {
-      // export struct — consume 'export' then parse struct (export is cosmetic at top level for structs)
       advance(); // skip 'export'
-      items.push(parseStructDecl());
+      items.push(parseStructDecl(true));
     } else if (at("export") || at("fn") || at("void") || (at("ident"))) {
       items.push(parseFuncDecl());
     } else {
