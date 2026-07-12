@@ -34,6 +34,7 @@ type CompileDiagnostic = {
   span: number;            // number of source characters to underline
   annotation?: string;     // text after the underline (e.g. "expected i32, found f64")
   hint?: string;           // help text (e.g. "use `as!` for checked conversion")
+  contextStart?: number;   // first line of leading context for multi-line spans (see below)
 };
 
 type CompileResult =
