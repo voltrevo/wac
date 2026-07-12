@@ -425,6 +425,21 @@ class FuncEmitter {
     return this.labelDepth - savedDepth - 1;
   }
 
+  // ── Helper: box a raw i32 value via ref.i31 when the slot is a nullable primitive ──
+
+  /**
+   * A literal of type `i32`/`bool` is a raw i32 on the wasm stack, but a
+   * nullable-primitive-typed slot (`i32?`, `bool?`) is represented as anyref
+   * — box it with ref.i31 so the value satisfies that type. i31ref is a
+   * subtype of anyref, so no further conversion is needed.
+   */
+  private boxIfNullablePrimitive(expectType: WacType | undefined, primName: "i32" | "bool"): void {
+    if (expectType?.kind === "nullable" &&
+        expectType.inner.kind === "prim" && expectType.inner.name === primName) {
+      this.emit(0xFB, 0x1C); // ref.i31
+    }
+  }
+
   // ── Expression emitter ──
 
   emitExpr(e: Expr, env: TypeEnv, expectType?: WacType): void {
@@ -435,6 +450,7 @@ class FuncEmitter {
           this.emit(0x42, ...slebBig(BigInt(e.value))); // i64.const
         } else {
           this.emit(0x41, ...sleb(parseInt(e.value))); // i32.const (parseInt auto-detects 0x hex)
+          this.boxIfNullablePrimitive(expectType, "i32");
         }
         break;
       }
@@ -453,7 +469,11 @@ class FuncEmitter {
         }
         break;
       }
-      case "bool":  this.emit(0x41, e.value ? 1 : 0); break; // i32.const
+      case "bool": {
+        this.emit(0x41, e.value ? 1 : 0); // i32.const
+        this.boxIfNullablePrimitive(expectType, "bool");
+        break;
+      }
       case "null": {
         const target = expectType ?? { kind: "prim", name: "anyref", line: 0, col: 0 } as WacType;
         this.emit(0xD0, ...heapTypeBytes(target, this.ctx)); // ref.null heapType
