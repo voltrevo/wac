@@ -587,14 +587,18 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       if (ctx.inLoop === 0) {
         errAt(ctx, `'break' outside loop or switch`, stmt.line, stmt.col);
       }
-      return true;  // terminates current path (jumps out)
+      // Jumps out, but does not return a value — per checkStmt's own contract
+      // ("returns true if ... returns or traps on every code path"), break
+      // must not count as a return, or a switch case ending in break would
+      // wrongly satisfy "all paths return".
+      return false;
     }
 
     case "continue": {
       if (ctx.inLoop === 0) {
         errAt(ctx, `'continue' outside loop`, stmt.line, stmt.col);
       }
-      return true;
+      return false;
     }
 
     case "trap": {
