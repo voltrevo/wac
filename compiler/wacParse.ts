@@ -291,7 +291,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         // Detection: last consumed token was ? AND current token looks like an expression start.
         const isTernaryQ = t.kind === "nullable" && tokens[cur - 1]?.kind === "?" &&
           (at("int") || at("float") || at("bool") || at("string") ||
-           at("(") || at("!") || at("~") || at("-"));
+           at("(") || at("!") || at("~") || at("-") ||
+           at("ident") || at("true") || at("false") || at("this"));
         if (isTernaryQ) {
           cur--; // put the ? back so parseTernary can find it
           return { kind: "is", expr: e, not: notFlag, rhs: (t as { kind: "nullable"; inner: WacType }).inner, ...p };
