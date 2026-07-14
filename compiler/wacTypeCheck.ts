@@ -13,7 +13,7 @@ import {
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry, type FileScope,
-  funcParams, funcReturnType,
+  funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -927,11 +927,24 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
       const tt = inferExpr(expr.then, env, ctx);
       const et = inferExpr(expr.else_, env, ctx);
       if (!tt || !et) return tt ?? et;
-      if (!typeEq(tt, et) && !isAssignable(et, tt, ctx) && !isAssignable(tt, et, ctx)) {
-        errAt(ctx, `ternary branches have incompatible types: ${typeName(tt)} and ${typeName(et)}`,
+      if (typeEq(tt, et)) return tt;
+      // Struct branches type to their closest common ancestor — this covers
+      // one branch being the other's ancestor (the result is that ancestor)
+      // as well as sibling subtypes of a shared parent.
+      if (tt.kind === "struct" && et.kind === "struct") {
+        const te = entryOfType(tt, ctx);
+        const ee = entryOfType(et, ctx);
+        const lca = te && ee ? commonAncestor(te, ee) : null;
+        if (lca) return structType(lca.name, lca.typeIndex);
+        errAt(ctx, `ternary branches have no common ancestor: ${typeName(tt)} and ${typeName(et)}`,
           expr.line, expr.col);
         return tt;
       }
+      // Other widenings (null → T?, T → T?, T? → S?): the wider side wins.
+      if (isAssignable(et, tt, ctx)) return tt;
+      if (isAssignable(tt, et, ctx)) return et;
+      errAt(ctx, `ternary branches have incompatible types: ${typeName(tt)} and ${typeName(et)}`,
+        expr.line, expr.col);
       return tt;
     }
 
