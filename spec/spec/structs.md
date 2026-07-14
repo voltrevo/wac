@@ -449,6 +449,40 @@ struct Outer {
 
 `[§wac-deep-const-j4fn2xq]` Calling a non-const method through const this is a compile error — const is deep.
 
+Deep const cannot be laundered through intermediate values. A reference
+obtained *through* a const reference is itself const, however it was obtained:
+
+```wac
+struct Outer2 {
+  Inner inner;
+  Inner getInner(const this) { return this.inner; }
+  void tryMutate(const this) {
+    this.getInner().mutate();   // error: result of a call through const this is const
+  }
+}
+```
+
+`[§wac-deep-const-accessor-w3kf8nq]` Calling a non-const method on the result
+of a method call made through a const receiver is a compile error.
+
+```wac
+struct Counter2 {
+  i32 count;
+  void mutate(this) { this.count = 99; }
+  void tryMutate(const this) {
+    Counter2 c = this;   // ok: binding stays reassignable...
+    c.mutate();          // error: ...but the object it references is const
+  }
+}
+```
+
+`[§wac-deep-const-alias-p6mk2wf]` Assigning a const reference to a plain local
+is allowed (read-only cursors like `Node? cur = this.head; cur = cur!.next;`
+depend on it), but the constness travels with the reference: writes and
+non-const method calls through the new binding are compile errors, and the
+reference may not be stored into a struct field or array element (which would
+make it reachable as mutable).
+
 The three meanings of `is`:
 - `x is Type` — runtime type test (`ref.test`)
 - `x is null` — null test (`ref.is_null`)
