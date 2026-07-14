@@ -11,7 +11,15 @@ export type Pos = { line: number; col: number };
 
 export type WacType =
   | ({ kind: "prim";     name: string } & Pos)
-  | ({ kind: "struct";   name: string } & Pos)
+  // `name` is the struct name as written (possibly an import alias) — struct
+  // declarations are only unique within their own file, so two files can
+  // declare the same bare name. `resolvedTypeIndex`, when known, is the
+  // globally-unique StructEntry.typeIndex this reference actually points to;
+  // consumers should prefer it over re-resolving `name` through a bare-name
+  // map. It's optional because the parser can't know it (resolution happens
+  // later) — set it wherever a WacType is reconstructed from an
+  // already-resolved StructEntry/FuncEntry instead of from source text.
+  | ({ kind: "struct";   name: string; resolvedTypeIndex?: number } & Pos)
   | ({ kind: "array";    elem: WacType } & Pos)
   | ({ kind: "nullable"; inner: WacType } & Pos)
   | ({ kind: "funcref";  params: WacType[]; ret: WacType } & Pos);

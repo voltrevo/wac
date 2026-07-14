@@ -42,8 +42,6 @@ export type WasmTypeCtx = {
   strHelperIdx: Map<string, number>;
   /** All fields (including inherited) for each struct, in order */
   structFields: Map<string, StructFieldInfo[]>;
-  /** Immediate parent name for each struct, or null */
-  structParent: Map<string, string | null>;
   /** Mangled function name → wasm function index */
   funcIdx: Map<string, number>;
   result: ResolveResult;
@@ -95,11 +93,23 @@ function slebBig(n: bigint): number[] {
 export function typeKey(t: WacType): string {
   switch (t.kind) {
     case "prim":     return t.name;
-    case "struct":   return `S:${t.name}`;
+    // Struct identity is the resolved typeIndex — the resolver annotates every
+    // struct-type reference in the AST (wacResolve's phase 5), so all keys for
+    // the same struct agree regardless of the name written at the use site
+    // (declared name vs. import alias), and two files' same-named structs get
+    // distinct keys. The name form only appears for unresolved types, which
+    // are compile errors reported elsewhere.
+    case "struct":   return t.resolvedTypeIndex !== undefined ? `S:#${t.resolvedTypeIndex}` : `S:${t.name}`;
     case "array":    return `A:${typeKey(t.elem)}`;
     case "nullable": return `?:${typeKey(t.inner)}`;
     case "funcref":  return `F:${sigKey(t.params, t.ret)}`;
   }
+}
+
+/** Resolve a struct WacType to its wasm type index, preferring an already-
+ *  resolved typeIndex over a bare-name lookup (see WacType's "struct" comment). */
+function structTypeIndexOf(t: { name: string; resolvedTypeIndex?: number }, ctx: WasmTypeCtx): number {
+  return t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name)!;
 }
 
 /** Stable key for a function signature. */
@@ -123,7 +133,7 @@ export function wasmValType(t: WacType, ctx: WasmTypeCtx): number[] {
       if (t.name === "void")   return [0x40]; // only valid as block type
       return [0x7F]; // fallback
     }
-    case "struct":   return [0x64, ...sleb(ctx.structTypeIdx.get(t.name)!)];
+    case "struct":   return [0x64, ...sleb(structTypeIndexOf(t, ctx))];
     case "array":    return [0x64, ...sleb(ctx.arrTypeIdx.get(typeKey(t.elem))!)];
     case "nullable": return wasmNullable(t.inner, ctx);
     case "funcref":  return [0x64, ...sleb(ctx.sigTypeIdx.get(sigKey(t.params, t.ret))!)];
@@ -138,7 +148,7 @@ function wasmNullable(inner: WacType, ctx: WasmTypeCtx): number[] {
       if (inner.name === "i31ref")  return [0x63, 0x6C];
       if (inner.name === "string")  return [0x63, ...sleb(ctx.stringTypeIdx)];
       return [0x6E]; // fallback to anyref
-    case "struct":   return [0x63, ...sleb(ctx.structTypeIdx.get(inner.name)!)];
+    case "struct":   return [0x63, ...sleb(structTypeIndexOf(inner, ctx))];
     case "array":    return [0x63, ...sleb(ctx.arrTypeIdx.get(typeKey(inner.elem))!)];
     case "funcref":  return [0x63, ...sleb(ctx.sigTypeIdx.get(sigKey(inner.params, inner.ret))!)];
     case "nullable": return wasmNullable(inner.inner, ctx);
@@ -153,7 +163,7 @@ export function heapTypeBytes(t: WacType, ctx: WasmTypeCtx): number[] {
       if (t.name === "i31ref")  return [0x6C];
       if (t.name === "string")  return sleb(ctx.stringTypeIdx);
       return [0x6E]; // fallback
-    case "struct":   return sleb(ctx.structTypeIdx.get(t.name)!);
+    case "struct":   return sleb(structTypeIndexOf(t, ctx));
     case "array":    return sleb(ctx.arrTypeIdx.get(typeKey(t.elem))!);
     case "funcref":  return sleb(ctx.sigTypeIdx.get(sigKey(t.params, t.ret))!);
     case "nullable": return heapTypeBytes(t.inner, ctx);
@@ -162,16 +172,33 @@ export function heapTypeBytes(t: WacType, ctx: WasmTypeCtx): number[] {
 
 // ── Method lookup ─────────────────────────────────────────────────────────────
 
-/** Walk the struct inheritance chain to find a method (handles inherited methods). */
+/**
+ * Resolve a struct type name to its StructEntry. The name may be an import
+ * alias (e.g. `BoxA` for a `Box` imported `as BoxA`) rather than the struct's
+ * own declared name — struct declarations are only unique within their own
+ * file, so two different files' structs can share a bare declared name.
+ * `ctx.structTypeIdx` is already alias-aware (registered per local name, see
+ * wasmBuildBin.ts's buildTypeCtx), so resolve through its typeIndex rather
+ * than searching `ctx.result.structs` by bare name directly.
+ */
+function resolveStructEntry(name: string, ctx: WasmTypeCtx, resolvedTypeIndex?: number): StructEntry | undefined {
+  const idx = resolvedTypeIndex ?? ctx.structTypeIdx.get(name);
+  if (idx === undefined) return undefined;
+  return ctx.result.structs[idx];  // structs are in typeIndex order
+}
+
+/** Walk the struct inheritance chain to find a method (handles inherited methods).
+ *  `resolvedTypeIndex`, when known, disambiguates the starting struct (see
+ *  resolveStructEntry); from there the chain follows the resolver's
+ *  parentEntry links, which are already scope-correct. */
 function lookupMethodInChain(
-  structName: string, methodName: string, ctx: WasmTypeCtx,
+  structName: string, methodName: string, ctx: WasmTypeCtx, resolvedTypeIndex?: number,
 ): import("./wacResolve.ts").FuncEntry | null {
-  let name: string | null | undefined = structName;
-  while (name) {
-    const entry = ctx.result.structs.find(s => s.name === name);
-    const m = entry?.methods.get(methodName);
+  let entry = resolveStructEntry(structName, ctx, resolvedTypeIndex);
+  while (entry) {
+    const m = entry.methods.get(methodName);
     if (m) return m;
-    name = ctx.structParent.get(name);
+    entry = entry.parentEntry ?? undefined;
   }
   return null;
 }
@@ -195,7 +222,9 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       const v = env.get(e.name);
       if (v) return v;
       // Struct type name or function name
-      if (ctx.structTypeIdx.has(e.name)) return { kind: "struct", name: e.name, line: 0, col: 0 };
+      if (ctx.structTypeIdx.has(e.name)) {
+        return { kind: "struct", name: e.name, resolvedTypeIndex: ctx.structTypeIdx.get(e.name), line: 0, col: 0 };
+      }
       const fi = [...ctx.result.funcs].find(f =>
         f.mangledName === e.name || f.exportName === e.name ||
         (f.origin.kind === "func" && f.origin.decl.name === e.name));
@@ -233,7 +262,7 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         }
         const sName = structName(baseT);
         if (sName) {
-          const meth = ctx.result.structs.find(s => s.name === sName)?.methods.get(fe.name);
+          const meth = resolveStructEntry(sName, ctx, structResolvedIndex(baseT))?.methods.get(fe.name);
           if (meth) return funcReturnType(meth);
         }
       }
@@ -254,9 +283,9 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       const baseT = typeOfExpr(e.expr, env, ctx);
       const sName = structName(baseT);
       if (sName) {
-        const f = ctx.structFields.get(sName)?.find(f => f.name === e.name);
+        const f = ctx.structFields.get(structLookupKey(baseT)!)?.find(f => f.name === e.name);
         if (f) return f.type;
-        const meth = ctx.result.structs.find(s => s.name === sName)?.methods.get(e.name);
+        const meth = resolveStructEntry(sName, ctx, structResolvedIndex(baseT))?.methods.get(e.name);
         if (meth) {
           const ps = funcParams(meth).map(p => p.type);
           return { kind: "funcref", params: ps, ret: funcReturnType(meth), line: 0, col: 0 };
@@ -296,14 +325,33 @@ function structName(t: WacType): string | null {
   return null;
 }
 
+/**
+ * Key to use for structFields/structTypeIdx lookups — prefers the `@<typeIndex>`
+ * form (globally unique) when the type carries a resolvedTypeIndex, falling
+ * back to the bare/aliased name otherwise (structFields/structTypeIdx register
+ * both forms — see wasmBuildBin.ts's buildTypeCtx/buildStructFields).
+ */
+function structLookupKey(t: WacType): string | null {
+  const s = t.kind === "struct" ? t : (t.kind === "nullable" && t.inner.kind === "struct" ? t.inner : null);
+  if (!s) return null;
+  return s.resolvedTypeIndex !== undefined ? `@${s.resolvedTypeIndex}` : s.name;
+}
+
+/** The resolvedTypeIndex carried by a struct (or nullable-struct) WacType, if known. */
+function structResolvedIndex(t: WacType): number | undefined {
+  if (t.kind === "struct") return t.resolvedTypeIndex;
+  if (t.kind === "nullable" && t.inner.kind === "struct") return t.inner.resolvedTypeIndex;
+  return undefined;
+}
+
 /** Type of an lvalue. */
 function lvalType(lv: Lvalue, env: TypeEnv, ctx: WasmTypeCtx): WacType {
   switch (lv.kind) {
     case "lv-ident": return env.get(lv.name) ?? I32;
     case "lv-field": {
       const bt = lvalType(lv.base, env, ctx);
-      const sn = structName(bt);
-      if (sn) return ctx.structFields.get(sn)?.find(f => f.name === lv.field)?.type ?? I32;
+      const key = structLookupKey(bt);
+      if (key) return ctx.structFields.get(key)?.find(f => f.name === lv.field)?.type ?? I32;
       return I32;
     }
     case "lv-index": {
@@ -846,7 +894,7 @@ class FuncEmitter {
     if (e.expr.kind === "ident") {
       const exprName = (e.expr as { name: string }).name;
       if (this.ctx.structTypeIdx.has(exprName)) {
-        const structEntry = this.ctx.result.structs.find(s => s.name === exprName);
+        const structEntry = resolveStructEntry(exprName, this.ctx);
         const methEntry = structEntry?.methods.get(e.name);
         if (methEntry) {
           const fIdx = this.ctx.funcIdx.get(methEntry.mangledName)!;
@@ -858,16 +906,16 @@ class FuncEmitter {
     const baseT = typeOfExpr(e.expr, env, this.ctx);
     const sName = structName(baseT);
     if (sName) {
-      const fields = this.ctx.structFields.get(sName) ?? [];
+      const fields = this.ctx.structFields.get(structLookupKey(baseT)!) ?? [];
       const fi = fields.find(f => f.name === e.name);
       if (fi) {
         this.emitExpr(e.expr, env);
-        const tIdx = this.ctx.structTypeIdx.get(sName)!;
+        const tIdx = structResolvedIndex(baseT) ?? this.ctx.structTypeIdx.get(sName)!;
         this.emit(0xFB, 0x02, ...uleb(tIdx), ...uleb(fi.absIdx)); // struct.get
         return;
       }
       // Method reference (not called here, handled in emitCall)
-      const methEntry = this.ctx.result.structs.find(s => s.name === sName)?.methods.get(e.name);
+      const methEntry = resolveStructEntry(sName, this.ctx, structResolvedIndex(baseT))?.methods.get(e.name);
       if (methEntry) {
         const fIdx = this.ctx.funcIdx.get(methEntry.mangledName)!;
         this.emit(0xD2, ...uleb(fIdx)); // ref.func
@@ -948,7 +996,7 @@ class FuncEmitter {
       const sName = structName(baseT);
       if (sName) {
         // Instance method call: emit receiver, then args (walk inheritance chain)
-        const meth = lookupMethodInChain(sName, fe.name, this.ctx);
+        const meth = lookupMethodInChain(sName, fe.name, this.ctx, structResolvedIndex(baseT));
         if (meth) {
           this.emitExpr(fe.expr, env); // push receiver
           for (const arg of e.args) this.emitExpr(arg, env);
@@ -961,7 +1009,7 @@ class FuncEmitter {
       if (fe.expr.kind === "ident") {
         const typeName = (fe.expr as { name: string }).name;
         if (this.ctx.structTypeIdx.has(typeName)) {
-          const structEntry2 = this.ctx.result.structs.find(s => s.name === typeName);
+          const structEntry2 = resolveStructEntry(typeName, this.ctx);
           const meth2 = structEntry2?.methods.get(fe.name);
           if (meth2) {
             for (const arg of e.args) this.emitExpr(arg, env);
@@ -1002,7 +1050,7 @@ class FuncEmitter {
       const sName = e.ctype.name;
       // If the name is not a known struct type, treat as a function call.
       // (The parser uses "construct" for any ident(...) that isn't a prim type.)
-      const tIdx  = this.ctx.structTypeIdx.get(sName);
+      const tIdx  = e.ctype.resolvedTypeIndex ?? this.ctx.structTypeIdx.get(sName);
       if (tIdx === undefined) {
         const fIdx = this.ctx.funcIdx.get(sName);
         if (fIdx !== undefined) {
@@ -1020,7 +1068,8 @@ class FuncEmitter {
         }
         return;
       };
-      const fields = this.ctx.structFields.get(sName) ?? [];
+      const fields = this.ctx.structFields.get(`@${tIdx}`)
+        ?? this.ctx.structFields.get(sName) ?? [];
 
       if (e.args.length === 0 && (!e.named || e.named.length === 0)) {
         // Default construction: use struct.new_default if all fields are directly defaultable,
@@ -1086,8 +1135,8 @@ class FuncEmitter {
         break;
       }
       case "struct": {
-        const idx = this.ctx.structTypeIdx.get(t.name)!;
-        const fields = this.ctx.structFields.get(t.name) ?? [];
+        const idx = structTypeIndexOf(t, this.ctx);
+        const fields = this.ctx.structFields.get(structLookupKey(t)!) ?? [];
         const allDirectlyDefaultable = fields.every(f => f.type.kind !== "struct" && f.type.kind !== "array");
         if (allDirectlyDefaultable) {
           this.emit(0xFB, 0x01, ...uleb(idx)); // struct.new_default $t
@@ -1125,7 +1174,7 @@ class FuncEmitter {
       // Struct element + literal size: initialize each element with default struct
       if (e.elem.kind === "struct" && e.size.kind === "int") {
         const n = parseInt(e.size.value);
-        const sIdx = this.ctx.structTypeIdx.get(e.elem.name)!;
+        const sIdx = structTypeIndexOf(e.elem, this.ctx);
         for (let i = 0; i < n; i++) {
           this.emit(0xFB, 0x01, ...uleb(sIdx)); // struct.new_default $S
         }
@@ -1257,8 +1306,8 @@ class FuncEmitter {
   ): void {
     const bt = lvalType(lval.base, env, this.ctx);
     const sn = structName(bt)!;
-    const tIdx = this.ctx.structTypeIdx.get(sn)!;
-    const fi = this.ctx.structFields.get(sn)!.find(f => f.name === lval.field)!;
+    const tIdx = structResolvedIndex(bt) ?? this.ctx.structTypeIdx.get(sn)!;
+    const fi = this.ctx.structFields.get(structLookupKey(bt)!)!.find(f => f.name === lval.field)!;
     const ft = fi.type;
 
     if (op !== "=") {
@@ -1355,8 +1404,8 @@ class FuncEmitter {
       case "lv-field": {
         const bt = lvalType(lv.base, env, this.ctx);
         const sn = structName(bt)!;
-        const tIdx = this.ctx.structTypeIdx.get(sn)!;
-        const fi   = this.ctx.structFields.get(sn)!.find(f => f.name === lv.field)!;
+        const tIdx = structResolvedIndex(bt) ?? this.ctx.structTypeIdx.get(sn)!;
+        const fi   = this.ctx.structFields.get(structLookupKey(bt)!)!.find(f => f.name === lv.field)!;
         this.emitLvalGet(lv.base, env);
         this.emit(0xFB, 0x02, ...uleb(tIdx), ...uleb(fi.absIdx)); // struct.get
         break;
@@ -1549,7 +1598,10 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   // For methods with `this`, add it as the first parameter (wasm param index 0).
   if (entry.origin.kind === "method" && entry.origin.decl.hasThis) {
     const structName = entry.origin.structName;
-    const thisType: WacType = { kind: "struct", name: structName, line: 0, col: 0 };
+    const thisType: WacType = {
+      kind: "struct", name: structName, resolvedTypeIndex: entry.origin.structTypeIndex,
+      line: 0, col: 0,
+    };
     emitter.localMap.set("this", { idx: localIdx++, type: thisType });
     emitter.nameToKey.set("this", "this");
     env.set("this", thisType);
