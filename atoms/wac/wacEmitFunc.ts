@@ -977,6 +977,16 @@ class FuncEmitter {
     }
   }
 
+  /** Emit call arguments with the callee's declared parameter types as
+   *  expected types, so a bare `null` gets the parameter's heap type (not
+   *  anyref) and literals get the parameter's width/boxing. Non-literal
+   *  arguments ignore the expected type. */
+  private emitArgs(args: Expr[], params: (WacType | undefined)[], env: TypeEnv): void {
+    for (let i = 0; i < args.length; i++) {
+      this.emitExpr(args[i], env, params[i]);
+    }
+  }
+
   private emitCall(
     e: { kind: "call"; callee: Expr; args: Expr[] },
     env: TypeEnv,
@@ -1023,7 +1033,7 @@ class FuncEmitter {
         const meth = lookupMethodInChain(sName, fe.name, this.ctx, structResolvedIndex(baseT));
         if (meth) {
           this.emitExpr(fe.expr, env); // push receiver
-          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emitArgs(e.args, funcParams(meth).map(p => p.type), env);
           this.emit(0x10, ...uleb(this.ctx.funcIdx.get(meth.mangledName)!)); // call
           return;
         }
@@ -1036,7 +1046,14 @@ class FuncEmitter {
           const structEntry2 = resolveStructEntry(typeName, this.ctx);
           const meth2 = structEntry2?.methods.get(fe.name);
           if (meth2) {
-            for (const arg of e.args) this.emitExpr(arg, env);
+            // Counter.inc(receiver, ...) — the receiver is the `this` argument
+            const declared = funcParams(meth2).map(p => p.type);
+            const hasThis = meth2.origin.kind === "method" && meth2.origin.decl.hasThis;
+            const thisT: WacType = {
+              kind: "struct", name: structEntry2!.name,
+              resolvedTypeIndex: structEntry2!.typeIndex, line: 0, col: 0,
+            };
+            this.emitArgs(e.args, hasThis ? [thisT, ...declared] : declared, env);
             this.emit(0x10, ...uleb(this.ctx.funcIdx.get(meth2.mangledName)!));
             return;
           }
@@ -1049,7 +1066,8 @@ class FuncEmitter {
       const name = (e.callee as { name: string }).name;
       const fIdx = this.ctx.funcIdx.get(name);
       if (fIdx !== undefined) {
-        for (const arg of e.args) this.emitExpr(arg, env);
+        const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
+        this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
         this.emit(0x10, ...uleb(fIdx)); // call
         return;
       }
@@ -1058,7 +1076,7 @@ class FuncEmitter {
     // Funcref indirect call: f(args)
     const calleeT = typeOfExpr(e.callee, env, this.ctx);
     if (calleeT.kind === "funcref") {
-      for (const arg of e.args) this.emitExpr(arg, env);
+      this.emitArgs(e.args, calleeT.params, env);
       this.emitExpr(e.callee, env); // funcref goes last (on top)
       const sIdx = this.ctx.sigTypeIdx.get(sigKey(calleeT.params, calleeT.ret))!;
       this.emit(0x14, ...uleb(sIdx)); // call_ref $type
@@ -1078,14 +1096,15 @@ class FuncEmitter {
       if (tIdx === undefined) {
         const fIdx = this.ctx.funcIdx.get(sName);
         if (fIdx !== undefined) {
-          for (const arg of e.args) this.emitExpr(arg, env);
+          const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
+          this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
           this.emit(0x10, ...uleb(fIdx));
           return;
         }
         // Local funcref variable: f(args) where f is a local with funcref type
         const localT = env.get(sName);
         if (localT?.kind === "funcref") {
-          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emitArgs(e.args, localT.params, env);
           this.emit(0x20, ...uleb(this.localMap.get(sName)!.idx)); // local.get
           const sIdx = this.ctx.sigTypeIdx.get(sigKey(localT.params, localT.ret))!;
           this.emit(0x14, ...uleb(sIdx)); // call_ref $type
