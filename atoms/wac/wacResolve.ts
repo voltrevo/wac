@@ -7,7 +7,7 @@
 
 import {
   type Program, type FuncDecl, type StructDecl, type MethodDecl,
-  type Param, type WacType,
+  type Param, type WacType, type Expr, type Stmt, type Block, type Lvalue,
 } from "./wacParse.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -19,7 +19,11 @@ export type ResolveError = { message: string } & Pos;
 // A function or method entry in the flat function table.
 export type FuncOrigin =
   | { kind: "func";   decl: FuncDecl }
-  | { kind: "method"; decl: MethodDecl; structName: string };
+  // structName is the struct's own declared name — only unique within its
+  // own file (see StructEntry.name). structTypeIndex is the globally-unique
+  // typeIndex of the specific struct this method belongs to; use it instead
+  // of re-resolving structName through a bare-name map.
+  | { kind: "method"; decl: MethodDecl; structName: string; structTypeIndex: number };
 
 export type FuncEntry = {
   origin: FuncOrigin;
@@ -35,13 +39,21 @@ export type FuncEntry = {
 // A struct type entry in the flat type table.
 export type StructEntry = {
   structDecl: StructDecl;
-  /** Canonical struct name (struct names are globally unique) */
+  /** Declared struct name — only unique within its own file */
   name: string;
-  /** 0-based wasm type index */
+  /** 0-based wasm type index (globally unique — this is the struct's identity) */
   typeIndex: number;
   filePath: string;
   /** Methods of this struct, keyed by method name */
   methods: Map<string, FuncEntry>;
+  /**
+   * Parent struct, resolved through the declaring file's own scope (so an
+   * imported or aliased parent resolves correctly, and a same-named struct in
+   * an unrelated file can't be picked up by accident). null = no parent.
+   * Consumers must walk this instead of re-resolving structDecl.parent
+   * through a bare-name map.
+   */
+  parentEntry: StructEntry | null;
 };
 
 export type ScopeEntry =
@@ -92,6 +104,128 @@ function stem(filePath: string): string {
   return base.includes(".") ? base.slice(0, base.lastIndexOf(".")) : base;
 }
 
+// ── Type-annotation pre-pass ──────────────────────────────────────────────────
+// Every struct-kind WacType in a file's AST gets its resolvedTypeIndex set by
+// looking the written name up in that file's scope. This is what gives types
+// identity: downstream phases compare/key struct types by resolvedTypeIndex,
+// never by the (file-local, alias-dependent) name string. Unknown names are
+// left unannotated — the type checker reports them.
+
+function annotateType(t: WacType, scope: FileScope): void {
+  switch (t.kind) {
+    case "prim": return;
+    case "struct": {
+      const found = scope.get(t.name);
+      if (found?.kind === "struct") t.resolvedTypeIndex = found.entry.typeIndex;
+      return;
+    }
+    case "array":    return annotateType(t.elem, scope);
+    case "nullable": return annotateType(t.inner, scope);
+    case "funcref":
+      for (const p of t.params) annotateType(p, scope);
+      return annotateType(t.ret, scope);
+  }
+}
+
+const TYPE_KINDS = new Set(["prim", "struct", "array", "nullable", "funcref"]);
+
+function annotateExpr(e: Expr, scope: FileScope): void {
+  switch (e.kind) {
+    case "int": case "float": case "string": case "bool":
+    case "null": case "ident":
+      return;
+    case "unary":   return annotateExpr(e.expr, scope);
+    case "binary":  annotateExpr(e.left, scope); return annotateExpr(e.right, scope);
+    case "cast":    annotateExpr(e.expr, scope); return annotateType(e.type, scope);
+    case "is":
+      annotateExpr(e.expr, scope);
+      if (typeof e.rhs === "string") return;               // "null"
+      if (TYPE_KINDS.has(e.rhs.kind)) return annotateType(e.rhs as WacType, scope);
+      return annotateExpr(e.rhs as Expr, scope);
+    case "ternary":
+      annotateExpr(e.cond, scope); annotateExpr(e.then, scope);
+      return annotateExpr(e.else_, scope);
+    case "call":
+      annotateExpr(e.callee, scope);
+      for (const a of e.args) annotateExpr(a, scope);
+      return;
+    case "index":   annotateExpr(e.expr, scope); return annotateExpr(e.idx, scope);
+    case "field":   return annotateExpr(e.expr, scope);
+    case "unwrap":  return annotateExpr(e.expr, scope);
+    case "construct":
+      annotateType(e.ctype, scope);
+      for (const a of e.args) annotateExpr(a, scope);
+      for (const n of e.named ?? []) annotateExpr(n.val, scope);
+      return;
+    case "arrNew":
+      annotateType(e.elem, scope);
+      if (e.size) annotateExpr(e.size, scope);
+      for (const f of e.fixed) annotateExpr(f, scope);
+      return;
+  }
+}
+
+function annotateLvalue(lv: Lvalue, scope: FileScope): void {
+  switch (lv.kind) {
+    case "lv-ident":  return;
+    case "lv-field":  return annotateLvalue(lv.base, scope);
+    case "lv-index":  annotateLvalue(lv.base, scope); return annotateExpr(lv.idx, scope);
+    case "lv-unwrap": return annotateLvalue(lv.base, scope);
+  }
+}
+
+function annotateStmt(s: Stmt, scope: FileScope): void {
+  switch (s.kind) {
+    case "var":     annotateType(s.type, scope); return annotateExpr(s.init, scope);
+    case "assign":  annotateLvalue(s.lval, scope); return annotateExpr(s.rhs, scope);
+    case "incr":    return annotateLvalue(s.lval, scope);
+    case "if":
+      annotateExpr(s.cond, scope); annotateBlock(s.then, scope);
+      if (s.els?.kind === "else-if") annotateStmt(s.els.stmt, scope);
+      else if (s.els?.kind === "else-block") annotateBlock(s.els.block, scope);
+      return;
+    case "while":   annotateExpr(s.cond, scope); return annotateBlock(s.body, scope);
+    case "for":
+      if (s.init) annotateStmt(s.init, scope);
+      if (s.cond) annotateExpr(s.cond, scope);
+      if (s.update) annotateStmt(s.update, scope);
+      return annotateBlock(s.body, scope);
+    case "dowhile": annotateBlock(s.body, scope); return annotateExpr(s.cond, scope);
+    case "switch":
+      annotateExpr(s.expr, scope);
+      for (const c of s.cases) {
+        if (c.value !== "default") annotateExpr(c.value, scope);
+        for (const st of c.body) annotateStmt(st, scope);
+      }
+      return;
+    case "return":  if (s.value) annotateExpr(s.value, scope); return;
+    case "break": case "continue": case "trap": return;
+    case "block":   return annotateBlock(s.block, scope);
+    case "expr":    return annotateExpr(s.expr, scope);
+  }
+}
+
+function annotateBlock(b: Block, scope: FileScope): void {
+  for (const s of b.stmts) annotateStmt(s, scope);
+}
+
+function annotateProgram(prog: Program, scope: FileScope): void {
+  for (const item of prog.items) {
+    if (item.tag === "func") {
+      annotateType(item.returnType, scope);
+      for (const p of item.params) annotateType(p.type, scope);
+      annotateBlock(item.body, scope);
+    } else if (item.tag === "struct") {
+      for (const f of item.fields) annotateType(f.type, scope);
+      for (const m of item.methods) {
+        annotateType(m.returnType, scope);
+        for (const p of m.params) annotateType(p.type, scope);
+        annotateBlock(m.body, scope);
+      }
+    }
+  }
+}
+
 export function wacResolve(
   entryPath: string,
   programs: Map<string, Program>,
@@ -134,6 +268,7 @@ export function wacResolve(
       const typeIndex = structs.length;
       const structEntry: StructEntry = {
         structDecl: item, name, typeIndex, filePath, methods: new Map(),
+        parentEntry: null,
       };
       structs.push(structEntry);
       scope.set(name, { kind: "struct", entry: structEntry });
@@ -180,10 +315,10 @@ export function wacResolve(
           continue;
         }
         methodNames.add(mname);
-        const mangledName = `${item.name}$${mname}`;
+        const mangledName = `${fileStem}$${item.name}$${mname}`;
         const funcIndex = funcs.length;
         const methodEntry: FuncEntry = {
-          origin: { kind: "method", decl: method, structName: item.name },
+          origin: { kind: "method", decl: method, structName: item.name, structTypeIndex: structEntry.typeIndex },
           mangledName,
           exportName: null,  // methods are never directly wasm-exported
           funcIndex, filePath,
@@ -233,9 +368,28 @@ export function wacResolve(
         scope.set(alias, found);
       }
     }
+
+    // ── Phase 5: annotate every struct-type reference with its resolved
+    // identity (scope is complete now that imports are processed) ────────────
+    annotateProgram(prog, scope);
   }
 
   visitFile(entryPath);
+
+  // ── Final pass: resolve parent-struct names through each struct's own
+  // file scope (imports are aliases, so this must NOT use a bare-name map) ───
+  for (const s of structs) {
+    const parentName = s.structDecl.parent;
+    if (!parentName) continue;
+    const found = fileScopes.get(s.filePath)?.get(parentName);
+    if (found?.kind === "struct") {
+      s.parentEntry = found.entry;
+    } else {
+      err(`unknown parent struct '${parentName}'`, s.filePath,
+        s.structDecl.line, s.structDecl.col);
+    }
+  }
+
   return { funcs, structs, fileScopes, errors, entryPath };
 }
 

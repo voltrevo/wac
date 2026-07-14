@@ -106,7 +106,7 @@ Deno.test("wacResolve: struct with methods", () => {
   if (!s.methods.has("create")) throw new Error("create");
   // Methods get function indices
   const inc = s.methods.get("inc")!;
-  if (inc.mangledName !== "Counter$inc") throw new Error(`mangled: ${inc.mangledName}`);
+  if (inc.mangledName !== "main$Counter$inc") throw new Error(`mangled: ${inc.mangledName}`);
   if (inc.exportName !== null) throw new Error("methods not exported");
   if (!isMethod(inc)) throw new Error("isMethod");
   // Methods have sequential function indices
@@ -124,7 +124,7 @@ Deno.test("wacResolve: struct methods registered in funcs array", () => {
   if (r.funcs.length !== 2) throw new Error(`funcs ${r.funcs.length}`);
   if (r.funcs[0].origin.kind !== "func") throw new Error("first is func");
   if (r.funcs[1].origin.kind !== "method") throw new Error("second is method");
-  if (r.funcs[1].mangledName !== "Foo$bar") throw new Error("mangled Foo$bar");
+  if (r.funcs[1].mangledName !== "main$Foo$bar") throw new Error("mangled main$Foo$bar");
 });
 
 // ── File scope ────────────────────────────────────────────────────────────────

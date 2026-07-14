@@ -2884,6 +2884,32 @@ Deno.test("[§wac-samename-struct-k7fn3wq] same-name structs in different files 
   eq(inst.call("test", []), 2030, "a.get()=20 (v*2), b.get()=30 (v*3) -> 20*100+30=2030, each struct keeps its own method");
 });
 
+Deno.test("[§wac-alias-same-type-j3wq8kf] aliased struct import is the same type as the original", async () => {
+  // Mirror image of the same-name-collision bug: one struct, two names.
+  // Name-based type comparison wrongly rejects `fn[i32(BoxA)] f = BoxA.get;`
+  // with "expected fn(BoxA) -> i32, got fn(Box) -> i32".
+  const files = new Map([
+    ["lib.wac", `
+      export struct Box {
+        i32 v;
+        i32 get(const this) { return this.v; }
+      }
+    `],
+    ["main.wac", `
+      import { Box as BoxA } from "./lib.wac";
+      export i32 test() {
+        BoxA b = BoxA(7);
+        fn[i32(BoxA)] f = BoxA.get;
+        return f(b);
+      }
+    `],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  if (!r.ok) throw new Error(`should compile: ${r.errors.map(e => e.message).join("; ")}`);
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("test", []), 7, "funcref annotation written with the alias matches the original struct's method");
+});
+
 // ── audit-02 — block-scope shadowing must not leak past if/while/switch/for ─
 
 Deno.test("(audit-02) shadowing inside an if-body doesn't corrupt the outer variable", async () => {

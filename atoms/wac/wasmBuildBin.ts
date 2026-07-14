@@ -61,7 +61,8 @@ function fullParamTypes(f: FuncEntry): WacType[] {
   const declared = funcParams(f).map((p: { type: WacType }) => p.type);
   if (f.origin.kind === "method" && f.origin.decl.hasThis) {
     const thisType: WacType = {
-      kind: "struct", name: f.origin.structName, line: 0, col: 0,
+      kind: "struct", name: f.origin.structName, resolvedTypeIndex: f.origin.structTypeIndex,
+      line: 0, col: 0,
     } as WacType;
     return [thisType, ...declared];
   }
@@ -242,11 +243,8 @@ function buildStructFields(
   // Build an ordered list: process base structs before derived
   // (structs are already in topological order from resolver)
   for (const s of structs) {
-    const parent = s.structDecl.parent;
-    // Look up parent fields by typeIndex to handle name collisions
-    const parentEntry = parent ? structs.find(x => x.name === parent && x.filePath === s.filePath)
-      ?? structs.find(x => x.name === parent) : null;
-    const parentFields = parentEntry ? (byIdx.get(parentEntry.typeIndex) ?? []) : [];
+    // parentEntry was resolved through the declaring file's scope by wacResolve
+    const parentFields = s.parentEntry ? (byIdx.get(s.parentEntry.typeIndex) ?? []) : [];
     const ownFields: StructFieldInfo[] = s.structDecl.fields.map((f, i) => ({
       name: f.name,
       type: f.type,
@@ -305,18 +303,13 @@ function buildTypeCtx(
 
   // 5. Struct fields (including inherited)
   const structFields = buildStructFields(result.structs);
-  const structParent = new Map<string, string | null>(
-    result.structs.map(s => [s.name, s.structDecl.parent ?? null]),
-  );
-  // Add alias entries for structFields and structParent too.
+  // Add alias entries for structFields too.
   for (const scope of result.fileScopes.values()) {
     for (const [alias, entry] of scope) {
       if (entry.kind === "struct" && !structFields.has(alias)) {
         // Use "@typeIndex" key for unambiguous lookup (handles same-name structs from different files)
         const fields = structFields.get(`@${entry.entry.typeIndex}`) ?? [];
         structFields.set(alias, fields);
-        const parentName = entry.entry.structDecl.parent ?? null;
-        structParent.set(alias, parentName);
       }
     }
   }
@@ -343,7 +336,7 @@ function buildTypeCtx(
 
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
-    structFields, structParent, funcIdx, result,
+    structFields, funcIdx, result,
     strHelperIdx: new Map<string, number>(),
   };
 }
@@ -365,8 +358,8 @@ function encodeFuncType(params: WacType[], ret: WacType, ctx: WasmTypeCtx): numb
 
 /** Encode a struct type entry (for the type section). */
 function encodeStructType(s: StructEntry, ctx: WasmTypeCtx, allFields: StructFieldInfo[]): number[] {
-  const parent = s.structDecl.parent;
-  const isParent = [...ctx.structParent.values()].some(p => p === s.name);
+  const parent = s.parentEntry;
+  const isParent = ctx.result.structs.some(x => x.parentEntry?.typeIndex === s.typeIndex);
 
   // Encode all fields (inherited + own)
   const fieldsBytes: number[] = [];
@@ -378,7 +371,7 @@ function encodeStructType(s: StructEntry, ctx: WasmTypeCtx, allFields: StructFie
   const structBody = [0x5F, ...fieldsBytes]; // 0x5F = struct
 
   if (parent !== null && parent !== undefined) {
-    const parentIdx = ctx.structTypeIdx.get(parent)!;
+    const parentIdx = parent.typeIndex;
     if (isParent) {
       // Non-final sub (0x50 in V8 encoding): has a parent AND is itself extended
       return [0x50, 0x01, ...uleb(parentIdx), ...structBody];
@@ -416,6 +409,11 @@ function keyToElemType(key: string, ctx: WasmTypeCtx): WacType | null {
   const p = { line: 0, col: 0 };
   const prims = new Set(["i32","i64","f32","f64","bool","i8","i16","anyref","i31ref","string"]);
   if (prims.has(key)) return { kind: "prim", name: key, ...p };
+  if (key.startsWith("S:#")) {
+    const idx = parseInt(key.slice(3));
+    const entry = ctx.result.structs[idx];
+    return { kind: "struct", name: entry?.name ?? "?", resolvedTypeIndex: idx, ...p };
+  }
   if (key.startsWith("S:")) return { kind: "struct", name: key.slice(2), ...p };
   if (key.startsWith("A:")) {
     const inner = keyToElemType(key.slice(2), ctx);

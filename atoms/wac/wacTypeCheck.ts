@@ -48,8 +48,8 @@ const T_I31  = prim("i31ref");
 /** Sentinel for the `null` literal — compatible with any T? */
 const T_NULL = prim("null");
 
-function structType(name: string): WacType {
-  return { kind: "struct", name, line: 0, col: 0 };
+function structType(name: string, resolvedTypeIndex?: number): WacType {
+  return { kind: "struct", name, resolvedTypeIndex, line: 0, col: 0 };
 }
 
 function arrayOf(elem: WacType): WacType {
@@ -65,7 +65,17 @@ function typeEq(a: WacType, b: WacType): boolean {
   if (a.kind !== b.kind) return false;
   switch (a.kind) {
     case "prim":     return a.name === (b as typeof a).name;
-    case "struct":   return a.name === (b as typeof a).name;
+    case "struct": {
+      // Struct identity is the resolved declaration, not the written name:
+      // `Box` and its import alias `BoxA` are the same type, while two files'
+      // unrelated `Box`es are not. Names are only compared when resolution
+      // failed (unknown type — already reported elsewhere).
+      const bs = b as typeof a;
+      if (a.resolvedTypeIndex !== undefined && bs.resolvedTypeIndex !== undefined) {
+        return a.resolvedTypeIndex === bs.resolvedTypeIndex;
+      }
+      return a.name === bs.name;
+    }
     case "array":    return typeEq(a.elem, (b as typeof a).elem);
     case "nullable": return typeEq(a.inner, (b as typeof a).inner);
     case "funcref": {
@@ -108,10 +118,26 @@ function isVoid(t: WacType): boolean {
   return t.kind === "prim" && t.name === "void";
 }
 
+// Struct lookup tables. `structs` is index-ordered (StructEntry.typeIndex),
+// `structMap` is the bare-name fallback used only when a type reference
+// failed to resolve (its "unknown type" error is reported elsewhere).
+type Tables = { structMap: Map<string, StructEntry>; structs: StructEntry[] };
+
+/** Resolve a struct-kind WacType to its StructEntry — by resolved identity
+ *  when the resolver annotated it, by bare name otherwise. */
+function entryOfType(
+  t: { name: string; resolvedTypeIndex?: number },
+  tables: Tables,
+): StructEntry | undefined {
+  return t.resolvedTypeIndex !== undefined
+    ? tables.structs[t.resolvedTypeIndex]
+    : tables.structMap.get(t.name);
+}
+
 /** Is `from` assignable to `to`? Handles subtyping and null widening. */
 function isAssignable(
   from: WacType, to: WacType,
-  structMap: Map<string, StructEntry>,
+  tables: Tables,
 ): boolean {
   if (typeEq(from, to)) return true;
   // null literal -> any T?
@@ -120,15 +146,17 @@ function isAssignable(
   }
   // T -> T? (widen non-null to nullable)
   if (to.kind === "nullable" && from.kind !== "nullable") {
-    return isAssignable(from, to.inner, structMap);
+    return isAssignable(from, to.inner, tables);
   }
   // T? -> S? if T -> S
   if (from.kind === "nullable" && to.kind === "nullable") {
-    return isAssignable(from.inner, to.inner, structMap);
+    return isAssignable(from.inner, to.inner, tables);
   }
   // Struct subtype (Rect -> Shape)
   if (from.kind === "struct" && to.kind === "struct") {
-    return isSubtype(from.name, to.name, structMap);
+    const fe = entryOfType(from, tables);
+    const te = entryOfType(to, tables);
+    return fe !== undefined && te !== undefined && isSubtype(fe, te);
   }
   // Any ref -> anyref
   if (to.kind === "prim" && to.name === "anyref" && isRefType(from)) return true;
@@ -136,45 +164,35 @@ function isAssignable(
 }
 
 /** Is `sub` a subtype (directly or transitively) of `ancestor`? */
-function isSubtype(
-  sub: string, ancestor: string,
-  structMap: Map<string, StructEntry>,
-): boolean {
-  if (sub === ancestor) return true;
-  const entry = structMap.get(sub);
-  if (!entry?.structDecl.parent) return false;
-  return isSubtype(entry.structDecl.parent, ancestor, structMap);
+function isSubtype(sub: StructEntry, ancestor: StructEntry): boolean {
+  for (let e: StructEntry | null = sub; e; e = e.parentEntry) {
+    if (e.typeIndex === ancestor.typeIndex) return true;
+  }
+  return false;
 }
 
 /** Lookup a method by name, walking the inheritance chain. */
 function lookupMethod(
-  structName: string, methodName: string,
-  structMap: Map<string, StructEntry>,
+  entry: StructEntry | undefined, methodName: string,
 ): FuncEntry | null {
-  const entry = structMap.get(structName);
-  if (!entry) return null;
-  const m = entry.methods.get(methodName);
-  if (m) return m;
-  const parent = entry.structDecl.parent;
-  if (!parent) return null;
-  return lookupMethod(parent, methodName, structMap);
+  for (let e: StructEntry | null = entry ?? null; e; e = e.parentEntry) {
+    const m = e.methods.get(methodName);
+    if (m) return m;
+  }
+  return null;
 }
 
 /** Collect all fields of a struct including inherited ones (parent first). */
-function allFields(
-  structName: string, structMap: Map<string, StructEntry>,
-): FieldDecl[] {
-  const entry = structMap.get(structName);
+function allFields(entry: StructEntry | undefined): FieldDecl[] {
   if (!entry) return [];
-  const parentFields = entry.structDecl.parent
-    ? allFields(entry.structDecl.parent, structMap) : [];
+  const parentFields = entry.parentEntry ? allFields(entry.parentEntry) : [];
   return [...parentFields, ...entry.structDecl.fields];
 }
 
 /** Does a type have a default value (for T[N]() and T() construction)? */
 function hasDefault(
-  t: WacType, structMap: Map<string, StructEntry>,
-  visiting = new Set<string>(),
+  t: WacType, tables: Tables,
+  visiting = new Set<number>(),
 ): boolean {
   switch (t.kind) {
     case "prim":     return t.name !== "void" && t.name !== "null";
@@ -182,24 +200,23 @@ function hasDefault(
     case "array":    return true;  // non-null array defaults to an empty (zero-length) array —
                                     // unlike T[N](), there's no size here, so the element type's
                                     // own defaultability is irrelevant.
-    case "struct":   return structHasDefault(t.name, structMap, visiting);
+    case "struct":   return structHasDefault(entryOfType(t, tables), tables, visiting);
     case "funcref":  return false;
   }
 }
 
 function structHasDefault(
-  name: string, structMap: Map<string, StructEntry>,
-  visiting: Set<string>,
+  entry: StructEntry | undefined, tables: Tables,
+  visiting: Set<number>,
 ): boolean {
-  if (visiting.has(name)) return false;  // circular non-null ref has no default
-  visiting.add(name);
-  const entry = structMap.get(name);
-  if (!entry) { visiting.delete(name); return false; }
-  const fields = allFields(name, structMap);
+  if (!entry) return false;
+  if (visiting.has(entry.typeIndex)) return false;  // circular non-null ref has no default
+  visiting.add(entry.typeIndex);
+  const fields = allFields(entry);
   for (const f of fields) {
-    if (!hasDefault(f.type, structMap, visiting)) { visiting.delete(name); return false; }
+    if (!hasDefault(f.type, tables, visiting)) { visiting.delete(entry.typeIndex); return false; }
   }
-  visiting.delete(name);  // backtrack so sibling fields can reuse this struct
+  visiting.delete(entry.typeIndex);  // backtrack so sibling fields can reuse this struct
   return true;
 }
 
@@ -208,9 +225,11 @@ function structHasDefault(
 type VarInfo = { type: WacType; isConst: boolean };
 type VarEnv  = Map<string, VarInfo>;
 
+// Ctx structurally satisfies Tables (structMap + structs).
 type Ctx = {
   file: string;
   structMap: Map<string, StructEntry>;
+  structs: StructEntry[];
   fileScope: FileScope;
   errors: TypeCheckError[];
   // per-function:
@@ -250,7 +269,7 @@ export function wacTypeCheck(
     const prog = programs.get(filePath);
     if (!prog) continue;
     const ctx: Ctx = {
-      file: filePath, structMap, fileScope, errors: [],
+      file: filePath, structMap, structs: result.structs, fileScope, errors: [],
       returnType: T_VOID, inLoop: 0, thisConst: false,
     };
     for (const item of prog.items) {
@@ -267,7 +286,7 @@ export function wacTypeCheck(
     if (!prog || !scope) continue;
 
     const ctx: Ctx = {
-      file: funcEntry.filePath, structMap, fileScope: scope, errors: [],
+      file: funcEntry.filePath, structMap, structs: result.structs, fileScope: scope, errors: [],
       returnType: T_VOID, inLoop: 0, thisConst: false,
     };
     const env: VarEnv = new Map();
@@ -284,10 +303,11 @@ export function wacTypeCheck(
     } else {
       const decl       = funcEntry.origin.decl;
       const structName = funcEntry.origin.structName;
+      const structIdx  = funcEntry.origin.structTypeIndex;
       ctx.returnType = decl.returnType;
       ctx.thisConst  = decl.thisConst;
       if (decl.hasThis) {
-        env.set("this", { type: structType(structName), isConst: decl.thisConst });
+        env.set("this", { type: structType(structName, structIdx), isConst: decl.thisConst });
       }
       for (const p of decl.params) env.set(p.name, { type: p.type, isConst: false });
       const returns = checkBlock(decl.body, env, ctx);
@@ -296,7 +316,7 @@ export function wacTypeCheck(
           decl.line, decl.col);
       }
       // Override correctness
-      checkOverride(decl, structName, ctx);
+      checkOverride(decl, result.structs[structIdx], ctx);
     }
 
     allErrors.push(...ctx.errors);
@@ -347,11 +367,14 @@ function checkFuncSig(
 
 /** Report an error for struct fields that form a recursive non-null chain. */
 function checkNoRecursiveNonNull(s: StructDecl, ctx: Ctx): void {
-  const fields = allFields(s.name, ctx.structMap);
+  const selfScope = ctx.fileScope.get(s.name);
+  const selfEntry = selfScope?.kind === "struct" ? selfScope.entry : undefined;
+  if (!selfEntry) return;
+  const fields = allFields(selfEntry);
   for (const f of fields) {
     if (f.type.kind === "struct") {
-      const visited = new Set<string>([s.name]);
-      if (!structHasDefault(f.type.name, ctx.structMap, visited)) {
+      const visited = new Set<number>([selfEntry.typeIndex]);
+      if (!structHasDefault(entryOfType(f.type, ctx), ctx, visited)) {
         errAt(ctx,
           `field '${f.name}' creates a non-null recursive reference — struct has no default value`,
           f.line, f.col);
@@ -363,14 +386,12 @@ function checkNoRecursiveNonNull(s: StructDecl, ctx: Ctx): void {
 /** Check override keyword correctness for a method. */
 function checkOverride(
   decl: { isOverride: boolean; name: string; hasThis: boolean; line: number; col: number },
-  structName: string,
+  entry: StructEntry | undefined,
   ctx: Ctx,
 ): void {
-  const entry = ctx.structMap.get(structName);
   if (!entry) return;
-  const parentName = entry.structDecl.parent;
-  const parentHasMethod = parentName
-    ? lookupMethod(parentName, decl.name, ctx.structMap) !== null
+  const parentHasMethod = entry.parentEntry
+    ? lookupMethod(entry.parentEntry, decl.name) !== null
     : false;
 
   if (decl.isOverride && !parentHasMethod) {
@@ -564,7 +585,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         if (vType) {
           if (isVoid(ctx.returnType)) {
             errAt(ctx, `void function cannot return a value`, stmt.line, stmt.col);
-          } else if (!isAssignable(vType, ctx.returnType, ctx.structMap)) {
+          } else if (!isAssignable(vType, ctx.returnType, ctx)) {
             const valSpan = stmt.value.kind === "binary" ?
               (stmt.value.left.kind === "ident" ? stmt.value.left.name.length : 1) + (stmt.value.op.length + 2) + (stmt.value.right.kind === "int" ? stmt.value.right.value.length : 1) :
               (stmt.value.kind === "ident" ? stmt.value.name.length : 1);
@@ -666,7 +687,8 @@ function checkLval(
         errAt(ctx, `type '${typeName(baseType)}' has no fields`, lval.line, lval.col);
         return null;
       }
-      const fields = allFields(baseType.name, ctx.structMap);
+      const baseEntry = entryOfType(baseType, ctx);
+      const fields = allFields(baseEntry);
       const field = fields.find(f => f.name === lval.field);
       if (!field) {
         errAt(ctx, `struct '${baseType.name}' has no field '${lval.field}'`, lval.line, lval.col);
@@ -676,8 +698,7 @@ function checkLval(
         const root = lvalRoot(lval);
         const span = lvalText(lval).length;
         // Check field const
-        const entry = ctx.structMap.get(baseType.name);
-        const structIsConst = entry?.structDecl.isConst ?? false;
+        const structIsConst = baseEntry?.structDecl.isConst ?? false;
         if (structIsConst || field.isConst) {
           errAt(ctx, `cannot write to const field '${lval.field}'`, root.line, root.col, span);
         }
@@ -874,7 +895,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
       const tt = inferExpr(expr.then, env, ctx);
       const et = inferExpr(expr.else_, env, ctx);
       if (!tt || !et) return tt ?? et;
-      if (!typeEq(tt, et) && !isAssignable(et, tt, ctx.structMap) && !isAssignable(tt, et, ctx.structMap)) {
+      if (!typeEq(tt, et) && !isAssignable(et, tt, ctx) && !isAssignable(tt, et, ctx)) {
         errAt(ctx, `ternary branches have incompatible types: ${typeName(tt)} and ${typeName(et)}`,
           expr.line, expr.col);
         return tt;
@@ -988,7 +1009,7 @@ function inferCall(
         if (!mdecl) return null;
         if (mdecl.hasThis) {
           // Allow Counter.inc(receiver, ...args) — receiver is the this argument
-          const selfType: WacType = { kind: "struct", name: se.entry.name, line: 0, col: 0 };
+          const selfType: WacType = { kind: "struct", name: se.entry.name, resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0 };
           const allParams = [selfType, ...mdecl.params.map(p => p.type)];
           return checkArgList(args, allParams, mdecl.returnType, expr, env, ctx);
         }
@@ -1052,14 +1073,14 @@ function inferCall(
     }
 
     // Check if it's a funcref field (e.g. h.callback("arg"))
-    const fields2 = allFields(baseType.name, ctx.structMap);
+    const fields2 = allFields(entryOfType(baseType, ctx));
     const fnField = fields2.find(f => f.name === methodName && f.type.kind === "funcref");
     if (fnField) {
       const fr = fnField.type as { kind: "funcref"; params: WacType[]; ret: WacType };
       return checkArgList(args, fr.params, fr.ret, expr, env, ctx);
     }
 
-    const m = lookupMethod(baseType.name, methodName, ctx.structMap);
+    const m = lookupMethod(entryOfType(baseType, ctx), methodName);
     if (!m) {
       errAt(ctx, `struct '${baseType.name}' has no method '${methodName}'`,
         callee.line, callee.col);
@@ -1129,11 +1150,11 @@ function inferFieldAccess(
   if (baseExpr.kind === "ident") {
     const se = ctx.fileScope.get(baseExpr.name);
     if (se?.kind === "struct") {
-      const m = lookupMethod(baseExpr.name, fieldName, ctx.structMap);
+      const m = lookupMethod(se.entry, fieldName);
       if (m && m.origin.kind === "method" && m.origin.decl.hasThis) {
         // Instance method reference: Counter.inc → fn[void(Counter)] funcref
         const mdecl = m.origin.decl;
-        const selfType: WacType = { kind: "struct", name: se.entry.name, line: 0, col: 0 };
+        const selfType: WacType = { kind: "struct", name: se.entry.name, resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0 };
         const allParams = [selfType, ...mdecl.params.map(p => p.type)];
         return { kind: "funcref", params: allParams, ret: mdecl.returnType, line: pos.line, col: pos.col };
       }
@@ -1156,11 +1177,11 @@ function inferFieldAccess(
     return null;
   }
 
-  const fields = allFields(baseType.name, ctx.structMap);
+  const fields = allFields(entryOfType(baseType, ctx));
   const field = fields.find(f => f.name === fieldName);
   if (!field) {
     // Could be a method accessed as value
-    const m = lookupMethod(baseType.name, fieldName, ctx.structMap);
+    const m = lookupMethod(entryOfType(baseType, ctx), fieldName);
     if (m) {
       errAt(ctx, `cannot use method '${fieldName}' as a value`, pos.line, pos.col);
       return null;
@@ -1185,8 +1206,10 @@ function inferConstruct(
 
   // The parser emits `construct { ctype: struct(Name), args }` for BOTH struct
   // constructions AND plain function calls like `helper(42)`. Disambiguate here
-  // based on what Name resolves to in the file scope.
-  if (!ctx.structMap.has(ctype.name)) {
+  // based on what Name resolves to in the file scope: the resolver annotates
+  // ctype iff Name is a struct in THIS file's scope (a same-named struct in an
+  // unimported file must not be constructible here).
+  if (ctype.resolvedTypeIndex === undefined) {
     // Not a struct — try as a function call or funcref variable
     const local = env.get(ctype.name);
     if (local) {
@@ -1212,15 +1235,13 @@ function inferConstruct(
       const ret = funcReturnType(se.entry);
       return checkArgList(args, ps, ret, expr, env, ctx);
     }
-    // If it's a struct name in scope but not in structMap — unresolved alias (shouldn't happen
-    // if structMap was built with aliases; treat as error)
-    if (se?.kind !== "struct") {
-      errAt(ctx, `undefined function or struct '${ctype.name}'`, expr.line, expr.col);
-      return null;
-    }
+    // A struct in scope would have been annotated by the resolver, so this
+    // name is neither a local, a function, nor a struct.
+    errAt(ctx, `undefined function or struct '${ctype.name}'`, expr.line, expr.col);
+    return null;
   }
 
-  const fields = allFields(ctype.name, ctx.structMap);
+  const fields = allFields(entryOfType(ctype, ctx));
 
   if (named) {
     // Named construction: Point { x: 1, y: 2 }
@@ -1242,7 +1263,7 @@ function inferConstruct(
     }
   } else if (args.length === 0) {
     // Default construction: T()
-    if (!structHasDefault(ctype.name, ctx.structMap, new Set())) {
+    if (!structHasDefault(entryOfType(ctype, ctx), ctx, new Set())) {
       errAt(ctx, `struct '${ctype.name}' has no default value (contains non-null non-default fields)`,
         expr.line, expr.col);
     }
@@ -1261,7 +1282,7 @@ function inferConstruct(
     for (let i = n; i < args.length; i++) inferExpr(args[i], env, ctx);
   }
 
-  return structType(ctype.name);
+  return structType(ctype.name, ctype.resolvedTypeIndex);
 }
 
 function inferArrNew(
@@ -1282,7 +1303,7 @@ function inferArrNew(
     if (st && !typeEq(st, T_I32)) {
       errAt(ctx, `array size must be i32, got ${typeName(st)}`, size.line, size.col);
     }
-    if (!hasDefault(elem, ctx.structMap)) {
+    if (!hasDefault(elem, ctx)) {
       errAt(ctx, `type '${typeName(elem)}' has no default value for array construction`,
         expr.line, expr.col);
     }
@@ -1416,7 +1437,7 @@ function checkCast(
         return to;
       }
       // Upcast (from is subtype of to): use 'as'
-      if (isAssignable(from, to, ctx.structMap)) {
+      if (isAssignable(from, to, ctx)) {
         if (op !== "as") {
           errAt(ctx, `upcast to '${tn}' is always safe — use 'as'`, line, col);
         }
@@ -1507,7 +1528,7 @@ function checkAssign(
   annotation?: string,
   hint?: string,
 ): void {
-  if (!isAssignable(actual, expected, ctx.structMap)) {
+  if (!isAssignable(actual, expected, ctx)) {
     const ann = annotation ?? `expected ${typeName(expected)}, found ${typeName(actual)}`;
     errAt(ctx,
       `type mismatch: expected ${typeName(expected)}, got ${typeName(actual)}`,

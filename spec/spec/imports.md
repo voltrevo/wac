@@ -190,3 +190,33 @@ export i32 test() {
 `[§wac-samename-struct-k7fn3wq]` `test()` returns `103` — same-name structs in
 different files don't collide; each keeps its own field layout and methods,
 mangled names are distinct.
+
+### Aliases preserve type identity
+
+The converse also holds: an alias introduced by `import { X as Y }` is a new
+*name*, not a new *type*. Two type names are the same type if and only if they
+resolve to the same struct declaration, regardless of what they are spelled as
+at the point of use. In particular, a funcref annotation written with an alias
+matches a method of the original struct.
+
+```wac
+// lib.wac
+export struct Box {
+  i32 v;
+  i32 get(const this) { return this.v; }
+}
+```
+
+```wac
+// main.wac
+import { Box as BoxA } from "./lib.wac";
+
+export i32 test() {
+  BoxA b = BoxA(7);
+  fn[i32(BoxA)] f = BoxA.get;   // BoxA IS lib's Box — signature matches
+  return f(b);
+}
+```
+
+`[§wac-alias-same-type-j3wq8kf]` `test()` returns `7` — aliased and declared
+names for the same struct are interchangeable in every type position.
