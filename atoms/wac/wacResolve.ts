@@ -413,3 +413,14 @@ export function funcParams(entry: FuncEntry): Param[] {
 export function isMethod(entry: FuncEntry): boolean {
   return entry.origin.kind === "method";
 }
+
+/** Closest common ancestor of two structs (walking parentEntry chains,
+ *  inclusive — a struct is its own ancestor), or null if unrelated. */
+export function commonAncestor(a: StructEntry, b: StructEntry): StructEntry | null {
+  const aChain = new Set<number>();
+  for (let e: StructEntry | null = a; e; e = e.parentEntry) aChain.add(e.typeIndex);
+  for (let e: StructEntry | null = b; e; e = e.parentEntry) {
+    if (aChain.has(e.typeIndex)) return e;
+  }
+  return null;
+}

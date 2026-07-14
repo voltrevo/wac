@@ -14,7 +14,7 @@ import {
 } from "./wacParse.ts";
 import {
   type FuncEntry, type StructEntry, type ResolveResult,
-  funcParams, funcReturnType,
+  funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -243,7 +243,22 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       if (cmp.has(e.op)) return BOOL;
       return typeOfExpr(e.left, env, ctx);
     }
-    case "ternary": return typeOfExpr(e.then, env, ctx);
+    case "ternary": {
+      const tt = typeOfExpr(e.then, env, ctx);
+      const et = typeOfExpr(e.else_, env, ctx);
+      // Struct branches type to their closest common ancestor (matches the
+      // type checker) — the if/else block type must be the ancestor so both
+      // branches validate via wasm's declared subtyping.
+      if (tt.kind === "struct" && et.kind === "struct") {
+        const ae = resolveStructEntry(tt.name, ctx, tt.resolvedTypeIndex);
+        const be = resolveStructEntry(et.name, ctx, et.resolvedTypeIndex);
+        if (ae && be && ae.typeIndex !== be.typeIndex) {
+          const lca = commonAncestor(ae, be);
+          if (lca) return { kind: "struct", name: lca.name, resolvedTypeIndex: lca.typeIndex, line: 0, col: 0 };
+        }
+      }
+      return tt;
+    }
     case "cast": return e.type;
     case "is": return BOOL;
     case "unwrap": {
@@ -577,7 +592,7 @@ class FuncEmitter {
       }
       case "binary": this.emitBinary(e, env); break;
       case "ternary": {
-        const resT = typeOfExpr(e.then, env, this.ctx);
+        const resT = typeOfExpr(e, env, this.ctx); // ternary case computes the LCA
         this.emitExpr(e.cond, env);
         this.emit(0x04, ...this.blockType(resT)); // if (result T)
         this.labelDepth++;
