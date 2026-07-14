@@ -431,6 +431,15 @@ function encodeString(raw: string): number[] {
 
 type LocalInfo = { idx: number; type: WacType };
 
+/** Rewind a live scope map to a saved snapshot: entries the inner scope
+ *  shadowed are restored, entries it introduced are removed. */
+function restoreScope<K, V>(live: Map<K, V>, saved: Map<K, V>): void {
+  for (const k of [...live.keys()]) {
+    if (saved.has(k)) live.set(k, saved.get(k)!);
+    else live.delete(k);
+  }
+}
+
 /** Loop context for break/continue tracking. */
 type LoopCtx = { breakTarget: number; continueTarget: number };
 // Each target is the labelDepth AT THE TIME of the block/loop creation.
@@ -1190,8 +1199,18 @@ class FuncEmitter {
 
   // ── Statement emitter ──
 
+  /** Every Block is a scope: emit its statements, then unwind any name
+   *  bindings (shadowing) and env entries the block introduced. */
   emitBlock(block: Block, env: TypeEnv): void {
-    for (const s of block.stmts) this.emitStmt(s, env);
+    this.emitScoped(block.stmts, env);
+  }
+
+  private emitScoped(stmts: Stmt[], env: TypeEnv): void {
+    const savedKeys = new Map(this.nameToKey);
+    const savedEnv  = new Map(env);
+    for (const s of stmts) this.emitStmt(s, env);
+    restoreScope(this.nameToKey, savedKeys);
+    restoreScope(env, savedEnv);
   }
 
   emitStmt(s: Stmt, env: TypeEnv): void {
@@ -1206,22 +1225,9 @@ class FuncEmitter {
         env.set(s.name, s.type);
         break;
       }
-      case "block": {
-        // Bare block — scoped environment so inner vars don't leak
-        const savedKeys = new Map(this.nameToKey);
-        const savedEnv  = new Map(env);
-        for (const stmt of s.block.stmts) this.emitStmt(stmt, env);
-        // Restore outer scope
-        for (const k of [...this.nameToKey.keys()]) {
-          if (savedKeys.has(k)) this.nameToKey.set(k, savedKeys.get(k)!);
-          else this.nameToKey.delete(k);
-        }
-        for (const k of [...env.keys()]) {
-          if (savedEnv.has(k)) env.set(k, savedEnv.get(k)!);
-          else env.delete(k);
-        }
+      case "block":
+        this.emitBlock(s.block, env);
         break;
-      }
       case "assign": this.emitAssign(s, env); break;
       case "incr": {
         const t = lvalType(s.lval, env, this.ctx);
@@ -1518,15 +1524,9 @@ class FuncEmitter {
     this.emit(0x0C, ...uleb(this.brDepth(contLevel))); // br $cont
     this.emit(0x0B); this.labelDepth--;
     this.emit(0x0B); this.labelDepth--;
-    // Restore outer scope after for-loop
-    for (const k of [...this.nameToKey.keys()]) {
-      if (savedKeys.has(k)) this.nameToKey.set(k, savedKeys.get(k)!);
-      else this.nameToKey.delete(k);
-    }
-    for (const k of [...env.keys()]) {
-      if (savedEnv.has(k)) env.set(k, savedEnv.get(k)!);
-      else env.delete(k);
-    }
+    // Restore outer scope after for-loop (init var is scoped to the loop)
+    restoreScope(this.nameToKey, savedKeys);
+    restoreScope(env, savedEnv);
   }
 
   private emitSwitch(s: Stmt & { kind: "switch" }, env: TypeEnv): void {
@@ -1553,14 +1553,14 @@ class FuncEmitter {
       this.emitEqForType(exprT);
       this.emit(0x04, 0x40); // if void
       this.labelDepth++;
-      for (const stmt of c.body) this.emitStmt(stmt, env);
+      this.emitScoped(c.body, env);
       // Implicit break after case body (no fall-through in wac)
       this.emit(0x0C, ...uleb(this.brDepth(brkLevel))); // br $brk
       this.emit(0x0B); // end if
       this.labelDepth--;
     }
     if (def) {
-      for (const stmt of def.body) this.emitStmt(stmt, env);
+      this.emitScoped(def.body, env);
     }
 
     this.loopStack.pop();
