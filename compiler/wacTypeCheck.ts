@@ -222,7 +222,13 @@ function structHasDefault(
 
 // ── Checker context ───────────────────────────────────────────────────────────
 
-type VarInfo = { type: WacType; isConst: boolean };
+// isConst: the binding itself (declared `const`) — no reassignment, and deep
+// const applies through it. refConst: the binding is reassignable, but the
+// object it currently references was reached through a const reference (e.g.
+// `Node? cur = this.head;` inside a `const this` method) — writes and
+// non-const method calls THROUGH it are errors, while reassigning the cursor
+// itself stays legal. This is the pointer-to-const / const-pointer split.
+type VarInfo = { type: WacType; isConst: boolean; refConst?: boolean };
 type VarEnv  = Map<string, VarInfo>;
 
 // Ctx structurally satisfies Tables (structMap + structs).
@@ -449,7 +455,11 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         checkAssign(stmt.type, initType, stmt.init.line, stmt.init.col, ctx,
           initSpan, undefined, initHint);
       }
-      env.set(stmt.name, { type: stmt.type, isConst: stmt.isConst });
+      // Deep const: binding a const-rooted reference to a plain variable is
+      // fine (read-only cursors need reassignment), but the binding carries
+      // the object's constness — writes through it stay forbidden.
+      const refConst = isMutableRefType(stmt.type) && exprIsConst(stmt.init, env, ctx);
+      env.set(stmt.name, { type: stmt.type, isConst: stmt.isConst, refConst });
       return false;
     }
 
@@ -459,6 +469,17 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       if (!lType || !rType) return false;
       if (stmt.op === "=") {
         checkAssign(lType, rType, stmt.rhs.line, stmt.rhs.col, ctx);
+        // Deep const: a const-rooted reference may only flow into a slot that
+        // keeps it const — a ref-const local (cursor reassignment) is fine,
+        // but a plain local, field, or array element would launder it.
+        if (isMutableRefType(lType) && exprIsConst(stmt.rhs, env, ctx)) {
+          const targetKeepsConst = stmt.lval.kind === "lv-ident" &&
+            (env.get(stmt.lval.name)?.refConst ?? false);
+          if (!targetKeepsConst) {
+            errAt(ctx, `cannot assign const reference to a non-const target — const is deep`,
+              stmt.rhs.line, stmt.rhs.col);
+          }
+        }
       } else {
         // Compound assignment: extract base op, check types, result same as lType
         const baseOp = stmt.op.slice(0, -1);  // "+=" -> "+"
@@ -727,6 +748,12 @@ function checkLval(
       if (idxType && !typeEq(idxType, T_I32)) {
         errAt(ctx, `array index must be i32, got ${typeName(idxType)}`, lval.line, lval.col);
       }
+      // Deep const: element writes through a const reference are errors
+      if (writing && lvalIsConst(lval.base, env, ctx)) {
+        const root = lvalRoot(lval);
+        errAt(ctx, `cannot write through const reference`, root.line, root.col,
+          lvalText(lval).length, `${lvalText(lval.base)} is const`);
+      }
       // Packed arrays: element type for assignment is i32 (write truncates)
       if (isPackedElem(baseType.elem)) return T_I32;
       return baseType.elem;
@@ -744,10 +771,15 @@ function checkLval(
   }
 }
 
-/** Check whether an lvalue is accessed through a const chain. */
+/** Check whether an lvalue is accessed through a const chain. Used only for
+ *  writes THROUGH the binding (field/index writes), so ref-const counts;
+ *  direct reassignment of the binding itself checks isConst alone. */
 function lvalIsConst(lval: Lvalue, env: VarEnv, ctx: Ctx): boolean {
   switch (lval.kind) {
-    case "lv-ident":  return env.get(lval.name)?.isConst ?? false;
+    case "lv-ident": {
+      const v = env.get(lval.name);
+      return (v?.isConst || v?.refConst) ?? false;
+    }
     case "lv-field":  return lvalIsConst(lval.base, env, ctx);
     case "lv-index":  return lvalIsConst(lval.base, env, ctx);
     case "lv-unwrap": return lvalIsConst(lval.base, env, ctx);
@@ -1538,14 +1570,35 @@ function checkAssign(
 
 // ── Const expression check (for deep const enforcement) ───────────────────────
 
-/** Returns true if the expression is rooted in a const variable or const this. */
+/** Returns true if the expression is rooted in a const variable, const this,
+ *  or a ref-const binding (a reference reached through const — see VarInfo). */
 function exprIsConst(expr: Expr, env: VarEnv, ctx: Ctx): boolean {
   switch (expr.kind) {
-    case "ident":  return env.get(expr.name)?.isConst ?? false;
+    case "ident": {
+      const v = env.get(expr.name);
+      return (v?.isConst || v?.refConst) ?? false;
+    }
     case "field":  return exprIsConst(expr.expr, env, ctx);
     case "unwrap": return exprIsConst(expr.expr, env, ctx);
+    case "cast":   return exprIsConst(expr.expr, env, ctx);
+    // Either branch const-rooted taints the result (conservative).
+    case "ternary": return exprIsConst(expr.then, env, ctx) || exprIsConst(expr.else_, env, ctx);
+    // A method call through a const receiver yields a const result: const is
+    // deep, and anything the method hands back was reached through that
+    // receiver (conservatively so — a const accessor returning a fresh object
+    // is also treated as const).
+    case "call":   return expr.callee.kind === "field" && exprIsConst(expr.callee.expr, env, ctx);
     default:       return false;
   }
+}
+
+/** Types through which a write could reach shared state — binding a const
+ *  reference of such a type to a non-const name would launder the constness.
+ *  Primitives (copies) and immutable refs (string) are exempt. */
+function isMutableRefType(t: WacType): boolean {
+  if (t.kind === "struct" || t.kind === "array") return true;
+  if (t.kind === "nullable") return isMutableRefType(t.inner);
+  return false;
 }
 
 // ── Helper: is this AST node a WacType (vs an Expr)? ─────────────────────────

@@ -1323,6 +1323,18 @@ Deno.test("[§wac-const-deep-j6b1nyg] writing through const ref at depth is erro
   `);
 });
 
+Deno.test("[§wac-const-deep-j6b1nyg] writing a const array's element is an error", () => {
+  // Array elements are a depth too — this bypass was found while fixing
+  // audit-03 (lv-index writes never consulted the const chain at all).
+  err(`
+    export i32 bad() {
+      const i32[] a = i32[](1, 2, 3);
+      a[0] = 99;
+      return a[0];
+    }
+  `);
+});
+
 // ── §wac-ret-void-ezw2lqp — void function with no return ─────────────────────
 
 Deno.test("[§wac-ret-void-ezw2lqp] void function with no return compiles", async () => {
@@ -2973,7 +2985,7 @@ Deno.test("(audit-02) shadowing a for-loop's own control variable inside its bod
 
 // ── audit-03 — deep const must survive an accessor chain and a local alias ──
 
-Deno.test("(audit-03) const is deep through a const-returning accessor method", () => {
+Deno.test("[§wac-deep-const-accessor-w3kf8nq] (audit-03) const is deep through a const-returning accessor method", () => {
   err(`
     struct Inner { i32 val; void mutate(this) { this.val = 1; } }
     struct Outer {
@@ -2985,7 +2997,7 @@ Deno.test("(audit-03) const is deep through a const-returning accessor method", 
   `);
 });
 
-Deno.test("(audit-03) const is deep through a local alias of this", () => {
+Deno.test("[§wac-deep-const-alias-p6mk2wf] (audit-03) const is deep through a local alias of this", () => {
   err(`
     struct Counter {
       i32 count;
