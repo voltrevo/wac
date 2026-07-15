@@ -26,6 +26,9 @@ export type TypeCheckError = {
   span?: number;
   annotation?: string;
   hint?: string;
+  /** First line of leading context for multi-line spans (e.g. the line the
+   *  call opens on when an argument error is reported on a later line). */
+  contextStart?: number;
 };
 
 // ── Type utilities ────────────────────────────────────────────────────────────
@@ -243,10 +246,13 @@ type Ctx = {
   inLoop: number;
   // per-method:
   thisConst: boolean;
+  /** While checking a var statement's initializer: `"i64 a = "` — lets nested
+   *  diagnostics (e.g. redundant-cast hints) reconstruct the full statement. */
+  varDeclPrefix?: string;
 };
 
-function errAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, annotation?: string, hint?: string): void {
-  ctx.errors.push({ message: msg, file: ctx.file, line, col, span, annotation, hint });
+function errAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, annotation?: string, hint?: string, contextStart?: number): void {
+  ctx.errors.push({ message: msg, file: ctx.file, line, col, span, annotation, hint, contextStart });
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -440,7 +446,9 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       if (isVoid(stmt.type)) {
         errAt(ctx, `variable type cannot be 'void'`, stmt.line, stmt.col);
       }
+      ctx.varDeclPrefix = `${typeName(stmt.type)} ${stmt.name} = `;
       const initType = inferExpr(stmt.init, env, ctx);
+      ctx.varDeclPrefix = undefined;
       if (initType && initType.kind === "nullable" && stmt.type.kind !== "nullable" &&
           (stmt.type.kind === "struct" || stmt.type.kind === "array")) {
         const initName = stmt.init.kind === "ident" ? stmt.init.name : "expr";
@@ -607,13 +615,11 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
           if (isVoid(ctx.returnType)) {
             errAt(ctx, `void function cannot return a value`, stmt.line, stmt.col);
           } else if (!isAssignable(vType, ctx.returnType, ctx)) {
-            const valSpan = stmt.value.kind === "binary" ?
-              (stmt.value.left.kind === "ident" ? stmt.value.left.name.length : 1) + (stmt.value.op.length + 2) + (stmt.value.right.kind === "int" ? stmt.value.right.value.length : 1) :
-              (stmt.value.kind === "ident" ? stmt.value.name.length : 1);
+            const valText = exprText(stmt.value);
             const retHint = typeEq(vType, T_BOOL) && typeEq(ctx.returnType, T_I32) ?
-              `use \`(${stmt.value.kind === "ident" ? (stmt.value as {name:string}).name : "expr"} > 0) as i32\` to convert` : undefined;
+              `use \`(${valText}) as i32\` to convert` : undefined;
             errAt(ctx, `return: expected ${typeName(ctx.returnType)}, found ${typeName(vType)}`,
-              stmt.value.line, stmt.value.col, valSpan,
+              stmt.value.line, stmt.value.col, valText.length,
               `expected ${typeName(ctx.returnType)}, found ${typeName(vType)}`,
               retHint);
           }
@@ -800,6 +806,31 @@ function lvalText(lval: Lvalue): string {
     case "lv-field":  return `${lvalText(lval.base)}.${lval.field}`;
     case "lv-index":  return `${lvalText(lval.base)}[...]`;
     case "lv-unwrap": return `${lvalText(lval.base)}!`;
+  }
+}
+
+/** Reconstruct approximate source text for an expression (diagnostics only —
+ *  spacing is normalized, parentheses are not reproduced). */
+function exprText(e: Expr): string {
+  switch (e.kind) {
+    case "int": case "float": return e.value;
+    case "bool":    return String(e.value);
+    case "string":  return `"${e.value}"`;
+    case "null":    return "null";
+    case "ident":   return e.name;
+    case "unary":   return `${e.op}${exprText(e.expr)}`;
+    case "binary":  return `${exprText(e.left)} ${e.op} ${exprText(e.right)}`;
+    case "cast":    return `${exprText(e.expr)} ${e.op} ${typeName(e.type)}`;
+    case "ternary": return `${exprText(e.cond)} ? ${exprText(e.then)} : ${exprText(e.else_)}`;
+    case "field":   return `${exprText(e.expr)}.${e.name}`;
+    case "index":   return `${exprText(e.expr)}[${exprText(e.idx)}]`;
+    case "unwrap":  return `${exprText(e.expr)}!`;
+    case "call":    return `${exprText(e.callee)}(${e.args.map(exprText).join(", ")})`;
+    case "is":
+      return `${exprText(e.expr)} is ${e.not ? "not " : ""}${
+        e.rhs === "null" ? "null" : isWacType(e.rhs) ? typeName(e.rhs) : exprText(e.rhs)}`;
+    case "construct": return `${typeName(e.ctype)}(${e.args.map(exprText).join(", ")})`;
+    case "arrNew":    return `${typeName(e.elem)}[](...)`;
   }
 }
 
@@ -1177,7 +1208,13 @@ function checkArgList(
   const n = Math.min(args.length, params.length);
   for (let i = 0; i < n; i++) {
     const at = inferExpr(args[i], env, ctx);
-    if (at) checkAssign(params[i], at, args[i].line, args[i].col, ctx);
+    if (at) {
+      // If the argument sits on a later line than the call opens on, point
+      // the diagnostic's leading context back at the call line.
+      const contextStart = args[i].line !== callExpr.line ? callExpr.line : undefined;
+      checkAssign(params[i], at, args[i].line, args[i].col, ctx,
+        exprText(args[i]).length, undefined, undefined, contextStart);
+    }
   }
   // Extra args still inferred (for error reporting)
   for (let i = n; i < args.length; i++) inferExpr(args[i], env, ctx);
@@ -1463,7 +1500,8 @@ function checkCast(
   casteeExpr?: Expr,
 ): WacType | null {
   const fn = typeName(from), tn = typeName(to);
-  const casteeSpan = casteeExpr?.kind === "ident" ? casteeExpr.name.length : 1;
+  const casteeText = casteeExpr ? exprText(casteeExpr) : "expr";
+  const casteeSpan = casteeText.length;
 
   // Reference casts (handled separately from numeric)
   if (isRefType(from) || from.kind === "prim" && from.name === "null") {
@@ -1507,9 +1545,14 @@ function checkCast(
   if (isLosslessNumericCast(fn, tn)) {
     if (op !== "as") {
       const totalSpan = casteeSpan + 1 + op.length + 1 + tn.length;
-      errAt(ctx, `lossy cast not needed`, line, col, totalSpan,
-        `${fn} -> ${tn} is lossless`,
-        `use \`as\` instead of \`${op}\``);
+      // Inside a var initializer, spell out the whole corrected statement
+      // ("use `as` instead: i64 a = x as i64;") [§wac-diag-cast-p5fn2rk].
+      const hint = ctx.varDeclPrefix !== undefined
+        ? `use \`as\` instead: ${ctx.varDeclPrefix}${casteeText} as ${tn};`
+        : `use \`as\` instead of \`${op}\``;
+      // Anchor at the castee so the caret underlines `x as~ i64` from its start
+      errAt(ctx, `lossy cast not needed`, casteeExpr?.line ?? line, casteeExpr?.col ?? col,
+        totalSpan, `${fn} -> ${tn} is lossless`, hint);
     }
     return to;
   }
@@ -1572,12 +1615,13 @@ function checkAssign(
   span = 1,
   annotation?: string,
   hint?: string,
+  contextStart?: number,
 ): void {
   if (!isAssignable(actual, expected, ctx)) {
     const ann = annotation ?? `expected ${typeName(expected)}, found ${typeName(actual)}`;
     errAt(ctx,
       `type mismatch: expected ${typeName(expected)}, got ${typeName(actual)}`,
-      line, col, span, ann, hint);
+      line, col, span, ann, hint, contextStart);
   }
 }
 

@@ -26,6 +26,8 @@ export type CompileError = {
   span: number;
   annotation?: string;
   hint?: string;
+  /** First line of leading context for multi-line spans */
+  contextStart?: number;
 };
 
 export type CompileResult =
