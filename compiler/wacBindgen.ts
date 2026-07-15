@@ -171,22 +171,9 @@ function genWrapper(exp: WacExport): WrapperResult {
     lines.push(`  return ${callExpr} as number;`);
   }
 
-  // Void-returning array functions: also return the mutated array copy
-  const hasArrayParam = exp.params.some(p => ARRAY_MAP[p.type]);
-  if (exp.ret === "void" && hasArrayParam) {
-    // Return the first mutated array
-    const firstArrParam = exp.params.find(p => ARRAY_MAP[p.type])!;
-    const elemBase = firstArrParam.type.replace("[]", "");
-    lines[lines.length - 1] = `  ${callExpr};`; // no return
-    lines.push(`  return _arrayFromWasm_${elemBase}(_w_${firstArrParam.name});`);
-    // Override return type
-    const jsArrType = ARRAY_MAP[firstArrParam.type];
-    return {
-      skip: false,
-      code: `export function ${jsName}(${tsParams}): ${jsArrType} {\n${lines.join("\n")}\n}`,
-    };
-  }
-
+  // Arrays are strictly copy-in [§wac-bind-arr-copy-j4wk7pm]: a void function
+  // stays void — mutations to the wasm-side copy are discarded, never
+  // mirrored back to the caller's typed array.
   return {
     skip: false,
     code: `export function ${jsName}(${tsParams}): ${tsRet} {\n${lines.join("\n")}\n}`,
@@ -207,7 +194,11 @@ export function wacBindgen(compiled: WacCompiled): string {
     e.ret,
   ]);
   const needsString = allTypes.some(t => t === "string");
-  const usedArrayTypes = new Set(allTypes.filter(t => ARRAY_MAP[t]));
+  // Copy-in helpers for array params, copy-out helpers only for array returns
+  const paramArrayTypes = new Set(
+    compiled.exports.flatMap(e => e.params.map(p => p.type)).filter(t => ARRAY_MAP[t]));
+  const retArrayTypes = new Set(
+    compiled.exports.map(e => e.ret).filter(t => ARRAY_MAP[t]));
 
   const parts: string[] = [];
 
@@ -226,10 +217,11 @@ export function wacBindgen(compiled: WacCompiled): string {
   }
 
   // Array helpers
-  for (const arrType of usedArrayTypes) {
-    const jsType = ARRAY_MAP[arrType];
-    parts.push(arrayToWasmHelper(arrType, jsType));
-    parts.push(arrayFromWasmHelper(arrType, jsType));
+  for (const arrType of paramArrayTypes) {
+    parts.push(arrayToWasmHelper(arrType, ARRAY_MAP[arrType]));
+  }
+  for (const arrType of retArrayTypes) {
+    parts.push(arrayFromWasmHelper(arrType, ARRAY_MAP[arrType]));
   }
 
   // Function wrappers

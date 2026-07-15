@@ -2268,8 +2268,10 @@ const MATH_SRC = `
   export f64 circle_area(f64 radius) { return 3.14159265358979 * radius * radius; }
 `;
 
+// Matches spec/spec/bindgen.md's sort.wac — bubbleSort returns the array
+// explicitly (arrays are strictly copy-in; void mutations are discarded).
 const SORT_SRC = `
-  export void bubbleSort(i32[] arr) {
+  export i32[] bubbleSort(i32[] arr) {
     for (i32 i = 0; i < arr.len(); i++) {
       for (i32 j = 0; j < arr.len() - 1 - i; j++) {
         if (arr[j] > arr[j + 1]) {
@@ -2277,6 +2279,7 @@ const SORT_SRC = `
         }
       }
     }
+    return arr;
   }
   export i32 sum(i32[] arr) {
     i32 total = 0;
