@@ -1599,8 +1599,10 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "f64"  && tn === "i32")  ||
          (fn === "f64"  && tn === "i64")  ||
          (fn === "f32"  && tn === "i32")  ||
+         (fn === "f32"  && tn === "i64")  ||
          (fn === "f64"  && tn === "f32")  ||
          (fn === "i64"  && tn === "f64")  ||
+         (fn === "i64"  && tn === "f32")  ||
          (fn === "i32"  && tn === "f32")  ||
          (fn === "i32"  && tn === "bool") ||
          (fn === "i32"  && tn === "i31ref");  // 31-bit, may overflow
