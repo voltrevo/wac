@@ -3208,7 +3208,7 @@ Deno.test("(audit-16) importing a non-exported struct is a compile error", () =>
 
 // ── audit-17 — export visibility must not leak transitively ────────────────
 
-Deno.test("(audit-17) importing a symbol doesn't implicitly re-export it", () => {
+Deno.test("[§wac-no-reexport-f7kn4wq] (audit-17) importing a symbol doesn't implicitly re-export it", () => {
   const files = new Map([
     ["a.wac", `export i32 foo() { return 42; }`],
     ["b.wac", `import { foo } from "./a.wac";`],

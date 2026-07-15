@@ -220,3 +220,27 @@ export i32 test() {
 
 `[§wac-alias-same-type-j3wq8kf]` `test()` returns `7` — aliased and declared
 names for the same struct are interchangeable in every type position.
+
+### No implicit re-export
+
+Importing a symbol makes it usable inside the importing file only. It does
+not re-export it: another file can import a symbol only from the file that
+declares (and exports) it.
+
+```wac
+// a.wac
+export i32 foo() { return 42; }
+```
+
+```wac
+// b.wac
+import { foo } from "./a.wac";   // b may use foo...
+```
+
+```wac
+// main.wac
+import { foo } from "./b.wac";   // error: b.wac does not export 'foo'
+```
+
+`[§wac-no-reexport-f7kn4wq]` Importing a symbol from a file that merely
+imports it (rather than declaring and exporting it) is a compile error.
