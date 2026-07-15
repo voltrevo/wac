@@ -352,7 +352,14 @@ export function wacResolve(
           err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
           continue;
         }
-        // Only allow importing exported functions and structs
+        // Only allow importing exported functions and structs that the named
+        // file itself declares — importing a symbol does not re-export it
+        // [§wac-no-reexport-f7kn4wq].
+        if (found.entry.filePath !== importedPath) {
+          err(`'${name}' is not exported from '${importedPath}' — importing a symbol does not re-export it`,
+            filePath, line, col);
+          continue;
+        }
         if (found.kind === "func" && found.entry.exportName === null) {
           err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
           continue;
