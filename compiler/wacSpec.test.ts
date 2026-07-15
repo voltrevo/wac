@@ -3308,7 +3308,11 @@ Deno.test("[§wac-diag-cast-p5fn2rk] lossy-cast diagnostic matches the spec's ex
   eq(r.ok, false, "should fail typecheck");
   if (r.ok) throw new Error("expected compile error");
   const e = r.errors[0];
-  eq(e.col, 9, "col=9 per the spec (not 11)");
+  // The spec's rendered caret (and its sibling assign example) anchor at the
+  // castee `x`, column 11 with the 2-space body indent — the original "2:9"
+  // header was a spec self-inconsistency, fixed to 2:11.
+  eq(e.col, 11, "col=11: the castee x, matching the spec's rendered caret");
+  eq(e.span, 9, "span covers `x as~ i64`");
   eq(e.hint, "use `as` instead: i64 a = x as i64;", "hint matches the spec's exact required text");
 });
 

@@ -98,14 +98,15 @@ error: type mismatch in assignment
    = help: use `as!` for checked conversion or `as~` for truncation
 ```
 
-`[§wac-diag-cast-p5fn2rk]` Given `i64 a = x as~ i64;` at line 2:
+`[§wac-diag-cast-p5fn2rk]` Given `i64 a = x as~ i64;` at line 2 (indented two
+spaces inside a function body, so `x` sits at column 11):
 
 The compiler must emit `span: 9`, `annotation: "i32 -> i64 is lossless"`,
 `hint: "use \`as\` instead: i64 a = x as i64;"`. Rendered:
 
 ```
 error: lossy cast not needed
-  --> file.wac:2:9
+  --> file.wac:2:11
    |
  2 |   i64 a = x as~ i64;
    |           ^^^^^^^^^ i32 -> i64 is lossless
