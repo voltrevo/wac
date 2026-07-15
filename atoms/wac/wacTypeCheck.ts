@@ -831,6 +831,8 @@ function exprText(e: Expr): string {
         e.rhs === "null" ? "null" : isWacType(e.rhs) ? typeName(e.rhs) : exprText(e.rhs)}`;
     case "construct": return `${typeName(e.ctype)}(${e.args.map(exprText).join(", ")})`;
     case "arrNew":    return `${typeName(e.elem)}[](...)`;
+    case "incr-expr":
+      return e.prefix ? `${e.op}${lvalText(e.lval)}` : `${lvalText(e.lval)}${e.op}`;
   }
 }
 
@@ -879,6 +881,18 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
       }
       errAt(ctx, `undefined variable '${expr.name}'`, expr.line, expr.col);
       return null;
+    }
+
+    case "incr-expr": {
+      // checkLval(writing) covers undefined names and all const rules
+      const lType = checkLval(expr.lval, env, ctx, /* writing */ true);
+      if (!lType) return null;
+      if (!isInteger(lType)) {
+        errAt(ctx, `'${expr.op}' requires i32 or i64, got ${typeName(lType)}`,
+          expr.line, expr.col);
+        return null;
+      }
+      return lType;
     }
 
     case "unary": {

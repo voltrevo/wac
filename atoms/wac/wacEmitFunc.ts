@@ -330,6 +330,7 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       return e.ctype;
     }
     case "arrNew": return { kind: "array", elem: e.elem, line: 0, col: 0 };
+    case "incr-expr": return lvalType(e.lval, env, ctx);
   }
 }
 
@@ -608,6 +609,7 @@ class FuncEmitter {
       }
       case "cast":   this.emitCast(e, env); break;
       case "is":     this.emitIs(e, env); break;
+      case "incr-expr": this.emitIncrExpr(e, env); break;
       case "unwrap": this.emitExpr(e.expr, env); this.emit(0xD4); break; // ref.as_non_null
       case "call":   this.emitCall(e, env); break;
       case "field":  this.emitField(e, env); break;
@@ -1397,6 +1399,41 @@ class FuncEmitter {
         break;
       }
     }
+  }
+
+  /** ++/-- as an expression: postfix leaves the old value on the stack,
+   *  prefix the new one. */
+  private emitIncrExpr(
+    e: { kind: "incr-expr"; op: "++" | "--"; prefix: boolean; lval: Lvalue },
+    env: TypeEnv,
+  ): void {
+    const t = lvalType(e.lval, env, this.ctx);
+    const is64 = t.kind === "prim" && t.name === "i64";
+    const one  = is64 ? [0x42, 0x01] : [0x41, 0x01];                       // const 1
+    const add  = is64 ? (e.op === "++" ? 0x7C : 0x7D) : (e.op === "++" ? 0x6A : 0x6B);
+    const undo = is64 ? (e.op === "++" ? 0x7D : 0x7C) : (e.op === "++" ? 0x6B : 0x6A);
+    if (e.lval.kind === "lv-ident") {
+      const key = this.nameToKey.get(e.lval.name) ?? e.lval.name;
+      const idx = this.localMap.get(key)!.idx;
+      if (e.prefix) {
+        this.emit(0x20, ...uleb(idx));       // local.get
+        this.emit(...one, add);              // ±1
+        this.emit(0x22, ...uleb(idx));       // local.tee — leaves the new value
+      } else {
+        this.emit(0x20, ...uleb(idx));       // old value (stays on stack)
+        this.emit(0x20, ...uleb(idx));
+        this.emit(...one, add);              // ±1
+        this.emit(0x21, ...uleb(idx));       // local.set
+      }
+      return;
+    }
+    // Field / array-element operand: statement-style read-modify-write, then
+    // re-read for the value. NOTE: this re-evaluates the base/index
+    // expressions — a side-effecting index inside an incr-expression operand
+    // runs twice.
+    this.emitFieldIncrAssign(e.lval, e.op === "++" ? "+=" : "-=", env, t);
+    this.emitLvalGet(e.lval, env);           // new value
+    if (!e.prefix) this.emit(...one, undo);  // postfix: old = new ∓ 1
   }
 
   private emitAssign(

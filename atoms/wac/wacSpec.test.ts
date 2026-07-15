@@ -305,11 +305,8 @@ Deno.test("[§wac-compound-pw7qq7v] compound() returns 40", async () => {
   eq(inst.call("compound", []), 40, "compound()");
 });
 
-// ── §wac-increxpr-cabck67 — ++ is statement not expression ───────────────────
-
-Deno.test("[§wac-increxpr-cabck67] i32 y = x++ is a compile error", () => {
-  err(`export i32 bad() { i32 x = 5; i32 y = x++; return y; }`);
-});
+// (former §wac-increxpr-cabck67 removed: ++/-- are full expressions now —
+// see [§wac-postincr-expr-n4kx8wq] / [§wac-preincr-expr-t8jm3wq])
 
 // ── §wac-abs-djo90kx — abs with if/else ──────────────────────────────────────
 
@@ -3364,6 +3361,26 @@ Deno.test("[§wac-preincr-expr-t8jm3wq] prefix ++ evaluates to the new value as 
     }
   `);
   eq(inst.call("preIncr", []), 66, "x becomes 6, z=6 (new value) -> 6*10+6=66");
+});
+
+Deno.test("(audit-24) ++/-- expressions on fields, elements, and mid-expression", async () => {
+  const inst = await run(`
+    struct P { i32 n; }
+    export i32 fieldPost() { P p = P(5); i32 old = p.n++; return old * 100 + p.n; }
+    export i32 fieldPre()  { P p = P(5); i32 nw = ++p.n; return nw * 100 + p.n; }
+    export i32 elemPost()  { i32[] a = i32[](7); i32 old = a[0]--; return old * 100 + a[0]; }
+    export i32 inExpr()    { i32 x = 3; return x++ * 2 + x; }
+  `);
+  eq(inst.call("fieldPost", []), 506, "p.n++ yields old 5, field becomes 6");
+  eq(inst.call("fieldPre", []), 606, "++p.n yields new 6");
+  eq(inst.call("elemPost", []), 706, "a[0]-- yields old 7, element becomes 6");
+  eq(inst.call("inExpr", []), 10, "x++ * 2 + x = 3*2 + 4");
+});
+
+Deno.test("(audit-24) ++ requires an integer lvalue", () => {
+  err(`export i32 f() { return 5++; }`);
+  err(`export i32 g() { const i32 x = 1; return x++; }`);
+  err(`export f64 h() { f64 x = 1.5; return x++; }`);
 });
 
 // ── audit-25 — a switch may have at most one default clause, and it must be last ─

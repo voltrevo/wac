@@ -162,6 +162,8 @@ function annotateExpr(e: Expr, scope: FileScope): void {
       if (e.size) annotateExpr(e.size, scope);
       for (const f of e.fixed) annotateExpr(f, scope);
       return;
+    case "incr-expr":
+      return annotateLvalue(e.lval, scope);
   }
 }
 

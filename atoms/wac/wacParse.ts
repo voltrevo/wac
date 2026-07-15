@@ -43,7 +43,10 @@ export type Expr =
   | ({ kind: "field";    expr: Expr; name: string } & Pos)
   | ({ kind: "unwrap";   expr: Expr } & Pos)
   | ({ kind: "construct"; ctype: WacType; args: Expr[]; named?: { name: string; val: Expr }[] } & Pos)
-  | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[] } & Pos);
+  | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[] } & Pos)
+  // ++/-- as an expression: postfix evaluates to the old value, prefix to the
+  // new one. The operand must be an lvalue (variable, field, array element).
+  | ({ kind: "incr-expr"; op: "++" | "--"; prefix: boolean; lval: Lvalue } & Pos);
 
 // lvalue — restricted subset used in assignments
 export type Lvalue =
@@ -382,11 +385,43 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return e;
   }
 
+  /** Convert an already-parsed expression to an Lvalue (for ++/-- operands),
+   *  or null if it isn't one. */
+  function exprToLvalue(e: Expr): Lvalue | null {
+    const pp = { line: e.line, col: e.col };
+    switch (e.kind) {
+      case "ident": return { kind: "lv-ident", name: e.name, ...pp };
+      case "field": {
+        const base = exprToLvalue(e.expr);
+        return base && { kind: "lv-field", base, field: e.name, ...pp };
+      }
+      case "index": {
+        const base = exprToLvalue(e.expr);
+        return base && { kind: "lv-index", base, idx: e.idx, ...pp };
+      }
+      case "unwrap": {
+        const base = exprToLvalue(e.expr);
+        return base && { kind: "lv-unwrap", base, ...pp };
+      }
+      default: return null;
+    }
+  }
+
   function parseUnary(): Expr {
     const p = pos();
     if (at("-") || at("!") || at("~")) {
       const op = advance().text;
       return { kind: "unary", op, expr: parseUnary(), ...p };
+    }
+    if (at("++") || at("--")) {
+      const op = advance().text as "++" | "--";
+      const operand = parseUnary();
+      const lval = exprToLvalue(operand);
+      if (!lval) {
+        err(`'${op}' requires a variable, field, or array element`);
+        return operand;
+      }
+      return { kind: "incr-expr", op, prefix: true, lval, ...p };
     }
     return parsePostfix();
   }
@@ -421,6 +456,14 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         const args = parseArgList();
         expect(")");
         e = { kind: "call", callee: e, args, ...p };
+      } else if (at("++") || at("--")) {
+        const op = advance().text as "++" | "--";
+        const lval = exprToLvalue(e);
+        if (!lval) {
+          err(`'${op}' requires a variable, field, or array element`);
+          break;
+        }
+        e = { kind: "incr-expr", op, prefix: false, lval, ...p };
       } else {
         break;
       }
@@ -686,11 +729,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         const op = advance().text; const rhs = parseExpr(); expect(";");
         return { kind: "assign", op, lval: lv, rhs, ...p };
       }
-      if (at("++") || at("--")) {
+      if ((at("++") || at("--")) && at(";", 1)) {
         const op = advance().text as "++" | "--"; expect(";");
         return { kind: "incr", op, lval: lv, ...p };
       }
       // Not an assignment — restore and parse as expression
+      // (including `x++ * 2;`, where ++ is an expression, not a statement)
       cur = savedCur;
     }
 

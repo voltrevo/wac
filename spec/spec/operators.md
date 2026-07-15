@@ -156,7 +156,8 @@ Shift (<<, >>):                    T*T->T for i32, i64
                                     Also: i64*i32->i64
                                     Not allowed on floats or bool
 Compound (+=, -=, etc):            Same rules as base operator
-++, --:                            i32 and i64 only, statement only
+++, --:                            i32 and i64 only, expression or statement
+                                    (postfix: old value, prefix: new value)
 Reference (is, is not):            type test, null test, or identity (ref -> bool)
 Cast (as):                         lossless numeric, safe ref upcast
 Cast (as!):                        checked numeric (traps), ref downcast (traps)
