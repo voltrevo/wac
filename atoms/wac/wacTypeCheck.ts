@@ -29,6 +29,8 @@ export type TypeCheckError = {
   /** First line of leading context for multi-line spans (e.g. the line the
    *  call opens on when an argument error is reported on a later line). */
   contextStart?: number;
+  /** Defaults to "error" when absent. Warnings never fail the compile. */
+  severity?: "error" | "warning";
 };
 
 // ── Type utilities ────────────────────────────────────────────────────────────
@@ -253,6 +255,10 @@ type Ctx = {
 
 function errAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, annotation?: string, hint?: string, contextStart?: number): void {
   ctx.errors.push({ message: msg, file: ctx.file, line, col, span, annotation, hint, contextStart });
+}
+
+function warnAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, annotation?: string, hint?: string): void {
+  ctx.errors.push({ message: msg, file: ctx.file, line, col, span, annotation, hint, severity: "warning" });
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -952,6 +958,16 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
         if (!isRefType(lt)) {
           errAt(ctx, `'is' type test requires a reference type, got ${typeName(lt)}`, expr.line, expr.col);
         }
+        // Statically unrelated struct hierarchies: the test can never be true
+        const ltStruct = lt.kind === "struct" ? lt : lt.kind === "nullable" && lt.inner.kind === "struct" ? lt.inner : null;
+        if (ltStruct && targetType.kind === "struct") {
+          const le = entryOfType(ltStruct, ctx);
+          const te = entryOfType(targetType, ctx);
+          if (le && te && !commonAncestor(le, te)) {
+            warnAt(ctx, `'${typeName(ltStruct)} is ${typeName(targetType)}' is always false — the types share no ancestor`,
+              expr.line, expr.col);
+          }
+        }
         return T_BOOL;
       }
       // Reference identity: expr is Expr
@@ -1543,6 +1559,14 @@ function checkCast(
       // Downcast: use 'as!'
       if (op !== "as!") {
         errAt(ctx, `downcast to '${tn}' may fail — use 'as!'`, line, col);
+      }
+      // Statically unrelated struct hierarchies: the downcast always traps
+      if (from.kind === "struct" && to.kind === "struct") {
+        const fe2 = entryOfType(from, ctx);
+        const te2 = entryOfType(to, ctx);
+        if (fe2 && te2 && !commonAncestor(fe2, te2)) {
+          warnAt(ctx, `'${fn} as! ${tn}' always traps — the types share no ancestor`, line, col);
+        }
       }
       return to;
     }

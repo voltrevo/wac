@@ -13,20 +13,20 @@ import type { DiagError } from "./wacDiag.ts";
 
 async function run(src: string) {
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   return wacInstance(r.compiled);
 }
 
 function err(src: string): string {
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   if (r.ok) throw new Error("expected compile error");
-  return r.errors[0].message;
+  return r.diagnostics[0].message;
 }
 
 function errMulti(files: Map<string, string>): string {
   const r = wacCompile(files, "main.wac");
   if (r.ok) throw new Error("expected compile error");
-  return r.errors[0].message;
+  return r.diagnostics[0].message;
 }
 
 function eq(a: unknown, b: unknown, msg: string): void {
@@ -1234,7 +1234,7 @@ Deno.test("[§wac-rename-pohglv4] renaming import resolves collision", async () 
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`should compile: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`should compile: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 3, "foo()+fooB()=3");
 });
@@ -1256,7 +1256,7 @@ Deno.test("[§wac-rename-type-h0a08xz] renaming struct imports resolves collisio
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`should compile: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`should compile: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 4, "p2.x + p3.z = 4");
 });
@@ -1449,7 +1449,7 @@ Deno.test("[§wac-diamond-79emza1] combined() returns 230", async () => {
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("combined", []), 230, "combined()");
 });
@@ -1478,7 +1478,7 @@ Deno.test("[§wac-circular-m7jx3p4] ping(5) returns 5", async () => {
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", [5]), 5, "ping(5)=5");
 });
@@ -1495,7 +1495,7 @@ Deno.test("[§wac-imp-coexist-p8km2v6] test() returns 21 (6 + 15)", async () => 
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 21, "6 + 15 = 21");
 });
@@ -1513,7 +1513,7 @@ Deno.test("[§wac-rename-imp-w4fn9k2] test() returns 16 (6 + 10)", async () => {
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 16, "6 + 10 = 16");
 });
@@ -1538,7 +1538,7 @@ Deno.test("[§wac-import-type-ev21tgx] importing struct makes constructors and m
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors[0].message}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics[0].message}`);
   const inst = await wacInstance(r.compiled);
   near(inst.call("test", []) as number, 3.0, "p.getX()");
 });
@@ -1956,7 +1956,7 @@ async function runStr(src: string) {
     }
   `;
   const r = wacCompile(new Map([["main.wac", fullSrc]]), "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
   const raw = instance.exports as Record<string, (...args: unknown[]) => unknown>;
 
@@ -2012,7 +2012,7 @@ async function runWithExpected(src: string, fnName: string, expected: string): P
     }
   `;
   const r = wacCompile(new Map([["main.wac", fullSrc]]), "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const inst2 = await wacInstance(r.compiled);
   return inst2.call("__verify", []) as boolean;
 }
@@ -2345,7 +2345,7 @@ function wasmStringToJs(exports: WebAssembly.Exports, wa: unknown): string {
 
 Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20)=6765, circle_area(5)=~78.54", async () => {
   const r = wacCompile(new Map([["math.wac", MATH_SRC]]), "math.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   // Verify bindgen generates correct TS with wrapper functions
   const ts = wacBindgen(r.compiled);
@@ -2363,7 +2363,7 @@ Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20
 
 Deno.test("[§wac-bind-arr-m7qj3xf] Bindgen for sort.wac: sum(Int32Array([10,20,30]))=60", async () => {
   const r = wacCompile(new Map([["sort.wac", SORT_SRC]]), "sort.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   // Verify bindgen generates correct TS
   const ts = wacBindgen(r.compiled);
@@ -2380,7 +2380,7 @@ Deno.test("[§wac-bind-arr-m7qj3xf] Bindgen for sort.wac: sum(Int32Array([10,20,
 
 Deno.test("[§wac-bind-arr-mut-p3kn7wp] Bindgen for sort.wac: bubbleSort([5,3,1,4,2])=[1,2,3,4,5]", async () => {
   const r = wacCompile(new Map([["sort.wac", SORT_SRC]]), "sort.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function bubbleSort(arr: Int32Array): Int32Array"), true, "bubbleSort returns Int32Array");
@@ -2397,7 +2397,7 @@ Deno.test("[§wac-bind-arr-mut-p3kn7wp] Bindgen for sort.wac: bubbleSort([5,3,1,
 
 Deno.test("[§wac-bind-arr-copy-j4wk7pm] Array params are copied into wasm; original JS array unmodified", async () => {
   const r = wacCompile(new Map([["sort.wac", SORT_SRC]]), "sort.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
   const exports = instance.exports;
@@ -2412,7 +2412,7 @@ Deno.test("[§wac-bind-arr-copy-j4wk7pm] Array params are copied into wasm; orig
 
 Deno.test("[§wac-bind-str-r8jm4xf] Bindgen for greet.wac: greet('world')='hello, world!'", async () => {
   const r = wacCompile(new Map([["greet.wac", GREET_SRC]]), "greet.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function greet(name: string): string"), true, "greet wrapper type");
@@ -2430,7 +2430,7 @@ Deno.test("[§wac-bind-str-r8jm4xf] Bindgen for greet.wac: greet('world')='hello
 
 Deno.test("[§wac-bind-strbytes-w5hd3jk] Bindgen for greet.wac: countBytes('hello')=5", async () => {
   const r = wacCompile(new Map([["greet.wac", GREET_SRC]]), "greet.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
   const exports = instance.exports;
@@ -2441,7 +2441,7 @@ Deno.test("[§wac-bind-strbytes-w5hd3jk] Bindgen for greet.wac: countBytes('hell
 
 Deno.test("[§wac-bind-i64-k3fn9wp] Bindgen for big.wac: add64(100n, 200n)=300n", async () => {
   const r = wacCompile(new Map([["big.wac", BIG_SRC]]), "big.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function add64(a: bigint, b: bigint): bigint"), true, "add64 wrapper type");
@@ -2452,7 +2452,7 @@ Deno.test("[§wac-bind-i64-k3fn9wp] Bindgen for big.wac: add64(100n, 200n)=300n"
 
 Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitted with a comment", () => {
   const r = wacCompile(new Map([["mixed.wac", MIXED_SRC]]), "mixed.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
 
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function simple(): number"), true, "simple() included");
@@ -2468,12 +2468,12 @@ Deno.test("[§wac-diag-bool-r8kn4wp] Bool error: CompileError has span/annotatio
   const r = wacCompile(new Map([["err.wac", src]]), "err.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.span, 1, "span=1 for ident condition");
   eq(e.annotation, "expected bool, found i32", "annotation");
   eq(typeof e.hint, "string", "has hint");
   eq(e.hint!.includes("comparison"), true, "hint mentions comparison");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["err.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["err.wac", src]]));
   eq(diag.includes("error:"), true, "has error prefix");
   eq(diag.includes("--> err.wac:"), true, "has file reference");
   eq(diag.includes("^"), true, "has underline");
@@ -2484,12 +2484,12 @@ Deno.test("[§wac-diag-assign-j3qm7xf] Assignment error: CompileError has span/a
   const r = wacCompile(new Map([["err.wac", src]]), "err.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.span, 4, "span=4 for 3.14");
   eq(e.annotation, "expected i32, found f64", "annotation");
   eq(typeof e.hint, "string", "has hint");
   eq(e.hint!.includes("as!"), true, "hint mentions as!");
-  const result = wacDiag(r.errors as DiagError[], new Map([["err.wac", src]]));
+  const result = wacDiag(r.diagnostics as DiagError[], new Map([["err.wac", src]]));
   eq(result.includes("error:"), true, "message");
   eq(result.includes("--> err.wac:4:"), true, "file:line");
   eq(result.includes("i32 n = 3.14;"), true, "source line");
@@ -2502,7 +2502,7 @@ Deno.test("[§wac-diag-cast-p5fn2rk] Cast error: lossy cast not needed", () => {
   const src = `export void test(i32 x) {\n  i64 a = x as~ i64;\n}`;
   const diagErr: DiagError = {
     message: "lossy cast not needed",
-    file: "file.wac", line: 2, col: 11, phase: "typecheck",
+    file: "file.wac", line: 2, col: 11, phase: "typecheck", severity: "error",
     span: 9, annotation: "i32 -> i64 is lossless",
     hint: "use `as` instead: i64 a = x as i64;",
   };
@@ -2518,7 +2518,7 @@ Deno.test("[§wac-diag-null-h6kp9wn] Null error: nullable assigned to non-null",
   const src = `struct Point { i32 x; i32 y; }\nexport void test(Point? q) {\n  Point p = q;\n}`;
   const diagErr: DiagError = {
     message: "cannot assign nullable to non-null",
-    file: "file.wac", line: 3, col: 13, phase: "typecheck",
+    file: "file.wac", line: 3, col: 13, phase: "typecheck", severity: "error",
     span: 1, annotation: "expected Point, found Point?",
     hint: "unwrap with `!`: Point p = q!;",
   };
@@ -2533,7 +2533,7 @@ Deno.test("[§wac-diag-const-w2jm5xf] Const error: write through const reference
   const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
   eq(r.ok, false, "should fail typecheck");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["file.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["file.wac", src]]));
   eq(diag.includes("error:"), true, "has error");
   eq(diag.includes("p.x = 5"), true, "shows source line with assignment");
 });
@@ -2547,7 +2547,7 @@ Deno.test("[§wac-diag-wide-k4rn8wp] Gutter width adjusts for high line numbers"
   const src = `export i32 algo() {\n` + lines.join("\n") + `\n`;
   const diagErr: DiagError = {
     message: "return: expected i32, found bool",
-    file: "algo.wac", line: 47, col: 10, phase: "typecheck",
+    file: "algo.wac", line: 47, col: 10, phase: "typecheck", severity: "error",
     span: 7, annotation: "expected i32, found bool",
     hint: "use `(sum > 0) as i32` to convert",
   };
@@ -2580,7 +2580,7 @@ Deno.test("[§wac-diag-multiline-ic7x2hq] Multi-line spans show context lines", 
   const src = lines.join("\n");
   const diagErr: DiagError = {
     message: "incompatible argument type",
-    file: "algo.wac", line: 14, col: 5, phase: "typecheck",
+    file: "algo.wac", line: 14, col: 5, phase: "typecheck", severity: "error",
     span: 4, annotation: "expected i32, found f64",
     contextStart: 12,
   };
@@ -2596,7 +2596,7 @@ Deno.test("[§wac-diag-parse-unexpected-q3kn8wp] Unexpected token shows formatte
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error prefix");
   eq(diag.includes("--> main.wac:"), true, "has file reference");
   eq(diag.includes("^"), true, "has underline");
@@ -2607,7 +2607,7 @@ Deno.test("[§wac-diag-parse-missing-semi-r7jm4xf] Missing semicolon shows forma
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error prefix");
   eq(diag.includes("main.wac"), true, "has file reference");
 });
@@ -2617,7 +2617,7 @@ Deno.test("[§wac-diag-parse-missing-brace-w5hd2jk] Missing closing brace shows 
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error");
   eq(diag.includes("main.wac"), true, "has file");
 });
@@ -2627,7 +2627,7 @@ Deno.test("[§wac-diag-parse-missing-paren-k8fn3qp] Missing closing paren shows 
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error prefix");
   eq(diag.includes("main.wac"), true, "has file reference");
 });
@@ -2637,7 +2637,7 @@ Deno.test("[§wac-diag-parse-bad-type-n7qm3xf] Unknown type shows parse error", 
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error");
   eq(diag.includes("main.wac"), true, "has file");
 });
@@ -2647,7 +2647,7 @@ Deno.test("[§wac-diag-parse-bad-struct-h9pd5wn] Struct syntax error shows parse
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail");
   if (r.ok) throw new Error("expected compile error");
-  const diag = wacDiag(r.errors as DiagError[], new Map([["main.wac", src]]));
+  const diag = wacDiag(r.diagnostics as DiagError[], new Map([["main.wac", src]]));
   eq(diag.includes("error:"), true, "has error");
 });
 
@@ -2706,7 +2706,7 @@ export i32 test() {
 }`;
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, true, "compiles");
-  if (!r.ok) throw new Error(r.errors[0].message);
+  if (!r.ok) throw new Error(r.diagnostics[0].message);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 10, "p!.next!.val == 10");
 });
@@ -2721,7 +2721,7 @@ Deno.test("[§wac-export-entry-only-v3kp8wn] only entry file exports appear in w
   ]);
   const r = wacCompile(files, "main.wac");
   eq(r.ok, true, "compiles");
-  if (!r.ok) throw new Error(r.errors[0].message);
+  if (!r.ok) throw new Error(r.diagnostics[0].message);
   const exportNames = r.compiled.exports.map(e => e.name).filter(n => !n.startsWith("__bind"));
   eq(exportNames.length, 1, "exactly one user export");
   eq(exportNames[0], "test", "export name is 'test'");
@@ -2747,7 +2747,7 @@ export i32 testVal() { Node n = Node(42, null); return n.val; }
 export i32 testNext() { Node n = Node(42, null); return n.next is null ? 1 : 0; }`;
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, true, "compiles");
-  if (!r.ok) throw new Error(r.errors[0].message);
+  if (!r.ok) throw new Error(r.diagnostics[0].message);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("testVal", []), 42, "val == 42");
   eq(inst.call("testNext", []), 1, "next is null");
@@ -2767,7 +2767,7 @@ struct Stack {
 export i32 test() { Stack s = Stack(); s.push(10); s.push(20); return s.len(); }`;
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, true, "compiles");
-  if (!r.ok) throw new Error(r.errors[0].message);
+  if (!r.ok) throw new Error(r.diagnostics[0].message);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 2, "len() == 2");
 });
@@ -2777,7 +2777,7 @@ export i32 test() { Stack s = Stack(); s.push(10); s.push(20); return s.len(); }
 async function llTest(testFn: string): Promise<ReturnType<typeof wacInstance>> {
   const src = LL_SRC + testFn;
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
-  if (!r.ok) throw new Error("compile error: " + r.errors[0].message);
+  if (!r.ok) throw new Error("compile error: " + r.diagnostics[0].message);
   return wacInstance(r.compiled);
 }
 
@@ -2891,7 +2891,7 @@ Deno.test("[§wac-samename-struct-k7fn3wq] same-name structs in different files 
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`should compile: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`should compile: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 2030, "a.get()=20 (v*2), b.get()=30 (v*3) -> 20*100+30=2030, each struct keeps its own method");
 });
@@ -2917,7 +2917,7 @@ Deno.test("[§wac-alias-same-type-j3wq8kf] aliased struct import is the same typ
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`should compile: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`should compile: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const inst = await wacInstance(r.compiled);
   eq(inst.call("test", []), 7, "funcref annotation written with the alias matches the original struct's method");
 });
@@ -3207,7 +3207,7 @@ Deno.test("[§wac-diag-lex-unterm-str-m9fk2wq] unterminated string literal is a 
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail to compile");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.phase, "lex", "should be a lex-phase error");
   eq(/unterminated/i.test(e.message) && /string/i.test(e.message), true, "message should mention unterminated string");
 });
@@ -3217,7 +3217,7 @@ Deno.test("[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
   eq(r.ok, false, "should fail to compile");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.phase, "lex", "should be a lex-phase error");
   eq(/unterminated/i.test(e.message) && /comment/i.test(e.message), true, "message should mention unterminated comment");
 });
@@ -3262,7 +3262,7 @@ Deno.test("(audit-19) bindgen keeps the wac export name verbatim, no camelCase r
   const r = wacCompile(new Map([["math.wac", `
     export f64 circle_area(f64 radius) { return 3.14159265358979 * radius * radius; }
   `]]), "math.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function circle_area("), true, "generated wrapper keeps circle_area verbatim");
   eq(ts.includes("function circleArea("), false, "generated wrapper must not rename to circleArea");
@@ -3274,7 +3274,7 @@ Deno.test("(audit-20) a void function's array mutation is never copied back by b
   const r = wacCompile(new Map([["m.wac", `
     export void mutateArr(i32[] arr) { arr[0] = 999; }
   `]]), "m.wac");
-  if (!r.ok) throw new Error(r.errors.map(e => e.message).join("; "));
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function mutateArr(arr: Int32Array): void"), true, "void function stays void in the generated wrapper");
   eq(ts.includes("_arrayFromWasm_i32"), false, "must not attempt to copy the array back for a void function");
@@ -3296,7 +3296,7 @@ Deno.test("[§wac-diag-multiline-ic7x2hq] multi-line call diagnostics carry the 
   const r = wacCompile(new Map([["algo.wac", src]]), "algo.wac");
   eq(r.ok, false, "should fail to compile");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0] as DiagError;
+  const e = r.diagnostics[0] as DiagError;
   eq(e.line, 6, "error reported on the 3.14 line");
   eq(e.span, 4, "span covers the 4-character literal 3.14, not a default of 1");
   eq(e.contextStart, 4, "contextStart points back to the compute( line, not left undefined");
@@ -3309,7 +3309,7 @@ Deno.test('[§wac-diag-const-w2jm5xf] const-write diagnostic carries span=3 and 
   const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
   eq(r.ok, false, "should fail typecheck");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.span, 3, "span=3 for 'p.x'");
   eq(e.annotation, "p is const", "annotation identifies p as const");
 });
@@ -3321,7 +3321,7 @@ Deno.test('[§wac-diag-wide-k4rn8wp] return-type hint reconstructs the real expr
   const r = wacCompile(new Map([["algo.wac", src]]), "algo.wac");
   eq(r.ok, false, "should fail typecheck");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   eq(e.hint, "use `(sum > 0) as i32` to convert", "hint reconstructs the real source expression");
 });
 
@@ -3330,7 +3330,7 @@ Deno.test("[§wac-diag-cast-p5fn2rk] lossy-cast diagnostic matches the spec's ex
   const r = wacCompile(new Map([["file.wac", src]]), "file.wac");
   eq(r.ok, false, "should fail typecheck");
   if (r.ok) throw new Error("expected compile error");
-  const e = r.errors[0];
+  const e = r.diagnostics[0];
   // The spec's rendered caret (and its sibling assign example) anchor at the
   // castee `x`, column 11 with the 2-space body indent — the original "2:9"
   // header was a spec self-inconsistency, fixed to 2:11.

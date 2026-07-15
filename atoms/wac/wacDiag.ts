@@ -1,7 +1,7 @@
-// wacDiag — pretty-prints compile errors as structured diagnostics.
+// wacDiag — pretty-prints compile diagnostics.
 //
-// Each error gets:
-//   error: <message>
+// Each diagnostic gets:
+//   error: <message>        (or "warning:" per its severity)
 //     --> file:line:col
 //      |
 //   L  | source line
@@ -10,9 +10,9 @@
 //
 // Gutter width scales with the number of digits in the line number.
 
-import type { CompileError } from "./wacCompile.ts";
+import type { CompileDiagnostic } from "./wacCompile.ts";
 
-export type DiagError = CompileError & {
+export type DiagError = CompileDiagnostic & {
   /** Number of characters to underline (default: 1). */
   span?: number;
   /** Annotation text placed after the underline carets. */
@@ -28,10 +28,10 @@ export type DiagError = CompileError & {
  * `sources` maps file paths to their source text.
  */
 export function wacDiag(
-  errors: DiagError[],
+  diagnostics: DiagError[],
   sources: Map<string, string>,
 ): string {
-  return errors.map(e => formatDiag(e, sources)).join("\n\n");
+  return diagnostics.map(e => formatDiag(e, sources)).join("\n\n");
 }
 
 function formatDiag(e: DiagError, sources: Map<string, string>): string {
@@ -46,7 +46,7 @@ function formatDiag(e: DiagError, sources: Map<string, string>): string {
 
   const lineText = srcLines[lineNum - 1] ?? "";
 
-  let out = `error: ${e.message}\n`;
+  let out = `${e.severity ?? "error"}: ${e.message}\n`;
   out += `${arrowPad}--> ${e.file}:${lineNum}:${e.col}\n`;
   out += `${pad}|\n`;
 

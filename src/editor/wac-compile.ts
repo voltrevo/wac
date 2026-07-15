@@ -18,7 +18,7 @@ export function compile(files: FileMap, fileName: string): EditorCompileResult {
     for (const [k, v] of Object.entries(files)) sources.set(k, v);
     return {
       ok: false,
-      errors: [wacDiag(result.errors, sources)],
+      errors: [wacDiag(result.diagnostics, sources)],
     };
   }
   return { ok: true, wasm: result.compiled.wasm, exports: result.compiled.exports, compiled: result.compiled };
@@ -68,7 +68,7 @@ export async function runFunction(
 
   const result = wacCompile(fileMap, fileName);
   if (!result.ok) {
-    return { success: false, output: result.errors.map((e) => e.message).join("\n") };
+    return { success: false, output: result.diagnostics.map((e) => e.message).join("\n") };
   }
 
   const meta = result.compiled.exports.find((e) => e.name === funcName);

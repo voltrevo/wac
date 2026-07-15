@@ -17,12 +17,13 @@ export type WacParam    = { name: string; type: string };
 export type WacExport   = { name: string; params: WacParam[]; ret: string };
 export type WacCompiled = { wasm: Uint8Array; exports: WacExport[] };
 
-export type CompileError = {
+export type CompileDiagnostic = {
   message: string;
   file: string;
   line: number;
   col: number;
   phase: "lex" | "parse" | "resolve" | "typecheck";
+  severity: "error" | "warning";
   span: number;
   annotation?: string;
   hint?: string;
@@ -30,9 +31,11 @@ export type CompileError = {
   contextStart?: number;
 };
 
+// `ok` is false iff at least one diagnostic has severity "error" — warnings
+// alone never fail a compile [see errors.md].
 export type CompileResult =
-  | { ok: true;  compiled: WacCompiled }
-  | { ok: false; errors: CompileError[] };
+  | { ok: true;  compiled: WacCompiled; diagnostics: CompileDiagnostic[] }
+  | { ok: false; diagnostics: CompileDiagnostic[] };
 
 // ── Type name serialization ───────────────────────────────────────────────────
 
@@ -75,43 +78,44 @@ export function wacCompile(
   files: Map<string, string>,
   entry: string,
 ): CompileResult {
-  const errors: CompileError[] = [];
+  const diagnostics: CompileDiagnostic[] = [];
   const programs = new Map<string, Program>();
+  const hasError = () => diagnostics.some(d => d.severity === "error");
 
-  // Phase 1 & 2: lex + parse every file
+  // Phase 1 & 2: lex + parse every file (these phases only produce errors)
   for (const [path, src] of files) {
     const { tokens, errors: lexErrs } = wacLex(src);
     for (const e of lexErrs) {
-      errors.push({ span: 1, ...e, file: path, phase: "lex" });
+      diagnostics.push({ span: 1, ...e, file: path, phase: "lex", severity: "error" });
     }
     // Parse even if there were lex errors (best-effort recovery)
     const { program, errors: parseErrs } = wacParse(tokens, path);
     for (const e of parseErrs) {
-      errors.push({ span: 1, ...e, phase: "parse" });
+      diagnostics.push({ span: 1, ...e, phase: "parse", severity: "error" });
     }
     programs.set(path, program);
   }
 
-  if (errors.length) return { ok: false, errors };
+  if (hasError()) return { ok: false, diagnostics };
 
   // Phase 3: resolve import graph and build flat symbol table
   const resolveResult = wacResolve(entry, programs);
   for (const e of resolveResult.errors) {
-    errors.push({ span: 1, ...e, phase: "resolve" });
+    diagnostics.push({ span: 1, ...e, phase: "resolve", severity: "error" });
   }
 
-  if (errors.length) return { ok: false, errors };
+  if (hasError()) return { ok: false, diagnostics };
 
-  // Phase 4: type check all functions and methods
-  const typeErrors = wacTypeCheck(resolveResult, programs);
-  for (const e of typeErrors) {
-    errors.push({ span: 1, ...e, phase: "typecheck" });
+  // Phase 4: type check all functions and methods (may also produce warnings)
+  const typeDiags = wacTypeCheck(resolveResult, programs);
+  for (const e of typeDiags) {
+    diagnostics.push({ span: 1, severity: "error", ...e, phase: "typecheck" });
   }
 
-  if (errors.length) return { ok: false, errors };
+  if (hasError()) return { ok: false, diagnostics };
 
   // Phase 5: emit wasm binary (cannot fail after successful typecheck)
   const wasm = wasmBuildBin(resolveResult, programs);
   const exports = extractExports(resolveResult);
-  return { ok: true, compiled: { wasm, exports } };
+  return { ok: true, compiled: { wasm, exports }, diagnostics };
 }
