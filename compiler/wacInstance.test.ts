@@ -7,7 +7,7 @@ import { wacInstance } from "./wacInstance.ts";
 
 async function compile(src: string) {
   const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   return wacInstance(r.compiled);
 }
 

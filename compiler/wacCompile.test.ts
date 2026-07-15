@@ -12,7 +12,7 @@ function compile(src: string) {
 
 async function inst(src: string): Promise<Record<string, (...a: unknown[]) => unknown>> {
   const r = compile(src);
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
   return instance.exports as Record<string, (...a: unknown[]) => unknown>;
 }
@@ -60,7 +60,7 @@ Deno.test("wacCompile: multi-file import chain", async () => {
     `],
   ]);
   const r = wacCompile(files, "main.wac");
-  if (!r.ok) throw new Error(`compile failed: ${r.errors.map(e => e.message).join("; ")}`);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
   const e = instance.exports as Record<string, (...a: unknown[]) => unknown>;
   eq(e.quadruple(3), 12, "quadruple(3)=12");
@@ -73,23 +73,23 @@ Deno.test("wacCompile: lex error — unexpected character", () => {
   // '#' is an unexpected character that the lexer rejects
   const r = compile(`export i32 f() { return #bad; }`);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors.length === 0) throw new Error("expected errors");
-  if (r.errors[0].phase !== "lex") throw new Error("expected lex error, got: " + r.errors[0].phase);
-  if (!r.errors[0].message.includes("#")) throw new Error("expected '#' in message");
+  if (r.diagnostics.length === 0) throw new Error("expected errors");
+  if (r.diagnostics[0].phase !== "lex") throw new Error("expected lex error, got: " + r.diagnostics[0].phase);
+  if (!r.diagnostics[0].message.includes("#")) throw new Error("expected '#' in message");
 });
 
 Deno.test("wacCompile: parse error — missing return expression", () => {
   // 'return;' in a non-void function is caught by type checker
   const r = compile(`export i32 bad() { return; }`);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors[0].phase !== "typecheck") throw new Error("expected typecheck error");
-  if (!r.errors[0].message.includes("return")) throw new Error("expected return error");
+  if (r.diagnostics[0].phase !== "typecheck") throw new Error("expected typecheck error");
+  if (!r.diagnostics[0].message.includes("return")) throw new Error("expected return error");
 });
 
 Deno.test("wacCompile: parse error — unclosed brace", () => {
   const r = compile(`export i32 f(i32 x) { return x;`);
   if (r.ok) throw new Error("expected failure");
-  const phases = r.errors.map(e => e.phase);
+  const phases = r.diagnostics.map(e => e.phase);
   if (!phases.includes("parse")) throw new Error("expected parse error, got: " + JSON.stringify(phases));
 });
 
@@ -102,7 +102,7 @@ Deno.test("wacCompile: resolve error — missing import", () => {
   const r = wacCompile(files, "main.wac");
   if (r.ok) throw new Error("expected failure");
   // Files map doesn't include lib.wac, so resolution fails
-  const phases = r.errors.map(e => e.phase);
+  const phases = r.diagnostics.map(e => e.phase);
   if (!phases.includes("resolve")) throw new Error("expected resolve error");
 });
 
@@ -110,7 +110,7 @@ Deno.test("wacCompile: typecheck error — undefined function call", () => {
   const r = compile(`export i32 f() { return noSuchFn(); }`);
   if (r.ok) throw new Error("expected failure");
   // Undefined calls are caught at typecheck phase
-  const phases = r.errors.map(e => e.phase);
+  const phases = r.diagnostics.map(e => e.phase);
   if (!phases.includes("typecheck") && !phases.includes("resolve")) {
     throw new Error("expected resolve or typecheck error, got: " + JSON.stringify(phases));
   }
@@ -121,14 +121,14 @@ Deno.test("wacCompile: typecheck error — undefined function call", () => {
 Deno.test("wacCompile: typecheck error — wrong return type", () => {
   const r = compile(`export i32 bad() { return "hello"; }`);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors[0].phase !== "typecheck") throw new Error("expected typecheck, got " + r.errors[0].phase);
-  if (!r.errors[0].message.includes("return:")) throw new Error("expected return type error, got: " + r.errors[0].message);
+  if (r.diagnostics[0].phase !== "typecheck") throw new Error("expected typecheck, got " + r.diagnostics[0].phase);
+  if (!r.diagnostics[0].message.includes("return:")) throw new Error("expected return type error, got: " + r.diagnostics[0].message);
 });
 
 Deno.test("wacCompile: typecheck error — argument count mismatch", () => {
   const r = compile(`i32 add(i32 a, i32 b) { return a + b; } export i32 f() { return add(1); }`);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors[0].phase !== "typecheck") throw new Error("expected typecheck");
+  if (r.diagnostics[0].phase !== "typecheck") throw new Error("expected typecheck");
 });
 
 Deno.test("wacCompile: typecheck error — wrong operator types", () => {
@@ -137,7 +137,7 @@ Deno.test("wacCompile: typecheck error — wrong operator types", () => {
     export S bad(S a, S b) { return a + b; }
   `);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors[0].phase !== "typecheck") throw new Error("expected typecheck");
+  if (r.diagnostics[0].phase !== "typecheck") throw new Error("expected typecheck");
 });
 
 // ── Error structure ───────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ Deno.test("wacCompile: typecheck error — wrong operator types", () => {
 Deno.test("wacCompile: error has file, line, col, phase fields", () => {
   const r = compile(`export i32 bad() { return "oops"; }`);
   if (r.ok) throw new Error("expected failure");
-  const err = r.errors[0];
+  const err = r.diagnostics[0];
   if (typeof err.file !== "string") throw new Error("file missing");
   if (typeof err.line !== "number") throw new Error("line missing");
   if (typeof err.col !== "number") throw new Error("col missing");
@@ -160,7 +160,7 @@ Deno.test("wacCompile: error line/col point to the problem location", () => {
   ].join("\n");
   const r = compile(src);
   if (r.ok) throw new Error("expected failure");
-  const err = r.errors[0];
+  const err = r.diagnostics[0];
   if (err.line !== 2) throw new Error(`expected line 2, got ${err.line}`);
   if (err.phase !== "typecheck") throw new Error("expected typecheck");
 });
@@ -174,8 +174,8 @@ Deno.test("wacCompile: multiple type errors reported together", () => {
     export i32 f2() { return "bad2"; }
   `);
   if (r.ok) throw new Error("expected failure");
-  if (r.errors.length < 2) throw new Error(`expected ≥2 errors, got ${r.errors.length}`);
-  if (!r.errors.every(e => e.phase === "typecheck")) throw new Error("all should be typecheck");
+  if (r.diagnostics.length < 2) throw new Error(`expected ≥2 errors, got ${r.diagnostics.length}`);
+  if (!r.diagnostics.every(e => e.phase === "typecheck")) throw new Error("all should be typecheck");
 });
 
 // ── WacCompiled exports metadata ──────────────────────────────────────────────

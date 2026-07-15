@@ -1,10 +1,10 @@
 import { type Diagnostic } from "@codemirror/lint";
 import { type EditorView } from "@codemirror/view";
-import { wacCompile, type CompileError } from "../../atoms/wac/wacCompile.ts";
+import { wacCompile, type CompileDiagnostic } from "../../atoms/wac/wacCompile.ts";
 import type { FileMap } from "./file-store";
 
-/** Convert a CompileError (1-indexed line/col) to a CM Diagnostic (char offset). */
-function errorToCM(err: CompileError, doc: string, fileName: string): Diagnostic | null {
+/** Convert a CompileDiagnostic (1-indexed line/col) to a CM Diagnostic (char offset). */
+function errorToCM(err: CompileDiagnostic, doc: string, fileName: string): Diagnostic | null {
   // Only show errors from the current file
   if (err.file !== fileName) return null;
 
@@ -21,7 +21,7 @@ function errorToCM(err: CompileError, doc: string, fileName: string): Diagnostic
   const hint = (err as Record<string, unknown>).hint as string | undefined;
   if (annotation) message += ` — ${annotation}`;
   if (hint) message += `\nHelp: ${hint}`;
-  return { from, to, severity: "error", message };
+  return { from, to, severity: err.severity, message };
 }
 
 /**
@@ -41,11 +41,10 @@ export function wacLintSource(
     // Use live editor content for current file
     fileMap.set(fileName, doc);
 
+    // Surface warnings too — a successful compile can still carry diagnostics
     const result = wacCompile(fileMap, fileName);
-    if (result.ok) return [];
-
     const diagnostics: Diagnostic[] = [];
-    for (const err of result.errors) {
+    for (const err of result.diagnostics) {
       const d = errorToCM(err, doc, fileName);
       if (d) diagnostics.push(d);
     }
