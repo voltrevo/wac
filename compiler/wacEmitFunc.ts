@@ -472,8 +472,11 @@ class FuncEmitter {
   private loopStack: LoopCtx[] = [];
   /** Number of structured control blocks currently open. */
   private labelDepth = 0;
-  /** Scratch i64 local index for checked/saturating i64 casts (set by wacEmitFunc). */
+  /** Scratch local indices for checked/saturating casts (set by wacEmitFunc). */
   tempI64Local = -1;
+  tempI32Local = -1;
+  tempF32Local = -1;
+  tempF64Local = -1;
 
   constructor(ctx: WasmTypeCtx, returnType: WacType) {
     this.ctx = ctx;
@@ -836,6 +839,75 @@ class FuncEmitter {
       if (from === "f32" && to === "i32") { this.emit(0xA8); return; }  // i32.trunc_f32_s (traps)
       if (from === "f64" && to === "i64") { this.emit(0xB0); return; }  // i64.trunc_f64_s (traps)
       if (from === "f32" && to === "i64") { this.emit(0xAE); return; }  // i64.trunc_f32_s (traps)
+      if (from === "f64" && to === "f32") {
+        // Exact iff promote(demote(x)) == x. NaN never traps (x != x makes
+        // the second conjunct false) [§wac-narrow-f32-*].
+        const a = this.tempF64Local, b = this.tempF32Local;
+        this.emit(0x22, ...uleb(a));       // local.tee $a       (x)
+        this.emit(0xB6);                   // f32.demote_f64     (d)
+        this.emit(0x22, ...uleb(b));       // local.tee $b
+        this.emit(0xBB);                   // f64.promote_f32    (p)
+        this.emit(0x20, ...uleb(a));       // local.get $a
+        this.emit(0x62);                   // f64.ne             (p != x)
+        this.emit(0x20, ...uleb(a));
+        this.emit(0x20, ...uleb(a));
+        this.emit(0x61);                   // f64.eq             (x == x — false for NaN)
+        this.emit(0x71);                   // i32.and
+        this.emit(0x04, 0x40, 0x00, 0x0B); // if { unreachable }
+        this.emit(0x20, ...uleb(b));       // result: d
+        return;
+      }
+      if (from === "i32" && to === "f32") {
+        // Exact iff the f32 value equals the (always exact) f64 image of x.
+        const i = this.tempI32Local, b = this.tempF32Local;
+        this.emit(0x22, ...uleb(i));       // local.tee $i       (x)
+        this.emit(0xB2);                   // f32.convert_i32_s  (c)
+        this.emit(0x22, ...uleb(b));       // local.tee $b
+        this.emit(0xBB);                   // f64.promote_f32
+        this.emit(0x20, ...uleb(i));
+        this.emit(0xB7);                   // f64.convert_i32_s  (exact for all i32)
+        this.emit(0x62);                   // f64.ne
+        this.emit(0x04, 0x40, 0x00, 0x0B); // if { unreachable }
+        this.emit(0x20, ...uleb(b));       // result: c
+        return;
+      }
+      if (from === "i64" && to === "f32") {
+        // Exact iff trunc_sat(c) round-trips to x AND c isn't the saturation
+        // boundary 2^63 (where i64::MAX would falsely compare equal).
+        const l = this.tempI64Local, b = this.tempF32Local;
+        this.emit(0x22, ...uleb(l));       // local.tee $l       (x)
+        this.emit(0xB4);                   // f32.convert_i64_s  (c)
+        this.emit(0x21, ...uleb(b));       // local.set $b
+        this.emit(0x20, ...uleb(b));
+        this.emit(0xFC, 0x04);             // i64.trunc_sat_f32_s (back)
+        this.emit(0x20, ...uleb(l));
+        this.emit(0x52);                   // i64.ne             (back != x)
+        this.emit(0x20, ...uleb(b));
+        this.emit(0x43, 0x00, 0x00, 0x00, 0x5F); // f32.const 2^63
+        this.emit(0x5B);                   // f32.eq             (c == 2^63)
+        this.emit(0x72);                   // i32.or
+        this.emit(0x04, 0x40, 0x00, 0x0B); // if { unreachable }
+        this.emit(0x20, ...uleb(b));       // result: c
+        return;
+      }
+      if (from === "i64" && to === "f64") {
+        // Same shape as i64 -> f32, in f64.
+        const l = this.tempI64Local, d = this.tempF64Local;
+        this.emit(0x22, ...uleb(l));       // local.tee $l       (x)
+        this.emit(0xB9);                   // f64.convert_i64_s  (c)
+        this.emit(0x21, ...uleb(d));       // local.set $d
+        this.emit(0x20, ...uleb(d));
+        this.emit(0xFC, 0x06);             // i64.trunc_sat_f64_s (back)
+        this.emit(0x20, ...uleb(l));
+        this.emit(0x52);                   // i64.ne
+        this.emit(0x20, ...uleb(d));
+        this.emit(0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE0, 0x43); // f64.const 2^63
+        this.emit(0x61);                   // f64.eq
+        this.emit(0x72);                   // i32.or
+        this.emit(0x04, 0x40, 0x00, 0x0B); // if { unreachable }
+        this.emit(0x20, ...uleb(d));       // result: c
+        return;
+      }
     }
     // Nearest (as~): round-to-nearest, clamp on overflow, never traps
     if (op === "as~") {
@@ -870,8 +942,19 @@ class FuncEmitter {
         this.emit(0xFC, 0x00);            // i32.trunc_sat_f32_s (clamp on overflow, no trap)
         return;
       }
+      if (from === "f64" && to === "i64") {
+        this.emit(0x9E);                  // f64.nearest
+        this.emit(0xFC, 0x06);            // i64.trunc_sat_f64_s (clamp on overflow, no trap)
+        return;
+      }
+      if (from === "f32" && to === "i64") {
+        this.emit(0x90);                  // f32.nearest
+        this.emit(0xFC, 0x04);            // i64.trunc_sat_f32_s (clamp on overflow, no trap)
+        return;
+      }
       if (from === "f64" && to === "f32")  { this.emit(0xB6); return; }       // f32.demote
       if (from === "i64" && to === "f64")  { this.emit(0xB9); return; }
+      if (from === "i64" && to === "f32")  { this.emit(0xB4); return; }       // f32.convert_i64_s (nearest)
       if (from === "i32" && to === "f32")  { this.emit(0xB2); return; }
       if (from === "i32" && to === "bool") { this.emit(0x41, 0x00, 0x47); return; } // i32.const 0; i32.ne -> canonical 0/1
     }
@@ -1670,18 +1753,24 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
       groups.push({ type: d.type, count: 1 });
   }
 
-  // Allocate a scratch i64 local for checked/saturating i64 casts.
-  const tempI64LocalIdx = localIdx;
-  emitter.tempI64Local = tempI64LocalIdx;
+  // Allocate scratch locals for checked/saturating casts (i64/i32/f32/f64 —
+  // the round-trip checks of `as!` need the source value and the converted
+  // value available twice each).
+  emitter.tempI64Local = localIdx;
+  emitter.tempI32Local = localIdx + 1;
+  emitter.tempF32Local = localIdx + 2;
+  emitter.tempF64Local = localIdx + 3;
 
-  // groups always gets one extra i64 scratch slot
   const localsVec: number[] = [];
-  localsVec.push(...uleb(groups.length + 1));
+  localsVec.push(...uleb(groups.length + 4));
   for (const g of groups) {
     localsVec.push(...uleb(g.count));
     localsVec.push(...wasmValType(g.type, ctx));
   }
   localsVec.push(0x01, 0x7E); // 1 × i64 scratch local
+  localsVec.push(0x01, 0x7F); // 1 × i32 scratch local
+  localsVec.push(0x01, 0x7D); // 1 × f32 scratch local
+  localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
 
   // Emit body
   emitter.emitBlock(body, env);

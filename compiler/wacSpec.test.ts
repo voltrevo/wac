@@ -3083,6 +3083,32 @@ Deno.test("[§wac-round-i64-h3fm2wq] f64 as~ i64 rounds to nearest and clamps on
   eq(inst.call("roundBig", [1.0e300]), 9223372036854775807n, "clamps to i64 max, never traps");
 });
 
+Deno.test("(audit-06) remaining as!/as~ pairs from the completed casts.md tables", async () => {
+  const inst = await run(`
+    export f32 i32f32(i32 x)  { return x as! f32; }
+    export f32 i64f32(i64 x)  { return x as! f32; }
+    export f64 i64f64(i64 x)  { return x as! f64; }
+    export i64 rf32i64(f32 x) { return x as~ i64; }
+    export f32 ri64f32(i64 x) { return x as~ f32; }
+  `);
+  // as!: exact value or trap (2^24+1 is the first integer with no f32 image,
+  // 2^53+1 the first with no f64 image; the type MIN values are exact powers
+  // of two and must NOT trap despite sitting at the saturation boundary)
+  eq(inst.call("i32f32", [16777216]), 16777216, "2^24 exact in f32");
+  traps(() => inst.call("i32f32", [16777217]), "2^24+1 has no exact f32");
+  traps(() => inst.call("i32f32", [2147483647]), "i32::MAX has no exact f32");
+  eq(inst.call("i32f32", [-2147483648]), -2147483648, "-2^31 is exact");
+  traps(() => inst.call("i64f32", [16777217n]), "2^24+1 has no exact f32 (from i64)");
+  eq(inst.call("i64f32", [-9223372036854775808n]), -9223372036854775808, "-2^63 is exact in f32");
+  traps(() => inst.call("i64f64", [9007199254740993n]), "2^53+1 has no exact f64");
+  traps(() => inst.call("i64f64", [9223372036854775807n]), "i64::MAX has no exact f64");
+  eq(inst.call("i64f64", [-9223372036854775808n]), -9223372036854775808, "-2^63 is exact in f64");
+  // as~: round to nearest, clamp, never trap
+  eq(inst.call("rf32i64", [3.7]), 4n, "f32 as~ i64 rounds to nearest");
+  eq(inst.call("rf32i64", [1e30]), 9223372036854775807n, "f32 as~ i64 clamps");
+  eq(inst.call("ri64f32", [16777217n]), 16777216, "i64 as~ f32 rounds to nearest");
+});
+
 // ── audit-07 — nullable primitives must produce valid, instantiable wasm ───
 
 Deno.test("(audit-07) a boxed literal returned as a nullable primitive instantiates and runs", async () => {
