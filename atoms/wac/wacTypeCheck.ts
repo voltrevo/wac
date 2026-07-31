@@ -668,6 +668,15 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       return isInfiniteLoop(stmt.cond, stmt.body);
     }
 
+    case "match": {
+      // Parsed but not yet checked: enums and match are being implemented in stages
+      // (see spec/spec/enums.md), and rejecting here is better than letting a
+      // half-checked match reach the emitter.
+      errAt(ctx, `match is not yet implemented`, stmt.line, stmt.col);
+      inferExpr(stmt.subject, env, ctx);
+      return false;
+    }
+
     case "switch": {
       // br_table dispatches on a 32-bit value. Signedness plays no part in an
       // equality match, so u32 is as good as i32; the 64-bit types are not.

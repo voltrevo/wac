@@ -9,7 +9,7 @@ export type TokenKind =
   | "import" | "from" | "export" | "struct" | "const" | "this" | "override"
   | "if" | "else" | "while" | "for" | "do" | "switch" | "case" | "default"
   | "break" | "continue" | "return" | "trap" | "true" | "false" | "null"
-  | "is" | "not" | "as" | "void" | "fn"
+  | "is" | "not" | "as" | "void" | "fn" | "enum" | "match"
   // cast operators (multi-char)
   | "as!" | "as~" | "as@"
   // operators
@@ -48,7 +48,7 @@ const KEYWORDS = new Set<string>([
   "import", "from", "export", "struct", "const", "this", "override",
   "if", "else", "while", "for", "do", "switch", "case", "default",
   "break", "continue", "return", "trap", "true", "false", "null",
-  "is", "not", "as", "void", "fn",
+  "is", "not", "as", "void", "fn", "enum", "match",
 ]);
 
 export function wacLex(source: string): LexResult {

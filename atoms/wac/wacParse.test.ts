@@ -1,5 +1,5 @@
 import { wacLex } from "./wacLex.ts";
-import { wacParse, type Program, type FuncDecl, type StructDecl, type Import, type Stmt, type Expr, type WacType } from "./wacParse.ts";
+import { wacParse, type Program, type FuncDecl, type StructDecl, type Import, type Stmt, type Expr, type WacType, type EnumDecl } from "./wacParse.ts";
 
 function parse(src: string): { prog: Program; errors: string[] } {
   const { tokens } = wacLex(src);
@@ -937,4 +937,158 @@ Deno.test("wacParse: a real string literal is still a string literal", () => {
   const ret = fn.body.stmts[0].value;
   if (ret.kind !== "string") throw new Error(`expected a string literal, got ${ret.kind}`);
   if (ret.value !== "hello") throw new Error(`expected "hello", got ${ret.value}`);
+});
+
+// ── enum declarations and match statements ────────────────────────────────────
+//
+// Parse level only: enums and match are being implemented in stages (see
+// spec/spec/enums.md) and the type checker still rejects a `match`. These tests pin
+// the shape the parser records, so the later stages have something stable to build
+// on and a malformed arm is known not to derail the arms after it.
+
+function parseOk(src: string) {
+  const { tokens, errors: lexErrors } = wacLex(src);
+  if (lexErrors.length) throw new Error(`lex errors: ${lexErrors.map(e => e.message).join("; ")}`);
+  const { program, errors } = wacParse(tokens, "t.wac");
+  if (errors.length) throw new Error(`parse errors: ${errors.map(e => e.message).join("; ")}`);
+  return program;
+}
+
+const SHAPE = `enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}`;
+
+Deno.test("wacParse: enum declaration with and without payloads", () => {
+  const program = parseOk(SHAPE);
+  const e = program.items[0] as EnumDecl;
+  if (e.tag !== "enum") throw new Error(`tag is ${e.tag}`);
+  if (e.name !== "Shape") throw new Error(`name is ${e.name}`);
+  if (e.variants.length !== 3) throw new Error(`${e.variants.length} variants`);
+
+  // A payload-less variant has no fields; payload fields are named, so a consumer
+  // can report `radius` rather than "field 0".
+  if (e.variants[0].name !== "Point" || e.variants[0].fields.length !== 0) {
+    throw new Error("Point should have no fields");
+  }
+  if (e.variants[1].fields.length !== 1 || e.variants[1].fields[0].name !== "radius") {
+    throw new Error("Circle should have one field named radius");
+  }
+  if (e.variants[2].fields.map(f => f.name).join(",") !== "width,height") {
+    throw new Error("Rect fields are wrong");
+  }
+  // Field types survive, since the arm bindings take their types from here.
+  if (e.variants[1].fields[0].type.kind !== "prim") throw new Error("radius type lost");
+});
+
+Deno.test("wacParse: export and a trailing comma on the last variant", () => {
+  const e = parseOk(`export enum E { A, B(i32 x), }`).items[0] as EnumDecl;
+  if (!e.exported) throw new Error("should be exported");
+  if (e.variants.length !== 2) throw new Error(`${e.variants.length} variants — a trailing comma should not add one`);
+});
+
+Deno.test("wacParse: an enum with one variant, and with none", () => {
+  const one = parseOk(`enum One { Only }`).items[0] as EnumDecl;
+  if (one.variants.length !== 1) throw new Error("expected one variant");
+  const none = parseOk(`enum Empty { }`).items[0] as EnumDecl;
+  if (none.variants.length !== 0) throw new Error("expected no variants");
+});
+
+Deno.test("wacParse: match arms record variant, bindings and body", () => {
+  const program = parseOk(`${SHAPE}
+    f64 area(Shape s) {
+      match (s) {
+        case Point: return 0.0;
+        case Circle(r): return r * r;
+        case Rect(w, h): f64 a = w * h; return a;
+      }
+    }`);
+  const fn = program.items[1] as FuncDecl;
+  const m = fn.body.stmts[0];
+  if (m.kind !== "match") throw new Error(`statement is ${m.kind}`);
+  if (m.arms.length !== 3) throw new Error(`${m.arms.length} arms`);
+  if (m.arms[0].variant !== "Point" || m.arms[0].bindings.length !== 0) {
+    throw new Error("Point arm wrong");
+  }
+  if (m.arms[1].bindings.join(",") !== "r") throw new Error("Circle bindings wrong");
+  if (m.arms[2].bindings.join(",") !== "w,h") throw new Error("Rect bindings wrong");
+  // An arm body is a statement list, so several statements need no braces — and the
+  // arm ends at the next `case`, not at a closing brace.
+  if (m.arms[2].body.length !== 2) throw new Error(`Rect body has ${m.arms[2].body.length} statements`);
+});
+
+Deno.test("wacParse: a braced arm body is one block statement", () => {
+  // Braces are allowed and mean what they always mean; they are not part of the arm
+  // syntax, which is why an unbraced multi-statement arm works too.
+  const program = parseOk(`${SHAPE}
+    f64 a(Shape s) { match (s) { case Point: { i32 x = 1; return 0.0; } else: return 1.0; } }`);
+  const m = (program.items[1] as FuncDecl).body.stmts[0];
+  if (m.kind !== "match") throw new Error("not a match");
+  if (m.arms[0].body.length !== 1) throw new Error(`braced body has ${m.arms[0].body.length} statements`);
+  if (m.arms[0].body[0].kind !== "block") throw new Error("braced body should be one block");
+});
+
+Deno.test("wacParse: an else arm records a null variant", () => {
+  const program = parseOk(`${SHAPE}
+    f64 r(Shape s, f64 d) { match (s) { case Circle(r): return r; else: return d; } }`);
+  const m = (program.items[1] as FuncDecl).body.stmts[0];
+  if (m.kind !== "match") throw new Error("not a match");
+  if (m.arms[1].variant !== null) throw new Error("else arm should have a null variant");
+  if (m.arms[1].bindings.length !== 0) throw new Error("else arm should bind nothing");
+});
+
+Deno.test("wacParse: `_` bindings are recorded, including repeated", () => {
+  // The parser records `_` like any other name; discarding is the checker's job.
+  const program = parseOk(`${SHAPE}
+    f64 a(Shape s) { match (s) { case Rect(_, _): return 1.0; else: return 0.0; } }`);
+  const m = (program.items[1] as FuncDecl).body.stmts[0];
+  if (m.kind !== "match") throw new Error("not a match");
+  if (m.arms[0].bindings.join(",") !== "_,_") throw new Error(`bindings are ${m.arms[0].bindings}`);
+});
+
+Deno.test("wacParse: a match subject can be any expression", () => {
+  // Narrowing needs a plain variable, but parsing does not care.
+  const program = parseOk(`${SHAPE}
+    f64 a(Shape[] xs) { match (xs[0]) { else: return 0.0; } }`);
+  const m = (program.items[1] as FuncDecl).body.stmts[0];
+  if (m.kind !== "match") throw new Error("not a match");
+  if (m.subject.kind !== "index") throw new Error(`subject is ${m.subject.kind}`);
+});
+
+Deno.test("wacParse: match nests inside match", () => {
+  const program = parseOk(`${SHAPE}
+    f64 a(Shape s, Shape t) {
+      match (s) {
+        case Circle(r): { match (t) { case Point: return r; else: return 0.0; } }
+        else: return 0.0;
+      }
+    }`);
+  const outer = (program.items[1] as FuncDecl).body.stmts[0];
+  if (outer.kind !== "match") throw new Error("outer is not a match");
+  const inner = outer.arms[0].body[0];
+  if (inner.kind !== "block") throw new Error(`inner wrapper is ${inner.kind}`);
+});
+
+Deno.test("wacParse: a malformed arm does not derail the arms after it", () => {
+  // One bad arm should cost one error, not a cascade — the same recovery property
+  // the rest of the parser has.
+  const { tokens } = wacLex(`${SHAPE}
+    f64 a(Shape s) { match (s) { 0.0; case Point: return 1.0; else: return 2.0; } }`);
+  const { program, errors } = wacParse(tokens, "t.wac");
+  if (errors.length === 0) throw new Error("expected an error for the junk arm");
+  const m = (program.items[1] as FuncDecl).body.stmts[0];
+  if (m.kind !== "match") throw new Error("not a match");
+  if (m.arms.length !== 2) throw new Error(`recovered ${m.arms.length} arms, expected 2`);
+});
+
+Deno.test("wacParse: match is rejected downstream, with the reason", async () => {
+  // Stage A parses it; the checker says so rather than emitting something broken.
+  const { wacCompile } = await import("./wacCompile.ts");
+  const r = wacCompile(new Map([["main.wac", `${SHAPE}
+    export f64 a(Shape s) { match (s) { else: return 0.0; } }`]]), "main.wac");
+  if (r.ok) throw new Error("expected match to be rejected for now");
+  if (!r.diagnostics.some(d => d.message.includes("match is not yet implemented"))) {
+    throw new Error(`unexpected diagnostics: ${r.diagnostics.map(d => d.message).join("; ")}`);
+  }
 });

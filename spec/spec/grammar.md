@@ -27,7 +27,7 @@ export i32 demo() {
 ### Program structure
 
 ```ebnf
-program        = { import | struct_decl | func_decl } ;
+program        = { import | struct_decl | enum_decl | func_decl } ;
 
 import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
 import_list    = import_item , { "," , import_item } , [ "," ] ;
@@ -48,6 +48,10 @@ struct_member  = field_decl | method_decl ;
 field_decl     = [ "const" ] , type , IDENT , ";" ;
 
 method_decl    = [ "override" ] , type , IDENT , "(" , [ method_params ] , ")" , block ;
+
+enum_decl      = [ "export" ] , "enum" , IDENT , "{" , [ variant_list ] , "}" ;
+variant_list   = variant , { "," , variant } , [ "," ] ;
+variant        = IDENT , [ "(" , [ param_list ] , ")" ] ;
 method_params  = this_param , [ "," , [ param_list ] ]
                | param_list ;
 this_param     = [ "const" ] , "this" ;
@@ -66,6 +70,7 @@ statement      = var_decl
                | for_stmt
                | do_while_stmt
                | switch_stmt
+               | match_stmt
                | return_stmt
                | break_stmt
                | continue_stmt
@@ -93,6 +98,11 @@ compound_stmt_no_semi = lvalue , compound_op , expr ;
 do_while_stmt  = "do" , block , "while" , "(" , expr , ")" , ";" ;
 
 switch_stmt    = "switch" , "(" , expr , ")" , "{" , { case_clause } , [ default_clause ] , "}" ;
+
+match_stmt     = "match" , "(" , expr , ")" , "{" , { match_arm } , "}" ;
+match_arm      = "case" , IDENT , [ "(" , [ binding_list ] , ")" ] , ":" , { statement }
+               | "else" , ":" , { statement } ;
+binding_list   = IDENT , { "," , IDENT } , [ "," ] ;
 case_clause    = "case" , expr , ":" , { statement } ;
 default_clause = "default" , ":" , { statement } ;
 
@@ -205,7 +215,7 @@ digit          = "0"..."9" ;
 ### Keywords
 
 ```
-as  as!  as~  as@  bool  break  case  const  continue  default  do  else
+as  as!  as~  as@  bool  break  case  const  continue  default  do  else  enum
 export  f32  f64  false  fn  for  i16  i32  i64  i8  if  import  is  not
-null  override  return  string  struct  switch  trap  true  void  while
+match  null  override  return  string  struct  switch  trap  true  void  while
 ```

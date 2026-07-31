@@ -1768,6 +1768,8 @@ class FuncEmitter {
       case "dowhile": this.emitDoWhile(s, env); break;
       case "for":     this.emitFor(s, env); break;
       case "switch":  this.emitSwitch(s, env); break;
+      // Unreachable: the type checker rejects `match` before emission.
+      case "match":   this.emit(0x00); break;
       case "return":
         if (s.value) {
           // Pass return type as expected type so literals (int/null) are emitted correctly

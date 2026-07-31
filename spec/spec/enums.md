@@ -1,6 +1,8 @@
 ## Enums and match
 
-*Draft. Nothing here is implemented yet.*
+*Partially implemented. The lexer and parser accept everything below; the type
+checker rejects a `match` with "match is not yet implemented" until the remaining
+stages land, so no tagged behaviour here is testable yet.*
 
 An enum is a type with a fixed set of variants, each optionally carrying payload
 fields. It compiles to the struct hierarchy you would otherwise write by hand: a
