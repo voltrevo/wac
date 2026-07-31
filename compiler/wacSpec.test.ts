@@ -4583,3 +4583,266 @@ Deno.test(`[§wac-arr-struct-runtime-w4kf2nq] T[n]() fills with distinct default
   eq(i.call("zero", []), 0, "a zero-length array fills vacuously");
   eq(i.call("twice", [2]), 23, "two fills in one expression do not collide");
 });
+
+// ── enums and match ───────────────────────────────────────────────────────────
+//
+// Every one of these instantiates rather than only compiling. In this codebase the
+// recurring failure has been a construct that typechecks and then emits invalid
+// wasm — six times now — and match is exactly the shape that risks it: casts,
+// nested ifs, and locals bound from struct fields.
+
+const SHAPES = `enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}`;
+
+Deno.test("[§enum-match-basic] [§enum-match-nopayload] match dispatches on the variant", async () => {
+  const inst = await run(`${SHAPES}
+    export f64 area(Shape s) {
+      match (s) {
+        case Point:      return 0.0;
+        case Circle(r):  return 3.0 * r * r;
+        case Rect(w, h): return w * h;
+      }
+    }
+    export Shape mkPoint()             { return Shape.Point; }
+    export Shape mkCircle(f64 r)       { return Shape.Circle(r); }
+    export Shape mkRect(f64 w, f64 h)  { return Shape.Rect(w, h); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.area(raw.mkRect(3.0, 4.0)), 12, "Rect arm, both payloads bound");
+  eq(raw.area(raw.mkCircle(2.0)), 12, "Circle arm");
+  eq(raw.area(raw.mkPoint()), 0, "payload-less arm");
+});
+
+Deno.test("[§enum-match-else] an else arm covers the rest", async () => {
+  const inst = await run(`${SHAPES}
+    export f64 radiusOr(Shape s, f64 fallback) {
+      match (s) {
+        case Circle(r): return r;
+        else:           return fallback;
+      }
+    }
+    export Shape mkPoint()       { return Shape.Point; }
+    export Shape mkCircle(f64 r) { return Shape.Circle(r); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.radiusOr(raw.mkCircle(2.5), 1.5), 2.5, "the covered variant");
+  eq(raw.radiusOr(raw.mkPoint(), 1.5), 1.5, "falls to else");
+});
+
+Deno.test("[§enum-narrow] [§enum-narrow-field] an arm narrows the subject implicitly", async () => {
+  // The point of the feature: `s.width` only exists on Rect, and no cast is written.
+  const inst = await run(`${SHAPES}
+    export f64 widthOf(Shape s) {
+      match (s) {
+        case Rect:   return s.width;
+        case Circle: return s.radius * 2.0;
+        case Point:  return 0.0;
+      }
+    }
+    export Shape mkCircle(f64 r)      { return Shape.Circle(r); }
+    export Shape mkRect(f64 w, f64 h) { return Shape.Rect(w, h); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.widthOf(raw.mkRect(3.0, 4.0)), 3, "narrowed to Rect");
+  eq(raw.widthOf(raw.mkCircle(2.0)), 4, "narrowed to Circle");
+});
+
+Deno.test("[§enum-match-ignore] `_` discards a payload and may repeat", async () => {
+  const inst = await run(`${SHAPES}
+    export f64 h(Shape s) {
+      match (s) {
+        case Rect(_, height): return height;
+        case Circle:          return 0.0;
+        case Point:           return 0.0;
+      }
+    }
+    export f64 anyRect(Shape s) {
+      match (s) {
+        case Rect(_, _): return 1.0;
+        else:            return 0.0;
+      }
+    }
+    export Shape mkRect(f64 w, f64 h) { return Shape.Rect(w, h); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.h(raw.mkRect(3.0, 7.0)), 7, "second payload bound, first discarded");
+  eq(raw.anyRect(raw.mkRect(1.0, 2.0)), 1, "both discarded");
+});
+
+Deno.test("[§enum-recursive] a recursive enum walks with match", async () => {
+  const inst = await run(`
+    enum Tree { Leaf(i32 value), Node(Tree left, Tree right) }
+    export i32 sum(Tree t) {
+      match (t) {
+        case Leaf(v):    return v;
+        case Node(l, r): return sum(l) + sum(r);
+      }
+    }
+    export Tree leaf(i32 v)            { return Tree.Leaf(v); }
+    export Tree node(Tree l, Tree r)   { return Tree.Node(l, r); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  const t = raw.node(raw.node(raw.leaf(1), raw.leaf(2)), raw.leaf(3));
+  eq(raw.sum(t), 6, "1 + 2 + 3 over a nested tree");
+});
+
+Deno.test("[§enum-match-inexhaustive] a missing variant is a compile error", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape s) {
+      match (s) {
+        case Point:     return 0.0;
+        case Circle(r): return r;
+      }
+    }`);
+  if (!m.includes("does not cover 'Rect'")) {
+    throw new Error(`expected the uncovered-variant diagnostic, got: ${m}`);
+  }
+});
+
+Deno.test("[§enum-match-else-unreachable] a covering match plus else is an error", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape s) {
+      match (s) {
+        case Point:      return 0.0;
+        case Circle(r):  return r;
+        case Rect(w, h): return w;
+        else:            return 0.0;
+      }
+    }`);
+  if (!m.includes("unreachable")) throw new Error(`expected an unreachable-else error, got: ${m}`);
+});
+
+Deno.test("[§enum-match-duplicate] a repeated variant is an error", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape s) {
+      match (s) {
+        case Circle(r):  return r;
+        case Circle(r2): return r2;
+        else:            return 0.0;
+      }
+    }`);
+  if (!m.includes("duplicate case")) throw new Error(`got: ${m}`);
+});
+
+Deno.test("[§enum-narrow-const] the narrowed subject cannot be assigned", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape s) {
+      match (s) {
+        case Circle: { s = Shape.Point; return 0.0; }
+        else:        return 0.0;
+      }
+    }`);
+  if (!m.includes("const") && !m.includes("assign")) throw new Error(`got: ${m}`);
+});
+
+Deno.test("[§enum-narrow-collision] a binding cannot reuse the subject's name", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape s) {
+      match (s) {
+        case Circle(s): return 0.0;
+        else:           return 0.0;
+      }
+    }`);
+  if (!m.includes("collides")) throw new Error(`got: ${m}`);
+});
+
+Deno.test("[§enum-match-nullable] a nullable subject must be unwrapped", () => {
+  const m = err(`${SHAPES}
+    export f64 bad(Shape? s) {
+      match (s) {
+        case Circle: return 0.0;
+        else:        return 0.0;
+      }
+    }`);
+  if (!m.includes("non-null")) throw new Error(`got: ${m}`);
+});
+
+Deno.test("[§enum-narrow-nonvariable] a non-variable subject matches but narrows nothing", async () => {
+  // It compiles and dispatches; there is simply no name for the arm to shadow.
+  const inst = await run(`${SHAPES}
+    export f64 firstIsRound(Shape[] xs) {
+      match (xs[0]) {
+        case Circle: return 1.0;
+        else:        return 0.0;
+      }
+    }
+    export Shape[] one(Shape s) { Shape[] a = Shape[1](); a[0] = s; return a; }
+    export Shape mkCircle(f64 r) { return Shape.Circle(r); }
+    export Shape mkPoint()       { return Shape.Point; }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.firstIsRound(raw.one(raw.mkCircle(1.0))), 1, "dispatch works without a name");
+  eq(raw.firstIsRound(raw.one(raw.mkPoint())), 0, "and falls to else");
+});
+
+Deno.test("[§enum-array] enums live in arrays like any struct", async () => {
+  const inst = await run(`${SHAPES}
+    export i32 countRects(Shape[] shapes) {
+      i32 n = 0;
+      for (i32 i = 0; i < shapes.len(); i++) {
+        match (shapes[i]) {
+          case Rect: n++;
+          else:      { }
+        }
+      }
+      return n;
+    }
+    export Shape[] three(Shape a, Shape b, Shape c) {
+      Shape[] out = Shape[3]();
+      out[0] = a; out[1] = b; out[2] = c;
+      return out;
+    }
+    export Shape mkPoint()            { return Shape.Point; }
+    export Shape mkRect(f64 w, f64 h) { return Shape.Rect(w, h); }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  const arr = raw.three(raw.mkRect(1.0, 1.0), raw.mkPoint(), raw.mkPoint());
+  eq(raw.countRects(arr), 1, "one Rect among three");
+});
+
+Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async () => {
+  // Every arm test needs the subject again, so a naive emitter would re-evaluate it.
+  const inst = await run(`${SHAPES}
+    struct Counter { i32 n; }
+    Shape bump(Counter c) { c.n++; return Shape.Point; }
+    export i32 calls() {
+      Counter c = Counter(0);
+      match (bump(c)) {
+        case Point:      return c.n;
+        case Circle(r):  return -1;
+        case Rect(w, h): return -2;
+      }
+    }
+  `);
+  eq(inst.call("calls", []), 1, "the subject expression ran once");
+});
+
+Deno.test("[§wac-shadow-param-7apc0wt] a local shadowing a parameter leaves it alone", async () => {
+  // This was wrong: a shadowing local aliased the parameter's slot, so the parameter
+  // read back as the shadow's value after the block ended. Silent, not a crash.
+  const inst = await run(`
+    export i32 shadowParam(i32 x) {
+      {
+        i32 x = 99;
+      }
+      return x;
+    }
+    export i32 usesInner(i32 x) {
+      {
+        i32 x = 99;
+        return x;
+      }
+    }
+    export i32 twoShadows(i32 x) {
+      { i32 x = 1; }
+      { i32 x = 2; }
+      return x;
+    }
+  `);
+  eq(inst.call("shadowParam", [7]), 7, "the parameter survives the shadow");
+  eq(inst.call("usesInner", [7]), 99, "the shadow is still visible inside");
+  eq(inst.call("twoShadows", [3]), 3, "two shadows, parameter still intact");
+});

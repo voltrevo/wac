@@ -692,6 +692,8 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
 
       // Narrowing is a shadowing binding, so it needs a name to shadow. A subject
       // that is not a plain variable still matches; its arms just narrow nothing.
+      stmt.enumBaseTypeIndex = enumEntry.base.typeIndex;
+
       const subjectName = stmt.subject.kind === "ident" ? stmt.subject.name : null;
 
       const covered = new Set<string>();
@@ -718,6 +720,9 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
               arm.variant.length);
           }
           covered.add(arm.variant);
+          arm.tag = variant.tag;
+          arm.variantTypeIndex = variant.entry.typeIndex;
+          arm.bindingTypes = variant.fields.map(f => f.type);
 
           // Omitting the parentheses ignores every payload; naming any binding means
           // naming all of them, so a miscount is a mistake rather than a shorthand.
@@ -1411,6 +1416,32 @@ function inferCall(
       return null;
     }
 
+    // Variant construction: Shape.Circle(args). Checked before static methods
+    // because an enum's base struct has no methods, so there is nothing to shadow.
+    if (baseExpr.kind === "ident") {
+      const ee = ctx.fileScope.get(baseExpr.name);
+      if (ee?.kind === "enum") {
+        const variant = ee.enumEntry.variants.find(v => v.name === methodName);
+        if (!variant) {
+          errAt(ctx, `'${methodName}' is not a variant of '${ee.enumEntry.name}'`,
+            callee.line, callee.col, methodName.length);
+          return null;
+        }
+        if (variant.fields.length === 0) {
+          errAt(ctx, `'${baseExpr.name}.${methodName}' takes no payload — write it without parentheses`,
+            callee.line, callee.col, methodName.length);
+          return null;
+        }
+        const variantType: WacType = {
+          kind: "struct", name: variant.name,
+          resolvedTypeIndex: variant.entry.typeIndex, line: expr.line, col: expr.col,
+        };
+        // A variant is a struct, so argument checking is the ordinary one; the only
+        // difference is that the compiler supplies the tag.
+        return checkArgList(args, variant.fields.map(f => f.type), variantType, expr, env, ctx);
+      }
+    }
+
     // Static method: StructName.method(args)
     if (baseExpr.kind === "ident") {
       const se = ctx.fileScope.get(baseExpr.name);
@@ -1579,6 +1610,29 @@ function inferFieldAccess(
   pos: { line: number; col: number },
   env: VarEnv, ctx: Ctx,
 ): WacType | null {
+  // Shape.Point — a payload-less variant is a value, not a call.
+  if (baseExpr.kind === "ident") {
+    const ee = ctx.fileScope.get(baseExpr.name);
+    if (ee?.kind === "enum") {
+      const variant = ee.enumEntry.variants.find(v => v.name === fieldName);
+      if (!variant) {
+        errAt(ctx, `'${fieldName}' is not a variant of '${ee.enumEntry.name}'`,
+          pos.line, pos.col, fieldName.length);
+        return null;
+      }
+      if (variant.fields.length > 0) {
+        const names = variant.fields.map(f => f.name).join(", ");
+        errAt(ctx,
+          `'${baseExpr.name}.${fieldName}' needs a payload (${names})`,
+          pos.line, pos.col, fieldName.length, undefined,
+          `write it as ${baseExpr.name}.${fieldName}(...)`);
+        return null;
+      }
+      return { kind: "struct", name: variant.name,
+               resolvedTypeIndex: variant.entry.typeIndex, line: pos.line, col: pos.col };
+    }
+  }
+
   // StructName.method — either a static method ref (error) or instance method ref (funcref value)
   if (baseExpr.kind === "ident") {
     const se = ctx.fileScope.get(baseExpr.name);

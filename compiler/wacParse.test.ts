@@ -1082,13 +1082,3 @@ Deno.test("wacParse: a malformed arm does not derail the arms after it", () => {
   if (m.arms.length !== 2) throw new Error(`recovered ${m.arms.length} arms, expected 2`);
 });
 
-Deno.test("wacParse: match is rejected downstream, with the reason", async () => {
-  // Stage A parses it; the checker says so rather than emitting something broken.
-  const { wacCompile } = await import("./wacCompile.ts");
-  const r = wacCompile(new Map([["main.wac", `${SHAPE}
-    export f64 a(Shape s) { match (s) { else: return 0.0; } }`]]), "main.wac");
-  if (r.ok) throw new Error("expected match to be rejected for now");
-  if (!r.diagnostics.some(d => d.message.includes("match is not yet implemented"))) {
-    throw new Error(`unexpected diagnostics: ${r.diagnostics.map(d => d.message).join("; ")}`);
-  }
-});

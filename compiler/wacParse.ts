@@ -69,7 +69,9 @@ export type Stmt =
   | ({ kind: "for";      init: Stmt | null; cond: Expr | null; update: Stmt | null; body: Block } & Pos)
   | ({ kind: "dowhile";  body: Block; cond: Expr } & Pos)
   | ({ kind: "switch";   expr: Expr; cases: SwitchCase[] } & Pos)
-  | ({ kind: "match";    subject: Expr; arms: MatchArm[] } & Pos)
+  | ({ kind: "match";    subject: Expr; arms: MatchArm[];
+        /** Type index of the enum's base struct; set by the type checker. */
+        enumBaseTypeIndex?: number } & Pos)
   | ({ kind: "return";   value: Expr | null } & Pos)
   | ({ kind: "break" } & Pos)
   | ({ kind: "continue" } & Pos)
@@ -91,6 +93,17 @@ export type MatchArm = {
   variant: string | null;
   bindings: string[];
   body: Stmt[];
+  /**
+   * Filled in by the type checker, consumed by the emitter — the same
+   * annotate-then-consume arrangement the resolver uses for `resolvedTypeIndex`.
+   *
+   * The emitter cannot work these out for itself: local allocation runs over the AST
+   * with no access to the enum table, so a payload's type has to be recorded here or
+   * it is unavailable when locals are declared.
+   */
+  tag?: number;
+  variantTypeIndex?: number;
+  bindingTypes?: WacType[];
 } & Pos;
 
 export type Block      = { stmts: Stmt[] } & Pos;

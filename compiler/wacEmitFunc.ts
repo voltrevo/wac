@@ -10,11 +10,11 @@
 
 import {
   type WacType, type Expr, type Stmt, type Block,
-  type Lvalue, type ElseBranch,
+  type Lvalue, type ElseBranch, type MatchArm,
 } from "./wacParse.ts";
 import {
   type FuncEntry, type StructEntry, type ResolveResult,
-  funcParams, funcReturnType, commonAncestor,
+  funcParams, funcReturnType, commonAncestor, ENUM_TAG_FIELD,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
 
@@ -478,10 +478,24 @@ function lvalType(lv: Lvalue, env: TypeEnv, ctx: WasmTypeCtx): WacType {
 type LocalDecl = { name: string; type: WacType };
 
 /** Walk all statements (recursively) to collect local var declarations with unique keys. */
-function collectLocals(stmts: Stmt[]): { decls: LocalDecl[]; keyMap: WeakMap<Stmt, string> } {
+function collectLocals(stmts: Stmt[], reserved: string[] = []): {
+  decls: LocalDecl[];
+  keyMap: WeakMap<Stmt, string>;
+  armKeys: WeakMap<MatchArm, string>;
+  bindingKeys: WeakMap<MatchArm, string[]>;
+} {
   const decls: LocalDecl[] = [];
   const count = new Map<string, number>(); // how many times each name has been declared
+  // Parameters already occupy their names, so a local that shadows one must get a
+  // suffixed key. Without this the shadow's key is the bare name, it overwrites the
+  // parameter's entry in localMap, and the parameter reads back as the shadow's value
+  // once the shadowing block has ended — a silent wrong answer, not a crash.
+  for (const name of reserved) count.set(name, 1);
   const keyMap = new WeakMap<Stmt, string>(); // var stmt → unique key
+  // A match arm is not a Stmt, so its narrowed shadow and its payload bindings need
+  // their own key maps rather than riding on keyMap.
+  const armKeys = new WeakMap<MatchArm, string>();
+  const bindingKeys = new WeakMap<MatchArm, string[]>();
   function walk(ss: Stmt[]): void {
     for (const s of ss) {
       if (s.kind === "var") {
@@ -501,13 +515,50 @@ function collectLocals(stmts: Stmt[]): { decls: LocalDecl[]; keyMap: WeakMap<Stm
         walk(s.body.stmts);
       } else if (s.kind === "switch") {
         for (const c of s.cases) walk(c.body);
+      } else if (s.kind === "match") {
+        // An arm's payload bindings and its narrowed shadow of the subject are
+        // locals. Their types come from the type checker's annotations, since this
+        // pass has no access to the enum table.
+        const subjName = s.subject.kind === "ident" ? s.subject.name : null;
+        for (const arm of s.arms) {
+          if (arm.variant === null) { walk(arm.body); continue; }
+
+          if (subjName !== null && arm.variantTypeIndex !== undefined) {
+            // The key must not collide with a parameter of the same name, and this
+            // pass does not know the parameter names — so the shadow gets a key that
+            // cannot be written in source and therefore cannot clash with anything.
+            const n = count.get(`#match:${subjName}`) ?? 0;
+            count.set(`#match:${subjName}`, n + 1);
+            const key = `#match:${subjName}:${n}`;
+            decls.push({
+              name: key,
+              type: { kind: "struct", name: arm.variant,
+                      resolvedTypeIndex: arm.variantTypeIndex, line: arm.line, col: arm.col },
+            });
+            armKeys.set(arm, key);
+          }
+
+          const bkeys: string[] = [];
+          for (let i = 0; i < arm.bindings.length; i++) {
+            const name = arm.bindings[i];
+            const type = arm.bindingTypes?.[i];
+            if (name === "_" || type === undefined) { bkeys.push(""); continue; }
+            const n = count.get(name) ?? 0;
+            count.set(name, n + 1);
+            const key = n === 0 ? name : `${name}$${n}`;
+            decls.push({ name: key, type });
+            bkeys.push(key);
+          }
+          bindingKeys.set(arm, bkeys);
+          walk(arm.body);
+        }
       } else if (s.kind === "block") {
         walk(s.block.stmts);
       }
     }
   }
   walk(stmts);
-  return { decls, keyMap };
+  return { decls, keyMap, armKeys, bindingKeys };
 }
 
 // ── String encoding ───────────────────────────────────────────────────────────
@@ -549,6 +600,10 @@ class FuncEmitter {
   readonly nameToKey: Map<string, string> = new Map();
   /** Maps each var Stmt to its unique localMap key (from collectLocals). */
   keyMap: WeakMap<Stmt, string> = new WeakMap();
+  /** Maps a match arm to the key of its narrowed shadow of the subject. */
+  armKeys: WeakMap<MatchArm, string> = new WeakMap();
+  /** Maps a match arm to its payload binding keys, "" where the binding is `_`. */
+  bindingKeys: WeakMap<MatchArm, string[]> = new WeakMap();
   private ctx: WasmTypeCtx;
   private returnType: WacType;
   private loopStack: LoopCtx[] = [];
@@ -1354,6 +1409,19 @@ class FuncEmitter {
     e: { kind: "field"; expr: Expr; name: string },
     env: TypeEnv,
   ): void {
+    // Shape.Point — a payload-less variant is a value, so construct it here.
+    if (e.expr.kind === "ident") {
+      const enumName = (e.expr as { name: string }).name;
+      const vEntry = this.ctx.result.enums
+        .find(en => en.name === enumName)?.variants.find(v => v.name === e.name);
+      if (vEntry) {
+        const tIdx = vEntry.entry.typeIndex;
+        this.emit(0x41, ...sleb(vEntry.tag));
+        this.emit(0xFB, 0x00, ...uleb(tIdx));   // struct.new — the tag is its only field
+        return;
+      }
+    }
+
     // StructName.method used as a funcref value: emit ref.func
     if (e.expr.kind === "ident") {
       const exprName = (e.expr as { name: string }).name;
@@ -1429,10 +1497,44 @@ class FuncEmitter {
     }
   }
 
+  /**
+   * The tag a variant's constructor stores, or null if the type is not a variant.
+   *
+   * Looked up from the resolver's enum table by struct type index, since the emitter
+   * has no file scope to ask.
+   */
+  private variantTagOf(typeIndex: number): number | null {
+    for (const e of this.ctx.result.enums) {
+      for (const v of e.variants) {
+        if (v.entry.typeIndex === typeIndex) return v.tag;
+      }
+    }
+    return null;
+  }
+
   private emitCall(
     e: { kind: "call"; callee: Expr; args: Expr[] },
     env: TypeEnv,
   ): void {
+    // Variant construction: Shape.Circle(args). The tag comes first because it is the
+    // base struct's only field, so every variant shares that layout prefix.
+    if (e.callee.kind === "field" && e.callee.expr.kind === "ident") {
+      const enumName = (e.callee.expr as { name: string }).name;
+      const vName = (e.callee as { name: string }).name;
+      const vEntry = this.ctx.result.enums
+        .find(en => en.name === enumName)?.variants.find(v => v.name === vName);
+      if (vEntry) {
+        const tIdx = vEntry.entry.typeIndex;
+        this.emit(0x41, ...sleb(vEntry.tag));
+        const fields = this.ctx.structFields.get(`@${tIdx}`) ?? [];
+        // Skip the tag, which was just pushed; the rest are the payload in order.
+        const payload = fields.filter(f => f.name !== ENUM_TAG_FIELD);
+        this.emitArgs(e.args, payload.map(f => f.type), env);
+        this.emit(0xFB, 0x00, ...uleb(tIdx));   // struct.new
+        return;
+      }
+    }
+
     // Method call: base.method(args)
     if (e.callee.kind === "field") {
       const fe = e.callee as { kind: "field"; expr: Expr; name: string };
@@ -1768,8 +1870,7 @@ class FuncEmitter {
       case "dowhile": this.emitDoWhile(s, env); break;
       case "for":     this.emitFor(s, env); break;
       case "switch":  this.emitSwitch(s, env); break;
-      // Unreachable: the type checker rejects `match` before emission.
-      case "match":   this.emit(0x00); break;
+      case "match":   this.emitMatch(s, env); break;
       case "return":
         if (s.value) {
           // Pass return type as expected type so literals (int/null) are emitted correctly
@@ -2123,6 +2224,114 @@ class FuncEmitter {
     restoreScope(env, savedEnv);
   }
 
+  /**
+   * `match` — dispatch on the tag, then bind and run the selected arm.
+   *
+   * The subject is evaluated exactly once, into the anyref scratch, because it may
+   * have side effects and every arm test needs it again. The tag is read through a
+   * cast to the enum's base, which every variant extends.
+   *
+   * Dispatch is an if-else chain over the tag rather than a `br_table`, matching
+   * `emitSwitch`. A table would be one jump instead of up to one comparison per
+   * variant; the tag makes that change possible later without touching anything
+   * else, which is most of why it exists.
+   *
+   * Inside an arm the cast back to the variant is unchecked in the sense that it
+   * cannot fail — the tag already established which variant this is — so the only
+   * cost of narrowing is the cast instruction itself.
+   */
+  private emitMatch(s: Stmt & { kind: "match" }, env: TypeEnv): void {
+    const baseIdx = s.enumBaseTypeIndex;
+    if (baseIdx === undefined) { this.emit(0x00); return; }   // unchecked match
+
+    // Evaluate the subject once. anyref holds any struct reference, so this needs no
+    // per-enum scratch local.
+    this.emitExpr(s.subject, env);
+    this.emit(0x21, ...uleb(this.tempAnyLocal));
+
+    // tag = (subject as base).#tag
+    // structFields is keyed by "@typeIndex" precisely so a same-named struct in
+    // another file cannot be picked up here.
+    const baseFields = this.ctx.structFields.get(`@${baseIdx}`) ?? [];
+    const tagField = baseFields.find(f => f.name === ENUM_TAG_FIELD);
+    // absIdx, not the array position: struct.get takes the wasm field index, and the
+    // two only coincide when nothing is inherited.
+    const tagIdx = tagField ? tagField.absIdx : 0;
+    this.emit(0x20, ...uleb(this.tempAnyLocal));
+    this.emit(0xFB, 0x16, ...sleb(baseIdx));                        // ref.cast (ref base)
+    this.emit(0xFB, 0x02, ...uleb(baseIdx), ...uleb(tagIdx));
+    this.emit(0x21, ...uleb(this.tempI32Local));
+
+    const variantArms = s.arms.filter(a => a.variant !== null);
+    const elseArm = s.arms.find(a => a.variant === null);
+
+    // One `if` per variant arm, nested in the else branches, so the arms are tried in
+    // source order and the else arm — or nothing — sits at the bottom.
+    let opened = 0;
+    for (const arm of variantArms) {
+      this.emit(0x20, ...uleb(this.tempI32Local));
+      this.emit(0x41, ...sleb(arm.tag ?? 0));
+      this.emit(0x46);                                             // i32.eq
+      this.emit(0x04, 0x40);                                       // if (void)
+      this.labelDepth++;
+      opened++;
+
+      const savedKeys = new Map(this.nameToKey);
+      const savedEnv = new Map(env);
+
+      // The narrowed shadow of the subject, if there was a name to shadow.
+      const armKey = this.armKeys.get(arm);
+      if (armKey !== undefined && s.subject.kind === "ident") {
+        const local = this.localMap.get(armKey);
+        if (local) {
+          this.emit(0x20, ...uleb(this.tempAnyLocal));
+          this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));    // ref.cast (ref variant)
+          this.emit(0x21, ...uleb(local.idx));
+          this.nameToKey.set(s.subject.name, armKey);
+          env.set(s.subject.name, local.type);
+        }
+      }
+
+      // Payload bindings, read off the variant's own fields.
+      const bkeys = this.bindingKeys.get(arm) ?? [];
+      // Bindings are positional, so the field is the i-th *payload* field — looking it
+      // up by the binding's name would never match, since `case Circle(r)` binds `r`
+      // to a field called `radius`.
+      const payloadFields = (this.ctx.structFields.get(`@${arm.variantTypeIndex}`) ?? [])
+        .filter(f => f.name !== ENUM_TAG_FIELD);
+      for (let i = 0; i < bkeys.length; i++) {
+        const key = bkeys[i];
+        if (key === "") continue;                                  // `_` binds nothing
+        const local = this.localMap.get(key);
+        const field = payloadFields[i];
+        if (!local || !field) continue;
+        this.emit(0x20, ...uleb(this.tempAnyLocal));
+        this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));
+        this.emit(0xFB, 0x02, ...uleb(arm.variantTypeIndex!), ...uleb(field.absIdx));
+        this.emit(0x21, ...uleb(local.idx));
+        this.nameToKey.set(arm.bindings[i], key);
+        env.set(arm.bindings[i], local.type);
+      }
+
+      for (const st of arm.body) this.emitStmt(st, env);
+
+      restoreScope(this.nameToKey, savedKeys);
+      restoreScope(env, savedEnv);
+
+      this.emit(0x05);                                             // else
+    }
+
+    if (elseArm) {
+      this.emitScoped(elseArm.body, env);
+    }
+
+    // Close every `if` opened above.
+    for (let i = 0; i < opened; i++) {
+      this.emit(0x0B);
+      this.labelDepth--;
+    }
+  }
+
   private emitSwitch(s: Stmt & { kind: "switch" }, env: TypeEnv): void {
     // Use if-else chain for correctness. br_table optimization can come later.
     const def = s.cases.find(c => c.value === "default");
@@ -2210,10 +2419,20 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
     env.set(p.name, p.type);
   }
 
-  // Collect and map local variables (unique keys for shadowed vars)
-  const { decls: allLocals, keyMap } = collectLocals(body.stmts);
+  // Collect and map local variables (unique keys for shadowed vars).
+  //
+  // Parameter names are reserved, so a local that shadows a parameter gets its own
+  // slot instead of aliasing the parameter's. Aliasing looked harmless — the name
+  // resolves to the same index either way — but it means the parameter reads back as
+  // the shadow's value once the shadowing block has ended, which is a silent wrong
+  // answer rather than an error.
+  const paramNames = new Set([...params.map(p => p.name),
+    ...(entry.origin.kind === "method" && entry.origin.decl.hasThis ? ["this"] : [])]);
+  const { decls: allLocals, keyMap, armKeys, bindingKeys } =
+    collectLocals(body.stmts, [...paramNames]);
   emitter.keyMap = keyMap;
-  const paramNames = new Set([...params.map(p => p.name), ...(entry.origin.kind === "method" && entry.origin.decl.hasThis ? ["this"] : [])]);
+  emitter.armKeys = armKeys;
+  emitter.bindingKeys = bindingKeys;
   for (const d of allLocals) {
     if (!emitter.localMap.has(d.name)) {
       emitter.localMap.set(d.name, { idx: localIdx++, type: d.type });

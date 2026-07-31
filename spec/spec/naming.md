@@ -118,6 +118,21 @@ export i32 shadow() {
 
 `[§wac-shadow-8u8qh2j]` `shadow()` returns `1`.
 
+A local may shadow a parameter, and the parameter is unaffected once the shadowing
+block ends:
+
+```wac
+export i32 shadowParam(i32 x) {
+  {
+    i32 x = 99;
+  }
+  return x;
+}
+```
+
+`[§wac-shadow-param-7apc0wt]` `shadowParam(7)` returns `7` — the shadow is a separate
+binding, not a write to the parameter.
+
 ### For-loop variable shadowing
 
 ```wac
