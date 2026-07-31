@@ -39,7 +39,9 @@ func_decl      = [ "export" ] , type , IDENT , "(" , [ param_list ] , ")" , bloc
    [see variables.md]; the grammar cannot express that restriction. *)
 const_decl     = [ "export" ] , "const" , type , IDENT , "=" , expr , ";" ;
 param_list     = param , { "," , param } , [ "," ] ;
-param          = type , IDENT ;
+(* `const` forbids writing through the parameter, as `const this` does for a
+   receiver [see functions.md]. *)
+param          = [ "const" ] , type , IDENT ;
 ```
 
 ### Struct declarations

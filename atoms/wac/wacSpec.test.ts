@@ -5705,6 +5705,19 @@ Deno.test(`[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejec
   eq(bad(`const i32 A = 1.5; export i32 g() { return A; }`), true, "wrong type");
 });
 
+Deno.test(`[§wac-grammar-keywords-h4mq7wn] the type names really are identifiers`, async () => {
+  // The reason the list above must not contain them: each of these parses as
+  // `IDENT "." IDENT "(" args ")"`, which only works if the type name is an identifier.
+  const inst = await run(`
+    export u64 bits(f64 x)   { return f64.toBits(x); }
+    export f64 unbits(u64 b) { return f64.fromBits(b); }
+    export i32 fromB()       { u8[] b = u8[](104, 105); return string.fromBytes(b).len(); }
+  `);
+  eq(inst.call("bits", [1.0]), 0x3FF0000000000000n, "f64.toBits is a static call on an identifier");
+  eq(inst.call("unbits", [0x3FF0000000000000n]), 1.0, "and f64.fromBits");
+  eq(inst.call("fromB", []), 2, "and string.fromBytes");
+});
+
 // §wac-modconst-ref-9jvq2mt — constants of reference type
 Deno.test(`[§wac-modconst-ref-9jvq2mt] a struct or enum can be a module constant`, async () => {
   // `struct.new` is a constant instruction in the GC proposal, so a constant is not

@@ -1,4 +1,4 @@
-# 0021 — `x is UndefinedType` compiles and is always true
+# 0022 — `x is UndefinedType` compiles and is always true
 
 - **Status:** open
 - **Reported by:** agent-c
