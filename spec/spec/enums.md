@@ -317,6 +317,24 @@ export i32 sum(Tree t) {
 
 `[§enum-recursive]` `sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2)))` returns `3`.
 
+Recursion may also go **through a struct**, which is what a container with methods
+forces: variants cannot have methods, so a growable payload lives in a struct that
+holds an array of the enum.
+
+```wac
+enum Val { Nil, Num(f64 v), Arr(ArrData a) }
+
+struct ArrData {
+  Val?[] items;
+  i32 count;
+  Val at(const this, i32 i) { return this.items[i]!; }
+}
+```
+
+`[§enum-recursive-via-struct]` A recursive fold over that shape works: the enum's
+payload names a struct, the struct's field is a nullable array of the enum, and
+neither declaration precedes the other.
+
 A payload field may be any type a struct field may be, including an array of structs:
 
 ```wac
