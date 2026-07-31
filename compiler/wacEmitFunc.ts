@@ -559,6 +559,8 @@ class FuncEmitter {
   tempI32Local = -1;
   tempF32Local = -1;
   tempF64Local = -1;
+  /** anyref scratch, for holding an array while a fill loop runs. */
+  tempAnyLocal = -1;
 
   constructor(ctx: WasmTypeCtx, returnType: WacType) {
     this.ctx = ctx;
@@ -979,6 +981,42 @@ class FuncEmitter {
     this.emit(cmp);
     this.emit(0x04, 0x40, 0x00, 0x0B);
     this.emit(0x20, ...uleb(t));
+  }
+
+  /** Fill an array on the stack with a freshly built default per element.
+   *
+   *  Takes the array off the stack, writes `arr[i] = default` for every i, and
+   *  leaves the array back on it. The array lives in the anyref scratch local
+   *  rather than one local per array type — anyref holds any of them, and a
+   *  ref.cast on the way out costs a great deal less than threading a typed
+   *  scratch local through local allocation. */
+  private emitFillLoop(elem: WacType, aIdx: number): void {
+    const arrT: WacType = { kind: "array", elem, line: 0, col: 0 };
+    const cast = () => {
+      this.emit(0x20, ...uleb(this.tempAnyLocal));            // local.get $any
+      this.emit(0xFB, 0x16, ...heapTypeBytes(arrT, this.ctx)); // ref.cast (ref $arr)
+    };
+    const i = this.tempI32Local;
+    this.emit(0x21, ...uleb(this.tempAnyLocal));  // local.set $any  (array)
+    this.emit(0x41, 0x00);                        // i32.const 0
+    this.emit(0x21, ...uleb(i));                  // local.set $i
+    this.emit(0x02, 0x40);                        // block (void)
+    this.emit(0x03, 0x40);                        //   loop (void)
+    this.emit(0x20, ...uleb(i));                  //     local.get $i
+    cast();
+    this.emit(0xFB, 0x0F);                        //     array.len
+    this.emit(0x4F);                              //     i32.ge_u
+    this.emit(0x0D, 0x01);                        //     br_if 1  (out of block)
+    cast();
+    this.emit(0x20, ...uleb(i));                  //     local.get $i
+    this.emitDefaultValue(elem);                  //     a fresh element
+    this.emit(0xFB, 0x0E, ...uleb(aIdx));         //     array.set $arr
+    this.emit(0x20, ...uleb(i), 0x41, 0x01, 0x6A); //    i + 1
+    this.emit(0x21, ...uleb(i));                  //     local.set $i
+    this.emit(0x0C, 0x00);                        //     br 0  (continue)
+    this.emit(0x0B);                              //   end loop
+    this.emit(0x0B);                              // end block
+    cast();                                       // result: the filled array
   }
 
   /** Trap unless the float on the stack is already an integer, leaving it there.
@@ -1652,6 +1690,16 @@ class FuncEmitter {
         this.emitDefaultValue(e.elem);
         this.emitExpr(e.size, env);
         this.emit(0xFB, 0x06, ...uleb(aIdx)); // array.new $t
+      } else if (!isWasmDefaultable(e.elem)) {
+        // A struct or array element is stored as a *nullable* ref, so
+        // array.new_default validates but fills the array with nulls — and
+        // every read unwraps with ref.as_non_null, so the first access traps.
+        // arrays.md promises a distinct default per element, which rules out
+        // array.fill too: one value replicated would alias. So: allocate, then
+        // loop and construct each element.
+        this.emitExpr(e.size, env);
+        this.emit(0xFB, 0x07, ...uleb(aIdx));   // array.new_default $t (nulls)
+        this.emitFillLoop(e.elem, aIdx);
       } else {
         this.emitExpr(e.size, env);
         this.emit(0xFB, 0x07, ...uleb(aIdx)); // array.new_default $t
@@ -2189,9 +2237,10 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   emitter.tempI32Local = localIdx + 1;
   emitter.tempF32Local = localIdx + 2;
   emitter.tempF64Local = localIdx + 3;
+  emitter.tempAnyLocal = localIdx + 4;
 
   const localsVec: number[] = [];
-  localsVec.push(...uleb(groups.length + 4));
+  localsVec.push(...uleb(groups.length + 5));
   for (const g of groups) {
     localsVec.push(...uleb(g.count));
     localsVec.push(...wasmValType(g.type, ctx));
@@ -2200,6 +2249,7 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   localsVec.push(0x01, 0x7F); // 1 × i32 scratch local
   localsVec.push(0x01, 0x7D); // 1 × f32 scratch local
   localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
+  localsVec.push(0x01, 0x6E); // 1 × anyref scratch local
 
   // Coverage points are attributed to the file the function was declared in.
   if (ctx.coverage) {
