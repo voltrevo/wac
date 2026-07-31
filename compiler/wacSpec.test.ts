@@ -4127,13 +4127,102 @@ Deno.test("(audit-06) remaining as!/as~ pairs from the completed casts.md tables
   eq(inst.call("ri64f32", [16777217n]), 16777216, "i64 as~ f32 rounds to nearest");
 });
 
+// §wac-nullable-primitive-4mzq7vp — a nullable primitive, boxed
+Deno.test("[§wac-nullable-primitive-4mzq7vp] a nullable primitive works in every position", async () => {
+  // Issue 0045. Every one of these produced invalid wasm before — `local.set expected anyref,
+  // found i32` — because no wasm numeric type has a null, so the value has to be boxed and
+  // nothing boxed it. The positions are listed one per export because they are separate paths
+  // through the emitter: each is a place where a value is stored into a slot.
+  const inst = await run(`
+    struct H { i32? v; f64? f; i32 get(const this) { return this.v!; } }
+    enum E { A(i32? v), B }
+    i32 take(i32? a) { return a is null ? -1 : a!; }
+    i32? give(bool some) { if (some) { return 5; } return null; }
+    export i32 declared()   { i32? a = 7; return a!; }
+    export i32 assigned()   { i32? a = null; a = 6; return a!; }
+    export i32 computed()   { i32 x = 40; i32? a = x + 2; return a!; }
+    export i32 aliased()    { i32? a = 5; i32? b = a; return b!; }
+    export i32 field()      { H h = H(7, 2.0); return h.v! + (h.f! as! i32); }
+    export i32 fieldNull()  { H h = H(null, null); return h.v is null ? 1 : 0; }
+    export i32 fieldSet()   { H h = H(null, null); h.v = 9; return h.v!; }
+    export i32 element()    { i32?[] xs = i32?[3](); xs[1] = 4; return (xs[0] is null ? 1 : 0) * 10 + xs[1]!; }
+    export i32 argument()   { i32 x = 3; return take(x) * 10 + take(null); }
+    export i32 returned()   { return give(true)! * 10 + (give(false) is null ? 1 : 0); }
+    export i32 ternary(bool c) { i32? a = c ? 1 : null; return a is null ? -1 : a!; }
+    export i32 matchArm(bool c) {
+      i32? a = match (c ? E.A(3) : E.B) { case A(v): v, case B: null };
+      return a is null ? -1 : a!;
+    }
+    export i32 payload()    { E e = E.A(8); return match (e) { case A(v): v!, case B: 0 }; }
+    export i32 viaMethod()  { H h = H(3, 0.0); return h.get(); }
+  `);
+  eq(inst.call("declared", []), 7, "a declaration");
+  eq(inst.call("assigned", []), 6, "assignment to a local");
+  eq(inst.call("computed", []), 42, "a computed value, not just a literal");
+  eq(inst.call("aliased", []), 5, "one nullable assigned from another, which must not double-box");
+  eq(inst.call("field", []), 9, "struct fields, i32 and f64");
+  eq(inst.call("fieldNull", []), 1, "a null field");
+  eq(inst.call("fieldSet", []), 9, "assignment to a field");
+  eq(inst.call("element", []), 14, "an array of them, and assignment to an element");
+  eq(inst.call("argument", []), 29, "a call argument, with a value and with null");
+  eq(inst.call("returned", []), 51, "a return, both ways");
+  eq(inst.call("ternary", [1]), 1, "a ternary branch against a null branch");
+  eq(inst.call("ternary", [0]), -1, "and the null side of it");
+  eq(inst.call("matchArm", [1]), 3, "a match expression's arm");
+  eq(inst.call("matchArm", [0]), -1, "and its null arm");
+  eq(inst.call("payload", []), 8, "an enum payload");
+  eq(inst.call("viaMethod", []), 3, "read through a method");
+});
+
+Deno.test("[§wac-nullable-primitive-4mzq7vp] the full range survives, which i31 did not", async () => {
+  // The reason it is a boxed struct rather than `ref.i31`, which is free: i31 holds 31 bits, so
+  // 2000000000 came back as -147483648. A wrong answer with no diagnostic, at exactly the
+  // values a program is most careful about. This test is the whole argument for the allocation.
+  const inst = await run(`
+    export i32 big()      { i32? a = 2000000000;      return a!; }
+    export i32 negBig()   { i32? a = 0 - 2000000000;  return a!; }
+    export i32 iMax()     { i32? a = 2147483647;      return a!; }
+    export u32 uMax()     { u32? a = 4294967295;      return a!; }
+    export i64 wide()     { i64? a = 9007199254740993; return a!; }
+    export f64 fraction() { f64? a = 1.25;            return a!; }
+    export bool flag()    { bool? a = true;           return a!; }
+  `);
+  eq(inst.call("big", []), 2000000000, "past 2^30, which i31 truncated");
+  eq(inst.call("negBig", []), -2000000000, "and the negative side");
+  eq(inst.call("iMax", []), 2147483647, "i32's maximum");
+  eq(inst.call("uMax", []), 4294967295, "u32's maximum, which needs all 32 bits");
+  eq(inst.call("wide", []), 9007199254740993n, "an i64 beyond f64's integer range");
+  eq(inst.call("fraction", []), 1.25, "an f64, which i31 could not have held at all");
+  eq(inst.call("flag", []), true, "and a bool");
+});
+
+Deno.test("[§wac-nullable-primitive-4mzq7vp] unwrapping an absent one traps", async () => {
+  const inst = await run(`
+    export i32 nullUnwrap() { i32? a = null; return a!; }
+    export i32 present()    { i32? a = 1;    return a!; }
+  `);
+  traps(() => inst.call("nullUnwrap", []), "unwrapping a null nullable primitive");
+  eq(inst.call("present", []), 1, "and the present case does not");
+});
+
 // ── audit-07 — nullable primitives must produce valid, instantiable wasm ───
 
-Deno.test("(audit-07) a boxed literal returned as a nullable primitive instantiates and runs", async () => {
+Deno.test("(audit-07) a nullable primitive crosses the host boundary as a reference", async () => {
+  // It used to come back as a *number*, because a nullable primitive was `ref.i31` — which is
+  // free and holds 31 bits, so `2000000000` came back as `-147483648`. It is a boxed struct now
+  // [issue 0045], so at the boundary it is a reference like any other, and reading one from the
+  // host needs an accessor written in wac. Asserted rather than described: this is the one
+  // observable behaviour the fix changed.
   const inst = await run(`
     export i32? mk() { return 5; }
+    export i32 read(i32? x) { return x is null ? -1 : x!; }
   `);
-  eq(inst.call("mk", []), 5, "mk() returns the boxed value 5");
+  const boxed = inst.call("mk", []);
+  if (typeof boxed === "number") {
+    throw new Error("a nullable primitive should cross as a reference, not a number");
+  }
+  eq(inst.call("read", [boxed as object]), 5, "and wac can read it back");
+  eq(inst.call("read", [null]), -1, "including the absent case");
 });
 
 // ── audit-08 — a bare null call argument must not miscompile ───────────────

@@ -1858,6 +1858,62 @@ export function monomorphise(
 
 }
 
+/** The struct a `P?` boxes into, for a primitive P. `#` cannot appear in an IDENT. */
+export function boxStructName(prim: string): string {
+  return `#box$${prim}`;
+}
+
+/**
+ * A primitive that needs boxing to be nullable — which is every one that is not already a
+ * reference. `string`, `anyref` and `i31ref` are refs, so `string?` is just a nullable ref.
+ */
+export function needsBoxing(t: WacType): boolean {
+  return t.kind === "prim" && t.name !== "string" && t.name !== "anyref" &&
+    t.name !== "i31ref" && t.name !== "void";
+}
+
+/**
+ * Register one struct per primitive that appears as `P?` anywhere in the program.
+ *
+ * `i32?` has to hold either an i32 or null, and no wasm numeric type has a null — so the
+ * value is boxed in a one-field struct and the slot holds `anyref`. The alternative,
+ * `ref.i31`, is free but only holds 31 bits, so it would silently truncate exactly the i32
+ * values a program is most likely to be careful about [issue 0045].
+ *
+ * Synthesised the same way an enum's base and variant structs are, and for the same reason:
+ * everything downstream — the type section, field offsets, `struct.new` — already knows how
+ * to handle a struct, and nothing else has to learn about boxing.
+ *
+ * Deliberately *not* added to any file scope. `#` cannot appear in an IDENT, so no program
+ * can name one, and nothing but the emitter should.
+ */
+function registerBoxTypes(
+  programs: Map<string, Program>, structs: StructEntry[], entryPath: string,
+): void {
+  const wanted = new Set<string>();
+  eachTypeInPrograms(programs, (t) => {
+    if (t.kind === "nullable" && needsBoxing(t.inner)) {
+      wanted.add((t.inner as { name: string }).name);
+    }
+  });
+  for (const prim of [...wanted].sort()) {
+    const name = boxStructName(prim);
+    if (structs.some((s) => s.name === name)) continue;
+    const field: FieldDecl = {
+      name: "v", type: { kind: "prim", name: prim, line: 0, col: 0 },
+      isConst: false, line: 0, col: 0,
+    };
+    const decl: StructDecl = {
+      tag: "struct", isConst: false, exported: false, name, parent: null,
+      fields: [field], methods: [], typeParams: [], line: 0, col: 0,
+    };
+    structs.push({
+      structDecl: decl, name, typeIndex: structs.length, filePath: entryPath,
+      methods: new Map(), parentEntry: null,
+    });
+  }
+}
+
 /**
  * Report `Foo<i32>` when the program declares no templates at all.
  *
@@ -2216,6 +2272,8 @@ export function wacResolve(
         s.structDecl.line, s.structDecl.col);
     }
   }
+
+  registerBoxTypes(programs, structs, entryPath);
 
   return {
     funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay,

@@ -385,12 +385,52 @@ nullable type (`T?`) is expected — the compiler infers the type from context.
 Point? p = null;             // ok
 p = null;                    // ok: reassign to null
 Point q = null;              // error: Point is non-null
-i32 x = null;                // error: i32 is not nullable
+i32 x = null;                // error: i32 is non-null — `i32?` is the nullable form
+i32? y = null;               // ok
 ```
 
 `[§wac-null-assign-k3fn8wp]` `Point? p = null` compiles.
 `[§wac-null-nonnull-m8qj5xf]` `Point q = null` is a compile error.
-`[§wac-null-primitive-p7hd6wn]` `i32 x = null` is a compile error.
+`[§wac-null-primitive-p7hd6wn]` `i32 x = null` is a compile error — because `i32` is non-null,
+not because a primitive cannot be nullable. See *A nullable primitive* below.
+
+#### A nullable primitive
+
+`i32?`, `f64?`, `bool?` — every primitive but `void` may be nullable, and behaves like any
+other nullable value:
+
+```wac
+i32? a = 2000000000;
+i32? b = null;
+i32 got = a is null ? 0 : a!;       // 2000000000
+i32? c = cond ? 1 : null;           // both branches, as for a reference
+```
+
+`[§wac-nullable-primitive-4mzq7vp]` All of these work, at the full range of the type — the
+declaration, an assignment, a field, an array element, a call argument, a return, a ternary
+branch, a match arm and an enum payload.
+
+**It is boxed.** No wasm numeric type has a null, so a nullable primitive is stored as a
+reference to a one-field struct the compiler synthesises, and `!` reads the field back. So `i32?`
+costs an allocation per non-null value, where `Point?` costs nothing beyond the reference that
+was there anyway. Where that matters — a large array of mostly-absent numbers — a parallel
+`bool[]` of presence flags is cheaper and says the same thing.
+
+`ref.i31` would have been free, and is what this used to do. It holds 31 bits, so
+`i32? a = 2000000000` silently came back as `-147483648`: a wrong answer with no diagnostic, at
+exactly the values a program is most careful about. The allocation is the price of that not
+happening [issue 0045].
+
+**At the host boundary it is a reference like any other.** A JS caller receives an opaque
+reference from `i32? f()`, not a number, exactly as it does for a struct — so reading one needs an
+accessor written in wac:
+
+```wac
+export i32 read(i32? x) { return x is null ? -1 : x!; }
+```
+
+`bindgen` omits an export whose signature mentions a nullable type rather than guessing at a
+representation for it.
 
 #### Unwrap operator `!`
 
@@ -403,7 +443,9 @@ Point p = q!;                      // traps if q is null
 i32 x = q!.x;                     // unwrap then access
 ```
 
-`[§wac-unwrap-trap-y1iep2p]` Unwrapping `null` traps.
+`[§wac-unwrap-trap-y1iep2p]` Unwrapping `null` traps. For a boxed primitive the trap comes from
+the cast that reads the box rather than from `ref.as_non_null`, which is the same trap by another
+name.
 
 #### Null testing
 
