@@ -491,7 +491,10 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("false")) { advance(); return { kind: "bool", value: false, ...p }; }
     if (at("int"))   { const v = advance().text; return { kind: "int", value: v, ...p }; }
     if (at("float")) { const v = advance().text; return { kind: "float", value: v, ...p }; }
-    if (at("string")){ const v = advance().text; return { kind: "string", value: v, ...p }; }
+    // Matched on kind, not through at(): at() falls back to comparing token text,
+    // so at("string") also matches the *identifier* `string` and would turn a
+    // bare `string` in an expression into the literal "string".
+    if (tok().kind === "string") { const v = advance().text; return { kind: "string", value: v, ...p }; }
     // `this` keyword as expression (inside method bodies)
     if (at("this"))  { advance(); return { kind: "ident", name: "this", ...p }; }
 
@@ -988,7 +991,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       items.push(parseImport());
     } else if (at("struct") || (at("const") && at("struct", 1))) {
       items.push(parseStructDecl(false));
-    } else if (at("export") && at("struct", 1)) {
+    } else if (at("export") && (at("struct", 1) || (at("const", 1) && at("struct", 2)))) {
+      // `export const struct` as well as `export struct` — parseStructDecl reads
+      // the `const` itself, so only the `export` is consumed here.
       advance(); // skip 'export'
       items.push(parseStructDecl(true));
     } else if (at("export") || at("fn") || at("void") || (at("ident"))) {

@@ -312,6 +312,12 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     case "call": {
       if (e.callee.kind === "field") {
         const fe = e.callee as { kind: "field"; expr: Expr; name: string };
+        // Builtin statics on `string`, matched before typing the base: `string`
+        // is an identifier here and names no variable.
+        if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "string"
+            && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
+          return { kind: "prim", name: "string", line: 0, col: 0 };
+        }
         const baseT = typeOfExpr(fe.expr, env, ctx);
         if (fe.name === "len") return I32; // arr.len() / string.len()
         // String methods
@@ -467,24 +473,16 @@ function collectLocals(stmts: Stmt[]): { decls: LocalDecl[]; keyMap: WeakMap<Stm
 
 // ── String encoding ───────────────────────────────────────────────────────────
 
-/** Convert a raw wac string value (with escape sequences) to UTF-8 bytes. */
-function encodeString(raw: string): number[] {
-  const out: number[] = [];
-  let i = 0;
-  while (i < raw.length) {
-    if (raw[i] === '\\' && i + 1 < raw.length) {
-      const map: Record<string, number> = { n:0x0A, t:0x09, r:0x0D, '\\':0x5C, '"':0x22, '0':0x00 };
-      out.push(map[raw[i+1]] ?? raw.charCodeAt(i+1));
-      i += 2;
-    } else {
-      const cp = raw.codePointAt(i)!;
-      if (cp < 0x80) { out.push(cp); i++; }
-      else if (cp < 0x800) { out.push(0xC0|(cp>>6), 0x80|(cp&0x3F)); i++; }
-      else if (cp < 0x10000) { out.push(0xE0|(cp>>12), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); i++; }
-      else { out.push(0xF0|(cp>>18), 0x80|((cp>>12)&0x3F), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); i+=2; }
-    }
-  }
-  return out;
+/**
+ * UTF-8 bytes of a string literal's value.
+ *
+ * The value arrives already unescaped — `lexString` resolved `\n`, `\\` and the
+ * rest when it built the token. Decoding a second time here would find the
+ * resolved backslash of a `\\` and treat it as the start of a fresh escape,
+ * swallowing whatever followed it, so this is a plain encode.
+ */
+function encodeString(value: string): number[] {
+  return [...new TextEncoder().encode(value)];
 }
 
 // ── Function body emitter ─────────────────────────────────────────────────────
@@ -1409,6 +1407,12 @@ class FuncEmitter {
       // Static method call: TypeName.method(args)
       if (fe.expr.kind === "ident") {
         const typeName = (fe.expr as { name: string }).name;
+        if (typeName === "string" && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
+          const helper = fe.name === "fromCodepoint" ? "__str_from_cp" : "__str_from_bytes";
+          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get(helper)!));
+          return;
+        }
         if (this.ctx.structTypeIdx.has(typeName)) {
           const structEntry2 = resolveStructEntry(typeName, this.ctx);
           const meth2 = structEntry2?.methods.get(fe.name);

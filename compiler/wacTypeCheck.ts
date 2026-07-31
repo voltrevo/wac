@@ -1239,6 +1239,38 @@ function inferCall(
   if (callee.kind === "field") {
     const { expr: baseExpr, name: methodName } = callee;
 
+    // Builtin statics on the `string` type. `string` lexes as an identifier, so
+    // this has to be matched before the base expression is inferred — there is no
+    // variable of that name to infer.
+    if (baseExpr.kind === "ident" && baseExpr.name === "string" && !ctx.fileScope.has("string")) {
+      if (methodName === "fromBytes") {
+        if (args.length !== 1) {
+          errAt(ctx, `'string.fromBytes()' takes 1 argument (bytes)`, expr.line, expr.col);
+          return null;
+        }
+        const bT = inferExpr(args[0], env, ctx);
+        if (bT && !(bT.kind === "array" && bT.elem.kind === "prim" && bT.elem.name === "u8")) {
+          errAt(ctx, `'string.fromBytes()' argument must be u8[], got ${typeName(bT)}`,
+            args[0].line, args[0].col);
+        }
+        return T_STR;
+      }
+      if (methodName === "fromCodepoint") {
+        if (args.length !== 1) {
+          errAt(ctx, `'string.fromCodepoint()' takes 1 argument (codepoint)`, expr.line, expr.col);
+          return null;
+        }
+        const cpT = inferExpr(args[0], env, ctx);
+        if (cpT && !typeEq(cpT, T_I32)) {
+          errAt(ctx, `'string.fromCodepoint()' argument must be i32, got ${typeName(cpT)}`,
+            args[0].line, args[0].col);
+        }
+        return T_STR;
+      }
+      errAt(ctx, `type 'string' has no static method '${methodName}'`, callee.line, callee.col);
+      return null;
+    }
+
     // Static method: StructName.method(args)
     if (baseExpr.kind === "ident") {
       const se = ctx.fileScope.get(baseExpr.name);
