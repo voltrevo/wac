@@ -44,6 +44,7 @@ function prim(name: string): WacType {
 // Well-known singletons
 const T_I32  = prim("i32");
 const T_I64  = prim("i64");
+const T_U64  = prim("u64");
 const T_F32  = prim("f32");
 const T_F64  = prim("f64");
 const T_BOOL = prim("bool");
@@ -1239,6 +1240,26 @@ function inferCall(
   if (callee.kind === "field") {
     const { expr: baseExpr, name: methodName } = callee;
 
+    // Builtin statics on `f64`: the only way to see a float's representation.
+    // Reinterpretation, not conversion — the bits are unchanged.
+    if (baseExpr.kind === "ident" && baseExpr.name === "f64" && !ctx.fileScope.has("f64")) {
+      const want = methodName === "toBits" ? T_F64 : T_U64;
+      if (methodName !== "toBits" && methodName !== "fromBits") {
+        errAt(ctx, `type 'f64' has no static method '${methodName}'`, callee.line, callee.col);
+        return null;
+      }
+      if (args.length !== 1) {
+        errAt(ctx, `'f64.${methodName}()' takes 1 argument`, expr.line, expr.col);
+        return null;
+      }
+      const at3 = inferExpr(args[0], env, ctx, want);
+      if (at3 && !typeEq(at3, want)) {
+        errAt(ctx, `'f64.${methodName}()' argument must be ${typeName(want)}, got ${typeName(at3)}`,
+          args[0].line, args[0].col);
+      }
+      return methodName === "toBits" ? T_U64 : T_F64;
+    }
+
     // Builtin statics on the `string` type. `string` lexes as an identifier, so
     // this has to be matched before the base expression is inferred — there is no
     // variable of that name to infer.
@@ -1260,7 +1281,7 @@ function inferCall(
           errAt(ctx, `'string.fromCodepoint()' takes 1 argument (codepoint)`, expr.line, expr.col);
           return null;
         }
-        const cpT = inferExpr(args[0], env, ctx);
+        const cpT = inferExpr(args[0], env, ctx, T_I32);
         if (cpT && !typeEq(cpT, T_I32)) {
           errAt(ctx, `'string.fromCodepoint()' argument must be i32, got ${typeName(cpT)}`,
             args[0].line, args[0].col);
@@ -1444,12 +1465,22 @@ function inferFieldAccess(
     const se = ctx.fileScope.get(baseExpr.name);
     if (se?.kind === "struct") {
       const m = lookupMethod(se.entry, fieldName);
-      if (m && m.origin.kind === "method" && m.origin.decl.hasThis) {
-        // Instance method reference: Counter.inc → fn[void(Counter)] funcref
+      if (m && m.origin.kind === "method") {
+        // A method reference is the underlying function. An instance method
+        // takes its receiver as an explicit leading parameter — there are no
+        // closures, so `Counter.inc` is fn[void(Counter)]. A static method has
+        // no receiver, so it is simply its declared signature
+        // [see funcrefs.md].
         const mdecl = m.origin.decl;
-        const selfType: WacType = { kind: "struct", name: se.entry.name, resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0 };
-        const allParams = [selfType, ...mdecl.params.map(p => p.type)];
-        return { kind: "funcref", params: allParams, ret: mdecl.returnType, line: pos.line, col: pos.col };
+        const params = mdecl.params.map(p => p.type);
+        if (mdecl.hasThis) {
+          const selfType: WacType = {
+            kind: "struct", name: se.entry.name,
+            resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0,
+          };
+          params.unshift(selfType);
+        }
+        return { kind: "funcref", params, ret: mdecl.returnType, line: pos.line, col: pos.col };
       }
       errAt(ctx, `cannot use static method '${baseExpr.name}.${fieldName}' as a value`,
         pos.line, pos.col);
