@@ -126,6 +126,13 @@ export type ResolveResult = {
   errors: ResolveError[];
   /** Entry file path (only functions from this file are wasm-exported) */
   entryPath: string;
+  /**
+   * `Vec$i32` -> `Vec<i32>`, for every monomorphised generic.
+   *
+   * Diagnostics render struct names through this, so a message never shows a mangled name the
+   * author did not write.
+   */
+  genericDisplay: Map<string, string>;
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────
@@ -353,11 +360,606 @@ function scopeEntryExported(e: ScopeEntry): boolean {
   return e.enumEntry.enumDecl.exported;
 }
 
+// ── Monomorphisation ──────────────────────────────────────────────────────────
+//
+// A generic declaration is a *template*: `struct Vec<T>` is not a type, and `Vec<i32>` is.
+// This pass runs before everything else in the resolver, finds every `Vec<i32>` written
+// anywhere, clones the template with `T` replaced, and registers the result as an ordinary
+// struct named `Vec$i32`. After it, no `typeParams` and no `typeArgs` remain, so the rest of
+// the resolver, the type checker and the emitter never learn the word "generic" — the same
+// containment that kept enums from touching them.
+//
+// The cost is here, as the design predicted: substituting types through a cloned AST. Every
+// WacType in a method body has to be rewritten — locals, casts, `T[n]()` constructions,
+// `is`/`as!` operands, funcref signatures — so most of this file is a deep clone.
+
+/** How deep `Vec<Vec<Vec<...>>>` may nest before it is called a mistake. */
+const MAX_INSTANTIATION_DEPTH = 24;
+
+type Template = { decl: StructDecl; filePath: string };
+
+/** Where an instantiation was written, for the trace an error needs. */
+/** A source location as the *parser* records it — line and col, no file. */
+type At = { line: number; col: number };
+
+function mangle(name: string, args: WacType[]): string {
+  // `$` is already the method-mangling separator and cannot appear in an IDENT, so a mangled
+  // name can never collide with a written one — the same trick `#tag` uses for enums.
+  return `${name}$${args.map(mangleType).join("$")}`;
+}
+
+function mangleType(t: WacType): string {
+  switch (t.kind) {
+    case "prim":     return t.name;
+    case "struct":   return t.typeArgs && t.typeArgs.length > 0 ? mangle(t.name, t.typeArgs) : t.name;
+    case "array":    return `${mangleType(t.elem)}_arr`;
+    case "nullable": return `${mangleType(t.inner)}_opt`;
+    case "funcref":  return `fn_${t.params.map(mangleType).join("_")}_to_${mangleType(t.ret)}`;
+  }
+}
+
+/** A type as a reader would write it, demangling any instantiation inside it. */
+function displayType(t: WacType, display?: Map<string, string>): string {
+  switch (t.kind) {
+    case "prim":     return t.name;
+    case "struct":
+      if (t.typeArgs && t.typeArgs.length > 0) {
+        return `${t.name}<${t.typeArgs.map((a) => displayType(a, display)).join(", ")}>`;
+      }
+      return display?.get(t.name) ?? t.name;
+    case "array":    return `${displayType(t.elem, display)}[]`;
+    case "nullable": return `${displayType(t.inner, display)}?`;
+    case "funcref":
+      return `fn[${displayType(t.ret, display)}(${t.params.map((p) => displayType(p, display)).join(", ")})]`;
+  }
+}
+
+function typeArgsKey(args: WacType[]): string {
+  return args.map(mangleType).join(",");
+}
+
+// ── Substitution ──────────────────────────────────────────────────────────────
+
+function substType(t: WacType, sub: Map<string, WacType>): WacType {
+  switch (t.kind) {
+    case "prim": return t;
+    case "struct": {
+      // A bare type-parameter name becomes the argument. It cannot itself have type
+      // arguments — `T<i32>` is meaningless — so this is a straight swap.
+      const bound = sub.get(t.name);
+      if (bound !== undefined && (t.typeArgs === undefined || t.typeArgs.length === 0)) {
+        // Keep the *use site's* position: an error inside a substituted body should point at
+        // the template's own text, which is where the reader can act on it.
+        return { ...bound, line: t.line, col: t.col };
+      }
+      if (t.typeArgs === undefined || t.typeArgs.length === 0) return t;
+      return { ...t, typeArgs: t.typeArgs.map((a) => substType(a, sub)) };
+    }
+    case "array":    return { ...t, elem: substType(t.elem, sub) };
+    case "nullable": return { ...t, inner: substType(t.inner, sub) };
+    case "funcref":
+      return { ...t, params: t.params.map((p) => substType(p, sub)), ret: substType(t.ret, sub) };
+  }
+}
+
+function substExpr(e: Expr, sub: Map<string, WacType>): Expr {
+  switch (e.kind) {
+    case "int": case "float": case "string": case "bool": case "null": case "ident":
+      return { ...e };
+    case "unary":  return { ...e, expr: substExpr(e.expr, sub) };
+    case "binary": return { ...e, left: substExpr(e.left, sub), right: substExpr(e.right, sub) };
+    case "cast":   return { ...e, expr: substExpr(e.expr, sub), type: substType(e.type, sub) };
+    case "is": {
+      const rhs = e.rhs === "null" ? "null"
+        : isWacType(e.rhs) ? substType(e.rhs as WacType, sub)
+        : substExpr(e.rhs as Expr, sub);
+      return { ...e, expr: substExpr(e.expr, sub), rhs };
+    }
+    case "ternary":
+      return { ...e, cond: substExpr(e.cond, sub), then: substExpr(e.then, sub), else_: substExpr(e.else_, sub) };
+    case "call":
+      return { ...e, callee: substExpr(e.callee, sub), args: e.args.map((a) => substExpr(a, sub)) };
+    case "index":  return { ...e, expr: substExpr(e.expr, sub), idx: substExpr(e.idx, sub) };
+    case "field":  return { ...e, expr: substExpr(e.expr, sub) };
+    case "unwrap": return { ...e, expr: substExpr(e.expr, sub) };
+    case "construct":
+      return {
+        ...e, ctype: substType(e.ctype, sub), args: e.args.map((a) => substExpr(a, sub)),
+        named: e.named?.map((n) => ({ ...n, val: substExpr(n.val, sub) })),
+      };
+    case "incr-expr": return { ...e, lval: substLvalue(e.lval, sub) };
+    case "arrNew":
+      return {
+        ...e, elem: substType(e.elem, sub),
+        size: e.size ? substExpr(e.size, sub) : null,
+        fill: e.fill ? substExpr(e.fill, sub) : undefined,
+        fixed: e.fixed.map((x) => substExpr(x, sub)),
+      };
+    case "matchExpr":
+      return {
+        ...e, subject: substExpr(e.subject, sub),
+        arms: e.arms.map((a) => ({ ...a, body: a.body.map((s) => substStmt(s, sub)),
+                                   value: a.value ? substExpr(a.value, sub) : undefined })),
+      };
+  }
+}
+
+function substLvalue(lv: Lvalue, sub: Map<string, WacType>): Lvalue {
+  switch (lv.kind) {
+    case "lv-ident":  return { ...lv };
+    case "lv-field":  return { ...lv, base: substLvalue(lv.base, sub) };
+    case "lv-index":  return { ...lv, base: substLvalue(lv.base, sub), idx: substExpr(lv.idx, sub) };
+    case "lv-unwrap": return { ...lv, base: substLvalue(lv.base, sub) };
+  }
+}
+
+function substBlock(b: Block, sub: Map<string, WacType>): Block {
+  return { ...b, stmts: b.stmts.map((s) => substStmt(s, sub)) };
+}
+
+function substStmt(s: Stmt, sub: Map<string, WacType>): Stmt {
+  switch (s.kind) {
+    case "var":
+      return { ...s, type: substType(s.type, sub), init: substExpr(s.init, sub) };
+    case "assign":
+      return { ...s, lval: substLvalue(s.lval, sub), rhs: substExpr(s.rhs, sub) };
+    case "incr": return { ...s, lval: substLvalue(s.lval, sub) };
+    case "if":
+      return {
+        ...s, cond: substExpr(s.cond, sub), then: substBlock(s.then, sub),
+        els: s.els === null ? null
+          : s.els.kind === "else-if" ? { ...s.els, stmt: substStmt(s.els.stmt, sub) }
+          : { ...s.els, block: substBlock(s.els.block, sub) },
+      };
+    case "while": case "dowhile":
+      return { ...s, cond: substExpr(s.cond, sub), body: substBlock(s.body, sub) };
+    case "for":
+      return {
+        ...s, init: s.init ? substStmt(s.init, sub) : null,
+        cond: s.cond ? substExpr(s.cond, sub) : null,
+        update: s.update ? substStmt(s.update, sub) : null,
+        body: substBlock(s.body, sub),
+      };
+    case "switch":
+      return {
+        ...s, expr: substExpr(s.expr, sub),
+        cases: s.cases.map((c) => ({
+          ...c, value: c.value === "default" ? "default" : substExpr(c.value, sub),
+          body: c.body.map((x) => substStmt(x, sub)),
+        })),
+      };
+    case "match":
+      return {
+        ...s, subject: substExpr(s.subject, sub),
+        arms: s.arms.map((a) => ({ ...a, body: a.body.map((x) => substStmt(x, sub)) })),
+      };
+    case "return": return { ...s, value: s.value ? substExpr(s.value, sub) : null };
+    case "break": case "continue": case "trap": return { ...s };
+    case "block":  return { ...s, block: substBlock(s.block, sub) };
+    case "expr":   return { ...s, expr: substExpr(s.expr, sub) };
+  }
+}
+
+/** Is this `is` right-hand side a type rather than an expression? */
+function isWacType(v: unknown): boolean {
+  return typeof v === "object" && v !== null && "kind" in v &&
+    ["prim", "struct", "array", "nullable", "funcref"].includes((v as { kind: string }).kind);
+}
+
+// ── Collecting instantiation requests ─────────────────────────────────────────
+//
+// Every `struct` type with arguments, anywhere in any program, is a request. Walking types is
+// enough — a generic can only be *named* in type position, by the bracket restriction.
+
+function eachTypeInPrograms(
+  programs: Map<string, Program>, visit: (t: WacType, filePath: string) => void,
+  skipTemplates = false,
+): void {
+  for (const [filePath, prog] of programs) {
+    const t = (x: WacType) => visitType(x, (y) => visit(y, filePath));
+    for (const item of prog.items) {
+      // A template's own body mentions its type parameters, so `Box<T>` inside `struct Wrap<T>`
+      // would be materialised as `Box$T` — with the parameter name treated as an argument.
+      // Template bodies are rewritten during materialisation, once T is known, and must not be
+      // visited before that.
+      if (skipTemplates && item.tag === "struct" && item.typeParams.length > 0) continue;
+      if (item.tag === "struct") {
+        for (const f of item.fields) t(f.type);
+        for (const m of item.methods) { t(m.returnType); for (const p of m.params) t(p.type); visitBlockTypes(m.body, t); }
+      } else if (item.tag === "func") {
+        t(item.returnType);
+        for (const p of item.params) t(p.type);
+        visitBlockTypes(item.body, t);
+      } else if (item.tag === "enum") {
+        for (const v of item.variants) for (const f of v.fields) t(f.type);
+        for (const m of item.methods) { t(m.returnType); for (const p of m.params) t(p.type); visitBlockTypes(m.body, t); }
+      } else if (item.tag === "const") {
+        t(item.type);
+        visitExprTypes(item.init, t);
+      }
+    }
+  }
+}
+
+function visitType(t: WacType, visit: (t: WacType) => void): void {
+  visit(t);
+  if (t.kind === "array") visitType(t.elem, visit);
+  else if (t.kind === "nullable") visitType(t.inner, visit);
+  else if (t.kind === "funcref") { for (const p of t.params) visitType(p, visit); visitType(t.ret, visit); }
+  else if (t.kind === "struct" && t.typeArgs) for (const a of t.typeArgs) visitType(a, visit);
+}
+
+function visitBlockTypes(b: Block, t: (x: WacType) => void): void {
+  for (const s of b.stmts) visitStmtTypes(s, t);
+}
+
+function visitStmtTypes(s: Stmt, t: (x: WacType) => void): void {
+  switch (s.kind) {
+    case "var": t(s.type); visitExprTypes(s.init, t); return;
+    case "assign": visitLvalTypes(s.lval, t); visitExprTypes(s.rhs, t); return;
+    case "incr": visitLvalTypes(s.lval, t); return;
+    case "if":
+      visitExprTypes(s.cond, t); visitBlockTypes(s.then, t);
+      if (s.els?.kind === "else-if") visitStmtTypes(s.els.stmt, t);
+      else if (s.els?.kind === "else-block") visitBlockTypes(s.els.block, t);
+      return;
+    case "while": case "dowhile": visitExprTypes(s.cond, t); visitBlockTypes(s.body, t); return;
+    case "for":
+      if (s.init) visitStmtTypes(s.init, t);
+      if (s.cond) visitExprTypes(s.cond, t);
+      if (s.update) visitStmtTypes(s.update, t);
+      visitBlockTypes(s.body, t);
+      return;
+    case "switch":
+      visitExprTypes(s.expr, t);
+      for (const c of s.cases) {
+        if (c.value !== "default") visitExprTypes(c.value, t);
+        for (const x of c.body) visitStmtTypes(x, t);
+      }
+      return;
+    case "match":
+      visitExprTypes(s.subject, t);
+      for (const a of s.arms) for (const x of a.body) visitStmtTypes(x, t);
+      return;
+    case "return": if (s.value) visitExprTypes(s.value, t); return;
+    case "block": visitBlockTypes(s.block, t); return;
+    case "expr": visitExprTypes(s.expr, t); return;
+    case "break": case "continue": case "trap": return;
+  }
+}
+
+function visitLvalTypes(lv: Lvalue, t: (x: WacType) => void): void {
+  if (lv.kind === "lv-index") { visitLvalTypes(lv.base, t); visitExprTypes(lv.idx, t); }
+  else if (lv.kind === "lv-field" || lv.kind === "lv-unwrap") visitLvalTypes(lv.base, t);
+}
+
+function visitExprTypes(e: Expr, t: (x: WacType) => void): void {
+  switch (e.kind) {
+    case "cast": t(e.type); visitExprTypes(e.expr, t); return;
+    case "is":
+      visitExprTypes(e.expr, t);
+      if (e.rhs !== "null" && isWacType(e.rhs)) t(e.rhs as WacType);
+      else if (e.rhs !== "null") visitExprTypes(e.rhs as Expr, t);
+      return;
+    case "construct":
+      t(e.ctype);
+      for (const a of e.args) visitExprTypes(a, t);
+      for (const n of e.named ?? []) visitExprTypes(n.val, t);
+      return;
+    case "arrNew":
+      t(e.elem);
+      if (e.size) visitExprTypes(e.size, t);
+      if (e.fill) visitExprTypes(e.fill, t);
+      for (const x of e.fixed) visitExprTypes(x, t);
+      return;
+    case "unary": case "unwrap": case "field": visitExprTypes(e.expr, t); return;
+    case "binary": visitExprTypes(e.left, t); visitExprTypes(e.right, t); return;
+    case "ternary":
+      visitExprTypes(e.cond, t); visitExprTypes(e.then, t); visitExprTypes(e.else_, t); return;
+    case "call": visitExprTypes(e.callee, t); for (const a of e.args) visitExprTypes(a, t); return;
+    case "index": visitExprTypes(e.expr, t); visitExprTypes(e.idx, t); return;
+    case "incr-expr": visitLvalTypes(e.lval, t); return;
+    case "matchExpr":
+      visitExprTypes(e.subject, t);
+      for (const a of e.arms) {
+        for (const x of a.body) visitStmtTypes(x, t);
+        if (a.value) visitExprTypes(a.value, t);
+      }
+      return;
+    case "int": case "float": case "string": case "bool": case "null": case "ident": return;
+  }
+}
+
+/**
+ * Replace every generic reference with its monomorphised struct, materialising as it goes.
+ *
+ * Runs to fixpoint: substituting a template body can name further instantiations, so
+ * materialising `Vec<Vec<i32>>` discovers `Vec<i32>`. `struct Rec<T> { Rec<Box<T>> next; }` never
+ * terminates, so depth is capped and reported — Rust has the same limit for the same reason.
+ */
+export function monomorphise(
+  programs: Map<string, Program>,
+  err: (msg: string, file: string, line: number, col: number) => void,
+  /**
+   * Filled in with `Vec$i32` -> `Vec<i32>` for every instantiation.
+   *
+   * Diagnostics must never show a mangled name: the design calls the instantiation trace
+   * first-class work, and it is the whole difference between this feature and C++ templates —
+   * an error about `Box$Base` is about code the author did not write.
+   */
+  display?: Map<string, string>,
+): void {
+  const templates = new Map<string, Template>();
+  for (const [filePath, prog] of programs) {
+    for (const item of prog.items) {
+      if (item.tag === "struct" && item.typeParams.length > 0) {
+        templates.set(item.name, { decl: item, filePath });
+      }
+    }
+  }
+  // An import alias names the same template: `import { Vec as V }` then `V<i32>`. Registered
+  // under the alias too, since this pass runs before imports are resolved and would otherwise
+  // report `V` as not generic.
+  for (const prog of programs.values()) {
+    for (const item of prog.items) {
+      if (item.tag !== "import") continue;
+      for (const it of item.items) {
+        const tpl = templates.get(it.name);
+        if (tpl !== undefined && it.alias !== it.name) templates.set(it.alias, tpl);
+      }
+    }
+  }
+  if (templates.size === 0) {
+    // Still worth checking: a generic reference to something that is not a template is an
+    // error the user should see rather than a silent bare-name lookup later.
+    reportStrayArgs(programs, templates, err);
+    return;
+  }
+
+  // Materialised structs, by mangled name, so each is built once however often it is written.
+  const made = new Map<string, StructDecl>();
+  const madeIn = new Map<string, string>();   // mangled name -> file it belongs to
+  const usedIn = new Map<string, Set<string>>();  // file -> mangled names it refers to
+  const noteUse = (file: string, mangled: string) => {
+    let set = usedIn.get(file);
+    if (set === undefined) { set = new Set(); usedIn.set(file, set); }
+    set.add(mangled);
+  };
+
+  const materialise = (name: string, args: WacType[], depth: number, at: At, file: string): string | null => {
+    const tpl = templates.get(name);
+    if (tpl === undefined) return null;
+    if (args.length !== tpl.decl.typeParams.length) {
+      err(`'${name}' takes ${tpl.decl.typeParams.length} type argument(s), got ${args.length}`,
+        file, at.line, at.col);
+      return null;
+    }
+    if (depth > MAX_INSTANTIATION_DEPTH) {
+      err(`generic instantiation of '${name}' nests more than ${MAX_INSTANTIATION_DEPTH} deep — ` +
+          `a generic that instantiates itself with a larger argument never terminates`,
+        file, at.line, at.col);
+      return null;
+    }
+    const mangled = mangle(name, args);
+    if (made.has(mangled)) return mangled;
+
+    const sub = new Map<string, WacType>();
+    tpl.decl.typeParams.forEach((p, i) => sub.set(p, args[i]));
+    // Registered before its body is walked, so a self-reference finds it rather than recursing.
+    const decl: StructDecl = {
+      ...tpl.decl, name: mangled, typeParams: [],
+      fields: tpl.decl.fields.map((f) => ({ ...f, type: substType(f.type, sub) })),
+      methods: tpl.decl.methods.map((m) => ({
+        ...m, returnType: substType(m.returnType, sub),
+        params: m.params.map((p) => ({ ...p, type: substType(p.type, sub) })),
+        body: substBlock(m.body, sub),
+      })),
+    };
+    made.set(mangled, decl);
+    madeIn.set(mangled, tpl.filePath);
+    display?.set(mangled, `${name}<${args.map((a) => displayType(a, display)).join(", ")}>`);
+    // Now rewrite any generic references the substituted copy itself contains.
+    rewriteDecl(decl, depth + 1, tpl.filePath);
+    return mangled;
+  };
+
+  // Rewriting a reference in place is what makes this a pre-pass: after it, `typeArgs` is gone
+  // and the type is an ordinary struct reference by mangled name.
+  const rewriteType = (t: WacType, depth: number, file: string): void => {
+    if (t.kind === "array") return rewriteType(t.elem, depth, file);
+    if (t.kind === "nullable") return rewriteType(t.inner, depth, file);
+    if (t.kind === "funcref") {
+      for (const p of t.params) rewriteType(p, depth, file);
+      return rewriteType(t.ret, depth, file);
+    }
+    if (t.kind !== "struct") return;
+    const args = t.typeArgs;
+    if (args === undefined || args.length === 0) {
+      // A bare template name is reported later, by `checkBareTemplates`, so that a construction
+      // whose arguments come from an expected type is not flagged before that runs.
+      return;
+    }
+    for (const a of args) rewriteType(a, depth, file);
+    if (!templates.has(t.name)) {
+      err(`'${t.name}' is not generic, so it takes no type arguments`, file, t.line, t.col);
+      delete (t as { typeArgs?: WacType[] }).typeArgs;
+      return;
+    }
+    const mangled = materialise(t.name, args, depth, t, file);
+    if (mangled === null) { delete (t as { typeArgs?: WacType[] }).typeArgs; return; }
+    (t as { name: string }).name = mangled;
+    delete (t as { typeArgs?: WacType[] }).typeArgs;
+    noteUse(file, mangled);
+  };
+
+  const rewriteDecl = (decl: StructDecl, depth: number, file: string): void => {
+    const t = (x: WacType) => rewriteType(x, depth, file);
+    for (const f of decl.fields) t(f.type);
+    for (const m of decl.methods) {
+      t(m.returnType);
+      for (const p of m.params) t(p.type);
+      visitBlockTypes(m.body, t);
+    }
+  };
+
+  // The initial sweep, over everything written by hand.
+  eachTypeInPrograms(programs, (t, filePath) => rewriteType(t, 0, filePath), true);
+
+  // A construction never names its type arguments — `Vec<i32> v = Vec(...)`, not `Vec<i32>(...)`
+  // — because angle brackets in an expression are ambiguous with less-than. So the arguments come
+  // from the expected type, which the design calls the bracket restriction and which works because
+  // every declaration in wac is explicitly typed.
+  //
+  // Two positions supply one without needing a symbol table: a variable's declared type and the
+  // enclosing function's return type. Anything else — notably a call argument, which would need
+  // the callee's signature this pass has not built yet — is an error telling the author to name
+  // the type. Idiomatic wac already writes those as two statements, so the restriction costs
+  // little; lifting it is Stage C's business.
+  for (const [filePath, prog] of programs) {
+    for (const item of prog.items) {
+      if (item.tag === "func") inferConstructions(item.body, item.returnType, filePath);
+      else if (item.tag === "struct" || item.tag === "enum") {
+        for (const m of item.methods) inferConstructions(m.body, m.returnType, filePath);
+      } else if (item.tag === "const") applyExpected(item.init, item.type, filePath);
+    }
+  }
+
+  function inferConstructions(b: Block, retType: WacType, filePath: string): void {
+    for (const st of b.stmts) inferInStmt(st, retType, filePath);
+  }
+
+  function inferInStmt(st: Stmt, retType: WacType, filePath: string): void {
+    switch (st.kind) {
+      case "var": applyExpected(st.init, st.type, filePath); return;
+      case "return": if (st.value) applyExpected(st.value, retType, filePath); return;
+      case "if":
+        inferConstructions(st.then, retType, filePath);
+        if (st.els?.kind === "else-if") inferInStmt(st.els.stmt, retType, filePath);
+        else if (st.els?.kind === "else-block") inferConstructions(st.els.block, retType, filePath);
+        return;
+      case "while": case "dowhile": inferConstructions(st.body, retType, filePath); return;
+      case "for":
+        if (st.init) inferInStmt(st.init, retType, filePath);
+        inferConstructions(st.body, retType, filePath);
+        return;
+      case "switch":
+        for (const c of st.cases) for (const x of c.body) inferInStmt(x, retType, filePath);
+        return;
+      case "match":
+        for (const a of st.arms) for (const x of a.body) inferInStmt(x, retType, filePath);
+        return;
+      case "block": inferConstructions(st.block, retType, filePath); return;
+      default: return;
+    }
+  }
+
+  /**
+   * Give a construction its type arguments from the type expected of it.
+   *
+   * Reaches through a ternary, so `Vec<i32> v = c ? Vec(...) : Vec(...)` works — the design flags
+   * that explicitly, and contextual literal typing needed the same propagation.
+   */
+  function applyExpected(e: Expr, expected: WacType, filePath: string): void {
+    if (e.kind === "ternary") {
+      applyExpected(e.then, expected, filePath);
+      applyExpected(e.else_, expected, filePath);
+      return;
+    }
+    if (e.kind === "arrNew") {
+      // The elements of an array take the element type, which the array construction names
+      // explicitly — so this is propagation from a type the author already wrote.
+      if (e.fill) applyExpected(e.fill, e.elem, filePath);
+      for (const x of e.fixed) applyExpected(x, e.elem, filePath);
+      return;
+    }
+    if (e.kind !== "construct") return;
+    const ctype = e.ctype;
+    if (ctype.kind !== "struct") return;
+    if (!templates.has(ctype.name)) return;
+    if (ctype.typeArgs !== undefined && ctype.typeArgs.length > 0) return;   // already named
+    // The expected type must be the same template, monomorphised by the sweep above.
+    const want = expected.kind === "nullable" ? expected.inner : expected;
+    if (want.kind !== "struct") return;
+    const prefix = `${ctype.name}$`;
+    if (!want.name.startsWith(prefix)) return;
+    (ctype as { name: string }).name = want.name;
+    if (want.resolvedTypeIndex !== undefined) {
+      (ctype as { resolvedTypeIndex?: number }).resolvedTypeIndex = want.resolvedTypeIndex;
+    }
+  }
+
+  // Anything still naming a template by itself could not get arguments from anywhere, which is
+  // the one case the bracket restriction cannot cover. Reported now rather than during the sweep,
+  // so a construction whose arguments come from its declaration is not flagged before the
+  // propagation above has run.
+  eachTypeInPrograms(programs, (t, filePath) => {
+    if (t.kind === "struct" && templates.has(t.name) &&
+        (t.typeArgs === undefined || t.typeArgs.length === 0)) {
+      err(`'${t.name}' is generic and needs type arguments, as in '${t.name}<i32>' — or an ` +
+          `expected type to take them from, such as a declared variable's type`,
+        filePath, t.line, t.col);
+    }
+  }, true);
+
+  // A materialised struct lives in the *template's* file, so the ordinary export and import rules
+  // apply to it unchanged. A file that wrote `Vec<i32>` therefore has to import `Vec$i32`, and the
+  // import item naming the template is rewritten to the instantiations that file actually uses.
+  // Importing the template itself would be meaningless: after this pass it is not a declaration.
+  for (const [filePath, prog] of programs) {
+    for (const item of prog.items) {
+      if (item.tag !== "import") continue;
+      const rewritten: typeof item.items = [];
+      for (const it of item.items) {
+        const tpl = templates.get(it.name);
+        if (tpl === undefined) { rewritten.push(it); continue; }
+        for (const mangled of usedIn.get(filePath) ?? []) {
+          // Only the instantiations of *this* template, and only if it came from this import.
+          if (madeIn.get(mangled) !== tpl.filePath) continue;
+          if (!mangled.startsWith(`${tpl.decl.name}$`)) continue;
+          rewritten.push({ ...it, name: mangled, alias: mangled });
+        }
+      }
+      item.items = rewritten;
+    }
+  }
+
+  // Templates themselves are removed and the materialised copies take their place.
+  for (const [filePath, prog] of programs) {
+    prog.items = prog.items.filter(
+      (it) => !(it.tag === "struct" && it.typeParams.length > 0));
+    for (const [mangled, decl] of made) {
+      if (madeIn.get(mangled) === filePath) prog.items.push(decl);
+    }
+  }
+}
+
+/** Report `Foo<i32>` where `Foo` is not generic, when there are no templates at all. */
+function reportStrayArgs(
+  programs: Map<string, Program>, templates: Map<string, Template>,
+  err: (msg: string, file: string, line: number, col: number) => void,
+): void {
+  eachTypeInPrograms(programs, (t, filePath) => {
+    if (t.kind === "struct" && t.typeArgs && t.typeArgs.length > 0 && !templates.has(t.name)) {
+      err(`'${t.name}' is not generic, so it takes no type arguments`, filePath, t.line, t.col);
+      delete (t as { typeArgs?: WacType[] }).typeArgs;
+    }
+  });
+}
+
 export function wacResolve(
   entryPath: string,
   programs: Map<string, Program>,
 ): ResolveResult {
   const errors: ResolveError[] = [];
+
+  // Generics are substituted before anything else looks at the AST — in particular before
+  // enums desugar, so `Option<i32>` becomes a concrete enum and then concrete structs. The
+  // other order would leave the generated structs still carrying `T`, and substitution would
+  // be rewriting generated code [see ~/notes/living/wac/generics-design.md].
+  const genericDisplay = new Map<string, string>();
+  monomorphise(programs,
+    (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
+    genericDisplay);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -439,7 +1041,7 @@ export function wacResolve(
         // describe what the struct actually has: any walk that reads `structDecl.methods` —
         // as several do for hand-written structs — would otherwise skip an enum's methods
         // silently, which is the failure this codebase produces most often.
-        parent: null, fields: [tagField], methods: item.methods, line, col,
+        parent: null, fields: [tagField], methods: item.methods, typeParams: [], line, col,
       };
       const base: StructEntry = {
         enumRole: "base",
@@ -479,7 +1081,7 @@ export function wacResolve(
           fields: v.fields.map((f) => ({
             isConst: true, type: f.type, name: f.name, line: f.line, col: f.col,
           })),
-          methods: [], line: v.line, col: v.col,
+          methods: [], typeParams: [], line: v.line, col: v.col,
         };
         const vEntry: StructEntry = {
           enumRole: "variant",
@@ -652,7 +1254,7 @@ export function wacResolve(
     }
   }
 
-  return { funcs, structs, enums, fileScopes, errors, entryPath };
+  return { funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay };
 }
 
 // ── Helpers for consumers ─────────────────────────────────────────────────────

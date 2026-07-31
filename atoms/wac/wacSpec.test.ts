@@ -5967,6 +5967,141 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §wac-generic-struct-9tkq4wm — generic structs, monomorphised
+const VEC = `
+struct Vec<T> {
+  T[] data;
+  i32 n;
+  void push(this, T v) {
+    if (this.n == this.data.len()) {
+      T[] next = T[this.data.len() == 0 ? 4 : this.data.len() * 2](fill: v);
+      for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
+      this.data = next;
+    }
+    this.data[this.n] = v;
+    this.n++;
+  }
+  T get(const this, i32 i) { return this.data[i]; }
+  i32 len(const this) { return this.n; }
+}`;
+
+Deno.test("[§wac-generic-struct-9tkq4wm] a generic struct works for several arguments", async () => {
+  // Issue 0034, built to the design in ~/notes/living/wac/generics-design.md: monomorphisation in
+  // the resolver, so the type checker and the emitter never learn the word "generic" — the same
+  // containment that kept enums out of them.
+  const inst = await run(`${VEC}
+    struct P { i32 v; }
+    enum E { A(i32 v), B }
+    export i32 ints() {
+      Vec<i32> v = Vec(i32[0](), 0);
+      v.push(10); v.push(20); v.push(30);
+      return v.len() * 100 + v.get(2);
+    }
+    export i32 floats() { Vec<f64> v = Vec(f64[0](), 0); v.push(1.5); v.push(2.5); return (v.get(1) * 2.0) as~ i32; }
+    export i32 structs() { Vec<P> v = Vec(P[0](), 0); v.push(P(5)); v.push(P(6)); return v.get(1).v; }
+    export i32 enums() {
+      Vec<E> v = Vec(E[](), 0);   // E has no default, so the literal form
+      v.push(E.A(8));
+      return match (v.get(0)) { case A(x): x, case B: 0 };
+    }
+    // Two instantiations of one template in one program: separate copies, separate element types.
+    export i32 both() {
+      Vec<i32> a = Vec(i32[0](), 0);  a.push(7);
+      Vec<f64> b = Vec(f64[0](), 0);  b.push(1.5);
+      return a.get(0) + (b.get(0) as~ i32);
+    }
+  `);
+  eq(inst.call("ints", []), 330, "a primitive argument");
+  eq(inst.call("floats", []), 5, "a float argument — the case erasure would have boxed");
+  eq(inst.call("structs", []), 6, "a struct argument");
+  eq(inst.call("enums", []), 8, "an enum argument, so generics run before enums desugar");
+  eq(inst.call("both", []), 9, "two instantiations coexist");
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] generics nest, and compose with arrays and other generics", async () => {
+  const inst = await run(`${VEC}
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+    struct Wrap<T> { Box<T> inner; T peek(const this) { return this.inner.get(); } }
+    struct Pair<A, B> { A first; B second; A getFirst(const this) { return this.first; } }
+    export i32 nested() {
+      Vec<i32> inner = Vec(i32[0](), 0); inner.push(9);
+      Vec<Vec<i32>> outer = Vec(Vec<i32>[0](), 0);
+      outer.push(inner);
+      return outer.get(0).get(0);
+    }
+    export i32 genericField() { Box<i32> b = Box(5); Wrap<i32> w = Wrap(b); return w.peek(); }
+    export i32 twoParams()    { Pair<i32, f64> p = Pair(4, 1.5); return p.getFirst(); }
+    export i32 arrayOf()      { Box<i32>[] a = Box<i32>[2](fill: Box(4)); return a[0].get() + a[1].get(); }
+    export i32 inTernary()    { Box<i32> b = true ? Box(3) : Box(4); return b.get(); }
+  `);
+  eq(inst.call("nested", []), 9, "Vec<Vec<i32>> — the `>>` the lexer munched is split by the parser");
+  eq(inst.call("genericField", []), 5, "a generic holding a generic, substituted through");
+  eq(inst.call("twoParams", []), 4, "two type parameters");
+  eq(inst.call("arrayOf", []), 8, "an array of a generic, with a fill");
+  eq(inst.call("inTernary", []), 3, "and both ternary branches take the expected type");
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", async () => {
+  // A materialised struct lives in the *template's* file, so the ordinary export and import rules
+  // apply to it — which means the import item naming the template has to be rewritten to the
+  // instantiations the importing file actually uses.
+  const inst = await runMulti(new Map([
+    ["box.wac", `export struct Box<T> { T v; T get(const this) { return this.v; } void set(this, T x) { this.v = x; } }`],
+    ["a.wac",   `import { Box } from "./box.wac";
+                 export i32 fromA() { Box<i32> b = Box(1); return b.get(); }`],
+    ["main.wac", `import { Box } from "./box.wac";
+                  import { fromA } from "./a.wac";
+                  export i32 test() { Box<i32> b = Box(2); b.set(5); return b.get() + fromA(); }
+                  // An alias must work too, since this pass runs before imports are resolved.
+                  export i32 viaAlias() { Box<f64> d = Box(2.5); return (d.get() * 2.0) as~ i32; }`],
+  ]));
+  eq(inst.call("test", []), 6, "the same instantiation used from two files is one struct");
+  eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] instantiations are invariant and diagnostics are demangled", () => {
+  // `Vec<Circle>` is not a `Vec<Shape>`: Java's covariant arrays are a known mistake and a mutable
+  // container cannot be covariant soundly.
+  const m = err(`
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+    struct Base { i32 a; }
+    struct Sub : Base { i32 b; }
+    i32 take(Box<Base> x) { return x.get().a; }
+    export i32 f() { Box<Sub> s = Box(Sub(1, 2)); return take(s); }`);
+  if (!m.includes("expected Box<Base>, got Box<Sub>")) {
+    throw new Error(`expected a demangled invariance diagnostic, got: ${m}`);
+  }
+  // The mangled name must never appear in a message — an error about `Box$Base` is an error about
+  // code the author did not write.
+  if (m.includes("$")) throw new Error(`a mangled name leaked into a diagnostic: ${m}`);
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] the errors a generic can raise", () => {
+  const cases: [string, string, string][] = [
+    ["a bare template name", `Box b = Box(1);`, "needs type arguments"],
+    ["too many arguments", `Box<i32, f64> b = Box(1);`, "takes 1 type argument"],
+    ["arguments on a non-generic", `P<i32> p = P(1);`, "is not generic"],
+  ];
+  for (const [what, body, want] of cases) {
+    const m = err(`
+      struct Box<T> { T v; }
+      struct P { i32 v; }
+      export i32 f() { ${body} return 0; }`);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
+  // A generic that instantiates itself with a larger argument never terminates, so depth is capped
+  // and reported rather than hanging the compiler.
+  const deep = err(`
+    struct Box<T> { T v; }
+    struct Rec<T> { Rec<Box<T>>? next; i32 v; }
+    export i32 f() { Rec<i32> r = Rec(null, 1); return r.v; }`);
+  if (!deep.includes("nests more than")) {
+    throw new Error(`expected the depth-cap diagnostic, got: ${deep}`);
+  }
+});
+
 // §wac-instance-ref-return-8mkq4wp — wacInstance decodes string and array returns
 Deno.test("[§wac-instance-ref-return-8mkq4wp] a string or array return comes back decoded", async () => {
   // Issue 0021. `coerceResult` handled the numeric types and then fell through to `Number()`,

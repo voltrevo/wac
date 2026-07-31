@@ -115,10 +115,21 @@ function typeEq(a: WacType, b: WacType): boolean {
 }
 
 /** Human-readable type name for error messages. */
+/**
+ * Names shown in diagnostics for monomorphised generics: `Vec$i32` -> `Vec<i32>`.
+ *
+ * A module-level table rather than a `Ctx` field because `typeName` is called from dozens of
+ * places, most of which have no context to thread. Set once per compilation, and the whole of it
+ * is cosmetic — a wrong or missing entry costs an uglier message and nothing else.
+ */
+let genericDisplay: Map<string, string> = new Map();
+
 function typeName(t: WacType): string {
   switch (t.kind) {
     case "prim":     return t.name;
-    case "struct":   return t.name;
+    // A mangled name is never shown: an error about `Box$Base` is an error about code the author
+    // did not write, which is the difference between this and a C++ template diagnostic.
+    case "struct":   return genericDisplay.get(t.name) ?? t.name;
     case "array":    return `${typeName(t.elem)}[]`;
     case "nullable": return `${typeName(t.inner)}?`;
     case "funcref":  return `fn(${t.params.map(typeName).join(", ")}) -> ${typeName(t.ret)}`;
@@ -354,6 +365,8 @@ export function wacTypeCheck(
   programs: Map<string, Program>,
 ): TypeCheckError[] {
   const allErrors: TypeCheckError[] = [];
+  // Diagnostics render generic struct names through this for the rest of the run.
+  genericDisplay = result.genericDisplay;
 
   // Build struct name -> StructEntry for lookups
   const structMap = new Map<string, StructEntry>();

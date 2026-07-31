@@ -47,7 +47,14 @@ param          = [ "const" ] , type , IDENT ;
 ### Struct declarations
 
 ```ebnf
-struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
+struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ type_params ] ,
+                 [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
+
+(* Type parameters make the declaration a template; see generics.md. *)
+type_params    = "<" , IDENT , { "," , IDENT } , [ "," ] , ">" ;
+(* Type *arguments*, only ever in type position — `IDENT <` is ambiguous with less-than in an
+   expression, so a generic construction takes its arguments from the expected type instead. *)
+type_args      = "<" , type , { "," , type } , [ "," ] , ">" ;
 
 struct_member  = field_decl | method_decl ;
 
@@ -175,6 +182,9 @@ construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positi
                   | type_name , "{" , field_init_list , "}"             (* named *)
                   | array_construction ;
 
+(* An element type may be generic: `Box<i32>[2](fill: ...)`. This is the one place type arguments
+   appear in something that reads as an expression, and it is unambiguous because a construction
+   bracket follows rather than an operand. *)
 array_construction = element_type , "[" , expr , "]" , "(" , [ "fill" , ":" , expr ] , ")"
                                                                                (* sized: default, or every element the fill value *)
                    | element_type , "[" , "]" , "(" , [ arg_list ] , ")" ;      (* literal *)
@@ -192,7 +202,7 @@ lvalue         = IDENT , { "!" | "." , IDENT | "[" , expr , "]" } ;
 ```ebnf
 type           = primitive_type
                | "string"
-               | IDENT                              (* struct type *)
+               | IDENT , [ type_args ]              (* struct type, generic when arguments follow *)
                | array_type
                | funcref_type
                | type , "?"                         (* nullable *)
