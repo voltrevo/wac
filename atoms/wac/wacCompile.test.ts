@@ -397,6 +397,47 @@ Deno.test("wacCompile: __cov_init resets counters and is required before use", a
   eq(threw, true, "calling instrumented code before __cov_init traps");
 });
 
+Deno.test("wacCompile: coverage instruments match arms, including else", async () => {
+  // `switch` cases were instrumented and `match` arms were not, so a match reported as
+  // fully covered no matter how many arms never ran — the statement contributed only its
+  // function's `entry` point. Silent under-reporting in the one tool whose job is to say
+  // what has not been exercised.
+  const m = await instCov(`
+    enum E { A(i32 v), B, C }
+    export i32 pick(E e) {
+      match (e) {
+        case A(v): return v;
+        case B:    return 2;
+        else:      return 3;
+      }
+    }
+    export E mkA(i32 v) { return E.A(v); }
+    export E mkB()      { return E.B; }
+    export E mkC()      { return E.C; }
+  `);
+
+  const arms = m.points.filter(p => p.kind === "case");
+  if (arms.length !== 3) {
+    throw new Error(`expected 3 arm points (two cases and the else), got ${arms.length}: ${
+      m.points.map(p => p.kind).join(", ")}`);
+  }
+
+  // Only the A arm runs, so exactly one arm counter moves.
+  m.ex.pick(m.ex.mkA(7));
+  const afterA = arms.map(p => m.counts()[p.index]);
+  if (afterA[0] !== 1 || afterA[1] !== 0 || afterA[2] !== 0) {
+    throw new Error(`expected only the first arm to be counted, got ${afterA.join(", ")}`);
+  }
+
+  // Then B, then C — which reaches the else arm, since C has no case of its own.
+  m.ex.pick(m.ex.mkB());
+  m.ex.pick(m.ex.mkC());
+  const afterAll = arms.map(p => m.counts()[p.index]);
+  if (afterAll.some(c => c !== 1)) {
+    throw new Error(`expected every arm counted once, got ${afterAll.join(", ")}`);
+  }
+});
+
 Deno.test("wacCompile: coverage points carry the declaring file across imports", async () => {
   const files = new Map([
     ["main.wac", `import { helper } from "./lib.wac";\nexport i32 f(i32 n) { return helper(n); }`],

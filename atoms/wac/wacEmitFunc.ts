@@ -2442,6 +2442,13 @@ class FuncEmitter {
       this.labelDepth++;
       opened++;
 
+      // An arm is a branch, so it needs a counter. Without one, branch coverage
+      // reported a `match` as fully covered no matter how many arms never ran — the
+      // whole statement had only its function's `entry` point, while a `switch` of the
+      // same shape got one per case. Silent under-reporting in a tool whose only job is
+      // to tell you what has not been exercised.
+      this.emitCovPoint("case", arm.line, arm.col);
+
       const savedKeys = new Map(this.nameToKey);
       const savedEnv = new Map(env);
 
@@ -2488,6 +2495,8 @@ class FuncEmitter {
     }
 
     if (elseArm) {
+      // The `else` arm is a branch too, matching `switch`'s `default`.
+      this.emitCovPoint("case", elseArm.line, elseArm.col);
       this.emitScoped(elseArm.body, env);
     }
 
