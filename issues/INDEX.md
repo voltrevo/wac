@@ -8,22 +8,14 @@ has been fixed and why.
 | [0023](open/0023-emitcall-direct-call-branch-is-unreachable.md) | `emitCall`'s direct-call branch is unreachable | bug | not implemented |
 | [0022](open/0022-is-against-an-undefined-type-is-always-true.md) | `x is UndefinedType` compiles and is always true | bug | wrong answer |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
+| [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
+| [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
+| [0029](open/0029-narrowing-outside-match.md) | `if (s is Circle)` does not narrow `s` | missing feature | compile error |
+| [0028](open/0028-methods-on-enums.md) | an enum cannot have methods | missing feature | not implemented |
+| [0027](open/0027-nested-patterns.md) | patterns are one level deep | missing feature | not implemented |
+| [0026](open/0026-match-as-an-expression.md) | `match` is a statement, not an expression | missing feature | not implemented |
 | [0025](open/0025-coverage-tool-covers-only-gzip.md) | the coverage tool measures gzip and nothing else | missing feature | wrong answer, no error |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
-
-## Known gaps that are not issues
-
-Deliberate omissions from the enum design, recorded in `spec/spec/enums.md` under "What
-this is not, in this draft". File an issue if you actually need one; they are listed
-here so nobody reports them as bugs:
-
-- `match` as an expression (needs result-type unification across arms)
-- nested patterns — `case Node(Leaf(v), r)` is one level too deep
-- methods on enums (where a user's method would live is unsettled)
-- narrowing outside `match` — `if (s is Circle)` does not narrow `s`
-- an integer representation for payload-less enums (an optimisation)
-- `br_table` dispatch for `match`, which currently uses a comparison chain like
-  `switch` (an optimisation)
 
 ## Closed
 
