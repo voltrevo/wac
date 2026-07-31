@@ -147,7 +147,16 @@ export type SwitchCase = { value: Expr | "default"; body: Stmt[] } & Pos;
 
 // Top-level -------------------------------------------------------------------
 
-export type ImportItem = { name: string; alias: string } & Pos;
+/**
+ * `injected` marks an import the *compiler* added rather than the author.
+ *
+ * Monomorphisation puts a materialised struct in its template's file, so any type its arguments
+ * mention has to resolve from there — and the author wrote the type argument at the use site, not
+ * an import. `export` governs what one author may take from another's file; it has nothing to say
+ * about the bookkeeping that makes a generated copy resolve, so an injected import is exempt from
+ * it.
+ */
+export type ImportItem = { name: string; alias: string; injected?: boolean } & Pos;
 export type Import     = { tag: "import"; path: string; items: ImportItem[] } & Pos;
 
 /**
@@ -737,7 +746,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       }
       if (depth <= 0 && k > cur + 1) {
         const after = tokens[k]?.kind;
-        return after === "[" || after === "(" || after === "{";
+        // `?` belongs here as much as `[`: `MapEntry<K, V>?[8]()` is an array of nullable
+        // instantiations, which is how a hash table represents an empty slot.
+        return after === "[" || after === "(" || after === "{" || after === "?";
       }
       return false;
     }

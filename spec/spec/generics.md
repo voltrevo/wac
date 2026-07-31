@@ -74,6 +74,7 @@ xs[0] = Vec(i32[0](), 0);             // to an array element
 take(Vec(i32[0](), 0));               // a call's argument
 Holder h = Holder(Vec(i32[0](), 0));  // a construction's argument, positional or named
 Vec<i32>[] a = Vec<i32>[2](fill: Vec(i32[0](), 0));   // an array's elements
+Vec<i32> w = Vec.create();            // a static method on the template
 ```
 
 `[§wac-generic-expected-position-3qmz8vk]` All of these work. The ones below a declaration need a
@@ -101,6 +102,21 @@ export i32 f() { Box<i32> b = Box(2); return b.get(); }
 
 `[§wac-generic-struct-9tkq4wm]` This works, an alias works, and two files instantiating `Box<i32>`
 share one struct rather than getting a copy each.
+
+A type argument does **not** have to be exported, even when the template is in another file:
+
+```wac
+// main.wac
+import { Box } from "./box.wac";
+struct Local { i32 v; }              // not exported
+Box<Local> b = Box(Local(1));        // fine
+```
+
+`[§wac-generic-struct-9tkq4wm]` The copy lives in `box.wac`, so the compiler injects the import
+that makes `Local` resolve there. `export` governs what one author may take from another's file,
+and nobody can name `Box$Local` — so the injected import is exempt from it. Requiring `export`
+here would mean a local type could not be a type argument, which is not a rule anything states
+and not one the use site could see.
 
 ### Instantiations are identified by identity, not by spelling
 

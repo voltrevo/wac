@@ -6139,6 +6139,42 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic composes with the rest of th
   eq(inst.call("asConstant", []), 5, "and a generic as a module constant");
 });
 
+Deno.test("[§wac-generic-struct-9tkq4wm] two instantiations share no AST", async () => {
+  // Substitution has to return fresh type nodes even where nothing changed. The bare `Vec` in
+  // `return Vec(T[0](), 0)` mentions no type parameter, so it used to be the *same node* in every
+  // copy — and the pass that gives a construction its type arguments rewrites in place, so the
+  // first instantiation to be resolved gave its arguments to all of them. `Vec<string>.create()`
+  // returned a `Vec<i32>`, which the type checker then reported against code the author wrote
+  // correctly.
+  const inst = await run(`
+    struct Vec<T> {
+      T[] data; i32 n;
+      Vec<T> create() { return Vec(T[0](), 0); }
+      i32 len(const this) { return this.n; }
+      void push(this, T v) {
+        if (this.n == this.data.len()) {
+          T[] next = T[this.data.len() == 0 ? 4 : this.data.len() * 2](fill: v);
+          for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
+          this.data = next;
+        }
+        this.data[this.n] = v;
+        this.n++;
+      }
+      T get(const this, i32 i) { return this.data[i]; }
+    }
+    export i32 ints()    { Vec<i32> v = Vec.create(); v.push(7); return v.get(0); }
+    export i32 strings() { Vec<string> v = Vec.create(); v.push("abc"); return v.get(0).len(); }
+    export i32 both() {
+      Vec<i32> a = Vec.create();     a.push(1);
+      Vec<string> b = Vec.create();  b.push("xy");
+      return a.get(0) + b.get(0).len();
+    }
+  `);
+  eq(inst.call("ints", []), 7, "the first instantiation");
+  eq(inst.call("strings", []), 3, "the second, which must not have been given the first's arguments");
+  eq(inst.call("both", []), 3, "and both in one function");
+});
+
 Deno.test("[§wac-generic-struct-9tkq4wm] each instantiation is instrumented separately", () => {
   // Coverage of a generic would be meaningless if instantiations shared branch points: one
   // instantiation exercising a branch would mark it covered for all of them.
@@ -6164,10 +6200,16 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
                   import { fromA } from "./a.wac";
                   export i32 test() { Box<i32> b = Box(2); b.set(5); return b.get() + fromA(); }
                   // An alias must work too, since this pass runs before imports are resolved.
-                  export i32 viaAlias() { Box<f64> d = Box(2.5); return (d.get() * 2.0) as~ i32; }`],
+                  export i32 viaAlias() { Box<f64> d = Box(2.5); return (d.get() * 2.0) as~ i32; }
+                  // Not exported, and it does not need to be: nothing can name Box$Local.
+                  struct Local { i32 v; }
+                  export i32 localArgument() { Box<Local> b = Box(Local(4)); return b.get().v; }`],
   ]));
   eq(inst.call("test", []), 6, "the same instantiation used from two files is one struct");
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
+  eq(inst.call("localArgument", []), 4,
+    "a type argument the importing file declares and does not export: the copy lives in the " +
+    "template's file, so the compiler injects the import that makes it resolve there");
 });
 
 // §wac-generic-enum-7dkq2mv — generic enums, which is what Option and Result need
@@ -6241,7 +6283,20 @@ Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum composes with the rest of
         xs[1] = Option.Some(4);
         return xs[1].orElse(0) + xs[0].orElse(1);
       }
-      export i32 reassigned() { Option<i32> o = Option.None; o = Option.Some(4); return o.orElse(0); }`],
+      export i32 reassigned() { Option<i32> o = Option.None; o = Option.Some(4); return o.orElse(0); }
+      // Every arm of a match *expression* produces the value, so each is an expected-type position
+      // of its own — which is how a generic enum's own combinators have to be written.
+      Option<i32> doubled(Option<i32> o) {
+        return match (o) {
+          case Some(v): Option.Some(v * 2),
+          case None: Option.None,
+        };
+      }
+      export i32 throughMatchArms() {
+        Option<i32> a = doubled(Option.Some(3));
+        Option<i32> b = doubled(Option.None);
+        return a.orElse(0) * 10 + b.orElse(7);
+      }`],
   ]));
   eq(inst.call("asField", []), 6, "a construction's argument, across a module boundary");
   eq(inst.call("inGeneric", []), 8, "a generic enum inside a generic struct");
@@ -6249,6 +6304,7 @@ Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum composes with the rest of
   eq(inst.call("viaGenericFn", []), 5, "passed to a generic function, which infers T through it");
   eq(inst.call("inArray", []), 5, "an array's fill and an element assignment");
   eq(inst.call("reassigned", []), 4, "assignment to a local");
+  eq(inst.call("throughMatchArms", []), 67, "a match expression's arms, each an expected-type position");
 });
 
 Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum's variants have no bare name", () => {
@@ -6297,6 +6353,23 @@ Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction takes its ar
     export i32 asNamedArg()   { Holder h = Holder { b: Box(7) }; return h.b.v; }
     export i32 asElement()    { Box<i32>[] xs = Box<i32>[](Box(8), Box(9)); return xs[0].v + xs[1].v; }
     export i32 throughTernary(bool c) { Box<i32> b = c ? Box(1) : Box(2); return b.v; }
+    // A static method on a generic struct is the same shape as a variant construction — a call on a
+    // field of the template's name — and the design lists it as a supported position.
+    struct Vec<T> {
+      T[] data; i32 n;
+      Vec<T> create() { return Vec(T[0](), 0); }
+      i32 len(const this) { return this.n; }
+      void push(this, T v) {
+        if (this.n == this.data.len()) {
+          T[] next = T[this.data.len() == 0 ? 4 : this.data.len() * 2](fill: v);
+          for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
+          this.data = next;
+        }
+        this.data[this.n] = v;
+        this.n++;
+      }
+    }
+    export i32 viaStatic() { Vec<i32> v = Vec.create(); v.push(1); v.push(2); v.push(3); return v.len(); }
   `);
   eq(inst.call("toLocal", []), 4, "assignment to a local");
   eq(inst.call("toField", []), 4, "assignment to a field");
@@ -6306,6 +6379,8 @@ Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction takes its ar
   eq(inst.call("asNamedArg", []), 7, "a construction's named argument");
   eq(inst.call("asElement", []), 17, "an array literal's elements");
   eq(inst.call("throughTernary", [true]), 1, "and still through both ternary branches");
+  eq(inst.call("viaStatic", []), 3, "a static method on the template, which is how a container " +
+    "gives itself a constructor without exposing its fields");
 });
 
 Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction with nowhere to take arguments from is an error", () => {
@@ -6377,6 +6452,15 @@ Deno.test("[§wac-generic-fn-5hvq3mt] a type parameter may be anything, includin
     export i32 insideFuncref() { fn[i32(i32)] f = inc; i32 x = 5; return applyTo(f, x); }
     export i32 insideNullable() { P? absent = null; P d = P(3); return orElse(absent, d).v; }
     export i32 arrayOfGeneric() { Box<i32>[] a = Box<i32>[2](fill: Box(6)); return unbox(a[0]); }
+    // An array of *nullable* instantiations, which is how an open-addressed hash table says
+    // "empty slot": a sized array needs a default value and a struct has none, but a nullable
+    // element type defaults to null.
+    export i32 arrayOfNullableGeneric() {
+      Box<i32>?[] a = Box<i32>?[4]();
+      a[1] = Box(9);
+      Box<i32>? got = a[1];
+      return (a[0] is null ? 1 : 0) * 100 + unbox(got!);
+    }
   `);
   eq(inst.call("structArg", []), 4, "a struct argument");
   eq(inst.call("enumArg", []), 7, "an enum argument, so functions substitute before enums desugar");
@@ -6386,6 +6470,7 @@ Deno.test("[§wac-generic-fn-5hvq3mt] a type parameter may be anything, includin
   eq(inst.call("insideFuncref", []), 6, "T from a funcref's signature");
   eq(inst.call("insideNullable", []), 3, "T from inside a nullable — a reference, see issue 0045");
   eq(inst.call("arrayOfGeneric", []), 6, "an array of instantiations, one of them passed on");
+  eq(inst.call("arrayOfNullableGeneric", []), 109, "an array of nullable instantiations");
 });
 
 Deno.test("[§wac-generic-fn-5hvq3mt] generic functions compose with the rest of the language", async () => {

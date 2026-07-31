@@ -543,9 +543,19 @@ function displayType(t: WacType, display?: Map<string, string>): string {
 
 // ── Substitution ──────────────────────────────────────────────────────────────
 
+/**
+ * Substitute type parameters, always returning *fresh* nodes.
+ *
+ * Never `return t`, even when nothing changed. The passes that follow rewrite a type in place —
+ * that is what makes monomorphisation a pre-pass rather than a rewrite — so a node shared between
+ * the template and its copies is a node one instantiation can change on another's behalf. It showed
+ * up as `Vec<string>.create()` returning a `Vec<i32>`: the bare `Vec` in `return Vec(T[0](), 0)`
+ * mentions no type parameter, so it was shared by every copy, and the first one to be given its
+ * arguments gave them to all of them.
+ */
 function substType(t: WacType, sub: Map<string, WacType>): WacType {
   switch (t.kind) {
-    case "prim": return t;
+    case "prim": return { ...t };
     case "struct": {
       // A bare type-parameter name becomes the argument. It cannot itself have type
       // arguments — `T<i32>` is meaningless — so this is a straight swap.
@@ -555,7 +565,7 @@ function substType(t: WacType, sub: Map<string, WacType>): WacType {
         // the template's own text, which is where the reader can act on it.
         return { ...bound, line: t.line, col: t.col };
       }
-      if (t.typeArgs === undefined || t.typeArgs.length === 0) return t;
+      if (t.typeArgs === undefined || t.typeArgs.length === 0) return { ...t };
       return { ...t, typeArgs: t.typeArgs.map((a) => substType(a, sub)) };
     }
     case "array":    return { ...t, elem: substType(t.elem, sub) };
@@ -832,6 +842,7 @@ function inferArgType(
   e: Expr, env: LocalTypes, filePath: string,
   origins: Map<string, Map<string, NameOrigin>>,
   funcReturns: Map<string, WacType>,
+  funcParams: Map<string, Param[]>,
   structFields: Map<string, Map<string, WacType>>,
 ): WacType | null {
   const pos = { line: e.line, col: e.col };
@@ -843,12 +854,22 @@ function inferArgType(
     case "float":  return { kind: "prim", name: "f64", ...pos };
     case "string": return { kind: "prim", name: "string", ...pos };
     case "bool":   return { kind: "prim", name: "bool", ...pos };
-    case "ident":  return lookupLocal(env, e.name) ?? null;
+    case "ident": {
+      const local = lookupLocal(env, e.name);
+      if (local !== undefined) return local;
+      // Not a local, so it may be a function's name used as a value — which is how a callback is
+      // written: `mapOption(o, double)`. Its type is the signature it was declared with.
+      const key = canonName(e.name, filePath, origins);
+      const ret = funcReturns.get(key);
+      const params = funcParams.get(key);
+      if (ret === undefined || params === undefined) return null;
+      return { kind: "funcref", params: params.map((p) => p.type), ret, ...pos };
+    }
     case "cast":   return e.type;
-    case "unary":  return inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+    case "unary":  return inferArgType(e.expr, env, filePath, origins, funcReturns, funcParams, structFields);
     case "is":     return { kind: "prim", name: "bool", ...pos };
     case "unwrap": {
-      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, funcParams, structFields);
       return t !== null && t.kind === "nullable" ? t.inner : t;
     }
     case "binary": {
@@ -857,13 +878,13 @@ function inferArgType(
       if (["==", "!=", "<", "<=", ">", ">=", "&&", "||"].includes(e.op)) {
         return { kind: "prim", name: "bool", ...pos };
       }
-      return inferArgType(e.left, env, filePath, origins, funcReturns, structFields);
+      return inferArgType(e.left, env, filePath, origins, funcReturns, funcParams, structFields);
     }
     case "ternary":
-      return inferArgType(e.then, env, filePath, origins, funcReturns, structFields)
-        ?? inferArgType(e.else_, env, filePath, origins, funcReturns, structFields);
+      return inferArgType(e.then, env, filePath, origins, funcReturns, funcParams, structFields)
+        ?? inferArgType(e.else_, env, filePath, origins, funcReturns, funcParams, structFields);
     case "index": {
-      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, funcParams, structFields);
       if (t === null) return null;
       if (t.kind === "array") return t.elem;
       // A string index yields a one-character string.
@@ -871,7 +892,7 @@ function inferArgType(
       return null;
     }
     case "field": {
-      const base = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      const base = inferArgType(e.expr, env, filePath, origins, funcReturns, funcParams, structFields);
       if (base === null) return null;
       const named = base.kind === "nullable" ? base.inner : base;
       if (named.kind !== "struct") return null;
@@ -893,7 +914,7 @@ function inferArgType(
       // it is how idiomatic wac gets at a container's contents. `structFields` holds method return
       // types alongside field types, so the receiver's struct is all that is needed.
       if (e.callee.kind !== "field") return null;
-      const base = inferArgType(e.callee.expr, env, filePath, origins, funcReturns, structFields);
+      const base = inferArgType(e.callee.expr, env, filePath, origins, funcReturns, funcParams, structFields);
       if (base === null) return null;
       const named = base.kind === "nullable" ? base.inner : base;
       if (named.kind !== "struct") return null;
@@ -1235,6 +1256,13 @@ export function monomorphise(
       applyExpected(e.else_, expected, filePath);
       return;
     }
+    if (e.kind === "matchExpr") {
+      // Every arm of a match *expression* produces the value, so each arm is the same expected-type
+      // position as a ternary branch. `return match (o) { case Some(v): Option.Some(f(v)), … }`
+      // needs it, which is how Option's own map is written.
+      for (const arm of e.arms) if (arm.value) applyExpected(arm.value, expected, filePath);
+      return;
+    }
     if (e.kind === "arrNew") {
       // The elements of an array take the element type, which the array construction names
       // explicitly — so this is propagation from a type the author already wrote.
@@ -1244,13 +1272,18 @@ export function monomorphise(
     }
     // `Option<i32> o = Option.Some(5)` — a variant construction, which is a call on a field of the
     // enum's *name* rather than a construction node, and a payload-less variant is the bare field.
-    // The enum name is what has to move to the instantiation; the variant resolves through it.
+    // The enum name is what has to move to the instantiation; the variant resolves through it. A
+    // static method on a generic struct — `Vec.create()` — is the same shape and the same fix.
     const enumRef = e.kind === "call" && e.callee.kind === "field" && e.callee.expr.kind === "ident"
       ? e.callee.expr
       : e.kind === "field" && e.expr.kind === "ident" ? e.expr : null;
     if (enumRef !== null) {
+      // Either kind of template: a variant construction on a generic enum, or a *static method* on
+      // a generic struct — `Map<string, i32> m = Map.create()`, which the design lists as a
+      // supported position and which is the only way to write a constructor for a container whose
+      // fields the caller should not have to know.
       const tpl = templateFor(enumRef.name, filePath);
-      if (tpl === undefined || tpl.decl.tag !== "enum") return;
+      if (tpl === undefined) return;
       const wantEnum = expected.kind === "nullable" ? expected.inner : expected;
       if (wantEnum.kind !== "struct") return;
       if (!wantEnum.name.startsWith(`${canonName(enumRef.name, filePath, origins)}$`)) return;
@@ -1316,7 +1349,7 @@ export function monomorphise(
       if (already) continue;
       prog.items.unshift({
         tag: "import", path: relativeImportPath(inFile, from),
-        items: [{ name, alias, line: 0, col: 0 }],
+        items: [{ name, alias, line: 0, col: 0, injected: true }],
         line: 0, col: 0,
       });
     }
@@ -1589,7 +1622,7 @@ export function monomorphise(
           // An arm's bindings are locals for the length of the arm, and their types come from the
           // variant's payload — positionally, which is what the pattern syntax means.
           const subject = inferArgType(
-            st.subject, env, filePath, origins, funcReturns, structFieldTypes);
+            st.subject, env, filePath, origins, funcReturns, funcParams, structFieldTypes);
           for (const a of st.arms) {
             env.push(armBindings(a, subject, filePath));
             walkStmtsForCalls(a.body, env, filePath);
@@ -1641,7 +1674,7 @@ export function monomorphise(
               : undefined;
             const method = (() => {
               const base = inferArgType(
-                recv, env, filePath, origins, funcReturns, structFieldTypes);
+                recv, env, filePath, origins, funcReturns, funcParams, structFieldTypes);
               if (base === null) return undefined;
               const named = base.kind === "nullable" ? base.inner : base;
               if (named.kind !== "struct") return undefined;
@@ -1675,7 +1708,7 @@ export function monomorphise(
         case "matchExpr": {
           rewriteCallExpr(e.subject, env, filePath);
           const subject = inferArgType(
-            e.subject, env, filePath, origins, funcReturns, structFieldTypes);
+            e.subject, env, filePath, origins, funcReturns, funcParams, structFieldTypes);
           for (const a of e.arms) {
             env.push(armBindings(a, subject, filePath));
             walkStmtsForCalls(a.body, env, filePath);
@@ -1702,7 +1735,7 @@ export function monomorphise(
       const paramNames = new Set(tpl.decl.typeParams);
       const ctx = { inst: structInst, origins, paramFile: tpl.filePath };
       for (let i = 0; i < e.args.length; i++) {
-        const actual = inferArgType(e.args[i], env, filePath, origins, funcReturns, structFieldTypes);
+        const actual = inferArgType(e.args[i], env, filePath, origins, funcReturns, funcParams, structFieldTypes);
         if (actual === null) {
           err(`cannot infer ${tpl.decl.typeParams.map((t) => `'${t}'`).join(", ")} for ` +
               `'${tpl.decl.name}': argument ${i + 1}'s type is not evident here. ` +
@@ -2126,10 +2159,19 @@ export function wacResolve(
       const importedScope = fileScopes.get(importedPath);
       if (!importedScope) continue; // file not found — already reported
 
-      for (const { name, alias, line, col } of item.items) {
+      for (const { name, alias, line, col, injected } of item.items) {
         const found = importedScope.get(name);
         if (!found) {
           err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
+          continue;
+        }
+        // A compiler-injected import is exempt from the export rule: it exists so a materialised
+        // generic's field types resolve in the template's file, and the author's intent was the
+        // type argument at the use site. Requiring `export` on it would mean a local struct could
+        // not be a type argument of a generic declared elsewhere, which is not a rule anyone
+        // stated and not one the use site can see.
+        if (injected === true) {
+          scope.set(alias, found);
           continue;
         }
         // Only allow importing exported functions and structs that the named
