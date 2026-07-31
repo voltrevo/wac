@@ -25,7 +25,13 @@ export type WacInst = {
 export type WacArg = number | bigint | boolean;
 
 /** Return value types from wac function calls. */
-export type WacVal = number | bigint | boolean | null | void;
+export type WacVal =
+  | number | bigint | boolean | null | void
+  // A `string` return is decoded to a JS string, and an array return to a plain JS array of
+  // its elements. Before this, both fell through to `Number()` and threw "Cannot convert
+  // object to primitive value" [issue 0021].
+  | string
+  | (number | bigint)[];
 
 // ── Instantiation ─────────────────────────────────────────────────────────────
 
@@ -57,10 +63,78 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
     const result = fn(...coercedArgs);
 
     if (meta.ret === "void") return undefined;
+    // A reference return needs the module's own accessors to read, so it is decoded here
+    // rather than in `coerceResult`, which sees only the value.
+    if (meta.ret === "string") return decodeString(rawExports, result);
+    const elem = ARRAY_ELEM[meta.ret];
+    if (elem !== undefined) return decodeArray(rawExports, result, elem);
     return coerceResult(result, meta.ret);
   }
 
   return { rawExports, exports: compiled.exports, call };
+}
+
+// ── Reference returns ─────────────────────────────────────────────────────────
+//
+// `string` and array returns are references; nothing about the value itself says how to read
+// one, so decoding goes through the per-module accessors that `wasmBuildBin` emits into every
+// module. Three separate workarounds existed for this before it was fixed — a spec-test helper
+// that compared strings *inside* wac, a hand-rolled decoder in wac-mono's test harness, and
+// going through bindgen instead [issue 0021].
+//
+// The per-element accessors are used rather than the bulk memory path: this is a harness for
+// tests and probes, and one call per element is simpler than plumbing the staging buffer for no
+// benefit at these sizes.
+
+/** wac array return types, mapped to the accessor suffix and whether elements are i64-width. */
+const ARRAY_ELEM: Record<string, { suffix: string; big: boolean }> = {
+  "u8[]":  { suffix: "u8",  big: false },
+  "i8[]":  { suffix: "i8",  big: false },
+  "u16[]": { suffix: "u16", big: false },
+  "i16[]": { suffix: "i16", big: false },
+  "i32[]": { suffix: "i32", big: false },
+  "u32[]": { suffix: "u32", big: false },
+  "i64[]": { suffix: "i64", big: true },
+  "u64[]": { suffix: "u64", big: true },
+  "f32[]": { suffix: "f32", big: false },
+  "f64[]": { suffix: "f64", big: false },
+};
+
+function decodeString(ex: Record<string, unknown>, v: unknown): string {
+  const len = ex.__bind_str_len as ((s: unknown) => number) | undefined;
+  const get = ex.__bind_str_get as ((s: unknown, i: number) => number) | undefined;
+  if (!len || !get) {
+    throw new Error(
+      "wac: this module has no string accessors, so a string return cannot be decoded");
+  }
+  const n = len(v);
+  const bytes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bytes[i] = get(v, i);
+  // The bytes are the string's UTF-8, which may be invalid — `string.fromBytes` does not
+  // validate [see strings.md]. Decoding leniently keeps a test able to report what it got.
+  return new TextDecoder().decode(bytes);
+}
+
+function decodeArray(
+  ex: Record<string, unknown>, v: unknown, elem: { suffix: string; big: boolean },
+): (number | bigint)[] {
+  const len = ex[`__bind_arr_${elem.suffix}_len`] as ((a: unknown) => number) | undefined;
+  const get = ex[`__bind_arr_${elem.suffix}_get`] as
+    ((a: unknown, i: number) => number | bigint) | undefined;
+  if (!len || !get) {
+    throw new Error(
+      `wac: this module has no ${elem.suffix}[] accessors, so that array cannot be decoded`);
+  }
+  const n = len(v);
+  const out: (number | bigint)[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const raw = get(v, i);
+    // u32 and u64 elements come back through a signed wasm type, exactly as returns do.
+    out[i] = elem.suffix === "u32" ? (raw as number) >>> 0
+           : elem.suffix === "u64" ? BigInt.asUintN(64, raw as bigint)
+           : raw;
+  }
+  return out;
 }
 
 // ── Type coercion helpers ─────────────────────────────────────────────────────
