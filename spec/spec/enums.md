@@ -1,8 +1,13 @@
 ## Enums and match
 
-*Implemented, except where marked otherwise below — but **new and thinly
-exercised**. Treat a surprise here as a likely compiler bug rather than as
-intended behaviour, and check the known gaps before working around one.*
+*Implemented, except where marked otherwise below.*
+
+*This feature has been exercised hard: `wacc`'s AST, `json` and `fmt` all use it, and five
+rounds of deliberately probing shapes no consumer had reached turned up thirteen compiler bugs,
+all fixed and all with tests named after the behaviour they pin. Twelve of the thirteen
+typechecked cleanly and failed at instantiation or ran wrong, so if you find a surprise here,
+**run it rather than trusting that it compiles** — and file it (see `issues/`) rather than
+working around it.*
 
 Enums work across files: declare one in a module, import it, `match` on it. `[§enum-cross-file]`
 
@@ -527,13 +532,23 @@ thing, so a method here must take `this` until the ambiguity is resolved deliber
 the same reason a method may not take a variant's name.
 `[§enum-methods-6vkq2wn]`
 
-### What this is not yet
+### What this is not
 
-Each of these is tracked as an issue, so the reasoning lives in one place rather than being
-re-derived: nested patterns (0027), narrowing outside `match` (0029), an integer
-representation for payload-less enums (0030), and `br_table` dispatch (0031). The last two
-are measured in their issues — the numbers are small, and neither is worth the surface it
-would cost today.
+**No nested patterns.** `case Node(Leaf(v), r)` is not accepted; patterns are one level deep,
+and a nested `match` inside the arm is the way to write it. That workaround is exact — it
+computes the same thing, only longer — which is why this is the one deferred item left
+undone. Nesting would also replace the exhaustiveness check with a pattern-matrix analysis,
+and exhaustiveness being obviously correct is worth more than the shorthand. Tracked as issue
+0027, with what would change the decision.
+
+**Payload-less enums still allocate**, and `match` still dispatches through a comparison
+chain rather than `br_table`. Both are measured in issues 0030 and 0031: a 20-variant dispatch
+costs 2.5 ns, within 15% of the same chain over a plain `i32`, and a payload-less construction
+costs 0.9 ns more than an integer. Neither is worth the representation split or the shared
+`emitSwitch` change today.
+
+Everything else once listed here is implemented: `match` as an expression (0026), methods
+(0028), and narrowing outside `match` in its restricted `if (x is T)` form (0029).
 
 **Not an expression.** `match` is a statement. The expression form is on the
 roadmap and needs result-type unification across arms, which is a separate step; the
