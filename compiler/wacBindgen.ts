@@ -234,5 +234,35 @@ export function wacBindgen(compiled: WacCompiled): string {
     }
   }
 
+  // Coverage helpers, when the module was built with instrumentation. They are
+  // part of an instrumented module's contract, so a wrapper that hid them would
+  // make the instrumentation unusable from the generated module.
+  if (compiled.coverage !== undefined) {
+    parts.push(
+      `/** Allocate (or reset) the branch-coverage counters. Call before running instrumented code. */
+` +
+      `export function __cov_init(): void {
+` +
+      `  (_exports.__cov_init as CallableFunction)();
+}`,
+    );
+    parts.push(
+      `/** Number of instrumented branch points. */
+` +
+      `export function __cov_len(): number {
+` +
+      `  return (_exports.__cov_len as CallableFunction)() as number;
+}`,
+    );
+    parts.push(
+      `/** Read one branch counter. Traps if __cov_init has not been called. */
+` +
+      `export function __cov_get(i: number): number {
+` +
+      `  return (_exports.__cov_get as CallableFunction)(i) as number;
+}`,
+    );
+  }
+
   return parts.join("\n\n") + "\n";
 }
