@@ -6662,7 +6662,14 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
         throw new Error(`${where}: heading says ${heading[1]}, filename says ${num[1]}`);
       }
       const status = body.match(/^- \*\*Status:\*\* (open|closed)$/m);
-      if (!status) throw new Error(`${where}: needs a "- **Status:** open|closed" line`);
+      if (!status) {
+        // Twice now I have written `Status: open (with a caveat)`, which this rejects. The rule is
+        // worth keeping strict — the line is what the directory check compares against — so the
+        // message says where the caveat goes instead.
+        throw new Error(
+          `${where}: needs a line that is exactly "- **Status:** open" or "- **Status:** closed". ` +
+          `Put any qualification on its own line, such as "- **Scope:**".`);
+      }
       if (status[1] !== (state === "open" ? "open" : "closed")) {
         throw new Error(`${where}: Status says ${status[1]} but it is in ${state}/`);
       }
