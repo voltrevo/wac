@@ -1112,6 +1112,19 @@ function makeIdx(si: number): number[] {
       0x41, 0x00, 0xFB, 0x07, ...uleb(si), // i32.const 0; array.new_default $str
       0xD4, 0x0F,                           // ref.as_non_null; return
     0x0B,
+    // Invalid lead byte check: if (b0 & 0xF8) == 0xF8 → return ""
+    //
+    // 0xF8..0xFF begins no UTF-8 sequence at all. Without this the length chain below fell
+    // through to its `len = 1` default, so `0xFF` decoded as a one-byte character and
+    // indexing it returned a 1-length string — while a *continuation* byte, equally
+    // un-indexable, already returned "" [issue 0038]. The two cases now agree.
+    0x20, 0x02, 0x41, ...f8, 0x71,        // b0 & 0xF8
+    0x41, ...f8,                           // 0xF8
+    0x46,                                  // i32.eq
+    0x04, 0x40,
+      0x41, 0x00, 0xFB, 0x07, ...uleb(si), // i32.const 0; array.new_default $str
+      0xD4, 0x0F,                           // ref.as_non_null; return
+    0x0B,
     // Determine UTF-8 sequence length
     0x41, 0x01, 0x21, 0x03,               // len = 1
     // if (b0 & 0xE0) == 0xC0 → len=2

@@ -263,6 +263,28 @@ Omitting them is still the right behaviour: a struct is not a value JavaScript c
 and inventing a representation would be worse than leaving the function out. The fix is
 only to say so where it will be read.
 
+### Unsigned returns
+
+wac's `u32` and `u64` are wasm's `i32` and `i64` — signedness lives in the instruction, not the
+type. WebAssembly's JS API hands those back as a *signed* `number` and a *signed* `BigInt`, so a
+wrapper has to reinterpret them or the caller sees `want - 2**width`:
+
+```typescript
+export function u32High(): number {
+  return ((_exports.u32High as CallableFunction)() as number) >>> 0;
+}
+export function u64High(): bigint {
+  return BigInt.asUintN(64, (_exports.u64High as CallableFunction)() as bigint);
+}
+```
+
+`[§wac-bind-unsigned-5wqk3np]` A `u32` returning `0xFF000000` reaches JS as `4278190080`, and a
+`u64` returning `0xFF00000000000000` as `18374686479671623680n`. `i32` and `i64` are untouched,
+since signed is what they mean.
+
+`u8` and `u16` never appear here: packed types are array elements only and cannot be a return
+type. Unsigned *array* elements are already handled by the copy helpers, which use `array.get_u`.
+
 ### Array copy semantics
 
 Arrays are copied into wasm at the call boundary — the JS caller's typed

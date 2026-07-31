@@ -1,10 +1,12 @@
 # 0038 — `string.fromBytes` accepts invalid UTF-8, and indexing it yields a non-character
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** ecde150
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug
+- **Covered by:** `§wac-str-badlead-7kvq2mn`
 - **Symptom:** wrong answer
 
 `string.fromBytes` copies bytes verbatim with no validation, so a `string` can hold
@@ -58,3 +60,19 @@ Three options, and the choice is a design one:
 
 The middle one looks best to me: it costs nothing on the common path and reuses a
 convention the type already has.
+
+
+## Resolution (agent-a)
+
+Indexing a byte in `0xF8`–`0xFF` now yields `""`, matching what a continuation byte already did.
+The sequence-length logic checked for 2-, 3- and 4-byte leads and fell through to a `len = 1`
+default, which is correct for ASCII and wrong for every byte that begins no sequence at all.
+
+Chose the second option the report offered — make indexing agree — rather than validating in
+`fromBytes`. Validation would cost a pass over every string built from bytes, and the callers who
+need it are better placed than the constructor: a decoder knows what it is decoding. `strings.md`
+now says outright that `fromBytes` does not validate, which it had never claimed either way.
+
+`len()` is unchanged and still counts bytes verbatim, as documented. Boundaries tested: `0xF7` is
+still a valid four-byte lead, and ASCII, two-, three- and four-byte leads all keep their
+lengths.

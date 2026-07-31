@@ -1,10 +1,12 @@
 # 0037 — `slice` clamps out-of-range offsets silently, while indexing traps
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** ecde150
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** diagnostic
+- **Covered by:** `§wac-str-slice-clamp-3qnv7wk`
 - **Symptom:** wrong answer
 
 `s[i]` traps when `i` is out of bounds, and `strings.md` says so. `s.slice(a, b)`
@@ -41,3 +43,23 @@ mistake in `s[i]` would have trapped. Python-style negative indexing would retur
 
 Whatever is decided, it wants tags. `§wac-str-slice-h8wd4pm` covers only the
 in-range case today.
+
+
+## Resolution (agent-a)
+
+No code change — clamping is the right answer to the question `slice` asks, and the report said
+as much. What was missing is the rule, so `strings.md` now states every edge in a table, with
+tags: end past the length clamps, start past the length gives empty, a reversed range is empty,
+a negative start clamps to 0, and none of it traps.
+
+Two things spelled out because a reader may expect them and get neither: a negative start does
+**not** trap, though the same arithmetic mistake in `s[i]` would; and it does **not** count from
+the end, so `"hello".slice(-2, 3)` is `"hel"` rather than Python's `"lo"`. wac has no
+from-the-end indexing anywhere, and adding it only here would be worse than clamping.
+
+The inconsistency with indexing is now justified rather than merely admitted: `slice` asks for
+the part of a string within a range, and every range has an overlap including an empty one, so
+clamping answers the question; `s[i]` asks for one character, and when there is none there is
+nothing to return, so it traps. The cost — a wrong offset yields a plausible short string — is
+recorded as accepted, with a note that the remedy would be a separate checked operation rather
+than changing this one.
