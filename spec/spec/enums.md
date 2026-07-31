@@ -124,24 +124,90 @@ error.
 
 ### Narrowing
 
-Because a variant is a type, an arm's subject can be used at the variant type:
+Inside an arm the subject has the variant's type, so its fields are reachable
+directly and no cast is written:
 
 ```wac
-f64 scaleCircle(Circle c, f64 by) { return c.radius * by; }
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}
 
-export f64 scaled(Shape s, f64 by) {
+export f64 widthOf(Shape s) {
   match (s) {
-    case Circle:  return scaleCircle(s as! Circle, by);
-    else:         return 0.0;
+    case Rect:   return s.width;    // `s` is a Rect here
+    case Circle: return s.radius * 2.0;
+    case Point:  return 0.0;
   }
 }
 ```
 
-`[§enum-narrow]` `scaled(Shape.Circle(2.0), 3.0)` returns `6.0`.
+`[§enum-narrow]` `widthOf(Shape.Rect(3.0, 4.0))` returns `3.0`.
+`[§enum-narrow-field]` `widthOf(Shape.Circle(2.0))` returns `4.0` — the arm reads
+`radius`, which only exists on `Circle`.
 
-Whether the arm should narrow `s` implicitly, making the `as!` unnecessary, is
-deliberately left out of this draft: flow-sensitive typing is a much larger change
-than the rest of the feature, and the cast is checked either way.
+This is not flow-sensitive typing. The arm introduces a **new binding that shadows
+the subject**, at the variant type, and block-scope shadowing is already part of the
+language (see naming.md). So the rule is lexical and needs no analysis: the name means
+the variant type for exactly the arm's extent, and the outer binding is untouched
+after it.
+
+Three consequences follow from that being a binding rather than a retyping.
+
+**Narrowing happens only when the subject is a plain variable**, since otherwise
+there is no name to shadow:
+
+```wac
+export f64 first(Shape[] shapes) {
+  match (shapes[0]) {
+    case Circle: return 1.0;        // nothing named to narrow
+    else:        return 0.0;
+  }
+}
+
+export f64 firstNarrowed(Shape[] shapes) {
+  Shape s = shapes[0];              // name it, and the arm narrows it
+  match (s) {
+    case Circle: return s.radius;
+    else:        return 0.0;
+  }
+}
+```
+
+`[§enum-narrow-nonvariable]` Matching on `shapes[0]` compiles, and its arms see no
+narrowed name; reading a variant field off the subject expression in such an arm is
+a compile error.
+
+**The narrowed binding is `const`.** Assigning to it would raise the question of
+which binding is being written, and neither answer is good: writing the shadow
+discards the value at the end of the arm, and writing through to the outer one would
+let the shadow's type go stale.
+
+```wac
+export f64 reassign(Shape s) {
+  match (s) {
+    case Circle: { s = Shape.Point; return 0.0; }   // error
+    else:        return 0.0;
+  }
+}
+```
+
+`[§enum-narrow-const]` This is a compile error: `cannot assign to 's' — a matched
+subject is const within its arm`.
+
+**A payload binding may not reuse the subject's name**, because both would occupy the
+arm's scope:
+
+`[§enum-narrow-collision]` `case Circle(s)` where the subject is also `s` is a
+compile error: duplicate binding.
+
+The `else` arm narrows nothing — its subject is still the enum type, which is the
+whole reason to be in `else`.
+
+Narrowing costs nothing at run time. The `br_table` on the tag has already selected
+the arm, so the binding is an unchecked downcast: the same instruction an explicit
+`as!` would emit, minus the type test that the dispatch made redundant.
 
 ### Recursion
 
@@ -203,6 +269,11 @@ level deep.
 
 **No methods on enums.** The base and variant structs are compiler-generated, so
 where a user's methods would live is an open question.
+
+**No narrowing outside `match`.** `if (s is Circle) { ... }` does not narrow `s`.
+That would be flow-sensitive typing, which needs an analysis rather than a scope
+rule — a `match` arm gets away without one only because its extent is lexical and
+its type is fixed by the pattern.
 
 **No integer representation for payload-less enums.** An enum whose variants all
 lack payloads could compile to a plain `i32` rather than heap-allocated structs. That
