@@ -2,8 +2,24 @@ import { wacLex } from "./wacLex.ts";
 import { wacParse, type Program } from "./wacParse.ts";
 import {
   wacResolve, type ResolveResult, type FuncEntry, type StructEntry,
-  funcReturnType, funcParams, isMethod,
+  funcReturnType, funcParams, isMethod, type ScopeEntry,
 } from "./wacResolve.ts";
+
+/** The FuncEntry a scope name denotes, or a clear failure if it denotes something else. */
+function funcOf(e: ScopeEntry | undefined): FuncEntry {
+  if (!e) throw new Error("no such name in scope");
+  if (e.kind !== "func") throw new Error(`expected a function, got a ${e.kind}`);
+  return e.entry;
+}
+
+/** The StructEntry a scope name denotes. */
+function structOf(e: ScopeEntry | undefined): StructEntry {
+  if (!e) throw new Error("no such name in scope");
+  if (e.kind === "const" || e.kind === "func") {
+    throw new Error(`expected a struct, got a ${e.kind}`);
+  }
+  return e.entry;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -153,7 +169,7 @@ Deno.test("wacResolve: simple import", () => {
   if (!mainScope.has("add")) throw new Error("add in scope");
   if (mainScope.get("add")!.kind !== "func") throw new Error("add is func");
   // The add entry should have the correct mangled name
-  const addEntry = mainScope.get("add")!.entry as FuncEntry;
+  const addEntry = funcOf(mainScope.get("add"));
   if (addEntry.mangledName !== "math$add") throw new Error(`mangled: ${addEntry.mangledName}`);
 });
 
@@ -165,7 +181,7 @@ Deno.test("wacResolve: import with alias", () => {
   const mainScope = r.fileScopes.get("/main.wac")!;
   if (!mainScope.has("dist")) throw new Error("dist in scope");
   if (mainScope.has("distance")) throw new Error("distance should not be in scope (aliased)");
-  const distEntry = mainScope.get("dist")!.entry as FuncEntry;
+  const distEntry = funcOf(mainScope.get("dist"));
   if (distEntry.mangledName !== "geo$distance") throw new Error(`mangled: ${distEntry.mangledName}`);
 });
 
@@ -186,8 +202,8 @@ Deno.test("wacResolve: local functions registered before imported functions", ()
     ["/dep.wac", `export i32 dep() { return 42; }`],
   ]);
   // main$main registered first (local) → index 0, dep$dep registered during import phase → index 1
-  const depEntry = r.fileScopes.get("/main.wac")!.get("dep")!.entry as FuncEntry;
-  const mainEntry = r.fileScopes.get("/main.wac")!.get("main")!.entry as FuncEntry;
+  const depEntry = funcOf(r.fileScopes.get("/main.wac")!.get("dep"));
+  const mainEntry = funcOf(r.fileScopes.get("/main.wac")!.get("main"));
   if (mainEntry.funcIndex !== 0) throw new Error(`main index ${mainEntry.funcIndex}`);
   if (depEntry.funcIndex !== 1) throw new Error(`dep index ${depEntry.funcIndex}`);
 });
@@ -443,8 +459,8 @@ Deno.test("wacResolve: same name functions in different files have distinct mang
     ["/a.wac", `export i32 compute(i32 x) { return x + 1; }`],
     ["/b.wac", `export i32 compute(i32 x) { return x * 2; }`],
   ]);
-  const aEntry = r.fileScopes.get("/main.wac")!.get("computeA")!.entry as FuncEntry;
-  const bEntry = r.fileScopes.get("/main.wac")!.get("computeB")!.entry as FuncEntry;
+  const aEntry = funcOf(r.fileScopes.get("/main.wac")!.get("computeA"));
+  const bEntry = funcOf(r.fileScopes.get("/main.wac")!.get("computeB"));
   if (aEntry.mangledName !== "a$compute") throw new Error(`a: ${aEntry.mangledName}`);
   if (bEntry.mangledName !== "b$compute") throw new Error(`b: ${bEntry.mangledName}`);
   if ((aEntry.mangledName as string) === (bEntry.mangledName as string)) throw new Error("same mangled names");
@@ -459,8 +475,8 @@ Deno.test("wacResolve: local struct indices assigned before imported struct indi
     ["/vec.wac", `export struct Vec { f64 x; f64 y; }`],
   ]);
   // Local-first: Matrix registered before imports → typeIndex 0, Vec → typeIndex 1
-  const vecEntry = r.fileScopes.get("/main.wac")!.get("Vec")!.entry as StructEntry;
-  const matEntry = r.fileScopes.get("/main.wac")!.get("Matrix")!.entry as StructEntry;
+  const vecEntry = structOf(r.fileScopes.get("/main.wac")!.get("Vec"));
+  const matEntry = structOf(r.fileScopes.get("/main.wac")!.get("Matrix"));
   if (matEntry.typeIndex !== 0) throw new Error(`Matrix typeIndex ${matEntry.typeIndex}`);
   if (vecEntry.typeIndex !== 1) throw new Error(`Vec typeIndex ${vecEntry.typeIndex}`);
 });
