@@ -2036,7 +2036,12 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
         tt = inferExpr(expr.then, env, ctx, et);
       }
       if (!tt || !et) return tt ?? et;
-      return unifyBranches(tt, et, "ternary branches", expr, ctx);
+      // Recorded on the node, so the emitter reads the answer rather than deriving a second one.
+      // The two *did* drift: this said `S?` for `c ? S(1) : s` and the emitter said `S`, so the
+      // block was declared non-nullable and the else arm failed validation [issue 0051].
+      const unified = unifyBranches(tt, et, "ternary branches", expr, ctx);
+      expr.resultType = unified;
+      return unified;
     }
 
     case "call": {

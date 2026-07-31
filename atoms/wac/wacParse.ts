@@ -50,7 +50,12 @@ export type Expr =
   | ({ kind: "binary";   op: string; left: Expr; right: Expr } & Pos)
   | ({ kind: "cast";     op: string; expr: Expr; type: WacType } & Pos)
   | ({ kind: "is";       expr: Expr; not: boolean; rhs: WacType | "null" | Expr } & Pos)
-  | ({ kind: "ternary";  cond: Expr; then: Expr; else_: Expr } & Pos)
+  /**
+   * `resultType` is the unified branch type, filled in by the type checker and read by the
+   * emitter — the same annotate-then-consume arrangement `matchExpr` uses, and for the same
+   * reason: both used to derive it independently and drifted [issue 0051].
+   */
+  | ({ kind: "ternary";  cond: Expr; then: Expr; else_: Expr; resultType?: WacType } & Pos)
   | ({ kind: "call";     callee: Expr; args: Expr[]; variantTypeIndex?: number } & Pos)
   | ({ kind: "index";    expr: Expr; idx: Expr } & Pos)
   // `variantTypeIndex` is filled in by the type checker when this field access is

@@ -361,6 +361,19 @@ const I64:  WacType = { kind: "prim", name: "i64",  line: 0, col: 0 };
 const BOOL: WacType = { kind: "prim", name: "bool", line: 0, col: 0 };
 
 /** Infer the wac type of an expression given local variable types. */
+/** Two branch types with the nullability already stripped: the struct rule, or the first. */
+function typeOfTernaryInner(a: WacType, b: WacType, ctx: WasmTypeCtx): WacType {
+  if (a.kind === "struct" && b.kind === "struct") {
+    const ae = resolveStructEntry(a.name, ctx, a.resolvedTypeIndex);
+    const be = resolveStructEntry(b.name, ctx, b.resolvedTypeIndex);
+    if (ae && be && ae.typeIndex !== be.typeIndex) {
+      const lca = commonAncestor(ae, be);
+      if (lca) return { kind: "struct", name: lca.name, resolvedTypeIndex: lca.typeIndex, line: 0, col: 0 };
+    }
+  }
+  return a;
+}
+
 export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
   switch (e.kind) {
     // An integer literal is typed by its own width, the same way wacTypeCheck
@@ -409,6 +422,10 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       return typeOfExpr(e.left, env, ctx);
     }
     case "ternary": {
+      // The type checker's answer when there is one — it is the authority, and re-deriving it is
+      // what produced issue 0051 and the i64-literal bug before it. The derivation below stays
+      // because the emitter is also driven directly, without a checker, by `wasmBuildBin.test.ts`.
+      if (e.resultType) return e.resultType;
       const tt = typeOfExpr(e.then, env, ctx);
       const et = typeOfExpr(e.else_, env, ctx);
       // A `null` branch makes the result nullable, matching the type checker. The two
@@ -424,6 +441,15 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       if (isNullLit(e.else_) && !isNullLit(e.then)) {
         const w = nullableOf(tt);
         if (w) return w;
+      }
+      // Exactly one branch nullable makes the result nullable, whatever the two inner types
+      // unify to. Without this the then-arm's type won and `c ? S(1) : s` declared a non-nullable
+      // block that the else arm could not satisfy.
+      if ((tt.kind === "nullable") !== (et.kind === "nullable")) {
+        const inner = tt.kind === "nullable" ? tt.inner : tt;
+        const other = et.kind === "nullable" ? et.inner : et;
+        const both = typeOfTernaryInner(inner, other, ctx);
+        return { kind: "nullable", inner: both, line: 0, col: 0 };
       }
       // Struct branches type to their closest common ancestor (matches the
       // type checker) — the if/else block type must be the ancestor so both

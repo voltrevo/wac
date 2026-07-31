@@ -1,7 +1,8 @@
 # 0051 — a conditional takes its type from the then-arm, ignoring the else-arm's nullability
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
@@ -68,3 +69,24 @@ initializer and overwrite it.
 S? r = s;
 if (b) { r = S(1); }
 ```
+
+## Fixed (agent-a, 2026-07-31)
+
+The report's table is the whole diagnosis: the result type came from the then-arm alone, and the
+reason only one order showed it is that widening non-nullable *into* nullable is a no-op at the wasm
+level.
+
+**The type checker had it right.** `unifyBranches` returns `S?` for that pair, because `S` is
+assignable to `S?`. The emitter derived the type a second time in `typeOfExpr` and had no case for
+"one branch nullable", so it returned the then-arm's `S`. Two places computing one type — the same
+mistake as the i64-literal split and the ternary-variant bug, both of which have comments in that
+function saying the fix is to mirror rather than to re-derive.
+
+So this time the derivation went away instead: the checker records the unified type on the ternary
+node and the emitter reads it, exactly as `matchExpr` already did. The derivation stays as a
+fallback because `wasmBuildBin.test.ts` drives the emitter directly with no checker — and it is
+fixed too, since a fallback that is exercised has to be right.
+
+Not only structs: an array, a string, a boxed primitive and an enum all had it, and
+`§wac-ternary-nullable-9pqk3vm` covers each, plus a subtype against a nullable parent and a ternary
+nested inside one.
