@@ -2487,12 +2487,25 @@ Deno.test(`[§wac-str-len-p2hd9xf] strLen() returns 3`, async () => {
 // ── §wac-str-append-q5km7wn — strAppend() returns "hello world" ──────────────
 
 Deno.test(`[§wac-str-append-q5km7wn] strAppend() returns "hello world"`, async () => {
+  // The tag is about `+=`, so this has to use `+=` — testing `+` here would pass
+  // while `+=` was broken, which is exactly what happened before: compound
+  // assignment on a string emitted f64.add on two string refs and produced a
+  // module that failed wasm validation.
   const ok = await runWithExpected(
-    `string strAppend() { return "hello" + " world"; }`,
+    `string strAppend() { string s = "hello"; s += " world"; return s; }`,
     "strAppend",
     "hello world",
   );
   eq(ok, true, `strAppend() == "hello world"`);
+
+  // Also on a struct field, which takes a different emit path from a local.
+  const ok2 = await runWithExpected(
+    `struct Msg { string text; }
+     string fieldAppend() { Msg m = Msg("hello"); m.text += " world"; return m.text; }`,
+    "fieldAppend",
+    "hello world",
+  );
+  eq(ok2, true, `fieldAppend() == "hello world"`);
 });
 
 // ── §wac-str-idx-r7kf4mb — strIdx() returns "e" ─────────────────────────────
