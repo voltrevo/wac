@@ -289,6 +289,13 @@ function buildTypeCtx(
   if (coverage && !arrElements.some(t => t.kind === "prim" && t.name === "i32")) {
     arrElements.push({ kind: "prim", name: "i32", line: 0, col: 0 });
   }
+  // __str_from_bytes takes a u8[], so that array type has to exist even in a
+  // module that never mentions one. Always adding it keeps the helper
+  // unconditional — the alternative is a helper list whose length varies, and
+  // every function index downstream is derived from that length.
+  if (!arrElements.some(t => t.kind === "prim" && t.name === "u8")) {
+    arrElements.push({ kind: "prim", name: "u8", line: 0, col: 0 });
+  }
   const arrTypeIdx  = new Map<string, number>();
   let nextTypeIdx = numStructs + 1; // after string type
   for (const elem of arrElements) {
@@ -555,7 +562,7 @@ function buildTypeCtxFull(
  */
 const STRING_AND_MATH_HELPERS = [
   "__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof",
-  "__str_from_cp",
+  "__str_from_cp", "__str_from_bytes",
   "__fmod", "__fmodf",
 ] as const;
 
@@ -575,7 +582,7 @@ function builtinHelpers(coverage: boolean): readonly string[] {
 }
 
 /** Return the builtin helper function type entries for the type section. */
-function helperFuncTypes(si: number, coverage: boolean): number[][] {
+function helperFuncTypes(si: number, u8ArrIdx: number, coverage: boolean): number[][] {
   // non-null str ref: 0x64 sleb(si)
   const str = [0x64, ...sleb(si)];
   const i32 = [0x7F];
@@ -592,13 +599,16 @@ function helperFuncTypes(si: number, coverage: boolean): number[][] {
   const iof    = [0x60, 0x02, ...str, ...str, 0x01, ...i32];
   // __str_from_cp(i32) -> str
   const fromCp = [0x60, 0x01, ...i32, 0x01, ...str];
+  // __str_from_bytes(u8[]) -> str
+  const u8arr    = [0x64, ...sleb(u8ArrIdx)];
+  const fromBytes = [0x60, 0x01, ...u8arr, 0x01, ...str];
   // __fmod(f64, f64) -> f64
   const f64    = [0x7C];
   const fmod   = [0x60, 0x02, ...f64, ...f64, 0x01, ...f64];
   // __fmodf(f32, f32) -> f32
   const f32    = [0x7D];
   const fmodf  = [0x60, 0x02, ...f32, ...f32, 0x01, ...f32];
-  const base = [concat, cmp, idx, slice, iof, fromCp, fmod, fmodf];
+  const base = [concat, cmp, idx, slice, iof, fromCp, fromBytes, fmod, fmodf];
   if (!coverage) return base;
   // __cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32
   return [
@@ -659,6 +669,7 @@ function makeCovGet(arrTypeIdx: number): number[] {
  */
 function buildHelperBodies(
   si: number,
+  u8ArrIdx: number,
   fmodIdx: number,
   cov: { arrTypeIdx: number; numPoints: number } | undefined,
 ): number[][] {
@@ -669,6 +680,7 @@ function buildHelperBodies(
     makeSlice(si),
     makeIndexOf(si),
     makeFromCodepoint(si),
+    makeFromBytes(si, u8ArrIdx),
     makeFmod(),
     makeFmodF(fmodIdx),
   ];
@@ -1182,6 +1194,37 @@ function makeFromCodepoint(si: number): number[] {
   ];
 }
 
+/**
+ * __str_from_bytes(bytes:u8[]) -> str
+ *
+ * Copy UTF-8 bytes into a fresh string. A copy rather than a reinterpret because
+ * `string` and `u8[]` are distinct wasm array types with the same element type —
+ * and because aliasing the caller's array would let a later write mutate a value
+ * the language promises is immutable.
+ *
+ * The bytes are not validated. An ill-formed sequence yields a string whose
+ * indexing returns "" at the bad offset, which is the same thing that happens to
+ * a slice landing mid-character; validating here would cost a second pass on
+ * every call for a guarantee the type does not otherwise make.
+ */
+function makeFromBytes(si: number, u8ArrIdx: number): number[] {
+  const nullableStr = [0x63, ...sleb(si)];
+  return [
+    // locals: local1 = len(i32), local2 = result(nullable str)
+    0x02, 0x01, 0x7F, 0x01, ...nullableStr,
+    // len = array.len(bytes)
+    0x20, 0x00, 0xFB, 0x0F, 0x21, 0x01,
+    // result = array.new_default $str(len)
+    0x20, 0x01, 0xFB, 0x07, ...uleb(si), 0x21, 0x02,
+    // array.copy $str $u8 (result, 0, bytes, 0, len)
+    0x20, 0x02, 0x41, 0x00, 0x20, 0x00, 0x41, 0x00, 0x20, 0x01,
+    0xFB, 0x11, ...uleb(si), ...uleb(u8ArrIdx),
+    // return ref.as_non_null result
+    0x20, 0x02, 0xD4,
+    0x0B,
+  ];
+}
+
 function makeIndexOf(si: number): number[] {
   // __str_indexof(haystack:str, needle:str) -> i32
   // locals: local2=hLen(i32), local3=nLen(i32), local4=i(i32), local5=j(i32), local6=match(i32)
@@ -1369,7 +1412,8 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
   }
 
   // String helper function signatures (after user sigs)
-  for (const helperType of helperFuncTypes(ctx.stringTypeIdx, ctx.coverage !== undefined)) {
+  const u8ArrIdx = ctx.arrTypeIdx.get(typeKey({ kind: "prim", name: "u8", line: 0, col: 0 }))!;
+  for (const helperType of helperFuncTypes(ctx.stringTypeIdx, u8ArrIdx, ctx.coverage !== undefined)) {
     entries.push(helperType);
   }
 
@@ -1460,6 +1504,7 @@ function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
   // __cov_init/__cov_len are built from the final count.
   const helperBodies = buildHelperBodies(
     ctx.stringTypeIdx,
+    ctx.arrTypeIdx.get(typeKey({ kind: "prim", name: "u8", line: 0, col: 0 }))!,
     ctx.helperIdx.get("__fmod")!,
     ctx.coverage
       ? { arrTypeIdx: covArrayTypeIdx(ctx), numPoints: ctx.coverage.points.length }

@@ -228,8 +228,30 @@ hide the caller's mistake.
 `[§wac-str-fromcp-trap-h6qw2np]` A negative value, a value above `0x10FFFF`, or a
 surrogate in `0xD800..0xDFFF` traps.
 
-There is no `string.fromBytes` yet: building a string from an `i8[]` of UTF-8
-bytes still has to go through `fromCodepoint` and `+`, which is O(n²).
+### Building a string from bytes
+
+`string.fromBytes(bytes)` returns a string holding a copy of `bytes`, which are
+taken to be UTF-8.
+
+```wac
+export string hi() { return string.fromBytes(u8[]('h', 'i')); }
+```
+
+`[§wac-str-frombytes-p3kq7wn]` `hi()` returns `"hi"`.
+`[§wac-str-frombytes-utf8-m9fj2xr]` The bytes are copied verbatim, so
+`u8[](0xC3, 0xA9)` gives `"é"` — one character, two bytes.
+
+It is a copy, not a view. Writing to the array afterwards does not change the
+string, which is what lets `string` stay immutable.
+
+`[§wac-str-frombytes-copy-w4nk8dt]` After `string s = string.fromBytes(b);`,
+assigning to `b[0]` leaves `s` unchanged.
+
+The bytes are **not validated**. Ill-formed UTF-8 produces a string whose
+indexing returns `""` at the bad offset — the same thing that happens when
+`slice` lands in the middle of a character — and whose `len()` is still the byte
+count. Validating on every call would cost a second pass for a guarantee the type
+does not otherwise make; a caller that needs one should check before converting.
 
 ### String methods
 

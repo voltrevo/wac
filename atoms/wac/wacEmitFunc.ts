@@ -315,7 +315,7 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         // Builtin statics on `string`, matched before typing the base: `string`
         // is an identifier here and names no variable.
         if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "string"
-            && fe.name === "fromCodepoint") {
+            && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
           return { kind: "prim", name: "string", line: 0, col: 0 };
         }
         const baseT = typeOfExpr(fe.expr, env, ctx);
@@ -1407,9 +1407,10 @@ class FuncEmitter {
       // Static method call: TypeName.method(args)
       if (fe.expr.kind === "ident") {
         const typeName = (fe.expr as { name: string }).name;
-        if (typeName === "string" && fe.name === "fromCodepoint") {
+        if (typeName === "string" && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
+          const helper = fe.name === "fromCodepoint" ? "__str_from_cp" : "__str_from_bytes";
           for (const arg of e.args) this.emitExpr(arg, env);
-          this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_from_cp")!));
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get(helper)!));
           return;
         }
         if (this.ctx.structTypeIdx.has(typeName)) {
