@@ -1440,6 +1440,33 @@ class FuncEmitter {
    *  same-width change (i32<->u32, i64<->u64) moves no bits: `as@` emits
    *  nothing at all, and `as!` emits only a range check. The float and
    *  narrowing rows mirror their signed equivalents with the _u opcodes. */
+  /** `x < bound ? bound : x` at 64 bits, signed — the low end of an `as~` clamp. */
+  private clampI64Low(bound: bigint): void {
+    const t = this.tempI64Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x42, ...slebBig(bound), 0x53);        // i64.const bound; i64.lt_s
+    this.emit(0x04, 0x7E, 0x42, ...slebBig(bound), 0x05);
+    this.emit(0x20, ...uleb(t), 0x0B);
+  }
+
+  /** `x > bound ? bound : x` at 64 bits, signed. */
+  private clampI64HighS(bound: bigint): void {
+    const t = this.tempI64Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x42, ...slebBig(bound), 0x55);        // i64.const bound; i64.gt_s
+    this.emit(0x04, 0x7E, 0x42, ...slebBig(bound), 0x05);
+    this.emit(0x20, ...uleb(t), 0x0B);
+  }
+
+  /** `x >u bound ? bound : x` at 64 bits — the unsigned reading, for a u64 source. */
+  private clampI64HighU(bound: bigint): void {
+    const t = this.tempI64Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x42, ...slebBig(bound), 0x56);        // i64.const bound; i64.gt_u
+    this.emit(0x04, 0x7E, 0x42, ...slebBig(bound), 0x05);
+    this.emit(0x20, ...uleb(t), 0x0B);
+  }
+
   private emitUnsignedCast(from: string, to: string, op: string): boolean {
     const I32MAX = 2147483647, U32MAX = 4294967295n;
     const I64MAX = 9223372036854775807n;
@@ -1449,6 +1476,7 @@ class FuncEmitter {
       if (from === "u32" && (to === "u64" || to === "i64")) { this.emit(0xAD); return true; } // i64.extend_i32_u
       if (from === "u32" && to === "f64") { this.emit(0xB8); return true; }  // f64.convert_i32_u
       if (from === "bool" && to === "u32") return true;                       // already 0 or 1
+      if (from === "bool" && to === "u64") { this.emit(0xAD); return true; }  // i64.extend_i32_u
     }
 
     if (op === "as@") {
@@ -1488,9 +1516,40 @@ class FuncEmitter {
         this.emit(0x20, ...uleb(t), 0x0B);
         return true;
       }
+      // The 64-bit and cross-width rows. Every one of these was in the type checker's narrowing
+      // table — so `as~` was accepted — and had no case here, which meant the cast emitted
+      // *nothing*: `i32 as~ u64` produced invalid wasm, and `i64 as~ u64` of -1 silently
+      // reinterpreted the bits instead of clamping, which is what `as@` means. The 32-bit pair
+      // above was right and its 64-bit mirror had never been written [found by the cast sweep].
+      if (from === "i64" && to === "u64") { this.clampI64Low(0n); return true; }
+      if (from === "u64" && to === "i64") { this.clampI64HighU(I64MAX); return true; }
+      if (from === "i32" && to === "u64") {
+        const t = this.tempI32Local;
+        this.emit(0x22, ...uleb(t));
+        this.emit(0x41, 0x00, 0x48);                 // i32.const 0; i32.lt_s
+        this.emit(0x04, 0x7F, 0x41, 0x00, 0x05);     // if (i32) { 0 } else {
+        this.emit(0x20, ...uleb(t), 0x0B);           //   $t }
+        this.emit(0xAD);                             // i64.extend_i32_u
+        return true;
+      }
+      if (from === "i64" && to === "u32") {
+        this.clampI64Low(0n);                        // negatives to 0 first, then the top
+        this.clampI64HighS(U32MAX);
+        this.emit(0xA7);                             // i32.wrap_i64
+        return true;
+      }
+      if (from === "u64" && to === "i32") { this.clampI64HighU(BigInt(I32MAX)); this.emit(0xA7); return true; }
+      if (from === "u64" && to === "u32") { this.clampI64HighU(U32MAX); this.emit(0xA7); return true; }
+      // Nonzero is true. Only the u64 row belongs here: this function is reached only when one
+      // side is unsigned, so `i64 -> bool` and the float rows live in the signed table.
+      if (from === "u64" && to === "bool") { this.emit(0x50, 0x45); return true; }
     }
 
     if (op === "as!") {
+      // To bool: only an exact 0 or 1 has a reading, so anything else traps. The i32 row lives in
+      // the signed table; these are its wider and floating-point mirrors.
+      if (from === "u64" && to === "bool") { this.checkedToBool64(); return true; }
+      if (from === "u32" && to === "bool") { this.checkedToBool32(); return true; }
       // Same width: check the value has a reading in the destination type.
       if (from === "i32" && to === "u32") { this.guardI32(0, 0x48); return true; }        // x < 0
       if (from === "u32" && to === "i32") { this.guardI32(I32MAX, 0x4B); return true; }   // x >u MAX
@@ -1552,6 +1611,45 @@ class FuncEmitter {
     return false;
   }
 
+  /**
+   * `as!` to bool from a 32-bit integer: only an exact 0 or 1 has a reading.
+   *
+   * `i32 -> bool` was in the type checker's narrowing table from the start and had no case here, so
+   * `3 as! bool` returned `true` — a checked cast that checked nothing. Found by contrast with the
+   * 64-bit row, which is why adding a missing case is worth doing even when the existing one looks
+   * fine [the cast sweep].
+   */
+  private checkedToBool32(): void {
+    const t = this.tempI32Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x41, 0x01, 0x4B);                 // i32.const 1; i32.gt_u
+    this.emit(0x04, 0x40, 0x00, 0x0B);           // if { unreachable }
+    this.emit(0x20, ...uleb(t));                 // local.get $t — already 0 or 1
+  }
+
+  /** `as!` to bool from a 64-bit integer: only an exact 0 or 1 has a reading. */
+  private checkedToBool64(): void {
+    const t = this.tempI64Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x42, 0x01, 0x56);                 // i64.const 1; i64.gt_u
+    this.emit(0x04, 0x40, 0x00, 0x0B);           // if { unreachable }
+    this.emit(0x20, ...uleb(t), 0xA7);           // local.get $t; i32.wrap_i64
+  }
+
+  /** `as!` to bool from a float: 0.0 and 1.0 convert, anything else traps. */
+  private checkedToBoolFloat(wide: boolean): void {
+    const t = wide ? this.tempF64Local : this.tempF32Local;
+    const zero = wide ? [0x44, 0, 0, 0, 0, 0, 0, 0, 0] : [0x43, 0, 0, 0, 0];
+    const one  = wide ? [0x44, 0, 0, 0, 0, 0, 0, 0xF0, 0x3F] : [0x43, 0, 0, 0x80, 0x3F];
+    const eq = wide ? 0x61 : 0x5B, ne = wide ? 0x62 : 0x5C;
+    this.emit(0x22, ...uleb(t));
+    this.emit(...zero, eq);                      // x == 0
+    this.emit(0x20, ...uleb(t), ...one, eq);     // x == 1
+    this.emit(0x72, 0x45);                       // i32.or; i32.eqz -> neither
+    this.emit(0x04, 0x40, 0x00, 0x0B);           // if { unreachable }
+    this.emit(0x20, ...uleb(t), ...zero, ne);    // result: x != 0
+  }
+
   private emitNumericCast(from: string, to: string, op: string): void {
     if (from === to) return;
     if (from === "u32" || from === "u64" || to === "u32" || to === "u64") {
@@ -1564,11 +1662,18 @@ class FuncEmitter {
       if (from === "i32"  && to === "f64") { this.emit(0xB7); return; } // f64.convert_i32_s
       if (from === "f32"  && to === "f64") { this.emit(0xBB); return; } // f64.promote_f32
       if (from === "bool" && to === "i64") { this.emit(0xAC); return; }
+      if (from === "bool" && to === "f64") { this.emit(0xB8); return; }  // f64.convert_i32_u (0 or 1)
+      if (from === "bool" && to === "f32") { this.emit(0xB3); return; }  // f32.convert_i32_u
       if (from === "i32"  && to === "f32") { this.emit(0xB2); return; } // f32.convert_i32_s
       if (from === "i64"  && to === "f64") { this.emit(0xB9); return; } // f64.convert_i64_s
     }
     // Checked (as!)
     if (op === "as!") {
+      // To bool: only an exact 0 or 1 has a reading in it, so anything else traps.
+      if (from === "i32" && to === "bool") { this.checkedToBool32(); return; }
+      if (from === "i64" && to === "bool") { this.checkedToBool64(); return; }
+      if (from === "f64" && to === "bool") { this.checkedToBoolFloat(true); return; }
+      if (from === "f32" && to === "bool") { this.checkedToBoolFloat(false); return; }
       if (from === "i64" && to === "i32") {
         // Range-check then wrap: trap if outside [-2^31, 2^31-1]
         const tmp = this.tempI64Local;
@@ -1713,6 +1818,11 @@ class FuncEmitter {
       if (from === "i64" && to === "f32")  { this.emit(0xB4); return; }       // f32.convert_i64_s (nearest)
       if (from === "i32" && to === "f32")  { this.emit(0xB2); return; }
       if (from === "i32" && to === "bool") { this.emit(0x41, 0x00, 0x47); return; } // i32.const 0; i32.ne -> canonical 0/1
+      // The wider and floating-point rows of the same rule: nonzero is true. Absent before,
+      // while the type checker's table promised them.
+      if (from === "i64" && to === "bool") { this.emit(0x50, 0x45); return; }       // i64.eqz; i32.eqz
+      if (from === "f64" && to === "bool") { this.emit(0x44, 0, 0, 0, 0, 0, 0, 0, 0, 0x62); return; }
+      if (from === "f32" && to === "bool") { this.emit(0x43, 0, 0, 0, 0, 0x5C); return; }
     }
     // Raw (as@): only where a genuinely distinct raw form exists (int narrowing
     // keeps bits; float->int truncates toward zero) — the type checker rejects

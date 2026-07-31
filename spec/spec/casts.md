@@ -119,6 +119,11 @@ export bool truthy(i32 x) {
 (clamped to i32 max). `saturate(-1000000000000)` returns `-2147483648`.
 `[§wac-truthy-cagp47u]` `truthy(0)` returns `false`. `truthy(42)` returns `true`.
 
+`[§wac-cast-matrix-6hkq4wz]` **Every** numeric type converts to `bool` this way, not only `i32`:
+`as~` is "nonzero is true" at any width and in floating point (NaN is nonzero, so it is true), and
+`as!` accepts an exact `0` or `1` and traps on anything else. A `bool` widens the other way with
+plain `as` into every numeric type, since `0` and `1` are exact in all of them.
+
 Like `as!`, `as~` is defined for every numeric pair not covered by `as` — never
 a gap, always either round-and-clamp (narrowing to an integer type) or
 round-to-nearest (narrowing to a smaller float, or widening an integer into a
@@ -179,7 +184,17 @@ Complete raw conversions:
 i64  -> i32       keep low 32 bits
 f64  -> i32       truncate toward zero, saturate to i32 min/max on overflow, 0 on NaN
 f32  -> i32       truncate toward zero, saturate to i32 min/max on overflow, 0 on NaN
+i64  -> u32       keep low 32 bits, read unsigned
+u64  -> i32       keep low 32 bits, read signed
+u64  -> u32       keep low 32 bits
+f64  -> u32       truncate toward zero, saturate to u32 range, 0 on NaN
+f32  -> u32       truncate toward zero, saturate to u32 range, 0 on NaN
+i32 <-> u32       same bits, read the other way — emits nothing
+i64 <-> u64       same bits, read the other way — emits nothing
 ```
+
+`[§wac-cast-matrix-6hkq4wz]` The unsigned rows are the signed ones with the destination read the
+other way, and they were missing from this list rather than from the compiler.
 
 These are the only pairs with a raw form distinct from `as~`: integer
 narrowing keeps bits instead of clamping, and float-to-int truncates toward
@@ -214,6 +229,12 @@ export u32 clamp(i32 x)  { return x as~ u32; }   // negatives clamp to 0
 `[§wac-usign-chk-p8jn3wl]` `check(5)` returns `5`; `check(-1)` traps.
 `[§wac-usign-clamp-r4mk9xf]` `clamp(-5)` returns `0`.
 
+`[§wac-cast-matrix-6hkq4wz]` The same at 64 bits and across widths: `as~` clamps into the
+destination's range whatever the pair — `i64 as~ u64` of `-1` is `0`, `u64 as~ i64` of `2^64-1` is
+`i64`'s maximum, and `i64 as~ u32` clamps to `[0, 2^32-1]` before narrowing. Those rows were
+accepted by the type checker and emitted nothing at all, so the narrowing ones produced invalid
+wasm and the same-width ones silently reinterpreted the bits — which is `as@`'s job, not `as~`'s.
+
 Widening out of `u32` is exact, so it uses plain `as`:
 
 ```
@@ -227,6 +248,19 @@ Everything else follows the same rule as the signed rows: `as!` to check, `as~`
 to round and clamp, `as@` where a distinct raw form exists. Note that `i32 ->
 u64` has no `as@` form, because sign-extending and zero-extending are different
 answers and neither is "the raw one" — go through `i64` or `u32` explicitly.
+
+#### A reference casts only to a reference
+
+`as` and `as!` on a reference are the upcast and the downcast. The target has to be a reference
+too — `string`, `i31ref`, `anyref`, a struct, an array or a nullable — with one exception that is a
+real conversion rather than a cast: `i31ref as i32`.
+
+```wac
+export i32 bad(string s) { return s as! i32; }   // error: cannot cast reference type 'string' to 'i32'
+```
+
+`[§wac-cast-matrix-6hkq4wz]` A compile error. It used to be accepted, and emitted a `ref.cast` to a
+numeric type — invalid wasm from a program the checker had approved.
 
 #### Cast errors
 

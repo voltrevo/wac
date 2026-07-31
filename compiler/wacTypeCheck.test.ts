@@ -463,7 +463,20 @@ Deno.test("wacTypeCheck: checked cast with as (lossless op)", () => {
 });
 
 Deno.test("wacTypeCheck: no valid numeric cast", () => {
-  fail("export void bad(bool x) { i64 y = x as i64; }", "no valid cast");
+  // `bool as i64` used to be the case here, and it was a gap rather than a rule: a bool widens
+  // exactly into every numeric type, and the emitter already had the instruction for it. `i31ref`
+  // converts only to and from `i32` — a 31-bit reference has no float form at all.
+  fail("export void bad(i64 x) { i31ref y = x as! i31ref; }", "no valid cast");
+  fail("export void bad2(bool x) { i31ref y = x as i31ref; }", "no valid cast");
+});
+
+Deno.test("wacTypeCheck: a bool widens exactly into every numeric type", () => {
+  ok("export i64 f(bool x) { return x as i64; }");
+  ok("export u64 f(bool x) { return x as u64; }");
+  ok("export f64 f(bool x) { return x as f64; }");
+  ok("export f32 f(bool x) { return x as f32; }");
+  // And the lossy spellings are refused, because there is nothing to lose.
+  fail("export f64 f(bool x) { return x as~ f64; }", "lossy cast not needed");
 });
 
 Deno.test("wacTypeCheck: redundant same-type cast", () => {
