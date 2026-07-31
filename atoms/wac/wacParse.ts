@@ -176,6 +176,12 @@ export type VariantDecl = {
 export type EnumDecl = {
   tag: "enum"; exported: boolean; name: string;
   variants: VariantDecl[];
+  /**
+   * Methods declared in the enum body, after the variants. They attach to the enum's
+   * generated base struct, so `this` is the enum type and `match (this)` is how a method
+   * reaches a variant.
+   */
+  methods: MethodDecl[];
 } & Pos;
 
 /**
@@ -1206,8 +1212,14 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const name = at("ident") ? advance().text : (err("expected enum name"), "?");
     expect("{");
 
+    // Variants first, comma-separated, then methods. A method is recognised by its shape —
+    // `type name(this, ...) { ... }` — which a variant can never have, so the two are
+    // distinguishable without a separator keyword. The variant list ends at the first thing
+    // that is not `IDENT` or `IDENT(...)` followed by a comma.
     const variants: VariantDecl[] = [];
+    const methods: MethodDecl[] = [];
     while (!at("}") && !at("eof")) {
+      if (looksLikeEnumMethod()) break;
       const vp = pos();
       const vname = at("ident") ? advance().text : (err("expected variant name"), "?");
       const fields: Param[] = [];
@@ -1218,8 +1230,71 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       variants.push({ name: vname, fields, ...vp });
       if (!consume(",")) break;
     }
+
+    while (!at("}") && !at("eof")) {
+      const mp = pos();
+      // `override` has no meaning here: the variants are compiler-generated subtypes of the
+      // base, so an override would be per-variant virtual dispatch — a different feature
+      // with its own design questions. Rejected rather than quietly accepted.
+      if (at("override")) {
+        err(`'override' is not allowed on an enum method`);
+        advance();
+      }
+      const returnType = parseType();
+      const mname = at("ident") ? advance().text : (err("expected method name"), "?");
+      expect("(");
+      let hasThis = false;
+      let thisConst = false;
+      const params: Param[] = [];
+      if (!at(")")) {
+        if (at("const") && tok(1).text === "this") {
+          thisConst = true; advance(); hasThis = true; advance();
+          if (consume(",")) parseParams(params);
+        } else if (at("this")) {
+          hasThis = true; advance();
+          if (consume(",")) parseParams(params);
+        } else {
+          parseParams(params);
+        }
+      }
+      expect(")");
+      // A static method on an enum would be written `Shape.make()`, which is already how a
+      // variant is constructed. Allowing both would make that spelling ambiguous, so a
+      // method here must take `this` until that ambiguity is decided deliberately.
+      if (!hasThis) {
+        err(`an enum method must take 'this' — 'Shape.name()' is how a variant is constructed`);
+      }
+      methods.push({
+        isOverride: false, returnType, name: mname, hasThis, thisConst, params,
+        body: parseBlock(), ...mp,
+      });
+    }
+
     expect("}");
-    return { tag: "enum", exported, name, variants, ...p };
+    return { tag: "enum", exported, name, variants, methods, ...p };
+  }
+
+  /**
+   * Does a method declaration start here, rather than another variant?
+   *
+   * A variant is `IDENT` or `IDENT(...)`; a method is a *type* followed by a name and a
+   * parameter list. The distinguishing shape is what follows the first identifier: a
+   * variant is followed by `,`, `}` or `(`, a method by another identifier (its name) or by
+   * a type suffix. `override` is unambiguous on its own.
+   */
+  function looksLikeEnumMethod(): boolean {
+    if (at("override")) return true;
+    if (at("void") || at("fn")) return true;
+    if (!at("ident")) return false;
+    // Skip the type's own suffixes: `i32[] name(...)`, `Node? name(...)`.
+    let j = cur + 1;
+    while (j < tokens.length) {
+      if (tokens[j]?.kind === "[" && tokens[j + 1]?.kind === "]") { j += 2; }
+      else if (tokens[j]?.kind === "?") { j++; }
+      else break;
+    }
+    // A second identifier followed by `(` is a method; anything else is a variant.
+    return tokens[j]?.kind === "ident" && tokens[j + 1]?.kind === "(";
   }
 
   function parseFuncDecl(): FuncDecl {

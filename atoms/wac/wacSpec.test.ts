@@ -5959,6 +5959,78 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §enum-methods-6vkq2wn — methods on an enum
+Deno.test("[§enum-methods-6vkq2wn] an enum may have methods", async () => {
+  // Issue 0028. The methods attach to the enum's generated base struct, so `this` is the
+  // enum type and `match (this)` is how a method reaches a variant. Nothing downstream
+  // needed teaching: from the resolver on, the base is an ordinary struct with methods.
+  const inst = await run(`
+    enum Shape {
+      Point,
+      Circle(f64 radius),
+      Rect(f64 w, f64 h),
+
+      f64 area(const this) {
+        match (this) {
+          case Point:      return 0.0;
+          case Circle(r):  return 3.0 * r * r;
+          case Rect(w, h): return w * h;
+        }
+      }
+      f64 twiceArea(const this) { return this.area() * 2.0; }
+      f64 scaled(const this, f64 k) { return this.area() * k; }
+    }
+    export f64 onLiteral()  { return Shape.Rect(3.0, 4.0).area(); }
+    export f64 onVariable() { Shape s = Shape.Circle(2.0); return s.area(); }
+    export f64 calling()    { return Shape.Rect(2.0, 3.0).twiceArea(); }
+    export f64 withArg()    { return Shape.Rect(2.0, 3.0).scaled(10.0); }
+    export f64 onPoint()    { Shape s = Shape.Point; return s.area(); }
+  `);
+  near(inst.call("onLiteral", []) as number, 12.0, "called on a constructed variant");
+  near(inst.call("onVariable", []) as number, 12.0, "and on an enum-typed variable");
+  near(inst.call("calling", []) as number, 12.0, "a method calling another through `this`");
+  near(inst.call("withArg", []) as number, 60.0, "a method with parameters beside `this`");
+  near(inst.call("onPoint", []) as number, 0.0, "and a payload-less variant");
+});
+
+Deno.test("[§enum-methods-6vkq2wn] a method may use the expression form and a mutable this", async () => {
+  const inst = await run(`
+    enum E {
+      A(i32 v), B,
+      i32 val(const this) { return match (this) { case A(v): v, case B: 0 }; }
+      i32 mutableThis(this) { return match (this) { case A(v): v * 2, case B: 1 }; }
+    }
+    export i32 exprForm() { return E.A(9).val(); }
+    export i32 mutThis()  { return E.A(4).mutableThis(); }
+  `);
+  eq(inst.call("exprForm", []), 9, "match as an expression inside a method");
+  eq(inst.call("mutThis", []), 8, "and a non-const receiver");
+});
+
+Deno.test("[§enum-methods-6vkq2wn] the two shapes that are refused, and why", () => {
+  // `override` would be per-variant virtual dispatch — the variants are compiler-generated
+  // subtypes of the base — which is a different feature with its own questions. Refused
+  // rather than quietly accepted and half-working.
+  const over = err(`enum E { A, B, override i32 val(const this) { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!over.includes("'override' is not allowed")) {
+    throw new Error(`expected the override diagnostic, got: ${over}`);
+  }
+  // A static method would be written `E.make()`, which is already how a variant is
+  // constructed, so that spelling has to mean one thing until it is decided deliberately.
+  const stat = err(`enum E { A, B, i32 make() { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!stat.includes("must take 'this'")) {
+    throw new Error(`expected the static-method diagnostic, got: ${stat}`);
+  }
+  // And a method may not take a variant's name, since `E.name` would mean two things.
+  const clash = err(`enum E { A(i32 v), B, i32 A(const this) { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!clash.includes("already a variant")) {
+    throw new Error(`expected the variant-clash diagnostic, got: ${clash}`);
+  }
+});
+
 // §enum-match-expr-4wnq7bk — `match` as an expression
 Deno.test("[§enum-match-expr-4wnq7bk] match can be an expression", async () => {
   // Issue 0026, and the last of the six items enums.md had listed as deferred. Arms give a
