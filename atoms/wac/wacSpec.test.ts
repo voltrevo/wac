@@ -7725,6 +7725,62 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+Deno.test("[§wac-const-deep-j6b1nyg] a match binding is unassignable without being deep-const", async () => {
+  // `isConst` on a variable meant two things at once: the name cannot be reassigned, and the object
+  // must not be written through. A match arm's payload binding is the first and not the second, so
+  // treating it as both made writing through a payload of a *mutable* enum an error — and made
+  // passing one to a function an error, which is what surfaced it.
+  const inst = await run(`
+    struct Data { i32 n; }
+    enum Val { Nil, Arr(Data d) }
+    i32 readIt(Data d) { return d.n; }
+    export i32 passedOn() {
+      Val v = Val.Arr(Data(7));
+      match (v) { case Nil: return 0; case Arr(d): return readIt(d); }
+    }
+    export i32 writtenThrough() {
+      Val v = Val.Arr(Data(1));
+      match (v) { case Nil: return 0; case Arr(d): { d.n = 5; return d.n; } }
+    }
+  `);
+  eq(inst.call("passedOn", []), 7, "a payload binding can be passed to a function");
+  eq(inst.call("writtenThrough", []), 5, "and written through, when the subject is not const");
+});
+
+Deno.test("[§wac-const-deep-j6b1nyg] what deep const does refuse", () => {
+  // The positions that are enforced, so a regression in them is caught. What is *not* enforced —
+  // passing a const reference to a non-const parameter — is issue 0052, with the analysis of why
+  // every enforcement point tried refused correct code.
+  for (const [what, src] of [
+    ["a write through const this",
+     `struct S { i32 v; void bad(const this) { this.v = 1; } } export i32 f() { return 0; }`],
+    ["a write through a const parameter",
+     `struct S { i32 v; } void bad(const S s) { s.v = 1; } export i32 f() { return 0; }`],
+    ["a write at depth",
+     `struct I { i32 v; }
+      struct O { I i; }
+      void bad(const O o) { o.i.v = 1; }
+      export i32 f() { return 0; }`],
+    ["a mutating method through const this",
+     `struct S { i32 v; void set(this, i32 x) { this.v = x; } void bad(const this) { this.set(1); } }
+      export i32 f() { return 0; }`],
+    ["laundering into a plain local",
+     `struct S { i32 v; } void bad(const S s) { S x = s; x.v = 1; } export i32 f() { return 0; }`],
+    ["laundering into a field",
+     `struct I { i32 v; }
+      struct H { I i; }
+      void bad(const I c, H h) { h.i = c; }
+      export i32 f() { return 0; }`],
+    ["laundering into an array element",
+     `struct S { i32 v; } void bad(const S s, S[] xs) { xs[0] = s; } export i32 f() { return 0; }`],
+    ["reassigning a const parameter",
+     `void bad(const i32 x) { x = 1; } export i32 f() { return 0; }`],
+  ] as [string, string][]) {
+    const m = err(src);
+    if (!/const/.test(m)) throw new Error(`${what}: expected a const diagnostic, got: ${m}`);
+  }
+});
+
 Deno.test("[§wac-continue-apojox2] continue in a do-while tests the condition", async () => {
   // A do-while is the one loop whose test is at the bottom, so it is the only one where the
   // `continue` target and the loop label differ — and `continue` branched to the loop label,

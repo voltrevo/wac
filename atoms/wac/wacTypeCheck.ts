@@ -388,7 +388,20 @@ function structHasDefault(
 // `Node? cur = this.head;` inside a `const this` method) — writes and
 // non-const method calls THROUGH it are errors, while reassigning the cursor
 // itself stays legal. This is the pointer-to-const / const-pointer split.
-type VarInfo = { type: WacType; isConst: boolean; refConst?: boolean };
+/**
+ * `isConst` and `deepConst` are two different questions and used to be one.
+ *
+ * `isConst` — the *name* cannot be reassigned. True for a `const` declaration, and also for a
+ * binding that is not a variable at all: a narrowed subject, a match arm's payload.
+ *
+ * `deepConst` — the *object* must not be written through, at any depth. True only where the author
+ * said `const`, or where the reference was reached through something that was.
+ *
+ * Conflating them made every match binding deep-const, so `total(a.at(i))` on a payload bound from
+ * a non-const subject was refused — which is how the argument check for deep const first went in
+ * and came straight back out.
+ */
+type VarInfo = { type: WacType; isConst: boolean; deepConst?: boolean; refConst?: boolean };
 type VarEnv  = Map<string, VarInfo>;
 
 // Ctx structurally satisfies Tables (structMap + structs).
@@ -554,9 +567,13 @@ export function wacTypeCheck(
       tctx.thisConst = m.thisConst;
       const env: VarEnv = new Map();
       if (m.hasThis) {
-        env.set("this", { type: structType(decl.name, undefined), isConst: m.thisConst });
+        env.set("this", {
+          type: structType(decl.name, undefined), isConst: m.thisConst, deepConst: m.thisConst,
+        });
       }
-      for (const p of m.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+      for (const p of m.params) {
+        env.set(p.name, { type: p.type, isConst: p.isConst, deepConst: p.isConst });
+      }
       checkBlock(m.body, env, tctx);
     }
 
@@ -606,7 +623,9 @@ export function wacTypeCheck(
       errors: [], enumByTypeIndex, returnType: decl.returnType, inLoop: 0, thisConst: false,
     };
     const env: VarEnv = new Map();
-    for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+    for (const p of decl.params) {
+      env.set(p.name, { type: p.type, isConst: p.isConst, deepConst: p.isConst });
+    }
     checkBlock(decl.body, env, tctx);
 
     // Suppressed on the same terms, plus one more: a generic function's *own* name is not in scope
@@ -634,7 +653,9 @@ export function wacTypeCheck(
     if (funcEntry.origin.kind === "func") {
       const decl = funcEntry.origin.decl;
       ctx.returnType = decl.returnType;
-      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+      for (const p of decl.params) {
+      env.set(p.name, { type: p.type, isConst: p.isConst, deepConst: p.isConst });
+    }
       const returns = checkBlock(decl.body, env, ctx);
       if (!returns && !isVoid(decl.returnType)) {
         errAt(ctx, `not all code paths return a value in '${decl.name}'`,
@@ -647,9 +668,13 @@ export function wacTypeCheck(
       ctx.returnType = decl.returnType;
       ctx.thisConst  = decl.thisConst;
       if (decl.hasThis) {
-        env.set("this", { type: structType(structName, structIdx), isConst: decl.thisConst });
+        env.set("this", {
+          type: structType(structName, structIdx), isConst: decl.thisConst, deepConst: decl.thisConst,
+        });
       }
-      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+      for (const p of decl.params) {
+      env.set(p.name, { type: p.type, isConst: p.isConst, deepConst: p.isConst });
+    }
       const returns = checkBlock(decl.body, env, ctx);
       if (!returns && !isVoid(decl.returnType)) {
         errAt(ctx, `not all code paths return a value in method '${structName}.${decl.name}'`,
@@ -886,7 +911,9 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       // fine (read-only cursors need reassignment), but the binding carries
       // the object's constness — writes through it stay forbidden.
       const refConst = isMutableRefType(stmt.type) && exprIsConst(stmt.init, env, ctx);
-      env.set(stmt.name, { type: stmt.type, isConst: stmt.isConst, refConst });
+      env.set(stmt.name, {
+        type: stmt.type, isConst: stmt.isConst, deepConst: stmt.isConst || refConst, refConst,
+      });
       return false;
     }
 
@@ -943,7 +970,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       const thenEnv: VarEnv = new Map(env);
       const narrowed = narrowedByCond(stmt.cond, env, ctx);
       if (narrowed !== null) {
-        thenEnv.set(narrowed.name, { type: narrowed.type, isConst: true });
+        // Deep const is inherited from the subject, not implied by the binding: narrowing makes
+        // the name unassignable, which is a different thing from the object being immutable.
+        thenEnv.set(narrowed.name, {
+          type: narrowed.type, isConst: true,
+          deepConst: env.get(narrowed.name)?.deepConst ?? false,
+        });
         stmt.narrowName = narrowed.name;
         stmt.narrowTypeIndex = narrowed.type.resolvedTypeIndex;
       }
@@ -1079,6 +1111,11 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
               `expected ${typeName(ctx.returnType)}, found ${typeName(vType)}`,
               retHint);
           }
+          // Deliberately *not* checked here: returning a const-rooted reference is legal, because
+          // the constness travels out with it — `exprIsConst` treats a call on a const receiver as
+          // const, so `this.getInner().mutate()` is refused at the call site instead. `tour.wac`
+          // states that rule and I broke it by adding a check here; the argument position is
+          // different only because a callee's body cannot see where its argument came from.
         }
       } else {
         if (!isVoid(ctx.returnType)) {
@@ -1247,7 +1284,10 @@ function lvalIsConst(lval: Lvalue, env: VarEnv, ctx: Ctx): boolean {
   switch (lval.kind) {
     case "lv-ident": {
       const v = env.get(lval.name);
-      if (v) return (v.isConst || v.refConst) ?? false;
+      // The *deep* question — may the object be written through — not "is the name assignable".
+      // A match arm's binding is unassignable and its object is only const if the subject was; this
+      // asked `isConst` and so refused `d.n = 5` for a payload of a perfectly mutable enum.
+      if (v) return (v.deepConst || v.refConst) ?? false;
       // A module-level constant array is one object shared by every use, so a
       // write through it would be visible everywhere. Const is deep here for
       // the same reason it is deep anywhere else.
@@ -1488,13 +1528,15 @@ function checkMatchArms(
           arm.line, arm.col, arm.variant.length);
       }
 
-      // The subject narrows to the variant type, as a const shadowing binding.
+      // The subject narrows to the variant type, as a const shadowing binding — unassignable, and
+      // deep-const only if the subject already was.
+      const subjectDeep = exprIsConst(subject, env, ctx);
       if (subjectName !== null) {
         armEnv.set(subjectName, {
           type: { kind: "struct", name: variant.name,
                   resolvedTypeIndex: variant.entry.typeIndex,
                   line: arm.line, col: arm.col },
-          isConst: true,
+          isConst: true, deepConst: subjectDeep,
         });
       }
 
@@ -1513,7 +1555,11 @@ function checkMatchArms(
           continue;
         }
         bound.add(name);
-        armEnv.set(name, { type: variant.fields[i].type, isConst: true });
+        // A payload binding reaches into the subject, so it is deep-const exactly when the subject
+        // is — and unassignable either way, because it is a pattern binding rather than a variable.
+        armEnv.set(name, {
+          type: variant.fields[i].type, isConst: true, deepConst: subjectDeep,
+        });
       }
     }
 
@@ -2151,7 +2197,7 @@ function inferCall(
       errAt(ctx, `'${name}' is a struct type, not a function`, callee.line, callee.col);
       return null;
     }
-    const ps  = funcParams(se.entry).map(p => p.type);
+    const ps  = funcParams(se.entry).map((p) => p.type);
     const ret = funcReturnType(se.entry);
     return checkArgList(args, ps, ret, expr, env, ctx);
   }
@@ -2399,6 +2445,10 @@ function checkArgList(
       const contextStart = args[i].line !== callExpr.line ? callExpr.line : undefined;
       checkAssign(params[i], at, args[i].line, args[i].col, ctx,
         exprText(args[i]).length, undefined, undefined, contextStart);
+      // Deliberately *not* checked: whether a const-rooted reference may be passed to a non-const
+      // parameter. It is a hole in deep const — the callee can write through it — and every place
+      // to enforce it refused correct code instead. `spec/spec/variables.md` records the hole and
+      // issue 0052 records the three attempts.
     }
   }
   // Extra args still inferred (for error reporting)
@@ -2992,11 +3042,14 @@ function exprIsConst(expr: Expr, env: VarEnv, ctx: Ctx): boolean {
   switch (expr.kind) {
     case "ident": {
       const v = env.get(expr.name);
-      return (v?.isConst || v?.refConst) ?? false;
+      return (v?.deepConst || v?.refConst) ?? false;
     }
     case "field":  return exprIsConst(expr.expr, env, ctx);
     case "unwrap": return exprIsConst(expr.expr, env, ctx);
     case "cast":   return exprIsConst(expr.expr, env, ctx);
+    // Not `index`: an element of a const array *is* reached through it, but adding that made the
+    // assignment rule refuse copying a key out of a const container into a fresh local array, which
+    // is what an accessor does. Part of the same hole — see issue 0052.
     // Either branch const-rooted taints the result (conservative).
     case "ternary": return exprIsConst(expr.then, env, ctx) || exprIsConst(expr.else_, env, ctx);
     // A method call through a const receiver yields a const result: const is

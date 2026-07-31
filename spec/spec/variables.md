@@ -39,6 +39,22 @@ t.left!.val = 5;         // error: const is deep
 `[§wac-const-deep-j6b1nyg]` Writing through any depth of a `const` reference is a
 compile error.
 
+The constness travels with the reference however it was obtained — through a field, through a
+method's return value, or by copying it into a fresh binding — so laundering it through a local or
+a field is refused too. `[§wac-const-deep-j6b1nyg]`
+
+**One hole, currently.** Passing a const reference to a function whose parameter is not `const`
+is accepted, and that function may write through it:
+
+```wac
+void mutate(S s) { s.v = 1; }
+void bad(const S s) { mutate(s); }     // accepted today
+```
+
+Declaring the parameter `const` is the fix at the call site, and there is nothing to write for a
+funcref, whose type has no place for it. Closing this properly means const-ness in the type rather
+than on the variable — see issue 0052, which records what each attempted enforcement broke.
+
 ### Module-level constants
 
 A `const` at the top level names a compile-time value. It has no storage: the
