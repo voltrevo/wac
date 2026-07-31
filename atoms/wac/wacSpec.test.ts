@@ -2497,10 +2497,50 @@ Deno.test(`[§wac-str-emoji-m4jw7rk] emoji.len() returns 10 for "hello 😀"`, a
 // ── §wac-str-esc-h9qm3v7 — testEscapes() returns 5 ─────────────────────────
 
 Deno.test(`[§wac-str-esc-h9qm3v7] testEscapes() returns 5`, async () => {
-  // "h\te\n\r\0" = h, tab, e, newline, carriage-return, null = but only 5 visible
-  // Actually: "hell\0" = 5 bytes (h, e, l, l, null)
-  const inst = await run(`export i32 testEscapes() { string s = "hell\\0"; return s.len(); }`);
-  eq(inst.call("testEscapes", []), 5, `"hell\\0".len() = 5`);
+  // The spec's own program: five one-character strings, one per escape form. The
+  // previous version of this test compiled `"hell\0"` instead, which returns 5
+  // without ever exercising `\\` or `\"` — the two that were actually broken.
+  const inst = await run(`
+    export i32 testEscapes() {
+      string nl = "\\n";
+      string tab = "\\t";
+      string nul = "\\0";
+      string bs = "\\\\";
+      string qt = "\\"";
+      return nl.len() + tab.len() + nul.len() + bs.len() + qt.len();
+    }
+  `);
+  eq(inst.call("testEscapes", []), 5, "each of the five escapes is one byte");
+});
+
+// ── §wac-str-esc-mid-* — an escape does not consume what follows it ──────────
+
+Deno.test(`[§wac-str-esc-mid-w7kn3qf] escMid() returns 3`, async () => {
+  const inst = await run(`export i32 escMid() { return "a\\\\b".len(); }`);
+  eq(inst.call("escMid", []), 3, `"a\\b" is a, backslash, b`);
+});
+
+Deno.test(`[§wac-str-esc-dbl-h2mf9xp] escDouble() returns 2`, async () => {
+  const inst = await run(`export i32 escDouble() { return "\\\\\\\\".len(); }`);
+  eq(inst.call("escDouble", []), 2, `"\\\\" is two backslashes`);
+});
+
+Deno.test(`[§wac-str-esc-run-r5jw4kt] escRun() returns 5`, async () => {
+  const inst = await run(`export i32 escRun() { return "[\\\\]^_".len(); }`);
+  eq(inst.call("escRun", []), 5, `"[\\]^_" keeps every character after the escape`);
+});
+
+Deno.test(`[§wac-str-esc-mid-w7kn3qf] the characters around an escape are the right ones`, async () => {
+  // Length alone would also pass if the escape emitted two backslashes and
+  // dropped the `b`, so check the characters themselves. Compared inside wac
+  // because a `string` cannot cross wacInstance's boundary.
+  const inst = await run(`
+    export bool escChars() {
+      string s = "a\\\\b";
+      return s[0] == "a" && s[1] == "\\\\" && s[2] == "b";
+    }
+  `);
+  eq(inst.call("escChars", []), true, `"a\\b" is exactly a, backslash, b`);
 });
 
 // ── §wac-str-len-p2hd9xf — strLen() returns 3 ──────────────────────────────

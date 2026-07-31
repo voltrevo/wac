@@ -36,6 +36,25 @@ export i32 testEscapes() {
 `[§wac-str-esc-h9qm3v7]` `testEscapes()` returns `5` — each escape is a single
 byte.
 
+An escape is one byte wherever it sits, including with text after it. The
+resolved character is never rescanned, so a `\\` does not consume what follows
+it:
+
+```wac
+export i32 escMid()    { return "a\\b".len(); }
+export i32 escDouble() { return "\\\\".len(); }
+export i32 escRun()    { return "[\\]^_".len(); }
+```
+
+`[§wac-str-esc-mid-w7kn3qf]` `escMid()` returns `3` — `a`, one backslash, `b`.
+`[§wac-str-esc-dbl-h2mf9xp]` `escDouble()` returns `2` — two backslashes, not one.
+`[§wac-str-esc-run-r5jw4kt]` `escRun()` returns `5` — a backslash mid-run leaves
+the following characters alone.
+
+These are separate requirements from the one above because a literal whose only
+escape sits at the very end cannot distinguish a correct implementation from one
+that rescans: there is nothing after the escape left to lose.
+
 ### Length
 
 `.len()` returns byte length.
