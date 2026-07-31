@@ -69,6 +69,7 @@ export type Stmt =
   | ({ kind: "for";      init: Stmt | null; cond: Expr | null; update: Stmt | null; body: Block } & Pos)
   | ({ kind: "dowhile";  body: Block; cond: Expr } & Pos)
   | ({ kind: "switch";   expr: Expr; cases: SwitchCase[] } & Pos)
+  | ({ kind: "match";    subject: Expr; arms: MatchArm[] } & Pos)
   | ({ kind: "return";   value: Expr | null } & Pos)
   | ({ kind: "break" } & Pos)
   | ({ kind: "continue" } & Pos)
@@ -78,6 +79,19 @@ export type Stmt =
 
 // else branch: another if, or a plain block (null = no else)
 export type ElseBranch = ({ kind: "else-if"; stmt: Stmt } & Pos) | ({ kind: "else-block"; block: Block } & Pos) | null;
+
+/**
+ * One `match` arm.
+ *
+ * `variant` is null for the `else` arm. `bindings` names the payload fields
+ * positionally; an empty array means the pattern omitted its parentheses, which
+ * ignores every payload. A binding named `_` is a deliberate discard and may repeat.
+ */
+export type MatchArm = {
+  variant: string | null;
+  bindings: string[];
+  body: Stmt[];
+} & Pos;
 
 export type Block      = { stmts: Stmt[] } & Pos;
 export type SwitchCase = { value: Expr | "default"; body: Stmt[] } & Pos;
@@ -105,7 +119,18 @@ export type FuncDecl = {
   params: Param[]; body: Block;
 } & Pos;
 
-export type TopLevel = Import | StructDecl | FuncDecl;
+/** One variant of an enum, with named payload fields. */
+export type VariantDecl = {
+  name: string;
+  fields: Param[];
+} & Pos;
+
+export type EnumDecl = {
+  tag: "enum"; exported: boolean; name: string;
+  variants: VariantDecl[];
+} & Pos;
+
+export type TopLevel = Import | StructDecl | FuncDecl | EnumDecl;
 export type Program  = { items: TopLevel[] };
 
 export type ParseError = { message: string; file: string; line: number; col: number; span?: number; annotation?: string; hint?: string };
@@ -712,6 +737,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("for"))      return parseForStmt();
     if (at("do"))       return parseDoWhileStmt();
     if (at("switch"))   return parseSwitchStmt();
+    if (at("match"))    return parseMatchStmt();
     if (at("return")) {
       advance();
       const value = at(";") ? null : parseExpr();
@@ -849,6 +875,62 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return stmts;
   }
 
+  /**
+   * `match (subject) { case Variant(a, b): ... else: ... }`
+   *
+   * Arms reuse `case ...:` with statement bodies, exactly like `switch`, so there is
+   * one arm syntax in the language. Exhaustiveness, duplicate arms and the reachability
+   * of `else` are all checked later — the parser's job is only to record what was
+   * written, so that one malformed arm does not derail the arms after it.
+   */
+  function parseMatchStmt(): Stmt {
+    const p = pos();
+    expect("match");
+    expect("(");
+    const subject = parseExpr();
+    expect(")");
+    expect("{");
+
+    const arms: MatchArm[] = [];
+    while (!at("}") && !at("eof")) {
+      const ap = pos();
+      if (consume("else")) {
+        expect(":");
+        arms.push({ variant: null, bindings: [], body: parseArmBody(), ...ap });
+        continue;
+      }
+      if (!consume("case")) {
+        err(`expected 'case' or 'else' in match`);
+        advance();
+        continue;
+      }
+      const variant = at("ident") ? advance().text : (err("expected variant name"), "?");
+      const bindings: string[] = [];
+      if (consume("(")) {
+        if (!at(")")) {
+          do {
+            if (at(")")) break;   // trailing comma
+            bindings.push(at("ident") ? advance().text : (err("expected binding name"), "?"));
+          } while (consume(","));
+        }
+        expect(")");
+      }
+      expect(":");
+      arms.push({ variant, bindings, body: parseArmBody(), ...ap });
+    }
+    expect("}");
+    return { kind: "match", subject, arms, ...p };
+  }
+
+  /** An arm body runs to the next `case`, `else` or the closing brace. */
+  function parseArmBody(): Stmt[] {
+    const body: Stmt[] = [];
+    while (!at("case") && !at("else") && !at("}") && !at("eof")) {
+      body.push(parseStatement());
+    }
+    return body;
+  }
+
   function parseSwitchStmt(): Stmt {
     const p = pos(); advance(); // switch
     expect("("); const expr = parseExpr(); expect(")"); expect("{");
@@ -970,6 +1052,34 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return { tag: "struct", isConst, exported, name, parent, fields, methods, ...p };
   }
 
+  /**
+   * `enum Name { Variant, Variant(T field), ... }`
+   *
+   * A variant with no payload takes no parentheses. A trailing comma after the last
+   * variant is allowed, like every other comma-separated list.
+   */
+  function parseEnumDecl(exported: boolean): EnumDecl {
+    const p = pos();
+    expect("enum");
+    const name = at("ident") ? advance().text : (err("expected enum name"), "?");
+    expect("{");
+
+    const variants: VariantDecl[] = [];
+    while (!at("}") && !at("eof")) {
+      const vp = pos();
+      const vname = at("ident") ? advance().text : (err("expected variant name"), "?");
+      const fields: Param[] = [];
+      if (consume("(")) {
+        if (!at(")")) parseParams(fields);
+        expect(")");
+      }
+      variants.push({ name: vname, fields, ...vp });
+      if (!consume(",")) break;
+    }
+    expect("}");
+    return { tag: "enum", exported, name, variants, ...p };
+  }
+
   function parseFuncDecl(): FuncDecl {
     const p = pos();
     const exported = consume("export");
@@ -996,6 +1106,11 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       // the `const` itself, so only the `export` is consumed here.
       advance(); // skip 'export'
       items.push(parseStructDecl(true));
+    } else if (at("enum")) {
+      items.push(parseEnumDecl(false));
+    } else if (at("export") && at("enum", 1)) {
+      advance(); // skip 'export'
+      items.push(parseEnumDecl(true));
     } else if (at("export") || at("fn") || at("void") || (at("ident"))) {
       items.push(parseFuncDecl());
     } else {
