@@ -241,6 +241,20 @@ export string hi() { return string.fromBytes(u8[]('h', 'i')); }
 `[§wac-str-frombytes-utf8-m9fj2xr]` The bytes are copied verbatim, so
 `u8[](0xC3, 0xA9)` gives `"é"` — one character, two bytes.
 
+**It does not validate.** The bytes are taken to be UTF-8 and are not checked, so a string can
+hold sequences that are not valid UTF-8. That is deliberate: validating would cost a pass over
+every string built this way, and the callers that need it — a decoder, a parser — are better
+placed to check than the constructor is.
+
+What that means for the operations: `len()` counts bytes, so it is unaffected. Indexing a byte
+that **begins no UTF-8 sequence** yields `""`, the same as indexing into the middle of a
+sequence. `[§wac-str-badlead-7kvq2mn]` So `string.fromBytes(u8[](0xFF, 0x41))[0]` is `""`.
+
+That agreement is newer than it looks. A continuation byte (`0x80`–`0xBF`) always yielded `""`,
+but `0xF8`–`0xFF` — which begin no sequence either — fell through the sequence-length logic and
+decoded as one-byte characters. Two equally un-indexable cases behaved differently, and only one
+was written down. See issue 0038.
+
 It is a copy, not a view. Writing to the array afterwards does not change the
 string, which is what lets `string` stay immutable.
 
@@ -279,5 +293,34 @@ i32 pos = s.indexOf("world");    // 6 — byte offset, -1 if not found
 ```
 
 `[§wac-str-slice-h8wd4pm]` `"hello world".slice(6, 11)` returns `"world"`.
+
+**`slice` clamps; it never traps.** The result is the overlap of the requested range with the
+string, so every combination of arguments has an answer:
+
+| call on `"hello"` | result | why |
+|---|---|---|
+| `slice(3, 99)` | `"lo"` | the end clamps to the length |
+| `slice(9, 99)` | `""` | the start clamps to the length, leaving nothing |
+| `slice(3, 1)` | `""` | a reversed range is empty, not an error |
+| `slice(-2, 3)` | `"hel"` | a negative start clamps to 0 |
+| `slice(2, 2)` | `""` | an empty range |
+
+`[§wac-str-slice-clamp-3qnv7wk]` All five hold.
+
+This differs deliberately from indexing, which **traps** out of range (see below). The two are
+not inconsistent by accident: `slice` asks "give me the part of this string in that range", and
+every range has an overlap, including an empty one — clamping is the answer to the question
+asked. `s[i]` asks for one specific character, and if there is no such character there is no
+answer to give, so it traps.
+
+The negative start is the case worth being explicit about, because a reader may expect two other
+behaviours and gets neither. It does **not** trap, even though the equivalent arithmetic mistake
+in `s[i]` would; and it does **not** count from the end — `"hello".slice(-2, 3)` is `"hel"`, not
+Python's `"lo"`. wac has no from-the-end indexing anywhere, and introducing it only in `slice`
+would be worse than clamping.
+
+The cost of clamping is real and is accepted: a caller who computes an offset wrongly gets a
+plausible short string rather than a trap. If that becomes a source of bugs, the fix is a
+separate checked operation, not changing this one.
 `[§wac-str-indexof-j2fn5rk]` `"hello world".indexOf("world")` returns `6`.
 `[§wac-str-indexof-miss-k4mf8js]` `"hello".indexOf("xyz")` returns `-1`.

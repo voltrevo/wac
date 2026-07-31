@@ -193,10 +193,22 @@ function genWrapper(exp: WacExport): WrapperResult {
     const elemBase = exp.ret.replace("[]", "");
     lines.push(`  const _result = ${callExpr};`);
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
-  } else if (exp.ret === "i64" || exp.ret === "u64") {
+  } else if (exp.ret === "u64") {
+    // wac's u64 is wasm's i64, which is right — signedness lives in the instruction, not the
+    // type. But WebAssembly's JS API hands an i64 back as a *signed* BigInt, so a value with
+    // the high bit set arrived as `want - 2**64`. Reinterpreting is the caller's only chance
+    // to see the value the wac function returned [issue 0039].
+    lines.push(`  return BigInt.asUintN(64, ${callExpr} as bigint);`);
+  } else if (exp.ret === "i64") {
     lines.push(`  return ${callExpr} as bigint;`);
   } else if (exp.ret === "bool") {
     lines.push(`  return Boolean(${callExpr});`);
+  } else if (exp.ret === "u32") {
+    // u8 and u16 cannot be return types at all (packed types are array elements only), so
+    // u32 is the whole of the 32-bit case.
+    // Same for the 32-bit and packed unsigned types: the JS API converts i32 to a signed
+    // number. `>>> 0` is the standard reinterpretation and is exact for all 32 bits.
+    lines.push(`  return (${callExpr} as number) >>> 0;`);
   } else {
     lines.push(`  return ${callExpr} as number;`);
   }

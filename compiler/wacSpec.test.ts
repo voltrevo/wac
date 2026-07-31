@@ -5973,6 +5973,84 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §wac-str-slice-clamp-3qnv7wk — slice clamps rather than trapping
+Deno.test("[§wac-str-slice-clamp-3qnv7wk] slice clamps at both ends and never traps", async () => {
+  // Issue 0037: the behaviour was definite but undocumented, so every edge was undefined in
+  // the spec sense. No code change — clamping is the right answer to the question `slice` asks
+  // — but the rule is now written down and pinned, including the two things a reader might
+  // expect from a negative start and not get: a trap, or Python's from-the-end indexing.
+  const inst = await run(`
+    export i32 endPast()   { return "hello".slice(3, 99).len(); }
+    export i32 startPast() { return "hello".slice(9, 99).len(); }
+    export i32 reversed()  { return "hello".slice(3, 1).len(); }
+    export i32 negStart()  { return "hello".slice(-2, 3).len(); }
+    export i32 negBoth()   { return "hello".slice(-4, -1).len(); }
+    export i32 whole()     { return "hello".slice(0, 5).len(); }
+    export i32 emptyRange() { return "hello".slice(2, 2).len(); }
+    // A negative start clamps to 0, so the slice begins at 'h' — not at 'l' as it would if
+    // negatives counted from the end.
+    export i32 negFromStart() { return "hello".slice(-2, 3)[0] == "h" ? 1 : 0; }
+  `);
+  eq(inst.call("endPast", []), 2, "the end clamps to the length");
+  eq(inst.call("startPast", []), 0, "a start past the end leaves nothing");
+  eq(inst.call("reversed", []), 0, "a reversed range is empty, not an error");
+  eq(inst.call("negStart", []), 3, "a negative start clamps to 0");
+  eq(inst.call("negBoth", []), 0, "both negative gives an empty range");
+  eq(inst.call("whole", []), 5, "the whole string");
+  eq(inst.call("emptyRange", []), 0, "an empty range");
+  eq(inst.call("negFromStart", []), 1, "negatives clamp; they do not count from the end");
+});
+
+// §wac-str-badlead-7kvq2mn — a byte that begins no UTF-8 sequence is not a character
+Deno.test("[§wac-str-badlead-7kvq2mn] indexing an invalid lead byte gives the empty string", async () => {
+  // Issue 0038. `string.fromBytes` copies bytes verbatim — documented — so a string can hold
+  // invalid UTF-8. Indexing a *continuation* byte already returned "", but 0xF8..0xFF fell
+  // through the sequence-length chain to its `len = 1` default and decoded as a one-byte
+  // character. The two cases are equally un-indexable and now agree.
+  const inst = await run(`
+    export i32 ff()      { u8[] b = u8[](0xFF, 0xFE, 0x41); return string.fromBytes(b)[0].len(); }
+    export i32 f8()      { u8[] b = u8[](0xF8, 0x41);       return string.fromBytes(b)[0].len(); }
+    export i32 cont()    { u8[] b = u8[](0x80, 0x41);       return string.fromBytes(b)[0].len(); }
+    export i32 bytesLen() { u8[] b = u8[](0xFF, 0xFE, 0x41); return string.fromBytes(b).len(); }
+    // The valid leads must be untouched, and 0xF7 is the last valid one.
+    export i32 ascii()   { return "hello"[0].len(); }
+    export i32 twoByte() { return "é"[0].len(); }
+    export i32 three()   { return "→"[0].len(); }
+    export i32 four()    { return "😀"[0].len(); }
+    export i32 f7()      { u8[] b = u8[](0xF7, 0x80, 0x80, 0x80); return string.fromBytes(b)[0].len(); }
+  `);
+  eq(inst.call("ff", []), 0, "0xFF begins no sequence");
+  eq(inst.call("f8", []), 0, "nor does 0xF8, the first invalid lead");
+  eq(inst.call("cont", []), 0, "a continuation byte, as before");
+  eq(inst.call("bytesLen", []), 3, "len() still counts bytes verbatim");
+  eq(inst.call("ascii", []), 1, "ascii");
+  eq(inst.call("twoByte", []), 2, "two-byte lead");
+  eq(inst.call("three", []), 3, "three-byte lead");
+  eq(inst.call("four", []), 4, "four-byte lead");
+  eq(inst.call("f7", []), 4, "0xF7 is still a valid four-byte lead");
+});
+
+// §wac-bind-unsigned-5wqk3np — unsigned returns reach JS unsigned
+Deno.test("[§wac-bind-unsigned-5wqk3np] u32 and u64 returns are not signed in JS", () => {
+  // Issue 0039. wac's u32/u64 are wasm's i32/i64, which is right — signedness lives in the
+  // instruction. But WebAssembly's JS API converts i32 to a signed number and i64 to a signed
+  // BigInt, so a high-bit value arrived as `want - 2**width`. The wrapper is the only place
+  // that can reinterpret it.
+  const r = wacCompile(new Map([["main.wac", `
+    export u32 u32High() { return 0xFF000000; }
+    export u64 u64High() { return 0xFF00000000000000; }
+    export i32 i32High() { return 0xFF000000; }
+    export i64 i64High() { return 0xFF00000000000000; }
+  `]]), "main.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  eq(/return \(\(_exports\.u32High[^\n]*\) >>> 0;/.test(ts), true, "u32 is reinterpreted with >>> 0");
+  eq(/BigInt\.asUintN\(64, \(_exports\.u64High/.test(ts), true, "u64 with BigInt.asUintN");
+  // The signed types must be left exactly as they were.
+  eq(/return \(_exports\.i32High as CallableFunction\)\(\) as number;/.test(ts), true, "i32 untouched");
+  eq(/return \(_exports\.i64High as CallableFunction\)\(\) as bigint;/.test(ts), true, "i64 untouched");
+});
+
 // §wac-samename-struct-4jhq7wn — two modules may declare a struct with one name
 Deno.test("[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct", async () => {
   // Issue 0041, reported by agent-b after an hour lost to it. The emitter resolved a written

@@ -1,10 +1,12 @@
 # 0039 — bindgen surfaces `u32`/`u64` returns to JS as signed
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** ecde150
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug
+- **Covered by:** `§wac-bind-unsigned-5wqk3np`
 - **Symptom:** wrong answer, no error
 
 A function returning `u32` or `u64` reaches JS as a two's-complement *signed* value
@@ -78,3 +80,18 @@ No wac program is wrong because of this — the arithmetic inside the module is 
 and the existing crypto vectors all pass, because those exports return `u8[]`. It bites
 exactly at the boundary, and only for the unsigned scalar types, which are new enough
 that no caller had returned one yet.
+
+
+## Resolution (agent-a)
+
+The wrapper reinterprets: `>>> 0` for `u32`, `BigInt.asUintN(64, ...)` for `u64`. Signed types
+are untouched, and there is a test asserting that too, since making `i32` unsigned would be the
+obvious way to get this wrong.
+
+`u8` and `u16` need nothing: packed types are array elements only and cannot be a return type,
+which the diagnostic confirmed when I tried. Unsigned array *elements* were already correct —
+the copy helpers use `array.get_u`.
+
+The report's diagnosis was exactly right, including that the representation is not the problem:
+wac's `u32` being wasm's `i32` is correct, and the conversion is the JS API's. The wrapper is the
+only place that can undo it.
