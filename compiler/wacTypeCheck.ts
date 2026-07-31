@@ -204,9 +204,53 @@ function isRefType(t: WacType): boolean {
 }
 /** Packed array element types. i8/u8 and i16/u16 share their storage — one
  *  byte or two — and differ only in which array.get the read uses. */
+/**
+ * A packed type in an *array element* position, where its compact storage is the point.
+ *
+ * Strictly the primitive: `u8?` is not this. A nullable packed element is a nullable *reference* to
+ * a boxed byte, so it reads back as `u8?` rather than as `i32` — which is what makes `u8?[]` an
+ * ordinary array rather than a packed one [issue 0050].
+ */
 function isPackedElem(t: WacType): boolean {
   return t.kind === "prim" &&
     (t.name === "i8" || t.name === "i16" || t.name === "u8" || t.name === "u16");
+}
+
+/**
+ * A packed type used as a *slot* — a field, a parameter, a return type, a local.
+ *
+ * Through a nullable, because the rule is "packed types only exist as array elements" and `u8` being
+ * refused in those positions while `u8?` was accepted is not a rule anyone stated. Half a rule is
+ * worse than either answer. A `u8?` local also reported a type mismatch rather than the packed rule,
+ * which is how this was noticed.
+ */
+function isPackedSlot(t: WacType): boolean {
+  return isPackedElem(t.kind === "nullable" ? t.inner : t);
+}
+
+/**
+ * Does this type contain a nullable packed type anywhere?
+ *
+ * `u8?` has no coherent use. As a slot it is refused by the rule above. As an *array element* it
+ * survived a little longer — `u8?[]` is a nullable-reference array, so the storage is real — but
+ * unwrapping one gives a `u8`, and `u8` cannot be a local, a parameter, a field or a return type,
+ * so the value has nowhere to go. Refused rather than half-supported: a type whose values cannot be
+ * held is not a type, and `i32?` or a `u8[]` with a separate presence flag says the same thing.
+ */
+function hasNullablePacked(t: WacType): boolean {
+  if (t.kind === "nullable") return isPackedElem(t.inner) || hasNullablePacked(t.inner);
+  if (t.kind === "array") return hasNullablePacked(t.elem);
+  if (t.kind === "funcref") {
+    return t.params.some(hasNullablePacked) || hasNullablePacked(t.ret);
+  }
+  return false;
+}
+
+/** The message for one, which names the two ways to say what was meant. */
+function nullablePackedMessage(t: WacType): string {
+  return `${typeName(t)} contains a nullable packed type, which has no representation — ` +
+    `unwrapping one gives a value no slot can hold. Use i32? for the value, or a packed array ` +
+    `with a separate presence flag`;
 }
 function isVoid(t: WacType): boolean {
   return t.kind === "prim" && t.name === "void";
@@ -642,9 +686,11 @@ export function wacTypeCheck(
 /** Check struct field types and packed-type restrictions. */
 function checkStructShape(s: StructDecl, ctx: Ctx): void {
   for (const f of s.fields) {
-    if (isPackedElem(f.type)) {
+    if (isPackedSlot(f.type)) {
       errAt(ctx, `packed type '${typeName(f.type)}' cannot be used as a struct field`,
         f.line, f.col);
+    } else if (hasNullablePacked(f.type)) {
+      errAt(ctx, nullablePackedMessage(f.type), f.line, f.col);
     }
     if (isVoid(f.type)) {
       errAt(ctx, `field type cannot be 'void'`, f.line, f.col);
@@ -678,14 +724,19 @@ function checkFuncSig(
     seen.add(p.name);
   }
   for (const p of params) {
-    if (isPackedElem(p.type)) {
+    if (isPackedSlot(p.type)) {
       errAt(ctx, `packed type '${typeName(p.type)}' cannot be a parameter type`, p.line, p.col);
+    } else if (hasNullablePacked(p.type)) {
+      errAt(ctx, nullablePackedMessage(p.type), p.line, p.col);
     }
     if (isVoid(p.type)) {
       errAt(ctx, `parameter type cannot be 'void'`, p.line, p.col);
     }
   }
-  if (isPackedElem(returnType)) {
+  if (hasNullablePacked(returnType)) {
+    errAt(ctx, nullablePackedMessage(returnType), line, col);
+  }
+  if (isPackedSlot(returnType)) {
     errAt(ctx, `packed type '${typeName(returnType)}' cannot be a return type`, line, col);
   }
 }
@@ -804,7 +855,10 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
   switch (stmt.kind) {
 
     case "var": {
-      if (isPackedElem(stmt.type)) {
+      if (hasNullablePacked(stmt.type)) {
+        errAt(ctx, nullablePackedMessage(stmt.type), stmt.line, stmt.col);
+      }
+      if (isPackedSlot(stmt.type)) {
         errAt(ctx, `packed type '${typeName(stmt.type)}' cannot be a variable type`,
           stmt.line, stmt.col);
       }
