@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0023](open/0023-emitcall-direct-call-branch-is-unreachable.md) | `emitCall`'s direct-call branch is unreachable | bug | not implemented |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
 | [0033](open/0033-unchecked-integer-overflow.md) | no way to detect integer overflow | missing feature | wrong answer |
 | [0032](open/0032-constants-of-aggregate-type.md) | constants of struct type are rejected | missing feature | compile error |
