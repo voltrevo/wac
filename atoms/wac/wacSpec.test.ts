@@ -1542,6 +1542,68 @@ Deno.test(`[§wac-str-fromcp-k8nf3wq] arity and argument type are checked`, () =
   if (!c.includes("no static method")) throw new Error(`unexpected: ${c}`);
 });
 
+// ── §wac-f64bits-* — f64.toBits / f64.fromBits ───────────────────────────────
+
+Deno.test(`[§wac-f64bits-h3kq9wn] the bit pattern matches IEEE 754`, async () => {
+  const inst = await run(`
+    export u64 one()      { return f64.toBits(1.0); }
+    export u64 half()     { return f64.toBits(0.5); }
+    export u64 negTwoFive(){ return f64.toBits(-2.5); }
+    export u64 tiny()     { return f64.toBits(5.0e-324); }
+    export f64 back()     { return f64.fromBits(0x3FF0000000000000); }
+    export f64 backTiny() { return f64.fromBits(1); }
+  `);
+  // Expected patterns from the host's own DataView, not from memory.
+  const view = new DataView(new ArrayBuffer(8));
+  const bitsOf = (x: number): bigint => { view.setFloat64(0, x); return view.getBigUint64(0); };
+  const asU64 = (v: unknown): bigint => (v as bigint) & 0xFFFFFFFFFFFFFFFFn;
+  eq(asU64(inst.call("one", [])), bitsOf(1.0), "1.0");
+  eq(asU64(inst.call("half", [])), bitsOf(0.5), "0.5");
+  eq(asU64(inst.call("negTwoFive", [])), bitsOf(-2.5), "-2.5 — the sign bit is set");
+  eq(asU64(inst.call("tiny", [])), bitsOf(5e-324), "the smallest subnormal is 1");
+  eq(inst.call("back", []), 1.0, "fromBits inverts it");
+  eq(inst.call("backTiny", []), 5e-324, "including for a subnormal");
+});
+
+Deno.test(`[§wac-f64bits-round-r7mf4jp] fromBits(toBits(x)) == x`, async () => {
+  const inst = await run(`
+    export bool round(f64 x) { return f64.fromBits(f64.toBits(x)) == x; }
+    // NaN is not equal to itself, so compare the bits instead.
+    export bool roundNaN() {
+      f64 nan = 0.0 / 0.0;
+      return f64.toBits(f64.fromBits(f64.toBits(nan))) == f64.toBits(nan);
+    }
+  `);
+  for (const x of [1.0, -1.0, 0.5, 3.14159265358979, 1e308, -1e308, 5e-324,
+                   2.2250738585072014e-308, 1 / 0, -1 / 0]) {
+    eq(inst.call("round", [x]), true, `round-trips ${x}`);
+  }
+  eq(inst.call("roundNaN", []), true, "NaN's payload survives the round trip");
+});
+
+Deno.test(`[§wac-f64bits-zero-w2nk6dq] the sign of zero is visible`, async () => {
+  const inst = await run(`
+    export bool distinct() { return f64.toBits(-0.0) != f64.toBits(0.0); }
+    export bool equalAsFloats() { return -0.0 == 0.0; }
+    export u64 negZero() { return f64.toBits(-0.0); }
+  `);
+  eq(inst.call("distinct", []), true, "the bit patterns differ");
+  eq(inst.call("equalAsFloats", []), true, "even though the values compare equal");
+  eq((inst.call("negZero", []) as bigint) & 0xFFFFFFFFFFFFFFFFn, 1n << 63n,
+    "-0.0 is the sign bit alone");
+});
+
+Deno.test(`[§wac-f64bits-h3kq9wn] arity and argument types are checked`, () => {
+  const a = err(`export u64 bad() { return f64.toBits(); }`);
+  if (!a.includes("takes 1 argument")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export u64 bad() { return f64.toBits(1); }`);
+  if (!b.includes("must be f64")) throw new Error(`unexpected: ${b}`);
+  const c = err(`export f64 bad() { return f64.fromBits(1.0); }`);
+  if (!c.includes("must be u64")) throw new Error(`unexpected: ${c}`);
+  const d = err(`export f64 bad() { return f64.nope(1.0); }`);
+  if (!d.includes("no static method")) throw new Error(`unexpected: ${d}`);
+});
+
 // ── §wac-str-frombytes-* — string.fromBytes ──────────────────────────────────
 
 Deno.test(`[§wac-str-frombytes-p3kq7wn] hi() returns "hi"`, async () => {
