@@ -5,14 +5,13 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0051](open/0051-a-conditional-takes-its-type-from-the-then-arm-and-ignores-the-else-arms-nullability.md) | a conditional takes its type from the then-arm, ignoring the else-arm's nullability | bug | invalid wasm |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
 | [0027](open/0027-nested-patterns.md) | patterns are one level deep | missing feature | not implemented |
 
 ## Closed
 
-50 issues, 47 closed.
+51 issues, 48 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -7725,6 +7725,41 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+// §wac-ternary-nullable-9pqk3vm — one nullable branch makes the conditional nullable
+Deno.test("[§wac-ternary-nullable-9pqk3vm] a nullable branch widens the conditional", async () => {
+  // Issue 0051, reported by agent-b. `c ? S(1) : s` where `s` is `S?` took its type from the
+  // then-arm alone, so the block was declared non-nullable and the else arm's `(ref null 0)` failed
+  // validation. Swapping the arms worked, which is the tell: widening non-nullable *into* nullable
+  // is a no-op at the wasm level, so only one order showed it.
+  //
+  // The type checker had it right. The emitter derived the type a second time and disagreed — the
+  // same two-places-computing-one-type mistake as the i64 literal and the ternary variant before
+  // it. The checker now records the unified type on the node and the emitter reads it.
+  const inst = await run(`
+    struct S { i32 x; }
+    struct Sub : S { i32 y; }
+    enum E { A(i32 v), B }
+    export i32 thenNonNull(bool b)    { S? s = null; S? r = b ? S(1) : s; return r is null ? 0 : r!.x; }
+    export i32 elseNonNull(bool b)    { S? s = null; S? r = b ? s : S(1); return r is null ? 0 : r!.x; }
+    export i32 subtypeAndNull(bool b) { S? s = null; S? r = b ? Sub(3, 4) : s; return r is null ? 0 : r!.x; }
+    export i32 arrayAndNull(bool b)   { i32[]? a = null; i32[]? r = b ? i32[](1, 2) : a; return r is null ? 0 : r!.len(); }
+    export i32 stringAndNull(bool b)  { string? s = null; string? r = b ? "hi" : s; return r is null ? 0 : r!.len(); }
+    export i32 primAndNull(bool b)    { i32? n = null; i32? r = b ? 7 : n; return r is null ? 0 : r!; }
+    export i32 enumAndNull(bool b)    { E? e = null; E? r = b ? E.A(9) : e; return r is null ? 0 : 1; }
+    export i32 nested(bool b, bool c) { S? s = null; S? r = b ? (c ? S(1) : s) : S(2); return r is null ? 0 : r!.x; }
+  `);
+  eq(inst.call("thenNonNull", [1]), 1, "the non-nullable then-arm");
+  eq(inst.call("thenNonNull", [0]), 0, "and the nullable else-arm");
+  eq(inst.call("elseNonNull", [0]), 1, "the order that always worked");
+  eq(inst.call("subtypeAndNull", [1]), 3, "a subtype against a nullable parent");
+  eq(inst.call("arrayAndNull", [1]), 2, "an array");
+  eq(inst.call("stringAndNull", [1]), 2, "a string");
+  eq(inst.call("primAndNull", [1]), 7, "a boxed primitive");
+  eq(inst.call("enumAndNull", [1]), 1, "an enum");
+  eq(inst.call("nested", [1, 1]), 1, "a ternary inside a ternary");
+  eq(inst.call("nested", [1, 0]), 0, "whose inner else-arm is the null one");
+});
+
 // §wac-cast-matrix-6hkq4wz — the numeric cast matrix, completed
 Deno.test("[§wac-cast-matrix-6hkq4wz] as~ clamps at every width, not only 32 bits", async () => {
   // Found by generating every (from, to, operator) triple and comparing against an oracle built
