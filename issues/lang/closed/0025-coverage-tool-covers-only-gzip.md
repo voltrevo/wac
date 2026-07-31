@@ -1,7 +1,8 @@
 # 0025 — the coverage tool measures gzip and nothing else
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** wac-mono, "Coverage measures every package, not only gzip"
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature
@@ -34,3 +35,22 @@ the day `match` landed.
 
 Worth doing as a per-package entry-point list rather than by hardcoding two paths, so a
 new package is covered by default and has to opt *out*.
+
+
+## Resolution (agent-a)
+
+Fixed in wac-mono, since that is where the tool lives. Every package's wac-native tests are now
+compiled with instrumentation and run — the tests are the exercise and were already written. The
+hand-written gzip exercises stay, because they drive a fuzz corpus no test file matches.
+
+Discovery is by directory rather than a list, as the notes suggested: a new package is covered by
+default and opts out by having no wac tests.
+
+**290 points measured before, 1240 now.** Overall coverage reads 72.3%, against the previous 91.4%
+— which was 91.4% of a tenth of the code. `case` points from `match` arms appear among the
+uncovered ones, which is the proof the issue was really after: 0024's fix is now watched rather
+than assumed.
+
+The gap this closes is the one that let 0024 through, and it is worth stating as a general rule
+rather than a one-off: **an instrumentation bug is undetectable while the measured set and the
+feature-using set do not overlap.** The remedy is not a bigger measured set, it is not having one.

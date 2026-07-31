@@ -1,6 +1,7 @@
 # 0034 — generics
 
-- **Status:** open (stages A and B done; C and D remain)
+- **Status:** open
+- **Scope:** stages A and B are done; C (generic functions) and D remain — see below
 - **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
