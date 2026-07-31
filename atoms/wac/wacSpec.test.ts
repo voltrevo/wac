@@ -561,7 +561,7 @@ Deno.test("[§wac-shr-u64-2jujzws] shiftLogic64(-16, 4) returns 1152921504606846
 
 Deno.test("[§wac-shr-u-float-s95dlzw] '>>>' on f64 is a compile error", () => {
   const m = err(`export f64 badShift(f64 x) { return x >>> 1; }`);
-  if (!m.includes("'>>>' requires i32 or i64")) {
+  if (!m.includes("'>>>' requires an integer type")) {
     throw new Error(`expected the >>> operand-type diagnostic, got: ${m}`);
   }
 });
@@ -1607,6 +1607,60 @@ Deno.test(`[§wac-str-frombytes-p3kq7wn] arity and argument type are checked`, (
   // point of the distinction, so it must not be silently accepted.
   const c = err(`export string bad(i8[] b) { return string.fromBytes(b); }`);
   if (!c.includes("must be u8[]")) throw new Error(`unexpected: ${c}`);
+});
+
+// ── §wac-str-tobytes-* — string.toBytes ──────────────────────────────────────
+
+Deno.test(`[§wac-str-tobytes-k7mq4wp] firstByte() returns 104`, async () => {
+  const inst = await run(`
+    export i32 first() { return "hi".toBytes()[0]; }
+    export i32 len()   { return "hi".toBytes().len(); }
+    export i32 empty() { return "".toBytes().len(); }
+  `);
+  eq(inst.call("first", []), 104, "'h' is 104");
+  eq(inst.call("len", []), 2, "two bytes");
+  eq(inst.call("empty", []), 0, "the empty string gives an empty array");
+});
+
+Deno.test(`[§wac-str-tobytes-utf8-r2nf8jt] the bytes are UTF-8`, async () => {
+  const inst = await run(`
+    export bool two()   { u8[] b = "é".toBytes(); return b.len() == 2 && b[0] == 0xC3 && b[1] == 0xA9; }
+    export bool three() { u8[] b = "日".toBytes(); return b.len() == 3 && b[0] == 0xE6 && b[2] == 0xA5; }
+    export bool four()  { u8[] b = "😀".toBytes(); return b.len() == 4 && b[0] == 0xF0 && b[3] == 0x80; }
+    // Unsigned: a lead byte above 0x7F must not read back negative.
+    export bool unsigned() { return "é".toBytes()[0] > 0; }
+    export bool roundTrip() { return string.fromBytes("日本語".toBytes()) == "日本語"; }
+  `);
+  eq(inst.call("two", []), true, "U+00E9 is C3 A9");
+  eq(inst.call("three", []), true, "U+65E5 is three bytes");
+  eq(inst.call("four", []), true, "U+1F600 is four bytes");
+  eq(inst.call("unsigned", []), true, "bytes read back unsigned");
+  eq(inst.call("roundTrip", []), true, "fromBytes(toBytes(s)) == s");
+});
+
+Deno.test(`[§wac-str-tobytes-copy-h5wk3qm] the result is a copy, not a view`, async () => {
+  // Returning the string's own storage would hand out a writable view of an
+  // immutable value; a second call proves the original was untouched.
+  const inst = await run(`
+    export bool test() {
+      u8[] b = "ab".toBytes();
+      b[0] = 'z';
+      return "ab".toBytes()[0] == 'a' && b[0] == 'z';
+    }
+    export bool viaString() {
+      string s = "ab";
+      u8[] b = s.toBytes();
+      b[0] = 'z';
+      return s == "ab";
+    }
+  `);
+  eq(inst.call("test", []), true, "writing to the copy leaves the string alone");
+  eq(inst.call("viaString", []), true, "including through a bound variable");
+});
+
+Deno.test(`[§wac-str-tobytes-k7mq4wp] toBytes takes no arguments`, () => {
+  const msg = err(`export i32 bad() { return "hi".toBytes(1).len(); }`);
+  if (!msg.includes("takes no arguments")) throw new Error(`unexpected: ${msg}`);
 });
 
 // ── §wac-charlit-* — character literals are i32 codepoints ───────────────────
@@ -4355,4 +4409,44 @@ Deno.test(`[§wac-narrow-frac-t6kq2wp] as! f64 -> i32 traps on a fractional part
   };
   eq(traps(3.5), true, "exact(3.5) traps");
   eq(traps(-2.3), true, "exact(-2.3) traps");
+});
+
+// §wac-litctx-ternary-j8kw3mq — ternary branches take the expected type too
+Deno.test(`[§wac-litctx-ternary-j8kw3mq] ternary branches adopt the expected type`, async () => {
+  const i = await run(`
+    export u32 pick(bool c)          { return c ? 1 : 2; }
+    export u64 orZero(bool c, u64 a) { return c ? a : 0; }
+    export u32 wraps(bool c, u32 x)  { return (c ? x : 1) * 2; }
+  `);
+  eq(i.call("pick", [true]), 1, "both branches are u32");
+  eq(i.call("pick", [false]), 2, "either way");
+  eq(i.call("orZero", [false, 7n]), 0n, "a literal branch follows the typed one");
+  eq(i.call("wraps", [true, 2147483648]), 0, "result really is u32 — it wraps");
+});
+
+// §wac-switch-u32-r5nk8wf — switch dispatches on any 32-bit integer
+Deno.test(`[§wac-switch-u32-r5nk8wf] switch accepts a u32 scrutinee`, async () => {
+  const i = await run(`
+    export i32 classify(u32 x) {
+      switch (x) {
+        case 0: { return 10; }
+        case 4294967295: { return 20; }
+        default: { return 30; }
+      }
+    }
+  `);
+  eq(i.call("classify", [0]), 10, "case 0");
+  eq(i.call("classify", [4294967295]), 20, "a case value beyond i32's range");
+  eq(i.call("classify", [7]), 30, "default");
+});
+
+// §wac-shr-u-redundant-m3kq7wn — `>>>` says nothing extra on an unsigned type
+Deno.test(`[§wac-shr-u-redundant-m3kq7wn] '>>>' on an unsigned type is rejected`, () => {
+  const m = err(`export u32 bad(u32 x) { return x >>> 1; }`);
+  if (!m.includes("redundant")) {
+    throw new Error(`expected the redundancy diagnostic, got: ${m}`);
+  }
+  // `>>` is the logical shift there, and is accepted.
+  const r = wacCompile(new Map([["main.wac", `export u32 ok(u32 x) { return x >> 1; }`]]), "main.wac");
+  eq(r.ok, true, "'>>' on u32 compiles");
 });

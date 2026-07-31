@@ -34,8 +34,9 @@ So the two differ only where the sign bit changes the answer:
 | `>>` | arithmetic (sign-extends) | logical (zero-fills) |
 | `+` `-` `*` `&` `|` `^` `<<` `==` `!=` | identical — same bits either way |
 
-`>>>` still means "logical shift" and is accepted on unsigned types, where it
-is the same instruction as `>>`.
+`>>>` is a compile error on an unsigned type: `>>` is already the logical shift
+there, so `>>>` would be asking for what it already has. See
+[operators.md](operators.md).
 
 ```wac
 export u32 half(u32 x) { return x / (2 as@ u32); }
@@ -131,11 +132,12 @@ export i64 wide()     { return 0x0EDB88320; }
 `[§wac-hexlit-sign-8wckct3]` `signBit()` returns `-2147483648`.
 `[§wac-hexlit-pad-9qw60ul]` `wide()` returns `3988292384` — padding to 9 digits selects `i64`, giving the positive value.
 
-More than 16 hex digits is an error, as is a decimal literal past the `i64`
+More than 16 hex digits is an error, as is a decimal literal past `u64`'s
 range.
 
-A literal's width comes from the literal itself, not from where it appears, so an
-`i64` literal is `i64` even as an operand where no type is being pushed down.
+Where nothing is expected of it, a literal keeps the width its own notation
+gives it — including as an operand of an operator, so an `i64` literal stays
+`i64` rather than narrowing to meet the other side.
 
 ```wac
 i64 big() { return 1000000000000; }
