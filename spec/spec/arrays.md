@@ -112,6 +112,33 @@ i32 val2 = shorts[0];           // 1000
 `[§wac-arr-i8-k3fn7wp]` `bytes[0]` returns `255` after setting `0xFF`.
 `[§wac-arr-i16-m8qj4xf]` `shorts[0]` returns `1000`.
 
+The fixed-element form takes `i32` values too, and truncates them the same way
+a write does — so a byte array can be written as a literal list.
+
+```wac
+export i32 byteLit(i32 i) {
+  i8[] bytes = i8[](104, 101, 108, 108, 111);   // "hello"
+  return bytes[i];
+}
+
+export i32 byteLitTrunc() {
+  i8[] bytes = i8[](300);
+  return bytes[0];
+}
+```
+
+`[§wac-arr-i8-lit-3fqjy2m]` `byteLit(0)` returns `104`.
+`[§wac-arr-i8-lit-trunc-i9g6kol]` `byteLitTrunc()` returns `44` — `300` truncates to 8 bits.
+`[§wac-arr-i16-lit-kyrurqi]` `i16[](70000)` element 0 reads back `4464`.
+
+Element expressions must still be `i32` — no other type is accepted.
+
+```wac
+i8[] bad = i8[](1.5);            // error: expected i32, got f64
+```
+
+`[§wac-arr-i8-lit-badtype-3w7g6aa]` A non-`i32` element in a packed array literal is a compile error.
+
 There are no `i8` or `i16` local variables, parameters, or struct fields —
 packed types only exist as array elements. Indexing a packed array returns `i32`,
 and assignment truncates from `i32`.
