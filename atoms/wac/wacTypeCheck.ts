@@ -438,6 +438,52 @@ function checkBlock(block: Block, env: VarEnv, ctx: Ctx): boolean {
   return terminated;
 }
 
+/** Is this condition the literal `true`? */
+function isAlwaysTrue(cond: Expr | null): boolean {
+  return cond === null || (cond.kind === "bool" && cond.value);
+}
+
+/**
+ * Does this block contain a `break` that would exit the loop it is the body of?
+ *
+ * A `break` inside a nested loop or switch binds to that construct instead, so
+ * it cannot end the outer loop and does not count here.
+ */
+function hasLoopBreak(block: Block): boolean {
+  for (const stmt of block.stmts) {
+    if (stmtHasLoopBreak(stmt)) return true;
+  }
+  return false;
+}
+
+function stmtHasLoopBreak(stmt: Stmt): boolean {
+  switch (stmt.kind) {
+    case "break": return true;
+    case "block": return hasLoopBreak(stmt.block);
+    case "if": {
+      if (hasLoopBreak(stmt.then)) return true;
+      if (stmt.els === null) return false;
+      if (stmt.els.kind === "else-if") return stmtHasLoopBreak(stmt.els.stmt);
+      return hasLoopBreak(stmt.els.block);
+    }
+    // A break in any of these binds to the inner construct, not to us.
+    case "while": case "for": case "dowhile": case "switch": return false;
+    default: return false;
+  }
+}
+
+/**
+ * Does control ever get past this loop?
+ *
+ * A loop with a condition that is literally true (or absent, in `for (;;)`) and
+ * no `break` reaching it never completes, so whatever follows is unreachable and
+ * the enclosing function needs no return after it. The emitter already appends
+ * an `unreachable` before a non-void function's `end`, so the wasm stays valid.
+ */
+function isInfiniteLoop(cond: Expr | null, body: Block): boolean {
+  return isAlwaysTrue(cond) && !hasLoopBreak(body);
+}
+
 /**
  * Check a statement. Returns true if this statement always terminates
  * (returns or traps on every code path).
@@ -545,7 +591,9 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       ctx.inLoop++;
       checkBlock(stmt.body, new Map(env), ctx);
       ctx.inLoop--;
-      return false;  // loop may not execute
+      // `while (true)` with no break never finishes, so control never reaches
+      // what follows. Otherwise the loop may not execute at all.
+      return isInfiniteLoop(stmt.cond, stmt.body);
     }
 
     case "for": {
@@ -566,7 +614,8 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       checkBlock(stmt.body, new Map(loopEnv), ctx);
       if (stmt.update) checkStmt(stmt.update, loopEnv, ctx);
       ctx.inLoop--;
-      return false;
+      // `for (;;)` and `for (i = 0; true; i++)` never finish without a break.
+      return isInfiniteLoop(stmt.cond, stmt.body);
     }
 
     case "dowhile": {
@@ -582,7 +631,8 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
           `expected bool, found ${typeName(cType)}`,
           `use a comparison: if (${condName} != 0) { ... }`);
       }
-      return false;
+      // `do { ... } while (true)` is infinite for the same reason.
+      return isInfiniteLoop(stmt.cond, stmt.body);
     }
 
     case "switch": {
