@@ -429,7 +429,12 @@ subject, so a nullable one is `match (s!)` or an `is null` check first. Extendin
 `[§enum-match-nullable]` `match (s)` where `s` is `Shape?` is a compile error:
 `match requires a non-null value`.
 
-### What this is not, in this draft
+### What this is not yet
+
+Each of these is tracked as an issue, so the reasoning lives in one place rather than being
+re-derived: `match` as an expression (0026), nested patterns (0027), methods on enums
+(0028), narrowing outside `match` (0029), an integer representation for payload-less enums
+(0030), and `br_table` dispatch (0031).
 
 **Not an expression.** `match` is a statement. The expression form is on the
 roadmap and needs result-type unification across arms, which is a separate step; the
