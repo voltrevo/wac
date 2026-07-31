@@ -403,7 +403,7 @@ function buildTypeCtx(
 
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
-    structFields, funcIdx, result, constGlobalIdx,
+    structFields, funcIdx, result, constGlobalIdx, currentFile: "",
     helperIdx: new Map<string, number>(),
   };
 }
