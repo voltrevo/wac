@@ -5049,3 +5049,72 @@ Deno.test(`[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejec
   eq(bad(`struct P { i32 x; } const P A = P(1); export i32 g() { return A.x; }`), true, "construction");
   eq(bad(`const i32 A = 1.5; export i32 g() { return A; }`), true, "wrong type");
 });
+
+// §wac-modconst-array-t8kn4wq — constant arrays are built once, as globals
+Deno.test(`[§wac-modconst-array-t8kn4wq] a constant array is one shared table`, async () => {
+  const src = `
+    const i32 N = 3;
+    const i32[] TABLE   = i32[](10, 20, 30);
+    const u32[] POLYS   = u32[](0xEDB88320, 0x82F63B78);
+    const u8[]  BYTES   = u8[](104, 101, 255);
+    const i64[] WIDE    = i64[](1000000000000, -1);
+    const f64[] FS      = f64[](1.5, 2.5);
+    const i32[] DERIVED = i32[](N, N * 2, N + 100);
+    export i32 sum()        { i32 t = 0; for (i32 i = 0; i < TABLE.len(); i++) { t += TABLE[i]; } return t; }
+    export u32 poly(i32 i)  { return POLYS[i]; }
+    export i32 byte(i32 i)  { return BYTES[i]; }
+    export i64 wide(i32 i)  { return WIDE[i]; }
+    export f64 f(i32 i)     { return FS[i]; }
+    export i32 derived(i32 i) { return DERIVED[i]; }
+  `;
+  const i = await run(src);
+  eq(i.call("sum", []), 60, "iterating a constant table");
+  eq(i.call("poly", [0]), 3988292384, "u32 elements keep their bit pattern");
+  eq(i.call("byte", [2]), 255, "packed u8 elements zero-extend");
+  eq(i.call("wide", [0]), 1000000000000n, "i64 elements");
+  eq(i.call("wide", [1]), -1n, "negative i64 elements");
+  eq(i.call("f", [1]), 2.5, "f64 elements");
+  eq(i.call("derived", [1]), 6, "elements may be constant expressions");
+  eq(i.call("derived", [2]), 103, "and reference other constants");
+
+  // The point of the feature is that the table is built once at instantiation
+  // rather than rebuilt per call, so assert it in the bytes: every constant
+  // array appears as array.new_fixed in the global section and none in code.
+  const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) return;
+  const w = r.compiled.wasm;
+  let p = 8;
+  let codeSec: Uint8Array | null = null, globalSec: Uint8Array | null = null;
+  while (p < w.length) {
+    const id = w[p++];
+    let size = 0, shift = 0, b: number;
+    do { b = w[p++]; size |= (b & 0x7F) << shift; shift += 7; } while (b & 0x80);
+    if (id === 10) codeSec = w.slice(p, p + size);
+    if (id === 6) globalSec = w.slice(p, p + size);
+    p += size;
+  }
+  const count = (buf: Uint8Array | null, pat: number[]) => {
+    if (!buf) return 0;
+    let n = 0;
+    for (let j = 0; j + pat.length <= buf.length; j++) {
+      if (pat.every((x, k) => buf[j + k] === x)) n++;
+    }
+    return n;
+  };
+  eq(count(globalSec, [0xFB, 0x08]), 6, "six arrays built in the global section");
+  eq(count(codeSec, [0xFB, 0x08]), 0, "and none rebuilt inside a function body");
+});
+
+// §wac-modconst-array-const-w2mk9fj — a constant table cannot be written through
+Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is rejected`, () => {
+  const bad = (src: string) => !wacCompile(new Map([["main.wac", src]]), "main.wac").ok;
+  // One object is shared by every use, so a write would be visible everywhere.
+  eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] = 9; }`), true, "element write");
+  eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] += 1; }`), true, "compound write");
+  eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0]++; }`), true, "increment");
+  // A sized array has no elements written down to evaluate.
+  eq(bad(`const i32[] T = i32[8](); export i32 f() { return T[0]; }`), true, "sized form");
+  // Reading is fine.
+  eq(bad(`const i32[] T = i32[](1, 2); export i32 f() { return T[1]; }`), false, "reads are allowed");
+});
