@@ -27,13 +27,17 @@ export i32 demo() {
 ### Program structure
 
 ```ebnf
-program        = { import | struct_decl | enum_decl | func_decl } ;
+program        = { import | struct_decl | enum_decl | func_decl | const_decl } ;
 
 import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
 func_decl      = [ "export" ] , type , IDENT , "(" , [ param_list ] , ")" , block ;
+
+(* A module-level constant. `init` must be a compile-time constant expression
+   [see variables.md]; the grammar cannot express that restriction. *)
+const_decl     = [ "export" ] , "const" , type , IDENT , "=" , expr , ";" ;
 param_list     = param , { "," , param } , [ "," ] ;
 param          = type , IDENT ;
 ```
@@ -185,10 +189,13 @@ type           = primitive_type
                | "anyref"
                | "i31ref" ;
 
-primitive_type = "i32" | "i64" | "f32" | "f64" | "bool" | "void" ;
+primitive_type = "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "void" ;
 
 array_type     = element_type , "[" , "]" ;
-element_type   = primitive_type | "i8" | "i16" | "string" | IDENT | funcref_type ;
+element_type   = primitive_type | packed_type | "string" | IDENT | funcref_type
+               | array_type                    (* nested: i32[][3]() *)
+               | element_type , "?" ;          (* nullable: Point?[5]() *)
+packed_type    = "i8" | "i16" | "u8" | "u16" ;   (* array elements only *)
 
 funcref_type   = "fn" , "[" , type , "(" , [ type_list ] , ")" , "]" ;
 type_list      = type , { "," , type } ;
@@ -216,7 +223,19 @@ digit          = "0"..."9" ;
 ### Keywords
 
 ```
-as  as!  as~  as@  bool  break  case  const  continue  default  do  else  enum
-export  f32  f64  false  fn  for  i16  i32  i64  i8  if  import  is  not
-match  null  override  return  string  struct  switch  trap  true  void  while
+as  as!  as~  as@  break  case  const  continue  default  do  else  enum
+export  false  fn  for  from  if  import  is  match  not  null  override
+return  struct  switch  this  trap  true  void  while
 ```
+
+Type names are **not** keywords: `i32`, `u8`, `f64`, `bool`, `string` and the rest
+lex as identifiers, matched against a set of primitive names where a type is
+expected. That is deliberate rather than an oversight — it is what makes
+`f64.toBits(x)`, `f32.fromBits(b)` and `string.fromBytes(b)` parse, since each is
+an ordinary `IDENT "." IDENT "(" args ")"` static call and needs no parser
+support of its own. A builtin static on a type therefore costs nothing in the
+grammar.
+
+`[§wac-grammar-keywords-h4mq7wn]` The keyword list above matches the lexer's
+`KEYWORDS` set exactly. A test asserts that, because this block has drifted from
+the implementation three times.

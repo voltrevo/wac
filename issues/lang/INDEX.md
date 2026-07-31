@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0020](open/0020-grammar-md-is-behind-the-implementation.md) | `grammar.md` is behind the implementation in four places | bug | not implemented |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 
 ## Known gaps that are not issues
@@ -24,6 +23,6 @@ here so nobody reports them as bugs:
 
 ## Closed
 
-19 issues, 18 of them found by porting wacc's AST to sum types and by probing shapes
+20 issues, 18 of them found by porting wacc's AST to sum types and by probing shapes
 that port does not reach. Twelve of the sixteen typechecked cleanly and failed at
 instantiation or ran wrong — which is why `README.md` asks you to run the thing.

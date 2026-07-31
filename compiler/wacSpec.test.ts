@@ -5892,3 +5892,34 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notU32", [0]), 4294967295, "~0 at 32 bits");
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
+
+// §wac-grammar-keywords-h4mq7wn — the grammar's keyword block matches the lexer
+Deno.test(`[§wac-grammar-keywords-h4mq7wn] grammar.md's keyword list matches KEYWORDS`, async () => {
+  // This block has drifted from the implementation three times, each time found
+  // by someone writing wac rather than reading the spec (issue 0020). Comparing
+  // the two directly is cheaper than noticing again.
+  const md = await Deno.readTextFile(new URL("../../spec/spec/grammar.md", import.meta.url));
+  const m = md.match(/### Keywords\n\n```\n([\s\S]*?)```/);
+  if (!m) throw new Error("could not find the keyword block in grammar.md");
+  const documented = m[1].split(/\s+/).filter(Boolean).sort();
+
+  // The lexer's set, read from source so the test cannot drift from it either.
+  const lex = await Deno.readTextFile(new URL("./wacLex.ts", import.meta.url));
+  const km = lex.match(/const KEYWORDS = new Set<string>\(\[([\s\S]*?)\]\);/);
+  if (!km) throw new Error("could not find KEYWORDS in wacLex.ts");
+  const actual = [...km[1].matchAll(/"([^"]+)"/g)].map(x => x[1]).sort();
+
+  // The cast operators are lexed as single tokens, not identifiers, so they are
+  // in the grammar's list without being in KEYWORDS.
+  const castOps = ["as!", "as~", "as@"];
+  const documentedMinusCasts = documented.filter(k => !castOps.includes(k));
+
+  const missing = actual.filter(k => !documentedMinusCasts.includes(k));
+  const extra = documentedMinusCasts.filter(k => !actual.includes(k));
+  if (missing.length || extra.length) {
+    throw new Error(
+      `grammar.md's keyword block disagrees with the lexer\n` +
+      `  in KEYWORDS but not documented: ${missing.join(", ") || "(none)"}\n` +
+      `  documented but not a keyword:   ${extra.join(", ") || "(none)"}`);
+  }
+});
