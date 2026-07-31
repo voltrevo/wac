@@ -46,6 +46,32 @@ export type WasmTypeCtx = {
   /** Mangled function name → wasm function index */
   funcIdx: Map<string, number>;
   result: ResolveResult;
+  /**
+   * Branch-coverage instrumentation state, or undefined when coverage is off.
+   *
+   * Counters are numbered across the whole program, so the index counter and the
+   * point table are shared by every function being emitted and mutate as
+   * emission proceeds.
+   */
+  coverage?: CoverageCtx;
+};
+
+/** One instrumented branch point. */
+export type CoveragePoint = {
+  index: number;
+  file: string;
+  line: number;
+  col: number;
+  kind:
+    | "entry" | "then" | "else" | "loop" | "case"
+    | "ternary-then" | "ternary-else" | "and-rhs" | "or-rhs";
+};
+
+export type CoverageCtx = {
+  /** Points recorded so far; the index of a point is its position here. */
+  points: CoveragePoint[];
+  /** File currently being emitted, for attributing points. */
+  file: string;
 };
 
 // ── LEB128 helpers ────────────────────────────────────────────────────────────
@@ -489,6 +515,46 @@ class FuncEmitter {
 
   private emit(...bytes: number[]): void { this.out.push(...bytes); }
 
+  /**
+   * Record a branch point and emit its counter increment. No-op when coverage is
+   * off, so every call site can be unconditional.
+   *
+   * The counters live in a WasmGC i32 array held in global 0. Incrementing one
+   * is `counters[i] = counters[i] + 1`, which in stack order means pushing the
+   * array and index for the store, then reading the old value and adding one:
+   *
+   *   global.get 0 ; i32.const i          -- destination for array.set
+   *   global.get 0 ; i32.const i ; array.get ; i32.const 1 ; i32.add
+   *   array.set
+   *
+   * The global is nullable and starts null, so __cov_init must run first — a
+   * missing init traps on the first increment rather than corrupting counts.
+   */
+  /** Record the "this function ran" point. Public shim over emitCovPoint. */
+  emitEntryPoint(entry: FuncEntry, body: Block): void {
+    const line = entry.origin.kind === "func" ? entry.origin.decl.line : entry.origin.decl.line;
+    const col  = entry.origin.kind === "func" ? entry.origin.decl.col  : entry.origin.decl.col;
+    this.emitCovPoint("entry", line ?? body.line, col ?? body.col);
+  }
+
+  private emitCovPoint(kind: CoveragePoint["kind"], line: number, col: number): void {
+    const cov = this.ctx.coverage;
+    if (!cov) return;
+
+    const index = cov.points.length;
+    cov.points.push({ index, file: cov.file, line, col, kind });
+
+    const aIdx = this.ctx.arrTypeIdx.get(typeKey(I32))!;
+    this.emit(0x23, 0x00);                        // global.get 0
+    this.emit(0x41, ...sleb(index));              // i32.const index
+    this.emit(0x23, 0x00);                        // global.get 0
+    this.emit(0x41, ...sleb(index));              // i32.const index
+    this.emit(0xFB, 0x0B, ...uleb(aIdx));         // array.get
+    this.emit(0x41, 0x01);                        // i32.const 1
+    this.emit(0x6A);                              // i32.add
+    this.emit(0xFB, 0x0E, ...uleb(aIdx));         // array.set
+  }
+
   // ── Block type encoding ──
 
   private blockType(t: WacType): number[] {
@@ -604,8 +670,10 @@ class FuncEmitter {
         this.emitExpr(e.cond, env);
         this.emit(0x04, ...this.blockType(resT)); // if (result T)
         this.labelDepth++;
+        this.emitCovPoint("ternary-then", e.then.line, e.then.col);
         this.emitExpr(e.then, env);
         this.emit(0x05); // else
+        this.emitCovPoint("ternary-else", e.else_.line, e.else_.col);
         this.emitExpr(e.else_, env);
         this.emit(0x0B); // end
         this.labelDepth--;
@@ -634,6 +702,7 @@ class FuncEmitter {
       this.emitExpr(e.left, env);
       this.emit(0x04, 0x7F); // if (result i32)
       this.labelDepth++;
+      this.emitCovPoint("and-rhs", e.right.line, e.right.col);
       this.emitExpr(e.right, env);
       this.emit(0x05, 0x41, 0x00, 0x0B); // else; i32.const 0; end
       this.labelDepth--;
@@ -644,6 +713,7 @@ class FuncEmitter {
       this.emit(0x04, 0x7F); // if (result i32)
       this.labelDepth++;
       this.emit(0x41, 0x01, 0x05); // i32.const 1; else
+      this.emitCovPoint("or-rhs", e.right.line, e.right.col);
       this.emitExpr(e.right, env);
       this.emit(0x0B); // end
       this.labelDepth--;
@@ -1623,6 +1693,7 @@ class FuncEmitter {
     this.emitExpr(s.cond, env);
     this.emit(0x04, 0x40); // if void
     this.labelDepth++;
+    this.emitCovPoint("then", s.then.line, s.then.col);
     this.emitBlock(s.then, env);
     if (s.els) { this.emit(0x05); this.emitElse(s.els, env); }
     this.emit(0x0B); // end
@@ -1632,6 +1703,7 @@ class FuncEmitter {
   private emitElse(els: ElseBranch, env: TypeEnv): void {
     if (!els) return;
     if (els.kind === "else-block") {
+      this.emitCovPoint("else", els.block.line, els.block.col);
       this.emitBlock(els.block, env);
     } else {
       // else-if: emit as nested if (no extra block needed since we're in the else branch)
@@ -1650,6 +1722,7 @@ class FuncEmitter {
     this.emit(0x45, 0x0D, ...uleb(this.brDepth(brkLevel))); // i32.eqz; br_if $brk
 
     this.loopStack.push({ breakTarget: brkLevel, continueTarget: contLevel });
+    this.emitCovPoint("loop", s.body.line, s.body.col);
     this.emitBlock(s.body, env);
     this.loopStack.pop();
 
@@ -1666,6 +1739,7 @@ class FuncEmitter {
     const contLevel = this.labelDepth - 1;
 
     this.loopStack.push({ breakTarget: brkLevel, continueTarget: contLevel });
+    this.emitCovPoint("loop", s.body.line, s.body.col);
     this.emitBlock(s.body, env);
     this.loopStack.pop();
 
@@ -1691,6 +1765,7 @@ class FuncEmitter {
     }
     // Wrap body in a block so `continue` exits to just before the update.
     // `continue` → br $bodyEnd → update runs → br $cont (loop back).
+    this.emitCovPoint("loop", s.body.line, s.body.col);
     if (s.update) {
       this.emit(0x02, 0x40); this.labelDepth++; // block $bodyEnd
       const bodyEndLevel = this.labelDepth - 1;
@@ -1737,6 +1812,7 @@ class FuncEmitter {
       this.emitEqForType(exprT);
       this.emit(0x04, 0x40); // if void
       this.labelDepth++;
+      this.emitCovPoint("case", c.line, c.col);
       this.emitScoped(c.body, env);
       // Implicit break after case body (no fall-through in wac)
       this.emit(0x0C, ...uleb(this.brDepth(brkLevel))); // br $brk
@@ -1744,6 +1820,7 @@ class FuncEmitter {
       this.labelDepth--;
     }
     if (def) {
+      this.emitCovPoint("case", def.line, def.col);
       this.emitScoped(def.body, env);
     }
 
@@ -1839,7 +1916,14 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   localsVec.push(0x01, 0x7D); // 1 × f32 scratch local
   localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
 
-  // Emit body
+  // Coverage points are attributed to the file the function was declared in.
+  if (ctx.coverage) {
+    ctx.coverage.file = entry.filePath;
+  }
+
+  // Emit body, preceded by an entry counter so "was this function ever called"
+  // is answerable on its own.
+  emitter.emitEntryPoint(entry, body);
   emitter.emitBlock(body, env);
 
   // For non-void functions, emit unreachable before the function end so the wasm

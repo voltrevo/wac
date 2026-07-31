@@ -18,7 +18,7 @@ import {
 } from "./wacResolve.ts";
 import {
   wacEmitFunc, typeKey, sigKey, wasmValType, heapTypeBytes,
-  type WasmTypeCtx, type StructFieldInfo,
+  type WasmTypeCtx, type StructFieldInfo, type CoverageCtx,
 } from "./wacEmitFunc.ts";
 
 // ── LEB128 helpers ────────────────────────────────────────────────────────────
@@ -265,6 +265,7 @@ function buildStructFields(
 function buildTypeCtx(
   result: ResolveResult,
   programs: Map<string, unknown>,
+  coverage: boolean,
 ): WasmTypeCtx {
   // 1. Struct types: indices assigned by resolver (0-based, in order)
   const structTypeIdx = new Map<string, number>();
@@ -284,6 +285,10 @@ function buildTypeCtx(
 
   // 3. Array types: one per unique element type
   const arrElements = collectArrayTypes(result, programs);
+  // The coverage counters live in an i32[], which the program itself may not use.
+  if (coverage && !arrElements.some(t => t.kind === "prim" && t.name === "i32")) {
+    arrElements.push({ kind: "prim", name: "i32", line: 0, col: 0 });
+  }
   const arrTypeIdx  = new Map<string, number>();
   let nextTypeIdx = numStructs + 1; // after string type
   for (const elem of arrElements) {
@@ -453,8 +458,9 @@ type WasmTypeCtxFull = WasmTypeCtx & {
 function buildTypeCtxFull(
   result: ResolveResult,
   programs: Map<string, unknown>,
+  coverage: boolean,
 ): WasmTypeCtxFull {
-  const base = buildTypeCtx(result, programs);
+  const base = buildTypeCtx(result, programs, coverage);
 
   // Build key → WacType map from collectArrayTypes to handle funcref element types
   // (keyToElemType cannot reconstruct funcref types from their key strings)
@@ -522,8 +528,9 @@ function buildTypeCtxFull(
   // Builtin helper function indices: placed after all user functions
   const numUserFuncs = base.result.funcs.length;
   const helperIdx = new Map<string, number>();
-  for (let i = 0; i < BUILTIN_HELPERS.length; i++) {
-    helperIdx.set(BUILTIN_HELPERS[i], numUserFuncs + i);
+  const helpers = builtinHelpers(coverage);
+  for (let i = 0; i < helpers.length; i++) {
+    helperIdx.set(helpers[i], numUserFuncs + i);
   }
 
   // Populate base.helperIdx (WasmTypeCtx) and the full ctx one
@@ -545,13 +552,28 @@ function buildTypeCtxFull(
  * a helper means adding a signature to helperFuncTypes and a body to
  * buildHelperBodies — and nothing else.
  */
-const BUILTIN_HELPERS = [
+const STRING_AND_MATH_HELPERS = [
   "__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof",
   "__fmod", "__fmodf",
 ] as const;
 
+/**
+ * Helpers that only exist in an instrumented module: allocate the counter array,
+ * report its length, and read one counter. Reading via an accessor rather than
+ * returning the array keeps the host side free of array marshalling.
+ */
+const COVERAGE_HELPERS = ["__cov_init", "__cov_len", "__cov_get"] as const;
+
+/**
+ * The builtin helpers present in this module. Coverage helpers are appended only
+ * when instrumenting, so an uninstrumented build is unchanged byte for byte.
+ */
+function builtinHelpers(coverage: boolean): readonly string[] {
+  return coverage ? [...STRING_AND_MATH_HELPERS, ...COVERAGE_HELPERS] : STRING_AND_MATH_HELPERS;
+}
+
 /** Return the builtin helper function type entries for the type section. */
-function helperFuncTypes(si: number): number[][] {
+function helperFuncTypes(si: number, coverage: boolean): number[][] {
   // non-null str ref: 0x64 sleb(si)
   const str = [0x64, ...sleb(si)];
   const i32 = [0x7F];
@@ -572,7 +594,15 @@ function helperFuncTypes(si: number): number[][] {
   // __fmodf(f32, f32) -> f32
   const f32    = [0x7D];
   const fmodf  = [0x60, 0x02, ...f32, ...f32, 0x01, ...f32];
-  return [concat, cmp, idx, slice, iof, fmod, fmodf];
+  const base = [concat, cmp, idx, slice, iof, fmod, fmodf];
+  if (!coverage) return base;
+  // __cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32
+  return [
+    ...base,
+    [0x60, 0x00, 0x00],
+    [0x60, 0x00, 0x01, ...i32],
+    [0x60, 0x01, ...i32, 0x01, ...i32],
+  ];
 }
 
 /** Encode an f64.const instruction. */
@@ -584,14 +614,51 @@ function f64Const(v: number): number[] {
 
 
 /**
- * Build all builtin helper function bodies, one per BUILTIN_HELPERS entry and in
+ * __cov_init() — allocate the counter array and store it in global 0.
+ *
+ * The global starts null so the module needs no start section; the host (or the
+ * bindgen wrapper) calls this before running instrumented code. Calling it again
+ * allocates a fresh array, which is how counters are reset between runs.
+ */
+function makeCovInit(arrTypeIdx: number, numPoints: number): number[] {
+  return [
+    0x00,                                          // no locals
+    0x41, ...sleb(numPoints),                      // i32.const numPoints
+    0xFB, 0x07, ...uleb(arrTypeIdx),               // array.new_default
+    0x24, 0x00,                                    // global.set 0
+    0x0B,
+  ];
+}
+
+/** __cov_len() -> i32 — how many counters exist. A constant, fixed at compile time. */
+function makeCovLen(numPoints: number): number[] {
+  return [0x00, 0x41, ...sleb(numPoints), 0x0B];
+}
+
+/** __cov_get(i: i32) -> i32 — read one counter. Traps if __cov_init was not called. */
+function makeCovGet(arrTypeIdx: number): number[] {
+  return [
+    0x00,                                          // no locals
+    0x23, 0x00,                                    // global.get 0
+    0x20, 0x00,                                    // local.get 0 (index)
+    0xFB, 0x0B, ...uleb(arrTypeIdx),               // array.get
+    0x0B,
+  ];
+}
+
+/**
+ * Build all builtin helper function bodies, one per builtinHelpers() entry and in
  * that order. Bodies are returned unprefixed; the code section adds the length
  * prefix, as it does for user functions.
  *
  * @param fmodIdx function index of __fmod, which __fmodf calls
  */
-function buildHelperBodies(si: number, fmodIdx: number): number[][] {
-  return [
+function buildHelperBodies(
+  si: number,
+  fmodIdx: number,
+  cov: { arrTypeIdx: number; numPoints: number } | undefined,
+): number[][] {
+  const base = [
     makeConcat(si),
     makeCmp(si),
     makeIdx(si),
@@ -599,6 +666,13 @@ function buildHelperBodies(si: number, fmodIdx: number): number[][] {
     makeIndexOf(si),
     makeFmod(),
     makeFmodF(fmodIdx),
+  ];
+  if (!cov) return base;
+  return [
+    ...base,
+    makeCovInit(cov.arrTypeIdx, cov.numPoints),
+    makeCovLen(cov.numPoints),
+    makeCovGet(cov.arrTypeIdx),
   ];
 }
 
@@ -1051,7 +1125,7 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
   }
 
   // String helper function signatures (after user sigs)
-  for (const helperType of helperFuncTypes(ctx.stringTypeIdx)) {
+  for (const helperType of helperFuncTypes(ctx.stringTypeIdx, ctx.coverage !== undefined)) {
     entries.push(helperType);
   }
 
@@ -1086,15 +1160,15 @@ function buildFuncSection(ctx: WasmTypeCtxFull): number[] {
   }
   // Add builtin helper functions with their type indices
   // helper order: concat(0), cmp(1), idx(2), slice(3), indexof(4)
-  for (let i = 0; i < BUILTIN_HELPERS.length; i++) {
+  for (let i = 0; i < builtinHelpers(ctx.coverage !== undefined).length; i++) {
     typeIdxEntries.push(...uleb(helperTypeIdx(ctx, i)));
   }
   // Add bind helper functions: their type indices follow the builtin helper sigs
-  const bindBaseTypeIdx = helperTypeIdx(ctx, BUILTIN_HELPERS.length);
+  const bindBaseTypeIdx = helperTypeIdx(ctx, builtinHelpers(ctx.coverage !== undefined).length);
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
     typeIdxEntries.push(...uleb(bindBaseTypeIdx + i));
   }
-  const totalFuncs = ctx.result.funcs.length + BUILTIN_HELPERS.length + ctx.bindHelpers.length;
+  const totalFuncs = ctx.result.funcs.length + builtinHelpers(ctx.coverage !== undefined).length + ctx.bindHelpers.length;
   return section(3, [...uleb(totalFuncs), ...typeIdxEntries]);
 }
 
@@ -1107,8 +1181,16 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
     const nameBytes = new TextEncoder().encode(f.exportName!);
     return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex)];
   });
+  // Export the coverage helpers so a host can reset and read the counters.
+  if (ctx.coverage) {
+    for (const name of COVERAGE_HELPERS) {
+      const nameBytes = new TextEncoder().encode(name);
+      entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00,
+        ...uleb(ctx.helperIdx.get(name)!)]);
+    }
+  }
   // Also export bind helpers so generated TS wrappers can call them
-  const bindBaseIdx = result.funcs.length + BUILTIN_HELPERS.length; // after the builtin helpers
+  const bindBaseIdx = result.funcs.length + builtinHelpers(ctx.coverage !== undefined).length; // after the builtin helpers
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
     const nameBytes = new TextEncoder().encode(ctx.bindHelpers[i].name);
     entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(bindBaseIdx + i)]);
@@ -1124,10 +1206,15 @@ function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
     const bodyBytes = wacEmitFunc(f, ctx);
     bodies.push([...uleb(bodyBytes.length), ...bodyBytes]);
   }
-  // Append the builtin helper function bodies
+  // Append the builtin helper function bodies. This must come after the user
+  // bodies above: emitting them is what discovers the coverage points, and
+  // __cov_init/__cov_len are built from the final count.
   const helperBodies = buildHelperBodies(
     ctx.stringTypeIdx,
     ctx.helperIdx.get("__fmod")!,
+    ctx.coverage
+      ? { arrTypeIdx: covArrayTypeIdx(ctx), numPoints: ctx.coverage.points.length }
+      : undefined,
   );
   for (const b of helperBodies) {
     bodies.push([...uleb(b.length), ...b]);
@@ -1137,6 +1224,33 @@ function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
     bodies.push([...uleb(bh.body.length), ...bh.body]);
   }
   return section(10, vec(bodies));
+}
+
+/** Type index of the i32 array holding coverage counters. */
+function covArrayTypeIdx(ctx: WasmTypeCtxFull): number {
+  return ctx.arrTypeIdx.get("i32")!;
+}
+
+/**
+ * Global section (id 6) — only emitted when instrumenting.
+ *
+ * One mutable global holding the counter array, typed nullable and initialised to
+ * ref.null so the initialiser stays a constant expression. That avoids depending
+ * on array.new_default being permitted in a global initialiser, which engines
+ * vary on. __cov_init fills it in.
+ *
+ * Section id 6 sits between the function (3) and export (7) sections; wasm
+ * requires sections in ascending order.
+ */
+function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
+  if (!ctx.coverage) return [];
+  const t = covArrayTypeIdx(ctx);
+  const global = [
+    0x63, ...sleb(t),        // (ref null $covArray)
+    0x01,                    // mutable
+    0xD0, ...sleb(t), 0x0B,  // ref.null $covArray; end
+  ];
+  return section(6, vec([global]));
 }
 
 // ── Element section ───────────────────────────────────────────────────────────
@@ -1156,20 +1270,28 @@ function buildElemSection(result: ResolveResult): number[] {
 export function wasmBuildBin(
   result: ResolveResult,
   programs: Map<string, unknown>,
+  options: { coverage?: CoverageCtx } = {},
 ): Uint8Array {
-  const ctx = buildTypeCtxFull(result, programs);
+  const ctx = buildTypeCtxFull(result, programs, options.coverage !== undefined);
+  ctx.coverage = options.coverage;
 
   const MAGIC   = [0x00, 0x61, 0x73, 0x6D];
   const VERSION = [0x01, 0x00, 0x00, 0x00];
 
+  // The code section is built first because emitting the bodies is what
+  // discovers the coverage points, and the global and export sections depend on
+  // knowing whether there are any. Section *bytes* are still concatenated in
+  // ascending id order below, which is what wasm requires.
+  const codeSection   = buildCodeSection(ctx);
   const typeSection   = buildTypeSectionFull(ctx);
   const funcSection   = buildFuncSection(ctx);
+  const globalSection = buildGlobalSection(ctx);
   const exportSection = buildExportSection(result, ctx);
   const elemSection   = buildElemSection(result);
-  const codeSection   = buildCodeSection(ctx);
 
   return new Uint8Array([
     ...MAGIC, ...VERSION,
-    ...typeSection, ...funcSection, ...exportSection, ...elemSection, ...codeSection,
+    ...typeSection, ...funcSection, ...globalSection, ...exportSection,
+    ...elemSection, ...codeSection,
   ]);
 }

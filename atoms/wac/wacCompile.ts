@@ -9,13 +9,33 @@ import { wacParse, type Program } from "./wacParse.ts";
 import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
 import { wasmBuildBin } from "./wasmBuildBin.ts";
+import type { CoveragePoint } from "./wacEmitFunc.ts";
 import type { WacType } from "./wacParse.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
+/**
+ * Compile options.
+ *
+ * `coverage` instruments every branch point with a counter and exports
+ * `__cov_init` / `__cov_len` / `__cov_get` to drive them. Instrumented modules
+ * are larger and slower, so this is off by default and should never be what
+ * ships. With it off the output is byte-for-byte what it was before.
+ */
+export type WacCompileOptions = { coverage?: boolean };
+
 export type WacParam    = { name: string; type: string };
 export type WacExport   = { name: string; params: WacParam[]; ret: string };
-export type WacCompiled = { wasm: Uint8Array; exports: WacExport[] };
+export type WacCompiled = {
+  wasm: Uint8Array;
+  exports: WacExport[];
+  /**
+   * The instrumented branch points, index-aligned with the counter array, when
+   * compiled with `coverage`. A counter index means nothing without this — it is
+   * what turns counts into per-file, per-line coverage.
+   */
+  coverage?: CoveragePoint[];
+};
 
 export type CompileDiagnostic = {
   message: string;
@@ -77,6 +97,7 @@ function extractExports(result: ResolveResult): WacExport[] {
 export function wacCompile(
   files: Map<string, string>,
   entry: string,
+  options: WacCompileOptions = {},
 ): CompileResult {
   const diagnostics: CompileDiagnostic[] = [];
   const programs = new Map<string, Program>();
@@ -115,7 +136,12 @@ export function wacCompile(
   if (hasError()) return { ok: false, diagnostics };
 
   // Phase 5: emit wasm binary (cannot fail after successful typecheck)
-  const wasm = wasmBuildBin(resolveResult, programs);
+  const coverage = options.coverage ? { points: [], file: entry } : undefined;
+  const wasm = wasmBuildBin(resolveResult, programs, { coverage });
   const exports = extractExports(resolveResult);
-  return { ok: true, compiled: { wasm, exports }, diagnostics };
+  return {
+    ok: true,
+    compiled: { wasm, exports, coverage: coverage?.points },
+    diagnostics,
+  };
 }
