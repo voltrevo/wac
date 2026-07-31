@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0036](open/0036-same-struct-name-in-two-modules-emits-invalid-wasm.md) | two modules declaring a struct with the same name emit invalid wasm | bug | invalid wasm |
 | [0035](open/0035-wacx-is-specified-but-does-not-exist.md) | `wacx` is specified as the entry point but does not exist | missing feature | not implemented |
 | [0023](open/0023-emitcall-direct-call-branch-is-unreachable.md) | `emitCall`'s direct-call branch is unreachable | bug | not implemented |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
