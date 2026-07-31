@@ -45,6 +45,7 @@ function prim(name: string): WacType {
 // Well-known singletons
 const T_I32  = prim("i32");
 const T_I64  = prim("i64");
+const T_U32  = prim("u32");
 const T_U64  = prim("u64");
 const T_F32  = prim("f32");
 const T_F64  = prim("f64");
@@ -1364,24 +1365,30 @@ function inferCall(
   if (callee.kind === "field") {
     const { expr: baseExpr, name: methodName } = callee;
 
-    // Builtin statics on `f64`: the only way to see a float's representation.
-    // Reinterpretation, not conversion — the bits are unchanged.
-    if (baseExpr.kind === "ident" && baseExpr.name === "f64" && !ctx.fileScope.has("f64")) {
-      const want = methodName === "toBits" ? T_F64 : T_U64;
+    // Builtin statics on the float types: the only way to see a float's
+    // representation. Reinterpretation, not conversion — the bits are unchanged,
+    // and each float pairs with the unsigned integer of its own width.
+    if (baseExpr.kind === "ident" && (baseExpr.name === "f64" || baseExpr.name === "f32")
+        && !ctx.fileScope.has(baseExpr.name)) {
+      const isF64 = baseExpr.name === "f64";
+      const floatT = isF64 ? T_F64 : T_F32;
+      const bitsT = isF64 ? T_U64 : T_U32;
       if (methodName !== "toBits" && methodName !== "fromBits") {
-        errAt(ctx, `type 'f64' has no static method '${methodName}'`, callee.line, callee.col);
+        errAt(ctx, `type '${baseExpr.name}' has no static method '${methodName}'`,
+          callee.line, callee.col);
         return null;
       }
+      const want = methodName === "toBits" ? floatT : bitsT;
       if (args.length !== 1) {
-        errAt(ctx, `'f64.${methodName}()' takes 1 argument`, expr.line, expr.col);
+        errAt(ctx, `'${baseExpr.name}.${methodName}()' takes 1 argument`, expr.line, expr.col);
         return null;
       }
       const at3 = inferExpr(args[0], env, ctx, want);
       if (at3 && !typeEq(at3, want)) {
-        errAt(ctx, `'f64.${methodName}()' argument must be ${typeName(want)}, got ${typeName(at3)}`,
-          args[0].line, args[0].col);
+        errAt(ctx, `'${baseExpr.name}.${methodName}()' argument must be ${typeName(want)}, ` +
+          `got ${typeName(at3)}`, args[0].line, args[0].col);
       }
-      return methodName === "toBits" ? T_U64 : T_F64;
+      return methodName === "toBits" ? bitsT : floatT;
     }
 
     // Builtin statics on the `string` type. `string` lexes as an identifier, so
