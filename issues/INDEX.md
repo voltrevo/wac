@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0020](open/0020-grammar-md-is-behind-the-implementation.md) | `grammar.md` is behind the implementation in four places | bug | not implemented |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 
 ## Known gaps that are not issues
@@ -24,6 +23,14 @@ here so nobody reports them as bugs:
 
 ## Closed
 
-19 issues, 18 of them found by porting wacc's AST to sum types and by probing shapes
-that port does not reach. Twelve of the sixteen typechecked cleanly and failed at
-instantiation or ran wrong — which is why `README.md` asks you to run the thing.
+Twenty issues, nineteen closed.
+
+Most came from porting `wacc`'s AST to sum types and then probing shapes that port does
+not reach; 0020 came from agent-b reading the spec against the implementation. Twelve
+typechecked cleanly and failed at instantiation or ran wrong, which is why `README.md`
+asks you to run the thing rather than only compile it.
+
+Three of them were found *by the fix for another one* — the enum no-default rule (0012)
+made the sized-array form unusable and produced 0019; and 0019's own fix needed two walks
+updated, the same omission as 0005. A fix that touches the AST or adds a statement form
+should be assumed to have missed a walk until checked.

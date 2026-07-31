@@ -5705,6 +5705,58 @@ Deno.test(`[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejec
   eq(bad(`const i32 A = 1.5; export i32 g() { return A; }`), true, "wrong type");
 });
 
+// §wac-grammar-keywords-3mfq7bx — the documented keyword list matches the lexer
+Deno.test(`[§wac-grammar-keywords-3mfq7bx] grammar.md's keyword list matches KEYWORDS`, async () => {
+  // Filed as issue 0020 by agent-b, along with the observation that a test would have
+  // caught it. The list had named eight *type* names as keywords — bool, i8, i16, i32,
+  // i64, f32, f64, string — which are deliberately identifiers, because that is what
+  // makes `f64.toBits(x)` parse as an ordinary static call. It also omitted `from` and
+  // `this`. A reader who trusted the grammar would have concluded those builtins were
+  // impossible.
+  //
+  // Comparing the prose against the source is the only way this stays true; three
+  // separate drifts had been found by people writing wac rather than reading the spec.
+  const grammar = await Deno.readTextFile(new URL("../../spec/spec/grammar.md", import.meta.url));
+  const lexer   = await Deno.readTextFile(new URL("./wacLex.ts", import.meta.url));
+
+  const block = grammar.match(/### Keywords\n\n```\n([\s\S]*?)```/);
+  if (!block) throw new Error("could not find the Keywords block in grammar.md");
+  const documented = new Set(block[1].split(/\s+/).filter((w) => w.length > 0));
+
+  const set = lexer.match(/const KEYWORDS = new Set<string>\(\[([\s\S]*?)\]\);/);
+  if (!set) throw new Error("could not find KEYWORDS in wacLex.ts");
+  const actual = new Set([...set[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+
+  // The cast operators are punctuation the lexer munches directly, not entries in
+  // KEYWORDS, but they are keywords as far as a reader of the grammar is concerned.
+  for (const cast of ["as!", "as~", "as@"]) {
+    if (!documented.has(cast)) throw new Error(`grammar.md omits the cast operator ${cast}`);
+    documented.delete(cast);
+  }
+
+  const missing = [...actual].filter((k) => !documented.has(k)).sort();
+  const extra   = [...documented].filter((k) => !actual.has(k)).sort();
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `grammar.md's keyword list disagrees with the lexer\n` +
+      (missing.length ? `  keywords the grammar omits: ${missing.join(" ")}\n` : "") +
+      (extra.length ? `  words the grammar lists that are not keywords: ${extra.join(" ")}\n` : ""));
+  }
+});
+
+Deno.test(`[§wac-grammar-keywords-3mfq7bx] the type names really are identifiers`, async () => {
+  // The reason the list above must not contain them: each of these parses as
+  // `IDENT "." IDENT "(" args ")"`, which only works if the type name is an identifier.
+  const inst = await run(`
+    export u64 bits(f64 x)   { return f64.toBits(x); }
+    export f64 unbits(u64 b) { return f64.fromBits(b); }
+    export i32 fromB()       { u8[] b = u8[](104, 105); return string.fromBytes(b).len(); }
+  `);
+  eq(inst.call("bits", [1.0]), 0x3FF0000000000000n, "f64.toBits is a static call on an identifier");
+  eq(inst.call("unbits", [0x3FF0000000000000n]), 1.0, "and f64.fromBits");
+  eq(inst.call("fromB", []), 2, "and string.fromBytes");
+});
+
 // §wac-modconst-ref-9jvq2mt — constants of reference type
 Deno.test(`[§wac-modconst-ref-9jvq2mt] a struct or enum can be a module constant`, async () => {
   // `struct.new` is a constant instruction in the GC proposal, so a constant is not
