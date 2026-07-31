@@ -63,6 +63,12 @@ export type Expr =
   // `T[n](fill: v)` — named-argument syntax because `T[n](v)` would be ambiguous with
   // indexing a funcref array and calling it, `arr[i](5)`.
   | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[]; fill?: Expr } & Pos)
+  // `match` in expression position: every arm gives a value rather than statements.
+  // `enumBaseTypeIndex` is filled in by the checker, exactly as on the statement form.
+  // `resultType` is the unified arm type, filled in by the checker so the emitter can
+  // declare the block's result without re-deriving it.
+  | ({ kind: "matchExpr"; subject: Expr; arms: MatchArm[]; enumBaseTypeIndex?: number;
+       resultType?: WacType } & Pos)
   // ++/-- as an expression: postfix evaluates to the old value, prefix to the
   // new one. The operand must be an lvalue (variable, field, array element).
   | ({ kind: "incr-expr"; op: "++" | "--"; prefix: boolean; lval: Lvalue } & Pos);
@@ -109,6 +115,13 @@ export type MatchArm = {
   variant: string | null;
   bindings: string[];
   body: Stmt[];
+  /**
+   * The arm's value, when the `match` is an expression rather than a statement. `body` is
+   * empty in that case and this is set; the two forms share everything else, including the
+   * annotations below, so the checker and emitter differ only in what they do with the
+   * arm's contents.
+   */
+  value?: Expr;
   /**
    * Filled in by the type checker, consumed by the emitter — the same
    * annotate-then-consume arrangement the resolver uses for `resolvedTypeIndex`.
@@ -575,6 +588,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       return e;
     }
 
+    // `match (subject) { case P: value, ... }` as an expression. Reuses `case P:` from the
+    // statement form so there is one arm syntax in the language; what follows the colon is
+    // an expression, and arms are comma-separated. Which form is being parsed is decided by
+    // position, not by syntax, so nothing is ambiguous.
+    if (at("match")) return parseMatchExpr();
+
     // fn[R(P)][](args) — array of funcref construction
     if (at("fn")) {
       const fnType = parseType();
@@ -995,6 +1014,53 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     }
     expect("}");
     return { kind: "match", subject, arms, ...p };
+  }
+
+  /**
+   * `match` as an expression.
+   *
+   * Deliberately close to `parseMatchStmt`: the arm header is identical, so a reader who
+   * knows one knows the other, and the checker shares its arm handling between them. The
+   * only difference is what follows the colon.
+   */
+  function parseMatchExpr(): Expr {
+    const p = pos();
+    expect("match");
+    expect("(");
+    const subject = parseExpr();
+    expect(")");
+    expect("{");
+
+    const arms: MatchArm[] = [];
+    while (!at("}") && !at("eof")) {
+      const ap = pos();
+      if (consume("else")) {
+        expect(":");
+        arms.push({ variant: null, bindings: [], body: [], value: parseExpr(), ...ap });
+      } else if (consume("case")) {
+        const variant = at("ident") ? advance().text : (err("expected variant name"), "?");
+        const bindings: string[] = [];
+        if (consume("(")) {
+          if (!at(")")) {
+            do {
+              if (at(")")) break;   // trailing comma
+              bindings.push(at("ident") ? advance().text : (err("expected binding name"), "?"));
+            } while (consume(","));
+          }
+          expect(")");
+        }
+        expect(":");
+        arms.push({ variant, bindings, body: [], value: parseExpr(), ...ap });
+      } else {
+        err(`expected 'case' or 'else' in match`);
+        advance();
+        continue;
+      }
+      // A trailing comma after the last arm is allowed, as in every other list.
+      if (!consume(",")) break;
+    }
+    expect("}");
+    return { kind: "matchExpr", subject, arms, ...p };
   }
 
   /** An arm body runs to the next `case`, `else` or the closing brace. */
