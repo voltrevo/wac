@@ -579,6 +579,8 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
   keyMap: WeakMap<Stmt, string>;
   armKeys: WeakMap<MatchArm, string>;
   bindingKeys: WeakMap<MatchArm, string[]>;
+  /** The shadow local an `if (x is T)` introduces for `x` inside its then-block. */
+  narrowKeys: WeakMap<Stmt, string>;
 } {
   const decls: LocalDecl[] = [];
   const count = new Map<string, number>(); // how many times each name has been declared
@@ -591,6 +593,7 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
   // A match arm is not a Stmt, so its narrowed shadow and its payload bindings need
   // their own key maps rather than riding on keyMap.
   const armKeys = new WeakMap<MatchArm, string>();
+  const narrowKeys = new WeakMap<Stmt, string>();
   const bindingKeys = new WeakMap<MatchArm, string[]>();
   function walk(ss: Stmt[]): void {
     for (const s of ss) {
@@ -608,6 +611,21 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
         walkExpr(s.init);
       } else if (s.kind === "if") {
         walkExpr(s.cond);
+        // `if (x is T)` shadows `x` at the narrower type inside the then-block, which needs
+        // a local of its own. Keyed like a match arm's shadow, for the same reason: the key
+        // must not collide with a parameter or local of the same name, and this pass does not
+        // know those names.
+        if (s.narrowName !== undefined && s.narrowTypeIndex !== undefined) {
+          const n = count.get(`#narrow:${s.narrowName}`) ?? 0;
+          count.set(`#narrow:${s.narrowName}`, n + 1);
+          const key = `#narrow:${s.narrowName}:${n}`;
+          decls.push({
+            name: key,
+            type: { kind: "struct", name: s.narrowName,
+                    resolvedTypeIndex: s.narrowTypeIndex, line: s.line, col: s.col },
+          });
+          narrowKeys.set(s, key);
+        }
         walk(s.then.stmts);
         if (s.els?.kind === "else-block") walk(s.els.block.stmts);
         else if (s.els?.kind === "else-if") walk([s.els.stmt]);
@@ -755,7 +773,7 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
   }
 
   walk(stmts);
-  return { decls, keyMap, armKeys, bindingKeys };
+  return { decls, keyMap, armKeys, bindingKeys, narrowKeys };
 }
 
 // ── String encoding ───────────────────────────────────────────────────────────
@@ -801,6 +819,8 @@ class FuncEmitter {
   armKeys: WeakMap<MatchArm, string> = new WeakMap();
   /** Maps a match arm to its payload binding keys, "" where the binding is `_`. */
   bindingKeys: WeakMap<MatchArm, string[]> = new WeakMap();
+  /** Maps an `if (x is T)` to the key of the shadow it introduces for `x`. */
+  narrowKeys: WeakMap<Stmt, string> = new WeakMap();
   private ctx: WasmTypeCtx;
   private returnType: WacType;
   private loopStack: LoopCtx[] = [];
@@ -2399,7 +2419,32 @@ class FuncEmitter {
     this.emit(0x04, 0x40); // if void
     this.labelDepth++;
     this.emitCovPoint("then", s.then.line, s.then.col);
+
+    // `if (x is T)` narrows `x` inside the then-block. The condition has already tested the
+    // type, so the cast cannot fail — it is the same unchecked downcast a `match` arm emits,
+    // and for the same reason: the test that would justify it has just been performed.
+    const narrowKey = s.narrowName !== undefined ? this.narrowKeys.get(s) : undefined;
+    const savedKeys = narrowKey !== undefined ? new Map(this.nameToKey) : null;
+    const savedEnv = narrowKey !== undefined ? new Map(env) : null;
+    if (narrowKey !== undefined && s.narrowName !== undefined) {
+      const local = this.localMap.get(narrowKey);
+      const source = this.localMap.get(this.nameToKey.get(s.narrowName) ?? s.narrowName);
+      if (local && source) {
+        this.emit(0x20, ...uleb(source.idx));                       // local.get x
+        this.emit(0xFB, 0x16, ...sleb(s.narrowTypeIndex!));         // ref.cast (ref T)
+        this.emit(0x21, ...uleb(local.idx));                        // local.set shadow
+        this.nameToKey.set(s.narrowName, narrowKey);
+        env.set(s.narrowName, local.type);
+      }
+    }
+
     this.emitBlock(s.then, env);
+
+    if (savedKeys && savedEnv) {
+      restoreScope(this.nameToKey, savedKeys);
+      restoreScope(env, savedEnv);
+    }
+
     if (s.els) { this.emit(0x05); this.emitElse(s.els, env); }
     this.emit(0x0B); // end
     this.labelDepth--;
@@ -2787,10 +2832,11 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   // answer rather than an error.
   const paramNames = new Set([...params.map(p => p.name),
     ...(entry.origin.kind === "method" && entry.origin.decl.hasThis ? ["this"] : [])]);
-  const { decls: allLocals, keyMap, armKeys, bindingKeys } =
+  const { decls: allLocals, keyMap, armKeys, bindingKeys, narrowKeys } =
     collectLocals(body.stmts, [...paramNames]);
   emitter.keyMap = keyMap;
   emitter.armKeys = armKeys;
+  emitter.narrowKeys = narrowKeys;
   emitter.bindingKeys = bindingKeys;
   for (const d of allLocals) {
     if (!emitter.localMap.has(d.name)) {

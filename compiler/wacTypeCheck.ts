@@ -680,7 +680,16 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
           `expected bool, found ${typeName(cType)}`,
           `use a comparison: if (${condName} != 0) { ... }`);
       }
-      const thenRet = checkBlock(stmt.then, new Map(env), ctx);
+      // `if (s is Circle)` narrows `s` inside the then-block. See narrowedByCond for
+      // exactly when, and why this is a scope rule rather than flow analysis.
+      const thenEnv: VarEnv = new Map(env);
+      const narrowed = narrowedByCond(stmt.cond, env, ctx);
+      if (narrowed !== null) {
+        thenEnv.set(narrowed.name, { type: narrowed.type, isConst: true });
+        stmt.narrowName = narrowed.name;
+        stmt.narrowTypeIndex = narrowed.type.resolvedTypeIndex;
+      }
+      const thenRet = checkBlock(stmt.then, thenEnv, ctx);
       const elseRet = checkElse(stmt.els, env, ctx);
       // All paths return only if both then and else terminate
       return thenRet && elseRet !== null && elseRet;
@@ -1277,6 +1286,66 @@ function checkMatchArms(
     baseTypeIndex: enumEntry.base.typeIndex,
     total: elseArm !== null || exhaustive,
   };
+}
+
+/**
+ * The narrowing an `if` condition licenses, or null if it licenses none.
+ *
+ * Only the exact shape `ident is Type` narrows, and only inside the then-block. That makes
+ * this a **scope rule** rather than flow-sensitive typing, which is what keeps it sound
+ * without any analysis:
+ *
+ *   - the extent is the block, which the parser has already delimited;
+ *   - the introduced binding is `const`, so it cannot be reassigned to something outside the
+ *     narrowed type — the same reason a `match` arm's narrowing is const;
+ *   - the outer binding is untouched, so nothing about what holds *after* the block changes,
+ *     and an early `return` inside it has nothing to invalidate.
+ *
+ * Anything else — a negation, an `&&`, a field or index on the left, a non-struct type — does
+ * not narrow. That is a much smaller language than flow-sensitive typing, and deliberately so
+ * [see issue 0029].
+ *
+ * The type must be a *subtype* of what the name already has, since narrowing to an unrelated
+ * type would describe a test that can never pass, and `is` already warns about that.
+ */
+function narrowedByCond(
+  cond: Expr, env: VarEnv, ctx: Ctx,
+): { name: string; type: WacType & { kind: "struct" } } | null {
+  // `A && B` narrows from *either* operand: reaching the then-block means both held, so both
+  // are available as premises. (An earlier version consulted only the left, on the reasoning
+  // that a right-hand narrowing "would have to hold for the left to have been evaluated" —
+  // that is the question for narrowing *inside* the condition, not for the block, and the
+  // block is all this rule governs.) `||` narrows from neither, since one branch alone may
+  // have held.
+  //
+  // The parentheses are not optional: `is` binds looser than `&&`, so `x is T && more` parses
+  // as `x is (T && more)` [see operators.md].
+  if (cond.kind === "binary" && cond.op === "&&") {
+    return narrowedByCond(cond.left, env, ctx) ?? narrowedByCond(cond.right, env, ctx);
+  }
+  if (cond.kind !== "is") return null;
+  if (cond.not) return null;                       // `is not` tells us nothing about the then
+  if (cond.expr.kind !== "ident") return null;     // nothing to shadow otherwise
+  const rhs = cond.rhs;
+  if (rhs === "null" || typeof rhs !== "object" || !("kind" in rhs)) return null;
+  if (rhs.kind !== "struct") return null;          // arrays and prims have no subtyping here
+
+  const current = env.get(cond.expr.name);
+  if (current === undefined) return null;
+  // Narrowing something already narrower, or unrelated, is not a narrowing.
+  const from = current.type.kind === "nullable" ? current.type.inner : current.type;
+  if (from.kind !== "struct") return null;
+  if (typeEq(from, rhs)) return null;
+  const fromEntry = entryOfType(from, ctx);
+  const toEntry = entryOfType(rhs, ctx);
+  if (!fromEntry || !toEntry) return null;
+  // The target has to be below the current type, or the test can never pass.
+  let walk: StructEntry | null = toEntry;
+  while (walk !== null) {
+    if (walk.typeIndex === fromEntry.typeIndex) return { name: cond.expr.name, type: rhs };
+    walk = walk.parentEntry;
+  }
+  return null;
 }
 
 /**

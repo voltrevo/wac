@@ -397,12 +397,11 @@ These map to `ref.test` and `ref.cast`.
 ```wac
 f64 area(Shape s) {
   if (s is Circle) {
-    Circle c = s as! Circle;      // ref.cast, traps if wrong
-    return 3.14159265358979 * c.radius * c.radius;
+    // `s` is narrowed to Circle here, so no cast is needed [see Narrowing below].
+    return 3.14159265358979 * s.radius * s.radius;
   }
   if (s is Rect) {
-    Rect r = s as! Rect;
-    return r.w * r.h;
+    return s.w * s.h;
   }
   return 0.0;
 }
@@ -411,6 +410,45 @@ f64 area(Shape s) {
 `[§wac-is-dz9jg1l]` A Circle `is Circle` returns true, `is Rect` returns false.
 `[§wac-as-trap-d10qz88]` Casting a Circle `as Rect` traps.
 `[§wac-is-not-fwatmyk]` A Circle `is not Rect` returns true.
+
+### Narrowing
+
+`if (x is T)` narrows `x` to `T` inside the then-block, so no cast is needed there:
+
+```wac
+f64 area(Shape s) {
+  if (s is Circle) {
+    return 3.14159265358979 * s.radius * s.radius;   // `s` is a Circle here
+  }
+  if (s is Rect) {
+    return s.w * s.h;
+  }
+  return 0.0;
+}
+```
+
+`[§wac-narrow-if-2mkq8vp]` This works for hand-written struct hierarchies and for enum
+variants alike, nests, and applies in an `else if` arm.
+
+The rule is deliberately small, and is a **scope rule rather than flow-sensitive typing**:
+the name is shadowed by a `const` binding at the narrower type whose extent is the block,
+exactly as a `match` arm's narrowing works (see enums.md). Three things follow.
+
+Only the exact shape `ident is Type` narrows. `[§wac-narrow-if-2mkq8vp]` `is not` does not,
+because it says nothing about the then-block. Neither does a field or index on the left,
+since there is no name to shadow.
+
+`&&` narrows from **either** operand, because reaching the block means both held; `||`
+narrows from neither. `[§wac-narrow-if-2mkq8vp]` Note that the parentheses matter: `is` binds
+looser than `&&`, so it is `(s is Circle) && ...`.
+
+The narrowed name is `const` within the block. `[§wac-narrow-if-2mkq8vp]` Assigning to it
+would raise the question of which binding is written, and the outer one is deliberately
+untouched — which is also why nothing needs to be analysed about what holds after the block.
+
+Because the cast is no longer needed, `(s as! Circle)` inside such a block is now a redundant
+upcast and reported as one. The migration is to drop it; this document's own example used to
+carry it.
 
 The type named on the right must exist. `[§wac-is-undefined-type-6qbn3wr]`
 `p is Nonexistent` is a compile error — `undefined type 'Nonexistent'`.

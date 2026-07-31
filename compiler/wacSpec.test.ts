@@ -3219,19 +3219,33 @@ Deno.test("[§wac-override-dispatch-r2km6jf] getName dispatches dynamically via 
     struct Shape { i32 tag; i32 getTag(const this) { return this.tag; } }
     struct Circle : Shape { i32 radius; override i32 getTag(const this) { return 42; } }
     i32 dispatch(Shape s) {
-      if (s is Circle) { return (s as! Circle).getTag(); }
+      // s is narrowed to Circle inside the block [see wac-narrow-if-2mkq8vp], so the
+      // (s as! Circle) this test used to need is now a redundant upcast and rejected as
+      // one. That is the point of the narrowing; the dispatch it demonstrates is unchanged.
+      if (s is Circle) { return s.getTag(); }
       return s.getTag();
+    }
+    // The cast is still how you get there when narrowing does not apply — from a field, for
+    // instance, where there is no name to shadow.
+    struct Holder { Shape s; }
+    i32 viaField(Holder h) {
+      if (h.s is Circle) { return (h.s as! Circle).getTag(); }
+      return h.s.getTag();
     }
     export i32 testDynDispatch() {
       Circle c = Circle(0, 5);
       Shape s = Shape(99);
       return dispatch(c) * 100 + dispatch(s);
     }
+    export i32 testViaField() {
+      return viaField(Holder(Circle(0, 5))) * 100 + viaField(Holder(Shape(99)));
+    }
   `);
   // c is Circle → (c as! Circle).getTag() = 42
   // s is Shape (not Circle) → s.getTag() = 99
   // result: 42 * 100 + 99 = 4299
   eq(inst.call("testDynDispatch", []), 4299, "dynamic dispatch: Circle → 42, Shape → 99");
+  eq(inst.call("testViaField", []), 4299, "and through a field, where the cast is still needed");
 });
 
 // ── §wac-bind-* — TypeScript bindgen ─────────────────────────────────────────
@@ -5957,6 +5971,77 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notU64", [18446744073709551615n]), 0n, "and back");
   eq(i.call("notU32", [0]), 4294967295, "~0 at 32 bits");
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
+});
+
+// §wac-narrow-if-2mkq8vp — `if (x is T)` narrows x in the then-block
+Deno.test("[§wac-narrow-if-2mkq8vp] `if (x is T)` narrows x", async () => {
+  // Issue 0029. Only the exact shape `ident is Type` narrows, and only in the then-block,
+  // which makes this a scope rule rather than flow-sensitive typing — the same mechanism a
+  // match arm uses: a const shadowing binding with a lexical extent.
+  const inst = await run(`
+    enum Shape { Point, Circle(f64 radius), Rect(f64 w, f64 h) }
+    struct Base { i32 a; }
+    struct Sub : Base { i32 b; }
+    struct Deeper : Sub { i32 c; }
+    export f64 variant()   { Shape s = Shape.Circle(2.5); if (s is Circle) { return s.radius; } return 0.0; }
+    export f64 notTaken()  { Shape s = Shape.Point;       if (s is Circle) { return s.radius; } return 7.0; }
+    export i32 structs()   { Base x = Sub(1, 2);          if (x is Sub) { return x.b; } return 0; }
+    export i32 nested()    { Base x = Deeper(1, 2, 3);    if (x is Sub) { if (x is Deeper) { return x.c; } return x.b; } return 0; }
+    export f64 elseIf()    {
+      Shape s = Shape.Rect(2.0, 3.0);
+      if (s is Circle) { return s.radius; } else if (s is Rect) { return s.w * s.h; }
+      return 0.0;
+    }
+    export f64 afterwards() {
+      // The outer binding is untouched, which is why no analysis is needed for what holds
+      // after the block.
+      Shape s = Shape.Circle(1.5);
+      if (s is Circle) { f64 unused = s.radius; }
+      return match (s) { case Circle(r): r, else: 0.0 };
+    }
+  `);
+  near(inst.call("variant", []) as number, 2.5, "an enum variant");
+  near(inst.call("notTaken", []) as number, 7.0, "the branch not taken is unaffected");
+  eq(inst.call("structs", []), 2, "a hand-written struct hierarchy, not just enums");
+  eq(inst.call("nested", []), 3, "narrowing inside a narrowing");
+  near(inst.call("elseIf", []) as number, 6.0, "an else-if arm narrows too");
+  near(inst.call("afterwards", []) as number, 1.5, "and the outer binding still has its own type");
+});
+
+Deno.test("[§wac-narrow-if-2mkq8vp] && narrows from either operand, || from neither", async () => {
+  // Reaching the block means both operands of `&&` held, so both are available as premises.
+  // One branch of `||` holding is not enough, so it narrows from neither.
+  const inst = await run(`
+    enum Shape { Point, Circle(f64 radius) }
+    export f64 left()  { Shape s = Shape.Circle(2.0); f64 k = 1.0; if ((s is Circle) && k > 0.0) { return s.radius; } return 0.0; }
+    export f64 right() { Shape s = Shape.Circle(3.0); f64 k = 1.0; if (k > 0.0 && (s is Circle)) { return s.radius; } return 0.0; }
+    export f64 chain() { Shape s = Shape.Circle(4.0); f64 k = 1.0; if ((s is Circle) && k > 0.0 && k < 5.0) { return s.radius; } return 0.0; }
+  `);
+  near(inst.call("left", []) as number, 2.0, "from the left operand");
+  near(inst.call("right", []) as number, 3.0, "from the right operand");
+  near(inst.call("chain", []) as number, 4.0, "and through a chain");
+
+  const orCond = err(`
+    enum Shape { Point, Circle(f64 radius) }
+    export f64 f() { Shape s = Shape.Circle(1.0); if ((s is Circle) || true) { return s.radius; } return 0.0; }`);
+  if (!orCond.includes("has no field 'radius'")) {
+    throw new Error(`|| should not narrow, got: ${orCond}`);
+  }
+});
+
+Deno.test("[§wac-narrow-if-2mkq8vp] what does not narrow, and the const rule", () => {
+  const cases: [string, string, string][] = [
+    ["`is not`", `if (s is not Point) { return s.radius; }`, "has no field 'radius'"],
+    ["assigning to the narrowed name", `if (s is Circle) { s = Shape.Point; } return 0.0;`, "cannot assign to const"],
+  ];
+  for (const [what, body, want] of cases) {
+    const m = err(`
+      enum Shape { Point, Circle(f64 radius) }
+      export f64 f() { Shape s = Shape.Circle(1.0); ${body} return 0.0; }`);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
 });
 
 // §enum-methods-6vkq2wn — methods on an enum
