@@ -52,7 +52,7 @@ direction. See [casts.md](casts.md) for how to move between them.
 ```wac
 export i32 int32()  { return 42; }
 export i64 int64()  { return 1000000000000; }
-export f32 float32() { return 3.14; }
+export f32 float32() { return 3.14; }   // f32 by context — see "Float literals" below
 export f64 float64() { return 2.718281828459045; }
 ```
 
@@ -100,6 +100,34 @@ u32 c(i32 x) { return x; }   // error: variables never coerce
 `[§wac-litctx-nofit-k3mq8wl]` Each of these is a compile error.
 
 With no expected type, a literal falls back to its own notation.
+
+### Float literals
+
+A float literal follows the same rule: it takes `f32` when `f32` is expected, and is
+`f64` otherwise.
+
+```wac
+f32 a = 1.5;          // f32, by context
+f64 b = 1.5;          // f64
+f32 c = 3.14159;      // f32, rounded — as decimal notation always rounds
+```
+
+`[§wac-float-literal-ctx-8dqm2vw]` All three are accepted, in every position an
+expected type exists: locals, returns, arguments, struct fields, array literals,
+compound assignments and ternary branches.
+
+Rounding to nearest is expected rather than an error. `0.1` is inexact in `f64` too, so
+requiring exactness would reject `3.14159` and leave the rule useless. A literal whose
+magnitude overflows `f32` is refused, because that is a value it does not denote:
+`[§wac-float-literal-ctx-8dqm2vw]` `f32 x = 1.0e40;` is a compile error.
+
+Until this rule existed, no float literal could be an `f32` at all and every one needed
+`as~ f32` — the *truncating* cast, which reads as though the loss were the point.
+
+An exponent needs the decimal point, per `FLOAT_LITERAL` in grammar.md: `1.0e40`, not
+`1e40`. `[§wac-float-no-point-5rtk9bq]` Writing `1e40` is a compile error naming the
+fix; it used to lex as the integer `1` followed by the identifier `e40`, and failed
+several tokens later with a message about a semicolon.
 
 A **decimal** literal is a magnitude. It takes the narrowest integer type that
 holds it: `42` is `i32`, `1000000000000` is `i64`. A decimal past `i64`'s range
