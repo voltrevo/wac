@@ -12,6 +12,7 @@
 // so i64 and u64 are exact, and narrowed to the destination width on demand.
 
 import { wacIntLit } from "./wacIntLit.ts";
+import { wacFloatLit } from "./wacFloatLit.ts";
 import type { Expr } from "./wacParse.ts";
 
 /** A compile-time value, tagged by which wac type family it belongs to. */
@@ -51,7 +52,7 @@ export function wacConstEval(
       const lit = wacIntLit(expr.value);
       return lit.ok ? { kind: "int", value: lit.value } : null;
     }
-    case "float": return { kind: "float", value: parseFloat(expr.value) };
+    case "float": return { kind: "float", value: wacFloatLit(expr.value) };
     case "bool":  return { kind: "bool", value: expr.value };
 
     case "ident": {

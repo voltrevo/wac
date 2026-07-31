@@ -17,6 +17,7 @@ import {
   funcParams, funcReturnType, commonAncestor, ENUM_TAG_FIELD,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
+import { wacFloatLit } from "./wacFloatLit.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -989,7 +990,7 @@ class FuncEmitter {
         break;
       }
       case "float": {
-        const v = parseFloat(e.value);
+        const v = wacFloatLit(e.value);
         // `resolved` is what the type checker decided, and it wins over the expected
         // type for the same reason it does for integers: the checker's answer is the one
         // the program was checked against, and re-deriving it here is how the two came

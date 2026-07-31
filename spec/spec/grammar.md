@@ -229,8 +229,10 @@ INT_LITERAL    = DEC_LITERAL | HEX_LITERAL ;
 DEC_LITERAL    = digit , { digit | "_" } ;
 HEX_LITERAL    = "0" , ( "x" | "X" ) , hex_digit , { hex_digit | "_" } ;
 hex_digit      = digit | "a".."f" | "A".."F" ;
-FLOAT_LITERAL  = digit , { digit | "_" } , "." , digit , { digit | "_" } ,
-                 [ ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ] ;
+(* A decimal point, an exponent, or both — either marks the literal a float. *)
+FLOAT_LITERAL  = digit , { digit | "_" } ,
+                 ( "." , digit , { digit | "_" } , [ exponent ] | exponent ) ;
+exponent       = ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ;
 STRING         = '"' , { string_char } , '"' ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
 string_char    = (* any character except " and \ *) | escape ;

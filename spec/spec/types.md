@@ -67,6 +67,46 @@ export i32 wrap32() { return 2147483647 + 1; }
 
 `[§wac-wrap-uy41uqt]` `wrap32()` returns `-2147483648`.
 
+#### Detecting overflow
+
+Wrapping is the only arithmetic wac has, and that is deliberate: it is what wasm does, and the
+codecs and hashes built on wac depend on it — Poly1305's borrow trick and ChaCha20's adds are
+wrapping by design, and a trapping `+` would make them wrong.
+
+There is no checked operator. What exists instead are two idioms, which work today and are written
+down here because they were not written down anywhere:
+
+**Widen, then narrow with `as!`.** For any type narrower than 64 bits, compute in the wider type and
+let the checked cast catch it:
+
+```wac
+i32 sum(i32 a, i32 b) { return (a as i64 + b as i64) as! i32; }   // traps if it would not fit
+u32 mul(u32 a, u32 b) { return (a as u64 * b as u64) as! u32; }
+```
+
+`[§wac-overflow-detect-8jqm4wn]` `sum(2147483647, 1)` traps; `sum(2000000000, 100)` returns
+`2000000100`.
+
+**Compare against an operand.** For 64-bit types there is no wider one, so unsigned wrap is detected
+by the result going backwards:
+
+```wac
+bool addWraps(u64 a, u64 b) { return a + b < a; }
+```
+
+`[§wac-overflow-detect-8jqm4wn]` True exactly when the addition wrapped. Signed 64-bit overflow needs
+the sign test — the operands agree in sign and the result does not:
+
+```wac
+bool addOverflows(i64 a, i64 b) { i64 s = a + b; return (a < 0) == (b < 0) && (s < 0) != (a < 0); }
+```
+
+`[§wac-overflow-detect-8jqm4wn]` True exactly when the addition overflowed.
+
+A checked operator — `+!`, reading like the casts, where `!` already means "or trap" — is the obvious
+next step and is deliberately not taken yet. The idioms above cover the cases that have come up, and
+a new token per operator is a large surface to add before something needs it. Tracked as issue 0033.
+
 No implicit conversions between any types.
 
 ### Integer literals
@@ -124,10 +164,16 @@ magnitude overflows `f32` is refused, because that is a value it does not denote
 Until this rule existed, no float literal could be an `f32` at all and every one needed
 `as~ f32` — the *truncating* cast, which reads as though the loss were the point.
 
-An exponent needs the decimal point, per `FLOAT_LITERAL` in grammar.md: `1.0e40`, not
-`1e40`. `[§wac-float-no-point-5rtk9bq]` Writing `1e40` is a compile error naming the
-fix; it used to lex as the integer `1` followed by the identifier `e40`, and failed
-several tokens later with a message about a semicolon.
+An exponent alone makes a float — the decimal point is optional:
+`[§wac-float-exponent-7mkq3wv]` `1e9`, `1E10` and `2e-3` are float literals, as are `1.5e10` and
+`1.5e+10`.
+
+It has to be a *real* exponent: `1e` and `1electron` are the integer `1` followed by an identifier,
+and `0x1e5` is hex, where `e` is a digit. `[§wac-float-exponent-7mkq3wv]`
+
+This used to require the point, and `1e9` lexed as `1` followed by the identifier `e9` — a rule the
+grammar stated deliberately, but a poor one: `1e9` for a billion is common, every language in this
+family accepts it, and an exponent marks a float as unambiguously as a point does. See issue 0018.
 
 A **decimal** literal is a magnitude. It takes the narrowest integer type that
 holds it: `42` is `i32`, `1000000000000` is `i64`. A decimal past `i64`'s range
