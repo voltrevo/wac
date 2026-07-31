@@ -1604,6 +1604,46 @@ Deno.test(`[§wac-f64bits-h3kq9wn] arity and argument types are checked`, () => 
   if (!d.includes("no static method")) throw new Error(`unexpected: ${d}`);
 });
 
+// ── §wac-f32bits-* — f32.toBits / f32.fromBits ───────────────────────────────
+
+Deno.test(`[§wac-f32bits-m4kq2wp] the f32 bit pattern matches IEEE 754`, async () => {
+  const inst = await run(`
+    export u32 bits(f32 x)  { return f32.toBits(x); }
+    export f32 back(u32 b)  { return f32.fromBits(b); }
+    export u32 one()        { return f32.toBits(1.0 as~ f32); }
+    export bool round(f32 x){ return f32.fromBits(f32.toBits(x)) == x; }
+    export bool zeroSign()  { return f32.toBits(-0.0 as~ f32) != f32.toBits(0.0 as~ f32); }
+    export f32 tiny()       { return f32.fromBits(1); }
+  `);
+  const view = new DataView(new ArrayBuffer(4));
+  const bitsOf = (x: number): number => { view.setFloat32(0, x); return view.getUint32(0); };
+  const asU32 = (v: unknown): number => (v as number) >>> 0;
+
+  for (const x of [1.0, 0.5, -2.5, 3.14159, 1e30, -1e-30]) {
+    eq(asU32(inst.call("bits", [x])), bitsOf(Math.fround(x)), `bits of ${x}`);
+    eq(inst.call("round", [x]), true, `round-trips ${x}`);
+  }
+  eq(asU32(inst.call("one", [])), 0x3F800000, "1.0 is 0x3F800000");
+  eq(inst.call("zeroSign", []), true, "-0.0 differs from 0.0 in its bits");
+  // Bit pattern 1 is the smallest f32 subnormal — an implementation that shifted
+  // or masked anything would not produce it.
+  view.setUint32(0, 1);
+  eq(inst.call("tiny", []), view.getFloat32(0), "fromBits(1) is the smallest subnormal");
+});
+
+Deno.test(`[§wac-f32bits-m4kq2wp] f32 and f64 pair only with their own width`, () => {
+  // The widths must not be interchangeable: each reinterpret is width-preserving,
+  // and accepting the wrong one would silently reinterpret across sizes.
+  const a = err(`export u32 bad(f64 x) { return f32.toBits(x); }`);
+  if (!a.includes("must be f32")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export f32 bad(u64 b) { return f32.fromBits(b); }`);
+  if (!b.includes("must be u32")) throw new Error(`unexpected: ${b}`);
+  const c = err(`export u64 bad(f32 x) { return f64.toBits(x); }`);
+  if (!c.includes("must be f64")) throw new Error(`unexpected: ${c}`);
+  const d = err(`export f32 bad() { return f32.nope(1); }`);
+  if (!d.includes("no static method")) throw new Error(`unexpected: ${d}`);
+});
+
 // ── §wac-str-frombytes-* — string.fromBytes ──────────────────────────────────
 
 Deno.test(`[§wac-str-frombytes-p3kq7wn] hi() returns "hi"`, async () => {
