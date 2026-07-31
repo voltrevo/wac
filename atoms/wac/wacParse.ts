@@ -373,16 +373,25 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     // would be `(a < b) > c` — comparing a bool, which wac rejects anyway.
     if (tokens[j]?.kind === "<") {
       let depth = 0;
+      // A type argument can contain parentheses and brackets — `Box<fn[i32(i32)]>` — so the scan
+      // tracks those too. Bailing on any `)` was wrong for exactly that case: the funcref's own
+      // `)` ended the scan, the declaration was read as an expression, and `fn` then failed in
+      // expression position with a message about array construction.
+      let group = 0;
       let k = j;
       while (k < tokens.length && tokens[k]?.kind !== "eof") {
         const kind = tokens[k].kind as string;
-        if (kind === "<") depth++;
+        if (kind === "(" || kind === "[") group++;
+        else if (kind === ")" || kind === "]") {
+          if (group === 0) break;        // a closer we never opened: not a type list
+          group--;
+        } else if (kind === "<") depth++;
         else if (kind === ">") { depth--; if (depth === 0) { k++; break; } }
         // `Vec<Vec<i32>>` closes with a munched `>>`; parseType splits it, and the scan has to
         // account for both halves here or the depth never reaches zero.
         else if (kind === ">>") { depth -= 2; if (depth <= 0) { k++; break; } }
         else if (kind === ">>>") { depth -= 3; if (depth <= 0) { k++; break; } }
-        else if (kind === ";" || kind === "{" || kind === ")") break;   // not a type list
+        else if (kind === ";" || kind === "{") break;   // not a type list
         k++;
       }
       if (depth <= 0 && k > j) j = k;

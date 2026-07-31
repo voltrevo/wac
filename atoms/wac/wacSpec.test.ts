@@ -6041,6 +6041,79 @@ Deno.test("[§wac-generic-struct-9tkq4wm] generics nest, and compose with arrays
   eq(inst.call("inTernary", []), 3, "and both ternary branches take the expected type");
 });
 
+Deno.test("[§wac-generic-struct-9tkq4wm] a type argument may be any type", async () => {
+  // The five tests around this one were written from the shapes I had in mind while implementing,
+  // which is the failure mode this project keeps hitting: they use whatever was already convenient.
+  // These are the ones a probe found afterwards, and one of them failed — `Box<fn[i32(i32)]>`, where
+  // the var-decl lookahead bailed on the funcref's own `)` and read the declaration as an
+  // expression.
+  const inst = await run(`
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+    i32 dbl(i32 x) { return x * 2; }
+    export i32 arrayArg()    { Box<i32[]> b = Box(i32[](1, 2, 3)); return b.get().len(); }
+    export i32 nullableArg() { Box<i32[]?> b = Box(null); return b.get() is null ? 7 : 0; }
+    export i32 funcrefArg()  { Box<fn[i32(i32)]> b = Box(dbl); return b.get()(21); }
+    export i32 stringArg()   { Box<string> b = Box("hello"); return b.get().len(); }
+    export i32 threeAtOnce() {
+      Box<i32> a = Box(1); Box<f64> b = Box(2.0); Box<string> c = Box("xyz");
+      return a.get() + (b.get() as~ i32) + c.get().len();
+    }
+  `);
+  eq(inst.call("arrayArg", []), 3, "an array type");
+  eq(inst.call("nullableArg", []), 7, "a nullable type");
+  eq(inst.call("funcrefArg", []), 42, "a funcref type — the case the lookahead got wrong");
+  eq(inst.call("stringArg", []), 5, "a string");
+  eq(inst.call("threeAtOnce", []), 6, "three instantiations of one template together");
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] a generic composes with the rest of the language", async () => {
+  const inst = await run(`
+    enum E { A(i32 v), B }
+    struct Base { i32 a; }
+    struct Sub : Base { i32 b; }
+    struct Parented<T> : Base { T v; T get(const this) { return this.v; } }
+    struct Node<T> { T v; Node<T>? next; i32 depth(const this) { return this.next is null ? 1 : 2; } }
+    struct Uses<T> {
+      T v;
+      i32 viaMatch(const this, E e)   { match (e) { case A(x): return x; case B: return 0; } }
+      i32 viaNarrow(const this, Base x) { if (x is Sub) { return x.b; } return 0; }
+      i32 viaLocal(const this, T seed) { T[] a = T[2](fill: seed); return a.len(); }
+      T   viaOther(const this)         { return this.get(); }
+      T   get(const this)              { return this.v; }
+    }
+    const Box<i32> ONE = Box(5);   // a generic as a module constant
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+
+    export i32 parent()   { Parented<i32> p = Parented(1, 6); return p.get() + p.a; }
+    export i32 selfRef()  { Node<i32> n = Node(1, null); return n.depth(); }
+    export i32 withMatch() { Uses<i32> u = Uses(1); return u.viaMatch(E.A(9)); }
+    export i32 withNarrow() { Uses<i32> u = Uses(1); return u.viaNarrow(Sub(1, 8)); }
+    export i32 withLocal()  { Uses<i32> u = Uses(1); return u.viaLocal(7); }
+    export i32 methodCall() { Uses<i32> u = Uses(4); return u.viaOther(); }
+    export i32 asConstant()  { return ONE.get(); }
+  `);
+  eq(inst.call("parent", []), 7, "a generic struct may have a parent");
+  eq(inst.call("selfRef", []), 1, "and a nullable field of its own type");
+  eq(inst.call("withMatch", []), 9, "match inside a generic method");
+  eq(inst.call("withNarrow", []), 8, "narrowing inside one");
+  eq(inst.call("withLocal", []), 2, "a local whose type is the parameter");
+  eq(inst.call("methodCall", []), 4, "one generic method calling another");
+  eq(inst.call("asConstant", []), 5, "and a generic as a module constant");
+});
+
+Deno.test("[§wac-generic-struct-9tkq4wm] each instantiation is instrumented separately", () => {
+  // Coverage of a generic would be meaningless if instantiations shared branch points: one
+  // instantiation exercising a branch would mark it covered for all of them.
+  const r = wacCompile(new Map([["main.wac", `
+    struct Box<T> { T v; i32 sign(const this, i32 k) { if (k > 0) { return 1; } return 0; } }
+    export i32 useInt()   { Box<i32> b = Box(1); return b.sign(1); }
+    export i32 useFloat() { Box<f64> b = Box(1.0); return b.sign(-1); }
+  `]]), "main.wac", { coverage: true });
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
+  const thens = r.compiled.coverage!.filter((p) => p.kind === "then");
+  eq(thens.length, 2, "one 'then' point per instantiation, not one shared");
+});
+
 Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", async () => {
   // A materialised struct lives in the *template's* file, so the ordinary export and import rules
   // apply to it — which means the import item naming the template has to be rewritten to the
