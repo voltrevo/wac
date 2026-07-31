@@ -462,24 +462,16 @@ function collectLocals(stmts: Stmt[]): { decls: LocalDecl[]; keyMap: WeakMap<Stm
 
 // ── String encoding ───────────────────────────────────────────────────────────
 
-/** Convert a raw wac string value (with escape sequences) to UTF-8 bytes. */
-function encodeString(raw: string): number[] {
-  const out: number[] = [];
-  let i = 0;
-  while (i < raw.length) {
-    if (raw[i] === '\\' && i + 1 < raw.length) {
-      const map: Record<string, number> = { n:0x0A, t:0x09, r:0x0D, '\\':0x5C, '"':0x22, '0':0x00 };
-      out.push(map[raw[i+1]] ?? raw.charCodeAt(i+1));
-      i += 2;
-    } else {
-      const cp = raw.codePointAt(i)!;
-      if (cp < 0x80) { out.push(cp); i++; }
-      else if (cp < 0x800) { out.push(0xC0|(cp>>6), 0x80|(cp&0x3F)); i++; }
-      else if (cp < 0x10000) { out.push(0xE0|(cp>>12), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); i++; }
-      else { out.push(0xF0|(cp>>18), 0x80|((cp>>12)&0x3F), 0x80|((cp>>6)&0x3F), 0x80|(cp&0x3F)); i+=2; }
-    }
-  }
-  return out;
+/**
+ * UTF-8 bytes of a string literal's value.
+ *
+ * The value arrives already unescaped — `lexString` resolved `\n`, `\\` and the
+ * rest when it built the token. Decoding a second time here would find the
+ * resolved backslash of a `\\` and treat it as the start of a fresh escape,
+ * swallowing whatever followed it, so this is a plain encode.
+ */
+function encodeString(value: string): number[] {
+  return [...new TextEncoder().encode(value)];
 }
 
 // ── Function body emitter ─────────────────────────────────────────────────────
