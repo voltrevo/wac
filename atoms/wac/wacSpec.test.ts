@@ -1125,17 +1125,24 @@ Deno.test("[§wac-arr-nested-l8rdntl] grid[1][2] is 6", async () => {
   eq(inst.call("testGrid", []), 6, "grid[1][2]");
 });
 
-// ── §wac-arr-i8-k3fn7wp — i8 packed array ────────────────────────────────────
+// ── §wac-arr-i8-k3fn7wp — packed byte arrays ─────────────────────────────────
 
 Deno.test("[§wac-arr-i8-k3fn7wp] bytes[0]=255 after setting 0xFF", async () => {
   const inst = await run(`
+    export i32 testU8() {
+      u8[] bytes = u8[4]();
+      bytes[0] = 0xFF;
+      return bytes[0];
+    }
     export i32 testI8() {
       i8[] bytes = i8[4]();
       bytes[0] = 0xFF;
       return bytes[0];
     }
   `);
-  eq(inst.call("testI8", []), 255, "i8 read 0xFF");
+  // Same byte in storage; the element type decides how the read extends it.
+  eq(inst.call("testU8", []), 255, "u8 zero-extends 0xFF");
+  eq(inst.call("testI8", []), -1, "i8 sign-extends the same byte");
 });
 
 // ── §wac-arr-i16-m8qj4xf — i16 packed array ──────────────────────────────────
@@ -1204,7 +1211,7 @@ Deno.test("[§wac-arr-i8-lit-badtype-3w7g6aa] non-i32 element in a packed litera
 Deno.test("[§wac-arr-i8-compound-t7btdiv] packedOr(0xF0, 0x0F) returns 255", async () => {
   const inst = await run(`
     export i32 packedOr(i32 a, i32 b) {
-      i8[] bytes = i8[1]();
+      u8[] bytes = u8[1]();
       bytes[0] = a;
       bytes[0] |= b;
       return bytes[0];
@@ -1231,7 +1238,7 @@ Deno.test("[§wac-arr-i8-cwrap-8qsspoh] packedWrap(250, 10) returns 4", async ()
 Deno.test("[§wac-arr-i16-compound-6i4h16a] i16 compound or gives 65535", async () => {
   const inst = await run(`
     export i32 packedOr16(i32 a, i32 b) {
-      i16[] shorts = i16[1]();
+      u16[] shorts = u16[1]();
       shorts[0] = a;
       shorts[0] |= b;
       return shorts[0];
@@ -2212,8 +2219,8 @@ Deno.test("[§wac-fnref-higher-p4jn7wq] testHigherOrder() returns 30", async () 
 
 const BUF_SRC = `
 struct Buffer {
-  i8[] data; i32 len; i32 cap;
-  Buffer create(i32 cap) { return Buffer(i8[cap](), 0, cap); }
+  u8[] data; i32 len; i32 cap;
+  Buffer create(i32 cap) { return Buffer(u8[cap](), 0, cap); }
   i32 get(const this, i32 idx) {
     if (idx < 0 || idx >= this.len) { trap; }
     return this.data[idx];
@@ -2226,7 +2233,7 @@ struct Buffer {
     if (this.len == this.cap) {
       i32 newCap = this.cap * 2;
       if (newCap == 0) { newCap = 8; }
-      i8[] next = i8[newCap]();
+      u8[] next = u8[newCap]();
       for (i32 i = 0; i < this.len; i++) { next[i] = this.data[i]; }
       this.data = next; this.cap = newCap;
     }
@@ -3981,4 +3988,23 @@ Deno.test(`[§wac-litctx-minint-p9fk4wq] -2147483648 is an i32`, async () => {
   `);
   eq(i.call("minI32", []), -2147483648, "i32 min");
   eq(i.call("minI64", []), -9223372036854775808n, "i64 min");
+});
+
+// §wac-arr-signedness-h4kq7wn — packed elements: one storage, two readings
+Deno.test(`[§wac-arr-signedness-h4kq7wn] packed reads extend per the element type`, async () => {
+  const i = await run(`
+    export i32 u8Read()  { u8[] b = u8[1]();  b[0] = 0xFF;   return b[0]; }
+    export i32 i8Read()  { i8[] b = i8[1]();  b[0] = 0xFF;   return b[0]; }
+    export i32 i8Min()   { i8[] b = i8[1]();  b[0] = 0x80;   return b[0]; }
+    export i32 u16Read() { u16[] b = u16[1](); b[0] = 0xFFFF; return b[0]; }
+    export i32 i16Read() { i16[] b = i16[1](); b[0] = 0xFFFF; return b[0]; }
+    export i32 trunc()   { u8[] b = u8[1]();  b[0] = 300;    return b[0]; }
+  `);
+  // The stored byte is the same in each pair; only the read differs.
+  eq(i.call("u8Read", []), 255, "u8 zero-extends");
+  eq(i.call("i8Read", []), -1, "i8 sign-extends the same byte");
+  eq(i.call("i8Min", []), -128, "0x80 is i8's most negative");
+  eq(i.call("u16Read", []), 65535, "u16 zero-extends");
+  eq(i.call("i16Read", []), -1, "i16 sign-extends");
+  eq(i.call("trunc", []), 44, "writes still truncate to the element width");
 });

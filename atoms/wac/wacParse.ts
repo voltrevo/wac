@@ -115,7 +115,7 @@ export type ParseResult = { program: Program; errors: ParseError[] };
 
 const PRIM_TYPES = new Set([
   "i32", "i64", "u32", "u64", "f32", "f64", "bool", "void", "string",
-  "anyref", "i31ref", "i8", "i16",
+  "anyref", "i31ref", "i8", "i16", "u8", "u16",
 ]);
 
 const COMPOUND_OPS = new Set([

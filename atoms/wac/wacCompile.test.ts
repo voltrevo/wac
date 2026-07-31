@@ -439,7 +439,7 @@ async function bindgenModule(src: string): Promise<Record<string, unknown>> {
 }
 
 Deno.test("[§wac-bind-bulk-70zh5tg] wacBindgen: byte arrays round trip across page boundaries", async () => {
-  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const mod = await bindgenModule(`export u8[] echo(u8[] d) { return d; }`);
   const echo = mod.echo as (d: Uint8Array) => Uint8Array;
 
   // 65536 is one wasm page. These straddle zero, one and two pages, which is
@@ -456,9 +456,9 @@ Deno.test("[§wac-bind-bulk-70zh5tg] wacBindgen: byte arrays round trip across p
 });
 
 Deno.test("wacBindgen: 0xFF survives the round trip unsigned", async () => {
-  // i8 reads zero-extend, and the staging buffer is a Uint8Array on the JS side,
+  // u8 reads zero-extend, and the staging buffer is a Uint8Array on the JS side,
   // so a sign-extension mistake anywhere would show up as 255 becoming -1.
-  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const mod = await bindgenModule(`export u8[] echo(u8[] d) { return d; }`);
   const echo = mod.echo as (d: Uint8Array) => Uint8Array;
   const out = echo(new Uint8Array([0, 1, 127, 128, 254, 255]));
   eq(Array.from(out).join(","), "0,1,127,128,254,255", "high bytes unchanged");
@@ -468,7 +468,7 @@ Deno.test("wacBindgen: several arrays in one call do not clobber each other", as
   // They share one staging buffer, so this only works because from_mem copies into
   // a GC array before the next argument is written.
   const mod = await bindgenModule(`
-    export i32 sums(i8[] a, i8[] b) {
+    export i32 sums(u8[] a, u8[] b) {
       i32 total = 0;
       for (i32 i = 0; i < a.len(); i++) { total += a[i]; }
       for (i32 i = 0; i < b.len(); i++) { total -= b[i]; }
@@ -524,7 +524,7 @@ Deno.test("wacBindgen: strings round trip, including multi-byte and long", async
 Deno.test("wacBindgen: a returned array is a copy, not a live view", async () => {
   // The staging buffer is reused, so a returned view would be silently
   // overwritten by the next call.
-  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const mod = await bindgenModule(`export u8[] echo(u8[] d) { return d; }`);
   const echo = mod.echo as (d: Uint8Array) => Uint8Array;
   const first = echo(new Uint8Array([1, 2, 3]));
   echo(new Uint8Array([9, 9, 9, 9, 9, 9]));
