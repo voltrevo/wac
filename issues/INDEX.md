@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0035](open/0035-wacx-is-specified-but-does-not-exist.md) | `wacx` is specified as the entry point but does not exist | missing feature | not implemented |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
 | [0033](open/0033-unchecked-integer-overflow.md) | no way to detect integer overflow | missing feature | wrong answer |
 | [0032](open/0032-constants-of-aggregate-type.md) | constants of struct type are rejected | missing feature | compile error |
@@ -20,6 +21,17 @@ has been fixed and why.
 
 ## Closed
 
-20 issues, 18 of them found by porting wacc's AST to sum types and by probing shapes
-that port does not reach. Twelve of the sixteen typechecked cleanly and failed at
-instantiation or ran wrong — which is why `README.md` asks you to run the thing.
+35 issues, 22 closed.
+
+Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
+that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
+wrong, which is why `README.md` asks you to run the thing rather than only compile it.
+
+Three were found *by the fix for another one*: the enum no-default rule (0012) made the
+sized-array form unusable and produced 0019, and 0019's own fix needed two AST walks updated
+— the same omission as 0005. A change that touches the AST or adds a statement form should be
+assumed to have missed a walk until checked.
+
+0024 came from asking what the probe rounds had not covered: branch coverage is wac's own
+tooling and had never been pointed at `match`, so arms were invisible to it and any coverage
+number over a match was overstated.
