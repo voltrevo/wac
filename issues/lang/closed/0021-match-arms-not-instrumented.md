@@ -32,8 +32,18 @@ the instrumentation and nothing connected the two.
 The consequence is worse than a missing feature. Coverage exists to say what has *not*
 been exercised, so under-reporting is the one failure mode that cannot be noticed by
 looking at the output — a match with three untested arms and a tested `if` beside it reads
-as 100%. `packages/wacc` and `packages/gzip` both use `match` and both have coverage
-numbers that were therefore overstated.
+as 100%.
+
+**Correcting my own commit message**, which said `packages/wacc` and `packages/gzip` both
+had overstated numbers. Neither is true. `gzip` uses no `match` at all — it predates the
+feature — and wac-mono's coverage tool instruments only the two gzip entry points, so it
+has never measured a file containing one. The packages that do use `match` are `fmt`,
+`json` and `wacc`, none of which the tool covers. So no number anyone has looked at was
+wrong; what was wrong is that any number produced for those packages would have been,
+silently.
+
+That mismatch is a second gap worth naming: **the coverage tool measures gzip and nothing
+else**, which is why this bug survived. Filed as 0022.
 
 Fixed by emitting a `case` point per variant arm and one for the `else` arm, matching what
 `switch` does. The test runs one arm, checks exactly one counter moved, then runs the rest.
