@@ -205,6 +205,25 @@ export i32 max(i32 a, i32 b) {
 
 `[§wac-ternary-bthswsh]` `max(3, 7)` returns `7`. `max(10, 2)` returns `10`.
 
+If one branch is `null`, the ternary's type is the other branch's, made nullable:
+
+```wac
+struct S { i32 v; }
+S? pick(bool y) { return y ? S(1) : null; }
+```
+
+`[§wac-ternary-null-3kx9ba2]` `pick(true)` is an `S`, `pick(false)` is null. Worth
+stating because it did not work: `null` is assignable to no non-nullable type and no
+type is assignable to `null`, so neither branch could win the usual widening and the
+two were reported as incompatible — for every struct, array and funcref.
+
+Both branches are then emitted at the result type, which is what lets the `null`
+branch produce a typed null rather than a bare `anyref` one. `[§wac-ternary-null-3kx9ba2]`
+
+A float literal in a ternary still types as `f64` regardless of context, so
+`f32 x = cond ? 1.5 : 2.5;` is a type error and needs an explicit cast. That is a
+separate gap in literal typing, not in the ternary.
+
 If the branches are reference types, the ternary's type is their **closest
 common ancestor** — found by walking each branch's chain of parent structs
 (`struct X : Parent`) and taking the nearest struct that appears in both

@@ -189,6 +189,27 @@ Listing the same variant twice is likewise an error:
 `[§enum-match-duplicate]` `case Circle(r): ... case Circle(r2): ...` is a compile
 error.
 
+### Matching a variant
+
+A variant is an enum value, so it can be matched directly. The arms still cover the
+whole enum:
+
+```wac
+Circle c = Shape.Circle(2.5);
+match (c) {
+  case Circle(r): return r;
+  case Point:     return 0.0;    // unreachable, and required anyway
+  case Rect(w, h): return w * h;
+}
+```
+
+`[§enum-match-variant-subject]` This works, including on a construction expression:
+`match (Shape.Rect(3.0, 4.0))`.
+
+Requiring the unreachable arms is deliberate. Narrowing the requirement to what the
+static type admits needs flow analysis, and an arm the tag comparison never selects
+costs nothing.
+
 ### Narrowing
 
 Inside an arm the subject has the variant's type, so its fields are reachable
