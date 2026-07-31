@@ -858,6 +858,49 @@ Deno.test("[§wac-arr-i16-m8qj4xf] shorts[0]=1000", async () => {
   eq(inst.call("testI16", []), 1000, "i16 read 1000");
 });
 
+// ── §wac-arr-i8-lit-* — packed array literals take i32 elements ─────────────
+//
+// Truncation values are chosen so a non-truncating implementation cannot pass:
+// 300 & 0xFF == 44 and 70000 & 0xFFFF == 4464 (both verified in Python).
+
+Deno.test("[§wac-arr-i8-lit-3fqjy2m] byteLit(0) returns 104", async () => {
+  const inst = await run(`
+    export i32 byteLit(i32 i) {
+      i8[] bytes = i8[](104, 101, 108, 108, 111);
+      return bytes[i];
+    }
+  `);
+  eq(inst.call("byteLit", [0]), 104, "bytes[0]");
+  eq(inst.call("byteLit", [4]), 111, "bytes[4]");
+});
+
+Deno.test("[§wac-arr-i8-lit-trunc-i9g6kol] byteLitTrunc() returns 44", async () => {
+  const inst = await run(`
+    export i32 byteLitTrunc() {
+      i8[] bytes = i8[](300);
+      return bytes[0];
+    }
+  `);
+  eq(inst.call("byteLitTrunc", []), 44, "300 truncated to 8 bits");
+});
+
+Deno.test("[§wac-arr-i16-lit-kyrurqi] i16[](70000) element reads back 4464", async () => {
+  const inst = await run(`
+    export i32 shortLit() {
+      i16[] shorts = i16[](70000);
+      return shorts[0];
+    }
+  `);
+  eq(inst.call("shortLit", []), 4464, "70000 truncated to 16 bits");
+});
+
+Deno.test("[§wac-arr-i8-lit-badtype-3w7g6aa] non-i32 element in a packed literal is an error", () => {
+  const m = err(`export i32 bad() { i8[] b = i8[](1.5); return b[0]; }`);
+  if (!m.includes("expected i32")) {
+    throw new Error(`expected an i32 element-type diagnostic, got: ${m}`);
+  }
+});
+
 // ── §wac-arr-i8-compound-* — compound assignment on packed elements ─────────
 //
 // Packed elements must be read back with array.get_u; array.get is not a valid

@@ -1404,10 +1404,13 @@ function inferArrNew(
   const { elem, size, fixed } = expr;
 
   if (fixed.length > 0) {
-    // T[](e1, e2, ...) — fixed elements
+    // T[](e1, e2, ...) — fixed elements.
+    // Packed elements are written as i32 and truncate, exactly as indexed
+    // assignment does [see checkLval lv-index and arrays.md].
+    const written = isPackedElem(elem) ? T_I32 : elem;
     for (const e of fixed) {
       const et = inferExpr(e, env, ctx);
-      if (et) checkAssign(elem, et, e.line, e.col, ctx);
+      if (et) checkAssign(written, et, e.line, e.col, ctx);
     }
   } else if (size !== null) {
     // T[size]() — default construction; requires T has a default
