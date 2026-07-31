@@ -1,7 +1,7 @@
 # 0026 — `match` is a statement, not an expression
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature
