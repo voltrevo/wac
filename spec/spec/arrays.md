@@ -29,9 +29,33 @@ only the sized `S[n]()` shape for a named type, so `S[](...)` fell through to be
 as an identifier followed by junk. A primitive element type took a different path, which
 is why `i32[](1, 2)` always worked.
 
-The sized form needs the element type to have a default value, and the literal form does
-not — which is what makes the literal the answer for element types that have none, such
-as an enum (see enums.md).
+### Giving every element a value
+
+A third form supplies the element value explicitly:
+
+```wac
+i32[] a = i32[n](fill: -1);
+E[]   b = E[n](fill: E.B);
+```
+
+`[§wac-arr-fill-7kqm3xz]` Every element is `fill`'s value. The size may be any `i32`
+expression, so this is the only way to build a *dynamically* sized array of an element
+type with no default — which since enums have none (see enums.md) is any type reachable
+from one. The literal form needs a compile-time element count, so it cannot serve.
+
+For a reference element type the value is **shared**, not copied: all n slots hold the
+same reference. `[§wac-arr-fill-7kqm3xz]` That is what supplying one value must mean, and
+it is the difference from `T[n]()`, which constructs a separate element for each slot.
+A packed element truncates, exactly as an indexed write does. `[§wac-arr-fill-7kqm3xz]`
+
+The value is written as `fill:` rather than as a bare `T[n](v)` because the bare form is
+genuinely ambiguous: `arr[i](5)` already means index an array of funcrefs and call the
+result, and nothing at parse time distinguishes a type name from a variable. Named
+argument syntax cannot collide, since a call rejects it outright.
+`[§wac-arr-fill-7kqm3xz]` `i32[2](7)` is an error naming `fill:`.
+
+The sized form without `fill:` needs the element type to have a default value; the
+literal form and the `fill:` form do not.
 
 ### Access
 

@@ -5007,6 +5007,83 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
   eq(inst.call("calls", []), 1, "the subject expression ran once");
 });
 
+Deno.test("[§wac-arr-fill-7kqm3xz] a sized array can be given an element value", async () => {
+  // `T[n]()` needs T to have a default, so once an enum correctly had none (issue 0012)
+  // there was no way at all to build a dynamically-sized array of one — the literal form
+  // needs a compile-time count. This is the third form, and it maps onto `array.new`,
+  // which the emitter already used to replicate the empty string for `string[n]()`.
+  const inst = await run(`
+    enum E { A(i32 v), B }
+    struct P { i32 v; }
+    export i32 enums(i32 n) {
+      E[] a = E[n](fill: E.A(4));
+      i32 s = 0;
+      for (i32 i = 0; i < a.len(); i++) { match (a[i]) { case A(v): s += v; case B: s += 100; } }
+      return s;
+    }
+    export i32 prims(i32 n)  { i32[] a = i32[n](fill: -1); return a[0] + a[n - 1]; }
+    export i32 packed()      { u8[] a = u8[2](fill: 300); return a[0]; }
+    export i32 zeroLength()  { E[] a = E[0](fill: E.B); return a.len(); }
+  `);
+  eq(inst.call("enums", [3]), 12, "three elements of A(4)");
+  eq(inst.call("prims", [4]), -2, "a -1-filled table, which is useful in its own right");
+  eq(inst.call("packed", []), 44, "a packed element truncates, as an indexed write does");
+  eq(inst.call("zeroLength", []), 0, "a zero-length fill is still a fill");
+});
+
+Deno.test("[§wac-arr-fill-7kqm3xz] one fill value is shared, not copied per element", async () => {
+  // `array.new` replicates a single value, so for a reference element type every slot is
+  // the same reference. That is what a caller supplying one value must mean; the
+  // alternative — n separately constructed copies — is what `T[n]()` already does.
+  const inst = await run(`
+    struct P { i32 v; }
+    export i32 shared() { P[] a = P[2](fill: P(1)); a[0].v = 9; return a[1].v; }
+    export i32 distinct() { P[] a = P[2](); a[0].v = 9; return a[1].v; }
+  `);
+  eq(inst.call("shared", []), 9, "writing through one element is visible through the other");
+  eq(inst.call("distinct", []), 0, "whereas T[n]() constructs a separate element each");
+});
+
+Deno.test("[§wac-arr-fill-7kqm3xz] the fill value is checked, and a bare argument is refused", () => {
+  const wrongType = err(`
+    enum E { A(i32 v), B }
+    export i32 f() { E[] a = E[2](fill: 5); return a.len(); }`);
+  if (!wrongType.includes("expected E")) {
+    throw new Error(`expected the fill type mismatch, got: ${wrongType}`);
+  }
+  // A bare `T[n](v)` cannot be allowed: `arr[i](5)` already means index a funcref array
+  // and call it, so the two are indistinguishable without a symbol table. The named form
+  // is unambiguous because a call rejects named arguments outright.
+  const bare = err(`export i32 f() { i32[] a = i32[2](7); return a[0]; }`);
+  if (!bare.includes("fill:")) {
+    throw new Error(`expected the diagnostic to name 'fill:', got: ${bare}`);
+  }
+  // And the shape it would have collided with still works.
+  const ok = wacCompile(new Map([["main.wac", `
+    i32 dbl(i32 x) { return x * 2; }
+    export i32 f() { fn[i32(i32)][] fs = fn[i32(i32)][](dbl); return fs[0](21); }`]]), "main.wac");
+  if (!ok.ok) {
+    throw new Error(`indexing a funcref array and calling it should be unaffected, got: ${
+      ok.diagnostics.map(d => d.message).join("; ")}`);
+  }
+});
+
+Deno.test("[§wac-arr-fill-7kqm3xz] the fill expression is visible to every walk", async () => {
+  // A type or function reachable only through the fill expression has to be reached by
+  // the resolver's annotation pass and by array-type collection. It was not, at first —
+  // the same omission as issue 0005's match arms, and the reason this test exists at all.
+  const inst = await run(`
+    struct Q { i32 v; }
+    i32 mk() { return 3; }
+    export i32 f(i32 n) {
+      // Q, Q[] and mk() all appear nowhere else in the program.
+      Q[] a = Q[n](fill: Q(mk()));
+      return a[0].v * a.len();
+    }
+  `);
+  eq(inst.call("f", [2]), 6, "the fill expression compiled and ran");
+});
+
 Deno.test("[§wac-const-param-2vhk7dq] a parameter may be const", async () => {
   // `const this` gave a method receiver this guarantee and nothing gave it to a free
   // function's parameter, so moving a method to a function silently lost it. The

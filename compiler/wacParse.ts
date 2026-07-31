@@ -58,7 +58,11 @@ export type Expr =
   | ({ kind: "field";    expr: Expr; name: string; variantTypeIndex?: number } & Pos)
   | ({ kind: "unwrap";   expr: Expr } & Pos)
   | ({ kind: "construct"; ctype: WacType; args: Expr[]; named?: { name: string; val: Expr }[] } & Pos)
-  | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[] } & Pos)
+  // `size` is the sized form `T[n](...)`, `fixed` the literal form `T[](a, b)`; exactly
+  // one is used. `fill` is the sized form's optional element value, written
+  // `T[n](fill: v)` — named-argument syntax because `T[n](v)` would be ambiguous with
+  // indexing a funcref array and calling it, `arr[i](5)`.
+  | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[]; fill?: Expr } & Pos)
   // ++/-- as an expression: postfix evaluates to the old value, prefix to the
   // new one. The operand must be an lvalue (variable, field, array element).
   | ({ kind: "incr-expr"; op: "++" | "--"; prefix: boolean; lval: Lvalue } & Pos);
@@ -643,8 +647,17 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         else if (tokens[j].kind === "]") depth--;
         j++;
       }
-      // For sized array construction T[N](), the () must be empty.
-      // If () has args (like arr[i](5)), it's an index+funcref-call, not construction.
+      // For sized array construction T[N](), the () must be empty — if it has args, as
+      // in `arr[i](5)`, that is an index followed by a funcref call.
+      //
+      // The one exception is `T[N](fill: v)`, whose named-argument form no call can
+      // take: `arr[i](fill: v)` would be a function call with a named argument, which
+      // is rejected outright. That is exactly why the fill value is written this way
+      // rather than as a bare `T[N](v)`, which would be genuinely ambiguous here.
+      if (tokens[j]?.kind === "(" && tokens[j + 1]?.kind === "ident" &&
+          tokens[j + 1]?.text === "fill" && tokens[j + 2]?.kind === ":") {
+        return true;
+      }
       return tokens[j]?.kind === "(" && tokens[j + 1]?.kind === ")";
     }
     return false;
@@ -691,12 +704,25 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       }
       advance(); // [
       if (!at("]")) {
-        // T[N]() — sized default array
+        // `T[n]()` — sized, each element the element type's default.
+        // `T[n](fill: v)` — sized, every element `v`.
         const size = parseExpr();
         expect("]");
         expect("(");
+        let fill: Expr | undefined;
+        if (!at(")")) {
+          // The only thing allowed here is `fill:`. A bare expression would be
+          // ambiguous with `arr[i](5)`, so it is refused rather than guessed at.
+          if (at("ident") && tok().text === "fill" && at(":", 1)) {
+            advance();
+            advance();
+            fill = parseExpr();
+          } else {
+            err(`expected ')' or 'fill:' — a sized array takes its element value as 'fill:'`);
+          }
+        }
         expect(")");
-        return { kind: "arrNew", elem: elemType, size, fixed: [], ...p };
+        return { kind: "arrNew", elem: elemType, size, fixed: [], fill, ...p };
       } else {
         // T[]() — fixed array literal
         advance(); // ]

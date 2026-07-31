@@ -221,6 +221,7 @@ function annotateExpr(e: Expr, scope: FileScope): void {
     case "arrNew":
       annotateType(e.elem, scope);
       if (e.size) annotateExpr(e.size, scope);
+      if (e.fill) annotateExpr(e.fill, scope);
       for (const f of e.fixed) annotateExpr(f, scope);
       return;
     case "incr-expr":

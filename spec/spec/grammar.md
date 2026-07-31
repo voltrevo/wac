@@ -161,7 +161,8 @@ construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positi
                   | type_name , "{" , field_init_list , "}"             (* named *)
                   | array_construction ;
 
-array_construction = element_type , "[" , expr , "]" , "(" , ")"                (* sized default *)
+array_construction = element_type , "[" , expr , "]" , "(" , [ "fill" , ":" , expr ] , ")"
+                                                                               (* sized: default, or every element the fill value *)
                    | element_type , "[" , "]" , "(" , [ arg_list ] , ")" ;      (* literal *)
 
 field_init_list = field_init , { "," , field_init } , [ "," ] ;
