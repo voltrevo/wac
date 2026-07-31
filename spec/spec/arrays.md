@@ -207,9 +207,18 @@ i8[] bad = i8[](1.5);            // error: expected i32, got f64
 
 `[§wac-arr-i8-lit-badtype-3w7g6aa]` A non-`i32` element in a packed array literal is a compile error.
 
-There are no packed local variables, parameters, or struct fields —
+There are no packed local variables, parameters, return types or struct fields —
 packed types only exist as array elements. Indexing a packed array returns `i32`,
 and assignment truncates from `i32`.
+
+`[§wac-packed-nullable-2knq6wv]` **A packed type cannot be nullable at all.** `u8? b` is refused
+everywhere `u8 b` is, and so is `u8?[]` — even though that one is a nullable-*reference* array whose
+storage is perfectly real. The reason is what you could do with an element: unwrapping it gives a
+`u8`, and a `u8` cannot be a local, a parameter, a field or a return type, so the value has nowhere
+to go. A type whose values cannot be held is not a type.
+
+Write `i32?` for a maybe-absent small integer, or a packed array with a separate `bool[]` of presence
+flags — which is also what a large, mostly-absent one should be for the sake of the allocation.
 
 A packed element reads as `i32`, so it can be cast onward like any other `i32`.
 

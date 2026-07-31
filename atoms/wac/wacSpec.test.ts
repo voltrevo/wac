@@ -7725,6 +7725,60 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+// §wac-packed-nullable-2knq6wv — the packed rule applies through a nullable
+Deno.test("[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is", () => {
+  // `u8` is refused as a field, a parameter, a return type and a local; `u8?` was accepted in every
+  // one of them. A nullable primitive is boxed, so the storage reason for the restriction does not
+  // apply — but "packed types are array elements" is the rule wac has, and half a rule is worse
+  // than either answer. The local case also reported a type mismatch rather than the packed rule,
+  // which is how this was noticed [issue 0050].
+  for (const [what, src] of [
+    ["a struct field",  `struct W { u8? p; } export i32 f() { return 0; }`],
+    ["a parameter",     `i32 g(u16? x) { return 0; } export i32 f() { return 0; }`],
+    ["a return type",   `i8? g() { return null; } export i32 f() { return 0; }`],
+    ["a local",         `export i32 f() { i16? x = null; return 0; }`],
+  ] as [string, string][]) {
+    const m = err(src);
+    if (!m.includes("packed type")) {
+      throw new Error(`${what}: expected the packed-type rule, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-packed-nullable-2knq6wv] an array of them is refused too", () => {
+  // `u8?[]` is a nullable-reference array, so the *storage* is real and this one survived longer
+  // than the slot cases. Unwrapping an element gives a `u8`, and a `u8` cannot be a local, a
+  // parameter, a field or a return type — so the value has nowhere to go. A type whose values
+  // cannot be held is not a type.
+  for (const [what, src] of [
+    ["a local",  `export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }`],
+    ["a field",  `struct W { i16?[] xs; } export i32 f() { return 0; }`],
+    ["a param",  `i32 g(u16?[] xs) { return xs.len(); } export i32 f() { return 0; }`],
+    ["nested",   `export i32 f() { u8?[][] xs = u8?[][](); return xs.len(); }`],
+  ] as [string, string][]) {
+    const m = err(src);
+    if (!m.includes("nullable packed type")) {
+      throw new Error(`${what}: expected the nullable-packed message, got: ${m}`);
+    }
+  }
+  // What to write instead, both spellings, and they compile.
+  err(`export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }`);
+});
+
+Deno.test("[§wac-packed-nullable-2knq6wv] what to write instead compiles", async () => {
+  const inst = await run(`
+    export i32 viaI32Nullable() { i32?[] xs = i32?[3](); xs[1] = 200; return (xs[0] is null ? 1 : 0) * 1000 + xs[1]!; }
+    export i32 viaPresenceFlag() {
+      u8[] xs = u8[3]();
+      bool[] has = bool[3]();
+      xs[1] = 200; has[1] = true;
+      return (has[0] ? 0 : 1) * 1000 + xs[1];
+    }
+  `);
+  eq(inst.call("viaI32Nullable", []), 1200, "i32? holds the value and the absence");
+  eq(inst.call("viaPresenceFlag", []), 1200, "and a packed array with a flag says the same thing");
+});
+
 // §wac-type-name-scope-8vqk3mn — a type name means what the file that wrote it says
 Deno.test("[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it", () => {
   // Issue 0048. Identity is the type index, and a type whose name did not resolve had none — so
