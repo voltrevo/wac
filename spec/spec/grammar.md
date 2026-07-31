@@ -2,17 +2,39 @@
 
 `[§wac-grammar-k7fn4xq]` EBNF grammar for the wac language.
 
+Every comma-separated list accepts one optional trailing comma — parameter
+lists, argument lists, array literals, struct field initialisers and import
+lists. It keeps multi-line lists diff-friendly, since adding an entry does not
+touch the line above it.
+
+```wac
+i32 area(
+  i32 width,
+  i32 height,
+) {
+  return width * height;
+}
+
+export i32 demo() {
+  i32[] sizes = i32[](3, 4,);
+  return area(sizes[0], sizes[1],);
+}
+```
+
+`[§wac-trailcomma-eg6567x]` `demo()` returns `12` — trailing commas are accepted in the parameter list, the array literal and the call.
+`[§wac-trailcomma-bad-689xwxt]` A comma with nothing before it (`f(,)`) or a doubled comma is still a compile error.
+
 ### Program structure
 
 ```ebnf
 program        = { import | struct_decl | func_decl } ;
 
 import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
-import_list    = import_item , { "," , import_item } ;
+import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
 func_decl      = [ "export" ] , type , IDENT , "(" , [ param_list ] , ")" , block ;
-param_list     = param , { "," , param } ;
+param_list     = param , { "," , param } , [ "," ] ;
 param          = type , IDENT ;
 ```
 
@@ -26,7 +48,7 @@ struct_member  = field_decl | method_decl ;
 field_decl     = [ "const" ] , type , IDENT , ";" ;
 
 method_decl    = [ "override" ] , type , IDENT , "(" , [ method_params ] , ")" , block ;
-method_params  = this_param , [ "," , param_list ]
+method_params  = this_param , [ "," , [ param_list ] ]
                | param_list ;
 this_param     = [ "const" ] , "this" ;
 ```
@@ -132,10 +154,10 @@ construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positi
 array_construction = element_type , "[" , expr , "]" , "(" , ")"                (* sized default *)
                    | element_type , "[" , "]" , "(" , [ arg_list ] , ")" ;      (* literal *)
 
-field_init_list = field_init , { "," , field_init } ;
+field_init_list = field_init , { "," , field_init } , [ "," ] ;
 field_init      = IDENT , ":" , expr ;
 
-arg_list       = expr , { "," , expr } ;
+arg_list       = expr , { "," , expr } , [ "," ] ;
 
 lvalue         = IDENT , { "!" | "." , IDENT | "[" , expr , "]" } ;
 ```

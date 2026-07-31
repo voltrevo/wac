@@ -473,7 +473,11 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
 
   function parseArgList(): Expr[] {
     const args: Expr[] = [];
-    if (!at(")")) { args.push(parseExpr()); while (consume(",")) args.push(parseExpr()); }
+    if (at(")")) return args;
+    do {
+      if (at(")")) break;   // trailing comma
+      args.push(parseExpr());
+    } while (consume(","));
     return args;
   }
 
@@ -632,7 +636,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
           const fn = at("ident") ? advance().text : (err("expected field name"), "?");
           expect(":");
           named.push({ name: fn, val: parseExpr() });
-        } while (consume(","));
+          if (!consume(",")) break;
+        } while (!at("}"));   // trailing comma
       }
       expect("}");
       const t: WacType = { kind: "struct", name, ...p };
@@ -876,11 +881,24 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       const name = at("ident") ? advance().text : (err("expected identifier"), "?");
       const alias = consume("as") ? (at("ident") ? advance().text : (err("expected alias"), "?")) : name;
       items.push({ name, alias, ...ip });
-    } while (consume(","));
+      if (!consume(",")) break;
+    } while (!at("}"));   // trailing comma
     expect("}"); expect("from");
     const path = at("string") ? advance().text : (err("expected file path string"), "?");
     expect(";");
     return { tag: "import", path, items, ...p };
+  }
+
+  /**
+   * Parse a comma-separated parameter list, allowing one trailing comma before
+   * the closing paren. Multi-line signatures read better with it, and every
+   * comma-separated list in the language accepts one for consistency.
+   */
+  function parseParams(params: Param[]): void {
+    do {
+      if (at(")")) break;   // trailing comma
+      params.push(parseParam());
+    } while (consume(","));
   }
 
   function parseParam(): Param {
@@ -926,12 +944,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         if (!at(")")) {
           if (at("const") && tok(1).text === "this") {
             thisConst = true; advance(); hasThis = true; advance(); // const this
-            if (consume(",")) { do { params.push(parseParam()); } while (consume(",")); }
+            if (consume(",")) { parseParams(params); }
           } else if (at("this")) {
             hasThis = true; advance();
-            if (consume(",")) { do { params.push(parseParam()); } while (consume(",")); }
+            if (consume(",")) { parseParams(params); }
           } else {
-            do { params.push(parseParam()); } while (consume(","));
+            parseParams(params);
           }
         }
         expect(")");
@@ -953,7 +971,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const name = at("ident") ? advance().text : (err("expected function name"), "?");
     expect("(");
     const params: Param[] = [];
-    if (!at(")")) { do { params.push(parseParam()); } while (consume(",")); }
+    if (!at(")")) { parseParams(params); }
     expect(")");
     const body = parseBlock();
     return { tag: "func", exported, returnType, name, params, body, ...p };

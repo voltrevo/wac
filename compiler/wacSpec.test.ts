@@ -237,6 +237,161 @@ Deno.test("[§wac-shift64-rhgzpth] shiftMixed(1, 32) returns 4294967296n", async
   eq(inst.call("shiftMixed", [1n, 32]), 4294967296n, "1 << 32");
 });
 
+// ── §wac-infloop-* — loops that never finish ─────────────────────────────────
+//
+// A `while (true)` with no reachable break never completes, so a non-void
+// function needs no return after it. The emitter already appends `unreachable`
+// before a non-void function's `end`, so these produce valid wasm — which
+// `run()` proves by instantiating.
+
+Deno.test("[§wac-infloop-while-zvvoovg] firstMultiple(4, 10) returns 12", async () => {
+  const inst = await run(`
+    export i32 firstMultiple(i32 step, i32 floor) {
+      i32 n = 0;
+      while (true) {
+        n += step;
+        if (n > floor) { return n; }
+      }
+    }
+  `);
+  eq(inst.call("firstMultiple", [4, 10]), 12, "4, 8, 12 — first over 10");
+});
+
+Deno.test("[§wac-infloop-for-q1ga6km] countTo(7) returns 7", async () => {
+  const inst = await run(`
+    export i32 countTo(i32 target) {
+      for (i32 i = 0; ; i++) {
+        if (i == target) { return i; }
+      }
+    }
+  `);
+  eq(inst.call("countTo", [7]), 7, "for with no condition");
+  eq(inst.call("countTo", [0]), 0, "target reached immediately");
+});
+
+Deno.test("[§wac-infloop-nested-m2ydt52] a switch break does not make the loop finite", async () => {
+  const inst = await run(`
+    export i32 nestedBreak(i32 n) {
+      while (true) {
+        switch (n) {
+          case 1: break;
+          default: break;
+        }
+        if (n > 0) { return n; }
+        n++;
+      }
+    }
+  `);
+  eq(inst.call("nestedBreak", [3]), 3, "switch breaks bind to the switch");
+  // Also true of a break inside a nested loop.
+  const inst2 = await run(`
+    export i32 innerLoopBreak() {
+      i32 total = 0;
+      while (true) {
+        for (i32 i = 0; i < 3; i++) {
+          if (i == 2) { break; }
+          total++;
+        }
+        if (total > 4) { return total; }
+      }
+    }
+  `);
+  eq(inst2.call("innerLoopBreak", []), 6, "inner-loop break binds to the for");
+});
+
+Deno.test("[§wac-infloop-break-hiomizo] a reachable break means a return is still required", () => {
+  const m = err(`
+    export i32 needsReturn(i32 n) {
+      while (true) {
+        if (n > 0) { break; }
+        n++;
+      }
+    }
+  `);
+  if (!m.includes("not all code paths return")) {
+    throw new Error(`expected the missing-return diagnostic, got: ${m}`);
+  }
+  // A break reached only through an else branch counts just the same.
+  err(`
+    export i32 alsoNeedsReturn(i32 n) {
+      while (true) {
+        if (n > 0) { n++; } else { break; }
+      }
+    }
+  `);
+  // ...as does one inside a bare block,
+  err(`
+    export i32 breakInBlock(i32 n) {
+      while (true) {
+        { break; }
+      }
+    }
+  `);
+  // ...or partway down an else-if chain.
+  err(`
+    export i32 breakInElseIf(i32 n) {
+      while (true) {
+        if (n > 10) { n++; } else if (n > 5) { break; } else { n += 2; }
+      }
+    }
+  `);
+});
+
+Deno.test("[§wac-infloop-while-zvvoovg] do-while(true) is infinite too", async () => {
+  const inst = await run(`
+    export i32 doubleUntil(i32 n) {
+      do {
+        n *= 2;
+        if (n > 50) { return n; }
+      } while (true);
+    }
+  `);
+  eq(inst.call("doubleUntil", [4]), 64, "4, 8, 16, 32, 64 — first over 50");
+});
+
+// ── §wac-trailcomma-* — optional trailing commas ─────────────────────────────
+
+Deno.test("[§wac-trailcomma-eg6567x] demo() returns 12", async () => {
+  const inst = await run(`
+    i32 area(
+      i32 width,
+      i32 height,
+    ) {
+      return width * height;
+    }
+
+    export i32 demo() {
+      i32[] sizes = i32[](3, 4,);
+      return area(sizes[0], sizes[1],);
+    }
+  `);
+  eq(inst.call("demo", []), 12, "3 * 4");
+});
+
+Deno.test("[§wac-trailcomma-eg6567x] every comma-separated list accepts one", async () => {
+  const inst = await run(`
+    struct P {
+      i32 x;
+      i32 y;
+
+      i32 scaled(const this, i32 by,) { return (this.x + this.y) * by; }
+      i32 self(const this,) { return this.x; }
+    }
+
+    export i32 all() {
+      P p = P { x: 3, y: 4, };
+      return p.scaled(2,) + p.self();
+    }
+  `);
+  eq(inst.call("all", []), 17, "(3+4)*2 + 3");
+});
+
+Deno.test("[§wac-trailcomma-bad-689xwxt] a comma with no element before it is still an error", () => {
+  err(`i32 g() { return 1; } export i32 f() { return g(,); }`);
+  err(`export i32 f(i32 a,,) { return a; }`);
+  err(`export i32 f(i32 a) { i32[] b = i32[](,1); return b[0]; }`);
+});
+
 // ── §wac-fmod-* — float remainder ────────────────────────────────────────────
 //
 // JavaScript's % on numbers is C fmod, so it is a valid oracle for the f64 case

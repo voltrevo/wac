@@ -85,6 +85,65 @@ export i32 digitCount(i32 n) {
 
 `[§wac-dowhile-d6kgle1]` `digitCount(0)` returns `1`. `digitCount(9999)` returns `4`.
 
+### Infinite loops
+
+A loop whose condition is literally `true` — or a `for` with no condition at all
+— never finishes on its own. If no `break` can reach it, control never gets past
+the loop, so a non-void function needs no `return` after it. This applies to
+`while`, `for` and `do`-`while` alike.
+
+```wac
+export i32 firstMultiple(i32 step, i32 floor) {
+  i32 n = 0;
+  while (true) {
+    n += step;
+    if (n > floor) { return n; }
+  }
+}
+
+export i32 countTo(i32 target) {
+  for (i32 i = 0; ; i++) {
+    if (i == target) { return i; }
+  }
+}
+```
+
+`[§wac-infloop-while-zvvoovg]` `firstMultiple(4, 10)` returns `12` — the function compiles with no `return` after the loop.
+`[§wac-infloop-for-q1ga6km]` `countTo(7)` returns `7`; `for (i32 i = 0; ; i++)` needs no trailing return either.
+
+Only a `break` that would exit *that* loop counts. A `break` inside a nested
+loop or `switch` binds to the inner construct, so it leaves the outer loop
+infinite.
+
+```wac
+export i32 nestedBreak(i32 n) {
+  while (true) {
+    switch (n) {
+      case 1: break;
+      default: break;
+    }
+    if (n > 0) { return n; }
+    n++;
+  }
+}
+```
+
+`[§wac-infloop-nested-m2ydt52]` `nestedBreak(3)` returns `3` — the `switch` breaks do not make the `while` finite.
+
+When a `break` *can* exit the loop, the loop may complete, and a non-void
+function still has to return afterwards.
+
+```wac
+export i32 needsReturn(i32 n) {
+  while (true) {
+    if (n > 0) { break; }
+    n++;
+  }
+}                                  // error: not all code paths return a value
+```
+
+`[§wac-infloop-break-hiomizo]` This is a compile error; adding `return n;` after the loop fixes it.
+
 ### break and continue
 
 ```wac
