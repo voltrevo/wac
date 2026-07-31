@@ -561,7 +561,7 @@ Deno.test("[§wac-shr-u64-2jujzws] shiftLogic64(-16, 4) returns 1152921504606846
 
 Deno.test("[§wac-shr-u-float-s95dlzw] '>>>' on f64 is a compile error", () => {
   const m = err(`export f64 badShift(f64 x) { return x >>> 1; }`);
-  if (!m.includes("'>>>' requires i32 or i64")) {
+  if (!m.includes("'>>>' requires an integer type")) {
     throw new Error(`expected the >>> operand-type diagnostic, got: ${m}`);
   }
 });
@@ -4384,4 +4384,44 @@ Deno.test(`[§wac-narrow-frac-t6kq2wp] as! f64 -> i32 traps on a fractional part
   };
   eq(traps(3.5), true, "exact(3.5) traps");
   eq(traps(-2.3), true, "exact(-2.3) traps");
+});
+
+// §wac-litctx-ternary-j8kw3mq — ternary branches take the expected type too
+Deno.test(`[§wac-litctx-ternary-j8kw3mq] ternary branches adopt the expected type`, async () => {
+  const i = await run(`
+    export u32 pick(bool c)          { return c ? 1 : 2; }
+    export u64 orZero(bool c, u64 a) { return c ? a : 0; }
+    export u32 wraps(bool c, u32 x)  { return (c ? x : 1) * 2; }
+  `);
+  eq(i.call("pick", [true]), 1, "both branches are u32");
+  eq(i.call("pick", [false]), 2, "either way");
+  eq(i.call("orZero", [false, 7n]), 0n, "a literal branch follows the typed one");
+  eq(i.call("wraps", [true, 2147483648]), 0, "result really is u32 — it wraps");
+});
+
+// §wac-switch-u32-r5nk8wf — switch dispatches on any 32-bit integer
+Deno.test(`[§wac-switch-u32-r5nk8wf] switch accepts a u32 scrutinee`, async () => {
+  const i = await run(`
+    export i32 classify(u32 x) {
+      switch (x) {
+        case 0: { return 10; }
+        case 4294967295: { return 20; }
+        default: { return 30; }
+      }
+    }
+  `);
+  eq(i.call("classify", [0]), 10, "case 0");
+  eq(i.call("classify", [4294967295]), 20, "a case value beyond i32's range");
+  eq(i.call("classify", [7]), 30, "default");
+});
+
+// §wac-shr-u-redundant-m3kq7wn — `>>>` says nothing extra on an unsigned type
+Deno.test(`[§wac-shr-u-redundant-m3kq7wn] '>>>' on an unsigned type is rejected`, () => {
+  const m = err(`export u32 bad(u32 x) { return x >>> 1; }`);
+  if (!m.includes("redundant")) {
+    throw new Error(`expected the redundancy diagnostic, got: ${m}`);
+  }
+  // `>>` is the logical shift there, and is accepted.
+  const r = wacCompile(new Map([["main.wac", `export u32 ok(u32 x) { return x >> 1; }`]]), "main.wac");
+  eq(r.ok, true, "'>>' on u32 compiles");
 });
