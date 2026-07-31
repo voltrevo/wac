@@ -1,7 +1,7 @@
 # 0022 — `x is UndefinedType` compiles and is always true
 
 - **Status:** closed
-- **Fixed in:** pending (see the commit that moves this file)
+- **Fixed in:** c65c625
 - **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
