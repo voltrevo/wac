@@ -143,7 +143,14 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
   }
 
   function scanExpr(e: Expr): void {
-    if (e.kind === "arrNew") { scanType(e.elem); scanType({ kind: "array", elem: e.elem, line: 0, col: 0 }); }
+    if (e.kind === "arrNew") {
+      scanType(e.elem);
+      scanType({ kind: "array", elem: e.elem, line: 0, col: 0 });
+      // The fill expression is a subexpression like any other, and a type used only
+      // there would otherwise never be collected — the same omission as the match arms
+      // in issue 0005.
+      if (e.fill) scanExpr(e.fill);
+    }
     else if (e.kind === "construct" && e.ctype.kind === "array") scanType(e.ctype);
     else if (e.kind === "cast") scanType(e.type);
     if ("args" in e) (e as { args: Expr[] }).args.forEach(scanExpr);

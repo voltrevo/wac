@@ -1919,7 +1919,7 @@ class FuncEmitter {
   }
 
   private emitArrNew(
-    e: { kind: "arrNew"; elem: WacType; size: Expr | null; fixed: Expr[] },
+    e: { kind: "arrNew"; elem: WacType; size: Expr | null; fixed: Expr[]; fill?: Expr },
     env: TypeEnv,
   ): void {
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(e.elem))!;
@@ -1927,6 +1927,22 @@ class FuncEmitter {
       for (const item of e.fixed) this.emitExpr(item, env, e.elem);
       this.emit(0xFB, 0x08, ...uleb(aIdx), ...uleb(e.fixed.length)); // array.new_fixed
     } else if (e.size !== null) {
+      // `T[n](fill: v)` — one value replicated by array.new, which is the instruction
+      // this form exists to reach. Every element is the *same* reference when the
+      // element type is a reference type; arrays.md says so, because the alternative is
+      // a loop that constructs n copies and the caller asking for one value cannot want
+      // that.
+      if (e.fill !== undefined) {
+        // A packed element is written as an i32 and truncates, exactly as an indexed
+        // assignment does.
+        const packed = e.elem.kind === "prim" &&
+          (e.elem.name === "i8" || e.elem.name === "i16" ||
+           e.elem.name === "u8" || e.elem.name === "u16");
+        this.emitExpr(e.fill, env, packed ? I32 : e.elem);
+        this.emitExpr(e.size, env);
+        this.emit(0xFB, 0x06, ...uleb(aIdx)); // array.new $t
+        return;
+      }
       // Struct element + literal size: initialize each element with default struct
       if (e.elem.kind === "struct" && e.size.kind === "int") {
         const n = parseInt(e.size.value);

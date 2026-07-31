@@ -24,6 +24,6 @@ here so nobody reports them as bugs:
 
 ## Closed
 
-18 issues, 16 of them found by porting wacc's AST to sum types and by probing shapes
+19 issues, 17 of them found by porting wacc's AST to sum types and by probing shapes
 that port does not reach. Twelve of the sixteen typechecked cleanly and failed at
 instantiation or ran wrong — which is why `README.md` asks you to run the thing.

@@ -2016,7 +2016,7 @@ function inferArrNew(
   expr: Expr & { kind: "arrNew" },
   env: VarEnv, ctx: Ctx,
 ): WacType | null {
-  const { elem, size, fixed } = expr;
+  const { elem, size, fixed, fill } = expr;
 
   if (fixed.length > 0) {
     // T[](e1, e2, ...) — fixed elements.
@@ -2028,14 +2028,22 @@ function inferArrNew(
       if (et) checkAssign(written, et, e.line, e.col, ctx);
     }
   } else if (size !== null) {
-    // T[size]() — default construction; requires T has a default
     const st = inferExpr(size, env, ctx);
     if (st && !typeEq(st, T_I32)) {
       errAt(ctx, `array size must be i32, got ${typeName(st)}`, size.line, size.col);
     }
-    if (!hasDefault(elem, ctx)) {
+    if (fill !== undefined) {
+      // T[size](fill: v) — every element is `v`. No default is needed, which is the
+      // point: it is the only way to build a dynamically-sized array of a type that has
+      // none, such as anything reachable from an enum.
+      const written = isPackedElem(elem) ? T_I32 : elem;
+      const ft = inferExpr(fill, env, ctx, written);
+      if (ft) checkAssign(written, ft, fill.line, fill.col, ctx);
+    } else if (!hasDefault(elem, ctx)) {
+      // T[size]() — default construction; requires T to have a default.
       errAt(ctx, `type '${typeName(elem)}' has no default value for array construction`,
-        expr.line, expr.col);
+        expr.line, expr.col, 1, undefined,
+        `give every element a value: ${typeName(elem)}[n](fill: ...)`);
     }
   }
 

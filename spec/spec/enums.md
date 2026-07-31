@@ -374,7 +374,8 @@ element type nullable, or construct the struct positionally:
 
 ```wac
 E[] a = E[](E.A(1), E.B);     // a literal needs no default
-E?[] b = E?[2]();             // nullable elements default to null
+E[] b = E[n](fill: E.B);      // or give every element a value — the dynamic-size answer
+E?[] c = E?[2]();             // nullable elements default to null
 S s = S(E.A(1));              // positional construction supplies the field
 ```
 
