@@ -1439,6 +1439,77 @@ Deno.test("[§wac-const-struct-g9apxwr] writing any field of const struct is err
   `);
 });
 
+// ── §wac-str-fromcp-* — string.fromCodepoint ─────────────────────────────────
+
+Deno.test(`[§wac-str-fromcp-k8nf3wq] letterA() returns "A"`, async () => {
+  // Compared against a real literal, so the bytes have to match what the lexer
+  // and emitter produce for "A" — not merely be self-consistent.
+  const inst = await run(`
+    export bool test() { return string.fromCodepoint(65) == "A"; }
+  `);
+  eq(inst.call("test", []), true, `fromCodepoint(65) == "A"`);
+});
+
+Deno.test(`[§wac-str-fromcp-utf8-r4mj7xt] the result is UTF-8 at every width`, async () => {
+  // Each case is checked two ways: the byte length, and equality with the literal
+  // spelling of the same character. A wrong lead byte or a missing continuation
+  // byte fails the second even when the first passes.
+  const inst = await run(`
+    export bool eq1() { return string.fromCodepoint(65) == "A"; }
+    export bool eq2() { return string.fromCodepoint(233) == "é"; }
+    export bool eq3() { return string.fromCodepoint(26085) == "日"; }
+    export bool eq4() { return string.fromCodepoint(128512) == "😀"; }
+    export i32 len1() { return string.fromCodepoint(65).len(); }
+    export i32 len2() { return string.fromCodepoint(233).len(); }
+    export i32 len3() { return string.fromCodepoint(26085).len(); }
+    export i32 len4() { return string.fromCodepoint(128512).len(); }
+    export bool bounds() {
+      return string.fromCodepoint(0x7F).len() == 1
+          && string.fromCodepoint(0x80).len() == 2
+          && string.fromCodepoint(0x7FF).len() == 2
+          && string.fromCodepoint(0x800).len() == 3
+          && string.fromCodepoint(0xFFFF).len() == 3
+          && string.fromCodepoint(0x10000).len() == 4;
+    }
+  `);
+  eq(inst.call("eq2", []), true, "U+00E9 encodes as é");
+  eq(inst.call("eq3", []), true, "U+65E5 encodes as 日");
+  eq(inst.call("eq4", []), true, "U+1F600 encodes as 😀");
+  eq(inst.call("len1", []), 1, "ASCII is 1 byte");
+  eq(inst.call("len2", []), 2, "U+00E9 is 2 bytes");
+  eq(inst.call("len3", []), 3, "U+65E5 is 3 bytes");
+  eq(inst.call("len4", []), 4, "U+1F600 is 4 bytes");
+  eq(inst.call("bounds", []), true, "every width boundary lands in the right branch");
+});
+
+Deno.test(`[§wac-str-fromcp-trap-h6qw2np] values with no encoding trap`, async () => {
+  const inst = await run(`
+    export i32 low()   { return string.fromCodepoint(0xD800).len(); }
+    export i32 high()  { return string.fromCodepoint(0xDFFF).len(); }
+    export i32 big()   { return string.fromCodepoint(0x110000).len(); }
+    export i32 neg()   { return string.fromCodepoint(0 - 1).len(); }
+    export i32 justOk(){ return string.fromCodepoint(0xD7FF).len(); }
+    export i32 alsoOk(){ return string.fromCodepoint(0xE000).len(); }
+  `);
+  traps(() => inst.call("low", []), "a low surrogate has no UTF-8 form");
+  traps(() => inst.call("high", []), "a high surrogate has no UTF-8 form");
+  traps(() => inst.call("big", []), "above U+10FFFF");
+  traps(() => inst.call("neg", []), "negative");
+  // Either side of the surrogate block must still work, or the range check is
+  // too wide and would reject valid text.
+  eq(inst.call("justOk", []), 3, "U+D7FF is valid");
+  eq(inst.call("alsoOk", []), 3, "U+E000 is valid");
+});
+
+Deno.test(`[§wac-str-fromcp-k8nf3wq] arity and argument type are checked`, () => {
+  const a = err(`export string bad() { return string.fromCodepoint(); }`);
+  if (!a.includes("takes 1 argument")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export string bad() { return string.fromCodepoint(1.5); }`);
+  if (!b.includes("must be i32")) throw new Error(`unexpected: ${b}`);
+  const c = err(`export string bad() { return string.nosuch(1); }`);
+  if (!c.includes("no static method")) throw new Error(`unexpected: ${c}`);
+});
+
 // ── §wac-charlit-* — character literals are i32 codepoints ───────────────────
 
 Deno.test("[§wac-charlit-p4kn8wq] letterA() returns 97", async () => {

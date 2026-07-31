@@ -202,6 +202,35 @@ s[0] = "H";              // error: strings are immutable
 
 `[§wac-str-immut-m3hd7qz]` Assigning to a string index is a compile error.
 
+### Building a string from a codepoint
+
+`string.fromCodepoint(cp)` returns the one-character string whose Unicode scalar
+is `cp`, UTF-8 encoded.
+
+This is the only way to reach a character that is not already written down
+somewhere. Literals, `+` and `slice` can only produce characters that appear in
+the source or in an input, so without it text whose content is computed — a
+`\uXXXX` escape decoder, a codepoint arithmetic routine — cannot be expressed.
+
+```wac
+export string letterA()  { return string.fromCodepoint(65); }
+export i32    emojiLen() { return string.fromCodepoint(128512).len(); }
+```
+
+`[§wac-str-fromcp-k8nf3wq]` `letterA()` returns `"A"`.
+`[§wac-str-fromcp-utf8-r4mj7xt]` The result is UTF-8, so its `len()` is 1, 2, 3 or
+4 bytes according to the scalar: `128512` gives 4.
+
+It traps rather than substituting a replacement character when the value has no
+encoding, because there is no correct string to return and a silent U+FFFD would
+hide the caller's mistake.
+
+`[§wac-str-fromcp-trap-h6qw2np]` A negative value, a value above `0x10FFFF`, or a
+surrogate in `0xD800..0xDFFF` traps.
+
+There is no `string.fromBytes` yet: building a string from an `i8[]` of UTF-8
+bytes still has to go through `fromCodepoint` and `+`, which is O(n²).
+
 ### String methods
 
 ```wac

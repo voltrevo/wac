@@ -554,6 +554,7 @@ function buildTypeCtxFull(
  */
 const STRING_AND_MATH_HELPERS = [
   "__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof",
+  "__str_from_cp",
   "__fmod", "__fmodf",
 ] as const;
 
@@ -588,13 +589,15 @@ function helperFuncTypes(si: number, coverage: boolean): number[][] {
   const slice  = [0x60, 0x03, ...str, ...i32, ...i32, 0x01, ...str];
   // __str_indexof(str, str) -> i32
   const iof    = [0x60, 0x02, ...str, ...str, 0x01, ...i32];
+  // __str_from_cp(i32) -> str
+  const fromCp = [0x60, 0x01, ...i32, 0x01, ...str];
   // __fmod(f64, f64) -> f64
   const f64    = [0x7C];
   const fmod   = [0x60, 0x02, ...f64, ...f64, 0x01, ...f64];
   // __fmodf(f32, f32) -> f32
   const f32    = [0x7D];
   const fmodf  = [0x60, 0x02, ...f32, ...f32, 0x01, ...f32];
-  const base = [concat, cmp, idx, slice, iof, fmod, fmodf];
+  const base = [concat, cmp, idx, slice, iof, fromCp, fmod, fmodf];
   if (!coverage) return base;
   // __cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32
   return [
@@ -664,6 +667,7 @@ function buildHelperBodies(
     makeIdx(si),
     makeSlice(si),
     makeIndexOf(si),
+    makeFromCodepoint(si),
     makeFmod(),
     makeFmodF(fmodIdx),
   ];
@@ -1086,6 +1090,84 @@ function makeSlice(si: number): number[] {
     // return ref.as_non_null result
     0x20, 0x05, 0xD4,
     0x0B, // end
+  ];
+}
+
+/**
+ * __str_from_cp(cp:i32) -> str
+ *
+ * UTF-8 encode one Unicode scalar into a fresh string. Traps on a value with no
+ * encoding — negative, above U+10FFFF, or a surrogate — because there is no
+ * answer to return and silently substituting U+FFFD would hide the caller's bug.
+ *
+ * array.set on a packed i8 array truncates on store, so the byte expressions
+ * need no masking beyond what the encoding itself requires.
+ */
+function makeFromCodepoint(si: number): number[] {
+  const nullableStr = [0x63, ...sleb(si)];
+  /** result = array.new_default $str(n) */
+  const alloc = (n: number) => [0x41, ...sleb(n), 0xFB, 0x07, ...uleb(si), 0x21, 0x01];
+  /** result[i] = <bytes on the stack> */
+  const setByte = (i: number, value: number[]) =>
+    [0x20, 0x01, 0x41, ...sleb(i), ...value, 0xFB, 0x0E, ...uleb(si)];
+  /** cp >>> shift, then OR with a lead/continuation marker */
+  const shifted = (marker: number, shift: number) =>
+    [0x41, ...sleb(marker), 0x20, 0x00, 0x41, ...sleb(shift), 0x76, 0x72];
+  /** (cp >>> shift) & 0x3F, OR'd with the 0x80 continuation marker */
+  const cont = (shift: number) =>
+    [0x41, ...sleb(0x80), 0x20, 0x00, 0x41, ...sleb(shift), 0x76, 0x41, ...sleb(0x3F), 0x71, 0x72];
+  /** cp & 0x3F, OR'd with 0x80 — the final continuation byte */
+  const contLow = [0x41, ...sleb(0x80), 0x20, 0x00, 0x41, ...sleb(0x3F), 0x71, 0x72];
+  /** if (cp <cmp> bound) { trap } */
+  const trapIf = (bound: number, cmp: number) =>
+    [0x20, 0x00, 0x41, ...sleb(bound), cmp, 0x04, 0x40, 0x00, 0x0B];
+
+  return [
+    // locals: 1 × nullable str
+    0x01, 0x01, ...nullableStr,
+
+    ...trapIf(0, 0x48),         // cp < 0
+    ...trapIf(0x10FFFF, 0x4A),  // cp > U+10FFFF
+    // surrogates D800..DFFF have no UTF-8 form
+    0x20, 0x00, 0x41, ...sleb(0xD800), 0x4E,
+    0x04, 0x40,
+      0x20, 0x00, 0x41, ...sleb(0xDFFF), 0x4C,
+      0x04, 0x40, 0x00, 0x0B,
+    0x0B,
+
+    // 1 byte: cp < 0x80
+    0x20, 0x00, 0x41, ...sleb(0x80), 0x48,
+    0x04, 0x40,
+      ...alloc(1),
+      ...setByte(0, [0x20, 0x00]),
+    0x05,
+      // 2 bytes: cp < 0x800
+      0x20, 0x00, 0x41, ...sleb(0x800), 0x48,
+      0x04, 0x40,
+        ...alloc(2),
+        ...setByte(0, shifted(0xC0, 6)),
+        ...setByte(1, contLow),
+      0x05,
+        // 3 bytes: cp < 0x10000
+        0x20, 0x00, 0x41, ...sleb(0x10000), 0x48,
+        0x04, 0x40,
+          ...alloc(3),
+          ...setByte(0, shifted(0xE0, 12)),
+          ...setByte(1, cont(6)),
+          ...setByte(2, contLow),
+        0x05,
+          // 4 bytes
+          ...alloc(4),
+          ...setByte(0, shifted(0xF0, 18)),
+          ...setByte(1, cont(12)),
+          ...setByte(2, cont(6)),
+          ...setByte(3, contLow),
+        0x0B,
+      0x0B,
+    0x0B,
+
+    0x20, 0x01, 0xD4, // ref.as_non_null result
+    0x0B,
   ];
 }
 
