@@ -7725,6 +7725,123 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+// §wac-cast-matrix-6hkq4wz — the numeric cast matrix, completed
+Deno.test("[§wac-cast-matrix-6hkq4wz] as~ clamps at every width, not only 32 bits", async () => {
+  // Found by generating every (from, to, operator) triple and comparing against an oracle built
+  // from the spec. Four of these emitted *nothing* — the type checker accepted the cast and the
+  // emitter had no case — so the value kept its source type and the wasm did not validate. The
+  // same-width 64-bit rows were worse: they reinterpreted the bits, which is what `as@` means, so
+  // `i64 as~ u64` of -1 answered 18446744073709551615 instead of clamping to 0.
+  const inst = await run(`
+    export u64 i32ToU64(i32 x) { return x as~ u64; }
+    export u32 i64ToU32(i64 x) { return x as~ u32; }
+    export i32 u64ToI32(u64 x) { return x as~ i32; }
+    export u32 u64ToU32(u64 x) { return x as~ u32; }
+    export u64 i64ToU64(i64 x) { return x as~ u64; }
+    export i64 u64ToI64(u64 x) { return x as~ i64; }
+    export u32 i32ToU32(i32 x) { return x as~ u32; }
+    export i32 u32ToI32(u32 x) { return x as~ i32; }
+  `);
+  eq(inst.call("i32ToU64", [-5]), 0n, "a negative i32 clamps to 0 in u64");
+  eq(inst.call("i32ToU64", [5]), 5n, "and a positive one zero-extends");
+  eq(inst.call("i64ToU32", [-5n]), 0, "a negative i64 clamps to 0 in u32");
+  eq(inst.call("i64ToU32", [8589934592n]), 4294967295, "and too large clamps to u32 max");
+  eq(inst.call("u64ToI32", [5n]), 5, "a small u64 narrows");
+  eq(inst.call("u64ToI32", [8589934592n]), 2147483647, "and a large one clamps to i32 max");
+  eq(inst.call("u64ToU32", [8589934592n]), 4294967295, "u64 to u32 clamps");
+  eq(inst.call("i64ToU64", [-1n]), 0n, "same width: -1 clamps to 0 rather than reinterpreting");
+  eq(inst.call("i64ToU64", [7n]), 7n, "and a positive value is itself");
+  eq(inst.call("u64ToI64", [18446744073709551615n]), 9223372036854775807n,
+    "and the other direction clamps to i64 max");
+  // The 32-bit pair that was already right, so the test says what it is being compared against.
+  eq(inst.call("i32ToU32", [-1]), 0, "the 32-bit row this was modelled on");
+  eq(inst.call("u32ToI32", [4294967295]), 2147483647, "in both directions");
+});
+
+Deno.test("[§wac-cast-matrix-6hkq4wz] every numeric type converts to and from bool", async () => {
+  // `as!`/`as~` are defined for every pair `as` does not cover, and only the 32-bit rows existed:
+  // `x as~ bool` on an i64 was "no valid cast". A bool widens the other way with plain `as`, since
+  // 0 and 1 are exact in every numeric type — the emitter already had the instruction for `i64`
+  // while the type checker refused to reach it.
+  const inst = await run(`
+    export bool i64Truthy(i64 x) { return x as~ bool; }
+    export bool u64Truthy(u64 x) { return x as~ bool; }
+    export bool f64Truthy(f64 x) { return x as~ bool; }
+    export bool f32Truthy(f32 x) { return x as~ bool; }
+    export i64 toI64(bool b) { return b as i64; }
+    export u64 toU64(bool b) { return b as u64; }
+    export f64 toF64(bool b) { return b as f64; }
+    export f32 toF32(bool b) { return b as f32; }
+  `);
+  eq(inst.call("i64Truthy", [7n]), true, "a nonzero i64");
+  eq(inst.call("i64Truthy", [0n]), false, "and zero");
+  eq(inst.call("u64Truthy", [9n]), true, "a u64");
+  eq(inst.call("f64Truthy", [2.5]), true, "an f64");
+  eq(inst.call("f64Truthy", [0]), false, "and zero");
+  eq(inst.call("f32Truthy", [1.5]), true, "an f32");
+  eq(inst.call("toI64", [true]), 1n, "and back out to i64");
+  eq(inst.call("toU64", [true]), 1n, "u64");
+  eq(inst.call("toF64", [true]), 1, "f64");
+  eq(inst.call("toF32", [false]), 0, "and f32");
+});
+
+Deno.test("[§wac-cast-matrix-6hkq4wz] as! to bool checks, at both widths", async () => {
+  // `i32 as! bool` was in the type checker's table from the start and had no case in the emitter,
+  // so `3 as! bool` returned `true`: a checked cast that checked nothing. Found by contrast with
+  // the 64-bit row I was adding — which is the argument for adding a missing case even when the
+  // one beside it looks fine.
+  const inst = await run(`
+    export bool i32Exact(i32 x) { return x as! bool; }
+    export bool i64Exact(i64 x) { return x as! bool; }
+    export bool f64Exact(f64 x) { return x as! bool; }
+  `);
+  eq(inst.call("i32Exact", [1]), true, "1 is exactly true");
+  eq(inst.call("i32Exact", [0]), false, "0 is exactly false");
+  traps(() => inst.call("i32Exact", [3]), "3 has no reading as a bool");
+  traps(() => inst.call("i32Exact", [-1]), "nor does -1");
+  eq(inst.call("i64Exact", [1n]), true, "the same at 64 bits");
+  traps(() => inst.call("i64Exact", [2n]), "and it traps there too");
+  eq(inst.call("f64Exact", [0]), false, "0.0 is false");
+  traps(() => inst.call("f64Exact", [2.5]), "and a fraction has no reading");
+});
+
+Deno.test("[§wac-cast-matrix-6hkq4wz] a reference casts only to a reference", () => {
+  // `s as! i32` on a string was accepted and emitted a ref.cast to a numeric type: invalid wasm
+  // from a program the checker approved. The guard let every *prim* target through, to make room
+  // for `i31ref -> i32`, which is a real conversion and is now the only exception.
+  for (const [what, src] of [
+    ["to i32",  `export i32 f(string s) { return s as! i32; }`],
+    ["to f64",  `export f64 f(string s) { return s as! f64; }`],
+    ["to bool", `export bool f(string s) { return s as! bool; }`],
+    ["a struct to i32", `struct P { i32 x; }
+                         export i32 f(P p) { return p as! i32; }`],
+  ] as [string, string][]) {
+    const m = err(src);
+    if (!m.includes("cannot cast reference type")) {
+      throw new Error(`${what}: expected the reference-cast refusal, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-cast-matrix-6hkq4wz] the raw pairs the spec had not listed", async () => {
+  // `as@` is only defined where a distinct raw form exists, and the unsigned rows are the signed
+  // ones with the destination read the other way. The compiler had them; the spec's "these are the
+  // only pairs" list did not.
+  const inst = await run(`
+    export u32 i64Raw(i64 x)  { return x as@ u32; }
+    export i32 u64RawI(u64 x) { return x as@ i32; }
+    export u32 u64RawU(u64 x) { return x as@ u32; }
+    export u32 f64Raw(f64 x)  { return x as@ u32; }
+    export u32 f32Raw(f32 x)  { return x as@ u32; }
+  `);
+  eq(inst.call("i64Raw", [-1n]), 4294967295, "low 32 bits, read unsigned");
+  eq(inst.call("u64RawI", [4294967295n]), -1, "and read signed");
+  eq(inst.call("u64RawU", [8589934593n]), 1, "keeping only the low bits");
+  eq(inst.call("f64Raw", [3.7]), 3, "a float truncates toward zero");
+  eq(inst.call("f64Raw", [-1]), 0, "and saturates into u32's range");
+  eq(inst.call("f32Raw", [2.9]), 2, "the same in f32");
+});
+
 // §wac-packed-nullable-2knq6wv — the packed rule applies through a nullable
 Deno.test("[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is", () => {
   // `u8` is refused as a field, a parameter, a return type and a local; `u8?` was accepted in every

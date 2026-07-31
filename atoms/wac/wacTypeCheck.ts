@@ -2751,7 +2751,14 @@ function checkCast(
     if (op === "as" || op === "as!") {
       // as: upcast only (subtype to parent)
       // as!: downcast (may trap)
-      if (!isRefType(to) && to.kind !== "prim") {
+      // The target has to be a reference too — `isRefType` already counts `string`, `i31ref` and
+      // `anyref` as ones. The `to.kind !== "prim"` escape that used to be here let every numeric
+      // target through, so `s as! i32` on a string was accepted and emitted a `ref.cast` to i32:
+      // invalid wasm from a program the checker had approved. The one prim pair that *is* a real
+      // conversion, `i31ref -> i32`, is handled immediately below.
+      const i31ToI32 = from.kind === "prim" && from.name === "i31ref" &&
+        to.kind === "prim" && to.name === "i32";
+      if (!isRefType(to) && !i31ToI32) {
         errAt(ctx, `cannot cast reference type '${fn}' to '${tn}'`, line, col);
         return null;
       }
@@ -2836,7 +2843,17 @@ function isLosslessNumericCast(fn: string | null, tn: string | null): boolean {
          // so these are zero-extend / exact and never need a checked form.
          (fn === "u32"    && tn === "u64")   ||
          (fn === "u32"    && tn === "i64")   ||
-         (fn === "u32"    && tn === "f64");
+         (fn === "u32"    && tn === "f64")   ||
+         // `bool` is an i32 holding 0 or 1, so widening one is exact whatever the width. `bool ->
+         // i32` and `bool -> u32` were listed and the 64-bit rows were not, which made
+         // `x as i64` on a bool "no valid cast" while the emitter already had the instruction for
+         // it [found by the cast sweep].
+         (fn === "bool"   && tn === "i64")   ||
+         (fn === "bool"   && tn === "u64")   ||
+         // And into floating point, where 0 and 1 are exact in both widths. A bool widens exactly
+         // into every numeric type, so `as` is the right and only spelling for all of them.
+         (fn === "bool"   && tn === "f64")   ||
+         (fn === "bool"   && tn === "f32");
   // Deliberately absent: i32 <-> u32 and i64 <-> u64. They are the same bits but
   // not the same values — a negative i32 has no u32 reading, and a u32 above
   // 2^31-1 has no i32 reading. Use `as!` to check, or `as@` to reinterpret.
@@ -2899,7 +2916,15 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "f32"  && tn === "u32")  ||
          (fn === "f32"  && tn === "u64")  ||
          (fn === "i32"  && tn === "u64")  ||  // negative has no u64 reading
-         (fn === "u32"  && tn === "bool");
+         (fn === "u32"  && tn === "bool") ||
+         // Every numeric type converts to bool: `as~` is "nonzero is true" and `as!` accepts only
+         // an exact 0 or 1. `i32 -> bool` and `u32 -> bool` were listed and the wider ones were
+         // not, so `x as~ bool` on an i64 was "no valid cast" — a gap rather than a rule, since
+         // the spec says as!/as~ are defined for every pair `as` does not cover.
+         (fn === "i64"  && tn === "bool") ||
+         (fn === "u64"  && tn === "bool") ||
+         (fn === "f64"  && tn === "bool") ||
+         (fn === "f32"  && tn === "bool");
 }
 
 /**
