@@ -199,6 +199,8 @@ export type VariantDecl = {
 export type EnumDecl = {
   tag: "enum"; exported: boolean; name: string;
   variants: VariantDecl[];
+  /** `enum Option<T>` has ["T"]. Empty for an ordinary enum. */
+  typeParams: string[];
   /**
    * Methods declared in the enum body, after the variants. They attach to the enum's
    * generated base struct, so `this` is the enum type and `match (this)` is how a method
@@ -1349,6 +1351,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos();
     expect("enum");
     const name = at("ident") ? advance().text : (err("expected enum name"), "?");
+    // As on a struct, and for the same reason: the parameters are in scope for every variant's
+    // payload types and every method below.
+    const typeParams = parseTypeParams();
     expect("{");
 
     // Variants first, comma-separated, then methods. A method is recognised by its shape —
@@ -1410,7 +1415,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     }
 
     expect("}");
-    return { tag: "enum", exported, name, variants, methods, ...p };
+    return { tag: "enum", exported, name, variants, methods, typeParams, ...p };
   }
 
   /**

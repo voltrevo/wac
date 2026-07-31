@@ -64,16 +64,25 @@ Vec<Vec<i32>> outer = Vec(Vec<i32>[0](), 0);
 `[§wac-generic-struct-9tkq4wm]` Both work, including the `>>` that closes a nested argument list —
 the lexer reads it as one shift token and the parser splits it.
 
-**A construction in an argument position must name its type.** `take(Vec(...))` cannot infer,
-because the callee's signature is not known when substitution runs. Declare it first:
+Every position that supplies an expected type works, and there are more of them than a declaration:
 
 ```wac
-Vec<i32> v = Vec(i32[0](), 0);
-take(v);                               // fine
+Vec<i32> v = Vec(i32[0](), 0);        // a declaration
+v = Vec(i32[0](), 0);                 // assignment to a local
+h.v = Vec(i32[0](), 0);               // to a field
+xs[0] = Vec(i32[0](), 0);             // to an array element
+take(Vec(i32[0](), 0));               // a call's argument
+Holder h = Holder(Vec(i32[0](), 0));  // a construction's argument, positional or named
+Vec<i32>[] a = Vec<i32>[2](fill: Vec(i32[0](), 0));   // an array's elements
 ```
 
-That is what idiomatic wac already does — containers mutate through `void` methods, so calls are
-already two statements — and lifting it is future work rather than a gap in the design.
+`[§wac-generic-expected-position-3qmz8vk]` All of these work. The ones below a declaration need a
+symbol table — the callee's parameters, the struct's fields, the local's declared type — so they are
+resolved in a later pass than the two that do not.
+
+What has no expected type is a construction whose value goes nowhere in particular: a discarded
+expression statement, or a method call on a fresh receiver. `Vec().len()` is an error, and the fix
+is the two statements idiomatic wac already writes.
 
 ### Across modules
 
@@ -165,6 +174,59 @@ difference between this feature and a C++ template error.
 
 The last is capped at 24 levels of nesting and reported. Rust has the same limit for the same
 reason: there is no way to tell an infinite family from a merely deep one.
+
+## Generic enums
+
+An enum may take type parameters too, which is what `Option<T>` and `Result<T, E>` need:
+
+```wac
+enum Option<T> {
+  Some(T v), None
+
+  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+}
+
+export i32 f() {
+  Option<i32> a = Option.Some(4);
+  Option<i32> b = Option.None;
+  return a.orElse(0) + b.orElse(9);
+}
+```
+
+`[§wac-generic-enum-7dkq2mv]` This works, and so does `Result<T, E>` with two parameters. An
+instantiation is an ordinary enum by the time anything else looks at it: generics substitute before
+enums desugar, so `Option<i32>` becomes a concrete enum and then concrete structs.
+
+A variant construction takes the enum's type arguments from the same expected type a struct
+construction would — `Option.Some(4)` in any of the positions listed above. It cannot name them:
+there is no `Option<i32>.Some(4)`.
+
+### A generic enum's variants have no bare name
+
+An ordinary enum's variants are file-scope names, which is what lets a variant be used as a type
+(`§enum-variant-name-collision`). A generic one's cannot be: `Option<i32>` and `Option<f64>` would both
+claim `Some`, and neither has a better claim.
+
+```wac
+Option<i32> a = Option.Some(1);
+match (a) { case Some(v): return v; case None: return 0; }   // fine
+Some s = a;                                                   // error: no such type
+bool b = a is Some;                                           // error: no such type
+```
+
+`[§wac-generic-enum-7dkq2mv]` `match` is unaffected — an arm resolves its variant through the
+subject's enum rather than through the file scope — and it is how a generic enum is meant to be
+taken apart. The diagnostic for the other two says which generic enum the name belongs to rather
+than suggesting a spelling mistake.
+
+### Not checked at the definition
+
+`§wac-generic-template-check-2wkq7nm` checks a generic struct's and a generic function's body with
+the type parameters opaque. A generic **enum**'s methods are not checked that way: a method reaches
+its variants through `match`, which needs the enum desugared, and a template has not been.
+`[§wac-generic-enum-7dkq2mv]` So a mistake in a generic enum's method is reported at each
+instantiation, and a generic enum nobody instantiates is not checked at all.
 
 ## Generic functions
 

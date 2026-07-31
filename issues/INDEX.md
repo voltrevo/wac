@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0046](open/0046-an-unknown-type-name-in-a-declaration-is-not-reported-as-one.md) | an unknown type name in a declaration or cast is not reported as unknown | diagnostic | compile error |
 | [0045](open/0045-nullable-primitives-are-not-boxed.md) | a nullable primitive is neither boxed nor unboxed | bug | invalid wasm |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
@@ -12,7 +13,7 @@ has been fixed and why.
 
 ## Closed
 
-45 issues, 41 closed.
+46 issues, 41 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
