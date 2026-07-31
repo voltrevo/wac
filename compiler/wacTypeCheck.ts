@@ -249,9 +249,21 @@ function allFields(entry: StructEntry | undefined): FieldDecl[] {
 }
 
 /** Does a type have a default value (for T[N]() and T() construction)? */
+/**
+ * Can a value of this type be produced with no initialiser?
+ *
+ * `cyclesOnly` narrows the question to "does construction fail to terminate", which is
+ * what the recursive-field check wants. The two questions were the same until enums
+ * arrived: a struct-typed field lacked a default only ever by recursion, so one
+ * predicate served both. An enum field lacks one for an unrelated reason, and
+ * answering the recursion question with it reported `struct S { E e; }` as "creates a
+ * non-null recursive reference" — which is neither true nor actionable, and would have
+ * made a struct with an enum field illegal to declare at all.
+ */
 function hasDefault(
   t: WacType, tables: Tables,
   visiting = new Set<number>(),
+  cyclesOnly = false,
 ): boolean {
   switch (t.kind) {
     case "prim":     return t.name !== "void" && t.name !== "null";
@@ -259,21 +271,31 @@ function hasDefault(
     case "array":    return true;  // non-null array defaults to an empty (zero-length) array —
                                     // unlike T[N](), there's no size here, so the element type's
                                     // own defaultability is irrelevant.
-    case "struct":   return structHasDefault(entryOfType(t, tables), tables, visiting);
-    case "funcref":  return false;
+    case "struct":   return structHasDefault(entryOfType(t, tables), tables, visiting, cyclesOnly);
+    case "funcref":  return cyclesOnly;
   }
 }
 
 function structHasDefault(
   entry: StructEntry | undefined, tables: Tables,
   visiting: Set<number>,
+  cyclesOnly = false,
 ): boolean {
   if (!entry) return false;
+  // An enum has no default value, and neither does a variant. The base struct's only
+  // field is the tag, which does have one, so the field walk below would say an enum
+  // is defaultable — and then `E[n]()` produced n bases and `S()` a struct holding
+  // one, values that satisfy no variant. Matching them trapped on `illegal cast`,
+  // pointing at the arm rather than at the construction that made them.
+  if (!cyclesOnly && entry.enumRole !== undefined) return false;
   if (visiting.has(entry.typeIndex)) return false;  // circular non-null ref has no default
   visiting.add(entry.typeIndex);
   const fields = allFields(entry);
   for (const f of fields) {
-    if (!hasDefault(f.type, tables, visiting)) { visiting.delete(entry.typeIndex); return false; }
+    if (!hasDefault(f.type, tables, visiting, cyclesOnly)) {
+      visiting.delete(entry.typeIndex);
+      return false;
+    }
   }
   visiting.delete(entry.typeIndex);  // backtrack so sibling fields can reuse this struct
   return true;
@@ -459,7 +481,7 @@ function checkNoRecursiveNonNull(s: StructDecl, ctx: Ctx): void {
   for (const f of fields) {
     if (f.type.kind === "struct") {
       const visited = new Set<number>([selfEntry.typeIndex]);
-      if (!structHasDefault(entryOfType(f.type, ctx), ctx, visited)) {
+      if (!structHasDefault(entryOfType(f.type, ctx), ctx, visited, true)) {
         errAt(ctx,
           `field '${f.name}' creates a non-null recursive reference — struct has no default value`,
           f.line, f.col);
