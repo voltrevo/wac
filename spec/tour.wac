@@ -75,13 +75,10 @@ export i64 padded()  { return 0x0EDB88320; }    // -> 3988292384  (9 digits, i64
 export i32 grouped() { return 0xEDB8_8320; }    // `_` is a separator, ignored...
 export i32 million() { return 1_000_000; }      // ...and cannot change the width
 
-// BUG, as of this writing: an i64-typed decimal literal is emitted correctly in
-// a return or initialiser, but as `i32.const` when it is an operand of a binary
-// operation — so `decBig() == 1000000000000` type-checks and then fails to
-// instantiate. emitExpr's "int" case picks the const width from the expected
-// type only, ignoring the literal's own width. Until fixed, keep large literals
-// out of binary operators: cast a small literal (`1000000 as i64`) or compare
-// the low word (`x as@ i32`).
+// A literal's width is intrinsic, not inferred from context, and that cuts both
+// ways: `1000000000000` IS an i64 everywhere, including as an operand of an
+// operator — but a small literal is an i32 and will NOT widen to meet an i64.
+// So `x == 5` where x is i64 is a type error; write `x == 5 as i64`.
 
 // A consequence to know about: i32's most negative value has no decimal
 // spelling. `-2147483648` is unary minus applied to the literal `2147483648`,
@@ -216,13 +213,12 @@ export i32 strBasics() {
 
 export string strOps() {
   string s = "hello";
-  s = s + " world";                 // strings are immutable: this rebinds s
+  s += " world";                    // strings are immutable: `+=` rebinds s,
+                                    // exactly as `s = s + " world"` would
   return s.slice(6, 11);            // -> "world"  — byte offsets, [start, end)
 }
-// BUG, as of this writing: `s += " world"` is specified (strings.md,
-// §wac-str-append-q5km7wn) but MISCOMPILES — emitBinOpCode falls through to the
-// f64 opcode table for `string`, so it emits `f64.add` on two string refs and
-// the module fails to instantiate. Write `s = s + t` until that is fixed.
+// `+=` is the only compound operator defined on strings; `-=`, `*=`, `|=` and
+// the rest are rejected, since the underlying operator is numeric.
 export i32 strFind() { return "hello world".indexOf("world"); }   // -> 6, or -1
 
 // Indexing decodes the UTF-8 codepoint starting at byte i and returns it as a
@@ -689,11 +685,9 @@ export bool selfTest() {
       && isEven(42) == 1 && isOdd(42) == 0
       && trailingComma() == 12
       && wrap() == 0x80000000 && mostNegative() == 0x80000000
-      && dec() == 42
-      && decBig() == (1000000 as i64) * (1000000 as i64)
-      && poly() == -306674912
-      && (padded() as@ i32) == poly()      // low word of 0x0EDB88320
-      && (decBig() as@ i32) == -727379968  // low word of 10^12
+      && dec() == 42 && decBig() == 1000000000000
+      && poly() == -306674912 && padded() == 3988292384
+      && (decBig() as@ i32) == -727379968   // as@ keeps the low 32 bits
       && grouped() == poly() && million() == 1000000
       && strictBool(3) == 1 && strictBool(0) == 0
       && variables() == 15 && constRef() == 3.0
