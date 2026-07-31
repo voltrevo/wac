@@ -14,10 +14,10 @@ import {
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry,
-  funcParams, funcReturnType,
+  funcParams, funcReturnType, ENUM_TAG_FIELD,
 } from "./wacResolve.ts";
 import {
-  wacEmitFunc, typeKey, sigKey, wasmValType, heapTypeBytes,
+  wacEmitFunc, typeKey, sigKey, wasmValType, heapTypeBytes, encodeString,
   type WasmTypeCtx, type StructFieldInfo, type CoverageCtx,
 } from "./wacEmitFunc.ts";
 import { wacConstEval } from "./wacConstEval.ts";
@@ -400,12 +400,21 @@ function buildTypeCtx(
     }
   }
 
-  // Constant arrays become immutable globals. The coverage counter global, when
-  // present, is index 0 and is emitted first, so these start after it.
+  // Constants of reference type become immutable globals. The coverage counter global,
+  // when present, is index 0 and is emitted first, so these start after it.
+  //
+  // Arrays were the original case. Structs and enums are here for the same reason and a
+  // sharper one: substituting the initialiser at each use rebuilds the value, so two
+  // mentions of one constant were two objects with different identity, and a constant
+  // table of variants — the thing issue 0002 asked for — paid for itself on every
+  // mention. A string constant is still substituted; it is immutable, so only its
+  // identity differs and nothing can observe that.
   const constGlobalIdx = new Map<ConstDecl, number>();
   let nextGlobal = coverage ? 1 : 0;
   for (const decl of moduleConsts(result)) {
-    if (decl.type.kind === "array") constGlobalIdx.set(decl, nextGlobal++);
+    if (decl.type.kind === "array" || decl.type.kind === "struct") {
+      constGlobalIdx.set(decl, nextGlobal++);
+    }
   }
 
   return {
@@ -1645,23 +1654,153 @@ function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
   // instructions, which is why they go through wacConstEval first.
   for (const decl of moduleConsts(ctx.result)) {
     const gi = ctx.constGlobalIdx.get(decl);
-    if (gi === undefined || decl.type.kind !== "array") continue;
-    const elem = decl.type.elem;
-    const aIdx = ctx.arrTypeIdx.get(typeKey(elem));
-    if (aIdx === undefined) continue;
+    if (gi === undefined) continue;
 
-    const init = decl.init;
-    const elems = init.kind === "arrNew" ? init.fixed : [];
-    const body: number[] = [];
-    for (const el of elems) body.push(...constElemBytes(el, elem, ctx));
-    body.push(0xFB, 0x08, ...uleb(aIdx), ...uleb(elems.length)); // array.new_fixed
-    body.push(0x0B);                                             // end
+    if (decl.type.kind === "array") {
+      const elem = decl.type.elem;
+      const aIdx = ctx.arrTypeIdx.get(typeKey(elem));
+      if (aIdx === undefined) continue;
 
-    globals.push([0x64, ...sleb(aIdx), 0x00, ...body]);          // (ref $arr), immutable
+      const init = decl.init;
+      const elems = init.kind === "arrNew" ? init.fixed : [];
+      const body: number[] = [];
+      for (const el of elems) body.push(...constValueBytes(el, elem, ctx));
+      body.push(0xFB, 0x08, ...uleb(aIdx), ...uleb(elems.length)); // array.new_fixed
+      body.push(0x0B);                                             // end
+
+      globals.push([0x64, ...sleb(aIdx), 0x00, ...body]);          // (ref $arr), immutable
+      continue;
+    }
+
+    // A struct, an enum or a variant: `struct.new` is a constant instruction, so the
+    // value is built once in the global's own initialiser.
+    //
+    // The global's declared type is the *initialiser's* type rather than the declared
+    // one, because a variant is a subtype of its enum: `const E X = E.A(1);` declares E
+    // and builds an A. Declaring the global as E would be valid wasm, but `global.get`
+    // would then yield E where the checker has already concluded the expression is an A,
+    // and a `match` reading the tag through a base-typed value would need a cast the
+    // emitter does not insert. The subtype is assignable everywhere the supertype is.
+    const tIdx = constGlobalStructIdx(decl, ctx);
+    if (tIdx === undefined) continue;
+    const body = constValueBytes(decl.init, decl.type, ctx);
+    globals.push([0x64, ...sleb(tIdx), 0x00, ...body, 0x0B]);      // (ref $struct), immutable
   }
 
   if (globals.length === 0) return [];
   return section(6, vec(globals));
+}
+
+/**
+ * The struct type index a reference-typed constant's global should be declared with.
+ *
+ * The initialiser's own type, not the declared one — see the call site for why a variant
+ * must not be widened to its enum here.
+ */
+function constGlobalStructIdx(decl: ConstDecl, ctx: WasmTypeCtxFull): number | undefined {
+  const init = decl.init;
+  const variantIdx = (init as { variantTypeIndex?: number }).variantTypeIndex;
+  if (variantIdx !== undefined) return variantIdx;
+  if (init.kind === "construct" && init.ctype.kind === "struct") {
+    return init.ctype.resolvedTypeIndex ?? ctx.structTypeIdx.get(init.ctype.name);
+  }
+  const declared = decl.type;
+  if (declared.kind === "struct") {
+    return declared.resolvedTypeIndex ?? ctx.structTypeIdx.get(declared.name);
+  }
+  return undefined;
+}
+
+/**
+ * Any constant value as wasm constant instructions.
+ *
+ * The GC proposal admits `struct.new`, `array.new_fixed`, `ref.null` and `ref.func` in a
+ * constant expression alongside the numeric constants, so a constant is not restricted to
+ * scalars — a struct, an enum variant, or an array of either can be built once at
+ * instantiation and shared. Before this, a constant of reference type was rejected with
+ * "needs a compile-time value", so a dispatch table of variants had to be rebuilt inside a
+ * function on every call.
+ *
+ * `expected` is the type the value is being stored as, which a nested `null` needs in order
+ * to emit a typed `ref.null`, and a packed field needs in order to truncate.
+ */
+function constValueBytes(e: Expr, expected: WacType, ctx: WasmTypeCtxFull): number[] {
+  // A struct or a variant: emit each field, then struct.new.
+  if (e.kind === "construct" && e.ctype.kind === "struct") {
+    const tIdx = e.ctype.resolvedTypeIndex ?? ctx.structTypeIdx.get(e.ctype.name);
+    if (tIdx !== undefined) {
+      const fields = ctx.structFields.get(`@${tIdx}`) ?? ctx.structFields.get(e.ctype.name) ?? [];
+      const out: number[] = [];
+      if (e.named && e.named.length > 0) {
+        // Named construction is written in any order and stored in declaration order.
+        for (const f of fields) {
+          const na = e.named.find((n) => n.name === f.name);
+          out.push(...(na ? constValueBytes(na.val, f.type, ctx) : [0x41, 0x00]));
+        }
+      } else {
+        for (let i = 0; i < fields.length; i++) {
+          const arg = e.args[i];
+          out.push(...(arg ? constValueBytes(arg, fields[i].type, ctx) : [0x41, 0x00]));
+        }
+      }
+      out.push(0xFB, 0x00, ...uleb(tIdx)); // struct.new $t
+      return out;
+    }
+  }
+
+  // A variant, with payload (`E.A(1)` — a call) or without (`E.B` — a field access). The
+  // tag is the base struct's only field and so comes first, exactly as emitCall does it.
+  const variantIdx = (e as { variantTypeIndex?: number }).variantTypeIndex;
+  if ((e.kind === "call" || e.kind === "field") && variantIdx !== undefined) {
+    const variant = variantByTypeIndex(variantIdx, ctx);
+    if (variant) {
+      const fields = ctx.structFields.get(`@${variantIdx}`) ?? [];
+      const payload = fields.filter((f) => f.name !== ENUM_TAG_FIELD);
+      const args = e.kind === "call" ? e.args : [];
+      const out: number[] = [0x41, ...sleb(variant.tag)];
+      for (let i = 0; i < payload.length; i++) {
+        const arg = args[i];
+        out.push(...(arg ? constValueBytes(arg, payload[i].type, ctx) : [0x41, 0x00]));
+      }
+      out.push(0xFB, 0x00, ...uleb(variantIdx)); // struct.new $variant
+      return out;
+    }
+  }
+
+  // A nested array literal.
+  if (e.kind === "arrNew" && e.size === null) {
+    const inner = expected.kind === "array" ? expected.elem : e.elem;
+    const aIdx = ctx.arrTypeIdx.get(typeKey(inner));
+    if (aIdx !== undefined) {
+      const out: number[] = [];
+      for (const el of e.fixed) out.push(...constValueBytes(el, inner, ctx));
+      out.push(0xFB, 0x08, ...uleb(aIdx), ...uleb(e.fixed.length)); // array.new_fixed
+      return out;
+    }
+  }
+
+  // A string is an immutable i8 array, so its literal is array.new_fixed over its bytes.
+  if (e.kind === "string") {
+    const bytes = encodeString(e.value);
+    const out: number[] = [];
+    for (const b of bytes) out.push(0x41, ...sleb(b));
+    out.push(0xFB, 0x08, ...uleb(ctx.stringTypeIdx), ...uleb(bytes.length));
+    return out;
+  }
+
+  if (e.kind === "null") return [0xD0, ...heapTypeBytes(expected, ctx)]; // ref.null
+
+  return constElemBytes(e, expected, ctx);
+}
+
+/** The variant a type index denotes, for the tag a constant variant has to store. */
+function variantByTypeIndex(typeIndex: number, ctx: WasmTypeCtxFull) {
+  for (const en of ctx.result.enums) {
+    for (const v of en.variants) {
+      if (v.entry.typeIndex === typeIndex) return v;
+    }
+  }
+  return null;
 }
 
 /** A constant array element as a wasm const instruction. */

@@ -56,9 +56,8 @@ export const u32 POLY = 0xEDB88320;    // and may be imported
 one that is not exported cannot.
 
 The initialiser must be a **compile-time constant expression**: literals, the
-operators over them, casts, and other constants. Not a call, not a construction
-— which is what keeps the substitution honest, since there is nothing to
-evaluate at run time and no allocation to order.
+operators over them, casts, other constants, and construction of a struct, an enum
+variant or an array out of those. Not a call — a call would have to run.
 
 ```wac
 i32 f() { return 1; }
@@ -69,6 +68,10 @@ const i32 C = 1; C = 2;  // error: cannot assign to constant
 
 `[§wac-modconst-notconst-r4jn9kq]` A call in an initialiser is a compile error,
 as is a cycle between constants, and assigning to one.
+
+Note that the parser treats every `name(...)` as a construction, so a plain call reaches
+the same check; it is rejected because the name does not resolve to a struct, not because
+it looks different.
 
 #### Constant arrays
 
@@ -98,11 +101,46 @@ i32 x = T[1];  // reading is fine
 `[§wac-modconst-array-const-w2mk9fj]` Element writes, compound assignment and
 `++` through a constant array are all rejected.
 
-The sized form `T[n]()` is not allowed: it has no elements written down to
-evaluate, and would have to be built at run time.
+The sized form `T[n]()` is not allowed, nor is `T[n](fill: v)`: neither has its
+elements written down to evaluate, and the length need not be constant.
 
-Struct constants are not supported — `const P X = P(1)` is rejected. Scalars,
-strings and arrays are what a compile-time value can be today.
+#### Constant structs and enums
+
+A struct, an enum variant, or anything built out of them may be a constant, and like a
+constant array it is **one value built once** at instantiation:
+
+```wac
+enum E { A(i32 v), B }
+struct P { i32 x; i32 y; }
+
+const E    X      = E.A(7);
+const E    PLAIN  = E.B;
+const E[]  TABLE  = E[](E.A(1), E.B, E.A(3));    // a dispatch table, built once
+const P    ORIGIN = P(3, 4);
+const P    BRACED = P { x: 1, y: 2 };            // named construction too
+```
+
+`[§wac-modconst-ref-9jvq2mt]` All of these work, including a struct holding a struct, a
+string, or a null, and an array of structs. `struct.new` is a constant instruction in the
+GC proposal, so nothing needs to run.
+
+`[§wac-modconst-ref-9jvq2mt]` There is exactly one of each, so two mentions of one
+constant are the same value — observable through a mutable field. Writing through the
+constant's own name is refused, as it is for arrays.
+
+The arguments still have to be constant, so a construction is only as constant as what
+goes into it:
+
+```wac
+i32 f() { return 1; }
+const P BAD = P(f());     // error: needs a compile-time value
+```
+
+`[§wac-modconst-notconst-r4jn9kq]` This is a compile error, as is a plain function call
+that merely looks like a construction.
+
+A **string** constant is still substituted at each use rather than shared. A string is
+immutable, so only its identity would differ and nothing can observe that.
 
 ### Type inference
 

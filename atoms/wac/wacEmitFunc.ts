@@ -663,7 +663,7 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
  * resolved backslash of a `\\` and treat it as the start of a fresh escape,
  * swallowing whatever followed it, so this is a plain encode.
  */
-function encodeString(value: string): number[] {
+export function encodeString(value: string): number[] {
   return [...new TextEncoder().encode(value)];
 }
 
