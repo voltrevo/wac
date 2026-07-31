@@ -4560,3 +4560,26 @@ Deno.test(`[§wac-fnref-static-n7kq3wm] a static method reference is its own sig
   eq(i.call("viaPlain", []), 42, "static method with no receiver");
   eq(i.call("viaInstance", []), 2, "instance references still carry the receiver");
 });
+
+// §wac-arr-struct-runtime-w4kf2nq — a runtime size builds real elements too
+Deno.test(`[§wac-arr-struct-runtime-w4kf2nq] T[n]() fills with distinct defaults`, async () => {
+  const i = await run(`
+    struct P { i32 x; }
+    struct S { string s; i32 n; }
+    export i32 readIt(i32 n)   { P[] a = P[n](); return a[1].x; }
+    export i32 distinct(i32 n) { P[] a = P[n](); a[0].x = 99; return a[1].x * 100 + a[0].x; }
+    export i32 nested(i32 n)   { i32[][] g = i32[][n](); return g.len() * 10 + g[0].len(); }
+    export i32 withString(i32 n) { S[] a = S[n](); return a.len() * 10 + a[1].s.len(); }
+    export i32 zero()          { P[] a = P[0](); return a.len(); }
+    export i32 twice(i32 n)    { return P[n]().len() * 10 + P[n + 1]().len(); }
+  `);
+  // array.new_default fills a struct-element array with nulls, and every read
+  // unwraps — so before the fill loop, reading any element trapped.
+  eq(i.call("readIt", [3]), 0, "an element is readable");
+  // Rules out array.fill: one replicated value would alias across the array.
+  eq(i.call("distinct", [3]), 99, "writing a[0] leaves a[1] alone");
+  eq(i.call("nested", [2]), 20, "array elements default to empty arrays");
+  eq(i.call("withString", [3]), 30, "a struct holding a string still works");
+  eq(i.call("zero", []), 0, "a zero-length array fills vacuously");
+  eq(i.call("twice", [2]), 23, "two fills in one expression do not collide");
+});

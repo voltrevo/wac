@@ -45,6 +45,19 @@ Point[] ps = Point[10]();               // ok: Point has only numeric fields
 `[§wac-arr-struct-xo3j05c]` `ps[0].x` is `0` — each element is a distinct
 `Point()` with default values.
 
+The size may be any `i32` expression, not only a literal, and the distinctness
+holds either way — writing through one element never shows up in another.
+
+```wac
+export i32 distinct(i32 n) {
+  Point[] ps = Point[n]();
+  ps[0].x = 99.0;
+  return ps[1].x as~ i32;
+}
+```
+
+`[§wac-arr-struct-runtime-w4kf2nq]` `distinct(3)` returns `0`.
+
 `T[N]()` requires that T has a default value. See
 [structs.md](structs.md) for default value rules.
 
