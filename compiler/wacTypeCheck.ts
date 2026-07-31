@@ -423,7 +423,12 @@ export function wacTypeCheck(
   }
 
   const enumByTypeIndex = new Map<number, EnumEntry>();
-  for (const e of result.enums) enumByTypeIndex.set(e.base.typeIndex, e);
+  for (const e of result.enums) {
+    enumByTypeIndex.set(e.base.typeIndex, e);
+    // Variants too: a variant is an enum value, and identifying one by index is the only way
+    // to recognise it when its *name* belongs to another file — see `enumOfType`.
+    for (const v of e.variants) enumByTypeIndex.set(v.entry.typeIndex, e);
+  }
 
   // Per-file structural checks (packed types, override, recursive default)
   for (const [filePath, fileScope] of result.fileScopes) {
@@ -1378,20 +1383,12 @@ function checkMatchArms(
 
   const enumEntry = enumOfType(subjType, ctx);
   if (!enumEntry) {
-    // The subject may well be an enum that this file never imported — in which case
-    // "match requires an enum value, got TyKind" is true, unhelpful, and points at the
-    // wrong thing. Say which it is.
-    const unimported = subjType.kind === "struct" && subjType.resolvedTypeIndex !== undefined
-      ? ctx.enumByTypeIndex.get(subjType.resolvedTypeIndex)
-      : undefined;
-    if (unimported) {
-      errAt(ctx, `'${typeName(subjType)}' is an enum, but it is not in scope in this file`,
-        subject.line, subject.col, exprText(subject).length, undefined,
-        `import it: import { ${unimported.name} } from "...";`);
-    } else {
-      errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
-        subject.line, subject.col);
-    }
+    // There used to be a second message here, for an enum this file had not imported. It is gone
+    // because the case is gone: `enumOfType` identifies an enum by its type index, so a subject
+    // that *is* an enum resolves whether or not its name is in scope. What remains is a subject
+    // that is not an enum at all.
+    errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
+      subject.line, subject.col);
     return null;
   }
 
@@ -2855,6 +2852,16 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
  */
 function enumOfType(t: WacType, ctx: Ctx): EnumEntry | null {
   if (t.kind !== "struct") return null;
+  // The type index first, because it is the identity and the name is not. A type that came back
+  // from *another file* — the return type of a generic instantiated with an enum, say — carries
+  // the name that file knows it by, which is not in scope here: `match (xs.get(0))` on a
+  // `Vec<JsonValue>` was rejected with "JsonValue is an enum, but it is not in scope in this
+  // file", about a file that had imported it. The name lookup stays as the fallback for a type
+  // no pass has annotated.
+  if (t.resolvedTypeIndex !== undefined) {
+    const byIndex = ctx.enumByTypeIndex.get(t.resolvedTypeIndex);
+    if (byIndex) return byIndex;
+  }
   const found = ctx.fileScope.get(t.name);
   if (found?.kind === "enum") return found.enumEntry;
   // A *variant* is an enum value too, so it can be matched. `match (Shape.Circle(2.0))`
