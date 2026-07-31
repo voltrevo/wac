@@ -4820,6 +4820,105 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
   eq(inst.call("calls", []), 1, "the subject expression ran once");
 });
 
+Deno.test("[§enum-arm-walks-kubc3rt] an arm body is reachable to every AST walk", async () => {
+  // Five separate walks over statements had no `match` case, so anything appearing
+  // *only* inside an arm was invisible to them. Each of these was a distinct failure
+  // and none of them was a compile error at the point of the mistake:
+  //
+  //   resolver's annotateType   — a struct construct in an arm: "undefined function"
+  //   collectArrayTypes         — an array type in an arm: invalid array index
+  //   collectFuncSigs           — a funcref type in an arm: missing type entry
+  //   scanBodyFuncref           — likewise
+  //
+  // They are one test because they are one mistake, and a walk added later will
+  // most likely miss `match` in exactly this way again.
+  const inst = await run(`
+    struct Q { i32 v; }
+    enum E { One(i32 v), Two }
+    i32 dbl(i32 x) { return x * 2; }
+    export i32 inArm(i32 seed) {
+      E e = E.One(seed);
+      match (e) {
+        case One(v): {
+          Q q = Q(v);                    // construct: needs the resolver's annotation
+          Q[] a = Q[2]();                // array type used nowhere else in the program
+          a[0] = q;
+          a[1] = Q(v + 1);
+          fn[i32(i32)] f = dbl;          // funcref sig used nowhere else
+          return f(a[0].v) + a[1].v;
+        }
+        case Two: return -1;
+      }
+    }
+  `);
+  eq(inst.call("inArm", [10]), 31, "dbl(10) + 11");
+});
+
+Deno.test("[§enum-arm-payload-struct-array] a payload may be an array of structs", async () => {
+  // The variant structs are generated in the resolver and are not in `prog.items`,
+  // so the annotation walk never reached their field types. A payload of struct type
+  // then keyed by name where every other reference to the same struct keyed by
+  // index, and `P[]` interned as two distinct array types — which only surfaced as
+  // a wasm validation failure at instantiation, never as a compile error.
+  const inst = await run(`
+    struct P { i32 v; }
+    enum Holder { Some(P[] xs), None }
+    export i32 total(i32 a, i32 b) {
+      P[] arr = P[2]();
+      arr[0] = P(a);
+      arr[1] = P(b);
+      Holder h = Holder.Some(arr);
+      match (h) {
+        case Some(xs): {
+          i32 n = 0;
+          for (i32 i = 0; i < xs.len(); i++) { n += xs[i].v; }
+          return n;
+        }
+        case None: return 0;
+      }
+    }
+  `);
+  eq(inst.call("total", [3, 4]), 7, "the payload array survived the round trip");
+});
+
+Deno.test("[§enum-match-break-loop] a break in an arm binds to the enclosing loop", async () => {
+  // An arm has no fallthrough, so `break` has nothing to mean locally and the
+  // emitter lets it reach the loop. The return checker disagreed: it treated an arm
+  // as a break barrier the way it treats `switch`, so `while (true)` containing one
+  // looked infinite, the missing return went unreported, and the function trapped on
+  // the `unreachable` the emitter appends.
+  const inst = await run(`
+    enum E { A, B }
+    export i32 loopBreak(i32 limit) {
+      E e = E.A;
+      i32 n = 0;
+      while (true) {
+        n++;
+        match (e) {
+          case A: { if (n >= limit) { break; } }
+          case B: { }
+        }
+      }
+      return n;
+    }
+  `);
+  eq(inst.call("loopBreak", [3]), 3, "the break left the loop, not the match");
+});
+
+Deno.test("[§enum-match-break-loop] the return check sees a break inside an arm", () => {
+  const m = err(`
+    enum E { A, B }
+    export i32 f() {
+      E e = E.A;
+      while (true) {
+        match (e) { case A: break; case B: { } }
+      }
+    }`);
+  if (!m.includes("not all code paths return a value")) {
+    throw new Error(`expected the missing-return diagnostic, got: ${m}`);
+  }
+});
+
 Deno.test("[§wac-shadow-param-7apc0wt] a local shadowing a parameter leaves it alone", async () => {
   // This was wrong: a shadowing local aliased the parameter's slot, so the parameter
   // read back as the shadow's value after the block ended. Silent, not a crash.

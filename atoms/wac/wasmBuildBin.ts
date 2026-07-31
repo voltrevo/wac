@@ -146,6 +146,10 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
       scanExpr(s.expr);
       for (const c of s.cases) { if (c.value !== "default") scanExpr(c.value); c.body.forEach(scanStmt); }
     }
+    else if (s.kind === "match") {
+      scanExpr(s.subject);
+      for (const a of s.arms) a.body.forEach(scanStmt);
+    }
     else if (s.kind === "return" && s.value) scanExpr(s.value);
     else if (s.kind === "assign") scanExpr(s.rhs);
     else if (s.kind === "expr") scanExpr(s.expr);
@@ -223,6 +227,7 @@ function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacTy
       s.body.stmts.forEach(scanBodyStmt);
     }
     if (s.kind === "switch") for (const c of s.cases) c.body.forEach(scanBodyStmt);
+    if (s.kind === "match") for (const a of s.arms) a.body.forEach(scanBodyStmt);
     if (s.kind === "block") s.block.stmts.forEach(scanBodyStmt);
   }
 
@@ -519,6 +524,7 @@ function buildTypeCtxFull(
       s.body.stmts.forEach(scanBodyFuncref);
     }
     if (s.kind === "switch") for (const c of s.cases) c.body.forEach(scanBodyFuncref);
+    if (s.kind === "match") for (const a of s.arms) a.body.forEach(scanBodyFuncref);
     if (s.kind === "block") s.block.stmts.forEach(scanBodyFuncref);
   }
   for (const f of result.funcs) {
