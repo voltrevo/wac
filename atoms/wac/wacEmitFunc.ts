@@ -329,7 +329,8 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       const lit = wacIntLit(e.value);
       return lit.ok && lit.width === 64 ? I64 : I32;
     }
-    case "float":  return { kind: "prim", name: "f64", line: 0, col: 0 };
+    // Mirrors the `int` case above: the checker's answer, when it made one.
+    case "float":  return e.resolved ?? { kind: "prim", name: "f64", line: 0, col: 0 };
     case "bool":   return BOOL;
     case "string": return { kind: "prim", name: "string", line: 0, col: 0 };
     case "null":   return { kind: "prim", name: "anyref", line: 0, col: 0 };
@@ -815,8 +816,13 @@ class FuncEmitter {
       }
       case "float": {
         const v = parseFloat(e.value);
-        // Use expect type to decide f32 vs f64; default to f64
-        const isF32 = expectType?.kind === "prim" && expectType.name === "f32";
+        // `resolved` is what the type checker decided, and it wins over the expected
+        // type for the same reason it does for integers: the checker's answer is the one
+        // the program was checked against, and re-deriving it here is how the two came
+        // to disagree about i64 literals.
+        const isF32 = e.resolved?.kind === "prim"
+          ? e.resolved.name === "f32"
+          : expectType?.kind === "prim" && expectType.name === "f32";
         if (isF32) {
           const buf = new ArrayBuffer(4);
           new DataView(buf).setFloat32(0, v, true);

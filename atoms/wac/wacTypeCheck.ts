@@ -1232,6 +1232,20 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
  * Infer the type of an expression. Returns null and pushes an error if the
  * expression is ill-typed. Avoids cascading errors — callers should guard on null.
  */
+/**
+ * Does this float literal have a finite f32 reading?
+ *
+ * Rounding to nearest is expected and is what every decimal float literal does. Only
+ * overflow to infinity is refused, since that is a value the literal plainly does not
+ * denote. A literal that is already infinite or NaN cannot be written in wac, so the
+ * only way to reach the false branch is a magnitude past f32's maximum.
+ */
+function floatLiteralFitsF32(text: string): boolean {
+  const v = parseFloat(text);
+  if (!Number.isFinite(v)) return false;
+  return Number.isFinite(Math.fround(v));
+}
+
 function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null): WacType | null {
   switch (expr.kind) {
 
@@ -1265,7 +1279,30 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       return lit.width === 32 ? T_I32 : T_I64;
     }
 
-    case "float": return T_F64;
+    case "float": {
+      // Contextual typing, by the same rule types.md already states for integers: a
+      // literal takes the type expected of it when the value has a reading there.
+      // Without this, no float literal could ever be an f32 — `f32 x = 1.5;` was a
+      // type error, and every f32 in the language needed `as~ f32`, which is the
+      // *truncating* cast and so read as though the loss were the point. The spec's own
+      // f32 example omitted the cast and did not compile.
+      //
+      // "Has a reading there" means within range. Decimal notation loses precision for
+      // f64 as readily as for f32 — `0.1` is inexact in both — so requiring exactness
+      // would reject `f32 pi = 3.14159;` and make the rule useless. Overflow to
+      // infinity is a different matter and is refused.
+      if (expected && expected.kind === "prim" && expected.name === "f32") {
+        if (floatLiteralFitsF32(expr.value)) {
+          expr.resolved = expected;
+          return expected;
+        }
+        errAt(ctx, `float literal out of range for f32`, expr.line, expr.col,
+          expr.value.length, `${expr.value} overflows f32`,
+          `use f64, or write the f32 value you mean`);
+        return null;
+      }
+      return T_F64;
+    }
     case "string": return T_STR;
     case "bool":   return T_BOOL;
     case "null":   return T_NULL;

@@ -66,7 +66,10 @@ Deno.test("[§wac-int64-81jz1o0] int64() returns 1000000000000", async () => {
 // ── §wac-float32-45okgg8 — f32 literal ───────────────────────────────────────
 
 Deno.test("[§wac-float32-45okgg8] float32() returns 3.14 (f32 precision)", async () => {
-  const inst = await run(`export f32 float32() { return 3.14 as~ f32; }`);
+  // Was `3.14 as~ f32`, which is not what types.md shows. The example in the spec did
+  // not compile until float literals took their type from context; the test papered
+  // over that with a cast rather than the mismatch being noticed.
+  const inst = await run(`export f32 float32() { return 3.14; }`);
   near(inst.call("float32", []) as number, 3.14, "float32()", 0.01);
 });
 
@@ -4979,6 +4982,72 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
     }
   `);
   eq(inst.call("calls", []), 1, "the subject expression ran once");
+});
+
+Deno.test("[§wac-float-literal-ctx-8dqm2vw] a float literal takes an expected f32", async () => {
+  // types.md already stated this rule for integers: "a literal first takes whatever
+  // integer type is expected of it". Floats never followed it, so *no* float literal
+  // could be an f32 anywhere — `f32 x = 1.5;` was a type error, and every f32 needed
+  // `as~ f32`, the truncating cast, as though the loss were deliberate. The spec's own
+  // f32 example omitted the cast and did not compile; its test quietly added one.
+  const inst = await run(`
+    struct S { f32 v; }
+    f32 take(f32 v) { return v; }
+    export f32 local()     { f32 x = 1.5; return x; }
+    export f32 returned()  { return 1.5; }
+    export f32 argument()  { return take(1.5); }
+    export f32 ternary(bool y) { f32 x = y ? 1.5 : 2.5; return x; }
+    export f32 field()     { return S(1.25).v; }
+    export f32 arrayLit()  { f32[] a = f32[](1.5, 2.5); return a[1]; }
+    export f32 compound()  { f32 x = 1.0; x += 0.5; return x; }
+    export f64 stillF64()  { f64 x = 2.5; return x; }
+  `);
+  near(inst.call("local", []) as number, 1.5, "a local");
+  near(inst.call("returned", []) as number, 1.5, "a return value");
+  near(inst.call("argument", []) as number, 1.5, "an argument");
+  near(inst.call("ternary", [1]) as number, 1.5, "a ternary branch");
+  near(inst.call("field", []) as number, 1.25, "a struct field");
+  near(inst.call("arrayLit", []) as number, 2.5, "an array literal element");
+  near(inst.call("compound", []) as number, 1.5, "a compound assignment");
+  near(inst.call("stillF64", []) as number, 2.5, "and f64 is unaffected");
+});
+
+Deno.test("[§wac-float-literal-ctx-8dqm2vw] an f32 literal rounds, and overflow is refused", async () => {
+  // Rounding is what decimal notation does — `0.1` is inexact in f64 too — so requiring
+  // exactness would reject `f32 pi = 3.14159;` and make the rule useless. Overflow is a
+  // different matter: the literal denotes a value f32 has no reading for.
+  const inst = await run(`export f32 rounded() { f32 x = 3.14159; return x; }`);
+  const got = inst.call("rounded", []) as number;
+  if (got === 3.14159) throw new Error("expected f32 rounding, got the exact f64 value");
+  near(got, 3.14159, "rounded to f32", 1e-6);
+
+  const over = err(`export f32 f() { f32 x = 1.0e40; return x; }`);
+  if (!over.includes("out of range for f32")) {
+    throw new Error(`expected the f32 range diagnostic, got: ${over}`);
+  }
+});
+
+Deno.test("[§wac-float-no-point-5rtk9bq] an exponent without a decimal point is reported", () => {
+  // grammar.md's FLOAT_LITERAL requires the point, so `1e40` is genuinely not a float
+  // literal. The defect was that it lexed as an int followed by an *identifier* — `1`
+  // and `e40` — and surfaced as "expected ';', found 'e40'" from the parser, naming
+  // neither the cause nor the fix. No valid wac puts an identifier immediately after an
+  // integer, so an adjacent one is always this mistake.
+  for (const src of ["export f64 f() { return 1e40; }",
+                     "export f64 f() { return 1E10; }",
+                     "export f64 f() { return 2e-3; }"]) {
+    const m = err(src);
+    if (!m.includes("needs a decimal point")) {
+      throw new Error(`expected the missing-point diagnostic for ${src}, got: ${m}`);
+    }
+  }
+  // A space between them is someone writing two things, not this mistake.
+  const spaced = wacCompile(new Map([["main.wac",
+    `export i32 f() { i32 e40 = 2; return 1 * e40; }`]]), "main.wac");
+  if (!spaced.ok) {
+    throw new Error(`a separate identifier should be unaffected, got: ${
+      spaced.diagnostics.map(d => d.message).join("; ")}`);
+  }
 });
 
 Deno.test("[§enum-ternary-variants] a ternary of two variants types to their enum", async () => {

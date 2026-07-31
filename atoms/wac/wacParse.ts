@@ -31,7 +31,10 @@ export type Expr =
   // from context (`u32 x = 5`). The emitter reads it rather than re-deciding,
   // so the two cannot disagree about a literal's width or signedness.
   | ({ kind: "int";      value: string; resolved?: WacType } & Pos)
-  | ({ kind: "float";    value: string } & Pos)
+  // `resolved` is filled in by the type checker when the literal took its type from
+  // context rather than from its own notation — see the `int` case above; floats follow
+  // the same rule, so they carry the same annotation.
+  | ({ kind: "float";    value: string; resolved?: WacType } & Pos)
   | ({ kind: "string";   value: string } & Pos)
   | ({ kind: "bool";     value: boolean } & Pos)
   | ({ kind: "null" } & Pos)

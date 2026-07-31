@@ -214,6 +214,22 @@ export function wacLex(source: string): LexResult {
       }
       emit("float", text, startLine, startCol);
     } else {
+      // `1e40` is not a float literal: the grammar requires the decimal point
+      // (FLOAT_LITERAL in grammar.md). Without saying so, the digits lex as an int and
+      // the exponent as an *identifier* — `1e40` became `1` and `e40` — and the first
+      // sign of trouble was "expected ';', found 'e40'" from the parser, which names
+      // neither the cause nor the fix. No valid wac places an identifier immediately
+      // after an integer, so an adjacent one is always this mistake.
+      if ((peek() === "e" || peek() === "E") &&
+          (/[0-9]/.test(peek(1)) ||
+           ((peek(1) === "+" || peek(1) === "-") && /[0-9]/.test(peek(2))))) {
+        errors.push({
+          message: `a float literal needs a decimal point — write '${text}.0${
+            source.slice(pos, pos + 1)}...' rather than '${text}${source.slice(pos, pos + 1)}...'`,
+          line: startLine,
+          col: startCol,
+        });
+      }
       emit("int", text, startLine, startCol);
     }
   }
