@@ -5852,6 +5852,56 @@ Deno.test(`[§wac-modconst-array-t8kn4wq] a constant array is one shared table`,
   eq(count(codeSec, [0xFB, 0x08]), 0, "and none rebuilt inside a function body");
 });
 
+// §wac-modconst-sized-5wnq8kt — a sized array can be a constant
+Deno.test(`[§wac-modconst-sized-5wnq8kt] a constant array may be written in the sized form`, async () => {
+  // Reported as the second half of issue 0032. `array.new_default` and `array.new` are
+  // both constant instructions, so a sized array is as constant as a literal one — what
+  // has to be constant is the *length*, not the elements.
+  const inst = await run(`
+    struct P { i32 v; }
+    enum E { A(i32 v), B }
+    const i32   N     = 5;
+    const i32[] ZEROS = i32[8]();
+    const i32[] ONES  = i32[4](fill: -1);
+    const i32[] BYN   = i32[N]();
+    const i32[] BYEXP = i32[N * 2]();
+    const P[]   PS    = P[3](fill: P(7));
+    const E[]   ES    = E[3](fill: E.A(4));
+    export i32 zeros() { return ZEROS.len() * 10 + ZEROS[0]; }
+    export i32 ones()  { return ONES.len() * 10 + ONES[3]; }
+    export i32 byN()   { return BYN.len(); }
+    export i32 byExp() { return BYEXP.len(); }
+    export i32 structs() { return PS.len() * 10 + PS[2].v; }
+    export i32 enums() {
+      i32 n = 0;
+      for (i32 i = 0; i < ES.len(); i++) { match (ES[i]) { case A(v): n += v; case B: n += 1; } }
+      return n;
+    }
+  `);
+  eq(inst.call("zeros", []), 80, "eight elements, default-filled");
+  eq(inst.call("ones", []), 39, "four elements of -1");
+  eq(inst.call("byN", []), 5, "a length from another constant");
+  eq(inst.call("byExp", []), 10, "a length from an expression over constants — N is 5");
+  eq(inst.call("structs", []), 37, "struct elements need fill, and take it");
+  eq(inst.call("enums", []), 12, "and so do enum elements");
+});
+
+Deno.test(`[§wac-modconst-sized-5wnq8kt] the length must be constant and the elements defaultable`, () => {
+  const computed = err(`i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }`);
+  if (!computed.includes("needs a compile-time value")) {
+    throw new Error(`expected a compile-time diagnostic for a computed length, got: ${computed}`);
+  }
+  // An enum has no default, so the sized form needs `fill:` — the same rule as outside a
+  // constant, and the diagnostic says which.
+  const noDefault = wacCompile(new Map([["main.wac",
+    `enum E { A(i32 v), B } const E[] T = E[3](); export i32 f() { return T.len(); }`]]), "main.wac");
+  if (noDefault.ok) throw new Error("expected an enum sized array with no fill to be rejected");
+  const ann = noDefault.diagnostics[0].annotation ?? "";
+  if (!ann.includes("fill:")) {
+    throw new Error(`expected the diagnostic to suggest 'fill:', got: ${ann}`);
+  }
+});
+
 // §wac-modconst-array-const-w2mk9fj — a constant table cannot be written through
 Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is rejected`, () => {
   const bad = (src: string) => !wacCompile(new Map([["main.wac", src]]), "main.wac").ok;
@@ -5859,8 +5909,11 @@ Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is r
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] = 9; }`), true, "element write");
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] += 1; }`), true, "compound write");
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0]++; }`), true, "increment");
-  // A sized array has no elements written down to evaluate.
-  eq(bad(`const i32[] T = i32[8](); export i32 f() { return T[0]; }`), true, "sized form");
+  // The sized form is allowed now (§wac-modconst-sized-5wnq8kt) and is still read-only.
+  eq(bad(`const i32[] T = i32[8](); export void f() { T[0] = 9; }`), true, "sized form, written");
+  // What a constant cannot have is a length that must be computed.
+  eq(bad(`i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }`),
+    true, "sized form with a computed length");
   // Reading is fine.
   eq(bad(`const i32[] T = i32[](1, 2); export i32 f() { return T[1]; }`), false, "reads are allowed");
 });
@@ -5993,6 +6046,33 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   if (dupes.length > 0) {
     throw new Error(`duplicate issue numbers:\n${
       dupes.map(([n, w]) => `  ${n}: ${w.join(", ")}`).join("\n")}`);
+  }
+
+  // INDEX.md's counts and its row set are maintained by hand, and have been wrong in both
+  // directions more than once — an issue closed without its row removed, and a total that
+  // no longer matched the directory. Both are trivially checkable against the files.
+  const index = await Deno.readTextFile(new URL("INDEX.md", dir));
+  const open = [...seen].filter(([, w]) => w[0].startsWith("open/")).map(([n]) => n);
+  const closed = [...seen].filter(([, w]) => w[0].startsWith("closed/")).map(([n]) => n);
+
+  const counts = index.match(/^(\d+) issues, (\d+) closed\./m);
+  if (!counts) throw new Error("INDEX.md needs a line of the form 'N issues, M closed.'");
+  if (Number(counts[1]) !== seen.size || Number(counts[2]) !== closed.length) {
+    throw new Error(
+      `INDEX.md says ${counts[1]} issues and ${counts[2]} closed; ` +
+      `the directory has ${seen.size} and ${closed.length}`);
+  }
+
+  // Every open issue needs a row, and no closed one may keep its row — a stale row is a
+  // link to a file that has moved.
+  const listed = new Set([...index.matchAll(/\| \[(\d{4})\]/g)].map((m) => m[1]));
+  const missingRow = open.filter((n) => !listed.has(n)).sort();
+  const staleRow = closed.filter((n) => listed.has(n)).sort();
+  if (missingRow.length > 0 || staleRow.length > 0) {
+    throw new Error(
+      `INDEX.md's rows disagree with the directory\n` +
+      (missingRow.length ? `  open with no row: ${missingRow.join(" ")}\n` : "") +
+      (staleRow.length ? `  closed but still listed: ${staleRow.join(" ")}\n` : ""));
   }
 });
 
