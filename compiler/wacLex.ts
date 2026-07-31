@@ -14,8 +14,8 @@ export type TokenKind =
   | "as!" | "as~" | "as@"
   // operators
   | "+" | "-" | "*" | "/" | "%" | "=" | "==" | "!=" | "<" | "<=" | ">" | ">="
-  | "&&" | "||" | "!" | "&" | "|" | "^" | "~" | "<<" | ">>"
-  | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+  | "&&" | "||" | "!" | "&" | "|" | "^" | "~" | "<<" | ">>" | ">>>"
+  | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>=" | ">>>="
   | "++" | "--"
   // punctuation
   | "(" | ")" | "{" | "}" | "[" | "]" | ";" | ":" | "," | "." | "?" | "@"
@@ -232,7 +232,12 @@ export function wacLex(source: string): LexResult {
       case ">":
         if (peek() === ">") {
           advance();
-          if (peek() === "=") { advance(); emit(">>=", ">>=", startLine, startCol); }
+          if (peek() === ">") {
+            advance();
+            if (peek() === "=") { advance(); emit(">>>=", ">>>=", startLine, startCol); }
+            else emit(">>>", ">>>", startLine, startCol);
+          }
+          else if (peek() === "=") { advance(); emit(">>=", ">>=", startLine, startCol); }
           else emit(">>", ">>", startLine, startCol);
         } else if (peek() === "=") { advance(); emit(">=", ">=", startLine, startCol); }
         else emit(">", ">", startLine, startCol);

@@ -116,7 +116,7 @@ const PRIM_TYPES = new Set([
 ]);
 
 const COMPOUND_OPS = new Set([
-  "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+  "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", ">>>=",
 ]);
 
 export function wacParse(tokens: Token[], file: string): ParseResult {
@@ -360,7 +360,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
 
   function parseShift(): Expr {
     let e = parseAdd();
-    while (at("<<") || at(">>")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseAdd(), ...p }; }
+    while (at("<<") || at(">>") || at(">>>")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseAdd(), ...p }; }
     return e;
   }
 

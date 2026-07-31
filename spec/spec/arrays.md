@@ -116,6 +116,31 @@ There are no `i8` or `i16` local variables, parameters, or struct fields —
 packed types only exist as array elements. Indexing a packed array returns `i32`,
 and assignment truncates from `i32`.
 
+Compound assignment and `++`/`--` work on packed elements. The element is read
+zero-extended, the operation runs at `i32` width, and the result truncates back
+to the element width on store.
+
+```wac
+export i32 packedOr(i32 a, i32 b) {
+  i8[] bytes = i8[1]();
+  bytes[0] = a;
+  bytes[0] |= b;
+  return bytes[0];
+}
+
+export i32 packedWrap(i32 a, i32 b) {
+  i8[] bytes = i8[1]();
+  bytes[0] = a;
+  bytes[0] += b;
+  return bytes[0];
+}
+```
+
+`[§wac-arr-i8-compound-t7btdiv]` `packedOr(0xF0, 0x0F)` returns `255`.
+`[§wac-arr-i8-cwrap-8qsspoh]` `packedWrap(250, 10)` returns `4` — the store truncates to 8 bits.
+`[§wac-arr-i16-compound-6i4h16a]` The same holds for `i16[]`: `0x00FF |= 0xFF00` gives `65535`.
+`[§wac-arr-i8-incr-tlkmjp0]` `bytes[0]++` on a packed element increments in place.
+
 ```wac
 i8 x = 5;                       // error: i8 is not a variable type
 ```

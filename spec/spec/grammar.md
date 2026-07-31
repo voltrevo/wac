@@ -55,7 +55,7 @@ var_decl       = [ "const" ] , type , IDENT , "=" , expr , ";" ;
 assign_stmt    = lvalue , "=" , expr , ";" ;
 
 compound_stmt  = lvalue , compound_op , expr , ";" ;
-compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=" ;
+compound_op    = "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | ">>>=" | "&=" | "|=" | "^=" ;
 
 if_stmt        = "if" , "(" , expr , ")" , block , [ "else" , ( block | if_stmt ) ] ;
 
@@ -98,7 +98,7 @@ xor_expr       = bitand_expr , { "^" , bitand_expr } ;
 bitand_expr    = eq_expr , { "&" , eq_expr } ;
 eq_expr        = rel_expr , { ( "==" | "!=" ) , rel_expr } ;
 rel_expr       = shift_expr , { ( "<" | "<=" | ">" | ">=" ) , shift_expr } ;
-shift_expr     = add_expr , { ( "<<" | ">>" ) , add_expr } ;
+shift_expr     = add_expr , { ( "<<" | ">>" | ">>>" ) , add_expr } ;
 add_expr       = mul_expr , { ( "+" | "-" ) , mul_expr } ;
 mul_expr       = cast_expr , { ( "*" | "/" | "%" ) , cast_expr } ;
 

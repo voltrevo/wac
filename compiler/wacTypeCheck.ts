@@ -1503,7 +1503,7 @@ function checkBinaryOp(
   }
 
   // Shift: i32×i32, i64×i64, or i64×i32
-  if (op === "<<" || op === ">>") {
+  if (op === "<<" || op === ">>" || op === ">>>") {
     if (!isInteger(lt)) {
       errAt(ctx, `'${op}' requires i32 or i64, got ${typeName(lt)}`, line, col);
       return null;

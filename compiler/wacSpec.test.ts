@@ -237,6 +237,74 @@ Deno.test("[§wac-shift64-rhgzpth] shiftMixed(1, 32) returns 4294967296n", async
   eq(inst.call("shiftMixed", [1n, 32]), 4294967296n, "1 << 32");
 });
 
+// ── §wac-shr-s / §wac-shr-u — arithmetic vs logical right shift ──────────────
+//
+// Expected values are the defining difference between the two wasm opcodes:
+// i32.shr_s sign-extends, i32.shr_u zero-fills. -16 is 0xFFFFFFF0, so
+// >> 1 keeps the sign (0xFFFFFFF8 = -8) and >>> 1 does not (0x7FFFFFF8 =
+// 2147483640). Cross-checked against JS, which has both operators:
+//   (-16 >> 1) === -8;  (-16 >>> 1) === 2147483640;  (-1 >>> 28) === 15
+
+Deno.test("[§wac-shr-s-z073930] shiftArith(-16, 1) returns -8", async () => {
+  const inst = await run(`export i32 shiftArith(i32 x, i32 n) { return x >> n; }`);
+  eq(inst.call("shiftArith", [-16, 1]), -8, "-16 >> 1 sign-extends");
+});
+
+Deno.test("[§wac-shr-u-ft3yabj] shiftLogic(-16, 1) returns 2147483640", async () => {
+  const inst = await run(`export i32 shiftLogic(i32 x, i32 n) { return x >>> n; }`);
+  eq(inst.call("shiftLogic", [-16, 1]), 2147483640, "-16 >>> 1 zero-fills");
+});
+
+Deno.test("[§wac-shr-u-neg1-d3b1hey] shiftLogic(-1, 28) returns 15", async () => {
+  const inst = await run(`export i32 shiftLogic(i32 x, i32 n) { return x >>> n; }`);
+  eq(inst.call("shiftLogic", [-1, 28]), 15, "-1 >>> 28 leaves 4 low bits set");
+});
+
+Deno.test("[§wac-shr-u64-2jujzws] shiftLogic64(-16, 4) returns 1152921504606846975n", async () => {
+  const inst = await run(`export i64 shiftLogic64(i64 x, i32 n) { return x >>> n; }`);
+  // 0xFFFFFFFFFFFFFFF0 >>> 4 == 0x0FFFFFFFFFFFFFFF
+  eq(inst.call("shiftLogic64", [-16n, 4]), 0x0FFFFFFFFFFFFFFFn, "i64 logical shift, i32 amount");
+});
+
+Deno.test("[§wac-shr-u-float-s95dlzw] '>>>' on f64 is a compile error", () => {
+  const m = err(`export f64 badShift(f64 x) { return x >>> 1; }`);
+  if (!m.includes("'>>>' requires i32 or i64")) {
+    throw new Error(`expected the >>> operand-type diagnostic, got: ${m}`);
+  }
+});
+
+// ── §wac-cshift-* — compound shift by i32 on every assignable target ─────────
+//
+// `i64 <<= i32` must widen the shift amount, exactly as the binary form does.
+// Before this was wired up, all three of these emitted i64.shl with an i32
+// operand still on the stack — a module that failed wasm validation outright,
+// so `run()` here also proves the emitted binary is well-formed.
+
+Deno.test("[§wac-cshift-local-e85g9us] compoundShiftLocal(-16, 4) returns 1152921504606846975n", async () => {
+  const inst = await run(`export i64 compoundShiftLocal(i64 x, i32 n) { x >>>= n; return x; }`);
+  eq(inst.call("compoundShiftLocal", [-16n, 4]), 0x0FFFFFFFFFFFFFFFn, "local >>>= i32");
+});
+
+Deno.test("[§wac-cshift-field-abx403z] compoundShiftField(1, 4) returns 16n", async () => {
+  const inst = await run(`
+    struct Bits { i64 v; }
+    export i64 compoundShiftField(i64 x, i32 n) { Bits b = Bits(x); b.v <<= n; return b.v; }
+  `);
+  eq(inst.call("compoundShiftField", [1n, 4]), 16n, "field <<= i32");
+});
+
+Deno.test("[§wac-cshift-elem-emvdry9] compoundShiftElem(1, 4) returns 16n", async () => {
+  const inst = await run(`
+    export i64 compoundShiftElem(i64 x, i32 n) {
+      i64[] a = i64[1]();
+      a[0] = x;
+      a[0] <<= n;
+      return a[0];
+    }
+  `);
+  eq(inst.call("compoundShiftElem", [1n, 4]), 16n, "array element <<= i32");
+});
+
 // ── §wac-logic-45at1jf and §wac-logicf-bi4nyl4 — logical &&  ─────────────────
 
 Deno.test("[§wac-logic-45at1jf] bothPositive(3, 5) returns true", async () => {
@@ -788,6 +856,65 @@ Deno.test("[§wac-arr-i16-m8qj4xf] shorts[0]=1000", async () => {
     }
   `);
   eq(inst.call("testI16", []), 1000, "i16 read 1000");
+});
+
+// ── §wac-arr-i8-compound-* — compound assignment on packed elements ─────────
+//
+// Packed elements must be read back with array.get_u; array.get is not a valid
+// instruction on an i8/i16 array, so before this was fixed each of these
+// produced a module that failed wasm validation. run() therefore doubles as the
+// well-formedness check, and the values verify the i32-width-then-truncate rule.
+
+Deno.test("[§wac-arr-i8-compound-t7btdiv] packedOr(0xF0, 0x0F) returns 255", async () => {
+  const inst = await run(`
+    export i32 packedOr(i32 a, i32 b) {
+      i8[] bytes = i8[1]();
+      bytes[0] = a;
+      bytes[0] |= b;
+      return bytes[0];
+    }
+  `);
+  eq(inst.call("packedOr", [0xF0, 0x0F]), 255, "0xF0 |= 0x0F");
+});
+
+Deno.test("[§wac-arr-i8-cwrap-8qsspoh] packedWrap(250, 10) returns 4", async () => {
+  const inst = await run(`
+    export i32 packedWrap(i32 a, i32 b) {
+      i8[] bytes = i8[1]();
+      bytes[0] = a;
+      bytes[0] += b;
+      return bytes[0];
+    }
+  `);
+  // 250 + 10 = 260; the store truncates to 8 bits, and the read zero-extends:
+  // 260 & 0xFF == 4. A sign-extending read would give 4 here too, so the
+  // 0xF0|0x0F case above is what pins down get_u vs get_s.
+  eq(inst.call("packedWrap", [250, 10]), 4, "250 += 10 truncates to 4");
+});
+
+Deno.test("[§wac-arr-i16-compound-6i4h16a] i16 compound or gives 65535", async () => {
+  const inst = await run(`
+    export i32 packedOr16(i32 a, i32 b) {
+      i16[] shorts = i16[1]();
+      shorts[0] = a;
+      shorts[0] |= b;
+      return shorts[0];
+    }
+  `);
+  // 0xFF00 in an i16 slot read back sign-extended would be -1, not 65535
+  eq(inst.call("packedOr16", [0x00FF, 0xFF00]), 65535, "0x00FF |= 0xFF00");
+});
+
+Deno.test("[§wac-arr-i8-incr-tlkmjp0] bytes[0]++ increments a packed element", async () => {
+  const inst = await run(`
+    export i32 packedIncr(i32 a) {
+      i8[] bytes = i8[2]();
+      bytes[1] = a;
+      bytes[1]++;
+      return bytes[1];
+    }
+  `);
+  eq(inst.call("packedIncr", [5]), 6, "packed element ++");
 });
 
 // ── §wac-arr-i8-nolocal-p7hd5wn — i8 not a variable type ────────────────────
