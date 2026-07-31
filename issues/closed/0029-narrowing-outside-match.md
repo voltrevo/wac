@@ -1,6 +1,7 @@
 # 0029 — `if (s is Circle)` does not narrow `s`
 
-- **Status:** closed (restricted form)
+- **Status:** closed
+- **Scope:** the restricted `ident is Type` form; the general case is not implemented — see Resolution
 - **Fixed in:** 9014759
 - **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-a
