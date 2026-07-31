@@ -10,6 +10,13 @@ WebAssembly.instantiate in Deno. No custom VM or interpreter. The compile-to-run
 loop: wac source -> lex -> parse -> type check -> emit wasm bytecode -> assemble
 binary -> instantiate and call.
 
+## Start here
+
+- [tour.wac](tour.wac) — the whole language in one annotated file. Every feature
+  with the rule that governs it, the errors it rejects, and what wac deliberately
+  lacks. It compiles, and its `selfTest()` returns `true`, so it cannot drift
+  from the compiler silently. Read this before the spec files below.
+
 ## Language spec
 
 - [spec/types.md](spec/types.md) — primitive types, reference types, nullability
