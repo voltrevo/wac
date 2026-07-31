@@ -19,7 +19,10 @@ export type WacType =
   // map. It's optional because the parser can't know it (resolution happens
   // later) — set it wherever a WacType is reconstructed from an
   // already-resolved StructEntry/FuncEntry instead of from source text.
-  | ({ kind: "struct";   name: string; resolvedTypeIndex?: number } & Pos)
+  // `typeArgs` are the arguments of a generic reference — `Vec<i32>` parses as a struct type
+  // named `Vec` with one argument. The resolver substitutes them and registers a concrete
+  // struct, so nothing after the resolver ever sees a non-empty `typeArgs`.
+  | ({ kind: "struct";   name: string; resolvedTypeIndex?: number; typeArgs?: WacType[] } & Pos)
   | ({ kind: "array";    elem: WacType } & Pos)
   | ({ kind: "nullable"; inner: WacType } & Pos)
   | ({ kind: "funcref";  params: WacType[]; ret: WacType } & Pos);
@@ -164,6 +167,14 @@ export type MethodDecl = {
 export type StructDecl = {
   tag: "struct"; isConst: boolean; exported: boolean; name: string; parent: string | null;
   fields: FieldDecl[]; methods: MethodDecl[];
+  /**
+   * Type parameter names, for a generic struct: `struct Vec<T>` has `["T"]`.
+   *
+   * A declaration with type parameters is a *template*. The resolver monomorphises it — one
+   * concrete struct per distinct set of arguments — so the type checker and the emitter never
+   * see one, exactly as they never see an `enum`.
+   */
+  typeParams: string[];
 } & Pos;
 
 export type FuncDecl = {
@@ -246,6 +257,18 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return t;
   }
 
+  /**
+   * Rewrite the current token, for splitting a munched `>>` or `>>>` in a type argument list.
+   *
+   * `Vec<Vec<i32>>` ends in what the lexer read as a single shift operator. Rather than make the
+   * lexer track nesting — which would mean it could no longer be a pure token stream — the
+   * parser consumes one `>` worth and leaves the rest in place.
+   */
+  function replaceCurrent(text: string): void {
+    const t = tokens[cur];
+    tokens[cur] = { ...t, kind: text as typeof t.kind, text, col: t.col + 1 };
+  }
+
   function consume(k: string): boolean {
     if (at(k)) { advance(); return true; }
     return false;
@@ -303,9 +326,15 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       name = "i32";
     }
 
+    // `Vec<i32>` — type arguments. Only in *type* position, never in an expression, because
+    // `IDENT <` is ambiguous with less-than there. wac can afford the restriction because every
+    // declaration is explicitly typed, so a generic construction always has an expected type to
+    // take its arguments from [see the design note and generics.md].
+    const typeArgs = PRIM_TYPES.has(name) ? undefined : parseTypeArgs();
+
     let base: WacType = PRIM_TYPES.has(name)
       ? { kind: "prim", name, ...p }
-      : { kind: "struct", name, ...p };
+      : { kind: "struct", name, typeArgs, ...p };
 
     // Interleave ? (nullable) and [] (array) suffixes in order.
     // e.g. Node?[] = array(nullable(Node)), i32[]? = nullable(array(i32))
@@ -335,6 +364,29 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     // Primitive type keyword or struct name
     if (t.kind !== "ident" && t.kind !== "void") return false;
     let j = i + 1;
+    // Skip a type-argument list: `Vec<i32> v = ...` is a declaration, and without this the
+    // statement parsed as the expression `Vec < i32` and failed at the `=`.
+    //
+    // This is where the classic C++ ambiguity would live, and wac gets off lightly: the scan
+    // requires a balanced `<...>` *followed by an identifier*, so `a < b;` and `f(a < b)` are
+    // unaffected. It does claim `a < b > c` as a declaration of `c`, which in expression terms
+    // would be `(a < b) > c` — comparing a bool, which wac rejects anyway.
+    if (tokens[j]?.kind === "<") {
+      let depth = 0;
+      let k = j;
+      while (k < tokens.length && tokens[k]?.kind !== "eof") {
+        const kind = tokens[k].kind as string;
+        if (kind === "<") depth++;
+        else if (kind === ">") { depth--; if (depth === 0) { k++; break; } }
+        // `Vec<Vec<i32>>` closes with a munched `>>`; parseType splits it, and the scan has to
+        // account for both halves here or the depth never reaches zero.
+        else if (kind === ">>") { depth -= 2; if (depth <= 0) { k++; break; } }
+        else if (kind === ">>>") { depth -= 3; if (depth <= 0) { k++; break; } }
+        else if (kind === ";" || kind === "{" || kind === ")") break;   // not a type list
+        k++;
+      }
+      if (depth <= 0 && k > j) j = k;
+    }
     // Skip interleaved ? and [] suffixes (matching parseType's suffix logic)
     while (true) {
       if (tokens[j]?.kind === "[" && tokens[j+1]?.kind === "]") { j += 2; }
@@ -650,6 +702,26 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     // Struct name followed by [ or ?: only construction if () comes after the size bracket
     // Skip element-type suffix [] and ? pairs first, then check for [N]() or []()
     // e.g. Node[5]() → construction; arr[i] → indexing; Node[][3]() → construction
+    // `Vec<i32>[0]()` — an array whose element type is generic. Skip the argument list so the
+    // scan below sees the construction brackets.
+    if (next.kind === "<") {
+      let depth = 0;
+      let k = cur + 1;
+      while (k < tokens.length && tokens[k]?.kind !== "eof") {
+        const kind = tokens[k].kind as string;
+        if (kind === "<") depth++;
+        else if (kind === ">") { depth--; if (depth === 0) { k++; break; } }
+        else if (kind === ">>") { depth -= 2; if (depth <= 0) { k++; break; } }
+        else if (kind === ">>>") { depth -= 3; if (depth <= 0) { k++; break; } }
+        else if (kind === ";" || kind === "{") break;
+        k++;
+      }
+      if (depth <= 0 && k > cur + 1) {
+        const after = tokens[k]?.kind;
+        return after === "[" || after === "(" || after === "{";
+      }
+      return false;
+    }
     if (next.kind === "[" || next.kind === "?") {
       let j = cur + 1; // point to [ or ?
       // Skip element-type suffix [] and ? pairs
@@ -695,6 +767,10 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
   function parseConstructionOrCall(p: Pos): Expr {
     // Parse element/struct type name (just the ident part, not array suffix yet)
     const name = advance().text; // struct or prim type name
+    // `Vec<i32>[2](fill: ...)` — a generic *element* type. This is the one place type arguments
+    // appear in something that reads like an expression, and it is unambiguous because what
+    // follows is a construction bracket rather than an operand.
+    const nameArgs = PRIM_TYPES.has(name) ? undefined : parseTypeArgs();
 
     // Static method call or struct method ref: TypeName.methodName(...)
     if (at(".")) {
@@ -719,7 +795,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("[") || at("?")) {
       let elemType: WacType = PRIM_TYPES.has(name)
         ? { kind: "prim", name, ...p }
-        : { kind: "struct", name, ...p };
+        : { kind: "struct", name, typeArgs: nameArgs, ...p };
       // Handle nullable element type: T? before the array brackets
       if (at("?")) {
         const nP = pos(); advance();
@@ -775,7 +851,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         } while (!at("}"));   // trailing comma
       }
       expect("}");
-      const t: WacType = { kind: "struct", name, ...p };
+      const t: WacType = { kind: "struct", name, typeArgs: nameArgs, ...p };
       return { kind: "construct", ctype: t, args: [], named, ...p };
     }
 
@@ -786,7 +862,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       expect(")");
       const t: WacType = PRIM_TYPES.has(name)
         ? { kind: "prim", name, ...p }
-        : { kind: "struct", name, ...p };
+        : { kind: "struct", name, typeArgs: nameArgs, ...p };
       return { kind: "construct", ctype: t, args, ...p };
     }
 
@@ -1148,11 +1224,53 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return { isConst, type, name, ...p };
   }
 
+  /**
+   * `<i32>` or `<string, Vec<i32>>` after a type name in *type* position; undefined when absent.
+   *
+   * Shared by `parseType` and `parseConstructionOrCall`, since `Vec<i32>[2]()` names a generic
+   * element type in what is otherwise an expression.
+   */
+  function parseTypeArgs(): WacType[] | undefined {
+    if (!at("<")) return undefined;
+    advance();
+    const args: WacType[] = [];
+    if (!at(">") && !at(">>") && !at(">>>")) {
+      args.push(parseType());
+      while (consume(",")) {
+        if (at(">") || at(">>") || at(">>>")) break;    // trailing comma, as in every other list
+        args.push(parseType());
+      }
+    }
+    // `Vec<Vec<i32>>` closes with `>>`, which the lexer has already munched into one token.
+    // Consuming one `>` worth and leaving the rest is cheaper than teaching the lexer about
+    // nesting depth, and is what a hand-written parser normally does.
+    if (at(">>")) replaceCurrent(">");
+    else if (at(">>>")) replaceCurrent(">>");
+    else expect(">");
+    return args;
+  }
+
+  /** `<T>` or `<T, U>` after a declaration's name; empty when there are none. */
+  function parseTypeParams(): string[] {
+    if (!at("<")) return [];
+    advance();
+    const params: string[] = [];
+    if (!at(">")) {
+      do {
+        if (at(">")) break;              // trailing comma
+        params.push(at("ident") ? advance().text : (err("expected type parameter name"), "?"));
+      } while (consume(","));
+    }
+    expect(">");
+    return params;
+  }
+
   function parseStructDecl(exported: boolean): StructDecl {
     const p = pos();
     const isConst = consume("const");
     advance(); // struct
     const name = at("ident") ? advance().text : (err("expected struct name"), "?");
+    const typeParams = parseTypeParams();
     const parent = consume(":") ? (at("ident") ? advance().text : (err("expected parent name"), "?")) : null;
     expect("{");
 
@@ -1201,7 +1319,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       }
     }
     expect("}");
-    return { tag: "struct", isConst, exported, name, parent, fields, methods, ...p };
+    return { tag: "struct", isConst, exported, name, parent, fields, methods, typeParams, ...p };
   }
 
   /**
