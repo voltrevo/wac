@@ -1571,6 +1571,42 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
         }
         return T_BOOL;
       }
+      // A *qualified* variant name — `s is Shape.Empty` — parses as an expression, not a
+      // type, because the parser sees `IDENT "." IDENT` and reads it as a field access or
+      // a construction. Left alone, the test became reference identity against a freshly
+      // built variant and so was always false, silently; and for a variant with a payload
+      // it failed with "needs a payload", a message about construction when nothing was
+      // being constructed. Both are wrong for what is plainly a type test.
+      //
+      // `Shape.Empty` is the natural thing to write, since it is how the variant is
+      // constructed and how the docs introduce it, so accepting it is better than
+      // rejecting it in favour of the bare form.
+      const qualified = constVariantOf(expr.rhs as Expr, ctx);
+      if (qualified !== null) {
+        if ((expr.rhs as Expr).kind === "call") {
+          // `s is Shape.Circle(1.0)` — a payload written in a type test. Silently false
+          // before, since it compared against a new object.
+          errAt(ctx, `a type test takes the variant name without a payload`,
+            expr.line, expr.col, 1, undefined,
+            `write 'is ${qualified.name}' or 'is <enum>.${qualified.name}'`);
+          return T_BOOL;
+        }
+        if (!isRefType(lt)) {
+          errAt(ctx, `'is' type test requires a reference type, got ${typeName(lt)}`,
+            expr.line, expr.col);
+        }
+        // Rewrite the node into the type it means, rather than annotating it. The node
+        // becomes indistinguishable from the one `s is Empty` produces, so the emitter
+        // needs no case for this and cannot disagree with the checker about it — which is
+        // the failure mode that has cost the most on this compiler.
+        expr.rhs = {
+          kind: "struct", name: qualified.name,
+          resolvedTypeIndex: qualified.entry.typeIndex,
+          line: expr.line, col: expr.col,
+        };
+        return T_BOOL;
+      }
+
       // Reference identity: expr is Expr
       const rhsType = inferExpr(expr.rhs as Expr, env, ctx);
       if (!rhsType) return null;
