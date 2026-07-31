@@ -422,6 +422,18 @@ export function wacResolve(
 
       for (let tag = 0; tag < item.variants.length; tag++) {
         const v = item.variants[tag];
+        // A variant's payload becomes struct fields, and a duplicate field name was
+        // already an error for a hand-written struct — but the generated ones skipped
+        // that check, so `A(i32 x, i32 x)` compiled. Two variants may of course share
+        // a field name; they are different structs.
+        const payloadNames = new Set<string>();
+        for (const f of v.fields) {
+          if (payloadNames.has(f.name)) {
+            err(`duplicate payload field '${f.name}' in variant '${v.name}'`,
+              filePath, f.line, f.col);
+          }
+          payloadNames.add(f.name);
+        }
         if (scope.has(v.name)) {
           err(`duplicate name '${v.name}'`, filePath, v.line, v.col);
           continue;
