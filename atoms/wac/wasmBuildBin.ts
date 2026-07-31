@@ -337,7 +337,7 @@ function buildTypeCtx(
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
     structFields, funcIdx, result,
-    strHelperIdx: new Map<string, number>(),
+    helperIdx: new Map<string, number>(),
   };
 }
 
@@ -445,7 +445,7 @@ type BindHelperSpec = {
 type WasmTypeCtxFull = WasmTypeCtx & {
   orderedArrayElems: WacType[];
   orderedSigs: { params: WacType[]; ret: WacType }[];
-  strHelperIdx: Map<string, number>;
+  helperIdx: Map<string, number>;
   /** Bind helpers (string + array accessors) exported for use by generated TS. */
   bindHelpers: BindHelperSpec[];
 };
@@ -519,29 +519,39 @@ function buildTypeCtxFull(
     if (sig) orderedSigs.push(sig);
   }
 
-  // String helper function indices: placed after all user functions
+  // Builtin helper function indices: placed after all user functions
   const numUserFuncs = base.result.funcs.length;
-  const helperNames = ["__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof"];
-  const strHelperIdx = new Map<string, number>();
-  for (let i = 0; i < helperNames.length; i++) {
-    strHelperIdx.set(helperNames[i], numUserFuncs + i);
+  const helperIdx = new Map<string, number>();
+  for (let i = 0; i < BUILTIN_HELPERS.length; i++) {
+    helperIdx.set(BUILTIN_HELPERS[i], numUserFuncs + i);
   }
 
-  // Populate base.strHelperIdx (WasmTypeCtx) and the full ctx one
-  base.strHelperIdx = strHelperIdx;
+  // Populate base.helperIdx (WasmTypeCtx) and the full ctx one
+  base.helperIdx = helperIdx;
 
-  // Bind helpers come after the 5 string helpers
-  const partialCtx = { ...base, orderedArrayElems, orderedSigs, strHelperIdx };
+  // Bind helpers come after the builtin helpers
+  const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
   const bindHelpers = buildBindHelpers(result, partialCtx);
 
   return { ...partialCtx, bindHelpers };
 }
 
-// ── String helper function signatures ─────────────────────────────────────────
-// All helpers use non-null string ref (0x64 sleb(si)) for string params/results.
+// ── Builtin helper function signatures ────────────────────────────────────────
+// String helpers use non-null string ref (0x64 sleb(si)) for params/results.
 
-/** Return the 5 string helper function type entries for the type section. */
-function strHelperFuncTypes(si: number): number[][] {
+/**
+ * Builtin helpers, in the order their function indices and type indices are
+ * assigned. Everything downstream derives its counts from this list, so adding
+ * a helper means adding a signature to helperFuncTypes and a body to
+ * buildHelperBodies — and nothing else.
+ */
+const BUILTIN_HELPERS = [
+  "__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof",
+  "__fmod", "__fmodf",
+] as const;
+
+/** Return the builtin helper function type entries for the type section. */
+function helperFuncTypes(si: number): number[][] {
   // non-null str ref: 0x64 sleb(si)
   const str = [0x64, ...sleb(si)];
   const i32 = [0x7F];
@@ -556,24 +566,40 @@ function strHelperFuncTypes(si: number): number[][] {
   const slice  = [0x60, 0x03, ...str, ...i32, ...i32, 0x01, ...str];
   // __str_indexof(str, str) -> i32
   const iof    = [0x60, 0x02, ...str, ...str, 0x01, ...i32];
-  return [concat, cmp, idx, slice, iof];
+  // __fmod(f64, f64) -> f64
+  const f64    = [0x7C];
+  const fmod   = [0x60, 0x02, ...f64, ...f64, 0x01, ...f64];
+  // __fmodf(f32, f32) -> f32
+  const f32    = [0x7D];
+  const fmodf  = [0x60, 0x02, ...f32, ...f32, 0x01, ...f32];
+  return [concat, cmp, idx, slice, iof, fmod, fmodf];
+}
+
+/** Encode an f64.const instruction. */
+function f64Const(v: number): number[] {
+  const buf = new ArrayBuffer(8);
+  new DataView(buf).setFloat64(0, v, true);
+  return [0x44, ...new Uint8Array(buf)];
 }
 
 
-/** Build all 5 string helper function bodies. Returns raw bytes for code section. */
-function buildStrHelperBodies(si: number): number[] {
-  const bodies: number[][] = [];
-  bodies.push(makeConcat(si));
-  bodies.push(makeCmp(si));
-  bodies.push(makeIdx(si));
-  bodies.push(makeSlice(si));
-  bodies.push(makeIndexOf(si));
-  // Wrap each body: [uleb(len), ...body_with_end]
-  const encoded: number[] = [];
-  for (const b of bodies) {
-    encoded.push(...uleb(b.length), ...b);
-  }
-  return encoded;
+/**
+ * Build all builtin helper function bodies, one per BUILTIN_HELPERS entry and in
+ * that order. Bodies are returned unprefixed; the code section adds the length
+ * prefix, as it does for user functions.
+ *
+ * @param fmodIdx function index of __fmod, which __fmodf calls
+ */
+function buildHelperBodies(si: number, fmodIdx: number): number[][] {
+  return [
+    makeConcat(si),
+    makeCmp(si),
+    makeIdx(si),
+    makeSlice(si),
+    makeIndexOf(si),
+    makeFmod(),
+    makeFmodF(fmodIdx),
+  ];
 }
 
 // ── Bind helpers (accessor functions exported for JS bindgen use) ─────────────
@@ -896,6 +922,112 @@ function makeIndexOf(si: number): number[] {
   ];
 }
 
+/**
+ * __fmod(x:f64, y:f64) -> f64 — floating-point remainder, as C fmod / IEEE 754
+ * "remainder truncated toward zero". wasm has no f64.rem instruction, so this
+ * is a software routine.
+ *
+ * `x - trunc(x/y)*y` is NOT this function: the quotient rounds, so trunc lands
+ * on the wrong integer and the sign can invert. fmod(1.0, 0.1) that way gives
+ * -2.2e-16 instead of 0.09999999999999995.
+ *
+ * Instead, shift-and-subtract in the float domain, which is exact:
+ *
+ *   r = |x|, s = |y|
+ *   double s (counting the doublings in n) while 2s <= r
+ *   then n+1 times: if r >= s, r -= s; halve s
+ *   result = copysign(r, x)
+ *
+ * Every step is exact. Doubling and halving only change the exponent, so no
+ * mantissa bit is ever lost — and s never overflows because it stays <= r.
+ * Each subtraction runs with s <= r < 2s, where Sterbenz's lemma makes r - s
+ * exactly representable. So the loop computes the true remainder, not an
+ * approximation of it. The counter (rather than comparing s back to |y|)
+ * guarantees termination even when y is subnormal.
+ *
+ * locals: local2 = r (f64), local3 = s (f64), local4 = n (i32)
+ */
+function makeFmod(): number[] {
+  return [
+    0x02, 0x02, 0x7C, 0x01, 0x7F, // locals: 2 f64, 1 i32
+
+    // NaN in, NaN out — checked first so no comparison below sees a NaN.
+    0x20, 0x00, 0x20, 0x00, 0x62,             // x != x
+    0x04, 0x40, 0x20, 0x00, 0x0F, 0x0B,       //   return x
+    0x20, 0x01, 0x20, 0x01, 0x62,             // y != y
+    0x04, 0x40, 0x20, 0x01, 0x0F, 0x0B,       //   return y
+
+    0x20, 0x00, 0x99, 0x21, 0x02,             // r = |x|
+    0x20, 0x01, 0x99, 0x21, 0x03,             // s = |y|
+
+    // fmod(±inf, y) and fmod(x, 0) are both NaN.
+    0x20, 0x02, ...f64Const(Infinity), 0x61,
+    0x04, 0x40, ...f64Const(NaN), 0x0F, 0x0B,
+    0x20, 0x03, ...f64Const(0), 0x61,
+    0x04, 0x40, ...f64Const(NaN), 0x0F, 0x0B,
+
+    // fmod(x, ±inf) = x, and |x| < |y| means x is already the remainder.
+    // Both return x rather than r, which keeps -0.0 and negative x intact.
+    0x20, 0x03, ...f64Const(Infinity), 0x61,
+    0x04, 0x40, 0x20, 0x00, 0x0F, 0x0B,
+    0x20, 0x02, 0x20, 0x03, 0x63,             // r < s
+    0x04, 0x40, 0x20, 0x00, 0x0F, 0x0B,       //   return x
+
+    0x41, 0x00, 0x21, 0x04,                   // n = 0
+
+    // Scale s up to the largest |y|*2^n that is still <= r.
+    0x02, 0x40, // block
+    0x03, 0x40, // loop
+      0x20, 0x03, ...f64Const(2), 0xA2,       // s * 2
+      0x20, 0x02, 0x64,                       //   > r ?
+      0x0D, 0x01,                             //   yes -> exit block
+      0x20, 0x03, ...f64Const(2), 0xA2, 0x21, 0x03, // s *= 2
+      0x20, 0x04, 0x41, 0x01, 0x6A, 0x21, 0x04,     // n++
+      0x0C, 0x00,                             // continue
+    0x0B,
+    0x0B,
+
+    // Reduce: n+1 passes, s stepping back down from |y|*2^n to |y|.
+    0x02, 0x40, // block
+    0x03, 0x40, // loop
+      0x20, 0x02, 0x20, 0x03, 0x66,           // r >= s ?
+      0x04, 0x40,
+        0x20, 0x02, 0x20, 0x03, 0xA1, 0x21, 0x02, // r -= s (exact)
+      0x0B,
+      0x20, 0x04, 0x45, 0x0D, 0x01,           // n == 0 -> exit block
+      0x20, 0x03, ...f64Const(0.5), 0xA2, 0x21, 0x03, // s *= 0.5
+      0x20, 0x04, 0x41, 0x01, 0x6B, 0x21, 0x04,       // n--
+      0x0C, 0x00,                             // continue
+    0x0B,
+    0x0B,
+
+    0x20, 0x02, 0x20, 0x00, 0xA6,             // copysign(r, x)
+    0x0B, // end
+  ];
+}
+
+/**
+ * __fmodf(x:f32, y:f32) -> f32 — f32 remainder via the f64 routine.
+ *
+ * Promoting to f64 is exact, and the true remainder of two f32 values is itself
+ * exactly representable as an f32, so computing it in f64 and demoting gives
+ * the exact result with no double rounding. Having this as its own helper also
+ * keeps the emitter simple: both operands are already on the stack as f32, and
+ * wasm has no way to reach past the top one to promote it.
+ *
+ * @param fmodIdx function index of __fmod
+ */
+function makeFmodF(fmodIdx: number): number[] {
+  return [
+    0x00,                                     // no locals
+    0x20, 0x00, 0xBB,                         // f64.promote_f32(x)
+    0x20, 0x01, 0xBB,                         // f64.promote_f32(y)
+    0x10, ...uleb(fmodIdx),                   // call __fmod
+    0xB6,                                     // f32.demote_f64
+    0x0B, // end
+  ];
+}
+
 function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
   const entries: number[][] = [];
 
@@ -919,7 +1051,7 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
   }
 
   // String helper function signatures (after user sigs)
-  for (const helperType of strHelperFuncTypes(ctx.stringTypeIdx)) {
+  for (const helperType of helperFuncTypes(ctx.stringTypeIdx)) {
     entries.push(helperType);
   }
 
@@ -935,7 +1067,7 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
 }
 
 /** Compute the type index of the Nth string helper signature. */
-function strHelperTypeIdx(ctx: WasmTypeCtxFull, helperIdx: number): number {
+function helperTypeIdx(ctx: WasmTypeCtxFull, helperIdx: number): number {
   // type indices: structs + string + arrays + userSigs + helperIdx
   return ctx.result.structs.length + 1 + ctx.orderedArrayElems.length + ctx.orderedSigs.length + helperIdx;
 }
@@ -952,17 +1084,17 @@ function buildFuncSection(ctx: WasmTypeCtxFull): number[] {
     const tIdx = ctx.sigTypeIdx.get(k)!;
     typeIdxEntries.push(...uleb(tIdx));
   }
-  // Add 5 string helper functions with their type indices
+  // Add builtin helper functions with their type indices
   // helper order: concat(0), cmp(1), idx(2), slice(3), indexof(4)
-  for (let i = 0; i < 5; i++) {
-    typeIdxEntries.push(...uleb(strHelperTypeIdx(ctx, i)));
+  for (let i = 0; i < BUILTIN_HELPERS.length; i++) {
+    typeIdxEntries.push(...uleb(helperTypeIdx(ctx, i)));
   }
-  // Add bind helper functions: their type indices follow the 5 string helper sigs
-  const bindBaseTypeIdx = strHelperTypeIdx(ctx, 5); // = baseTypeIdx + 5 string helper sigs
+  // Add bind helper functions: their type indices follow the builtin helper sigs
+  const bindBaseTypeIdx = helperTypeIdx(ctx, BUILTIN_HELPERS.length);
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
     typeIdxEntries.push(...uleb(bindBaseTypeIdx + i));
   }
-  const totalFuncs = ctx.result.funcs.length + 5 + ctx.bindHelpers.length;
+  const totalFuncs = ctx.result.funcs.length + BUILTIN_HELPERS.length + ctx.bindHelpers.length;
   return section(3, [...uleb(totalFuncs), ...typeIdxEntries]);
 }
 
@@ -976,7 +1108,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
     return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex)];
   });
   // Also export bind helpers so generated TS wrappers can call them
-  const bindBaseIdx = result.funcs.length + 5; // after 5 string helpers
+  const bindBaseIdx = result.funcs.length + BUILTIN_HELPERS.length; // after the builtin helpers
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
     const nameBytes = new TextEncoder().encode(ctx.bindHelpers[i].name);
     entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(bindBaseIdx + i)]);
@@ -992,13 +1124,11 @@ function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
     const bodyBytes = wacEmitFunc(f, ctx);
     bodies.push([...uleb(bodyBytes.length), ...bodyBytes]);
   }
-  // Append the 5 string helper function bodies (each already size-prefixed)
-  const helperBytes = buildStrHelperBodies(ctx.stringTypeIdx);
-  // helperBytes already contains [uleb(len), ...body] for each of the 5 helpers,
-  // so we need to split them into individual prefixed entries.
-  // Actually buildStrHelperBodies returns them concatenated; re-encode as separate bodies.
-  const si = ctx.stringTypeIdx;
-  const helperBodies = [makeConcat(si), makeCmp(si), makeIdx(si), makeSlice(si), makeIndexOf(si)];
+  // Append the builtin helper function bodies
+  const helperBodies = buildHelperBodies(
+    ctx.stringTypeIdx,
+    ctx.helperIdx.get("__fmod")!,
+  );
   for (const b of helperBodies) {
     bodies.push([...uleb(b.length), ...b]);
   }

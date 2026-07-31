@@ -5,6 +5,29 @@
 Arithmetic (`+`, `-`, `*`, `/`, `%`) requires matching numeric types.
 Not allowed on `bool`.
 
+`%` is the remainder after truncating division, for floats as well as integers:
+the result has the sign of the left operand and satisfies
+`a % b == a - trunc(a/b) * b` computed exactly. This matches C's `fmod` and
+JavaScript's `%`.
+
+Unlike every other arithmetic operator, float `%` is not a single wasm
+instruction — wasm has no `f32.rem`/`f64.rem`, so the compiler emits a call to a
+builtin helper. The result is exact, not an approximation: writing
+`a - trunc(a/b) * b` in source would *not* be equivalent, because the quotient
+rounds before `trunc` sees it.
+
+```wac
+export f64 modF(f64 a, f64 b) { return a % b; }
+export f32 modF32(f32 a, f32 b) { return a % b; }
+```
+
+`[§wac-fmod-ox2ga90]` `modF(7.0, 2.0)` returns `1.0`.
+`[§wac-fmod-round-lji73wg]` `modF(1.0, 0.1)` returns `0.09999999999999995`, not `-2.220446049250313e-16`.
+`[§wac-fmod-sign-l3ief80]` `modF(-7.0, 2.0)` returns `-1.0` and `modF(7.0, -2.0)` returns `1.0` — the sign follows the left operand.
+`[§wac-fmod-large-wfr4moy]` `modF(1e300, 3.0)` returns `0.0`, exactly.
+`[§wac-fmod-zero-f9hnqhr]` `modF(7.0, 0.0)` is NaN, and `modF(7.0, 1.0/0.0)` returns `7.0`.
+`[§wac-fmod-f32-t52576z]` `modF32(5.5, 1.5)` returns `1.0`.
+
 ```wac
 export i64 add64(i64 a, i64 b) { return a + b; }
 export f64 mulF(f64 a, f64 b) { return a * b; }
