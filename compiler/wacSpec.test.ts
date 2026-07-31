@@ -5973,6 +5973,57 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §wac-samename-struct-4jhq7wn — two modules may declare a struct with one name
+Deno.test("[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct", async () => {
+  // Issue 0041, reported by agent-b after an hour lost to it. The emitter resolved a written
+  // struct name through a global bare-name map, last-wins, so two modules each declaring `Dup`
+  // both reached whichever was registered last: the module typechecked and then failed to
+  // instantiate, because a function's declared return type and the `struct.new` inside it
+  // disagreed. The resolver already keeps a per-file scope; the emitter was not asking it.
+  //
+  // What made it expensive is that `main.wac` need never mention the second `Dup` — the
+  // collision can be entirely between a module you import and something it pulls in, so
+  // neither file you are reading mentions the other's type.
+  const A = `export struct Dup { i32 x; Dup make() { return Dup(1); } i32 get(const this) { return this.x; } }
+             export Dup fromA() { return Dup.make(); }`;
+  const B = `export struct Dup { i32 p; i32 q; Dup make() { return Dup(2, 3); } i32 get(const this) { return this.p * 10 + this.q; } }
+             export Dup fromB() { return Dup.make(); }`;
+
+  const one = await runMulti(new Map([["a.wac", A], ["b.wac", B], ["main.wac", `
+    import { Dup, fromA } from "./a.wac";
+    import { fromB } from "./b.wac";
+    export i32 test() { Dup d = fromA(); return d.x; }`]]));
+  eq(one.call("test", []), 1, "a's Dup, with b reached only for a function");
+
+  const other = await runMulti(new Map([["a.wac", A], ["b.wac", B], ["main.wac", `
+    import { fromA } from "./a.wac";
+    import { Dup, fromB } from "./b.wac";
+    export i32 test() { Dup d = fromB(); return d.p * 10 + d.q; }`]]));
+  eq(other.call("test", []), 23, "and the same the other way round");
+
+  const both = await runMulti(new Map([["a.wac", A], ["b.wac", B], ["main.wac", `
+    import { Dup, fromA } from "./a.wac";
+    import { Dup as DupB, fromB } from "./b.wac";
+    export i32 test()    { Dup a = fromA(); DupB b = fromB(); return a.x + b.p * 10 + b.q; }
+    export i32 methods() { return fromA().get() + fromB().get(); }`]]));
+  eq(both.call("test", []), 24, "both in one file, one aliased");
+  eq(both.call("methods", []), 24, "and a method on each, which is where the wrong index showed");
+});
+
+Deno.test("[§wac-samename-struct-4jhq7wn] the name may even be a struct in one module and an enum in another", async () => {
+  const inst = await runMulti(new Map([
+    ["a.wac", `export enum Dup { A(i32 v), B }
+               export Dup mkA() { return Dup.A(4); }
+               export i32 readA(Dup d) { match (d) { case A(v): return v; case B: return 0; } }`],
+    ["b.wac", `export struct Dup { i32 z; Dup make() { return Dup(9); } }
+               export Dup fromB() { return Dup.make(); }`],
+    ["main.wac", `import { mkA, readA } from "./a.wac";
+                  import { fromB } from "./b.wac";
+                  export i32 test() { return readA(mkA()) + fromB().z; }`],
+  ]));
+  eq(inst.call("test", []), 13, "4 from the enum variant, 9 from the struct");
+});
+
 // §wac-inherited-method-type-9dkq3wv — an inherited method's result type
 Deno.test("[§wac-inherited-method-type-9dkq3wv] an inherited method's result is typed correctly", async () => {
   // Issue 0040. `typeOfExpr` resolved a method through the struct's *own* method map, so an

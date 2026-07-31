@@ -8,7 +8,6 @@ has been fixed and why.
 | [0038](open/0038-frombytes-accepts-invalid-utf8.md) | `string.fromBytes` accepts invalid UTF-8 | bug | wrong answer |
 | [0039](open/0039-bindgen-surfaces-unsigned-returns-as-signed.md) | bindgen surfaces `u32`/`u64` returns to JS as signed | bug | wrong answer |
 | [0037](open/0037-slice-clamps-silently-while-indexing-traps.md) | `slice` clamps silently while indexing traps | diagnostic | wrong answer |
-| [0041](open/0041-same-struct-name-in-two-modules-emits-invalid-wasm.md) | two modules declaring a struct with the same name emit invalid wasm | bug | invalid wasm |
 | [0035](open/0035-wacx-is-specified-but-does-not-exist.md) | `wacx` is specified as the entry point but does not exist | missing feature | not implemented |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
 | [0033](open/0033-unchecked-integer-overflow.md) | no way to detect integer overflow | missing feature | wrong answer |
@@ -21,7 +20,7 @@ has been fixed and why.
 
 ## Closed
 
-41 issues, 28 closed.
+41 issues, 29 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

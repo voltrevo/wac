@@ -165,6 +165,19 @@ same name — the mangled type identifiers and method names are kept distinct
 by the file-stem qualifier described above, so each keeps its own field
 layout and its own methods.
 
+`[§wac-samename-struct-4jhq7wn]` This holds however the two are reached, including when the
+importing file names only *one* of them and the other arrives transitively — which is the case
+that matters in practice, because then neither file you are reading mentions the other's type.
+It also holds when the name is a struct in one module and an enum in another.
+
+This paragraph described the intent before it described the behaviour. The emitter resolved a
+written struct name through a global bare-name map, last-wins, so both names reached whichever
+struct was registered last: the program typechecked and then failed to instantiate with a type
+mismatch inside a function that mentioned neither file. The example below happened to work
+because it imports both under aliases and uses each immediately; the transitive case did not.
+See issue 0041, which cost the reporter an hour, in a diagnostic naming a function in neither
+file.
+
 ```wac
 // a.wac
 struct Box { i32 x; i32 y; }
