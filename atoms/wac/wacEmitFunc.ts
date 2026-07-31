@@ -209,7 +209,7 @@ export function typeKey(t: WacType): string {
 /** Resolve a struct WacType to its wasm type index, preferring an already-
  *  resolved typeIndex over a bare-name lookup (see WacType's "struct" comment). */
 function structTypeIndexOf(t: { name: string; resolvedTypeIndex?: number }, ctx: WasmTypeCtx): number {
-  return t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name)!;
+  return t.resolvedTypeIndex ?? structIdxInFile(t.name, ctx)!;
 }
 
 /** Stable key for a function signature. */
@@ -302,8 +302,32 @@ export function heapTypeBytes(t: WacType, ctx: WasmTypeCtx): number[] {
  * wasmBuildBin.ts's buildTypeCtx), so resolve through its typeIndex rather
  * than searching `ctx.result.structs` by bare name directly.
  */
+/**
+ * The type index a *written* struct name denotes, resolved through the file being emitted.
+ *
+ * `ctx.structTypeIdx` maps bare names globally and last-wins, so two files each declaring a
+ * struct called `Dup` both reached whichever was registered last — the module typechecked and
+ * then failed to instantiate, because a function's declared return type and the `struct.new`
+ * inside it disagreed [issue 0041]. The resolver already keeps a per-file scope for exactly
+ * this reason; the emitter simply was not asking it.
+ *
+ * The same fix as 123ac4c made for bare *function* names, and the same shape as four enum bugs:
+ * a name is only unique within its file, so identity has to come from somewhere that knows
+ * which file is being compiled.
+ */
+function structIdxInFile(name: string, ctx: WasmTypeCtx): number | undefined {
+  const scoped = ctx.result.fileScopes.get(ctx.currentFile)?.get(name);
+  if (scoped !== undefined &&
+      (scoped.kind === "struct" || scoped.kind === "enum" || scoped.kind === "variant")) {
+    return scoped.entry.typeIndex;
+  }
+  // A name the current file does not have — a method body emitted for another file's struct
+  // reaches here, and the global map is the only answer available.
+  return ctx.structTypeIdx.get(name);
+}
+
 function resolveStructEntry(name: string, ctx: WasmTypeCtx, resolvedTypeIndex?: number): StructEntry | undefined {
-  const idx = resolvedTypeIndex ?? ctx.structTypeIdx.get(name);
+  const idx = resolvedTypeIndex ?? structIdxInFile(name, ctx);
   if (idx === undefined) return undefined;
   return ctx.result.structs[idx];  // structs are in typeIndex order
 }
@@ -358,8 +382,9 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       if (v) return v;
       if (e.constRef) return e.constRef.type;
       // Struct type name or function name
-      if (ctx.structTypeIdx.has(e.name)) {
-        return { kind: "struct", name: e.name, resolvedTypeIndex: ctx.structTypeIdx.get(e.name), line: 0, col: 0 };
+      const asType = structIdxInFile(e.name, ctx);
+      if (asType !== undefined) {
+        return { kind: "struct", name: e.name, resolvedTypeIndex: asType, line: 0, col: 0 };
       }
       const fi = [...ctx.result.funcs].find(f =>
         f.mangledName === e.name || f.exportName === e.name ||
@@ -522,7 +547,7 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     }
     case "construct": {
       // For struct types, return the struct type; for function-named constructs, return the func return type.
-      if (e.ctype.kind === "struct" && !ctx.structTypeIdx.has((e.ctype as { name: string }).name)) {
+      if (e.ctype.kind === "struct" && structIdxInFile((e.ctype as { name: string }).name, ctx) === undefined) {
         const ctypeName = (e.ctype as { name: string }).name;
         // The calling file's scope decides, for the same reason as in
         // emitConstruct: a bare name is not globally unique.
@@ -1690,7 +1715,7 @@ class FuncEmitter {
     // StructName.method used as a funcref value: emit ref.func
     if (e.expr.kind === "ident") {
       const exprName = (e.expr as { name: string }).name;
-      if (this.ctx.structTypeIdx.has(exprName)) {
+      if (structIdxInFile(exprName, this.ctx) !== undefined) {
         const structEntry = resolveStructEntry(exprName, this.ctx);
         const methEntry = structEntry?.methods.get(e.name);
         if (methEntry) {
@@ -1707,7 +1732,7 @@ class FuncEmitter {
       const fi = fields.find(f => f.name === e.name);
       if (fi) {
         this.emitExpr(e.expr, env);
-        const tIdx = structResolvedIndex(baseT) ?? this.ctx.structTypeIdx.get(sName)!;
+        const tIdx = structResolvedIndex(baseT) ?? structIdxInFile(sName, this.ctx)!;
         this.emit(0xFB, 0x02, ...uleb(tIdx), ...uleb(fi.absIdx)); // struct.get
         return;
       }
@@ -1888,7 +1913,7 @@ class FuncEmitter {
           this.emit(0x10, ...uleb(this.ctx.helperIdx.get(helper)!));
           return;
         }
-        if (this.ctx.structTypeIdx.has(typeName)) {
+        if (structIdxInFile(typeName, this.ctx) !== undefined) {
           const structEntry2 = resolveStructEntry(typeName, this.ctx);
           const meth2 = structEntry2?.methods.get(fe.name);
           if (meth2) {
@@ -1939,7 +1964,7 @@ class FuncEmitter {
       const sName = e.ctype.name;
       // If the name is not a known struct type, treat as a function call.
       // (The parser uses "construct" for any ident(...) that isn't a prim type.)
-      const tIdx  = e.ctype.resolvedTypeIndex ?? this.ctx.structTypeIdx.get(sName);
+      const tIdx  = e.ctype.resolvedTypeIndex ?? structIdxInFile(sName, this.ctx);
       if (tIdx === undefined) {
         // The parser calls any `ident(...)` a construction, so an ordinary call
         // to a plain function arrives here — this is where *every* direct call is
