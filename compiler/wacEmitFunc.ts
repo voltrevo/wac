@@ -944,6 +944,22 @@ class FuncEmitter {
     this.emit(0x20, ...uleb(t));
   }
 
+  /** Trap unless the float on the stack is already an integer, leaving it there.
+   *
+   *  `x != trunc(x)` is true for a fractional value and also for NaN, which the
+   *  following trunc opcode would reject anyway — so NaN still traps, just one
+   *  instruction earlier. Infinities equal their own truncation and fall through
+   *  to the range check, which rejects them. */
+  private guardIntegral(isF32: boolean): void {
+    const t = isF32 ? this.tempF32Local : this.tempF64Local;
+    this.emit(0x22, ...uleb(t));         // local.tee $t        (x)
+    this.emit(isF32 ? 0x8F : 0x9D);      // fN.trunc            (trunc(x))
+    this.emit(0x20, ...uleb(t));         // local.get $t        (x)
+    this.emit(isF32 ? 0x5C : 0x62);      // fN.ne               (trunc(x) != x)
+    this.emit(0x04, 0x40, 0x00, 0x0B);   // if { unreachable }
+    this.emit(0x20, ...uleb(t));         // local.get $t
+  }
+
   /** Conversions where either side is unsigned. Returns true if handled.
    *
    *  Signedness is a property of the wac type, not of the storage, so a
@@ -1018,11 +1034,12 @@ class FuncEmitter {
         return true;
       }
       // float -> unsigned: the trapping trunc opcodes reject negative,
-      // fractional and out-of-range inputs, and NaN.
-      if (from === "f64" && to === "u32") { this.emit(0xAB); return true; } // i32.trunc_f64_u
-      if (from === "f32" && to === "u32") { this.emit(0xA9); return true; } // i32.trunc_f32_u
-      if (from === "f64" && to === "u64") { this.emit(0xB1); return true; } // i64.trunc_f64_u
-      if (from === "f32" && to === "u64") { this.emit(0xAF); return true; } // i64.trunc_f32_u
+      // out-of-range and NaN inputs; the guard adds the fractional case, so
+      // these behave exactly like their signed counterparts.
+      if (from === "f64" && to === "u32") { this.guardIntegral(false); this.emit(0xAB); return true; }
+      if (from === "f32" && to === "u32") { this.guardIntegral(true);  this.emit(0xA9); return true; }
+      if (from === "f64" && to === "u64") { this.guardIntegral(false); this.emit(0xB1); return true; }
+      if (from === "f32" && to === "u64") { this.guardIntegral(true);  this.emit(0xAF); return true; }
       // unsigned -> float: exact iff converting back round-trips. Mirrors the
       // signed i64->f32/f64 cases, with 2^64 as the saturation boundary.
       if (from === "u32" && to === "f32") {
@@ -1097,10 +1114,13 @@ class FuncEmitter {
         this.emit(0xA7);                                 // i32.wrap_i64
         return;
       }
-      if (from === "f64" && to === "i32") { this.emit(0xAA); return; }  // i32.trunc_f64_s (traps)
-      if (from === "f32" && to === "i32") { this.emit(0xA8); return; }  // i32.trunc_f32_s (traps)
-      if (from === "f64" && to === "i64") { this.emit(0xB0); return; }  // i64.trunc_f64_s (traps)
-      if (from === "f32" && to === "i64") { this.emit(0xAE); return; }  // i64.trunc_f32_s (traps)
+      // The trunc opcodes trap on out-of-range and NaN but silently discard a
+      // fractional part, so each needs the integrality guard first to make
+      // `as!` mean "exact, or trap" [see casts.md].
+      if (from === "f64" && to === "i32") { this.guardIntegral(false); this.emit(0xAA); return; }
+      if (from === "f32" && to === "i32") { this.guardIntegral(true);  this.emit(0xA8); return; }
+      if (from === "f64" && to === "i64") { this.guardIntegral(false); this.emit(0xB0); return; }
+      if (from === "f32" && to === "i64") { this.guardIntegral(true);  this.emit(0xAE); return; }
       if (from === "f64" && to === "f32") {
         // Exact iff promote(demote(x)) == x. NaN never traps (x != x makes
         // the second conjunct false) [§wac-narrow-f32-*].

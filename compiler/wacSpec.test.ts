@@ -4008,3 +4008,14 @@ Deno.test(`[§wac-arr-signedness-h4kq7wn] packed reads extend per the element ty
   eq(i.call("i16Read", []), -1, "i16 sign-extends");
   eq(i.call("trunc", []), 44, "writes still truncate to the element width");
 });
+
+// §wac-narrow-frac-t6kq2wp — as! float->int is exact or it traps
+Deno.test(`[§wac-narrow-frac-t6kq2wp] as! f64 -> i32 traps on a fractional part`, async () => {
+  const i = await run(`export i32 exact(f64 x) { return x as! i32; }`);
+  eq(i.call("exact", [3.0]), 3, "exact(3.0) == 3");
+  const traps = (x: number) => {
+    try { i.call("exact", [x]); return false; } catch { return true; }
+  };
+  eq(traps(3.5), true, "exact(3.5) traps");
+  eq(traps(-2.3), true, "exact(-2.3) traps");
+});
