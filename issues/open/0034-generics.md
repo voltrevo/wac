@@ -87,9 +87,8 @@ position must currently name its type, because the callee's signature is not kno
 substitution runs. Doing argument-directed inference means knowing signatures, which is the same
 information.
 
-**Stage D — opaque-`T` definition-time checking**, if it earns its place. Unchanged from the
-design's assessment: it catches typos in generics nobody has instantiated, which is most of what
-constraints would buy, and it needs a type checker mode for an opaque `T`.
+**Stage D is done** — see issue 0043. Templates are checked at their definition with type
+parameters opaque, so a mistake independent of `T` is caught even in a generic nobody instantiates.
 
 **Not measured yet**, and the design asked for both: code size, since monomorphisation duplicates
 bodies and wac compiles in the browser; and compile time, since the fixpoint runs on every build.

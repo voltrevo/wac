@@ -115,12 +115,40 @@ happened to differ. See issue 0042.
 
 ### No constraints
 
-There is no `T: Default` and there are no traits. A template's body is checked when it is
-**instantiated**, against the substituted types.
+There is no `T: Default` and there are no traits. Instead, a template is checked **twice**: once at
+its definition with the type parameters treated as opaque, and again at each instantiation against
+the substituted types.
 
-The cost is the C++ template bargain: a generic nobody instantiates is never checked, and a bad
-instantiation reports errors inside code the caller did not write. What keeps that tolerable is
-that **no diagnostic ever shows a mangled name** — `Box$Base` is rendered `Box<Base>`.
+The definition-time pass catches everything structurally wrong regardless of what `T` turns out to
+be:
+
+```wac
+struct Vec<T> {
+  T[] data;
+  i32 n;
+
+  void oops(this) {
+    i32 x = "hello";              // error here, even if nothing instantiates Vec
+    this.data.noSuchMethod();     // deferred — depends on what T is
+  }
+}
+```
+
+`[§wac-generic-template-check-2wkq7nm]` The first is reported at the definition. The second is not,
+and cannot be: an opaque `T` has no known members, so nothing about it is decidable yet.
+
+Anything naming a type parameter is deferred, and so is anything naming **another template** — a
+`Box<T>` field is not a type until `T` is known, so its members are unknowable rather than absent.
+`[§wac-generic-template-check-2wkq7nm]` The cost is that a genuine mistake involving another
+template inside a template body is also deferred to instantiation.
+
+A `T`-independent mistake is reported **once**, not once per instantiation.
+`[§wac-generic-template-check-2wkq7nm]` Diagnostics are deduplicated by position and message, which
+is more honest than suppressing the instantiation-time pass: two instantiations can fail
+differently, and those messages differ.
+
+What remains of the C++ bargain is the part about *where* an error points, and what keeps it
+tolerable is that **no diagnostic ever shows a mangled name** — `Box$Base` is rendered `Box<Base>`.
 `[§wac-generic-struct-9tkq4wm]` An error about a name the author never typed is the whole
 difference between this feature and a C++ template error.
 

@@ -127,6 +127,14 @@ export type ResolveResult = {
   /** Entry file path (only functions from this file are wasm-exported) */
   entryPath: string;
   /**
+   * The generic templates, kept after monomorphisation removed them from the programs.
+   *
+   * The type checker checks each one *once* with its parameters treated as opaque, so a mistake
+   * that has nothing to do with `T` is reported at the definition rather than at each use — or
+   * never, for a template nobody instantiates [issue 0043].
+   */
+  templates: { decl: StructDecl; filePath: string }[];
+  /**
    * `Vec$i32` -> `Vec<i32>`, for every monomorphised generic.
    *
    * Diagnostics render struct names through this, so a message never shows a mangled name the
@@ -773,6 +781,8 @@ export function monomorphise(
    * an error about `Box$Base` is about code the author did not write.
    */
   display?: Map<string, string>,
+  /** Collects the templates, which are removed from the programs but still want checking. */
+  keep?: { decl: StructDecl; filePath: string }[],
 ): void {
   const origins = buildOrigins(programs);
 
@@ -783,6 +793,7 @@ export function monomorphise(
     for (const item of prog.items) {
       if (item.tag === "struct" && item.typeParams.length > 0) {
         templates.set(`${item.name}__${fileTag(filePath)}`, { decl: item, filePath });
+        keep?.push({ decl: item, filePath });
       }
     }
   }
@@ -1099,9 +1110,10 @@ export function wacResolve(
   // other order would leave the generated structs still carrying `T`, and substitution would
   // be rewriting generated code [see ~/notes/living/wac/generics-design.md].
   const genericDisplay = new Map<string, string>();
+  const templateDecls: { decl: StructDecl; filePath: string }[] = [];
   monomorphise(programs,
     (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
-    genericDisplay);
+    genericDisplay, templateDecls);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -1396,7 +1408,7 @@ export function wacResolve(
     }
   }
 
-  return { funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay };
+  return { funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay, templates: templateDecls };
 }
 
 // ── Helpers for consumers ─────────────────────────────────────────────────────
