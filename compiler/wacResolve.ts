@@ -316,6 +316,15 @@ function annotateProgram(prog: Program, scope: FileScope): void {
       for (const v of item.variants) {
         for (const f of v.fields) annotateType(f.type, scope);
       }
+      // An enum's methods are ordinary method declarations and need the same treatment as a
+      // struct's — signature and body. Without this, a struct construct or an array type
+      // reachable only from inside an enum method reported "undefined function or struct",
+      // which is the seventh appearance of issue 0005's shape.
+      for (const m of item.methods) {
+        annotateType(m.returnType, scope);
+        for (const p of m.params) annotateType(p.type, scope);
+        annotateBlock(m.body, scope);
+      }
     }
   }
 }
@@ -422,9 +431,14 @@ export function wacResolve(
       const baseDecl: StructDecl = {
         tag: "struct", isConst: false, exported: item.exported, name,
         // The enum's methods belong to the base struct, so `this` is the enum type and
-        // `match (this)` is how a method reaches a variant. Nothing further is needed:
-        // from here on the base is an ordinary struct with methods, and every later phase
-        // handles it with the machinery it already has.
+        // `match (this)` is how a method reaches a variant.
+        //
+        // Phase 3 below registers the callable entries by reading the *EnumDecl*, and
+        // `collectArrayTypes` reaches the bodies through `result.funcs`, so this assignment
+        // is currently redundant for both. It is here because the declaration should
+        // describe what the struct actually has: any walk that reads `structDecl.methods` —
+        // as several do for hand-written structs — would otherwise skip an enum's methods
+        // silently, which is the failure this codebase produces most often.
         parent: null, fields: [tagField], methods: item.methods, line, col,
       };
       const base: StructEntry = {
