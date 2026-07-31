@@ -2934,19 +2934,19 @@ async function runStr(src: string) {
 }
 
 /** Helper: compile with string content verification by including an expected literal. */
-async function runWithExpected(src: string, fnName: string, expected: string): Promise<boolean> {
-  const escaped = JSON.stringify(expected); // JS string literal
-  const fullSrc = src + `
-    export bool __verify() {
-      string got = ${fnName}();
-      string want = ${escaped};
-      return got == want;
-    }
-  `;
-  const r = wacCompile(new Map([["main.wac", fullSrc]]), "main.wac");
+/**
+ * Compile `src`, call `fnName`, and return the string it produced.
+ *
+ * This used to append a `__verify` function and compare the two strings *inside* wac, because
+ * `wacInstance` could not decode a string return [issue 0021]. It can now, so a failure reports
+ * what it actually got rather than only that it differed — which is the whole reason that
+ * workaround was worth removing.
+ */
+async function runForString(src: string, fnName: string): Promise<string> {
+  const r = wacCompile(new Map([["main.wac", `export ${src}`]]), "main.wac");
   if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
   const inst2 = await wacInstance(r.compiled);
-  return inst2.call("__verify", []) as boolean;
+  return inst2.call(fnName, []) as string;
 }
 
 // ── §wac-str-literal-k8fn2qp — s.len() returns 5 for "hello" ────────────────
@@ -3026,43 +3026,39 @@ Deno.test(`[§wac-str-append-q5km7wn] strAppend() returns "hello world"`, async 
   // while `+=` was broken, which is exactly what happened before: compound
   // assignment on a string emitted f64.add on two string refs and produced a
   // module that failed wasm validation.
-  const ok = await runWithExpected(
+  const got = await runForString(
     `string strAppend() { string s = "hello"; s += " world"; return s; }`,
     "strAppend",
-    "hello world",
   );
-  eq(ok, true, `strAppend() == "hello world"`);
+  eq(got, "hello world", "strAppend()");
 
   // Also on a struct field, which takes a different emit path from a local.
-  const ok2 = await runWithExpected(
-    `struct Msg { string text; }
-     string fieldAppend() { Msg m = Msg("hello"); m.text += " world"; return m.text; }`,
+  const got2 = await runForString(
+    `string fieldAppend() { Msg m = Msg("hello"); m.text += " world"; return m.text; }
+     struct Msg { string text; }`,
     "fieldAppend",
-    "hello world",
   );
-  eq(ok2, true, `fieldAppend() == "hello world"`);
+  eq(got2, "hello world", "fieldAppend()");
 });
 
 // ── §wac-str-idx-r7kf4mb — strIdx() returns "e" ─────────────────────────────
 
 Deno.test(`[§wac-str-idx-r7kf4mb] strIdx() returns "e"`, async () => {
-  const ok = await runWithExpected(
+  const got = await runForString(
     `string strIdx() { string s = "hello"; return s[1]; }`,
     "strIdx",
-    "e",
   );
-  eq(ok, true, `"hello"[1] == "e"`);
+  eq(got, "e", `"hello"[1] == "e"`);
 });
 
 // ── §wac-str-idx-emoji-w3qn8jk — strEmoji() returns "😀" ─────────────────────
 
 Deno.test(`[§wac-str-idx-emoji-w3qn8jk] strEmoji() returns "😀"`, async () => {
-  const ok = await runWithExpected(
+  const got = await runForString(
     `string strEmoji() { string s = "hello 😀"; return s[6]; }`,
     "strEmoji",
-    "😀",
   );
-  eq(ok, true, `"hello 😀"[6] == "😀"`);
+  eq(got, "😀", `"hello 😀"[6] == "😀"`);
 });
 
 // ── §wac-str-idx-mid-h5pd2wn — strMid() returns "" (continuation byte) ──────
@@ -3092,12 +3088,11 @@ Deno.test(`[§wac-str-oob-j4wk7pm] strOob() traps on out-of-bounds index`, async
 // ── §wac-str-concat-n8qm5jf — strConcat() returns "hello world" ──────────────
 
 Deno.test(`[§wac-str-concat-n8qm5jf] strConcat() returns "hello world"`, async () => {
-  const ok = await runWithExpected(
+  const got = await runForString(
     `string strConcat() { string a = "hello"; string b = " world"; return a + b; }`,
     "strConcat",
-    "hello world",
   );
-  eq(ok, true, `strConcat() == "hello world"`);
+  eq(got, "hello world", `strConcat() == "hello world"`);
 });
 
 // ── §wac-str-concat-len-k2fn8wp — strConcatLen() returns 6 ──────────────────
@@ -3156,12 +3151,11 @@ Deno.test(`[§wac-str-immut-m3hd7qz] s[0] = "H" is a compile error`, () => {
 // ── §wac-str-slice-h8wd4pm — slice(6,11) returns "world" ─────────────────────
 
 Deno.test(`[§wac-str-slice-h8wd4pm] slice(6,11) returns "world"`, async () => {
-  const ok = await runWithExpected(
+  const got = await runForString(
     `string strSlice() { return "hello world".slice(6, 11); }`,
     "strSlice",
-    "world",
   );
-  eq(ok, true, `"hello world".slice(6, 11) == "world"`);
+  eq(got, "world", `"hello world".slice(6, 11) == "world"`);
 });
 
 // ── §wac-str-indexof-j2fn5rk — indexOf("world") returns 6 ───────────────────
@@ -5971,6 +5965,37 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notU64", [18446744073709551615n]), 0n, "and back");
   eq(i.call("notU32", [0]), 4294967295, "~0 at 32 bits");
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
+});
+
+// §wac-instance-ref-return-8mkq4wp — wacInstance decodes string and array returns
+Deno.test("[§wac-instance-ref-return-8mkq4wp] a string or array return comes back decoded", async () => {
+  // Issue 0021. `coerceResult` handled the numeric types and then fell through to `Number()`,
+  // which threw "Cannot convert object to primitive value" on any reference. Three separate
+  // workarounds had grown around it, including a helper in this very file that compared strings
+  // *inside* wac — so a failing string test could say only that it differed, never what it got.
+  // That helper is gone; the string tests above now compare directly.
+  const inst = await run(`
+    export string greet()   { return "hi"; }
+    export string unicode() { return "héllo → 😀"; }
+    export string blank()   { return ""; }
+    export u8[]  bytes()    { return u8[](104, 105, 255); }
+    export i32[] ints()     { return i32[](1, -2, 3); }
+    export u32[] unsigned() { return u32[](0xFF000000, 5); }
+    export i64[] wide()     { return i64[](1000000000000, -1); }
+    export f64[] floats()   { return f64[](1.5, -2.5); }
+    export i32   plain()    { return 42; }
+  `);
+  eq(inst.call("greet", []), "hi", "a string return");
+  eq(inst.call("unicode", []), "héllo → 😀", "multi-byte characters survive the round trip");
+  eq(inst.call("blank", []), "", "and the empty string");
+  eq(JSON.stringify(inst.call("bytes", [])), "[104,105,255]", "a u8[] return");
+  eq(JSON.stringify(inst.call("ints", [])), "[1,-2,3]", "signed elements keep their sign");
+  // u32 elements arrive through a signed wasm type, exactly as u32 *returns* do [0039].
+  eq(JSON.stringify(inst.call("unsigned", [])), "[4278190080,5]", "u32 elements are unsigned");
+  eq((inst.call("wide", []) as bigint[])[0], 1000000000000n, "i64 elements are bigints");
+  eq((inst.call("wide", []) as bigint[])[1], -1n, "including negative ones");
+  eq(JSON.stringify(inst.call("floats", [])), "[1.5,-2.5]", "f64 elements");
+  eq(inst.call("plain", []), 42, "and a plain i32 is unaffected");
 });
 
 // §wac-str-slice-clamp-3qnv7wk — slice clamps rather than trapping
