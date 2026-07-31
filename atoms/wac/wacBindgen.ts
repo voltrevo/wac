@@ -9,7 +9,8 @@
 //   string              → string   (copied in/out via wasm helper exports)
 //   u8[]                → Uint8Array      i8[]  → Int8Array
 //   u16[]               → Uint16Array     i16[] → Int16Array
-//   i32[]               → Int32Array
+//   i32[]               → Int32Array      u32[] → Uint32Array
+//   u64[]               → BigUint64Array
 //   i64[]               → BigInt64Array
 //   f32[]               → Float32Array
 //   f64[]               → Float64Array
@@ -38,14 +39,16 @@ const ARRAY_MAP: Record<string, string> = {
   "u16[]": "Uint16Array",
   "i16[]": "Int16Array",
   "i32[]": "Int32Array",
+  "u32[]": "Uint32Array",
   "i64[]": "BigInt64Array",
+  "u64[]": "BigUint64Array",
   "f32[]": "Float32Array",
   "f64[]": "Float64Array",
 };
 
 const ARRAY_ELEM_WIDTH: Record<string, number> = {
   "u8[]": 1, "i8[]": 1, "u16[]": 2, "i16[]": 2,
-  "i32[]": 4, "i64[]": 8, "f32[]": 4, "f64[]": 8,
+  "i32[]": 4, "u32[]": 4, "i64[]": 8, "u64[]": 8, "f32[]": 4, "f64[]": 8,
 };
 
 const ARRAY_ELEM_PREFIX: Record<string, string> = {
@@ -54,7 +57,9 @@ const ARRAY_ELEM_PREFIX: Record<string, string> = {
   "u16[]": "__bind_arr_u16",
   "i16[]": "__bind_arr_i16",
   "i32[]": "__bind_arr_i32",
+  "u32[]": "__bind_arr_u32",
   "i64[]": "__bind_arr_i64",
+  "u64[]": "__bind_arr_u64",
   "f32[]": "__bind_arr_f32",
   "f64[]": "__bind_arr_f64",
 };
@@ -73,7 +78,7 @@ function isSupported(wacType: string): boolean {
 
 function arrayToWasmHelper(elemType: string, jsType: string): string {
   const prefix = ARRAY_ELEM_PREFIX[elemType];
-  const isBigInt = elemType === "i64[]";
+  const isBigInt = elemType === "i64[]" || elemType === "u64[]";
   const convert = isBigInt ? "" : "";
   void convert;
   const width = ARRAY_ELEM_WIDTH[elemType];
@@ -89,7 +94,7 @@ function arrayToWasmHelper(elemType: string, jsType: string): string {
 
 function arrayFromWasmHelper(elemType: string, jsType: string): string {
   const prefix = ARRAY_ELEM_PREFIX[elemType];
-  const isBigInt = elemType === "i64[]";
+  const isBigInt = elemType === "i64[]" || elemType === "u64[]";
   const elemCast = isBigInt ? " as bigint" : " as number";
   const elemBase = elemType.replace("[]", "");
   void elemCast;
@@ -188,7 +193,7 @@ function genWrapper(exp: WacExport): WrapperResult {
     const elemBase = exp.ret.replace("[]", "");
     lines.push(`  const _result = ${callExpr};`);
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
-  } else if (exp.ret === "i64") {
+  } else if (exp.ret === "i64" || exp.ret === "u64") {
     lines.push(`  return ${callExpr} as bigint;`);
   } else if (exp.ret === "bool") {
     lines.push(`  return Boolean(${callExpr});`);

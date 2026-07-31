@@ -668,9 +668,12 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     }
 
     case "switch": {
+      // br_table dispatches on a 32-bit value. Signedness plays no part in an
+      // equality match, so u32 is as good as i32; the 64-bit types are not.
       const eType = inferExpr(stmt.expr, env, ctx);
-      if (eType && !typeEq(eType, T_I32)) {
-        errAt(ctx, `switch expression must be i32, got ${typeName(eType)}`,
+      const scrutinee = eType && eType.kind === "prim" && eType.name === "u32" ? eType : T_I32;
+      if (eType && !typeEq(eType, scrutinee)) {
+        errAt(ctx, `switch expression must be i32 or u32, got ${typeName(eType)}`,
           stmt.expr.line, stmt.expr.col);
       }
       let hasDefault = false;
@@ -679,9 +682,11 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       for (const c of stmt.cases) {
         if (c.value === "default") hasDefault = true;
         else {
-          const vType = inferExpr(c.value, env, ctx);
-          if (vType && !typeEq(vType, T_I32)) {
-            errAt(ctx, `case value must be i32, got ${typeName(vType)}`, c.line, c.col);
+          // Case values follow the scrutinee, so `case 1:` works for both.
+          const vType = inferExpr(c.value, env, ctx, scrutinee);
+          if (vType && !typeEq(vType, scrutinee)) {
+            errAt(ctx, `case value must be ${typeName(scrutinee)}, got ${typeName(vType)}`,
+              c.line, c.col);
           }
         }
         // Check if case body terminates
@@ -1113,8 +1118,14 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       if (ct && !typeEq(ct, T_BOOL)) {
         errAt(ctx, `ternary condition must be bool, got ${typeName(ct)}`, expr.cond.line, expr.cond.col);
       }
-      const tt = inferExpr(expr.then, env, ctx);
-      const et = inferExpr(expr.else_, env, ctx);
+      // Both branches take the expected type, and failing that each offers
+      // its own to the other, so `u32 x = c ? 1 : 2` and `c ? a : 0` work the
+      // same way the operands of a binary operator do.
+      let tt = inferExpr(expr.then, env, ctx, expected);
+      let et = inferExpr(expr.else_, env, ctx, expected ?? tt);
+      if (expr.then.kind === "int" && et && isInteger(et) && tt && !typeEq(tt, et)) {
+        tt = inferExpr(expr.then, env, ctx, et);
+      }
       if (!tt || !et) return tt ?? et;
       if (typeEq(tt, et)) return tt;
       // Struct branches type to their closest common ancestor — this covers
@@ -1636,12 +1647,23 @@ function checkBinaryOp(
   // Shift: i32×i32, i64×i64, or i64×i32
   if (op === "<<" || op === ">>" || op === ">>>") {
     if (!isInteger(lt)) {
-      errAt(ctx, `'${op}' requires i32 or i64, got ${typeName(lt)}`, line, col);
+      errAt(ctx, `'${op}' requires an integer type, got ${typeName(lt)}`, line, col);
+      return null;
+    }
+    // `>>` on an unsigned type is already the logical shift, so `>>>` there
+    // asks for something it is already getting. Rejecting it keeps `>>>` a
+    // signal that a signed value is deliberately being shifted as unsigned,
+    // the same way the cast operators refuse a stronger form than needed.
+    if (op === ">>>" && isUnsigned(lt)) {
+      errAt(ctx, `'>>>' is redundant on ${typeName(lt)}`, line, col, 3,
+        `'>>' on an unsigned type is already a logical shift`, `use \`>>\``);
       return null;
     }
     if (!typeEq(lt, rt)) {
-      // Special: i64 << i32 is allowed
+      // Special: a 64-bit value may take a 32-bit shift amount.
       if (typeEq(lt, T_I64) && typeEq(rt, T_I32)) return T_I64;
+      if (isUnsigned(lt) && lt.kind === "prim" && lt.name === "u64" &&
+          rt.kind === "prim" && (rt.name === "i32" || rt.name === "u32")) return lt;
       errAt(ctx, `type mismatch in '${op}': ${typeName(lt)} and ${typeName(rt)}`, line, col);
       return null;
     }

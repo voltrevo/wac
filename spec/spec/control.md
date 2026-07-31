@@ -248,7 +248,11 @@ switch (expr) {
 ```
 
 No fallthrough — each case is its own block. The switch expression and case
-values must be `i32`. Maps to wasm's `br_table`.
+values must be a 32-bit integer, `i32` or `u32` — `br_table` dispatches on 32
+bits, and signedness plays no part in an equality match.
+
+`[§wac-switch-u32-r5nk8wf]` A `u32` scrutinee works, including a case value
+above `i32`'s range such as `4294967295`.
 
 ```wac
 export i32 dayType(i32 day) {
