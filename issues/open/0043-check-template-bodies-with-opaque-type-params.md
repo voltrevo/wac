@@ -1,7 +1,7 @@
 # 0043 — type-check template bodies, treating type parameters as permissive unknowns
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a
 - **Reported by:** the operator, via agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature
