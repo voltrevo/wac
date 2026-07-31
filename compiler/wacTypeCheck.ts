@@ -9,10 +9,11 @@
 import {
   type Program, type Expr, type Stmt, type Block, type WacType,
   type Lvalue, type ElseBranch, type SwitchCase,
-  type FieldDecl, type StructDecl,
+  type FieldDecl, type StructDecl, type MatchArm,
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry, type FileScope,
+  type EnumEntry,
   funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
@@ -669,12 +670,121 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     }
 
     case "match": {
-      // Parsed but not yet checked: enums and match are being implemented in stages
-      // (see spec/spec/enums.md), and rejecting here is better than letting a
-      // half-checked match reach the emitter.
-      errAt(ctx, `match is not yet implemented`, stmt.line, stmt.col);
-      inferExpr(stmt.subject, env, ctx);
-      return false;
+      const subjType = inferExpr(stmt.subject, env, ctx);
+      if (!subjType) return false;
+
+      // A nullable subject would need a null case, which is deferred; `s!` or an
+      // `is null` check first is the answer for now.
+      if (subjType.kind === "nullable") {
+        errAt(ctx, `match requires a non-null value, got ${typeName(subjType)}`,
+          stmt.subject.line, stmt.subject.col,
+          exprText(stmt.subject).length, undefined,
+          `unwrap it first: match (${exprText(stmt.subject)}!)`);
+        return false;
+      }
+
+      const enumEntry = enumOfType(subjType, ctx);
+      if (!enumEntry) {
+        errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
+          stmt.subject.line, stmt.subject.col);
+        return false;
+      }
+
+      // Narrowing is a shadowing binding, so it needs a name to shadow. A subject
+      // that is not a plain variable still matches; its arms just narrow nothing.
+      const subjectName = stmt.subject.kind === "ident" ? stmt.subject.name : null;
+
+      const covered = new Set<string>();
+      let elseArm: MatchArm | null = null;
+      let allReturn = true;
+
+      for (const arm of stmt.arms) {
+        const armEnv: VarEnv = new Map(env);
+
+        if (arm.variant === null) {
+          if (elseArm) {
+            errAt(ctx, `duplicate else arm`, arm.line, arm.col);
+          }
+          elseArm = arm;
+        } else {
+          const variant = enumEntry.variants.find(v => v.name === arm.variant);
+          if (!variant) {
+            errAt(ctx, `'${arm.variant}' is not a variant of '${enumEntry.name}'`,
+              arm.line, arm.col, arm.variant.length);
+            continue;
+          }
+          if (covered.has(arm.variant)) {
+            errAt(ctx, `duplicate case for '${arm.variant}'`, arm.line, arm.col,
+              arm.variant.length);
+          }
+          covered.add(arm.variant);
+
+          // Omitting the parentheses ignores every payload; naming any binding means
+          // naming all of them, so a miscount is a mistake rather than a shorthand.
+          if (arm.bindings.length > 0 && arm.bindings.length !== variant.fields.length) {
+            errAt(ctx,
+              `case '${arm.variant}' binds ${arm.bindings.length} name(s) but the variant has ${variant.fields.length}`,
+              arm.line, arm.col, arm.variant.length);
+          }
+
+          // The subject narrows to the variant type, as a const shadowing binding.
+          if (subjectName !== null) {
+            armEnv.set(subjectName, {
+              type: { kind: "struct", name: variant.name,
+                      resolvedTypeIndex: variant.entry.typeIndex,
+                      line: arm.line, col: arm.col },
+              isConst: true,
+            });
+          }
+
+          const bound = new Set<string>();
+          for (let i = 0; i < arm.bindings.length && i < variant.fields.length; i++) {
+            const name = arm.bindings[i];
+            if (name === "_") continue;   // a deliberate discard, and may repeat
+            if (bound.has(name)) {
+              errAt(ctx, `duplicate binding '${name}' in case '${arm.variant}'`,
+                arm.line, arm.col, name.length);
+              continue;
+            }
+            if (name === subjectName) {
+              errAt(ctx,
+                `binding '${name}' collides with the matched subject`,
+                arm.line, arm.col, name.length);
+              continue;
+            }
+            bound.add(name);
+            armEnv.set(name, { type: variant.fields[i].type, isConst: true });
+          }
+        }
+
+        let terminated = false;
+        for (const st of arm.body) {
+          if (terminated) break;
+          terminated = checkStmt(st, armEnv, ctx);
+        }
+        if (!terminated) allReturn = false;
+      }
+
+      const exhaustive = covered.size === enumEntry.variants.length;
+      if (elseArm === null && !exhaustive) {
+        const missing = enumEntry.variants
+          .filter(v => !covered.has(v.name)).map(v => `'${v.name}'`);
+        errAt(ctx, `match does not cover ${missing.join(", ")}`, stmt.line, stmt.col,
+          5, undefined,
+          missing.length === 1
+            ? `add a case for it, or an else arm`
+            : `add cases for them, or an else arm`);
+      }
+      // A covering match plus an else arm is a mistake, not dead code: either a
+      // variant was removed and the else is now stale, or the arms are wrong.
+      if (elseArm !== null && exhaustive) {
+        errAt(ctx, `else arm is unreachable — all variants are covered`,
+          elseArm.line, elseArm.col, 4);
+      }
+
+      // A match only guarantees a return if control cannot fall past it, which needs
+      // every arm to terminate *and* every value to reach an arm.
+      return allReturn && (elseArm !== null || exhaustive);
     }
 
     case "switch": {
@@ -1922,6 +2032,20 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "f32"  && tn === "u64")  ||
          (fn === "i32"  && tn === "u64")  ||  // negative has no u64 reading
          (fn === "u32"  && tn === "bool");
+}
+
+/**
+ * The enum a type denotes, or null if it is not an enum's base.
+ *
+ * Only the base type is an enum for matching purposes: matching on a value already
+ * known to be one variant has exactly one possible arm, so it is a mistake worth
+ * reporting rather than a degenerate case to support.
+ */
+function enumOfType(t: WacType, ctx: Ctx): EnumEntry | null {
+  if (t.kind !== "struct") return null;
+  const found = ctx.fileScope.get(t.name);
+  if (found?.kind !== "enum") return null;
+  return found.enumEntry;
 }
 
 // ── Type compatibility check (assignment / argument passing) ──────────────────
