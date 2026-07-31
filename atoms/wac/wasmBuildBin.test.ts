@@ -980,13 +980,13 @@ Deno.test("wasmBuildBin: numeric casts", async () => {
   eq(e.i32toI64(42), 42n, "i32toI64");
   eq(e.i64toI32(100n), 100, "i64toI32");
   eq(e.i32toF64(7), 7.0, "i32toF64");
-  eq(e.f64toI32(3.9), 3, "f64toI32 truncate");
+  eq(e.f64toI32(3.0), 3, "f64toI32 exact value passes");
   const close = (a: unknown, b: number, msg: string) => {
     if (Math.abs((a as number) - b) > 0.01) throw new Error(`${msg}: got ${a}, expected ~${b}`);
   };
   close(e.f32toF64(1.5), 1.5, "f32toF64");
   close(e.f64toF32(2.5), 2.5, "f64toF32");
-  eq(e.f32toI32(3.7), 3, "f32toI32");
+  eq(e.f32toI32(3.0), 3, "f32toI32 exact value passes");
   eq(e.f64satToI32(4.9), 5, "f64satToI32 rounds-to-nearest: 4.9→5");
 });
 
@@ -1401,7 +1401,7 @@ Deno.test("wasmBuildBin: extended numeric casts", async () => {
   eq(e.boolToI64(true), 1n, "bool->i64");
   eq(e.boolToI64(false), 0n, "false->i64=0");
   eq(e.i64ToF64(5n), 5.0, "i64->f64");
-  eq(e.f64ToI64(3.9), 3n, "f64->i64 trunc");
+  eq(e.f64ToI64(3.0), 3n, "f64->i64 exact value passes");
   eq(e.i64SatI32(100n), 100, "i64 sat->i32");
   eq(e.i64AsF64sat(7n), 7.0, "i64 sat->f64");
   eq(e.boolToI32(true), 1, "bool->i32");
@@ -1876,3 +1876,76 @@ Deno.test("wasmBuildBin: null assign to nullable struct field", async () => {
   eq(e.isNull3(f), 1, "field null after clearField");
 });
 
+
+// `as!` means "exact, or trap". The trunc opcodes trap on range and NaN but
+// silently drop a fractional part, so each float->int as! carries an
+// integrality guard. Covers all eight pairs, both signednesses.
+Deno.test("wasmBuildBin: as! float->int rejects a fractional part", async () => {
+  const e = await inst(`
+    export i32 f64i32(f64 x) { return x as! i32; }
+    export i32 f32i32(f32 x) { return x as! i32; }
+    export i64 f64i64(f64 x) { return x as! i64; }
+    export i64 f32i64(f32 x) { return x as! i64; }
+    export u32 f64u32(f64 x) { return x as! u32; }
+    export u32 f32u32(f32 x) { return x as! u32; }
+    export u64 f64u64(f64 x) { return x as! u64; }
+    export u64 f32u64(f32 x) { return x as! u64; }
+  `);
+  const traps = (f: () => unknown) => { try { f(); return false; } catch { return true; } };
+
+  // Integral values pass through, including negatives and the boundaries.
+  eq(e.f64i32(3.0), 3, "3.0 -> 3");
+  eq(e.f64i32(-4.0), -4, "-4.0 -> -4");
+  eq(e.f64i32(-0.0), 0, "-0.0 is integral");
+  eq(e.f64i32(2147483647.0), 2147483647, "i32 max");
+  eq(e.f64i32(-2147483648.0), -2147483648, "i32 min");
+  eq((e.f64u32(4294967295.0) as number) >>> 0, 4294967295, "u32 max");
+  eq(e.f32i32(3.0), 3, "f32 3.0 -> 3");
+  eq(e.f64i64(3.0), 3n, "f64 -> i64");
+  eq(e.f32i64(3.0), 3n, "f32 -> i64");
+  eq(BigInt.asUintN(64, e.f64u64(3.0) as bigint), 3n, "f64 -> u64");
+  eq(BigInt.asUintN(64, e.f32u64(3.0) as bigint), 3n, "f32 -> u64");
+  eq((e.f32u32(3.0) as number) >>> 0, 3, "f32 -> u32");
+
+  // A fractional part is a trap in every pair — this is the behaviour that was
+  // missing, and each of these previously returned a silently truncated value.
+  eq(traps(() => e.f64i32(3.5)), true, "f64 3.5 -> i32 traps");
+  eq(traps(() => e.f64i32(-2.3)), true, "negative fraction traps");
+  eq(traps(() => e.f64i32(0.1)), true, "0.1 traps");
+  eq(traps(() => e.f32i32(3.5)), true, "f32 3.5 -> i32 traps");
+  eq(traps(() => e.f64i64(3.5)), true, "f64 3.5 -> i64 traps");
+  eq(traps(() => e.f32i64(3.5)), true, "f32 3.5 -> i64 traps");
+  eq(traps(() => e.f64u32(3.5)), true, "f64 3.5 -> u32 traps");
+  eq(traps(() => e.f32u32(3.5)), true, "f32 3.5 -> u32 traps");
+  eq(traps(() => e.f64u64(3.5)), true, "f64 3.5 -> u64 traps");
+  eq(traps(() => e.f32u64(3.5)), true, "f32 3.5 -> u64 traps");
+
+  // Unchanged: range, NaN and sign violations still trap. Infinity is equal to
+  // its own truncation, so it reaches the range check rather than the guard.
+  eq(traps(() => e.f64i32(2147483648.0)), true, "one past i32 max traps");
+  eq(traps(() => e.f64i32(NaN)), true, "NaN traps");
+  eq(traps(() => e.f64i32(Infinity)), true, "Infinity traps on range");
+  eq(traps(() => e.f64i32(-Infinity)), true, "-Infinity traps on range");
+  eq(traps(() => e.f64u32(-1.0)), true, "negative -> unsigned traps");
+  eq(traps(() => e.f64i32(1e300)), true, "1e300 is integral but out of range");
+});
+
+// The integrality guard uses a shared temp local, so several casts in one
+// expression could clobber each other. They are sequential rather than
+// interleaved, but that is worth pinning rather than assuming.
+Deno.test("wasmBuildBin: as! float->int guards do not interfere", async () => {
+  const e = await inst(`
+    i32 sum(i32 x, i32 y) { return x + y; }
+    export i32 twoCasts(f64 a, f64 b)   { return (a as! i32) + (b as! i32); }
+    export i32 mixedWidths(f64 a, f32 b) { return (a as! i32) + (b as! i32); }
+    export i32 asArgs(f64 a, f64 b)     { return sum(a as! i32, b as! i32); }
+    export i32 nested(f64 a)            { return ((a as! i32) as i64) as! i32; }
+  `);
+  const traps = (f: () => unknown) => { try { f(); return false; } catch { return true; } };
+  eq(e.twoCasts(3.0, 4.0), 7, "two guards in one expression");
+  eq(e.mixedWidths(3.0, 4.0), 7, "f64 and f32 guards use separate temps");
+  eq(e.asArgs(10.0, 20.0), 30, "guards inside call arguments");
+  eq(e.nested(5.0), 5, "a guard inside a guarded cast");
+  eq(traps(() => e.twoCasts(3.5, 4.0)), true, "first operand still checked");
+  eq(traps(() => e.twoCasts(3.0, 4.5)), true, "second operand still checked");
+});

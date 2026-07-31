@@ -250,6 +250,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     // Reporting i32 unconditionally selected the i32 form of the enclosing
     // operator, so `4000000000000 + 1000000000000` emitted i32.add.
     case "int": {
+      // `resolved` is set by wacTypeCheck when the literal took its type from
+      // context. Trusting it is what keeps the two in agreement — deriving a
+      // second opinion here is how the operand and the operator came to
+      // disagree about width before.
+      if (e.resolved) return e.resolved;
       const lit = wacIntLit(e.value);
       return lit.ok && lit.width === 64 ? I64 : I32;
     }
@@ -605,8 +610,14 @@ class FuncEmitter {
         // expectType alone emitted i32.const for an i64-typed literal wherever no
         // type was being pushed down — as a binary operand, for instance — which
         // is invalid wasm rather than a wrong value.
-        const isI64 = lit.width === 64
-          || (expectType?.kind === "prim" && expectType.name === "i64");
+        // A literal typed from context wins: it already knows whether it is a
+        // 32- or 64-bit value, and whether it is signed, so consult it first.
+        const res = e.resolved?.kind === "prim" ? e.resolved.name : undefined;
+        const isI64 = res !== undefined
+          ? (res === "i64" || res === "u64")
+          : lit.width === 64
+            || (expectType?.kind === "prim" &&
+                (expectType.name === "i64" || expectType.name === "u64"));
         if (isI64) {
           this.emit(0x42, ...slebBig(BigInt.asIntN(64, lit.value))); // i64.const
         } else {
@@ -819,7 +830,9 @@ class FuncEmitter {
     // (add, sub, mul, the bitwise ops, shl, eq, ne) is bit-identical for both
     // signednesses and simply repeats the signed column.
     const p = lt.kind === "prim" ? lt.name : "i32";
-    const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
+    // Packed elements are read out as i32 before any operation, so they use
+    // the i32 column regardless of their own signedness.
+    const k = p === "bool" || p === "i8" || p === "i16" || p === "u8" || p === "u16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
             : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";
@@ -929,6 +942,22 @@ class FuncEmitter {
     this.emit(0x20, ...uleb(t));
   }
 
+  /** Trap unless the float on the stack is already an integer, leaving it there.
+   *
+   *  `x != trunc(x)` is true for a fractional value and also for NaN, which the
+   *  following trunc opcode would reject anyway — so NaN still traps, just one
+   *  instruction earlier. Infinities equal their own truncation and fall through
+   *  to the range check, which rejects them. */
+  private guardIntegral(isF32: boolean): void {
+    const t = isF32 ? this.tempF32Local : this.tempF64Local;
+    this.emit(0x22, ...uleb(t));         // local.tee $t        (x)
+    this.emit(isF32 ? 0x8F : 0x9D);      // fN.trunc            (trunc(x))
+    this.emit(0x20, ...uleb(t));         // local.get $t        (x)
+    this.emit(isF32 ? 0x5C : 0x62);      // fN.ne               (trunc(x) != x)
+    this.emit(0x04, 0x40, 0x00, 0x0B);   // if { unreachable }
+    this.emit(0x20, ...uleb(t));         // local.get $t
+  }
+
   /** Conversions where either side is unsigned. Returns true if handled.
    *
    *  Signedness is a property of the wac type, not of the storage, so a
@@ -1003,11 +1032,12 @@ class FuncEmitter {
         return true;
       }
       // float -> unsigned: the trapping trunc opcodes reject negative,
-      // fractional and out-of-range inputs, and NaN.
-      if (from === "f64" && to === "u32") { this.emit(0xAB); return true; } // i32.trunc_f64_u
-      if (from === "f32" && to === "u32") { this.emit(0xA9); return true; } // i32.trunc_f32_u
-      if (from === "f64" && to === "u64") { this.emit(0xB1); return true; } // i64.trunc_f64_u
-      if (from === "f32" && to === "u64") { this.emit(0xAF); return true; } // i64.trunc_f32_u
+      // out-of-range and NaN inputs; the guard adds the fractional case, so
+      // these behave exactly like their signed counterparts.
+      if (from === "f64" && to === "u32") { this.guardIntegral(false); this.emit(0xAB); return true; }
+      if (from === "f32" && to === "u32") { this.guardIntegral(true);  this.emit(0xA9); return true; }
+      if (from === "f64" && to === "u64") { this.guardIntegral(false); this.emit(0xB1); return true; }
+      if (from === "f32" && to === "u64") { this.guardIntegral(true);  this.emit(0xAF); return true; }
       // unsigned -> float: exact iff converting back round-trips. Mirrors the
       // signed i64->f32/f64 cases, with 2^64 as the saturation boundary.
       if (from === "u32" && to === "f32") {
@@ -1082,10 +1112,13 @@ class FuncEmitter {
         this.emit(0xA7);                                 // i32.wrap_i64
         return;
       }
-      if (from === "f64" && to === "i32") { this.emit(0xAA); return; }  // i32.trunc_f64_s (traps)
-      if (from === "f32" && to === "i32") { this.emit(0xA8); return; }  // i32.trunc_f32_s (traps)
-      if (from === "f64" && to === "i64") { this.emit(0xB0); return; }  // i64.trunc_f64_s (traps)
-      if (from === "f32" && to === "i64") { this.emit(0xAE); return; }  // i64.trunc_f32_s (traps)
+      // The trunc opcodes trap on out-of-range and NaN but silently discard a
+      // fractional part, so each needs the integrality guard first to make
+      // `as!` mean "exact, or trap" [see casts.md].
+      if (from === "f64" && to === "i32") { this.guardIntegral(false); this.emit(0xAA); return; }
+      if (from === "f32" && to === "i32") { this.guardIntegral(true);  this.emit(0xA8); return; }
+      if (from === "f64" && to === "i64") { this.guardIntegral(false); this.emit(0xB0); return; }
+      if (from === "f32" && to === "i64") { this.guardIntegral(true);  this.emit(0xAE); return; }
       if (from === "f64" && to === "f32") {
         // Exact iff promote(demote(x)) == x. NaN never traps (x != x makes
         // the second conjunct false) [§wac-narrow-f32-*].
@@ -1296,11 +1329,13 @@ class FuncEmitter {
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(elem))!;
     this.emitExpr(e.expr, env);
     this.emitExpr(e.idx, env);
-    // packed types use array.get_u (spec: zero-extends on read)
-    const isPackedI8  = elem.kind === "prim" && elem.name === "i8";
-    const isPackedI16 = elem.kind === "prim" && elem.name === "i16";
-    if (isPackedI8 || isPackedI16) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
-    else                           this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
+    // Packed elements are narrower than any value wasm computes with, so the
+    // read has to extend them. Which way is exactly what the element type says:
+    // i8/i16 sign-extend, u8/u16 zero-extend. Same storage either way.
+    const en = elem.kind === "prim" ? elem.name : "";
+    if (en === "i8" || en === "i16")      this.emit(0xFB, 0x0C, ...uleb(aIdx)); // array.get_s
+    else if (en === "u8" || en === "u16") this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
+    else                                  this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
     // Non-nullable ref elements stored as nullable in wasm; unwrap to non-null
     if (elem.kind === "struct" || elem.kind === "array" || elem.kind === "funcref") {
       this.emit(0xD4); // ref.as_non_null
@@ -1497,7 +1532,8 @@ class FuncEmitter {
   private emitDefaultValue(t: WacType): void {
     switch (t.kind) {
       case "prim":
-        if (t.name === "i32" || t.name === "bool" || t.name === "i8" || t.name === "i16")
+        if (t.name === "i32" || t.name === "bool" || t.name === "i8" || t.name === "i16" ||
+            t.name === "u8" || t.name === "u16")
           this.emit(0x41, 0x00); // i32.const 0
         else if (t.name === "i64")
           this.emit(0x42, 0x00); // i64.const 0
@@ -1756,7 +1792,8 @@ class FuncEmitter {
       this.emitExpr(lval.idx, env);     // idx for array.get
       // packed elements must read through array.get_u — array.get is invalid on
       // i8/i16 arrays and would fail wasm validation [see arrays.md]
-      const packed = elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16");
+      const packed = elem.kind === "prim" &&
+        (elem.name === "i8" || elem.name === "i16" || elem.name === "u8" || elem.name === "u16");
       if (packed) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u (read old)
       else        this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get   (read old)
       this.emitCompoundRhs(rhs, env, elem, op.slice(0,-1));
@@ -1800,7 +1837,7 @@ class FuncEmitter {
 
     // Mirrors emitBinary's table — see there for why unsigned needs its own
     // columns rather than sharing the signed ones.
-    const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
+    const k = p === "bool" || p === "i8" || p === "i16" || p === "u8" || p === "u16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
             : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";

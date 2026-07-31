@@ -27,7 +27,10 @@ export type WacType =
 // Expressions -----------------------------------------------------------------
 
 export type Expr =
-  | ({ kind: "int";      value: string } & Pos)
+  // `resolved` is filled in by wacTypeCheck when the literal takes its type
+  // from context (`u32 x = 5`). The emitter reads it rather than re-deciding,
+  // so the two cannot disagree about a literal's width or signedness.
+  | ({ kind: "int";      value: string; resolved?: WacType } & Pos)
   | ({ kind: "float";    value: string } & Pos)
   | ({ kind: "string";   value: string } & Pos)
   | ({ kind: "bool";     value: boolean } & Pos)
@@ -112,7 +115,7 @@ export type ParseResult = { program: Program; errors: ParseError[] };
 
 const PRIM_TYPES = new Set([
   "i32", "i64", "u32", "u64", "f32", "f64", "bool", "void", "string",
-  "anyref", "i31ref", "i8", "i16",
+  "anyref", "i31ref", "i8", "i16", "u8", "u16",
 ]);
 
 const COMPOUND_OPS = new Set([

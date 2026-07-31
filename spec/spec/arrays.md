@@ -95,22 +95,34 @@ to arrays, not a rectangular matrix.
 
 ### Packed arrays
 
-`i8[]` and `i16[]` are packed array types backed by WasmGC's packed element
-types. Elements are stored compactly (1 or 2 bytes each) but read/write as
-`i32` — the runtime zero-extends on read and truncates on write.
+`u8[]`, `i8[]`, `u16[]` and `i16[]` are packed array types backed by WasmGC's
+packed element types. Elements are stored compactly — one or two bytes each —
+but read and write as `i32`, since wasm has no narrower value to compute with.
+
+Storage is identical for both signednesses; the element type decides only how a
+read extends the stored bits. `u8`/`u16` zero-extend (`array.get_u`), `i8`/`i16`
+sign-extend (`array.get_s`). Writes truncate either way.
 
 ```wac
-i8[] bytes = i8[4]();
+u8[] bytes = u8[4]();
 bytes[0] = 0xFF;
-i32 val = bytes[0];              // 255 (zero-extended to i32)
+i32 val = bytes[0];              // 255 — zero-extended
 
-i16[] shorts = i16[4]();
+i8[] signed = i8[4]();
+signed[0] = 0xFF;
+i32 val2 = signed[0];            // -1 — the same byte, sign-extended
+
+u16[] shorts = u16[4]();
 shorts[0] = 1000;
-i32 val2 = shorts[0];           // 1000
+i32 val3 = shorts[0];           // 1000
 ```
 
-`[§wac-arr-i8-k3fn7wp]` `bytes[0]` returns `255` after setting `0xFF`.
+`[§wac-arr-i8-k3fn7wp]` A `u8[]` element reads back `255` after setting `0xFF`;
+an `i8[]` element holding the same byte reads back `-1`.
 `[§wac-arr-i16-m8qj4xf]` `shorts[0]` returns `1000`.
+
+Use `u8[]` for byte data — buffers, text, file contents — which is nearly
+always what is wanted. `i8[]` is for genuinely signed samples.
 
 The fixed-element form takes `i32` values too, and truncates them the same way
 a write does — so a byte array can be written as a literal list.
@@ -139,7 +151,7 @@ i8[] bad = i8[](1.5);            // error: expected i32, got f64
 
 `[§wac-arr-i8-lit-badtype-3w7g6aa]` A non-`i32` element in a packed array literal is a compile error.
 
-There are no `i8` or `i16` local variables, parameters, or struct fields —
+There are no packed local variables, parameters, or struct fields —
 packed types only exist as array elements. Indexing a packed array returns `i32`,
 and assignment truncates from `i32`.
 
@@ -149,14 +161,14 @@ to the element width on store.
 
 ```wac
 export i32 packedOr(i32 a, i32 b) {
-  i8[] bytes = i8[1]();
+  u8[] bytes = u8[1]();
   bytes[0] = a;
   bytes[0] |= b;
   return bytes[0];
 }
 
 export i32 packedWrap(i32 a, i32 b) {
-  i8[] bytes = i8[1]();
+  u8[] bytes = u8[1]();
   bytes[0] = a;
   bytes[0] += b;
   return bytes[0];
@@ -165,7 +177,7 @@ export i32 packedWrap(i32 a, i32 b) {
 
 `[§wac-arr-i8-compound-t7btdiv]` `packedOr(0xF0, 0x0F)` returns `255`.
 `[§wac-arr-i8-cwrap-8qsspoh]` `packedWrap(250, 10)` returns `4` — the store truncates to 8 bits.
-`[§wac-arr-i16-compound-6i4h16a]` The same holds for `i16[]`: `0x00FF |= 0xFF00` gives `65535`.
+`[§wac-arr-i16-compound-6i4h16a]` The same holds for `u16[]`: `0x00FF |= 0xFF00` gives `65535`.
 `[§wac-arr-i8-incr-tlkmjp0]` `bytes[0]++` on a packed element increments in place.
 
 ```wac
