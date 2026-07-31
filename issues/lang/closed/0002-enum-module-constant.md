@@ -1,7 +1,7 @@
 # 0002 — an enum value cannot be a module constant
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** 67a5982
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature

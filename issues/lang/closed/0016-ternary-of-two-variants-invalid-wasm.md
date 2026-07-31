@@ -1,7 +1,7 @@
 # 0016 — a ternary of two variants emitted invalid wasm
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** fca718c
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** bug

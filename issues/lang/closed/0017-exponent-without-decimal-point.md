@@ -1,7 +1,7 @@
 # 0017 — an exponent without a decimal point lexed as an identifier
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** 2683771
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** diagnostic

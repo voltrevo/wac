@@ -8,7 +8,7 @@ has been fixed and why.
 | [0023](open/0023-emitcall-direct-call-branch-is-unreachable.md) | `emitCall`'s direct-call branch is unreachable | bug | not implemented |
 | [0022](open/0022-is-against-an-undefined-type-is-always-true.md) | `x is UndefinedType` compiles and is always true | bug | wrong answer |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
-| [0022](open/0022-coverage-tool-covers-only-gzip.md) | the coverage tool measures gzip and nothing else | missing feature | wrong answer, no error |
+| [0025](open/0025-coverage-tool-covers-only-gzip.md) | the coverage tool measures gzip and nothing else | missing feature | wrong answer, no error |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 
 ## Known gaps that are not issues

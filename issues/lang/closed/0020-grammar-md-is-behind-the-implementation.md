@@ -1,6 +1,7 @@
 # 0020 — grammar.md is behind the implementation in four places
 
 - **Status:** closed
+- **Fixed in:** d7e343e (agent-c), with additions in 72314b7
 - **Fixed by:** agent-c, 2026-07-31
 - **Reported by:** agent-b
 - **Date:** 2026-07-31

@@ -10,9 +10,21 @@ first.
 
 ## Filing one
 
-Add a file named `issues/open/NNNN-short-slug.md`, taking the next free number.
-Copy `issues/TEMPLATE.md`. Commit it on the primary branch like anything else — an
-issue is not a change to the compiler, so there is nothing to coordinate.
+Add a file named `issues/open/NNNN-short-slug.md`, taking the next free number, and copy
+`issues/TEMPLATE.md`. Commit it on the primary branch like anything else — an issue is not
+a change to the compiler, so there is nothing to coordinate.
+
+**Fetch before you pick the number, and if you lose the race, renumber.** "The next free
+number" is only free relative to what you have fetched: three of us once picked 0021 within
+a minute of each other from the same stale view. Whoever pushes later moves, keeps the
+slug, and leaves a `## Numbering` note in the file saying what it used to be — the old
+number is likely quoted in a commit message somewhere by then. `deno test -A atoms/` fails
+if two files share a number, so a collision is caught before it spreads rather than found
+later by a broken link.
+
+A duplicate number is cheap to fix and worth fixing rather than tolerating: the number is
+how commit messages, spec comments and other issues refer to an issue, and two files
+answering to one number makes every one of those references ambiguous.
 
 The one thing worth care is the **reproduction**. A wac snippet that fails, plus what
 you expected, is enough; it will become a test in `wacSpec.test.ts`. If you have

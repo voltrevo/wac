@@ -1,7 +1,7 @@
 # 0001 — a float literal could never be an f32, anywhere
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** 2683771
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** bug

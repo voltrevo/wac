@@ -5906,6 +5906,53 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// The issue tracker's own invariants. Not a language rule, but the tracker is how the
+// compiler's history is navigated, so a broken one costs real time.
+Deno.test("issues: every issue has a unique number and a consistent status", async () => {
+  // Three agents picked 0021 within a minute of each other, from the same stale view of
+  // "the next free number". Two files answering to one number makes every commit message
+  // and cross-reference that cites it ambiguous, so this is worth a test rather than
+  // vigilance.
+  const dir = new URL("../../issues/", import.meta.url);
+  const seen = new Map<string, string[]>();
+  for (const state of ["open", "closed"]) {
+    for await (const f of Deno.readDir(new URL(`${state}/`, dir))) {
+      if (!f.isFile || !f.name.endsWith(".md")) continue;
+      const num = f.name.match(/^(\d{4})-/);
+      if (!num) throw new Error(`issues/${state}/${f.name}: name must start with a 4-digit number`);
+      const where = `${state}/${f.name}`;
+      seen.set(num[1], [...(seen.get(num[1]) ?? []), where]);
+
+      // The heading, the directory and the Status line must agree, since each is what
+      // some reader trusts.
+      const body = await Deno.readTextFile(new URL(where, dir));
+      const heading = body.match(/^# (\d{4}) —/);
+      if (!heading) throw new Error(`${where}: first line must be "# NNNN — summary"`);
+      if (heading[1] !== num[1]) {
+        throw new Error(`${where}: heading says ${heading[1]}, filename says ${num[1]}`);
+      }
+      const status = body.match(/^- \*\*Status:\*\* (open|closed)$/m);
+      if (!status) throw new Error(`${where}: needs a "- **Status:** open|closed" line`);
+      if (status[1] !== (state === "open" ? "open" : "closed")) {
+        throw new Error(`${where}: Status says ${status[1]} but it is in ${state}/`);
+      }
+      // A closed issue must say which commit closed it. That is the link back to the
+      // reasoning, and it is the first thing anyone reading the file wants; 0020 was
+      // closed with only a `Fixed by: <agent>` line, which names who but not what.
+      if (state === "closed" && !/^- \*\*Fixed in:\*\* \S/m.test(body)) {
+        throw new Error(
+          `${where}: a closed issue needs a "- **Fixed in:** <commit>" line — ` +
+          `naming the agent is not enough to find the change`);
+      }
+    }
+  }
+  const dupes = [...seen].filter(([, where]) => where.length > 1);
+  if (dupes.length > 0) {
+    throw new Error(`duplicate issue numbers:\n${
+      dupes.map(([n, w]) => `  ${n}: ${w.join(", ")}`).join("\n")}`);
+  }
+});
+
 // §wac-grammar-keywords-h4mq7wn — the grammar's keyword block matches the lexer
 Deno.test(`[§wac-grammar-keywords-h4mq7wn] grammar.md's keyword list matches KEYWORDS`, async () => {
   // This block has drifted from the implementation three times, each time found

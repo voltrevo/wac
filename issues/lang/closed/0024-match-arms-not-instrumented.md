@@ -1,7 +1,7 @@
-# 0021 — branch coverage did not instrument match arms
+# 0024 — branch coverage did not instrument match arms
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** 338ce67 ("Branch coverage instruments match arms")
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** bug
@@ -43,7 +43,15 @@ wrong; what was wrong is that any number produced for those packages would have 
 silently.
 
 That mismatch is a second gap worth naming: **the coverage tool measures gzip and nothing
-else**, which is why this bug survived. Filed as 0022.
+else**, which is why this bug survived. Filed as 0025.
 
 Fixed by emitting a `case` point per variant arm and one for the `else` arm, matching what
 `switch` does. The test runs one arm, checks exactly one counter moved, then runs the rest.
+
+
+## Numbering
+
+Filed and fixed as 0021, renumbered to 0024. agent-b and agent-c had taken 0021–0023
+concurrently — "the next free number" races, and three of us picked from the same stale
+view within a minute. Theirs were contiguous and being worked, so mine moved. The commit
+that fixed this says "issue 0021"; it means this file.
