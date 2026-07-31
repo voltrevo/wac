@@ -136,6 +136,18 @@ function slebBig(n: bigint): number[] {
 // ── Type key functions ────────────────────────────────────────────────────────
 
 /** Stable string key for an array element type (used as map key). */
+/** The struct type of the variant a type index denotes, or null if it is not one. */
+function variantStructType(typeIndex: number, ctx: WasmTypeCtx): WacType | null {
+  for (const en of ctx.result.enums) {
+    for (const v of en.variants) {
+      if (v.entry.typeIndex === typeIndex) {
+        return { kind: "struct", name: v.name, resolvedTypeIndex: typeIndex, line: 0, col: 0 };
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Is this expression the literal `null`?
  *
@@ -384,6 +396,15 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       return t.kind === "nullable" ? t.inner : t;
     }
     case "call": {
+      // Variant construction, e.g. `Shape.Circle(2.0)`. Nothing else here recognised
+      // it, so it fell through to method resolution, found none, and reported void —
+      // which only mattered where the type is asked for directly rather than supplied
+      // as an expected type. A ternary does exactly that, so `cond ? E.A(1) : E.B`
+      // declared its block with no result and pushed a value into it anyway.
+      if (e.variantTypeIndex !== undefined) {
+        const v = variantStructType(e.variantTypeIndex, ctx);
+        if (v) return v;
+      }
       if (e.callee.kind === "field") {
         const fe = e.callee as { kind: "field"; expr: Expr; name: string };
         // Builtin statics on `string`, matched before typing the base: `string`
@@ -434,6 +455,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       return VOID;
     }
     case "field": {
+      // A payload-less variant used as a value, e.g. `Shape.Point`.
+      if (e.variantTypeIndex !== undefined) {
+        const v = variantStructType(e.variantTypeIndex, ctx);
+        if (v) return v;
+      }
       const baseT = typeOfExpr(e.expr, env, ctx);
       const sName = structName(baseT);
       if (sName) {

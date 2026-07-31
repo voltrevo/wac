@@ -4862,6 +4862,68 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
   eq(inst.call("calls", []), 1, "the subject expression ran once");
 });
 
+Deno.test("[§enum-ternary-variants] a ternary of two variants types to their enum", async () => {
+  // `typeOfExpr` did not recognise variant construction: `E.A(9)` is a call with a field
+  // callee, so it fell through to method resolution, found none, and reported void. The
+  // ternary then declared its block with no result and pushed a value into it. It
+  // surfaced only here because nearly every other context supplies an expected type
+  // rather than asking for the expression's own — a ternary asks.
+  const inst = await run(`
+    enum E { A(i32 v), B }
+    E identity(E e) { return e; }
+    export i32 twoVariants()  { E e = true ? E.A(9) : E.B;            match (e) { case A(v): return v; case B: return 1; } }
+    export i32 sameVariant()  { E e = true ? E.A(8) : E.A(1);         match (e) { case A(v): return v; case B: return 1; } }
+    export i32 variantAndEnum() { E e = true ? E.A(7) : identity(E.B); match (e) { case A(v): return v; case B: return 1; } }
+    export i32 payloadless()  { E e = false ? E.A(1) : E.B;           match (e) { case A(v): return v; case B: return 5; } }
+  `);
+  eq(inst.call("twoVariants", []), 9, "two different variants");
+  eq(inst.call("sameVariant", []), 8, "the same variant twice");
+  eq(inst.call("variantAndEnum", []), 7, "a variant and an enum-typed expression");
+  eq(inst.call("payloadless", []), 5, "a payload-less variant as a value");
+});
+
+Deno.test("[§enum-dup-payload-field] a variant may not repeat a payload field name", () => {
+  // The resolver's duplicate-field check runs over hand-written struct declarations, and
+  // the generated variant structs skipped it — so this compiled while the equivalent
+  // `struct S { i32 x; i32 x; }` was already an error.
+  const m = err(`enum E { A(i32 x, i32 x), B } export i32 f() { return 1; }`);
+  if (!m.includes("duplicate payload field")) {
+    throw new Error(`expected the duplicate-payload diagnostic, got: ${m}`);
+  }
+});
+
+Deno.test("[§enum-dup-payload-field] two variants may share a field name", async () => {
+  // They are different structs, so this must stay legal — the check above must not be
+  // written as "no field name may repeat within an enum".
+  const inst = await run(`
+    enum E { A(i32 x), B(i32 x) }
+    export i32 f(bool y) {
+      E e = y ? E.A(3) : E.B(4);
+      match (e) { case A(x): return x; case B(x): return x * 10; }
+    }
+  `);
+  eq(inst.call("f", [1]), 3, "the A payload");
+  eq(inst.call("f", [0]), 40, "the B payload of the same name");
+});
+
+Deno.test("[§wac-dup-param-4tnq8vx] a duplicate parameter name is an error", () => {
+  // This compiled, and the second parameter silently won: `dup(1, 2)` returned 2 with
+  // the first parameter unreachable. A duplicate field was already an error and a local
+  // shadowing a parameter is well defined; only this was neither.
+  const fn = err(`export i32 dup(i32 a, i32 a) { return a; }`);
+  if (!fn.includes("duplicate parameter")) {
+    throw new Error(`expected the duplicate-parameter diagnostic for a function, got: ${fn}`);
+  }
+  const meth = err(`
+    struct S { i32 v;
+      i32 m(const this, i32 a, i32 a) { return a; }
+    }
+    export i32 f() { return S(1).m(1, 2); }`);
+  if (!meth.includes("duplicate parameter")) {
+    throw new Error(`expected the duplicate-parameter diagnostic for a method, got: ${meth}`);
+  }
+});
+
 Deno.test("[§enum-no-default] an enum has no default value", async () => {
   // The base struct's only field is the tag, which does have a default, so the
   // ordinary defaultability rule said an enum was defaultable. It is not: a bare base

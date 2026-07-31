@@ -332,6 +332,14 @@ distinct array types, which surfaced only as a wasm validation failure.
 Payload fields hold references, so this needs no indirection syntax. Construction is
 bottom-up, so a non-null reference is always available by the time it is needed.
 
+### Payload field names
+
+Within one variant, payload field names must differ, exactly as a struct's fields must.
+`[§enum-dup-payload-field]` `enum E { A(i32 x, i32 x) }` is a compile error.
+
+Two *different* variants may share a field name, because they are different structs:
+`[§enum-dup-payload-field]` `enum E { A(i32 x), B(i32 x) }` is fine.
+
 ### An enum has no default value
 
 There is no such thing as a default variant, so an enum cannot be produced without
@@ -362,6 +370,19 @@ construction. Fixing it then briefly reported `struct S { E e; }` as "creates a
 non-null recursive reference", because the recursive-field check and the
 defaultability check shared one predicate; that was sound only while recursion was the
 only reason a struct field could lack a default.
+
+### Variants in a ternary
+
+A ternary whose branches are two variants has the enum as its type, by the ordinary
+closest-common-ancestor rule (see control.md) — the base struct is the ancestor of every
+variant:
+
+```wac
+E e = cond ? E.A(9) : E.B;
+```
+
+`[§enum-ternary-variants]` This works, including when both branches are the same variant
+and when one branch is already enum-typed.
 
 ### Enums in other positions
 

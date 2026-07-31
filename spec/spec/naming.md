@@ -133,6 +133,11 @@ export i32 shadowParam(i32 x) {
 `[§wac-shadow-param-7apc0wt]` `shadowParam(7)` returns `7` — the shadow is a separate
 binding, not a write to the parameter.
 
+Two parameters of one function may not share a name.
+`[§wac-dup-param-4tnq8vx]` `i32 f(i32 a, i32 a)` is a compile error, for functions and
+for methods alike. It used to compile, with the second parameter winning and the first
+unreachable — silently, and unlike a duplicate struct field, which was already an error.
+
 ### For-loop variable shadowing
 
 ```wac

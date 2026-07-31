@@ -454,11 +454,24 @@ function checkStructShape(s: StructDecl, ctx: Ctx): void {
 }
 
 function checkFuncSig(
-  params: { type: WacType; line: number; col: number }[],
+  params: { name?: string; type: WacType; line: number; col: number }[],
   returnType: WacType,
   line: number, col: number,
   ctx: Ctx,
 ): void {
+  // Two parameters of the same name were accepted, and the second silently won: for
+  // `i32 f(i32 a, i32 a)`, `f(1, 2)` returned 2 and the first parameter was
+  // unreachable. Nothing warned. A duplicate *field* was already an error, and a
+  // duplicate local shadowing a parameter is well defined; only this was neither.
+  const seen = new Set<string>();
+  for (const p of params) {
+    if (p.name === undefined) continue;
+    if (seen.has(p.name)) {
+      errAt(ctx, `duplicate parameter '${p.name}'`, p.line, p.col, p.name.length,
+        undefined, `each parameter needs its own name`);
+    }
+    seen.add(p.name);
+  }
   for (const p of params) {
     if (isPackedElem(p.type)) {
       errAt(ctx, `packed type '${typeName(p.type)}' cannot be a parameter type`, p.line, p.col);
