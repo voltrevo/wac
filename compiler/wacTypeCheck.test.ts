@@ -929,11 +929,21 @@ Deno.test("wacTypeCheck: method accessed as value is error", () => {
 
 // ── Static method field reference from inferFieldAccess ──────────────────────
 
-Deno.test("wacTypeCheck: struct method field ref as value is error", () => {
+// A static method reference is a funcref of the method's declared signature,
+// so this is a plain type mismatch rather than "not usable as a value".
+Deno.test("wacTypeCheck: static method ref is a funcref, not an i32", () => {
   fail(`struct S {
     S make() { return S(); }
   }
-  export void bad() { i32 x = S.make; }`, "value");
+  export void bad() { i32 x = S.make; }`, "expected i32");
+});
+
+Deno.test("wacTypeCheck: static method ref matches its own signature", () => {
+  ok(`struct S {
+    i32 v;
+    S make(i32 n) { return S(n); }
+  }
+  export i32 good() { fn[S(i32)] f = S.make; return f(3).v; }`);
 });
 
 // ── lv-field: nullable base ───────────────────────────────────────────────────
