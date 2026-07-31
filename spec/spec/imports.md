@@ -94,6 +94,37 @@ export f64 run() {
 `[§wac-import-type-ev21tgx]` Importing a struct makes its constructors, methods, and
 fields accessible.
 
+#### A written type name must be in scope
+
+**Every type name a file writes has to be in that file's scope.** An enum, a variant, a struct —
+naming one you did not import is `undefined type 'X'`, reported where you wrote it:
+
+```wac
+import { mk } from "./k.wac";      // K itself is not imported
+export i32 f() {
+  K k = mk();                      // error: undefined type 'K'
+  A a = mk() as! A;                // error: undefined type 'A'
+  return mk() is A ? 1 : 0;        // error: undefined type 'A'
+}
+```
+
+`[§wac-type-name-scope-8vqk3mn]` The fix is the import — and a variant imports like any other
+name, `import { K, A } from "./k.wac"`.
+
+This is worth stating because it did not hold, and what it cost was a **wrong answer**. A name
+that resolved nowhere had no type index, and every consumer then fell back to a global map keyed
+by name: two files may each declare a `Circle` variant (`§enum-name-identity`), so `x is Circle`
+in a third file picked one of them and answered `false` about a value that was the other. No
+diagnostic. `[§wac-type-name-scope-8vqk3mn]` It is refused now.
+
+Two things that look like a type name are not, and are unaffected: `f(x)` where `f` is a funcref
+local or a function, and `x is Other` where `Other` is a variable, which is an identity test.
+`[§wac-type-name-scope-8vqk3mn]`
+
+What needs **no** import is `match`. An arm resolves its variants through the enum the subject
+*is*, so matching a value you got from an imported function needs neither the enum's name nor its
+variants' — see `§enum-cross-file`.
+
 ### Circular imports
 
 ```wac

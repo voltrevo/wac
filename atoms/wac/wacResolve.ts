@@ -686,6 +686,33 @@ function isWacType(v: unknown): boolean {
 // Every `struct` type with arguments, anywhere in any program, is a request. Walking types is
 // enough — a generic can only be *named* in type position, by the bracket restriction.
 
+/**
+ * Every position where the author certainly wrote a *type*, in one program.
+ *
+ * Two positions look like types and are not, so the pass that is strict about type names skips
+ * both. `f(x)` parses as a construction whose "type" is the name `f`, which may be a struct, a
+ * function or a funcref *local* — and the resolver already reports an unknown callee as "undefined
+ * function or struct". `x is Other` parses its right-hand side as a type, and it is an identity
+ * test when `Other` is a variable — the type checker decides which, and reports an undefined type
+ * there itself.
+ */
+function eachTypeInProgram(prog: Program, visit: (t: WacType) => void): void {
+  writtenTypesOnly = true;
+  try {
+    eachTypeInPrograms(new Map([["", prog]]), (t) => visit(t));
+  } finally {
+    writtenTypesOnly = false;
+  }
+}
+
+/**
+ * Set only for the duration of `eachTypeInProgram`.
+ *
+ * A parameter threaded through eight recursive walks would be eight signatures changed for one
+ * caller; a flag with a `finally` is smaller and the walks are synchronous.
+ */
+let writtenTypesOnly = false;
+
 function eachTypeInPrograms(
   programs: Map<string, Program>, visit: (t: WacType, filePath: string) => void,
   skipTemplates = false,
@@ -776,11 +803,12 @@ function visitExprTypes(e: Expr, t: (x: WacType) => void): void {
     case "cast": t(e.type); visitExprTypes(e.expr, t); return;
     case "is":
       visitExprTypes(e.expr, t);
+      if (writtenTypesOnly) return;
       if (e.rhs !== "null" && isWacType(e.rhs)) t(e.rhs as WacType);
       else if (e.rhs !== "null") visitExprTypes(e.rhs as Expr, t);
       return;
     case "construct":
-      t(e.ctype);
+      if (!writtenTypesOnly) t(e.ctype);
       for (const a of e.args) visitExprTypes(a, t);
       for (const n of e.named ?? []) visitExprTypes(n.val, t);
       return;
@@ -2300,6 +2328,41 @@ export function wacResolve(
       err(`unknown parent struct '${parentName}'`, s.filePath,
         s.structDecl.line, s.structDecl.col);
     }
+  }
+
+  // ── Final pass: a written type name must be in scope in the file that wrote it ──
+  //
+  // Identity is the type index, and everything downstream keys on it — but a type whose name did
+  // not resolve had no index, and every consumer then fell back to a *global* name map. So a file
+  // could name a type it never imported, and when two files declared the same name one of them won
+  // arbitrarily: `x is Circle` answered false about a value that was a `Circle` [issue 0048]. The
+  // scope is the authority on what a name means, and this is where that is enforced.
+  //
+  // Reporting only, not annotating. A type in a file whose imports were injected by
+  // monomorphisation could not resolve when `annotateProgram` ran — the injection happens after the
+  // file is visited — so it has no index and resolves by name later. That is safe where the name is
+  // one the *compiler* invented, because those are unique by construction: an alias carries its
+  // declaring file and a mangled instantiation its arguments. Annotating here as well made no test
+  // behave differently, so it is not done.
+  for (const [filePath, prog] of programs) {
+    const scope = fileScopes.get(filePath);
+    if (scope === undefined) continue;
+    eachTypeInProgram(prog, (t) => {
+      if (t.kind !== "struct") return;
+      const found = scope.get(t.name);
+      if (found?.kind === "struct" || found?.kind === "enum" || found?.kind === "variant") return;
+      // A *call* arrives here too: the parser reads every `name(args)` as a construction, so the
+      // callee's name is a struct-kind type until something knows better. If the name is in scope
+      // as anything at all, this is not the pass to complain.
+      if (found !== undefined) return;
+      // A generic template's name is reported by monomorphisation, with a message that says what
+      // to do about it; a second one here would be noise.
+      if (genericDisplay.has(t.name)) return;
+      // A generic enum's variant has no bare name by design, and the type checker says so with a
+      // hint naming the enum. Resolver errors carry no hint, so the better message is left to win.
+      if (enumTemplateDecls.some((e) => e.decl.variants.some((v) => v.name === t.name))) return;
+      err(`undefined type '${t.name}'`, filePath, t.line, t.col);
+    });
   }
 
   registerBoxTypes(programs, structs, entryPath);

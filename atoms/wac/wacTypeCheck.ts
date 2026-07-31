@@ -1289,9 +1289,14 @@ function undefinedTypeNameIn(t: WacType, ctx: Ctx): string | null {
   switch (t.kind) {
     case "prim": return null;
     case "struct": {
+      // The file's scope and nothing else. It used to accept a hit in the global name map as well,
+      // which is how `x is Circle` resolved to whichever file's `Circle` was registered first and
+      // answered false about a value that was one [issue 0048]. An `is` whose right-hand side turns
+      // out to name a *variable* is handled by the caller, which is why this may return a name that
+      // is not a mistake.
       const e = ctx.fileScope.get(t.name);
       const known = e?.kind === "struct" || e?.kind === "enum" || e?.kind === "variant";
-      return known || entryOfType(t, ctx) ? null : t.name;
+      return known ? null : t.name;
     }
     case "array":    return undefinedTypeNameIn(t.elem, ctx);
     case "nullable": return undefinedTypeNameIn(t.inner, ctx);

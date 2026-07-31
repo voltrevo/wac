@@ -74,8 +74,9 @@ Shape c = Shape.Rect(3.0, 4.0);
 A payload-less variant is a value, not a call — `Shape.Point`, not `Shape.Point()`.
 
 A variant name is a file-scope name, exactly like a struct name — which is what lets
-it be used as a type. So two enums in one file cannot share a variant name, and a
-variant cannot share a name with a struct or function:
+it be used as a type, and which means another file has to *import* it to name it
+(`§wac-type-name-scope-8vqk3mn`). So two enums in one file cannot share a variant name,
+and a variant cannot share a name with a struct or function:
 
 ```wac
 enum Shape { Circle(f64 r) }
