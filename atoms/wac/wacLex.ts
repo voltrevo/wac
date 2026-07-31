@@ -202,34 +202,30 @@ export function wacLex(source: string): LexResult {
     }
     // Decimal digits
     while (/[0-9_]/.test(peek())) text += advance();
-    // Float: dot followed by digit
+    /** An exponent, which makes the literal a float wherever it appears. */
+    const takeExponent = (): boolean => {
+      if (peek() !== "e" && peek() !== "E") return false;
+      const signed = peek(1) === "+" || peek(1) === "-";
+      if (!/[0-9]/.test(peek(signed ? 2 : 1))) return false;   // `1electron` is not a number
+      text += advance();
+      if (signed) text += advance();
+      while (/[0-9_]/.test(peek())) text += advance();
+      return true;
+    };
+    // Float: a decimal point, or an exponent, or both.
+    //
+    // `1e9` used to lex as the integer `1` followed by the identifier `e9`, because the grammar
+    // required the point. That was a real rule rather than an oversight, but a poor one: `1e9` for a
+    // billion is common, every language in this family accepts it, and an exponent marks a float as
+    // unambiguously as a point does [issue 0018].
     if (peek() === "." && /[0-9]/.test(peek(1))) {
       text += advance(); // dot
       while (/[0-9_]/.test(peek())) text += advance();
-      // Optional exponent
-      if (peek() === "e" || peek() === "E") {
-        text += advance();
-        if (peek() === "+" || peek() === "-") text += advance();
-        while (/[0-9_]/.test(peek())) text += advance();
-      }
+      takeExponent();
+      emit("float", text, startLine, startCol);
+    } else if (takeExponent()) {
       emit("float", text, startLine, startCol);
     } else {
-      // `1e40` is not a float literal: the grammar requires the decimal point
-      // (FLOAT_LITERAL in grammar.md). Without saying so, the digits lex as an int and
-      // the exponent as an *identifier* — `1e40` became `1` and `e40` — and the first
-      // sign of trouble was "expected ';', found 'e40'" from the parser, which names
-      // neither the cause nor the fix. No valid wac places an identifier immediately
-      // after an integer, so an adjacent one is always this mistake.
-      if ((peek() === "e" || peek() === "E") &&
-          (/[0-9]/.test(peek(1)) ||
-           ((peek(1) === "+" || peek(1) === "-") && /[0-9]/.test(peek(2))))) {
-        errors.push({
-          message: `a float literal needs a decimal point — write '${text}.0${
-            source.slice(pos, pos + 1)}...' rather than '${text}${source.slice(pos, pos + 1)}...'`,
-          line: startLine,
-          col: startCol,
-        });
-      }
       emit("int", text, startLine, startCol);
     }
   }

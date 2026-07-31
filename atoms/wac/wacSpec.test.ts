@@ -5191,27 +5191,52 @@ Deno.test("[§wac-float-literal-ctx-8dqm2vw] an f32 literal rounds, and overflow
   }
 });
 
-Deno.test("[§wac-float-no-point-5rtk9bq] an exponent without a decimal point is reported", () => {
-  // grammar.md's FLOAT_LITERAL requires the point, so `1e40` is genuinely not a float
-  // literal. The defect was that it lexed as an int followed by an *identifier* — `1`
-  // and `e40` — and surfaced as "expected ';', found 'e40'" from the parser, naming
-  // neither the cause nor the fix. No valid wac puts an identifier immediately after an
-  // integer, so an adjacent one is always this mistake.
-  for (const src of ["export f64 f() { return 1e40; }",
-                     "export f64 f() { return 1E10; }",
-                     "export f64 f() { return 2e-3; }"]) {
-    const m = err(src);
-    if (!m.includes("needs a decimal point")) {
-      throw new Error(`expected the missing-point diagnostic for ${src}, got: ${m}`);
-    }
-  }
-  // A space between them is someone writing two things, not this mistake.
-  const spaced = wacCompile(new Map([["main.wac",
-    `export i32 f() { i32 e40 = 2; return 1 * e40; }`]]), "main.wac");
-  if (!spaced.ok) {
-    throw new Error(`a separate identifier should be unaffected, got: ${
-      spaced.diagnostics.map(d => d.message).join("; ")}`);
-  }
+Deno.test("[§wac-float-exponent-7mkq3wv] an exponent alone makes a float literal", async () => {
+  // Issue 0018, decided rather than left open: `1e9` is a float. The grammar required the point on
+  // purpose, but the rule bought nothing — `1e9` for a billion is common and every language in this
+  // family accepts it.
+  const inst = await run(`
+    export f64 plain()    { return 1e9; }
+    export f64 upper()    { return 1E10; }
+    export f64 negative() { return 2e-3; }
+    export f64 withPoint() { return 1.5e10; }
+    export f64 signed()   { return 1.5e+10; }
+    export f64 grouped()  { return 1_000e3; }
+  `);
+  near(inst.call("plain", []) as number, 1e9, "1e9", 1);
+  near(inst.call("upper", []) as number, 1e10, "1E10", 1);
+  near(inst.call("negative", []) as number, 2e-3, "2e-3", 1e-9);
+  near(inst.call("withPoint", []) as number, 1.5e10, "1.5e10 still works", 1);
+  near(inst.call("signed", []) as number, 1.5e10, "and 1.5e+10", 1);
+  near(inst.call("grouped", []) as number, 1_000e3, "underscores are still allowed", 1);
+  // That last one found issue 0044: every float literal with an underscore evaluated to the digits
+  // before it, because `parseFloat` stops there and returns what it has.
+});
+
+Deno.test("[§wac-float-underscore-4wnk8mq] underscores in a float literal are separators", async () => {
+  const inst = await run(`
+    export f64 intPart()  { return 1_000.5; }
+    export f64 zeroFrac() { return 1_000.0; }
+    export f64 fraction() { return 0.000_1; }
+    export f64 inExp()    { return 1e1_0; }
+    export i32 integer()  { return 1_000; }
+  `);
+  near(inst.call("intPart", []) as number, 1000.5, "in the integer part", 1e-9);
+  near(inst.call("zeroFrac", []) as number, 1000, "with a zero fraction", 1e-9);
+  near(inst.call("fraction", []) as number, 0.0001, "in the fraction", 1e-12);
+  near(inst.call("inExp", []) as number, 1e10, "in the exponent", 1);
+  eq(inst.call("integer", []), 1000, "and integers were always right, via wacIntLit");
+});
+
+Deno.test("[§wac-float-exponent-7mkq3wv] it has to be a real exponent", () => {
+  // `1e` and `1electron` are an integer followed by an identifier, not malformed floats — and
+  // `0x1e5` is hex, where `e` is a digit rather than an exponent marker.
+  const kinds = (src: string) =>
+    wacLex(src).tokens.slice(0, -1).map((t) => `${t.kind}:${t.text}`).join(" ");
+  eq(kinds("1e"), "int:1 ident:e", "no digits after e");
+  eq(kinds("1electron"), "int:1 ident:electron", "an identifier that happens to start with e");
+  eq(kinds("0x1e5"), "int:0x1e5", "hex is unaffected");
+  eq(kinds("1e9"), "float:1e9", "and the real thing is a float");
 });
 
 Deno.test("[§enum-ternary-variants] a ternary of two variants types to their enum", async () => {
@@ -6135,6 +6160,37 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
   ]));
   eq(inst.call("test", []), 6, "the same instantiation used from two files is one struct");
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
+});
+
+// §wac-overflow-detect-8jqm4wn — the idioms for detecting overflow
+Deno.test("[§wac-overflow-detect-8jqm4wn] widen-then-narrow traps on overflow", async () => {
+  // Issue 0033: wrapping is the only arithmetic and should stay so — the codecs and hashes built on
+  // wac depend on it. What was missing is that the detection idioms existed and were written down
+  // nowhere, so the gap was documentation rather than language.
+  const inst = await run(`
+    export i32 sumOk()   { i32 a = 2000000000; i32 b = 100; return (a as i64 + b as i64) as! i32; }
+    export i32 sumBad()  { i32 a = 2147483647; i32 b = 1;   return (a as i64 + b as i64) as! i32; }
+    export u32 mulBad()  { u32 a = 100000; u32 b = 100000;  return (a as u64 * b as u64) as! u32; }
+  `);
+  eq(inst.call("sumOk", []), 2000000100, "in range, so no trap");
+  traps(() => inst.call("sumBad", []), "i32 addition that would not fit");
+  traps(() => inst.call("mulBad", []), "u32 multiplication that would not fit");
+});
+
+Deno.test("[§wac-overflow-detect-8jqm4wn] 64-bit overflow is detected by comparison", async () => {
+  // There is no type wider than 64 bits, so the widen idiom does not apply and a comparison is the
+  // only option. Both directions are checked, because an idiom that reports overflow when there is
+  // none would be worse than none at all.
+  const inst = await run(`
+    export bool uWraps(u64 a, u64 b)     { return a + b < a; }
+    export bool iOverflows(i64 a, i64 b) { i64 s = a + b; return (a < 0) == (b < 0) && (s < 0) != (a < 0); }
+  `);
+  eq(inst.call("uWraps", [18446744073709551615n, 2n]), true, "u64 wrap detected");
+  eq(inst.call("uWraps", [5n, 2n]), false, "and not reported when it did not");
+  eq(inst.call("iOverflows", [9223372036854775807n, 1n]), true, "i64 positive overflow");
+  eq(inst.call("iOverflows", [-9223372036854775808n, -1n]), true, "and negative");
+  eq(inst.call("iOverflows", [5n, -3n]), false, "not reported for opposite signs");
+  eq(inst.call("iOverflows", [5n, 3n]), false, "nor for a sum that fits");
 });
 
 // §wac-generic-template-check-2wkq7nm — templates are checked with opaque type parameters

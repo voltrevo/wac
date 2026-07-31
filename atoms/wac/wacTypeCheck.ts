@@ -18,6 +18,7 @@ import {
   funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
+import { wacFloatLit } from "./wacFloatLit.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -1599,7 +1600,7 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
  * only way to reach the false branch is a magnitude past f32's maximum.
  */
 function floatLiteralFitsF32(text: string): boolean {
-  const v = parseFloat(text);
+  const v = wacFloatLit(text);
   if (!Number.isFinite(v)) return false;
   return Number.isFinite(Math.fround(v));
 }
