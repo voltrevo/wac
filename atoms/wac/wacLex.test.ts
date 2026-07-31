@@ -314,3 +314,87 @@ Deno.test("wacLex: null unwrap operator ! vs != disambiguation", () => {
   if (excl.length !== 1) throw new Error(`expected 1 '!', got ${excl.length}`);
   if (neq.length !== 1) throw new Error(`expected 1 '!=', got ${neq.length}`);
 });
+
+Deno.test("wacLex: character literal becomes an int token holding the codepoint", () => {
+  // The whole design: no new token kind, so everything downstream treats it as
+  // the integer literal it is.
+  const [[kind, text]] = tok("'a'");
+  if (kind !== "int") throw new Error(`expected an int token, got ${kind}`);
+  if (text !== "97") throw new Error(`expected text "97", got ${text}`);
+});
+
+Deno.test("wacLex: character literal escapes map to their codepoints", () => {
+  const cases: [string, string][] = [
+    [`'\\n'`, "10"], [`'\\t'`, "9"], [`'\\r'`, "13"],
+    [`'\\\\'`, "92"], [`'\\''`, "39"], [`'\\"'`, "34"], [`'\\0'`, "0"],
+  ];
+  for (const [src, want] of cases) {
+    const { tokens, errors } = wacLex(src);
+    if (errors.length > 0) throw new Error(`${src}: unexpected error ${errors[0].message}`);
+    if (tokens[0].text !== want) throw new Error(`${src}: got ${tokens[0].text}, want ${want}`);
+  }
+});
+
+Deno.test("wacLex: astral character literal consumes both surrogate halves", () => {
+  // A single advance() would leave the low surrogate behind and lex it as junk,
+  // so the token count matters as much as the value.
+  const { tokens, errors } = wacLex("'😀'");
+  if (errors.length > 0) throw new Error(`unexpected error: ${errors[0].message}`);
+  if (tokens[0].text !== "128512") throw new Error(`got ${tokens[0].text}, want 128512`);
+  if (tokens[1].kind !== "eof") throw new Error(`expected eof after the literal, got ${tokens[1].kind}`);
+});
+
+Deno.test("wacLex: empty character literal is an error", () => {
+  const { errors } = wacLex("''");
+  if (!errors.some((e) => e.message.includes("empty character literal"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+});
+
+Deno.test("wacLex: multi-character literal is an error and recovery continues", () => {
+  const { tokens, errors } = wacLex("'ab' + 1");
+  if (!errors.some((e) => e.message.includes("exactly one character"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+  // Recovery matters: the tokens after the bad literal must still be there.
+  if (!kinds("'ab' + 1").includes("+")) throw new Error("lexing did not recover past the bad literal");
+  if (tokens[0].kind !== "int") throw new Error("a token is still emitted for the bad literal");
+});
+
+Deno.test("wacLex: unterminated character literal at end of input is an error", () => {
+  const { errors } = wacLex("'");
+  if (!errors.some((e) => e.message.includes("unterminated character literal"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+});
+
+Deno.test("wacLex: unknown escape in a character literal is an error", () => {
+  const { errors } = wacLex(`'\\q'`);
+  if (!errors.some((e) => e.message.includes("unknown escape"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+});
+
+Deno.test("wacLex: an unclosed character literal stops at the line end", () => {
+  // Without the newline guard the skip loop would run on into the next line and
+  // swallow real code.
+  const { errors } = wacLex("'ab\nx + 1");
+  if (!errors.some((e) => e.message.includes("exactly one character"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+  if (!kinds("'ab\nx + 1").includes("+")) throw new Error("swallowed the following line");
+});
+
+Deno.test("wacLex: unterminated block comment is an error", () => {
+  const { errors } = wacLex("i32 x = 1; /* never closed");
+  if (!errors.some((e) => e.message.includes("unterminated block comment"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+});
+
+Deno.test("wacLex: unterminated string literal is an error", () => {
+  const { errors } = wacLex(`string s = "no closing quote`);
+  if (!errors.some((e) => e.message.includes("unterminated string literal"))) {
+    throw new Error(`wrong errors: ${errors.map((e) => e.message).join("; ")}`);
+  }
+});
