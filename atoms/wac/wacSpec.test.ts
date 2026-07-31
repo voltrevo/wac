@@ -6007,6 +6007,31 @@ Deno.test("[§enum-methods-6vkq2wn] a method may use the expression form and a m
   eq(inst.call("mutThis", []), 8, "and a non-const receiver");
 });
 
+Deno.test("[§enum-methods-6vkq2wn] an enum method's body is reachable to every walk", async () => {
+  // The three tests above all passed while the resolver's annotation pass ignored enum
+  // method bodies entirely, because none of them named a type that appears nowhere else.
+  // This one does: `Q`, `Q[]` and `helper()` exist only inside the method, and without the
+  // annotation the construct reported "undefined function or struct 'Q'".
+  //
+  // Seventh appearance of issue 0005's shape, and the reason to write the test this way
+  // round: a feature's own tests will use whatever is already in scope, so they do not
+  // exercise the walks. A type reachable *only* through the new construct does.
+  const inst = await run(`
+    struct Q { i32 v; }
+    i32 helper() { return 3; }
+    enum E {
+      A(i32 v), B,
+      i32 sum(const this) {
+        Q[] qs = Q[2](fill: Q(helper()));
+        i32 base = match (this) { case A(v): v, case B: 0 };
+        return base + qs[0].v + qs[1].v;
+      }
+    }
+    export i32 f() { return E.A(4).sum(); }
+  `);
+  eq(inst.call("f", []), 10, "4 from the payload, plus two Q(3)s built inside the method");
+});
+
 Deno.test("[§enum-methods-6vkq2wn] the two shapes that are refused, and why", () => {
   // `override` would be per-variant virtual dispatch — the variants are compiler-generated
   // subtypes of the base — which is a different feature with its own questions. Refused
