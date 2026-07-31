@@ -1182,6 +1182,32 @@ function checkConstDecl(decl: ConstDecl, ctx: Ctx): void {
 }
 
 /**
+ * The first named component of a type that resolves to nothing, or null if all resolve.
+ *
+ * Walks arrays, nullables and funcref signatures, so `p is Nonexistent[]` is caught as
+ * readily as the bare name.
+ */
+function undefinedTypeNameIn(t: WacType, ctx: Ctx): string | null {
+  switch (t.kind) {
+    case "prim": return null;
+    case "struct": {
+      const e = ctx.fileScope.get(t.name);
+      const known = e?.kind === "struct" || e?.kind === "enum" || e?.kind === "variant";
+      return known || entryOfType(t, ctx) ? null : t.name;
+    }
+    case "array":    return undefinedTypeNameIn(t.elem, ctx);
+    case "nullable": return undefinedTypeNameIn(t.inner, ctx);
+    case "funcref": {
+      for (const p of t.params) {
+        const bad = undefinedTypeNameIn(p, ctx);
+        if (bad !== null) return bad;
+      }
+      return undefinedTypeNameIn(t.ret, ctx);
+    }
+  }
+}
+
+/**
  * The variant an expression constructs, or null if it constructs none.
  *
  * `E.A(1)` is a call whose callee is a field access, and `E.B` is the field access alone.
@@ -1488,6 +1514,33 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       if (typeof expr.rhs === "object" && "kind" in expr.rhs && isWacType(expr.rhs)) {
         // Type test: expr is WacType
         const targetType = expr.rhs as WacType;
+
+        // The parser decides type-versus-value after `is` by naming convention — an
+        // initial capital means a type [see wacParse's looksLikeTypeHere]. It has no
+        // symbol table, so it cannot know whether the name exists, and an unresolvable
+        // one used to sail through: `p is Nonexistent` compiled with no diagnostic and
+        // returned *true*, because the unresolved target left nothing for `ref.test` to
+        // narrow against. A typo, a rename, or a dropped import silently turned a type
+        // test into a tautology.
+        const unknown = undefinedTypeNameIn(targetType, ctx);
+        if (unknown !== null) {
+          // If a variable of that name is in scope, the convention simply guessed wrong
+          // and this is an identity test. Checking it that way is better than reporting
+          // a missing type the author never meant to name.
+          if (env.has(unknown)) {
+            const varType = env.get(unknown)!.type;
+            if (!isRefType(lt) || !isRefType(varType)) {
+              errAt(ctx, `'is' identity requires reference types, got ${typeName(lt)} and ${typeName(varType)}`,
+                expr.line, expr.col);
+            }
+            return T_BOOL;
+          }
+          errAt(ctx, `undefined type '${unknown}'`, expr.line, expr.col,
+            unknown.length, undefined,
+            `no struct, enum or variant named '${unknown}' is in scope — check the spelling and the imports`);
+          return null;
+        }
+
         if (!isRefType(lt)) {
           errAt(ctx, `'is' type test requires a reference type, got ${typeName(lt)}`, expr.line, expr.col);
         }
