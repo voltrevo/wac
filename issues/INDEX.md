@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0020](open/0020-grammar-md-is-behind-the-implementation.md) | `grammar.md` is behind the implementation in four places | bug | not implemented |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 | [0002](open/0002-enum-module-constant.md) | an enum value cannot be a module constant | missing feature | compile error |
 
