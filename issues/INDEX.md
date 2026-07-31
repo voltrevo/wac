@@ -6,7 +6,6 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0023](open/0023-emitcall-direct-call-branch-is-unreachable.md) | `emitCall`'s direct-call branch is unreachable | bug | not implemented |
-| [0022](open/0022-is-against-an-undefined-type-is-always-true.md) | `x is UndefinedType` compiles and is always true | bug | wrong answer |
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
