@@ -27,17 +27,21 @@ export i32 demo() {
 ### Program structure
 
 ```ebnf
-program        = { import | struct_decl | enum_decl | const_decl | func_decl } ;
+program        = { import | struct_decl | enum_decl | func_decl | const_decl } ;
 
 import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
 func_decl      = [ "export" ] , type , IDENT , "(" , [ param_list ] , ")" , block ;
-param_list     = param , { "," , param } , [ "," ] ;
-param          = [ "const" ] , type , IDENT ;
 
+(* A module-level constant. `init` must be a compile-time constant expression
+   [see variables.md]; the grammar cannot express that restriction. *)
 const_decl     = [ "export" ] , "const" , type , IDENT , "=" , expr , ";" ;
+param_list     = param , { "," , param } , [ "," ] ;
+(* `const` forbids writing through the parameter, as `const this` does for a
+   receiver [see functions.md]. *)
+param          = [ "const" ] , type , IDENT ;
 ```
 
 ### Struct declarations
@@ -190,9 +194,10 @@ type           = primitive_type
 primitive_type = "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "void" ;
 
 array_type     = element_type , "[" , "]" ;
-(* An element type is any type at all — nested arrays and nullable elements both work —
-   plus the packed types, which exist only as array elements. *)
-element_type   = type | "i8" | "i16" | "u8" | "u16" ;
+element_type   = primitive_type | packed_type | "string" | IDENT | funcref_type
+               | array_type                    (* nested: i32[][3]() *)
+               | element_type , "?" ;          (* nullable: Point?[5]() *)
+packed_type    = "i8" | "i16" | "u8" | "u16" ;   (* array elements only *)
 
 funcref_type   = "fn" , "[" , type , "(" , [ type_list ] , ")" , "]" ;
 type_list      = type , { "," , type } ;
@@ -220,22 +225,19 @@ digit          = "0"..."9" ;
 ### Keywords
 
 ```
-as  as!  as~  as@  break  case  const  continue  default  do  else  enum  export
-false  fn  for  from  if  import  is  match  not  null  override  return  struct
-switch  this  trap  true  void  while
+as  as!  as~  as@  break  case  const  continue  default  do  else  enum
+export  false  fn  for  from  if  import  is  match  not  null  override
+return  struct  switch  this  trap  true  void  while
 ```
 
-The type names — `bool`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`,
-`f64`, `string`, `anyref`, `i31ref` — are **not** keywords. They lex as identifiers, and
-that is deliberate rather than an oversight: it is what makes `f64.toBits(x)`,
-`f32.fromBits(b)` and `string.fromBytes(b)` parse, since each is an ordinary
-`IDENT "." IDENT "(" args ")"` static call. A reader who took them for keywords would
-conclude those builtins cannot exist, and anyone adding another would go looking for
-parser support that is not needed.
+Type names are **not** keywords: `i32`, `u8`, `f64`, `bool`, `string` and the rest
+lex as identifiers, matched against a set of primitive names where a type is
+expected. That is deliberate rather than an oversight — it is what makes
+`f64.toBits(x)`, `f32.fromBits(b)` and `string.fromBytes(b)` parse, since each is
+an ordinary `IDENT "." IDENT "(" args ")"` static call and needs no parser
+support of its own. A builtin static on a type therefore costs nothing in the
+grammar.
 
-`void` is the exception and is a real keyword, because it appears only as a type and
-never as a value.
-
-`[§wac-grammar-keywords-3mfq7bx]` A test asserts this block matches the lexer's
-`KEYWORDS` set exactly, in both directions. It exists because this list had drifted: it
-named eight type names that are not keywords and omitted `from` and `this`.
+`[§wac-grammar-keywords-h4mq7wn]` The keyword list above matches the lexer's
+`KEYWORDS` set exactly. A test asserts that, because this block has drifted from
+the implementation three times.
