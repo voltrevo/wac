@@ -73,8 +73,8 @@ function fullParamTypes(f: FuncEntry): WacType[] {
 
 /** Wasm packed type byte for i8/i16 array elements. */
 function packedType(name: string): number {
-  if (name === "i8")  return 0x78;
-  if (name === "i16") return 0x77;
+  if (name === "i8" || name === "u8")  return 0x78;
+  if (name === "i16" || name === "u16") return 0x77;
   return 0x7F; // fallback i32
 }
 
@@ -395,7 +395,8 @@ function encodeStructType(s: StructEntry, ctx: WasmTypeCtx, allFields: StructFie
 /** Encode an array type entry. */
 function encodeArrayType(elem: WacType, ctx: WasmTypeCtx): number[] {
   // For packed types (i8/i16)
-  if (elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16")) {
+  if (elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16" ||
+                               elem.name === "u8" || elem.name === "u16")) {
     return [0x5E, packedType(elem.name), 0x01]; // array, packed type, mutable
   }
   // For non-nullable ref element types (struct/array/funcref), use nullable
@@ -412,7 +413,7 @@ function encodeArrayType(elem: WacType, ctx: WasmTypeCtx): number[] {
 function keyToElemType(key: string, ctx: WasmTypeCtx): WacType | null {
   // Keys:  "i32", "i64", "f32", "f64", "bool", "string", "S:Name", "A:key", "?:key", "F:sig"
   const p = { line: 0, col: 0 };
-  const prims = new Set(["i32","i64","f32","f64","bool","i8","i16","anyref","i31ref","string"]);
+  const prims = new Set(["i32","i64","u32","u64","f32","f64","bool","i8","i16","u8","u16","anyref","i31ref","string"]);
   if (prims.has(key)) return { kind: "prim", name: key, ...p };
   if (key.startsWith("S:#")) {
     const idx = parseInt(key.slice(3));
@@ -687,8 +688,8 @@ function buildHelperBodies(
 function bindElemValType(elem: WacType): number[] {
   if (elem.kind !== "prim") return [0x7F]; // fallback i32
   const map: Record<string, number> = {
-    i8: 0x7F, i16: 0x7F, i32: 0x7F,
-    i64: 0x7E, f32: 0x7D, f64: 0x7C,
+    i8: 0x7F, i16: 0x7F, i32: 0x7F, u8: 0x7F, u16: 0x7F, u32: 0x7F,
+    i64: 0x7E, u64: 0x7E, f32: 0x7D, f64: 0x7C,
     anyref: 0x6E, i31ref: 0x6C,
   };
   return [map[elem.name] ?? 0x7F];
@@ -697,7 +698,9 @@ function bindElemValType(elem: WacType): number[] {
 /** Return the array.get opcode byte for a given element type. */
 function arrGetOp(elem: WacType): number {
   const name = elem.kind === "prim" ? elem.name : "";
-  return (name === "i8" || name === "i16") ? 0x0D : 0x0B; // array.get_u or array.get
+  if (name === "i8" || name === "i16")  return 0x0C; // array.get_s — signed elements
+  if (name === "u8" || name === "u16") return 0x0D; // array.get_u — unsigned
+  return 0x0B;                                       // array.get
 }
 
 /** Build the bind helper specs needed for a compiled wac module. */
@@ -752,11 +755,19 @@ function makeMemEnsure(): number[] {
 
 /** Byte width, load opcode and store opcode for a bulk-transferable element. */
 function bulkOps(name: string): { width: number; load: number; store: number } | null {
+  // The load is only ever a staging-buffer read on the way into a GC array,
+  // where the value is about to be truncated to the element width again, so
+  // the *_u forms serve signed and unsigned elements alike. What differs
+  // between them is the array.get on the way out, which arrGetOp picks.
   const map: Record<string, { width: number; load: number; store: number }> = {
-    i8:  { width: 1, load: 0x2D, store: 0x3A },   // i32.load8_u  / i32.store8
-    i16: { width: 2, load: 0x2F, store: 0x3B },   // i32.load16_u / i32.store16
+    u8:  { width: 1, load: 0x2D, store: 0x3A },   // i32.load8_u  / i32.store8
+    i8:  { width: 1, load: 0x2D, store: 0x3A },
+    u16: { width: 2, load: 0x2F, store: 0x3B },   // i32.load16_u / i32.store16
+    i16: { width: 2, load: 0x2F, store: 0x3B },
     i32: { width: 4, load: 0x28, store: 0x36 },
+    u32: { width: 4, load: 0x28, store: 0x36 },
     i64: { width: 8, load: 0x29, store: 0x37 },
+    u64: { width: 8, load: 0x29, store: 0x37 },
     f32: { width: 4, load: 0x2A, store: 0x38 },
     f64: { width: 8, load: 0x2B, store: 0x39 },
   };

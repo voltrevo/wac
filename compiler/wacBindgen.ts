@@ -7,8 +7,8 @@
 //   i32, f32, f64, bool → number
 //   i64                 → bigint
 //   string              → string   (copied in/out via wasm helper exports)
-//   i8[]                → Uint8Array
-//   i16[]               → Int16Array
+//   u8[]                → Uint8Array      i8[]  → Int8Array
+//   u16[]               → Uint16Array     i16[] → Int16Array
 //   i32[]               → Int32Array
 //   i64[]               → BigInt64Array
 //   f32[]               → Float32Array
@@ -31,7 +31,11 @@ const PRIM_MAP: Record<string, string> = {
 };
 
 const ARRAY_MAP: Record<string, string> = {
-  "i8[]":  "Uint8Array",
+  // i8/i16 sign-extend on read and u8/u16 zero-extend, so each maps to the
+  // typed array with matching semantics. Byte data is u8[] -> Uint8Array.
+  "u8[]":  "Uint8Array",
+  "i8[]":  "Int8Array",
+  "u16[]": "Uint16Array",
   "i16[]": "Int16Array",
   "i32[]": "Int32Array",
   "i64[]": "BigInt64Array",
@@ -40,11 +44,14 @@ const ARRAY_MAP: Record<string, string> = {
 };
 
 const ARRAY_ELEM_WIDTH: Record<string, number> = {
-  "i8[]": 1, "i16[]": 2, "i32[]": 4, "i64[]": 8, "f32[]": 4, "f64[]": 8,
+  "u8[]": 1, "i8[]": 1, "u16[]": 2, "i16[]": 2,
+  "i32[]": 4, "i64[]": 8, "f32[]": 4, "f64[]": 8,
 };
 
 const ARRAY_ELEM_PREFIX: Record<string, string> = {
+  "u8[]":  "__bind_arr_u8",
   "i8[]":  "__bind_arr_i8",
+  "u16[]": "__bind_arr_u16",
   "i16[]": "__bind_arr_i16",
   "i32[]": "__bind_arr_i32",
   "i64[]": "__bind_arr_i64",

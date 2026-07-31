@@ -65,6 +65,16 @@ export f32 exactNarrow(f64 x) {
 }
 ```
 
+A fractional part is exactly the kind of inexactness `as!` exists to catch, so
+a float with one traps rather than truncating:
+
+```wac
+export i32 exact(f64 x) { return x as! i32; }
+```
+
+`[§wac-narrow-frac-t6kq2wp]` `exact(3.0)` returns `3`; `exact(3.5)` traps, as
+does `exact(-2.3)`. Use `as~` to round or `as@` to truncate toward zero.
+
 `[§wac-narrow-f32-ok-h8fk3wq]` `exactNarrow(0.5)` returns `0.5` (0.5 is exact
 in f32). `[§wac-narrow-f32-trap-r5tn9wq]` `exactNarrow(0.1)` traps — 0.1 has
 no exact binary representation, so its nearest `f64` and nearest `f32` values

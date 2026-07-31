@@ -24,9 +24,37 @@ Deno.test("wacIntLit: decimal takes the narrowest type that holds it", () => {
   ok("9223372036854775807", 9223372036854775807n, 64); // i64 max
 });
 
-Deno.test("wacIntLit: decimal past i64 max is out of range", () => {
-  bad("9223372036854775808", "range");          // one past i64 max
+// Between i64 max and u64 max a decimal is still a real literal — a u64 can
+// hold it — so the atom returns it with fitsI64 false and leaves the decision
+// to the caller, which reports "out of range" when no u64 is expected.
+Deno.test("wacIntLit: decimal between i64 max and u64 max needs a u64", () => {
+  for (const [raw, mag] of [
+    ["9223372036854775808", 9223372036854775808n],   // one past i64 max
+    ["18446744073709551615", 18446744073709551615n], // u64 max
+  ] as const) {
+    const r = wacIntLit(raw);
+    if (!r.ok) throw new Error(`${raw}: expected ok, got ${r.reason}`);
+    if (r.fitsI64) throw new Error(`${raw}: should not fit i64`);
+    if (r.magnitude !== mag) throw new Error(`${raw}: magnitude ${r.magnitude}, expected ${mag}`);
+    if (r.width !== 64) throw new Error(`${raw}: width ${r.width}, expected 64`);
+    // `value` carries the bit pattern, so it reads back negative as an i64.
+    if (BigInt.asUintN(64, r.value) !== mag) throw new Error(`${raw}: bits do not round-trip`);
+  }
+});
+
+Deno.test("wacIntLit: decimal past u64 max is out of range", () => {
+  bad("18446744073709551616", "range");         // one past u64 max
   bad("99999999999999999999", "range");
+});
+
+Deno.test("wacIntLit: reports notation and magnitude", () => {
+  const d = wacIntLit("42");
+  if (!d.ok || d.hex || d.magnitude !== 42n) throw new Error("decimal 42 misreported");
+  const h = wacIntLit("0xEDB88320");
+  // Bit pattern: value is the signed reading, magnitude the raw bits.
+  if (!h.ok || !h.hex) throw new Error("hex not flagged");
+  if (h.value !== -306674912n) throw new Error(`hex value ${h.value}`);
+  if (h.magnitude !== 0xEDB88320n) throw new Error(`hex magnitude ${h.magnitude}`);
 });
 
 // ── hex: digit count picks the width, digits are two's complement ────────────

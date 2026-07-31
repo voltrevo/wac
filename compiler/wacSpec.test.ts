@@ -1125,17 +1125,24 @@ Deno.test("[§wac-arr-nested-l8rdntl] grid[1][2] is 6", async () => {
   eq(inst.call("testGrid", []), 6, "grid[1][2]");
 });
 
-// ── §wac-arr-i8-k3fn7wp — i8 packed array ────────────────────────────────────
+// ── §wac-arr-i8-k3fn7wp — packed byte arrays ─────────────────────────────────
 
 Deno.test("[§wac-arr-i8-k3fn7wp] bytes[0]=255 after setting 0xFF", async () => {
   const inst = await run(`
+    export i32 testU8() {
+      u8[] bytes = u8[4]();
+      bytes[0] = 0xFF;
+      return bytes[0];
+    }
     export i32 testI8() {
       i8[] bytes = i8[4]();
       bytes[0] = 0xFF;
       return bytes[0];
     }
   `);
-  eq(inst.call("testI8", []), 255, "i8 read 0xFF");
+  // Same byte in storage; the element type decides how the read extends it.
+  eq(inst.call("testU8", []), 255, "u8 zero-extends 0xFF");
+  eq(inst.call("testI8", []), -1, "i8 sign-extends the same byte");
 });
 
 // ── §wac-arr-i16-m8qj4xf — i16 packed array ──────────────────────────────────
@@ -1204,7 +1211,7 @@ Deno.test("[§wac-arr-i8-lit-badtype-3w7g6aa] non-i32 element in a packed litera
 Deno.test("[§wac-arr-i8-compound-t7btdiv] packedOr(0xF0, 0x0F) returns 255", async () => {
   const inst = await run(`
     export i32 packedOr(i32 a, i32 b) {
-      i8[] bytes = i8[1]();
+      u8[] bytes = u8[1]();
       bytes[0] = a;
       bytes[0] |= b;
       return bytes[0];
@@ -1231,7 +1238,7 @@ Deno.test("[§wac-arr-i8-cwrap-8qsspoh] packedWrap(250, 10) returns 4", async ()
 Deno.test("[§wac-arr-i16-compound-6i4h16a] i16 compound or gives 65535", async () => {
   const inst = await run(`
     export i32 packedOr16(i32 a, i32 b) {
-      i16[] shorts = i16[1]();
+      u16[] shorts = u16[1]();
       shorts[0] = a;
       shorts[0] |= b;
       return shorts[0];
@@ -2417,8 +2424,8 @@ Deno.test("[§wac-fnref-higher-p4jn7wq] testHigherOrder() returns 30", async () 
 
 const BUF_SRC = `
 struct Buffer {
-  i8[] data; i32 len; i32 cap;
-  Buffer create(i32 cap) { return Buffer(i8[cap](), 0, cap); }
+  u8[] data; i32 len; i32 cap;
+  Buffer create(i32 cap) { return Buffer(u8[cap](), 0, cap); }
   i32 get(const this, i32 idx) {
     if (idx < 0 || idx >= this.len) { trap; }
     return this.data[idx];
@@ -2431,7 +2438,7 @@ struct Buffer {
     if (this.len == this.cap) {
       i32 newCap = this.cap * 2;
       if (newCap == 0) { newCap = 8; }
-      i8[] next = i8[newCap]();
+      u8[] next = u8[newCap]();
       for (i32 i = 0; i < this.len; i++) { next[i] = this.data[i]; }
       this.data = next; this.cap = newCap;
     }
@@ -4176,4 +4183,84 @@ Deno.test(`[§wac-usign-clamp-r4mk9xf] as~ i32 -> u32 clamps a negative to 0`, a
   const i = await run(`export u32 clamp(i32 x) { return x as~ u32; }`);
   eq(i.call("clamp", [-5]), 0, "clamp(-5) == 0");
   eq(i.call("clamp", [7]), 7, "clamp(7) == 7");
+});
+
+// ── Contextual literal typing ────────────────────────────────────────────────
+
+// §wac-litctx-w7kn2mf — a literal takes the integer type expected of it
+Deno.test(`[§wac-litctx-w7kn2mf] integer literals adopt the expected type`, async () => {
+  const i = await run(`
+    struct Hdr { u32 magic; u32 len; }
+    u32 addU(u32 a, u32 b) { return a + b; }
+    export u32 twice(u32 x)  { return x * 2; }
+    export u32 mask(u32 x)   { return x & 0xFF; }
+    export u32 leftLit(u32 x) { return 2 * x; }
+    export i64 wideInit()    { return 5; }
+    export u64 uMax()        { return 18446744073709551615; }
+    export u32 args()        { return addU(1, 2); }
+    export u32 fields()      { Hdr h = Hdr(7, 9); return h.magic + h.len; }
+    export u32 elems()       { u32[] a = u32[](1, 4000000000); return a[1]; }
+  `);
+  eq(i.call("twice", [2147483648]), 0, "u32 * 2 wraps — literal is u32, not i32");
+  eq(i.call("mask", [0xDEAD]), 0xAD, "hex literal adopts u32");
+  eq(i.call("leftLit", [2147483648]), 0, "literal on the left of the operator too");
+  eq(i.call("wideInit", []), 5n, "i64 n = 5 — previously an error");
+  eq(i.call("uMax", []), 18446744073709551615n, "a decimal only u64 can hold");
+  eq(i.call("args", []), 3, "call arguments adopt the parameter type");
+  eq(i.call("fields", []), 16, "struct fields adopt the field type");
+  eq(i.call("elems", []), 4000000000, "array literal elements adopt the element type");
+});
+
+// §wac-litctx-nofit-k3mq8wl — adoption requires the value to fit
+Deno.test(`[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected`, () => {
+  const bad = (src: string) => {
+    const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+    return !r.ok;
+  };
+  eq(bad(`u32 f() { return -1; }`), true, "-1 has no u32 reading");
+  eq(bad(`i32 f() { return 5000000000; }`), true, "5000000000 exceeds i32");
+  eq(bad(`u32 f() { return 5000000000; }`), true, "5000000000 exceeds u32");
+  eq(bad(`u64 f() { return 18446744073709551616; }`), true, "past u64 max");
+  eq(bad(`i64 f() { return 9223372036854775808; }`), true, "needs u64, none expected");
+  eq(bad(`u32 f(i32 x) { return x; }`), true, "a variable still never coerces");
+});
+
+// §wac-litctx-minint-p9fk4wq — the most negative value is spellable in decimal
+Deno.test(`[§wac-litctx-minint-p9fk4wq] -2147483648 is an i32`, async () => {
+  const i = await run(`
+    export i32 minI32() { return -2147483648; }
+    export i64 minI64() { return -9223372036854775808; }
+  `);
+  eq(i.call("minI32", []), -2147483648, "i32 min");
+  eq(i.call("minI64", []), -9223372036854775808n, "i64 min");
+});
+
+// §wac-arr-signedness-h4kq7wn — packed elements: one storage, two readings
+Deno.test(`[§wac-arr-signedness-h4kq7wn] packed reads extend per the element type`, async () => {
+  const i = await run(`
+    export i32 u8Read()  { u8[] b = u8[1]();  b[0] = 0xFF;   return b[0]; }
+    export i32 i8Read()  { i8[] b = i8[1]();  b[0] = 0xFF;   return b[0]; }
+    export i32 i8Min()   { i8[] b = i8[1]();  b[0] = 0x80;   return b[0]; }
+    export i32 u16Read() { u16[] b = u16[1](); b[0] = 0xFFFF; return b[0]; }
+    export i32 i16Read() { i16[] b = i16[1](); b[0] = 0xFFFF; return b[0]; }
+    export i32 trunc()   { u8[] b = u8[1]();  b[0] = 300;    return b[0]; }
+  `);
+  // The stored byte is the same in each pair; only the read differs.
+  eq(i.call("u8Read", []), 255, "u8 zero-extends");
+  eq(i.call("i8Read", []), -1, "i8 sign-extends the same byte");
+  eq(i.call("i8Min", []), -128, "0x80 is i8's most negative");
+  eq(i.call("u16Read", []), 65535, "u16 zero-extends");
+  eq(i.call("i16Read", []), -1, "i16 sign-extends");
+  eq(i.call("trunc", []), 44, "writes still truncate to the element width");
+});
+
+// §wac-narrow-frac-t6kq2wp — as! float->int is exact or it traps
+Deno.test(`[§wac-narrow-frac-t6kq2wp] as! f64 -> i32 traps on a fractional part`, async () => {
+  const i = await run(`export i32 exact(f64 x) { return x as! i32; }`);
+  eq(i.call("exact", [3.0]), 3, "exact(3.0) == 3");
+  const traps = (x: number) => {
+    try { i.call("exact", [x]); return false; } catch { return true; }
+  };
+  eq(traps(3.5), true, "exact(3.5) traps");
+  eq(traps(-2.3), true, "exact(-2.3) traps");
 });
