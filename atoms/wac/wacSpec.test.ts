@@ -5906,6 +5906,49 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §wac-is-undefined-type-6qbn3wr — `is` against a name that does not exist
+Deno.test("[§wac-is-undefined-type-6qbn3wr] `is` against an undefined type is an error", () => {
+  // Reported by agent-c as issue 0022. It compiled with no diagnostic and returned *true*,
+  // because an unresolved target left nothing for ref.test to narrow against. The contrast
+  // is what makes it a real bug: a test against a real but unrelated type already warns
+  // that it can never be true, so the meaningless case was the quiet one.
+  for (const src of [
+    `struct P { i32 x; } export i32 f() { P p = P(1); return (p is Nonexistent) ? 1 : 0; }`,
+    `struct P { i32 x; } export i32 f() { P p = P(1); return (p is not Nonexistent) ? 1 : 0; }`,
+    `struct P { i32 x; } export i32 f() { P p = P(1); return (p is Nonexistent[]) ? 1 : 0; }`,
+    `struct P { i32 x; } export i32 f() { P p = P(1); return (p is Nonexistent?) ? 1 : 0; }`,
+  ]) {
+    const m = err(src);
+    if (!m.includes("undefined type 'Nonexistent'")) {
+      throw new Error(`expected the undefined-type diagnostic for ${src}, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", async () => {
+  // The fix must not catch any of these. The last is the interesting one: the parser
+  // decides type-versus-value by naming convention, so an uppercase *variable* looks like
+  // a type — and rejecting it as a missing type would be wrong, since the author meant an
+  // identity test and the convention guessed.
+  const inst = await run(`
+    struct P { i32 x; }
+    struct Q { i32 y; }
+    enum E { A(i32 v), B }
+    export i32 sameType()   { P p = P(1); return (p is P) ? 1 : 0; }
+    export i32 otherType()  { P p = P(1); return (p is Q) ? 1 : 0; }
+    export i32 variant()    { E e = E.A(1); return (e is A) ? 1 : 0; }
+    export i32 identity()   { P p = P(1); P q = p; return (p is q) ? 1 : 0; }
+    export i32 upperLocal() { P p = P(1); P Other = p; return (p is Other) ? 1 : 0; }
+    export i32 notSame()    { P p = P(1); return (p is not Q) ? 1 : 0; }
+  `);
+  eq(inst.call("sameType", []), 1, "its own type");
+  eq(inst.call("otherType", []), 0, "an unrelated type is false, not an error");
+  eq(inst.call("variant", []), 1, "an enum variant is a type");
+  eq(inst.call("identity", []), 1, "a lowercase variable is an identity test");
+  eq(inst.call("upperLocal", []), 1, "and so is an uppercase one, despite looking like a type");
+  eq(inst.call("notSame", []), 1, "`is not` against a real type");
+});
+
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
 Deno.test("issues: every issue has a unique number and a consistent status", async () => {

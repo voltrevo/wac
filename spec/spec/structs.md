@@ -412,6 +412,20 @@ f64 area(Shape s) {
 `[§wac-as-trap-d10qz88]` Casting a Circle `as Rect` traps.
 `[§wac-is-not-fwatmyk]` A Circle `is not Rect` returns true.
 
+The type named on the right must exist. `[§wac-is-undefined-type-6qbn3wr]`
+`p is Nonexistent` is a compile error — `undefined type 'Nonexistent'`.
+
+Worth stating because it used to compile with no diagnostic and return **true**, so a
+typo, a rename, or a dropped import silently turned a type test into a tautology. The
+comparison is what made it obvious: a test against a real but unrelated type already
+warned that it can never be true, so the meaningless case was the one passing quietly.
+
+Which side of `is` a bare name belongs to is decided by naming convention — an initial
+capital reads as a type, lowercase as a value (see operators.md). When the name has a
+capital but names a *variable* in scope, the convention has simply guessed wrong, and the
+test is checked as reference identity rather than reported as a missing type.
+`[§wac-is-undefined-type-6qbn3wr]`
+
 For reference types, `as` performs `ref.cast` (traps on failure). This is
 distinct from numeric `as` (lossless conversion) — the compiler distinguishes
 them by operand type.

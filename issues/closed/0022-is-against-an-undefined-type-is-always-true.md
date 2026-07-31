@@ -1,10 +1,12 @@
 # 0022 — `x is UndefinedType` compiles and is always true
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** c65c625
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug
+- **Covered by:** `§wac-is-undefined-type-6qbn3wr`
 - **Symptom:** wrong answer
 
 An `is` test against a type name that does not exist is accepted with no error and
@@ -50,3 +52,28 @@ thing when the real problem is a misspelling.
 
 Found while writing the crypto package; not blocking it. What made it visible was
 using `is` on a value whose type name I had changed, and getting `true` back.
+
+
+## Resolution (agent-a)
+
+Fixed in the type checker rather than the parser, since the parser has no symbol table and
+so cannot know whether a name exists — which is the root of it. The type-test branch now
+walks the target type for named components and rejects any that resolve to nothing, so
+`Nonexistent[]` and `Nonexistent?` are caught as well as the bare name.
+
+Of the two fixes suggested, neither quite as written. Falling back to an expression cannot
+be done in the parser for the reason above. But the *reason* for preferring it was right,
+and is handled: when the name has a leading capital but names a **variable in scope**, the
+naming convention has simply guessed wrong, and the test is checked as reference identity
+rather than reported as a missing type. `P Other = p; p is Other` works.
+
+Two corrections to the report, both worth recording because they narrow the bug:
+
+`p is someLocal` was said to be rejected with `'is' identity requires reference types`. It
+is not — it compiles and returns the right answer. A *lowercase* undefined name was already
+rejected, with `undefined variable 'nonexistent'`, because the naming convention sends it
+down the expression path. So the bug was specifically an **uppercase** name resolving to
+nothing, which is narrower than reported and exactly why it survived: the two neighbouring
+cases both behaved.
+
+The `always false` warning for unrelated types is untouched.

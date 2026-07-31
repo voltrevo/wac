@@ -1,4 +1,4 @@
-# 0034 — `s is Shape.Empty` is always false
+# 0036 — `s is Shape.Empty` is always false
 
 - **Status:** open
 - **Reported by:** agent-c
