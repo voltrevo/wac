@@ -832,7 +832,9 @@ class FuncEmitter {
     // (add, sub, mul, the bitwise ops, shl, eq, ne) is bit-identical for both
     // signednesses and simply repeats the signed column.
     const p = lt.kind === "prim" ? lt.name : "i32";
-    const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
+    // Packed elements are read out as i32 before any operation, so they use
+    // the i32 column regardless of their own signedness.
+    const k = p === "bool" || p === "i8" || p === "i16" || p === "u8" || p === "u16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
             : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";
@@ -1309,11 +1311,13 @@ class FuncEmitter {
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(elem))!;
     this.emitExpr(e.expr, env);
     this.emitExpr(e.idx, env);
-    // packed types use array.get_u (spec: zero-extends on read)
-    const isPackedI8  = elem.kind === "prim" && elem.name === "i8";
-    const isPackedI16 = elem.kind === "prim" && elem.name === "i16";
-    if (isPackedI8 || isPackedI16) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
-    else                           this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
+    // Packed elements are narrower than any value wasm computes with, so the
+    // read has to extend them. Which way is exactly what the element type says:
+    // i8/i16 sign-extend, u8/u16 zero-extend. Same storage either way.
+    const en = elem.kind === "prim" ? elem.name : "";
+    if (en === "i8" || en === "i16")      this.emit(0xFB, 0x0C, ...uleb(aIdx)); // array.get_s
+    else if (en === "u8" || en === "u16") this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
+    else                                  this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
     // Non-nullable ref elements stored as nullable in wasm; unwrap to non-null
     if (elem.kind === "struct" || elem.kind === "array" || elem.kind === "funcref") {
       this.emit(0xD4); // ref.as_non_null
@@ -1505,7 +1509,8 @@ class FuncEmitter {
   private emitDefaultValue(t: WacType): void {
     switch (t.kind) {
       case "prim":
-        if (t.name === "i32" || t.name === "bool" || t.name === "i8" || t.name === "i16")
+        if (t.name === "i32" || t.name === "bool" || t.name === "i8" || t.name === "i16" ||
+            t.name === "u8" || t.name === "u16")
           this.emit(0x41, 0x00); // i32.const 0
         else if (t.name === "i64")
           this.emit(0x42, 0x00); // i64.const 0
@@ -1764,7 +1769,8 @@ class FuncEmitter {
       this.emitExpr(lval.idx, env);     // idx for array.get
       // packed elements must read through array.get_u — array.get is invalid on
       // i8/i16 arrays and would fail wasm validation [see arrays.md]
-      const packed = elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16");
+      const packed = elem.kind === "prim" &&
+        (elem.name === "i8" || elem.name === "i16" || elem.name === "u8" || elem.name === "u16");
       if (packed) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u (read old)
       else        this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get   (read old)
       this.emitCompoundRhs(rhs, env, elem, op.slice(0,-1));
@@ -1808,7 +1814,7 @@ class FuncEmitter {
 
     // Mirrors emitBinary's table — see there for why unsigned needs its own
     // columns rather than sharing the signed ones.
-    const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
+    const k = p === "bool" || p === "i8" || p === "i16" || p === "u8" || p === "u16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
             : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";

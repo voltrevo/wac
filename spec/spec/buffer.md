@@ -5,19 +5,19 @@ in wac.
 
 (This is an example only, not to be included in the language.)
 
-### Implementation (using i8[])
+### Implementation (using u8[])
 
-With packed `i8[]` arrays, the implementation is straightforward — no
+With packed `u8[]` arrays, the implementation is straightforward — no
 bit-packing needed:
 
 ```wac
 struct Buffer {
-  i8[] data;
+  u8[] data;
   i32 len;
   i32 cap;
 
   Buffer create(i32 cap) {
-    return Buffer(i8[cap](), 0, cap);
+    return Buffer(u8[cap](), 0, cap);
   }
 
   i32 get(const this, i32 idx) {
@@ -34,7 +34,7 @@ struct Buffer {
     if (this.len == this.cap) {
       i32 newCap = this.cap * 2;
       if (newCap == 0) { newCap = 8; }
-      i8[] next = i8[newCap]();
+      u8[] next = u8[newCap]();
       for (i32 i = 0; i < this.len; i++) {
         next[i] = this.data[i];
       }

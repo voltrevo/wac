@@ -146,8 +146,11 @@ function isRefType(t: WacType): boolean {
   return t.kind === "struct" || t.kind === "array" || t.kind === "nullable" ||
     (t.kind === "prim" && (t.name === "anyref" || t.name === "i31ref" || t.name === "string"));
 }
+/** Packed array element types. i8/u8 and i16/u16 share their storage — one
+ *  byte or two — and differ only in which array.get the read uses. */
 function isPackedElem(t: WacType): boolean {
-  return t.kind === "prim" && (t.name === "i8" || t.name === "i16");
+  return t.kind === "prim" &&
+    (t.name === "i8" || t.name === "i16" || t.name === "u8" || t.name === "u16");
 }
 function isVoid(t: WacType): boolean {
   return t.kind === "prim" && t.name === "void";
