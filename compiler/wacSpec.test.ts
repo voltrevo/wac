@@ -5663,7 +5663,9 @@ Deno.test("[§enum-cross-file] an enum inside a generic container crosses files"
         i32 len(const this) { return this.n; }
       }`],
     ["main.wac", `
-      import { V } from "./v.wac";
+      // Bool is imported as well as V: a variant is a file-scope name like any other, and naming
+      // one as a type needs it in scope (issue 0048). match does not.
+      import { V, Bool } from "./v.wac";
       import { Vec } from "./vec.wac";
       export i32 matched() {
         Vec<V> xs = Vec.create();
@@ -7723,6 +7725,133 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+// §wac-type-name-scope-8vqk3mn — a type name means what the file that wrote it says
+Deno.test("[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it", () => {
+  // Issue 0048. Identity is the type index, and a type whose name did not resolve had none — so
+  // every consumer fell back to a *global* name map. A file could name a type it never imported,
+  // and when two files declared the same name one of them won arbitrarily.
+  for (const [what, files] of [
+    ["a struct", new Map([
+      ["p.wac", `export struct P { i32 x; }
+                 export P mk() { return P(3); }`],
+      ["main.wac", `import { mk } from "./p.wac";
+                    export i32 f() { P p = mk(); return p.x; }`],
+    ])],
+    ["an enum", new Map([
+      ["k.wac", `export enum K { A, B }
+                 export K mk() { return K.A; }`],
+      ["main.wac", `import { mk } from "./k.wac";
+                    export i32 f() { K k = mk(); return match (k) { case A: 1, case B: 2 }; }`],
+    ])],
+    ["a variant", new Map([
+      ["k.wac", `export enum K { A(i32 v), B }
+                 export K mk() { return K.A(1); }`],
+      ["main.wac", `import { mk } from "./k.wac";
+                    export i32 f() { A a = mk() as! A; return a.v; }`],
+    ])],
+    ["a field's type", new Map([
+      ["p.wac", `export struct Inner { i32 x; }
+                 export struct Outer { Inner i; }`],
+      ["main.wac", `import { Outer } from "./p.wac";
+                    struct Holder { Inner i; }
+                    export i32 f() { return 1; }`],
+    ])],
+  ] as [string, Map<string, string>][]) {
+    const m = errMulti(files);
+    if (!m.includes("undefined type")) {
+      throw new Error(`${what}: expected 'undefined type', got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-type-name-scope-8vqk3mn] the wrong answer that came of it", () => {
+  // The reason this is a bug rather than a tidiness point. Two files each declare a `Circle`
+  // variant, which `§enum-name-identity` permits; a third tested both. `x is Circle` resolved
+  // globally, picked one, and answered **false about a value that was a Circle** — no diagnostic.
+  const m = errMulti(new Map([
+    ["a.wac", `export enum A { Circle(i32 n), Sq }
+               export A mkA() { return A.Circle(5); }`],
+    ["b.wac", `export enum B { Circle(f64 r), Tri }
+               export B mkB() { return B.Circle(2.5); }`],
+    ["main.wac", `import { mkA } from "./a.wac";
+                  import { mkB } from "./b.wac";
+                  export i32 f() { return (mkA() is Circle ? 1 : 0) * 10 + (mkB() is Circle ? 1 : 0); }`],
+  ]));
+  if (!m.includes("undefined type 'Circle'")) {
+    throw new Error(`expected the ambiguous name to be refused, got: ${m}`);
+  }
+});
+
+Deno.test("[§wac-type-name-scope-8vqk3mn] importing the name is what makes it work", async () => {
+  // The fix is an import, and a variant imports like anything else — so nothing legitimate became
+  // unwritable. Both spellings of the same test, one per kind of name.
+  const inst = await runMulti(new Map([
+    ["k.wac", `export enum K { A(i32 v), B }
+               export struct P { i32 x; }
+               export K mkK() { return K.A(7); }
+               export P mkP() { return P(3); }`],
+    ["main.wac", `import { K, A, P, mkK, mkP } from "./k.wac";
+      export i32 viaVariant() { A a = mkK() as! A; return a.v; }
+      export i32 viaIs()      { K k = mkK(); return k is A ? 1 : 0; }
+      export i32 viaStruct()  { P p = mkP(); return p.x; }
+      // And match needs neither the enum name nor its variants: it never did.
+      export i32 viaMatch()   { return match (mkK()) { case A(v): v, case B: 0 }; }`],
+  ]));
+  eq(inst.call("viaVariant", []), 7, "a variant named as a type, imported");
+  eq(inst.call("viaIs", []), 1, "and in an is-test");
+  eq(inst.call("viaStruct", []), 3, "a struct named as a type, imported");
+  eq(inst.call("viaMatch", []), 7, "match, which resolves through the enum the subject is");
+});
+
+Deno.test("[§wac-type-name-scope-8vqk3mn] what is not a type name is left alone", async () => {
+  // Two positions look like a type and are not, and the strict pass has to skip both or it reports
+  // a local variable as an undefined type. `f(x)` parses as a construction whose "type" is `f`, and
+  // `x is Other` parses its right-hand side as a type when it may be an identity test.
+  const inst = await run(`
+    struct P { i32 x; }
+    i32 twice(i32 v) { return v * 2; }
+    export i32 viaFuncrefLocal() { fn[i32(i32)] f = twice; return f(4); }
+    export i32 viaIdentity()     { P p = P(1); P Other = p; return (p is Other) ? 1 : 0; }
+    export i32 viaPlainCall()    { return twice(3); }
+  `);
+  eq(inst.call("viaFuncrefLocal", []), 8, "a funcref local called by name");
+  eq(inst.call("viaIdentity", []), 1, "an is-test against an upper-case local");
+  eq(inst.call("viaPlainCall", []), 6, "and an ordinary call");
+});
+
+Deno.test("[§wac-type-name-scope-8vqk3mn] an unknown type says so where it is written", () => {
+  // Issue 0046, which is the same pass: a name that resolves nowhere used to be reported by
+  // whatever tripped over it later, so `Nope n = 1` complained about the *initialiser*.
+  for (const [src, want] of [
+    [`export i32 f() { Nope n = 1; return 0; }`, "undefined type 'Nope'"],
+    [`struct P { i32 x; }
+      export i32 f() { P p = P(1); return (p as! Nope).x; }`, "undefined type 'Nope'"],
+    [`export i32 f(Nope n) { return 0; }`, "undefined type 'Nope'"],
+    [`struct P { Nope n; }
+      export i32 f() { return 0; }`, "undefined type 'Nope'"],
+    [`export Nope f() { return 0; }`, "undefined type 'Nope'"],
+    [`export i32 f() { Nope[] xs = i32[](); return 0; }`, "undefined type 'Nope'"],
+  ] as [string, string][]) {
+    const m = err(src);
+    if (!m.includes(want)) throw new Error(`expected ${want}, got: ${m}`);
+  }
+});
+
+Deno.test("spec/tour.wac compiles and its selfTest() returns true", async () => {
+  // `CLAUDE.md` sends every reader here first and the file's own header says "it compiles, and
+  // `selfTest()` at the bottom returns true". Nothing checked either, so it rotted: narrowing made
+  // the `as!` in its dynamic-dispatch example an error — an upcast to a type the value already has
+  // — and the tour went on claiming otherwise for as long as no test compiled it.
+  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
+  const r = wacCompile(new Map([["tour.wac", src]]), "tour.wac");
+  if (!r.ok) {
+    const lines = r.diagnostics.map((d) => `  ${d.line}:${d.col} ${d.message}`);
+    throw new Error(`spec/tour.wac does not compile:\n${lines.join("\n")}`);
+  }
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("selfTest", []), true, "the tour's own claims about itself");
+});
+
 Deno.test("issues: every issue has a unique number and a consistent status", async () => {
   // Three agents picked 0021 within a minute of each other, from the same stale view of
   // "the next free number". Two files answering to one number makes every commit message

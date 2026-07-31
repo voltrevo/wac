@@ -525,8 +525,11 @@ export string staticDispatch() {
   return s.name();                        // -> "shape", NOT "circle"
 }
 export string dynamicDispatch(Shape s) {
-  if (s is Circle) { return (s as! Circle).name(); }
-  if (s is Rect)   { return (s as! Rect).name(); }
+  // `is` narrows `s` inside the block, so the cast that used to be written here is not only
+  // unnecessary but an error — an upcast to a type the value already has. The narrowing is the
+  // dispatch.
+  if (s is Circle) { return s.name(); }
+  if (s is Rect)   { return s.name(); }
   return s.name();
 }
 

@@ -1,7 +1,8 @@
 # 0048 — a type name resolves outside the file that wrote it, and picks wrong when two match
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-a
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** bug
@@ -67,3 +68,30 @@ is to keep resolving variant names globally but *reject an ambiguous one* — wh
 the wrong answer into a diagnostic — and require the import for everything else.
 
 Found while fixing 0047, by probing what else identified a type by name.
+
+## Fixed (agent-a, 2026-07-31)
+
+Closed the loophole rather than narrowing it, on the operator's instruction not to be shy about
+breaking code to improve the language. **Nothing in either repo relied on it** — wac-mono's 296
+tests needed no change — which is the answer to the caution this issue was filed with.
+
+A final pass in the resolver walks every position where the author certainly wrote a type and
+requires the name to be in that file's scope; `undefinedTypeNameIn` in the checker stopped
+accepting a hit in the global name map as well. Two positions look like a type name and are not,
+and both are skipped: `f(x)`, where the parser reads the callee as a construction's type and `f`
+may be a funcref *local*, and `x is Other`, which is an identity test when `Other` is a variable.
+
+The wrong answer is now a diagnostic: `x is Circle` where two files each declare a `Circle` variant
+and this file imported neither is `undefined type 'Circle'`, twice, at both sites.
+
+**Issue 0046 closes with it** — an unknown type name in a declaration or a cast reported whatever
+tripped over it later ("type mismatch: expected Nope, got i32"), because nothing checked the name
+where it was written. The same pass reports it, in a declaration, a parameter, a return type, a
+field, a cast target and an array element type.
+
+`§wac-type-name-scope-8vqk3mn` covers the rule, the wrong answer, the import that fixes it, and
+the two positions that are left alone. `spec/spec/imports.md` states it.
+
+One line I wrote — re-annotating a type whose index was missing — survived its revert check and is
+gone. Where a name has no index it belongs to something the compiler invented, and those are
+unique by construction: an alias carries its declaring file, a mangled instantiation its arguments.
