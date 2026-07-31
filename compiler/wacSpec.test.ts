@@ -6170,6 +6170,156 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
 });
 
+// §wac-generic-enum-7dkq2mv — generic enums, which is what Option and Result need
+const OPTION = `
+enum Option<T> {
+  Some(T v), None
+
+  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+}`;
+
+Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum works, with methods and several arguments", async () => {
+  // The design's payoff: Option and Result need generics *and* enums, and the ordering it settled —
+  // generics substitute before enums desugar — is what makes an instantiation an ordinary enum by
+  // the time anything else looks at it.
+  const inst = await run(`${OPTION}
+    enum Result<T, E> {
+      Ok(T v), Err(E e)
+      bool isOk(const this) { return match (this) { case Ok(_): true, case Err(_): false }; }
+    }
+    export i32 some()   { Option<i32> a = Option.Some(4); return a.orElse(0); }
+    export i32 none()   { Option<i32> a = Option.None;   return a.orElse(9); }
+    export bool isSome(){ Option<i32> a = Option.None;   return a.isSome(); }
+    export i32 two() {
+      Option<i32> a = Option.Some(3);
+      Option<f64> b = Option.Some(2.0);
+      return a.orElse(0) + (b.orElse(0.0) as! i32);
+    }
+    export i32 result() {
+      Result<i32, string> r = Result.Err("no");
+      return r.isOk() ? 0 : match (r) { case Ok(v): v, case Err(e): e.len() };
+    }
+    // A generic enum whose payload is another template: the type sweep has to skip an enum
+    // template's variants as it skips a struct template's fields, or the inner reference is
+    // materialised with the parameter name T treated as an argument.
+    struct Box<T> { T v; }
+    enum Wrap<T> { W(Box<T> b), Empty }
+    export i32 payloadIsGeneric() {
+      Wrap<i32> w = Wrap.W(Box(5));
+      return match (w) { case W(b): b.v, case Empty: 0 };
+    }
+    export i32 nested() {
+      Option<Option<i32>> oo = Option.Some(Option.Some(2));
+      Option<i32> inner = oo.orElse(Option.None);
+      return inner.orElse(0);
+    }
+  `);
+  eq(inst.call("some", []), 4, "a payload variant, with T from the declared type");
+  eq(inst.call("none", []), 9, "a payload-less variant, which is a value rather than a call");
+  eq(inst.call("isSome", []), false, "a method on the instantiation");
+  eq(inst.call("two", []), 5, "two instantiations of one generic enum coexist");
+  eq(inst.call("result", []), 2, "two type parameters, and a string argument");
+  eq(inst.call("payloadIsGeneric", []), 5, "a variant carrying an instantiation of a generic struct");
+  eq(inst.call("nested", []), 2, "an Option of an Option");
+});
+
+Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum composes with the rest of the language", async () => {
+  const inst = await runMulti(new Map([
+    ["opt.wac", `export ${OPTION}`],
+    ["main.wac", `import { Option } from "./opt.wac";
+      struct Holder { Option<i32> o; }
+      struct Box<T> { Option<T> o; T get(const this, T d) { return this.o.orElse(d); } }
+      Option<i32> find(i32 x) { if (x > 0) { return Option.Some(x); } return Option.None; }
+      T unwrapOr<T>(Option<T> o, T d) { return o.orElse(d); }
+      export i32 asField()      { Holder h = Holder(Option.Some(6)); return h.o.orElse(0); }
+      export i32 inGeneric()    { Box<i32> b = Box(Option.Some(8)); return b.get(0); }
+      export i32 returned()     { return find(3).orElse(0) * 10 + find(-1).orElse(7); }
+      export i32 viaGenericFn() { Option<i32> a = Option.Some(5); return unwrapOr(a, 0); }
+      export i32 inArray() {
+        Option<i32>[] xs = Option<i32>[3](fill: Option.None);
+        xs[1] = Option.Some(4);
+        return xs[1].orElse(0) + xs[0].orElse(1);
+      }
+      export i32 reassigned() { Option<i32> o = Option.None; o = Option.Some(4); return o.orElse(0); }`],
+  ]));
+  eq(inst.call("asField", []), 6, "a construction's argument, across a module boundary");
+  eq(inst.call("inGeneric", []), 8, "a generic enum inside a generic struct");
+  eq(inst.call("returned", []), 37, "returned from a function, both variants");
+  eq(inst.call("viaGenericFn", []), 5, "passed to a generic function, which infers T through it");
+  eq(inst.call("inArray", []), 5, "an array's fill and an element assignment");
+  eq(inst.call("reassigned", []), 4, "assignment to a local");
+});
+
+Deno.test("[§wac-generic-enum-7dkq2mv] a generic enum's variants have no bare name", () => {
+  // An ordinary enum's variant is a file-scope name, which is what lets it be a type. A generic
+  // one's cannot be: two instantiations would both claim `Some`. `match` is unaffected, and the
+  // diagnostic says which generic enum the name belongs to rather than suggesting a typo.
+  const r = wacCompile(new Map([["main.wac", `${OPTION}
+    export i32 f() { Option<i32> a = Option.Some(1); return a is Some ? 1 : 0; }`]]), "main.wac");
+  if (r.ok) throw new Error("expected a compile error for 'is Some'");
+  const d = r.diagnostics[0];
+  if (!d.message.includes("undefined type 'Some'")) {
+    throw new Error(`expected 'undefined type', got: ${d.message}`);
+  }
+  if (!(d.hint ?? "").includes("generic enum 'Option'")) {
+    throw new Error(`the hint should name the enum, got: ${d.hint}`);
+  }
+  // Naming it as a declared type or a cast target fails too, though those positions report an
+  // unknown type name less directly — see issue 0046.
+  err(`${OPTION}
+    export i32 f() { Option<i32> a = Option.Some(1); Some s = a; return s.v; }`);
+  err(`${OPTION}
+    export i32 f() { Option<i32> a = Option.Some(1); return (a as! Some).v; }`);
+  // And no diagnostic about a generic enum shows its mangled name.
+  const m = err(`${OPTION}
+    export i32 f() { Option<i32> a = Option.Some(1); return match (a) { case Nope(v): v, case None: 0 }; }`);
+  if (!m.includes("Option<i32>")) throw new Error(`expected the written name in: ${m}`);
+  if (m.includes("$")) throw new Error(`a mangled name reached a diagnostic: ${m}`);
+});
+
+// §wac-generic-expected-position-3qmz8vk — every position that supplies an expected type
+Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction takes its arguments from any expected type", async () => {
+  // A construction cannot name its type arguments, so every position that supplies an expected type
+  // has to be found. Only a declaration and a `return` were, which made `v = Vec(...)` and
+  // `take(Vec(...))` impossible to write — and for a *generic enum* there is no spelling at all, so
+  // the gap was invisible until Option existed.
+  const inst = await run(`
+    struct Box<T> { T v; }
+    struct Holder { Box<i32> b; }
+    void ignore(Box<i32> b) { }
+    i32 peek(Box<i32> b) { return b.v; }
+    export i32 toLocal()      { Box<i32> b = Box(1); b = Box(4); return b.v; }
+    export i32 toField()      { Holder h = Holder(Box(1)); h.b = Box(4); return h.b.v; }
+    export i32 toElement()    { Box<i32>[] xs = Box<i32>[2](fill: Box(0)); xs[1] = Box(4); return xs[1].v; }
+    export i32 asArgument()   { return peek(Box(5)); }
+    export i32 asFieldArg()   { Holder h = Holder(Box(6)); return h.b.v; }
+    export i32 asNamedArg()   { Holder h = Holder { b: Box(7) }; return h.b.v; }
+    export i32 asElement()    { Box<i32>[] xs = Box<i32>[](Box(8), Box(9)); return xs[0].v + xs[1].v; }
+    export i32 throughTernary(bool c) { Box<i32> b = c ? Box(1) : Box(2); return b.v; }
+  `);
+  eq(inst.call("toLocal", []), 4, "assignment to a local");
+  eq(inst.call("toField", []), 4, "assignment to a field");
+  eq(inst.call("toElement", []), 4, "assignment to an array element");
+  eq(inst.call("asArgument", []), 5, "a call's argument");
+  eq(inst.call("asFieldArg", []), 6, "a construction's positional argument");
+  eq(inst.call("asNamedArg", []), 7, "a construction's named argument");
+  eq(inst.call("asElement", []), 17, "an array literal's elements");
+  eq(inst.call("throughTernary", [true]), 1, "and still through both ternary branches");
+});
+
+Deno.test("[§wac-generic-expected-position-3qmz8vk] a construction with nowhere to take arguments from is an error", () => {
+  // The restriction that remains, and it is the one the design predicted: a value going nowhere in
+  // particular has no expected type. Reported last of all, after every position has had its chance.
+  const m = err(`
+    struct Box<T> { T v; i32 get(const this) { return 1; } }
+    export i32 f() { return Box(1).get(); }
+  `);
+  if (!m.includes("needs type arguments")) {
+    throw new Error(`expected the bare-template diagnostic, got: ${m}`);
+  }
+});
+
 // §wac-generic-fn-5hvq3mt — generic functions, with argument-directed inference
 Deno.test("[§wac-generic-fn-5hvq3mt] a generic function infers its type arguments from the call", async () => {
   // Issue 0034 Stage C. There is no `max<i32>(x, y)` — angle brackets are type syntax only — so

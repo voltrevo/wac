@@ -124,6 +124,12 @@ function typeEq(a: WacType, b: WacType): boolean {
  * is cosmetic — a wrong or missing entry costs an uglier message and nothing else.
  */
 let genericDisplay: Map<string, string> = new Map();
+/**
+ * The generic enum templates, for the one diagnostic that needs them — a bare variant name that did
+ * not resolve. Module-level for the same reason `genericDisplay` is: the message is produced deep in
+ * expression checking, and threading it through every frame would be noise.
+ */
+let enumTemplates: ResolveResult["enumTemplates"] = [];
 
 function typeName(t: WacType): string {
   switch (t.kind) {
@@ -135,6 +141,19 @@ function typeName(t: WacType): string {
     case "nullable": return `${typeName(t.inner)}?`;
     case "funcref":  return `fn(${t.params.map(typeName).join(", ")}) -> ${typeName(t.ret)}`;
   }
+}
+
+/** The generic enum a bare variant name belongs to, if that is why the name did not resolve. */
+function genericVariantOwner(name: string): string | null {
+  for (const t of enumTemplates) {
+    if (t.decl.variants.some((v) => v.name === name)) return t.decl.name;
+  }
+  return null;
+}
+
+/** An enum's name as the author would write it — the same demangling `typeName` does for a type. */
+function enumName(name: string): string {
+  return genericDisplay.get(name) ?? name;
 }
 
 function isNumeric(t: WacType): boolean {
@@ -372,6 +391,9 @@ function deferredTemplateNames(result: ResolveResult): string[] {
   return [
     ...result.templates.map((t) => t.decl.name),
     ...result.funcTemplates.map((t) => t.decl.name),
+    // A generic enum's name and each of its variants': `Option<T>` inside a template body is not a
+    // type until T is known, and `Some` is not a declaration until the enum is desugared.
+    ...result.enumTemplates.flatMap((t) => [t.decl.name, ...t.decl.variants.map((v) => v.name)]),
   ];
 }
 
@@ -382,6 +404,7 @@ export function wacTypeCheck(
   const allErrors: TypeCheckError[] = [];
   // Diagnostics render generic struct names through this for the rest of the run.
   genericDisplay = result.genericDisplay;
+  enumTemplates = result.enumTemplates;
 
   // Build struct name -> StructEntry for lookups
   const structMap = new Map<string, StructEntry>();
@@ -1385,7 +1408,7 @@ function checkMatchArms(
     } else {
       const variant = enumEntry.variants.find(v => v.name === arm.variant);
       if (!variant) {
-        errAt(ctx, `'${arm.variant}' is not a variant of '${enumEntry.name}'`,
+        errAt(ctx, `'${arm.variant}' is not a variant of '${enumName(enumEntry.name)}'`,
           arm.line, arm.col, arm.variant.length);
         continue;
       }
@@ -1861,9 +1884,16 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
             }
             return T_BOOL;
           }
+          // A generic enum's variants have no bare name — `Option<i32>` and `Option<f64>` would
+          // both claim `Some` — so this is not a spelling mistake and saying "check the spelling"
+          // would send the reader looking for one.
+          const ofGeneric = genericVariantOwner(unknown);
           errAt(ctx, `undefined type '${unknown}'`, expr.line, expr.col,
             unknown.length, undefined,
-            `no struct, enum or variant named '${unknown}' is in scope — check the spelling and the imports`);
+            ofGeneric !== null
+              ? `'${unknown}' is a variant of the generic enum '${ofGeneric}', which has no name ` +
+                `of its own once instantiated — narrow with 'match' instead`
+              : `no struct, enum or variant named '${unknown}' is in scope — check the spelling and the imports`);
           return null;
         }
 
@@ -2126,7 +2156,7 @@ function inferCall(
       if (ee?.kind === "enum") {
         const variant = ee.enumEntry.variants.find(v => v.name === methodName);
         if (!variant) {
-          errAt(ctx, `'${methodName}' is not a variant of '${ee.enumEntry.name}'`,
+          errAt(ctx, `'${methodName}' is not a variant of '${enumName(ee.enumEntry.name)}'`,
             callee.line, callee.col, methodName.length);
           return null;
         }
@@ -2322,7 +2352,7 @@ function inferFieldAccess(
     if (ee?.kind === "enum") {
       const variant = ee.enumEntry.variants.find(v => v.name === fieldName);
       if (!variant) {
-        errAt(ctx, `'${fieldName}' is not a variant of '${ee.enumEntry.name}'`,
+        errAt(ctx, `'${fieldName}' is not a variant of '${enumName(ee.enumEntry.name)}'`,
           pos.line, pos.col, fieldName.length);
         return null;
       }

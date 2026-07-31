@@ -139,6 +139,15 @@ export type ResolveResult = {
   /** The generic *function* templates, kept and checked the same way. */
   funcTemplates: { decl: FuncDecl; filePath: string }[];
   /**
+   * The generic *enum* templates.
+   *
+   * Not checked at their definition — an enum's methods need the enum machinery, which does not
+   * exist for a declaration that has not been desugared — but their names are needed, so a struct
+   * or function template mentioning `Option<T>` does not report against a name that is a template
+   * rather than a type.
+   */
+  enumTemplates: { decl: EnumDecl; filePath: string }[];
+  /**
    * `Vec$i32` -> `Vec<i32>`, for every monomorphised generic.
    *
    * Diagnostics render struct names through this, so a message never shows a mangled name the
@@ -391,7 +400,11 @@ function scopeEntryExported(e: ScopeEntry): boolean {
 /** How deep `Vec<Vec<Vec<...>>>` may nest before it is called a mistake. */
 const MAX_INSTANTIATION_DEPTH = 24;
 
-type Template = { decl: StructDecl; filePath: string };
+/**
+ * A generic declaration. Structs and enums share everything monomorphisation needs — a name, type
+ * parameters, methods — and differ only in what else has to be substituted, so one map holds both.
+ */
+type Template = { decl: StructDecl | EnumDecl; filePath: string };
 
 /** Where an instantiation was written, for the trace an error needs. */
 /** A source location as the *parser* records it — line and col, no file. */
@@ -674,7 +687,7 @@ function eachTypeInPrograms(
       // visited before that.
       // A generic *function* has the same hazard, from its signature as much as its body:
       // `T unbox<T>(Box<T> b)` would materialise `Box$T` before anything knows what T is.
-      if (skipTemplates && (item.tag === "struct" || item.tag === "func") &&
+      if (skipTemplates && (item.tag === "struct" || item.tag === "func" || item.tag === "enum") &&
           item.typeParams.length > 0) continue;
       if (item.tag === "struct") {
         for (const f of item.fields) t(f.type);
@@ -987,6 +1000,8 @@ export function monomorphise(
   keep?: { decl: StructDecl; filePath: string }[],
   /** The generic *function* templates, kept for the same reason. */
   keepFuncs?: { decl: FuncDecl; filePath: string }[],
+  /** The generic *enum* templates. Collected for their names, which template checking defers on. */
+  keepEnums?: { decl: EnumDecl; filePath: string }[],
 ): void {
   const origins = buildOrigins(programs);
 
@@ -995,9 +1010,10 @@ export function monomorphise(
   const templates = new Map<string, Template>();
   for (const [filePath, prog] of programs) {
     for (const item of prog.items) {
-      if (item.tag === "struct" && item.typeParams.length > 0) {
+      if ((item.tag === "struct" || item.tag === "enum") && item.typeParams.length > 0) {
         templates.set(`${item.name}__${fileTag(filePath)}`, { decl: item, filePath });
-        keep?.push({ decl: item, filePath });
+        if (item.tag === "struct") keep?.push({ decl: item, filePath });
+        else keepEnums?.push({ decl: item, filePath });
       }
     }
   }
@@ -1015,7 +1031,7 @@ export function monomorphise(
   }
 
   // Materialised structs, by mangled name, so each is built once however often it is written.
-  const made = new Map<string, StructDecl>();
+  const made = new Map<string, StructDecl | EnumDecl>();
   const structInst = new Map<string, StructInst>();
   const madeIn = new Map<string, string>();   // mangled name -> file it belongs to
   const usedIn = new Map<string, Set<string>>();  // file -> mangled names it refers to
@@ -1045,16 +1061,27 @@ export function monomorphise(
 
     const sub = new Map<string, WacType>();
     tpl.decl.typeParams.forEach((p, i) => sub.set(p, visibleFrom(args[i], file, tpl.filePath)));
+    const substMethods = (ms: MethodDecl[]) => ms.map((m) => ({
+      ...m, returnType: substType(m.returnType, sub),
+      params: m.params.map((prm) => ({ ...prm, type: substType(prm.type, sub) })),
+      body: substBlock(m.body, sub),
+    }));
     // Registered before its body is walked, so a self-reference finds it rather than recursing.
-    const decl: StructDecl = {
-      ...tpl.decl, name: mangled, typeParams: [],
-      fields: tpl.decl.fields.map((f) => ({ ...f, type: substType(f.type, sub) })),
-      methods: tpl.decl.methods.map((m) => ({
-        ...m, returnType: substType(m.returnType, sub),
-        params: m.params.map((p) => ({ ...p, type: substType(p.type, sub) })),
-        body: substBlock(m.body, sub),
-      })),
-    };
+    const decl: StructDecl | EnumDecl = tpl.decl.tag === "enum"
+      ? {
+        ...tpl.decl, name: mangled, typeParams: [],
+        // A variant's payload is the only enum-specific part: everything else — the name, the
+        // methods, the removal and re-insertion — is what a struct needs too.
+        variants: tpl.decl.variants.map((v) => ({
+          ...v, fields: v.fields.map((f) => ({ ...f, type: substType(f.type, sub) })),
+        })),
+        methods: substMethods(tpl.decl.methods),
+      }
+      : {
+        ...tpl.decl, name: mangled, typeParams: [],
+        fields: tpl.decl.fields.map((f) => ({ ...f, type: substType(f.type, sub) })),
+        methods: substMethods(tpl.decl.methods),
+      };
     made.set(mangled, decl);
     madeIn.set(mangled, tpl.filePath);
     // Kept so generic-function inference can read `Box$i32` back as `Box<i32>`: by the time
@@ -1130,9 +1157,10 @@ export function monomorphise(
     noteUse(file, mangled);
   };
 
-  const rewriteDecl = (decl: StructDecl, depth: number, file: string): void => {
+  const rewriteDecl = (decl: StructDecl | EnumDecl, depth: number, file: string): void => {
     const t = (x: WacType) => rewriteType(x, depth, file);
-    for (const f of decl.fields) t(f.type);
+    if (decl.tag === "enum") for (const v of decl.variants) for (const f of v.fields) t(f.type);
+    else for (const f of decl.fields) t(f.type);
     for (const m of decl.methods) {
       t(m.returnType);
       for (const p of m.params) t(p.type);
@@ -1214,6 +1242,21 @@ export function monomorphise(
       for (const x of e.fixed) applyExpected(x, e.elem, filePath);
       return;
     }
+    // `Option<i32> o = Option.Some(5)` — a variant construction, which is a call on a field of the
+    // enum's *name* rather than a construction node, and a payload-less variant is the bare field.
+    // The enum name is what has to move to the instantiation; the variant resolves through it.
+    const enumRef = e.kind === "call" && e.callee.kind === "field" && e.callee.expr.kind === "ident"
+      ? e.callee.expr
+      : e.kind === "field" && e.expr.kind === "ident" ? e.expr : null;
+    if (enumRef !== null) {
+      const tpl = templateFor(enumRef.name, filePath);
+      if (tpl === undefined || tpl.decl.tag !== "enum") return;
+      const wantEnum = expected.kind === "nullable" ? expected.inner : expected;
+      if (wantEnum.kind !== "struct") return;
+      if (!wantEnum.name.startsWith(`${canonName(enumRef.name, filePath, origins)}$`)) return;
+      (enumRef as { name: string }).name = wantEnum.name;
+      return;
+    }
     if (e.kind !== "construct") return;
     const ctype = e.ctype;
     if (ctype.kind !== "struct") return;
@@ -1232,19 +1275,6 @@ export function monomorphise(
       (ctype as { resolvedTypeIndex?: number }).resolvedTypeIndex = want.resolvedTypeIndex;
     }
   }
-
-  // Anything still naming a template by itself could not get arguments from anywhere, which is
-  // the one case the bracket restriction cannot cover. Reported now rather than during the sweep,
-  // so a construction whose arguments come from its declaration is not flagged before the
-  // propagation above has run.
-  eachTypeInPrograms(programs, (t, filePath) => {
-    if (t.kind === "struct" && templateFor(t.name, filePath) !== undefined &&
-        (t.typeArgs === undefined || t.typeArgs.length === 0)) {
-      err(`'${t.name}' is generic and needs type arguments, as in '${t.name}<i32>' — or an ` +
-          `expected type to take them from, such as a declared variable's type`,
-        filePath, t.line, t.col);
-    }
-  }, true);
 
   // A materialised struct lives in the *template's* file, so the ordinary export and import rules
   // apply to it unchanged. A file that wrote `Vec<i32>` therefore has to import `Vec$i32`, and the
@@ -1296,7 +1326,7 @@ export function monomorphise(
   // Templates themselves are removed and the materialised copies take their place.
   for (const [filePath, prog] of programs) {
     prog.items = prog.items.filter(
-      (it) => !(it.tag === "struct" && it.typeParams.length > 0));
+      (it) => !((it.tag === "struct" || it.tag === "enum") && it.typeParams.length > 0));
     for (const [mangled, decl] of made) {
       if (madeIn.get(mangled) === filePath) prog.items.push(decl);
     }
@@ -1315,12 +1345,21 @@ export function monomorphise(
     }
   }
 
-  if (funcTemplates.size > 0) {
+  // Runs whether or not any function is generic: the walk below also finishes the job the
+  // bracket restriction leaves — giving a construction its type arguments from the type expected
+  // of it — and that needs a symbol table for locals, fields and signatures, which is exactly what
+  // generic-function inference needed. With no templates of either kind every loop here is a no-op.
+  {
     // What `inferArgType` needs to read a call's arguments: every function's declared return type and
     // every struct's fields, keyed canonically so an alias resolves to the same entry.
     const funcReturns = new Map<string, WacType>();
     const structFieldTypes = new Map<string, Map<string, WacType>>();
     const enumVariants = new Map<string, Map<string, WacType[]>>();
+    // Parameter types, for pushing an expected type *into* a call's arguments. Fields are kept in
+    // declaration order for the same reason: a positional construction matches them by position.
+    const funcParams = new Map<string, Param[]>();
+    const structFieldList = new Map<string, FieldDecl[]>();
+    const methodParams = new Map<string, Map<string, Param[]>>();
     for (const [filePath, prog] of programs) {
       for (const item of prog.items) {
         // Keyed through `canonName`, which is what every lookup uses. A hand-written name is in
@@ -1329,11 +1368,15 @@ export function monomorphise(
         // meant a materialised struct's fields were never found [the `this.v` case].
         if (item.tag === "func") {
           funcReturns.set(canonName(item.name, filePath, origins), item.returnType);
+          funcParams.set(canonName(item.name, filePath, origins), item.params);
         } else if (item.tag === "struct") {
           const fields = new Map<string, WacType>();
           for (const f of item.fields) fields.set(f.name, f.type);
           for (const m of item.methods) fields.set(m.name, m.returnType);
           structFieldTypes.set(canonName(item.name, filePath, origins), fields);
+          structFieldList.set(canonName(item.name, filePath, origins), item.fields);
+          methodParams.set(canonName(item.name, filePath, origins),
+            new Map(item.methods.map((m) => [m.name, m.params])));
         } else if (item.tag === "enum") {
           // Payload types per variant, so a `match` arm's bindings have types during this pass:
           // `case A(v): f(v)` has to know what `v` is. Enums have not desugared yet — generics run
@@ -1344,6 +1387,8 @@ export function monomorphise(
           const fields = new Map<string, WacType>();
           for (const m of item.methods) fields.set(m.name, m.returnType);
           structFieldTypes.set(canonName(item.name, filePath, origins), fields);
+          methodParams.set(canonName(item.name, filePath, origins),
+            new Map(item.methods.map((m) => [m.name, m.params])));
         }
       }
     }
@@ -1437,12 +1482,60 @@ export function monomorphise(
       return out;
     };
 
-    /** Walk a body, inferring and rewriting every call to a generic function. */
+    /**
+     * Walk a body: rewrite every call to a generic function, and give every construction the type
+     * arguments its position expects.
+     *
+     * `retType` is threaded rather than passed around because a `return` is the one expected-type
+     * position that comes from the declaration rather than from the statement.
+     */
+    let retType: WacType = { kind: "prim", name: "void", line: 0, col: 0 };
     const rewriteCallsIn = (
-      body: Block, filePath: string, params: Param[], _ret: WacType,
+      body: Block, filePath: string, params: Param[], ret: WacType,
     ): void => {
+      const outer = retType;
+      retType = ret;
       const env: LocalTypes = [new Map(params.map((p) => [p.name, p.type]))];
       walkStmtsForCalls(body.stmts, env, filePath);
+      retType = outer;
+    };
+
+    /** The declared type of an assignment target, so the right-hand side has an expected type. */
+    const lvalueType = (lv: Lvalue, env: LocalTypes, filePath: string): WacType | null => {
+      switch (lv.kind) {
+        case "lv-ident": return lookupLocal(env, lv.name) ?? null;
+        case "lv-unwrap": {
+          const t = lvalueType(lv.base, env, filePath);
+          return t !== null && t.kind === "nullable" ? t.inner : t;
+        }
+        case "lv-index": {
+          const t = lvalueType(lv.base, env, filePath);
+          return t !== null && t.kind === "array" ? t.elem : null;
+        }
+        case "lv-field": {
+          const base = lvalueType(lv.base, env, filePath);
+          if (base === null) return null;
+          const named = base.kind === "nullable" ? base.inner : base;
+          if (named.kind !== "struct") return null;
+          return structFieldTypes.get(canonName(named.name, filePath, origins))?.get(lv.field)
+            ?? null;
+        }
+      }
+    };
+
+    /**
+     * Give a construction the type arguments its position expects.
+     *
+     * The pre-materialisation pass covers a declaration and a `return`, which need no symbol table.
+     * The rest of the positions the design lists — assignment, a call's arguments, a construction's
+     * own arguments, an array's elements — need one, so they are done here. Without this,
+     * `b = Box(4)` and `f(Box(4))` were impossible to write for a *generic* struct, and a generic
+     * enum was worse: `Option.Some(x)` cannot name its arguments at all, so an argument position
+     * had no spelling that worked.
+     */
+    const applyExpectedHere = (e: Expr, expected: WacType | null, filePath: string): void => {
+      if (expected === null) return;
+      applyExpected(e, expected, filePath);
     };
 
     const walkStmtsForCalls = (stmts: Stmt[], env: LocalTypes, filePath: string): void => {
@@ -1459,8 +1552,13 @@ export function monomorphise(
     const visitExprsForCalls = (st: Stmt, env: LocalTypes, filePath: string): void => {
       const expr = (e: Expr) => rewriteCallExpr(e, env, filePath);
       switch (st.kind) {
-        case "var": expr(st.init); return;
-        case "assign": expr(st.rhs); return;
+        case "var": applyExpectedHere(st.init, st.type, filePath); expr(st.init); return;
+        case "assign":
+          // A compound assignment (`+=`) cannot be a construction, and its expected type is the
+          // operand's anyway, so the plain form is the only one that needs this.
+          applyExpectedHere(st.rhs, lvalueType(st.lval, env, filePath), filePath);
+          expr(st.rhs);
+          return;
         case "if":
           expr(st.cond);
           walkStmtsForCalls(st.then.stmts, env, filePath);
@@ -1499,7 +1597,9 @@ export function monomorphise(
           }
           return;
         }
-        case "return": if (st.value) expr(st.value); return;
+        case "return":
+          if (st.value) { applyExpectedHere(st.value, retType, filePath); expr(st.value); }
+          return;
         case "block": walkStmtsForCalls(st.block.stmts, env, filePath); return;
         case "expr": expr(st.expr); return;
         default: return;
@@ -1510,14 +1610,52 @@ export function monomorphise(
     const rewriteCallExpr = (e: Expr, env: LocalTypes, filePath: string): void => {
       // Depth first, so `outer(inner(1))` resolves `inner` before `outer` reads its return type.
       switch (e.kind) {
-        case "construct":
+        case "construct": {
+          // A construction's own arguments are an expected-type position: the fields of the struct
+          // being built, by position, and by name for the `S { f: … }` form. A call parses as a
+          // construction too, so the same node covers a function's parameters.
+          const key = canonName(e.ctype.kind === "struct" ? e.ctype.name : "", filePath, origins);
+          const fields = structFieldList.get(key);
+          const params = funcParams.get(key);
+          e.args.forEach((a, i) => {
+            const want = fields !== undefined
+              ? fields[i]?.type
+              : params !== undefined ? params[i]?.type : undefined;
+            if (want !== undefined) applyExpectedHere(a, want, filePath);
+          });
+          for (const n of e.named ?? []) {
+            const want = fields?.find((f) => f.name === n.name)?.type;
+            if (want !== undefined) applyExpectedHere(n.val, want, filePath);
+          }
           for (const a of e.args) rewriteCallExpr(a, env, filePath);
           for (const n of e.named ?? []) rewriteCallExpr(n.val, env, filePath);
           break;
-        case "call":
+        }
+        case "call": {
+          // A method call, or a variant construction — `E.V(args)`, whose "parameters" are the
+          // variant's payload fields. Both reach their arguments through a field callee.
+          if (e.callee.kind === "field") {
+            const recv = e.callee.expr;
+            const variantOf = recv.kind === "ident"
+              ? enumVariants.get(canonName(recv.name, filePath, origins))?.get(e.callee.name)
+              : undefined;
+            const method = (() => {
+              const base = inferArgType(
+                recv, env, filePath, origins, funcReturns, structFieldTypes);
+              if (base === null) return undefined;
+              const named = base.kind === "nullable" ? base.inner : base;
+              if (named.kind !== "struct") return undefined;
+              return methodParams.get(canonName(named.name, filePath, origins))?.get(e.callee.name);
+            })();
+            e.args.forEach((a, i) => {
+              const want = variantOf !== undefined ? variantOf[i] : method?.[i]?.type;
+              if (want !== undefined) applyExpectedHere(a, want, filePath);
+            });
+          }
           rewriteCallExpr(e.callee, env, filePath);
           for (const a of e.args) rewriteCallExpr(a, env, filePath);
           return;
+        }
         case "unary": case "unwrap": case "field": case "cast":
           rewriteCallExpr(e.expr, env, filePath); return;
         case "binary":
@@ -1531,8 +1669,8 @@ export function monomorphise(
           rewriteCallExpr(e.expr, env, filePath); rewriteCallExpr(e.idx, env, filePath); return;
         case "arrNew":
           if (e.size) rewriteCallExpr(e.size, env, filePath);
-          if (e.fill) rewriteCallExpr(e.fill, env, filePath);
-          for (const x of e.fixed) rewriteCallExpr(x, env, filePath);
+          if (e.fill) { applyExpectedHere(e.fill, e.elem, filePath); rewriteCallExpr(e.fill, env, filePath); }
+          for (const x of e.fixed) { applyExpectedHere(x, e.elem, filePath); rewriteCallExpr(x, env, filePath); }
           return;
         case "matchExpr": {
           rewriteCallExpr(e.subject, env, filePath);
@@ -1671,6 +1809,20 @@ export function monomorphise(
     injectNeededImports();
   }
 
+  // Anything still naming a template by itself could not get arguments from anywhere, which is the
+  // one case the bracket restriction cannot cover. Last of all, after every expected type has had
+  // its chance: a construction assigned to a local, passed to a call or nested inside another
+  // construction gets its arguments in the walk above, and reporting before that ran flagged code
+  // that was about to be given what it needed.
+  eachTypeInPrograms(programs, (t, filePath) => {
+    if (t.kind === "struct" && templateFor(t.name, filePath) !== undefined &&
+        (t.typeArgs === undefined || t.typeArgs.length === 0)) {
+      err(`'${t.name}' is generic and needs type arguments, as in '${t.name}<i32>' — or an ` +
+          `expected type to take them from, such as a declared variable's type`,
+        filePath, t.line, t.col);
+    }
+  }, true);
+
 }
 
 /**
@@ -1704,9 +1856,10 @@ export function wacResolve(
   const genericDisplay = new Map<string, string>();
   const templateDecls: { decl: StructDecl; filePath: string }[] = [];
   const funcTemplateDecls: { decl: FuncDecl; filePath: string }[] = [];
+  const enumTemplateDecls: { decl: EnumDecl; filePath: string }[] = [];
   monomorphise(programs,
     (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
-    genericDisplay, templateDecls, funcTemplateDecls);
+    genericDisplay, templateDecls, funcTemplateDecls, enumTemplateDecls);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -1816,14 +1969,30 @@ export function wacResolve(
           }
           payloadNames.add(f.name);
         }
-        if (scope.has(v.name)) {
+        // An instantiation of a generic enum registers its variants under a *qualified* key.
+        // `Option<i32>` and `Option<f64>` would otherwise both claim `Some`, and neither has a
+        // better claim than the other. `case Some(v)` is unaffected — an arm resolves its variant
+        // through the subject's enum, not through the file scope — so what this costs is naming
+        // such a variant as a type, which is documented in spec/spec/generics.md.
+        const scopeKey = genericDisplay.has(name) ? `${name}$${v.name}` : v.name;
+        if (scopeKey !== v.name) {
+          // So a diagnostic about it reads `Option<i32>.Some` rather than the mangled name. The
+          // variant is deliberately *not* reachable under its bare name for a generic enum, so this
+          // is the only spelling a message could otherwise use.
+          genericDisplay.set(scopeKey, `${genericDisplay.get(name)}.${v.name}`);
+        }
+        if (scope.has(scopeKey)) {
           err(`duplicate name '${v.name}'`, filePath, v.line, v.col);
           continue;
         }
         // A variant lists only its payload; inherited fields are computed later, so
         // the tag is not repeated here.
+        // Declared under the *qualified* name for an instantiation, so two instantiations of one
+        // generic enum are two distinct types rather than one shadowing the other. What this costs
+        // is naming such a variant as a type — `Some s` and `x is Some` — which has no unambiguous
+        // spelling anyway. `case Some(v)` is unaffected: an arm resolves through the subject's enum.
         const variantDecl: StructDecl = {
-          tag: "struct", isConst: false, exported: item.exported, name: v.name,
+          tag: "struct", isConst: false, exported: item.exported, name: scopeKey,
           parent: name,
           fields: v.fields.map((f) => ({
             isConst: true, type: f.type, name: f.name, line: f.line, col: f.col,
@@ -1832,7 +2001,7 @@ export function wacResolve(
         };
         const vEntry: StructEntry = {
           enumRole: "variant",
-          structDecl: variantDecl, name: v.name, typeIndex: structs.length,
+          structDecl: variantDecl, name: scopeKey, typeIndex: structs.length,
           filePath, methods: new Map(), parentEntry: base,
         };
         structs.push(vEntry);
@@ -1842,7 +2011,7 @@ export function wacResolve(
         variants.push(variant);
         // Registered as a variant rather than a plain struct, so a constructor call
         // can find its tag and `Shape.Circle` can be told from a static method.
-        scope.set(v.name, { kind: "variant", entry: vEntry, enumEntry, variant });
+        scope.set(scopeKey, { kind: "variant", entry: vEntry, enumEntry, variant });
       }
 
       enums.push(enumEntry);
@@ -2009,6 +2178,7 @@ export function wacResolve(
   return {
     funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay,
     templates: templateDecls, funcTemplates: funcTemplateDecls,
+    enumTemplates: enumTemplateDecls,
   };
 }
 
