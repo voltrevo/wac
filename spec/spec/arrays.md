@@ -14,6 +14,25 @@ i32[] b = i32[](1, 2, 3);               // array.new_fixed, length 3
 `[§wac-arr-default-uwpc1ls]` `a.len()` is `5`, `a[0]` is `0`.
 `[§wac-arr-fixed-v6p97qy]` `b.len()` is `3`, `b[0]` is `1`, `b[2]` is `3`.
 
+The element type may be a named type in either form, including a nested array or a
+nullable one:
+
+```wac
+S[]   c = S[](S(1), S(2));
+S[][] d = S[][](S[](S(7)));
+S?[]  e = S?[](S(1), null);
+```
+
+`[§wac-array-literal-named-9mzq4rt]` All three work. The literal form with a named
+element type did not parse at all until recently: the construction lookahead recognised
+only the sized `S[n]()` shape for a named type, so `S[](...)` fell through to being read
+as an identifier followed by junk. A primitive element type took a different path, which
+is why `i32[](1, 2)` always worked.
+
+The sized form needs the element type to have a default value, and the literal form does
+not — which is what makes the literal the answer for element types that have none, such
+as an enum (see enums.md).
+
 ### Access
 
 ```wac

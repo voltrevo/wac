@@ -332,6 +332,37 @@ distinct array types, which surfaced only as a wasm validation failure.
 Payload fields hold references, so this needs no indirection syntax. Construction is
 bottom-up, so a non-null reference is always available by the time it is needed.
 
+### An enum has no default value
+
+There is no such thing as a default variant, so an enum cannot be produced without
+saying which variant it is. Two forms are therefore rejected:
+
+```wac
+E[] a = E[2]();      // error: type 'E' has no default value for array construction
+struct S { E e; }
+S s = S();           // error: struct 'S' has no default value
+```
+
+`[§enum-no-default]` Both are compile errors. Write the array as a literal, make the
+element type nullable, or construct the struct positionally:
+
+```wac
+E[] a = E[](E.A(1), E.B);     // a literal needs no default
+E?[] b = E?[2]();             // nullable elements default to null
+S s = S(E.A(1));              // positional construction supplies the field
+```
+
+A struct *holding* an enum is perfectly legal; only default-constructing one is not.
+`[§enum-no-default]`
+
+This is worth stating because the opposite was true and was silent. The base struct's
+only field is the tag, which does have a default, so `E[n]()` allocated n bases and a
+`match` on one trapped with `illegal cast` — blaming the arm rather than the
+construction. Fixing it then briefly reported `struct S { E e; }` as "creates a
+non-null recursive reference", because the recursive-field check and the
+defaultability check shared one predicate; that was sound only while recursion was the
+only reason a struct field could lack a default.
+
 ### Enums in other positions
 
 Anywhere a struct type works:

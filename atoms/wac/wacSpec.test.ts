@@ -4815,7 +4815,7 @@ Deno.test("[§enum-narrow-nonvariable] a non-variable subject matches but narrow
         else:        return 0.0;
       }
     }
-    export Shape[] one(Shape s) { Shape[] a = Shape[1](); a[0] = s; return a; }
+    export Shape[] one(Shape s) { return Shape[](s); }
     export Shape mkCircle(f64 r) { return Shape.Circle(r); }
     export Shape mkPoint()       { return Shape.Point; }
   `);
@@ -4836,11 +4836,7 @@ Deno.test("[§enum-array] enums live in arrays like any struct", async () => {
       }
       return n;
     }
-    export Shape[] three(Shape a, Shape b, Shape c) {
-      Shape[] out = Shape[3]();
-      out[0] = a; out[1] = b; out[2] = c;
-      return out;
-    }
+    export Shape[] three(Shape a, Shape b, Shape c) { return Shape[](a, b, c); }
     export Shape mkPoint()            { return Shape.Point; }
     export Shape mkRect(f64 w, f64 h) { return Shape.Rect(w, h); }
   `);
@@ -4864,6 +4860,88 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
     }
   `);
   eq(inst.call("calls", []), 1, "the subject expression ran once");
+});
+
+Deno.test("[§enum-no-default] an enum has no default value", async () => {
+  // The base struct's only field is the tag, which does have a default, so the
+  // ordinary defaultability rule said an enum was defaultable. It is not: a bare base
+  // is no variant at all, and a default-constructed variant carries tag 0 rather than
+  // its own. Both were reachable — `E[n]()` produced n of them, and `S()` on a struct
+  // with an enum field produced one — and matching one trapped on `illegal cast`,
+  // pointing at the arm rather than at the construction responsible.
+  const sized = err(`
+    enum E { A(i32 v), B }
+    export i32 f() { E[] a = E[2](); return a.len(); }`);
+  if (!sized.includes("no default value")) {
+    throw new Error(`expected the no-default diagnostic for E[n](), got: ${sized}`);
+  }
+  const defaulted = err(`
+    enum E { A(i32 v), B }
+    struct S { E e; }
+    export i32 f() { S s = S(); return 1; }`);
+  if (!defaulted.includes("no default value")) {
+    throw new Error(`expected the no-default diagnostic for S(), got: ${defaulted}`);
+  }
+
+  // What still works, since rejecting the above is only tolerable if there is a way to
+  // write it: the fixed literal, a nullable element type, and a struct that merely
+  // *has* an enum field and is constructed positionally.
+  const inst = await run(`
+    enum E { A(i32 v), B }
+    struct S { E e; i32 n; }
+    export i32 literal()  { E[] a = E[](E.A(3), E.B); match (a[0]) { case A(v): return v; case B: return 0; } }
+    export i32 nullableElems() { E?[] a = E?[2](); a[0] = E.A(5);
+      if (a[0] is null) { return -1; }
+      match (a[0]!) { case A(v): return v; case B: return 0; } }
+    export i32 field() { S s = S(E.A(4), 1); match (s.e) { case A(v): return v + s.n; case B: return 0; } }
+  `);
+  eq(inst.call("literal", []), 3, "a fixed literal needs no default");
+  eq(inst.call("nullableElems", []), 5, "a nullable element type defaults to null");
+  eq(inst.call("field", []), 5, "a struct may hold an enum and be built positionally");
+});
+
+Deno.test("[§enum-no-default] a struct with an enum field is not 'recursive'", () => {
+  // Making enums non-defaultable initially reported `struct S { E e; }` as "field 'e'
+  // creates a non-null recursive reference" — and rejected the declaration outright,
+  // which would have made a struct with an enum field illegal to write. The
+  // recursive-field check and the defaultability check had been sharing one predicate,
+  // which was sound only while recursion was the single reason a struct field could
+  // lack a default.
+  const r = wacCompile(new Map([["main.wac", `
+    enum E { A(i32 v), B }
+    struct S { E e; i32 n; }
+    export i32 f() { S s = S(E.B, 2); return s.n; }`]]), "main.wac");
+  if (!r.ok) {
+    throw new Error(`declaring a struct with an enum field should be legal, got: ${
+      r.diagnostics.map(d => d.message).join("; ")}`);
+  }
+  // And genuine recursion is still reported as recursion.
+  const rec = err(`struct Node { Node next; } export i32 f() { return 1; }`);
+  if (!rec.includes("recursive")) {
+    throw new Error(`expected the recursion diagnostic, got: ${rec}`);
+  }
+});
+
+Deno.test("[§wac-array-literal-named-9mzq4rt] a fixed array literal accepts a named element type", async () => {
+  // `i32[](1, 2)` parsed and `S[](S(1), S(2))` did not. The construction lookahead only
+  // recognised the *sized* form for a named element type: it skipped `[]` pairs looking
+  // for a size bracket, found `(` instead, and gave up — so the whole thing fell
+  // through to being parsed as an identifier followed by junk. A primitive element type
+  // took an earlier path and worked. The parser proper handled the shape all along.
+  const inst = await run(`
+    struct S { i32 v; }
+    enum E { A(i32 v), B }
+    export i32 structs()  { S[] a = S[](S(1), S(2)); return a.len() + a[1].v; }
+    export i32 nested()   { S[][] a = S[][](S[](S(7))); return a[0][0].v; }
+    export i32 nullables() { S?[] a = S?[](S(1), null); return a[1] is null ? 10 : 0; }
+    export i32 enums()    { E[] a = E[](E.A(4), E.B); match (a[0]) { case A(v): return v; case B: return 0; } }
+    export i32 empty()    { S[] a = S[](); return a.len(); }
+  `);
+  eq(inst.call("structs", []), 4, "two elements, second holds 2");
+  eq(inst.call("nested", []), 7, "an array of arrays of structs");
+  eq(inst.call("nullables", []), 10, "a nullable element type");
+  eq(inst.call("enums", []), 4, "and an enum element type");
+  eq(inst.call("empty", []), 0, "an empty literal is still a literal");
 });
 
 Deno.test("[§enum-match-variant-subject] a variant-typed value can be matched", async () => {
@@ -4967,9 +5045,7 @@ Deno.test("[§enum-name-identity] two files may declare the same enum name", asy
       enum F { X, Z(i32 v) }
       i32 readF(F f) { match (f) { case X: return 20; case Z(v): return v; } }
       export i32 go(i32 v) {
-        F[] mine = F[2]();
-        mine[0] = F.X;
-        mine[1] = F.Z(v);
+        F[] mine = F[](F.X, F.Z(v));
         return readA(mkY(v)) + readF(mine[0]) + readF(mine[1]);
       }
     `],
@@ -5012,8 +5088,8 @@ Deno.test("[§enum-cross-file] an enum not in scope says so, rather than 'not an
   const m = errMulti(new Map([
     ["k.wac", `
       export enum Kind { A, B }
-      export struct Holder { Kind kind; }
-      export Holder mk() { return Holder(Kind.A); }
+      export struct Holder { Kind kind; i32 n; }
+      export Holder mk() { return Holder(Kind.A, 1); }
     `],
     ["main.wac", `
       import { Holder, mk } from "./k.wac";

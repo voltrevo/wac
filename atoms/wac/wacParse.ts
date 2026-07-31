@@ -611,11 +611,20 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (next.kind === "[" || next.kind === "?") {
       let j = cur + 1; // point to [ or ?
       // Skip element-type suffix [] and ? pairs
+      let lastWasBracketPair = false;
       while (j < tokens.length) {
-        if (tokens[j]?.kind === "[" && tokens[j + 1]?.kind === "]") { j += 2; }
-        else if (tokens[j]?.kind === "?") { j++; }
+        if (tokens[j]?.kind === "[" && tokens[j + 1]?.kind === "]") { j += 2; lastWasBracketPair = true; }
+        else if (tokens[j]?.kind === "?") { j++; lastWasBracketPair = false; }
         else break;
       }
+      // A fixed literal with a named element type: `S[](S(1), S(2))`. The final `[]`
+      // pair is the construction bracket rather than an element-type suffix, so the
+      // scan lands on `(` with no size bracket to find. Only the sized form was
+      // recognised here, which is why `i32[](1, 2)` parsed and `S[](S(1))` did not —
+      // a primitive element type takes an earlier, simpler path. `parseConstructionOrCall`
+      // already handles this shape; nothing but the lookahead was missing.
+      // An empty `[]` cannot be an index expression, so there is no ambiguity.
+      if (lastWasBracketPair && tokens[j]?.kind === "(") return true;
       // Now j should point to the construction [ (size bracket)
       if (tokens[j]?.kind !== "[") return false;
       j++; // past [
