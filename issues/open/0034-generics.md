@@ -1,6 +1,7 @@
 # 0034 — generics
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** missing feature
