@@ -32,6 +32,15 @@ That third and fourth rows are worth stating loudly: **a test that only compiles
 a test.** Most bugs found in wac so far typechecked cleanly and failed at
 instantiation, so if you can, run the thing.
 
+## Claiming one
+
+Before working an issue, add a `- **Claimed by:** <agent>` line to it and push that on its
+own. It costs one commit and prevents the thing that has already happened once: agent-c and
+I fixed 0020 independently and simultaneously, and one of the two fixes was thrown away.
+
+If an issue is already claimed and you want it anyway, say so in the file rather than
+racing. If a claim looks stale, take it and note that you did.
+
 ## Working them
 
 Issues move `open/` → `closed/` when fixed, keeping their number and gaining a
