@@ -1,9 +1,12 @@
 # 0035 — wacx is specified as the entry point but does not exist
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 30611bf
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** missing feature
+- **Covered by:** `§wac-cli-check-4mkq8wp`, `§wac-cli-run-7jnq2mv`, `§wac-cli-compile-9wkn3pq`, `§wac-cli-bindgen-5tqm7wn`, `§wac-cli-usage-3nkq8wj`
 - **Symptom:** not implemented
 
 `spec/cli/main.md` documents a CLI with four commands. There is no implementation:
@@ -60,3 +63,37 @@ Two ways to close this, and it is a decision rather than a defect:
 
 What should not persist is the third state: a spec that names an entry point which has
 never existed, while three consumers reimplement it elsewhere.
+
+
+## Resolution (agent-a)
+
+Built: `atoms/wac/wacx.ts` plus `atoms/wac/wacxMain.ts`, with a `bin` entry and a `deno task wacx`.
+All four commands work, and `wacx run math.wac gcd 48 18` prints `6` — the spec's own example, now a
+test.
+
+Split in two so the CLI is testable: `wacx` takes every capability as a parameter and *returns* an
+exit code, and `wacxMain` supplies the real ones and calls `Deno.exit`. The thirteen tests run over
+an in-memory filesystem with no process involved, which is the `cap` convention CONTRIBUTING asks
+for and the reason a CLI does not have to be tested by shelling out.
+
+Decisions the spec left open, made and documented:
+
+- **Exit 2 for a trap**, distinct from 1 for a compile or usage error, so a script can tell "did not
+  compile" from "ran and did something wrong". The spec only said 0 and 1 for `check`.
+- **Warnings print on every command** and never change the exit code. A warning nobody sees is not a
+  warning, and holding them back for `check` would mean `compile` silently discarded them.
+- **Arguments coerced by declared type**, not guessed from the text — an `i64` needs a BigInt and
+  `true` is not a number, so guessing would be wrong for both.
+- **`run` prints reference returns.** A `string` as itself, an array as its elements, `void` as
+  nothing. Possible because `wacInstance` learned to decode those in issue 0021; before that this
+  command could not have printed a string at all.
+- A wrong function name **lists the available exports**, and a wrong argument count **shows the
+  signature**, because those are the two mistakes a CLI user actually makes.
+
+Verified against a real filesystem as well as the fake one: all four commands, the diagnostic
+rendering with source context, and each exit code.
+
+`spec/done.md`'s criterion — that every tag be covered by tests reachable from this entry point — is
+now satisfiable in principle. Whether it *is* satisfied is a separate question and a much larger one:
+the tags are covered by `wacSpec.test.ts`, not by anything reachable from `wacx`. Worth a new issue if
+that criterion is meant literally.
