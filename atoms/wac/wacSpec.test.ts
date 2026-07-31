@@ -1201,6 +1201,31 @@ Deno.test("[§wac-arr-i8-lit-badtype-3w7g6aa] non-i32 element in a packed litera
   }
 });
 
+// ── §wac-arr-packed-cast — a packed element reads as i32 and casts onward ────
+//
+// The emitter's typeOfExpr reported the raw element type for an index, while the
+// type checker normalised it to i32. The cast path then looked for a u8 -> i64
+// conversion, found none, and emitted no widening — valid types, invalid wasm. So
+// this instantiates rather than only compiling.
+
+Deno.test("[§wac-arr-packed-cast-nfe1ha9] a packed element widens to i64", async () => {
+  const inst = await run(`
+    export i64 wideByte(u8[] bytes) { return bytes[0] as i64; }
+    export i64 wideSigned(i8[] bytes) { return bytes[0] as i64; }
+    export f64 wideFloat(u8[] bytes) { return bytes[0] as f64; }
+    export u8[] makeU8(i32 v) { u8[] b = u8[1](); b[0] = v; return b; }
+    export i8[] makeI8(i32 v) { i8[] b = i8[1](); b[0] = v; return b; }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  // u8[] and i8[] are distinct array types, so each needs its own constructor —
+  // one maker cannot feed both.
+  const u = raw.makeU8(200);
+  eq(raw.wideByte(u), 200n, "u8 200 widens to i64 200");
+  eq(raw.wideFloat(u), 200, "u8 200 widens to f64 200");
+  // i8 sign-extends on read, so the same bits are -56 before widening.
+  eq(raw.wideSigned(raw.makeI8(200)), -56n, "i8 200 reads as -56 and widens");
+});
+
 // ── §wac-arr-i8-compound-* — compound assignment on packed elements ─────────
 //
 // Packed elements must be read back with array.get_u; array.get is not a valid
@@ -1582,6 +1607,60 @@ Deno.test(`[§wac-str-frombytes-p3kq7wn] arity and argument type are checked`, (
   // point of the distinction, so it must not be silently accepted.
   const c = err(`export string bad(i8[] b) { return string.fromBytes(b); }`);
   if (!c.includes("must be u8[]")) throw new Error(`unexpected: ${c}`);
+});
+
+// ── §wac-str-tobytes-* — string.toBytes ──────────────────────────────────────
+
+Deno.test(`[§wac-str-tobytes-k7mq4wp] firstByte() returns 104`, async () => {
+  const inst = await run(`
+    export i32 first() { return "hi".toBytes()[0]; }
+    export i32 len()   { return "hi".toBytes().len(); }
+    export i32 empty() { return "".toBytes().len(); }
+  `);
+  eq(inst.call("first", []), 104, "'h' is 104");
+  eq(inst.call("len", []), 2, "two bytes");
+  eq(inst.call("empty", []), 0, "the empty string gives an empty array");
+});
+
+Deno.test(`[§wac-str-tobytes-utf8-r2nf8jt] the bytes are UTF-8`, async () => {
+  const inst = await run(`
+    export bool two()   { u8[] b = "é".toBytes(); return b.len() == 2 && b[0] == 0xC3 && b[1] == 0xA9; }
+    export bool three() { u8[] b = "日".toBytes(); return b.len() == 3 && b[0] == 0xE6 && b[2] == 0xA5; }
+    export bool four()  { u8[] b = "😀".toBytes(); return b.len() == 4 && b[0] == 0xF0 && b[3] == 0x80; }
+    // Unsigned: a lead byte above 0x7F must not read back negative.
+    export bool unsigned() { return "é".toBytes()[0] > 0; }
+    export bool roundTrip() { return string.fromBytes("日本語".toBytes()) == "日本語"; }
+  `);
+  eq(inst.call("two", []), true, "U+00E9 is C3 A9");
+  eq(inst.call("three", []), true, "U+65E5 is three bytes");
+  eq(inst.call("four", []), true, "U+1F600 is four bytes");
+  eq(inst.call("unsigned", []), true, "bytes read back unsigned");
+  eq(inst.call("roundTrip", []), true, "fromBytes(toBytes(s)) == s");
+});
+
+Deno.test(`[§wac-str-tobytes-copy-h5wk3qm] the result is a copy, not a view`, async () => {
+  // Returning the string's own storage would hand out a writable view of an
+  // immutable value; a second call proves the original was untouched.
+  const inst = await run(`
+    export bool test() {
+      u8[] b = "ab".toBytes();
+      b[0] = 'z';
+      return "ab".toBytes()[0] == 'a' && b[0] == 'z';
+    }
+    export bool viaString() {
+      string s = "ab";
+      u8[] b = s.toBytes();
+      b[0] = 'z';
+      return s == "ab";
+    }
+  `);
+  eq(inst.call("test", []), true, "writing to the copy leaves the string alone");
+  eq(inst.call("viaString", []), true, "including through a bound variable");
+});
+
+Deno.test(`[§wac-str-tobytes-k7mq4wp] toBytes takes no arguments`, () => {
+  const msg = err(`export i32 bad() { return "hi".toBytes(1).len(); }`);
+  if (!msg.includes("takes no arguments")) throw new Error(`unexpected: ${msg}`);
 });
 
 // ── §wac-charlit-* — character literals are i32 codepoints ───────────────────

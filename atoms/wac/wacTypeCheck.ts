@@ -1321,6 +1321,16 @@ function inferCall(
         }
         return T_STR;
       }
+      if (methodName === "toBytes") {
+        if (args.length !== 0) {
+          errAt(ctx, `'toBytes()' takes no arguments`, expr.line, expr.col);
+        }
+        return {
+          kind: "array",
+          elem: { kind: "prim", name: "u8", line: expr.line, col: expr.col },
+          line: expr.line, col: expr.col,
+        };
+      }
       if (methodName === "indexOf") {
         if (args.length !== 1) {
           errAt(ctx, `'indexOf()' takes 1 argument (needle)`, expr.line, expr.col);

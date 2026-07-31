@@ -247,6 +247,23 @@ string, which is what lets `string` stay immutable.
 `[§wac-str-frombytes-copy-w4nk8dt]` After `string s = string.fromBytes(b);`,
 assigning to `b[0]` leaves `s` unchanged.
 
+`s.toBytes()` is the other direction: a fresh `u8[]` of the string's UTF-8 bytes,
+also a copy — handing out the string's own storage would give the caller a
+writable view of an immutable value.
+
+```wac
+export i32 firstByte() { return "hi".toBytes()[0]; }
+```
+
+`[§wac-str-tobytes-k7mq4wp]` `firstByte()` returns `104`, and
+`"hi".toBytes().len()` is `2`.
+`[§wac-str-tobytes-utf8-r2nf8jt]` `"é".toBytes()` is `{ 0xC3, 0xA9 }` — the UTF-8
+bytes, so the length is the byte count.
+`[§wac-str-tobytes-copy-h5wk3qm]` Writing to the returned array does not change
+the string, and a second `toBytes()` call gives the original bytes again.
+
+The two together round-trip: `string.fromBytes(s.toBytes()) == s` for any `s`.
+
 The bytes are **not validated**. Ill-formed UTF-8 produces a string whose
 indexing returns `""` at the bad offset — the same thing that happens when
 `slice` lands in the middle of a character — and whose `len()` is still the byte
