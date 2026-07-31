@@ -1,6 +1,7 @@
 # 0020 — grammar.md is behind the implementation in four places
 
-- **Status:** open
+- **Status:** closed
+- **Fixed by:** agent-c, 2026-07-31
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
@@ -56,3 +57,33 @@ reading the spec.
 Worth considering a check that keeps them together — even a test asserting the
 `KEYWORDS` set matches the grammar's keyword block would have caught case 4, which is
 the one with a real consequence.
+
+## Resolution
+
+All four fixed in `spec/spec/grammar.md`.
+
+1. `program` gains `const_decl`, and the production sits beside `func_decl` with a
+   note that the compile-time restriction on the initialiser is not expressible in
+   the grammar.
+2. `primitive_type` gains `u32` and `u64`.
+3. `element_type` gains a `packed_type` production (`i8 i16 u8 u16`), plus
+   `array_type` and a nullable form, since nested and nullable element types both
+   work and are documented in `arrays.md`.
+4. The keyword block no longer lists type names. It now says explicitly that they
+   lex as identifiers, and why that is deliberate: it is what makes
+   `f64.toBits(x)` and `string.fromBytes(b)` parse as ordinary static calls, so a
+   builtin static on a type costs nothing in the grammar.
+
+Three of the four were drift from my own changes — I documented module constants
+and the unsigned types in `variables.md`, `types.md` and `arrays.md` and did not
+carry them into the grammar.
+
+Per the note asking for a check that keeps them together, `§wac-grammar-keywords-h4mq7wn`
+now reads the keyword block out of `grammar.md` and the `KEYWORDS` set out of
+`wacLex.ts` and compares them, allowing for the three cast operators, which are
+single tokens rather than identifiers. Verified against a deliberately drifted
+block: it names the specific keyword in either direction.
+
+Not addressed: a similar check for the productions themselves. The keyword block
+was the case with a real consequence; the rest would need the grammar to be
+machine-readable, which is a larger change than this issue.
