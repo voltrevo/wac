@@ -235,12 +235,20 @@ function lookupMethodInChain(
 type TypeEnv = Map<string, WacType>;
 const VOID: WacType = { kind: "prim", name: "void", line: 0, col: 0 };
 const I32:  WacType = { kind: "prim", name: "i32",  line: 0, col: 0 };
+const I64:  WacType = { kind: "prim", name: "i64",  line: 0, col: 0 };
 const BOOL: WacType = { kind: "prim", name: "bool", line: 0, col: 0 };
 
 /** Infer the wac type of an expression given local variable types. */
 export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
   switch (e.kind) {
-    case "int":    return I32;
+    // An integer literal is typed by its own width, the same way wacTypeCheck
+    // types it: decimal by magnitude, hex by digit count [see types.md].
+    // Reporting i32 unconditionally selected the i32 form of the enclosing
+    // operator, so `4000000000000 + 1000000000000` emitted i32.add.
+    case "int": {
+      const lit = wacIntLit(e.value);
+      return lit.ok && lit.width === 64 ? I64 : I32;
+    }
     case "float":  return { kind: "prim", name: "f64", line: 0, col: 0 };
     case "bool":   return BOOL;
     case "string": return { kind: "prim", name: "string", line: 0, col: 0 };

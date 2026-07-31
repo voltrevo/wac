@@ -778,6 +778,44 @@ Deno.test("wasmBuildBin: i64 arithmetic", async () => {
   eq(e.i64eq(5n, 6n), 0, "i64eq false");
 });
 
+// An i64-typed literal — decimal by magnitude, hex by digit count [types.md] —
+// must be emitted as i64.const AND must select the i64 form of the operator.
+// Both used to come out as i32: typeOfExpr reported i32 for every int literal,
+// and emitExpr took the const width from the expected type alone. Neither
+// surfaced until instantiate, since the typechecker was already correct.
+//
+// The operands are 0x4321...8ACE and 0x1122...3488 with results computed in
+// Python, so that a truncation to 32 bits or a wrong operator width cannot
+// coincidentally produce the expected value.
+Deno.test("wasmBuildBin: i64 literals as operands of binary ops", async () => {
+  const e = await inst(`
+    export i64 addLit(i64 x)  { return x + 1234605616436508552; }
+    export i64 subLits()      { return 1099511627776 - 68719476736; }
+    export i64 mulLits()      { return 3037000493 * 3037000493; }
+    export i64 divLits()      { return 4835703278458516698 / 1234605616436508552; }
+    export i64 remLits()      { return 4835703278458516698 % 1234605616436508552; }
+    export i64 xorLits()      { return 4835703278458516698 ^ 1234605616436508552; }
+    export i64 shrLit()       { return 1099511627776 >> 7; }
+    export i32 eqLit(i64 x)   { return x == 1234605616436508552 ? 1 : 0; }
+    export i32 ltLits()       { return 68719476736 < 1099511627776 ? 1 : 0; }
+    export i32 eqHexLit(i64 x) { return x == 0x0EDB88320 ? 1 : 0; }
+    export i64 compoundLit(i64 x) { x += 1234605616436508552; return x; }
+  `);
+  eq(e.addLit(4835703278458516698n), 6070308894895025250n, "i64 + literal");
+  eq(e.subLits(), 1030792151040n, "literal - literal");
+  eq(e.mulLits(), 9223371994482243049n, "literal * literal");
+  eq(e.divLits(), 3n, "literal / literal");
+  eq(e.remLits(), 1131886429148991042n, "literal % literal");
+  eq(e.xorLits(), 5925028221636592466n, "literal ^ literal");
+  eq(e.shrLit(), 8589934592n, "literal >> literal");
+  eq(e.eqLit(1234605616436508552n), 1, "i64 == literal, equal");
+  eq(e.eqLit(1234605616436508553n), 0, "i64 == literal, off by one");
+  eq(e.ltLits(), 1, "literal < literal");
+  // A 9-digit hex literal is i64 and positive; read as i32 it would be -306674912.
+  eq(e.eqHexLit(3988292384n), 1, "i64 == 9-digit hex literal");
+  eq(e.compoundLit(4835703278458516698n), 6070308894895025250n, "i64 += literal");
+});
+
 Deno.test("wasmBuildBin: i64 comparison ops", async () => {
   const e = await inst(`
     export i32 i64lt(i64 a, i64 b) { return a < b ? 1 : 0; }
