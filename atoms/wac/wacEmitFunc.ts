@@ -149,6 +149,25 @@ function variantStructType(typeIndex: number, ctx: WasmTypeCtx): WacType | null 
 }
 
 /**
+ * A method on a struct or anything it inherits from.
+ *
+ * `StructEntry.methods` is the struct's own map, so a subtype's lookup has to walk `parentEntry`
+ * — which is also how an enum's methods are reached from a variant, since the variants are
+ * generated subtypes of the enum's base.
+ */
+function lookupMethod(
+  name: string, resolvedIndex: number | undefined, method: string, ctx: WasmTypeCtx,
+): FuncEntry | undefined {
+  let entry = resolveStructEntry(name, ctx, resolvedIndex);
+  while (entry) {
+    const found = entry.methods.get(method);
+    if (found) return found;
+    entry = entry.parentEntry ?? undefined;
+  }
+  return undefined;
+}
+
+/**
  * Is this expression the literal `null`?
  *
  * Checked syntactically rather than by type: the null literal types as `anyref` here,
@@ -440,7 +459,12 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         }
         const sName = structName(baseT);
         if (sName) {
-          const meth = resolveStructEntry(sName, ctx, structResolvedIndex(baseT))?.methods.get(fe.name);
+          // Walk the parent chain: `methods` holds only a struct's *own* methods, so an
+          // inherited one missed the lookup, this fell through, and the expression ended up
+          // typed f64 — which made `s.get() + 1` emit `f64.add` for two i32s [issue 0040].
+          // The type checker already walks the chain; keeping a second, shorter answer here
+          // is the disagreement this compiler produces most often.
+          const meth = lookupMethod(sName, structResolvedIndex(baseT), fe.name, ctx);
           if (meth) return funcReturnType(meth);
         }
       }
