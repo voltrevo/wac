@@ -341,6 +341,13 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         if (baseT.kind === "prim" && baseT.name === "string") {
           if (fe.name === "slice") return { kind: "prim", name: "string", line: 0, col: 0 };
           if (fe.name === "indexOf") return I32;
+          if (fe.name === "toBytes") {
+            return {
+              kind: "array",
+              elem: { kind: "prim", name: "u8", line: 0, col: 0 },
+              line: 0, col: 0,
+            };
+          }
         }
         const sName = structName(baseT);
         if (sName) {
@@ -380,7 +387,18 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       // String indexing returns a string
       if (t.kind === "prim" && t.name === "string") return { kind: "prim", name: "string", line: 0, col: 0 };
       const arr = t.kind === "array" ? t : t.kind === "nullable" && t.inner.kind === "array" ? t.inner : null;
-      return arr ? arr.elem : I32;
+      if (!arr) return I32;
+      // A packed element reads as i32 — array.get_s/get_u yield i32 — so that is
+      // the type of the *value*, which is what every consumer here needs. The type
+      // checker already normalises this (inferExpr's "index" case); without the
+      // same normalisation the cast path looked for a u8 -> i64 conversion, found
+      // none, and emitted no widening at all: valid types, invalid wasm.
+      const el = arr.elem;
+      if (el.kind === "prim" &&
+          (el.name === "i8" || el.name === "i16" || el.name === "u8" || el.name === "u16")) {
+        return I32;
+      }
+      return el;
     }
     case "construct": {
       // For struct types, return the struct type; for function-named constructs, return the func return type.
@@ -1405,6 +1423,11 @@ class FuncEmitter {
           this.emitExpr(fe.expr, env); // push string
           for (const arg of e.args) this.emitExpr(arg, env);
           this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_indexof")!)); // call __str_indexof
+          return;
+        }
+        if (fe.name === "toBytes") {
+          this.emitExpr(fe.expr, env); // push string
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_to_bytes")!));
           return;
         }
       }
