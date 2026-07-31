@@ -1,6 +1,19 @@
 ## Enums and match
 
-*Implemented, except where marked otherwise below.*
+*Implemented, except where marked otherwise below — but **new and thinly
+exercised**. Treat a surprise here as a likely compiler bug rather than as
+intended behaviour, and check the known gaps before working around one.*
+
+**Known gap, open:** an **imported** enum is not recognised as an enum, so `match`
+on a value whose type came from another file fails with `match requires an enum
+value`. An enum and the code matching on it must currently live in the same file.
+This is the common case for anything real, so it is the first thing to hit.
+
+The feature's tests were written alongside its implementation, from the same
+understanding, so they agree with each other about more than they should. The first
+outside consumer — porting `wacc`'s AST to sum types — found six bugs in roughly
+twenty lines of use, five of them fixed in `08fedd2`. Expect more, and prefer adding
+a case to `wacSpec.test.ts` over adapting your code to whatever it currently does.
 
 An enum is a type with a fixed set of variants, each optionally carrying payload
 fields. It compiles to the struct hierarchy you would otherwise write by hand: a
