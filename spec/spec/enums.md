@@ -189,6 +189,31 @@ Listing the same variant twice is likewise an error:
 `[§enum-match-duplicate]` `case Circle(r): ... case Circle(r2): ...` is a compile
 error.
 
+### Testing for a variant
+
+`is` accepts a variant name, bare or qualified by the enum:
+
+```wac
+if (s is Circle)       { ... }
+if (s is Shape.Circle) { ... }     // the same test
+```
+
+`[§enum-is-qualified-8jkq4wp]` Both mean the same thing, for a variant with a payload as
+readily as one without — a type test needs no payload.
+
+The qualified form is worth stating because it used to be silently wrong. `Shape.Empty` on
+the right of `is` parses as an expression rather than a type, so the test became reference
+identity against a freshly constructed variant and was always false; a variant *with* a
+payload failed instead with "needs a payload", a message about construction when nothing was
+being constructed. It is also the spelling this document teaches, since it is how a variant
+is built.
+
+Writing a payload in a type test is an error rather than silently false:
+`[§enum-is-qualified-8jkq4wp]` `s is Shape.Circle(1.0)` is a compile error.
+
+`is` does not narrow `s` — see 0029 in the issue tracker, and use `match` when you need the
+payload.
+
 ### Matching a variant
 
 A variant is an enum value, so it can be matched directly. The arms still cover the

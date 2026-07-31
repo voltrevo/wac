@@ -5959,6 +5959,56 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §enum-is-qualified-8jkq4wp — a qualified variant name works in an `is` test
+Deno.test("[§enum-is-qualified-8jkq4wp] `s is Shape.Empty` means what `s is Empty` means", async () => {
+  // Reported by agent-c as issue 0036. The qualified form parses as an expression, not a
+  // type, so the test became reference identity against a freshly constructed variant and
+  // was always false — silently for a payload-less variant, and with "needs a payload" for
+  // one with a payload, a message about construction when nothing was being constructed.
+  //
+  // The same inversion as 0022: the meaningless spelling passed quietly while a sensible
+  // one was rejected. And it is the spelling the docs teach, since it is how the variant is
+  // constructed in the first place.
+  const inst = await run(`${SHAPES}
+    export i32 barePoint()      { Shape s = Shape.Point;         return (s is Point) ? 1 : 0; }
+    export i32 qualPoint()      { Shape s = Shape.Point;         return (s is Shape.Point) ? 1 : 0; }
+    export i32 qualPointFalse() { Shape s = Shape.Circle(1.0);   return (s is Shape.Point) ? 1 : 0; }
+    export i32 qualPayload()    { Shape s = Shape.Circle(1.0);   return (s is Shape.Circle) ? 1 : 0; }
+    export i32 qualNot()        { Shape s = Shape.Point;         return (s is not Shape.Circle) ? 1 : 0; }
+    export i32 qualRect()       { Shape s = Shape.Rect(1.0, 2.0); return (s is Shape.Rect) ? 1 : 0; }
+  `);
+  eq(inst.call("barePoint", []), 1, "the bare form, which always worked");
+  eq(inst.call("qualPoint", []), 1, "the qualified form now agrees with it");
+  eq(inst.call("qualPointFalse", []), 0, "and is false when it should be, not always");
+  eq(inst.call("qualPayload", []), 1, "a variant with a payload needs none for a type test");
+  eq(inst.call("qualNot", []), 1, "`is not` too");
+  eq(inst.call("qualRect", []), 1, "and a multi-field variant");
+});
+
+Deno.test("[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected", () => {
+  // `s is Shape.Circle(1.0)` was silently false — it compared against a new object. It is
+  // now an error, since a type test has no use for a payload and writing one means the
+  // author expected something else to happen.
+  const m = err(`${SHAPES}
+    export i32 f() { Shape s = Shape.Circle(1.0); return (s is Shape.Circle(1.0)) ? 1 : 0; }`);
+  if (!m.includes("without a payload")) {
+    throw new Error(`expected the no-payload diagnostic, got: ${m}`);
+  }
+});
+
+Deno.test("[§enum-is-qualified-8jkq4wp] ordinary reference identity is unaffected", async () => {
+  // The qualified-variant path must not swallow a genuine identity test against something
+  // that merely looks similar — a field holding a reference, read off a struct.
+  const inst = await run(`
+    struct Inner { i32 v; }
+    struct Holder { Inner i; }
+    export i32 sameField() { Inner x = Inner(1); Holder h = Holder(x); return (h.i is x) ? 1 : 0; }
+    export i32 diffField() { Holder h = Holder(Inner(1)); Inner y = Inner(1); return (h.i is y) ? 1 : 0; }
+  `);
+  eq(inst.call("sameField", []), 1, "a field holding the same reference");
+  eq(inst.call("diffField", []), 0, "and a different one");
+});
+
 // §wac-is-undefined-type-6qbn3wr — `is` against a name that does not exist
 Deno.test("[§wac-is-undefined-type-6qbn3wr] `is` against an undefined type is an error", () => {
   // Reported by agent-c as issue 0022. It compiled with no diagnostic and returned *true*,
