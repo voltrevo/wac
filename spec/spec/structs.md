@@ -411,6 +411,12 @@ f64 area(Shape s) {
 `[§wac-as-trap-d10qz88]` Casting a Circle `as Rect` traps.
 `[§wac-is-not-fwatmyk]` A Circle `is not Rect` returns true.
 
+An inherited method's result type is the method's own, wherever it was declared.
+`[§wac-inherited-method-type-9dkq3wv]` `s.get() + 1` on a subtype works. Worth a tag only
+because it did not: the emitter resolved methods through a struct's own map, so an inherited
+one was mistyped and the addition was emitted as `f64.add` over two `i32`s — while the call
+on its own was always correct, since a different path resolved it properly.
+
 ### Narrowing
 
 `if (x is T)` narrows `x` to `T` inside the then-block, so no cast is needed there:

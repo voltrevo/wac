@@ -20,7 +20,7 @@ has been fixed and why.
 
 ## Closed
 
-39 issues, 27 closed.
+40 issues, 28 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -5973,6 +5973,35 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §wac-inherited-method-type-9dkq3wv — an inherited method's result type
+Deno.test("[§wac-inherited-method-type-9dkq3wv] an inherited method's result is typed correctly", async () => {
+  // Issue 0040. `typeOfExpr` resolved a method through the struct's *own* method map, so an
+  // inherited one missed, the expression ended up typed f64, and `s.get() + 1` emitted
+  // `f64.add` for two i32s. Two things had to coincide for it to show: the method inherited,
+  // and its result feeding an operator so that something asks for its type. The call on its
+  // own was always emitted correctly, by a path that does walk the chain — so this was the
+  // checker and the emitter holding two answers, which is this compiler's most common bug.
+  const inst = await run(`
+    struct Base { i32 a; i32 get(const this) { return this.a; } f64 half(const this) { return 0.5; } }
+    struct Sub : Base { i32 b; }
+    struct Deeper : Sub { i32 c; }
+    enum E { A(i32 v), B, i32 val(const this) { return match (this) { case A(v): v, case B: 0 }; } }
+
+    export i32 oneLevel()   { Sub s = Sub(4, 5); return s.get() + 1; }
+    export i32 twoLevels()  { Deeper d = Deeper(4, 5, 6); return d.get() + 1; }
+    export i32 ownMethod()  { Base b = Base(4); return b.get() + 1; }
+    export f64 floatToo()   { Sub s = Sub(4, 5); return s.half() + 0.25; }
+    // An enum's methods live on its generated base, so calling one on a narrowed variant is
+    // an inherited call — which is how this was found.
+    export i32 viaNarrowing() { E e = E.A(9); if (e is A) { return e.val() + e.v; } return 0; }
+  `);
+  eq(inst.call("oneLevel", []), 5, "inherited one level, feeding an operator");
+  eq(inst.call("twoLevels", []), 5, "and two levels down");
+  eq(inst.call("ownMethod", []), 5, "a struct's own method still works");
+  near(inst.call("floatToo", []) as number, 0.75, "an inherited f64 method is not broken the other way");
+  eq(inst.call("viaNarrowing", []), 18, "an enum method on a narrowed variant");
+});
+
 // §wac-narrow-if-2mkq8vp — `if (x is T)` narrows x in the then-block
 Deno.test("[§wac-narrow-if-2mkq8vp] `if (x is T)` narrows x", async () => {
   // Issue 0029. Only the exact shape `ident is Type` narrows, and only in the then-block,
