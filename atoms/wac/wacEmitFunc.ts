@@ -126,6 +126,29 @@ function slebBig(n: bigint): number[] {
 // ── Type key functions ────────────────────────────────────────────────────────
 
 /** Stable string key for an array element type (used as map key). */
+/**
+ * Is this expression the literal `null`?
+ *
+ * Checked syntactically rather than by type: the null literal types as `anyref` here,
+ * and `anyref` is also a type a branch can legitimately have, so the type alone cannot
+ * tell the two apart.
+ */
+function isNullLit(e: Expr): boolean {
+  return e.kind === "null";
+}
+
+/** `T?` for a type that has a nullable form, else null. Mirrors the type checker. */
+function nullableOf(t: WacType): WacType | null {
+  if (t.kind === "nullable") return t;
+  if (t.kind === "struct" || t.kind === "array" || t.kind === "funcref") {
+    return { kind: "nullable", inner: t, line: 0, col: 0 };
+  }
+  if (t.kind === "prim" && t.name === "string") {
+    return { kind: "nullable", inner: t, line: 0, col: 0 };
+  }
+  return null;
+}
+
 export function typeKey(t: WacType): string {
   switch (t.kind) {
     case "prim":     return t.name;
@@ -317,6 +340,20 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     case "ternary": {
       const tt = typeOfExpr(e.then, env, ctx);
       const et = typeOfExpr(e.else_, env, ctx);
+      // A `null` branch makes the result nullable, matching the type checker. The two
+      // must agree: the checker accepted `cond ? S(1) : null` as `S?` while this
+      // returned the then-branch's non-nullable `S`, so the block was declared with a
+      // non-nullable result and the `ref.null` in the else branch failed validation.
+      // This is the same shape as the i64-literal split — two places computing one
+      // type — and it is worth stating that the fix is to mirror, not to re-derive.
+      if (isNullLit(e.then) && !isNullLit(e.else_)) {
+        const w = nullableOf(et);
+        if (w) return w;
+      }
+      if (isNullLit(e.else_) && !isNullLit(e.then)) {
+        const w = nullableOf(tt);
+        if (w) return w;
+      }
       // Struct branches type to their closest common ancestor (matches the
       // type checker) — the if/else block type must be the ancestor so both
       // branches validate via wasm's declared subtyping.
@@ -815,10 +852,15 @@ class FuncEmitter {
         this.emit(0x04, ...this.blockType(resT)); // if (result T)
         this.labelDepth++;
         this.emitCovPoint("ternary-then", e.then.line, e.then.col);
-        this.emitExpr(e.then, env);
+        // Both branches are emitted against the result type. A `null` branch needs it
+        // in order to emit a typed `ref.null $T` rather than `ref.null any`, which the
+        // block's declared result would then reject; a float branch needs it to pick
+        // f32 over f64. The branches were previously emitted with no expected type at
+        // all, which happened to work only because no branch had ever needed one.
+        this.emitExpr(e.then, env, resT);
         this.emit(0x05); // else
         this.emitCovPoint("ternary-else", e.else_.line, e.else_.col);
-        this.emitExpr(e.else_, env);
+        this.emitExpr(e.else_, env, resT);
         this.emit(0x0B); // end
         this.labelDepth--;
         break;
