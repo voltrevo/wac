@@ -159,6 +159,29 @@ export i32 million()  { return 1_000_000; }
 
 `[§wac-numsep-qpeegkw]` `grouped()` returns `-306674912` and `million()` returns `1000000`.
 
+### Float representation
+
+`f64.toBits(x)` is the IEEE 754 bit pattern of `x` as a `u64`, and
+`f64.fromBits(b)` is the reverse. Both are reinterpretations — the bits are
+unchanged and nothing is rounded, checked or trapped.
+
+```wac
+export u64 one()  { return f64.toBits(1.0); }
+export f64 back() { return f64.fromBits(0x3FF0000000000000); }
+```
+
+`[§wac-f64bits-h3kq9wn]` `one()` returns `0x3FF0000000000000` and `back()` returns
+`1.0`.
+`[§wac-f64bits-round-r7mf4jp]` `f64.fromBits(f64.toBits(x)) == x` for any non-NaN
+`x`, and the two round-trip NaN's payload bits unchanged.
+`[§wac-f64bits-zero-w2nk6dq]` `f64.toBits(-0.0) != f64.toBits(0.0)` — the sign bit
+is visible even though `-0.0 == 0.0`.
+
+This is the only way to see a float's representation. Without it a program cannot
+decompose a float into sign, exponent and mantissa, so nothing that needs the
+representation — shortest-round-trip formatting, classification, hashing a float
+by value — can be written at all.
+
 ### Character literals
 
 `'a'` is an integer literal spelled as a character. Its value is the Unicode
