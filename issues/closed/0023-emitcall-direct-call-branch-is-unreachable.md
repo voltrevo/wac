@@ -1,7 +1,7 @@
 # 0023 — `emitCall`'s direct-call branch is unreachable
 
 - **Status:** closed
-- **Fixed in:** 26d8461
+- **Fixed in:** 6d1625e
 - **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
