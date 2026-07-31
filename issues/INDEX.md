@@ -14,14 +14,13 @@ has been fixed and why.
 | [0034](open/0034-generics.md) | generics | missing feature | not implemented |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
-| [0029](open/0029-narrowing-outside-match.md) | `if (s is Circle)` does not narrow `s` | missing feature | compile error |
 | [0027](open/0027-nested-patterns.md) | patterns are one level deep | missing feature | not implemented |
 | [0025](open/0025-coverage-tool-covers-only-gzip.md) | the coverage tool measures gzip and nothing else | missing feature | wrong answer, no error |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 
 ## Closed
 
-38 issues, 26 closed.
+39 issues, 27 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

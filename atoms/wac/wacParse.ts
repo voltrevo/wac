@@ -86,7 +86,11 @@ export type Stmt =
   | ({ kind: "var";      isConst: boolean; type: WacType; name: string; init: Expr } & Pos)
   | ({ kind: "assign";   op: string; lval: Lvalue; rhs: Expr } & Pos)
   | ({ kind: "incr";     op: "++" | "--"; lval: Lvalue } & Pos)
-  | ({ kind: "if";       cond: Expr; then: Block; els: ElseBranch } & Pos)
+  // `narrowName`/`narrowTypeIndex` are filled in by the type checker when the condition is
+  // `ident is Type`: the name is shadowed at the narrower type inside the then-block, which
+  // the emitter needs a local and a cast for [see issue 0029].
+  | ({ kind: "if";       cond: Expr; then: Block; els: ElseBranch;
+       narrowName?: string; narrowTypeIndex?: number } & Pos)
   | ({ kind: "while";    cond: Expr; body: Block } & Pos)
   | ({ kind: "for";      init: Stmt | null; cond: Expr | null; update: Stmt | null; body: Block } & Pos)
   | ({ kind: "dowhile";  body: Block; cond: Expr } & Pos)
