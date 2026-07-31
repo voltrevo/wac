@@ -1,10 +1,12 @@
 # 0020 — grammar.md is behind the implementation in four places
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
 - **Symptom:** not implemented (the spec is wrong, not the compiler)
+- **Covered by:** `§wac-grammar-keywords-3mfq7bx`
 
 `spec/spec/grammar.md` is the formal grammar, and CONTRIBUTING says the spec is the
 source of truth. Four productions no longer describe what the parser accepts. Each is
@@ -56,3 +58,40 @@ reading the spec.
 Worth considering a check that keeps them together — even a test asserting the
 `KEYWORDS` set matches the grammar's keyword block would have caught case 4, which is
 the one with a real consequence.
+
+
+## Resolution
+
+All four corrected, and every snippet in the report is now verified to compile — the
+grammar describing the accepted language is the whole claim, so it is worth checking
+rather than asserting.
+
+1. `program` gains `const_decl`, and the production itself, which was referenced nowhere
+   and defined nowhere.
+2. `primitive_type` gains `u32` and `u64`.
+3. `element_type` is now `type | "i8" | "i16" | "u8" | "u16"` — any type at all, plus the
+   packed types, which exist only as elements. Listing the cases separately is what let
+   nested arrays and nullable elements go missing, so the general form is less likely to
+   drift again.
+4. The keyword list drops the eight type names and gains `from` and `this`, with a
+   paragraph saying *why* the type names are identifiers — the reasoning is the part
+   worth keeping, since a future reader would otherwise "fix" it back.
+
+`param` also gained its optional `const`, which landed in issue 0004 and was missing here
+too — a fifth instance of the same drift, found only because the report prompted a read of
+the whole file.
+
+## The check
+
+Taking up the suggestion: `§wac-grammar-keywords-3mfq7bx` reads the Keywords block out of
+`grammar.md` and the `KEYWORDS` set out of `wacLex.ts` and asserts they match in both
+directions, naming what is missing on each side. Verified by deleting `from` from the
+grammar and watching it report exactly that.
+
+A second test compiles `f64.toBits`, `f32.fromBits` and `string.fromBytes`, which is the
+consequence case 4 had inverted — those parse only because the type name is an identifier,
+so if anyone makes them keywords the builtins stop working and this says so.
+
+The remaining productions are still prose checked by hand. A parser-level conformance
+check against the whole EBNF would be the real fix and is a much larger job; the keyword
+block was singled out because it was the case with a behavioural consequence.
