@@ -6,7 +6,7 @@
 // Import paths are resolved relative to the importing file's directory.
 
 import {
-  type Program, type FuncDecl, type StructDecl, type MethodDecl, type EnumDecl,
+  type Program, type FuncDecl, type StructDecl, type MethodDecl, type EnumDecl, type ConstDecl,
   type FieldDecl, type Param, type WacType, type Expr, type Stmt, type Block, type Lvalue,
 } from "./wacParse.ts";
 
@@ -90,7 +90,11 @@ export type ScopeEntry =
   | { kind: "enum";    entry: StructEntry; enumEntry: EnumEntry }
   // `entry` is the variant's own synthetic struct, so every scope kind exposes the
   // struct a name denotes and callers that only want that need no special case.
-  | { kind: "variant"; entry: StructEntry; enumEntry: EnumEntry; variant: VariantEntry };
+  | { kind: "variant"; entry: StructEntry; enumEntry: EnumEntry; variant: VariantEntry }
+  // A module-level constant carries its declared type and its initialiser. The
+  // emitter substitutes the initialiser at each use rather than allocating
+  // storage, so there is no global and no initialisation order.
+  | { kind: "const";   decl: ConstDecl; exported: boolean; filePath: string };
 
 /** Per-file scope: maps the local name used in this file → the resolved entry */
 export type FileScope = Map<string, ScopeEntry>;
@@ -276,6 +280,7 @@ export const ENUM_TAG_FIELD = "#tag";
 
 /** The file a scope entry was declared in, whatever kind it is. */
 function scopeEntryFile(e: ScopeEntry): string {
+  if (e.kind === "const") return e.filePath;
   return e.entry.filePath;
 }
 
@@ -284,6 +289,7 @@ function scopeEntryExported(e: ScopeEntry): boolean {
   if (e.kind === "func") return e.entry.exportName !== null;
   if (e.kind === "struct") return e.entry.structDecl.exported;
   if (e.kind === "enum") return e.enumEntry.enumDecl.exported;
+  if (e.kind === "const") return e.exported;
   // A variant is exported exactly when its enum is: they are one declaration.
   return e.enumEntry.enumDecl.exported;
 }
@@ -430,6 +436,21 @@ export function wacResolve(
       };
       funcs.push(entry);
       scope.set(name, { kind: "func", entry });
+    }
+
+    // ── Constants ─────────────────────────────────────────────────────────────
+    for (const item of prog.items) {
+      if (item.tag !== "const") continue;
+      if (scope.has(item.name)) {
+        errors.push({
+          message: `duplicate name '${item.name}'`,
+          file: filePath, line: item.line, col: item.col,
+        });
+        continue;
+      }
+      scope.set(item.name, {
+        kind: "const", decl: item, exported: item.exported, filePath,
+      });
     }
 
     // ── Phase 3: register methods for all structs in this file ───────────────

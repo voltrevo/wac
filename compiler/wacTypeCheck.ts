@@ -9,7 +9,7 @@
 import {
   type Program, type Expr, type Stmt, type Block, type WacType,
   type Lvalue, type ElseBranch, type SwitchCase,
-  type FieldDecl, type StructDecl, type MatchArm,
+  type FieldDecl, type StructDecl, type MatchArm, type ConstDecl,
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry, type FileScope,
@@ -329,6 +329,7 @@ export function wacTypeCheck(
     for (const item of prog.items) {
       if (item.tag === "struct") checkStructShape(item, ctx);
       else if (item.tag === "func") checkFuncSig(item.params, item.returnType, item.line, item.col, ctx);
+      else if (item.tag === "const") checkConstDecl(item, ctx);
     }
     allErrors.push(...ctx.errors);
   }
@@ -913,6 +914,13 @@ function checkLval(
     case "lv-ident": {
       const info = env.get(lval.name);
       if (!info) {
+        const scoped = ctx.fileScope.get(lval.name);
+        if (scoped?.kind === "const") {
+          errAt(ctx, `cannot assign to constant '${lval.name}'`, lval.line, lval.col,
+            lval.name.length, `declared at module level`,
+            `module-level constants are substituted at each use and have no storage`);
+          return null;
+        }
         errAt(ctx, `undefined variable '${lval.name}'`, lval.line, lval.col);
         return null;
       }
@@ -1056,6 +1064,66 @@ function exprText(e: Expr): string {
   }
 }
 
+/**
+ * A module-level constant: its initialiser must type-check against the declared
+ * type and be evaluable at compile time.
+ *
+ * The constant-expression rule is deliberately narrow — literals, the operators
+ * over them, casts, and other constants. No calls and no construction, so there
+ * is nothing to order and nothing to allocate, which is what lets the emitter
+ * substitute the initialiser at each use instead of building a global.
+ */
+function checkConstDecl(decl: ConstDecl, ctx: Ctx): void {
+  if (isVoid(decl.type)) {
+    errAt(ctx, `a constant cannot have type void`, decl.line, decl.col);
+    return;
+  }
+  const why = notCompileTimeConstant(decl.init, ctx, new Set([decl.name]));
+  if (why !== null) {
+    errAt(ctx, `constant '${decl.name}' needs a compile-time value`,
+      decl.init.line, decl.init.col, 0, why,
+      `only literals, operators over them, casts and other constants are allowed`);
+    return;
+  }
+  const env: VarEnv = new Map();
+  const t = inferExpr(decl.init, env, ctx, decl.type);
+  if (t) checkAssign(decl.type, t, decl.init.line, decl.init.col, ctx);
+}
+
+/**
+ * Why `expr` cannot be evaluated at compile time, or null if it can.
+ *
+ * `seen` carries the constants already being evaluated, so a cycle is reported
+ * as a cycle rather than recursing until the stack gives out.
+ */
+function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string | null {
+  switch (expr.kind) {
+    case "int": case "float": case "bool": case "string":
+      return null;
+    case "unary":
+      return notCompileTimeConstant(expr.expr, ctx, seen);
+    case "cast":
+      return notCompileTimeConstant(expr.expr, ctx, seen);
+    case "binary":
+      return notCompileTimeConstant(expr.left, ctx, seen)
+          ?? notCompileTimeConstant(expr.right, ctx, seen);
+    case "ternary":
+      return notCompileTimeConstant(expr.cond, ctx, seen)
+          ?? notCompileTimeConstant(expr.then, ctx, seen)
+          ?? notCompileTimeConstant(expr.else_, ctx, seen);
+    case "ident": {
+      const e = ctx.fileScope.get(expr.name);
+      if (e?.kind !== "const") return `'${expr.name}' is not a constant`;
+      if (seen.has(expr.name)) return `'${expr.name}' is defined in terms of itself`;
+      const next = new Set(seen);
+      next.add(expr.name);
+      return notCompileTimeConstant(e.decl.init, ctx, next);
+    }
+    default:
+      return `this is computed at run time`;
+  }
+}
+
 // ── Expression inference ──────────────────────────────────────────────────────
 
 /**
@@ -1110,6 +1178,12 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
           const params = funcParams(scopeEntry.entry).map(p => p.type);
           const ret = funcReturnType(scopeEntry.entry);
           return { kind: "funcref", params, ret, line: expr.line, col: expr.col };
+        }
+        // A module-level constant reads as its declared type. The emitter
+        // substitutes the initialiser, so nothing is stored or looked up.
+        if (scopeEntry.kind === "const") {
+          expr.constRef = scopeEntry.decl;
+          return scopeEntry.decl.type;
         }
         errAt(ctx, `'${expr.name}' is a ${scopeEntry.kind}, not a variable`, expr.line, expr.col);
         return null;

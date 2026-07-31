@@ -4886,3 +4886,67 @@ Deno.test("[§wac-shadow-param-7apc0wt] a local shadowing a parameter leaves it 
   eq(inst.call("usesInner", [7]), 99, "the shadow is still visible inside");
   eq(inst.call("twoShadows", [3]), 3, "two shadows, parameter still intact");
 });
+
+// ── Module-level constants ───────────────────────────────────────────────────
+
+// §wac-modconst-h3kq8wn — a top-level const is a named compile-time value
+Deno.test(`[§wac-modconst-h3kq8wn] module-level constants substitute at each use`, async () => {
+  const i = await run(`
+    const i32 BLOCK = 64;
+    const i32 TWO_BLOCKS = BLOCK * 2;
+    const u32 POLY = 0xEDB88320;
+    const u64 BIG = 18446744073709551615;
+    const f64 TAU = 6.283185307179586;
+    const bool ON = true;
+    const string NAME = "wac";
+    export i32 block()   { return BLOCK; }
+    export i32 two()     { return TWO_BLOCKS; }
+    export u32 poly()    { return POLY; }
+    export u64 big()     { return BIG; }
+    export f64 tau()     { return TAU; }
+    export bool on()     { return ON; }
+    export i32 nameLen() { return NAME.len(); }
+    export i32 inExpr(i32 x) { return (x & BLOCK) + TWO_BLOCKS; }
+  `);
+  eq(i.call("block", []), 64, "a plain constant");
+  eq(i.call("two", []), 128, "one constant defined from another");
+  eq(i.call("poly", []), 4023233417 - 34941033, "u32 constant");  // 0xEDB88320
+  eq(i.call("big", []), 18446744073709551615n, "u64 constant");
+  eq(i.call("tau", []), 6.283185307179586, "f64 constant");
+  eq(i.call("on", []), true, "bool constant");
+  eq(i.call("nameLen", []), 3, "string constant, used as a receiver");
+  eq(i.call("inExpr", [255]), 192, "used inside a larger expression");
+});
+
+// §wac-modconst-import-p7fm2wj — exported constants cross files, private ones do not
+Deno.test(`[§wac-modconst-import-p7fm2wj] constants obey export`, async () => {
+  const files = new Map([
+    ["/c.wac", `export const i32 BLOCK = 64;\nconst i32 HIDDEN = 7;\nexport i32 useHidden() { return HIDDEN; }`],
+    ["/main.wac", `import { BLOCK, useHidden } from "/c.wac";\nexport i32 f() { return BLOCK + useHidden(); }`],
+  ]);
+  const r = wacCompile(files, "/main.wac");
+  eq(r.ok, true, "importing an exported constant compiles");
+  if (r.ok) {
+    const inst = await wacInstance(r.compiled);
+    eq(inst.call("f", []), 71, "64 from the constant, 7 through a function");
+  }
+  const bad = wacCompile(new Map([
+    ["/c.wac", `export const i32 BLOCK = 64;\nconst i32 HIDDEN = 7;`],
+    ["/main.wac", `import { HIDDEN } from "/c.wac";\nexport i32 f() { return HIDDEN; }`],
+  ]), "/main.wac");
+  eq(bad.ok, false, "a constant that is not exported cannot be imported");
+});
+
+// §wac-modconst-notconst-r4jn9kq — the initialiser must be evaluable at compile time
+Deno.test(`[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected`, () => {
+  const bad = (src: string) => !wacCompile(new Map([["main.wac", src]]), "main.wac").ok;
+  eq(bad(`i32 f() { return 1; } const i32 A = f(); export i32 g() { return A; }`), true, "a call");
+  eq(bad(`const i32 A = A + 1; export i32 g() { return A; }`), true, "self-reference");
+  eq(bad(`const i32 A = B; const i32 B = A; export i32 g() { return A; }`), true, "a cycle");
+  eq(bad(`const i32 A = 1; export i32 g() { A = 2; return A; }`), true, "assigning to one");
+  eq(bad(`const void A = 1; export i32 g() { return 0; }`), true, "void");
+  eq(bad(`const i32 A = 1; const i32 A = 2; export i32 g() { return A; }`), true, "duplicate");
+  eq(bad(`i32 A() { return 1; } const i32 A = 2; export i32 g() { return A; }`), true, "clashes with a function");
+  eq(bad(`struct P { i32 x; } const P A = P(1); export i32 g() { return A.x; }`), true, "construction");
+  eq(bad(`const i32 A = 1.5; export i32 g() { return A; }`), true, "wrong type");
+});
