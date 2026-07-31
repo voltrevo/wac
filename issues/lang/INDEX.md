@@ -9,7 +9,7 @@ has been fixed and why.
 | [0021](open/0021-wacinstance-cannot-return-a-string.md) | `wacInstance` cannot return a `string` — three workarounds exist instead | bug | trap |
 | [0033](open/0033-unchecked-integer-overflow.md) | no way to detect integer overflow | missing feature | wrong answer |
 | [0032](open/0032-constants-of-aggregate-type.md) | constants of struct type are rejected | missing feature | compile error |
-| [0024](open/0024-generics.md) | generics | missing feature | not implemented |
+| [0034](open/0034-generics.md) | generics | missing feature | not implemented |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
 | [0029](open/0029-narrowing-outside-match.md) | `if (s is Circle)` does not narrow `s` | missing feature | compile error |
