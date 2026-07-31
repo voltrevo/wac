@@ -126,7 +126,13 @@ export type SwitchCase = { value: Expr | "default"; body: Stmt[] } & Pos;
 export type ImportItem = { name: string; alias: string } & Pos;
 export type Import     = { tag: "import"; path: string; items: ImportItem[] } & Pos;
 
-export type Param      = { type: WacType; name: string } & Pos;
+/**
+ * `isConst` records a leading `const` on the parameter, which forbids reassigning it and
+ * — because const is deep — mutating anything reachable through it. It is the same
+ * guarantee `const this` gives a method receiver, which was previously available to
+ * methods and to nothing else.
+ */
+export type Param      = { isConst: boolean; type: WacType; name: string } & Pos;
 export type FieldDecl  = { isConst: boolean; type: WacType; name: string } & Pos;
 export type MethodDecl = {
   isOverride: boolean; returnType: WacType; name: string;
@@ -1034,9 +1040,10 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
 
   function parseParam(): Param {
     const p = pos();
+    const isConst = consume("const");
     const type = parseType();
     const name = at("ident") ? advance().text : (err("expected parameter name"), "?");
-    return { type, name, ...p };
+    return { isConst, type, name, ...p };
   }
 
   function parseStructDecl(exported: boolean): StructDecl {

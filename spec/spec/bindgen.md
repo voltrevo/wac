@@ -243,10 +243,25 @@ export function simple(): number {
 }
 
 // skipped: getOrigin() — struct return types not yet supported in bindgen
+
+export const __bindgenSkipped: readonly string[] = [
+  "getOrigin() — struct return types not yet supported in bindgen",
+];
 ```
 
-`[§wac-bind-skip-h9pd5wn]` Functions with unsupported types are omitted with a
-comment.
+`[§wac-bind-skip-h9pd5wn]` Functions with unsupported types are omitted with a comment,
+and the reasons are also exported as `__bindgenSkipped`.
+
+The export matters more than it looks. A skipped function is simply *absent*, so the
+first sign of it is `mod.getOrigin is not a function` at the call site — which reads like
+a typo rather than a boundary a struct cannot cross. And a module whose every export is
+struct-typed binds without complaint and exports nothing whatsoever, which reads like a
+failed build. The comment explaining it was in a generated file that nobody opens while
+asking where their export went. `[§wac-bind-skip-h9pd5wn]`
+
+Omitting them is still the right behaviour: a struct is not a value JavaScript can hold,
+and inventing a representation would be worse than leaving the function out. The fix is
+only to say so where it will be read.
 
 ### Array copy semantics
 

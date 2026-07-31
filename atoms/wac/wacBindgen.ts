@@ -259,13 +259,38 @@ export function wacBindgen(compiled: WacCompiled): string {
   }
 
   // Function wrappers
+  const skipped: string[] = [];
   for (const exp of compiled.exports) {
     const result = genWrapper(exp);
     if (result.skip) {
       parts.push(`// skipped: ${result.reason}`);
+      skipped.push(result.reason);
     } else {
       parts.push(result.code);
     }
+  }
+
+  // A skipped export is invisible to the caller: `mod.mk` is simply undefined, which
+  // reads like a typo rather than a boundary the value cannot cross. The reason was
+  // already recorded — as a comment in this file, which nobody reads while wondering
+  // where their export went. Naming it as a real export puts it where the person
+  // looking will find it, and a module whose every export was skipped stops looking
+  // like a module that failed to build.
+  if (skipped.length > 0) {
+    const list = skipped.map((r) => `  ${JSON.stringify(r)},`).join("\n");
+    parts.push(
+      `/**
+ * Exports that could not be given a JavaScript wrapper, and why.
+ *
+ * A struct or an enum is not a value JavaScript can hold, so a function taking or
+ * returning one has no wrapper here. That is deliberate — inventing a representation
+ * would be worse than omitting it — but it is easy to mistake for a build failure, so
+ * the list is exported rather than left in a comment.
+ */
+export const __bindgenSkipped: readonly string[] = [
+${list}
+];`,
+    );
   }
 
   // Coverage helpers, when the module was built with instrumentation. They are

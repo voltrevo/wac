@@ -401,7 +401,7 @@ export function wacTypeCheck(
     if (funcEntry.origin.kind === "func") {
       const decl = funcEntry.origin.decl;
       ctx.returnType = decl.returnType;
-      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: false });
+      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
       const returns = checkBlock(decl.body, env, ctx);
       if (!returns && !isVoid(decl.returnType)) {
         errAt(ctx, `not all code paths return a value in '${decl.name}'`,
@@ -416,7 +416,7 @@ export function wacTypeCheck(
       if (decl.hasThis) {
         env.set("this", { type: structType(structName, structIdx), isConst: decl.thisConst });
       }
-      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: false });
+      for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
       const returns = checkBlock(decl.body, env, ctx);
       if (!returns && !isVoid(decl.returnType)) {
         errAt(ctx, `not all code paths return a value in method '${structName}.${decl.name}'`,
