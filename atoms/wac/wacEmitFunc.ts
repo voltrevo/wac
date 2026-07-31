@@ -171,6 +171,23 @@ export function wasmValType(t: WacType, ctx: WasmTypeCtx): number[] {
   }
 }
 
+/** Can `struct.new_default` / `array.new_default` produce this type?
+ *
+ *  Only numeric and packed types and nullable refs have a wasm default. Non-null
+ *  struct and array refs do not — and neither does `string`, which parses as a
+ *  prim but compiles to a non-null (ref $string). Anything false here has to be
+ *  built explicitly with emitDefaultValue. */
+function isWasmDefaultable(t: WacType): boolean {
+  if (t.kind === "struct" || t.kind === "array") return false;
+  return !isStringPrim(t);
+}
+
+/** True for `string`, which parses as a prim but compiles to a non-null
+ *  (ref $string) — so it is not wasm-defaultable and needs an explicit "". */
+function isStringPrim(t: WacType): boolean {
+  return t.kind === "prim" && t.name === "string";
+}
+
 /** Nullable ref type bytes for a nullable wac type. */
 function wasmNullable(inner: WacType, ctx: WasmTypeCtx): number[] {
   switch (inner.kind) {
@@ -1491,9 +1508,7 @@ class FuncEmitter {
         // struct.new_default requires every field's storage type to itself be
         // wasm-defaultable — non-null struct and array refs aren't (only
         // numeric/packed types and nullable refs are), so those need recursion.
-        const allDirectlyDefaultable = fields.every(f =>
-          f.type.kind !== "struct" && f.type.kind !== "array",
-        );
+        const allDirectlyDefaultable = fields.every(f => isWasmDefaultable(f.type));
         if (allDirectlyDefaultable) {
           this.emit(0xFB, 0x01, ...uleb(tIdx)); // struct.new_default $t
         } else {
@@ -1542,6 +1557,9 @@ class FuncEmitter {
           this.emit(0x43, 0x00, 0x00, 0x00, 0x00); // f32.const 0.0
         else if (t.name === "f64")
           this.emit(0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00); // f64.const 0.0
+        else if (t.name === "string")
+          // The empty string: a zero-length array of the string type.
+          this.emit(0xFB, 0x08, ...uleb(this.ctx.stringTypeIdx), 0x00); // array.new_fixed 0
         break;
       case "nullable": {
         // ref.null with the inner type's heap type
@@ -1552,7 +1570,7 @@ class FuncEmitter {
       case "struct": {
         const idx = structTypeIndexOf(t, this.ctx);
         const fields = this.ctx.structFields.get(structLookupKey(t)!) ?? [];
-        const allDirectlyDefaultable = fields.every(f => f.type.kind !== "struct" && f.type.kind !== "array");
+        const allDirectlyDefaultable = fields.every(f => isWasmDefaultable(f.type));
         if (allDirectlyDefaultable) {
           this.emit(0xFB, 0x01, ...uleb(idx)); // struct.new_default $t
         } else {
@@ -1589,15 +1607,24 @@ class FuncEmitter {
       // Struct element + literal size: initialize each element with default struct
       if (e.elem.kind === "struct" && e.size.kind === "int") {
         const n = parseInt(e.size.value);
-        const sIdx = structTypeIndexOf(e.elem, this.ctx);
-        for (let i = 0; i < n; i++) {
-          this.emit(0xFB, 0x01, ...uleb(sIdx)); // struct.new_default $S
-        }
+        // emitDefaultValue rather than struct.new_default directly: the struct
+        // may itself hold a field with no wasm default, such as a string.
+        for (let i = 0; i < n; i++) this.emitDefaultValue(e.elem);
         this.emit(0xFB, 0x08, ...uleb(aIdx), ...uleb(n)); // array.new_fixed N
+      } else if (isStringPrim(e.elem)) {
+        // array.new_default needs a wasm-defaultable element, and a string is a
+        // non-null ref. Build the "" value once and let array.new replicate it —
+        // every element aliases the same immutable empty string, which is
+        // indistinguishable from separate ones.
+        this.emitDefaultValue(e.elem);
+        this.emitExpr(e.size, env);
+        this.emit(0xFB, 0x06, ...uleb(aIdx)); // array.new $t
       } else {
         this.emitExpr(e.size, env);
         this.emit(0xFB, 0x07, ...uleb(aIdx)); // array.new_default $t
       }
+    } else if (isStringPrim(e.elem)) {
+      this.emit(0xFB, 0x08, ...uleb(aIdx), 0x00); // array.new_fixed 0 — empty
     } else {
       this.emit(0x41, 0x00, 0xFB, 0x07, ...uleb(aIdx)); // size=0, array.new_default
     }

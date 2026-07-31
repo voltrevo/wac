@@ -4371,3 +4371,28 @@ Deno.test(`[§wac-shr-u-redundant-m3kq7wn] '>>>' on an unsigned type is rejected
   const r = wacCompile(new Map([["main.wac", `export u32 ok(u32 x) { return x >> 1; }`]]), "main.wac");
   eq(r.ok, true, "'>>' on u32 compiles");
 });
+
+// §wac-string-default-k2mf9wq — "" is string's default value
+Deno.test(`[§wac-string-default-k2mf9wq] string defaults to the empty string`, async () => {
+  const i = await run(`
+    struct S { string s; i32 n; }
+    struct Nested { S inner; }
+    export i32 fieldDefault()  { S x = S(); return x.s.len(); }
+    export bool fieldIsEmpty() { S x = S(); return x.s == ""; }
+    export i32 nestedDefault() { Nested x = Nested(); return x.inner.s.len(); }
+    export i32 sizedArray()    { string[] a = string[3](); return a.len() * 10 + a[2].len(); }
+    export bool arrayElemEmpty(){ string[] a = string[2](); return a[0] == ""; }
+    export i32 dynamicSize(i32 n) { string[] a = string[n](); return a.len(); }
+    export i32 arrayLiteral()  { string[] a = string[]("x", "yz"); return a[0].len() + a[1].len(); }
+  `);
+  // struct.new_default and array.new_default both refuse a non-null ref element,
+  // which is what string compiles to — so each of these used to typecheck and
+  // then fail to instantiate.
+  eq(i.call("fieldDefault", []), 0, "a defaulted string field is empty");
+  eq(i.call("fieldIsEmpty", []), true, "and equals \"\"");
+  eq(i.call("nestedDefault", []), 0, "through a nested struct default");
+  eq(i.call("sizedArray", []), 30, "string[3]() has length 3, elements empty");
+  eq(i.call("arrayElemEmpty", []), true, "elements really are \"\"");
+  eq(i.call("dynamicSize", [4]), 4, "size may be a runtime value");
+  eq(i.call("arrayLiteral", []), 3, "the literal form still works");
+});
