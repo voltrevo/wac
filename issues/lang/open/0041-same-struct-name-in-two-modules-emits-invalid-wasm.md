@@ -1,7 +1,7 @@
 # 0041 — two modules declaring a struct with the same name emit invalid wasm
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug

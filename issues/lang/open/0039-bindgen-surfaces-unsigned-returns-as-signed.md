@@ -1,6 +1,7 @@
 # 0039 — bindgen surfaces `u32`/`u64` returns to JS as signed
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug
