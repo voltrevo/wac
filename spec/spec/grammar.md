@@ -41,7 +41,7 @@ param          = type , IDENT ;
 ### Struct declarations
 
 ```ebnf
-struct_decl    = [ "const" ] , "struct" , IDENT , [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
+struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
 
 struct_member  = field_decl | method_decl ;
 

@@ -1439,6 +1439,67 @@ Deno.test("[§wac-const-struct-g9apxwr] writing any field of const struct is err
   `);
 });
 
+// ── §wac-struct-export-* — export on a struct, alone and with const ──────────
+
+Deno.test("[§wac-struct-export-m3kq8wp] only an exported struct can be imported", async () => {
+  const exported = new Map([
+    ["lib.wac", `export struct Open { i32 v; }`],
+    ["main.wac", `
+      import { Open } from "./lib.wac";
+      export i32 test() { return Open(7).v; }
+    `],
+  ]);
+  const r = wacCompile(exported, "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  eq((await wacInstance(r.compiled)).call("test", []), 7, "exported struct is importable");
+
+  const hidden = new Map([
+    ["lib.wac", `struct Shut { i32 v; }`],
+    ["main.wac", `
+      import { Shut } from "./lib.wac";
+      export i32 test() { return Shut(7).v; }
+    `],
+  ]);
+  const bad = wacCompile(hidden, "main.wac");
+  if (bad.ok) throw new Error("importing a non-exported struct should fail");
+  if (!bad.diagnostics[0].message.includes("not exported")) {
+    throw new Error(`unexpected error: ${bad.diagnostics[0].message}`);
+  }
+});
+
+Deno.test("[§wac-struct-export-const-r7nf4jq] export const struct: both modifiers apply", async () => {
+  // Two independent claims, so two checks. Parsing alone is not enough — a parser
+  // that consumed `const` and dropped it would pass a compile-only test while
+  // silently making the fields mutable.
+  const files = new Map([
+    ["lib.wac", `
+      export const struct Frozen {
+        i32 w;
+        i32 h;
+        Frozen of(i32 w, i32 h) { return Frozen(w, h); }
+      }
+    `],
+    ["main.wac", `
+      import { Frozen } from "./lib.wac";
+      export i32 area() { Frozen f = Frozen.of(137, 429); return f.w * f.h; }
+    `],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  // 137 * 429 = 58773 — not a value a truncation or a swapped field could produce.
+  eq((await wacInstance(r.compiled)).call("area", []), 58773, "exported and usable");
+
+  const mutating = new Map([
+    ["lib.wac", `export const struct Frozen { i32 w; }`],
+    ["main.wac", `
+      import { Frozen } from "./lib.wac";
+      export void bad() { Frozen f = Frozen(1); f.w = 2; }
+    `],
+  ]);
+  const bad = wacCompile(mutating, "main.wac");
+  if (bad.ok) throw new Error("const struct fields must stay immutable when exported");
+});
+
 // ── §wac-subpos-order-m7kx3qf — subtype positional construction order ─────────
 
 Deno.test("[§wac-subpos-order-m7kx3qf] Rect(x,y,w,h) parent fields first", async () => {

@@ -31,6 +31,23 @@ const struct Config {     // all fields immutable
 `[§wac-const-struct-g9apxwr]` Writing to any field of a `const struct` is a compile
 error.
 
+### Exporting
+
+`export` makes a struct type importable from another file. Only exported structs
+can be imported — see [imports.md](imports.md).
+
+`export` and `const` are independent and may be written together, `export` first:
+
+```wac
+export struct Point { i32 x; i32 y; }
+export const struct Frozen { i32 w; i32 h; }
+```
+
+`[§wac-struct-export-m3kq8wp]` An `export struct` can be imported from another
+file; a struct without `export` cannot.
+`[§wac-struct-export-const-r7nf4jq]` `export const struct` is accepted, and both
+modifiers take effect — the type is importable and every field is immutable.
+
 ### Construction
 
 Three forms:
