@@ -1,10 +1,12 @@
 # 0019 — no way to build a dynamically-sized array of a type with no default
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 6754023
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature
 - **Symptom:** compile error
+- **Covered by:** `§wac-arr-fill-7kqm3xz`
 
 ## Reproduction
 
@@ -47,3 +49,20 @@ That is the proposal. It reads as what it does and needs no new token.
 Worth deciding at the same time whether `i32[n](fill: -1)` should be allowed for types
 that *do* have a default — it is useful (`-1`-filled tables are common) and falling out
 of the same rule is better than special-casing.
+
+
+## Resolution
+
+`T[n](fill: v)`, as proposed. One `array.new`, so the emission is three lines.
+
+Two things it needed beyond the obvious. `looksLikeConstructionOrCall` distinguishes
+construction from indexing by the parentheses being empty, so it had to learn the
+`(fill:` shape too — otherwise `E[n](fill: x)` was not recognised as construction at all
+and failed with a parse error about a `:`. And the fill expression is a subexpression, so
+the resolver's annotation pass and array-type collection both had to walk it; missing that
+gave "undefined function or struct 'P'" for a `P(1)` written inside a fill, which is the
+same omission as issue 0005's match arms. There is a test for exactly that, using a type
+reachable only through a fill expression.
+
+`i32[n](fill: -1)` is allowed for types that do have a default, as the notes suggested —
+it falls out of the same rule and a -1-filled table is worth having.
