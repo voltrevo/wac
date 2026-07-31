@@ -1201,6 +1201,31 @@ Deno.test("[§wac-arr-i8-lit-badtype-3w7g6aa] non-i32 element in a packed litera
   }
 });
 
+// ── §wac-arr-packed-cast — a packed element reads as i32 and casts onward ────
+//
+// The emitter's typeOfExpr reported the raw element type for an index, while the
+// type checker normalised it to i32. The cast path then looked for a u8 -> i64
+// conversion, found none, and emitted no widening — valid types, invalid wasm. So
+// this instantiates rather than only compiling.
+
+Deno.test("[§wac-arr-packed-cast-nfe1ha9] a packed element widens to i64", async () => {
+  const inst = await run(`
+    export i64 wideByte(u8[] bytes) { return bytes[0] as i64; }
+    export i64 wideSigned(i8[] bytes) { return bytes[0] as i64; }
+    export f64 wideFloat(u8[] bytes) { return bytes[0] as f64; }
+    export u8[] makeU8(i32 v) { u8[] b = u8[1](); b[0] = v; return b; }
+    export i8[] makeI8(i32 v) { i8[] b = i8[1](); b[0] = v; return b; }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  // u8[] and i8[] are distinct array types, so each needs its own constructor —
+  // one maker cannot feed both.
+  const u = raw.makeU8(200);
+  eq(raw.wideByte(u), 200n, "u8 200 widens to i64 200");
+  eq(raw.wideFloat(u), 200, "u8 200 widens to f64 200");
+  // i8 sign-extends on read, so the same bits are -56 before widening.
+  eq(raw.wideSigned(raw.makeI8(200)), -56n, "i8 200 reads as -56 and widens");
+});
+
 // ── §wac-arr-i8-compound-* — compound assignment on packed elements ─────────
 //
 // Packed elements must be read back with array.get_u; array.get is not a valid

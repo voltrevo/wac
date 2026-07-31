@@ -155,6 +155,14 @@ There are no packed local variables, parameters, or struct fields —
 packed types only exist as array elements. Indexing a packed array returns `i32`,
 and assignment truncates from `i32`.
 
+A packed element reads as `i32`, so it can be cast onward like any other `i32`.
+
+```wac
+export i64 wideByte(u8[] bytes) { return bytes[0] as i64; }
+```
+
+`[§wac-arr-packed-cast-nfe1ha9]` `wideByte` on a byte of `200` returns `200` as an `i64`.
+
 Compound assignment and `++`/`--` work on packed elements. The element is read
 zero-extended, the operation runs at `i32` width, and the result truncates back
 to the element width on store.
