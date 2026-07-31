@@ -1,10 +1,12 @@
 # 0003 — bindgen silently drops exports it cannot marshal
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** diagnostic
 - **Symptom:** wrong answer, no error
+- **Covered by:** `§wac-bind-skip-h9pd5wn`
 
 ## Reproduction
 
@@ -21,6 +23,15 @@ Actual: the generated module exports nothing at all. `Object.keys(mod)` is `[]`,
 warning at compile time and no error at bind time.
 
 ## Notes
+
+Partly wrong as filed: bindgen *did* record the reason, as a `// skipped: ...` comment in
+the generated file. What was missing is that a comment in a generated file is not where
+anyone looks while wondering why `mod.mk` is undefined, and a module whose entire surface
+is skipped produces a file with no exports at all — which reads like a failed build rather
+than a deliberate omission.
+
+Fixed by exporting the reasons as `__bindgenSkipped`, so they are reachable from the
+module the caller already has.
 
 Dropping them is the right behaviour — a struct is not a value JavaScript can hold, and
 inventing a representation would be worse. The problem is purely that it is silent: the

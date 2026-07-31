@@ -6,8 +6,6 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
-| [0004](open/0004-const-on-free-function-params.md) | `const` is not accepted on a free function's parameter | missing feature | compile error |
-| [0003](open/0003-bindgen-drops-unmarshalable-exports.md) | bindgen silently drops exports it cannot marshal | diagnostic | wrong answer, no error |
 | [0002](open/0002-enum-module-constant.md) | an enum value cannot be a module constant | missing feature | compile error |
 
 ## Known gaps that are not issues
@@ -26,6 +24,6 @@ here so nobody reports them as bugs:
 
 ## Closed
 
-18 issues, 14 of them found by porting wacc's AST to sum types and by probing shapes
+18 issues, 16 of them found by porting wacc's AST to sum types and by probing shapes
 that port does not reach. Twelve of the sixteen typechecked cleanly and failed at
 instantiation or ran wrong — which is why `README.md` asks you to run the thing.

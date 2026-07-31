@@ -3444,6 +3444,29 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
   eq(ts.includes("// skipped:"), true, "skipped comment present");
   eq(ts.includes("getOrigin"), true, "getOrigin mentioned in skip comment");
   eq(ts.includes("function getOrigin"), false, "getOrigin not exported as function");
+
+  // The reason was recorded only as a comment in the generated file, which nobody
+  // reads while wondering why `mod.getOrigin` is undefined — and a module whose every
+  // export is struct-typed binds cleanly and exports nothing at all, which reads like a
+  // build failure. The list is a real export now, so it is reachable from the place the
+  // question gets asked.
+  eq(ts.includes("__bindgenSkipped"), true, "the skip list is exported, not only commented");
+  eq(ts.includes("readonly string[]"), true, "and is typed");
+});
+
+Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound module", async () => {
+  const r = wacCompile(new Map([["main.wac", `
+    export struct Expr { i32 line; }
+    export Expr mk(i32 line) { return Expr(line); }
+    export i32 lineOf(Expr e) { return e.line; }
+  `]]), "main.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  // Every export here is struct-typed, so the module's whole surface is skipped. Before,
+  // that produced a file with no exports whatsoever and no indication why.
+  eq(ts.includes("__bindgenSkipped"), true, "an all-skipped module still exports the reason");
+  eq(/mk\(\) — return type 'Expr'/.test(ts), true, "and names the return-type case");
+  eq(/lineOf\(\) — parameter 'e: Expr'/.test(ts), true, "and the parameter case");
 });
 
 // ── §wac-diag-* — structured error diagnostics ────────────────────────────────
@@ -4982,6 +5005,57 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
     }
   `);
   eq(inst.call("calls", []), 1, "the subject expression ran once");
+});
+
+Deno.test("[§wac-const-param-2vhk7dq] a parameter may be const", async () => {
+  // `const this` gave a method receiver this guarantee and nothing gave it to a free
+  // function's parameter, so moving a method to a function silently lost it. The
+  // enforcement needed no new machinery: const is already deep, and the parameter is
+  // simply bound with the flag the environment already carries per binding.
+  const inst = await run(`
+    struct P { i32 v; }
+    i32 peek(const P p) { return p.v; }
+    i32 addTo(const i32 a, i32 b) { b += a; return b; }
+    struct S { i32 n; i32 m(const this, const P p) { return p.v + this.n; } }
+    export i32 viaFunction() { return peek(P(7)); }
+    export i32 primitive()   { return addTo(2, 5); }
+    export i32 inMethod()    { return S(1).m(P(2)); }
+  `);
+  eq(inst.call("viaFunction", []), 7, "a struct parameter");
+  eq(inst.call("primitive", []), 7, "a primitive parameter, with a mutable one beside it");
+  eq(inst.call("inMethod", []), 3, "and alongside `const this`");
+});
+
+Deno.test("[§wac-const-param-2vhk7dq] const on a parameter is deep and blocks writes", () => {
+  const cases: [string, string, string][] = [
+    ["a field write", `struct P { i32 v; }
+      void bad(const P p) { p.v = 1; }
+      export i32 f() { bad(P(1)); return 1; }`, "const reference"],
+    ["a reassignment", `struct P { i32 v; }
+      void bad(const P p) { p = P(2); }
+      export i32 f() { bad(P(1)); return 1; }`, "cannot assign to const variable"],
+    ["an element write", `void bad(const i32[] a) { a[0] = 1; }
+      export i32 f() { bad(i32[2]()); return 1; }`, "const reference"],
+    ["a primitive write", `i32 bad(const i32 a) { a = 2; return a; }
+      export i32 f() { return bad(1); }`, "cannot assign to const variable"],
+  ];
+  for (const [what, src, want] of cases) {
+    const m = err(src);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-const-param-2vhk7dq] a non-const parameter is unaffected", async () => {
+  // The flag has to be per-parameter, not per-signature: a const parameter beside a
+  // mutable one must not make the mutable one const.
+  const inst = await run(`
+    struct P { i32 v; }
+    void bump(P p) { p.v = 5; }
+    export i32 f() { P p = P(1); bump(p); return p.v; }
+  `);
+  eq(inst.call("f", []), 5, "a plain parameter is still mutable, and mutation is visible");
 });
 
 Deno.test("[§wac-float-literal-ctx-8dqm2vw] a float literal takes an expected f32", async () => {

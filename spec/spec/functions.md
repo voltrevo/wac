@@ -105,6 +105,31 @@ f64 r = sqrt(approx as f64);   // ok: explicit cast
 
 `[§wac-paramatch-84zc2km]` `sqrt(approx)` is a compile error — f32 passed to f64.
 
+### const parameters
+
+A parameter may be marked `const`, which forbids reassigning it and — because const is
+deep — writing through it:
+
+```wac
+struct P { i32 v; }
+
+i32 peek(const P p) { return p.v; }      // fine
+void bad(const P p) { p.v = 1; }         // error: cannot write through const reference
+void also(const P p) { p = P(2); }       // error: cannot assign to const variable 'p'
+```
+
+`[§wac-const-param-2vhk7dq]` The reads compile and each write is a compile error. It
+applies to any parameter type — a struct, an array (element writes are refused too), or a
+primitive — and is per-parameter, so a `const` one beside a mutable one leaves the mutable
+one alone.
+
+This is the same guarantee `const this` gives a method receiver (see structs.md), and the
+two compose: `i32 m(const this, const P p)`.
+
+Until this existed the guarantee was available to methods and to nothing else, so moving a
+method to a free function silently lost it — and a function that plainly does not mutate
+its argument had no way to say so.
+
 ### Export
 
 `export` marks a function as visible to other wac files via `import`.
