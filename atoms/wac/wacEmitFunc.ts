@@ -282,6 +282,7 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     case "ident": {
       const v = env.get(e.name);
       if (v) return v;
+      if (e.constRef) return e.constRef.type;
       // Struct type name or function name
       if (ctx.structTypeIdx.has(e.name)) {
         return { kind: "struct", name: e.name, resolvedTypeIndex: ctx.structTypeIdx.get(e.name), line: 0, col: 0 };
@@ -759,6 +760,14 @@ class FuncEmitter {
         const key = this.nameToKey.get(e.name) ?? e.name;
         const loc = this.localMap.get(key);
         if (loc) { this.emit(0x20, ...uleb(loc.idx)); break; } // local.get
+        // A module-level constant is substituted here rather than loaded: the
+        // type checker has already established the initialiser is a
+        // compile-time expression, so emitting it inline is the whole
+        // implementation — no global, no initialisation order.
+        if (e.constRef) {
+          this.emitExpr(e.constRef.init, env, e.constRef.type);
+          break;
+        }
         // Named function reference
         const fIdx = this.ctx.funcIdx.get(e.name);
         if (fIdx !== undefined) this.emit(0xD2, ...uleb(fIdx)); // ref.func

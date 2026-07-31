@@ -101,6 +101,20 @@ export i32 strictBool(i32 x) {
 
 // ── 3. VARIABLES AND const ──────────────────────────────────────────────────
 
+// A `const` at the top level is a named compile-time value. It has no storage —
+// the initialiser is substituted at each use — so there is nothing to
+// initialise and no ordering between declarations.
+const i32 BLOCK = 64;
+const i32 TWO_BLOCKS = BLOCK * 2;      // constants may build on constants
+export const u32 CRC_POLY = 0xEDB88320;   // and may be imported
+export i32 useConst(i32 x) { return (x & BLOCK) + TWO_BLOCKS; }
+// The initialiser must be a compile-time expression: literals, operators over
+// them, casts, other constants. Nothing evaluated at run time, which is what
+// makes substitution honest.
+// ERROR: i32 f() { return 1; }  const i32 A = f();   // a call
+// ERROR: const i32 B = B + 1;                        // defined from itself
+// ERROR: const P C = P(1);                           // needs storage, not a value
+
 export i32 variables() {
   i32 x = 5;                 // mutable
   const i32 y = 10;          // immutable
@@ -689,7 +703,7 @@ export i32 shadowing() {
 //   interfaces / traits     subtyping is single-parent struct extension only
 //   enums, pattern matching, match expressions
 //   linear memory           no pointers, no mem[addr], no data segments
-//   module-level globals    no top-level constants or variables at all
+//   module-level variables  constants exist; mutable globals do not
 //   host function imports   nothing is imported from JS; wasm imports are empty
 //   char type               string indexing yields a one-character string
 //   type aliases            write the type out
@@ -724,6 +738,7 @@ export bool selfTest() {
       && grouped() == poly() && million() == 1000000
       && strictBool(3) == 1 && strictBool(0) == 0
       && variables() == 15 && constRef() == 3.0
+      && useConst(255) == 192 && CRC_POLY == 0xEDB88320
       && mixTypes(1, 2.7) == 4
       && rem(-7.0, 2.0) == -1.0 && rem(7.0, -2.0) == 1.0
       && shifts(-16) == 2147483632
