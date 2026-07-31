@@ -1428,14 +1428,15 @@ class FuncEmitter {
   }
 
   private emitField(
-    e: { kind: "field"; expr: Expr; name: string },
+    e: { kind: "field"; expr: Expr; name: string; variantTypeIndex?: number },
     env: TypeEnv,
   ): void {
-    // Shape.Point — a payload-less variant is a value, so construct it here.
-    if (e.expr.kind === "ident") {
-      const enumName = (e.expr as { name: string }).name;
-      const vEntry = this.ctx.result.enums
-        .find(en => en.name === enumName)?.variants.find(v => v.name === e.name);
+    // Shape.Point — a payload-less variant is a value, so construct it here. Which
+    // variant is the checker's answer, for the same reason as in emitCall: a name
+    // search over every enum in the program picks the wrong one when two files
+    // declare the same enum name.
+    if (e.variantTypeIndex !== undefined) {
+      const vEntry = this.variantByTypeIndex(e.variantTypeIndex);
       if (vEntry) {
         const tIdx = vEntry.entry.typeIndex;
         this.emit(0x41, ...sleb(vEntry.tag));
@@ -1525,6 +1526,16 @@ class FuncEmitter {
    * Looked up from the resolver's enum table by struct type index, since the emitter
    * has no file scope to ask.
    */
+  /** The variant a type index denotes, or null when it is not a variant's. */
+  private variantByTypeIndex(typeIndex: number) {
+    for (const e of this.ctx.result.enums) {
+      for (const v of e.variants) {
+        if (v.entry.typeIndex === typeIndex) return v;
+      }
+    }
+    return null;
+  }
+
   private variantTagOf(typeIndex: number): number | null {
     for (const e of this.ctx.result.enums) {
       for (const v of e.variants) {
@@ -1535,16 +1546,19 @@ class FuncEmitter {
   }
 
   private emitCall(
-    e: { kind: "call"; callee: Expr; args: Expr[] },
+    e: { kind: "call"; callee: Expr; args: Expr[]; variantTypeIndex?: number },
     env: TypeEnv,
   ): void {
     // Variant construction: Shape.Circle(args). The tag comes first because it is the
     // base struct's only field, so every variant shares that layout prefix.
-    if (e.callee.kind === "field" && e.callee.expr.kind === "ident") {
-      const enumName = (e.callee.expr as { name: string }).name;
-      const vName = (e.callee as { name: string }).name;
-      const vEntry = this.ctx.result.enums
-        .find(en => en.name === enumName)?.variants.find(v => v.name === vName);
+    //
+    // Which variant is the type checker's answer, not a name lookup here. Searching
+    // `result.enums` by name was wrong as soon as two files declared enums with the
+    // same name: the search found the first, its variant list did not contain this
+    // name, and the whole branch was skipped — so the value silently emitted nothing
+    // and the surrounding `array.set` failed wasm validation two arguments short.
+    if (e.variantTypeIndex !== undefined) {
+      const vEntry = this.variantByTypeIndex(e.variantTypeIndex);
       if (vEntry) {
         const tIdx = vEntry.entry.typeIndex;
         this.emit(0x41, ...sleb(vEntry.tag));

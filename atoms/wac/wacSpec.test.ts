@@ -23,6 +23,12 @@ function err(src: string): string {
   return r.diagnostics[0].message;
 }
 
+async function runMulti(files: Map<string, string>) {
+  const r = wacCompile(files, "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  return wacInstance(r.compiled);
+}
+
 function errMulti(files: Map<string, string>): string {
   const r = wacCompile(files, "main.wac");
   if (r.ok) throw new Error("expected compile error");
@@ -4858,6 +4864,97 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
     }
   `);
   eq(inst.call("calls", []), 1, "the subject expression ran once");
+});
+
+Deno.test("[§enum-name-identity] two files may declare the same enum name", async () => {
+  // Three separate bugs met here, all of them "resolved by name where identity was
+  // meant", and none of them reachable with a single file:
+  //
+  //   the resolver never annotated an enum-typed anything with its type identity,
+  //   because annotateType only handled scope entries of kind "struct" — so an enum
+  //   type keyed by its name string while everything else keyed by index, and a
+  //   variant was not assignable to its own enum;
+  //
+  //   emitCall and emitField each searched every enum in the program by name, found
+  //   the wrong one, skipped the whole variant-construction branch and emitted
+  //   *nothing* for the value — which surfaced as the enclosing array.set failing
+  //   validation two arguments short, nowhere near the cause.
+  //
+  // Both variants here are called `X` as well, so a name search cannot even
+  // disambiguate by variant.
+  const inst = await runMulti(new Map([
+    ["a.wac", `
+      export enum E { X, Y(i32 v) }
+      export E mkY(i32 v) { return E.Y(v); }
+      export i32 readA(E e) { match (e) { case X: return 1; case Y(v): return v; } }
+    `],
+    ["main.wac", `
+      import { E, mkY, readA } from "./a.wac";
+      enum F { X, Z(i32 v) }
+      i32 readF(F f) { match (f) { case X: return 20; case Z(v): return v; } }
+      export i32 go(i32 v) {
+        F[] mine = F[2]();
+        mine[0] = F.X;
+        mine[1] = F.Z(v);
+        return readA(mkY(v)) + readF(mine[0]) + readF(mine[1]);
+      }
+    `],
+  ]));
+  eq(inst.call("go", [5]), 30, "5 + 20 + 5, each enum resolved to itself");
+});
+
+Deno.test("[§enum-cross-file] an enum works across files", async () => {
+  // An enum declared in one file and matched in another. This is the normal shape
+  // for anything real — an AST in one module, a parser in the next — and it was
+  // never tested until a port needed it.
+  const inst = await runMulti(new Map([
+    ["shape.wac", `
+      export enum Shape {
+        Point,
+        Circle(f64 radius),
+      }
+      export Shape mkCircle(f64 r) { return Shape.Circle(r); }
+    `],
+    ["main.wac", `
+      import { Shape, mkCircle } from "./shape.wac";
+      export f64 area(f64 r) {
+        Shape s = mkCircle(r);
+        match (s) {
+          case Point:     return 0.0;
+          case Circle(x): return x * x;
+        }
+      }
+    `],
+  ]));
+  eq(inst.call("area", [3.0]), 9.0, "matched an imported enum");
+});
+
+Deno.test("[§enum-cross-file] an enum not in scope says so, rather than 'not an enum'", () => {
+  // `t.kind` here has an enum type, but this file never imported the enum's name, so
+  // the scope lookup failed and the diagnostic said "match requires an enum value,
+  // got Kind" — true, and pointing at the wrong problem. Cost me a wrong conclusion
+  // about a compiler bug that did not exist, which is a good measure of how much a
+  // diagnostic that names the wrong cause is worth.
+  const m = errMulti(new Map([
+    ["k.wac", `
+      export enum Kind { A, B }
+      export struct Holder { Kind kind; }
+      export Holder mk() { return Holder(Kind.A); }
+    `],
+    ["main.wac", `
+      import { Holder, mk } from "./k.wac";
+      export i32 f() {
+        Holder h = mk();
+        match (h.kind) {
+          case A: return 1;
+          case B: return 2;
+        }
+      }
+    `],
+  ]));
+  if (!m.includes("is an enum, but it is not in scope")) {
+    throw new Error(`expected the not-in-scope diagnostic, got: ${m}`);
+  }
 });
 
 Deno.test("[§enum-arm-walks-kubc3rt] an arm body is reachable to every AST walk", async () => {
