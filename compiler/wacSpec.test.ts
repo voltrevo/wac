@@ -7725,6 +7725,47 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+Deno.test("[§wac-continue-apojox2] continue in a do-while tests the condition", async () => {
+  // A do-while is the one loop whose test is at the bottom, so it is the only one where the
+  // `continue` target and the loop label differ — and `continue` branched to the loop label,
+  // restarting the body with the condition untested. `while` and `for` were both right, which is
+  // why it went unnoticed: `for` already wrapped its body in a block so `continue` lands before
+  // the update, and a do-while needs the same wrapper so it lands before the condition.
+  const inst = await run(`
+    export i32 sumOdds() {
+      i32 i = 0; i32 sum = 0;
+      do { i++; if (i % 2 == 0) { continue; } sum = sum + i; } while (i < 10);
+      return sum;
+    }
+    export i32 stopsAtTheTest() {
+      // Every iteration continues, so nothing but the condition can end the loop.
+      i32 i = 0;
+      do { i++; continue; } while (i < 3);
+      return i;
+    }
+    export i32 whileVersion() {
+      i32 i = 0; i32 sum = 0;
+      while (i < 10) { i++; if (i % 2 == 0) { continue; } sum = sum + i; }
+      return sum;
+    }
+    export i32 forVersion() {
+      i32 sum = 0;
+      for (i32 i = 1; i <= 10; i++) { if (i % 2 == 0) { continue; } sum = sum + i; }
+      return sum;
+    }
+    export i32 breakStillWorks() {
+      i32 i = 0;
+      do { i++; if (i == 4) { break; } } while (i < 100);
+      return i;
+    }
+  `);
+  eq(inst.call("sumOdds", []), 25, "1+3+5+7+9 — it gave 36, having run an eleventh iteration");
+  eq(inst.call("stopsAtTheTest", []), 3, "a body that always continues still ends at the condition");
+  eq(inst.call("whileVersion", []), 25, "the while form, which was already right");
+  eq(inst.call("forVersion", []), 25, "and the for form");
+  eq(inst.call("breakStillWorks", []), 4, "break leaves the loop, not just the new inner block");
+});
+
 Deno.test("[§wac-str-tobytes-utf8-r2nf8jt] strings agree with UTF-8 at every boundary", async () => {
   // A differential sweep against the host's own encoder: 622 operations over ASCII, 2-, 3- and
   // 4-byte codepoints, checking length in bytes, every byte, every index (including the empty

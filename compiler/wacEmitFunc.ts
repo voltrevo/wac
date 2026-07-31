@@ -2723,19 +2723,32 @@ class FuncEmitter {
   }
 
   private emitDoWhile(s: Stmt & { kind: "dowhile" }, env: TypeEnv): void {
-    // block $brk { loop $cont { body; cond; br_if $cont } }
+    // block $brk { loop $again { block $cont { body } cond; br_if $again } }
+    //
+    // The body is wrapped so `continue` lands *before* the condition, which is the same shape
+    // `emitFor` uses to land before the update. Without the wrapper, `continue` branched to the
+    // loop label and restarted the body with the condition untested: the C-family answer for
+    //
+    //   i32 i = 0; do { i++; if (i % 2 == 0) { continue; } sum += i; } while (i < 10);
+    //
+    // is 25 and this gave 36, having run an eleventh iteration. `while` and `for` were both
+    // right, which is why it went unnoticed — a do-while is the one loop whose test is at the
+    // bottom, so it is the one where the continue target and the loop label differ.
     this.emit(0x02, 0x40); this.labelDepth++;
     const brkLevel = this.labelDepth - 1;
     this.emit(0x03, 0x40); this.labelDepth++;
+    const againLevel = this.labelDepth - 1;
+    this.emit(0x02, 0x40); this.labelDepth++;
     const contLevel = this.labelDepth - 1;
 
     this.loopStack.push({ breakTarget: brkLevel, continueTarget: contLevel });
     this.emitCovPoint("loop", s.body.line, s.body.col);
     this.emitBlock(s.body, env);
     this.loopStack.pop();
+    this.emit(0x0B); this.labelDepth--;              // end $cont
 
     this.emitExpr(s.cond, env);
-    this.emit(0x0D, ...uleb(this.brDepth(contLevel))); // br_if $cont
+    this.emit(0x0D, ...uleb(this.brDepth(againLevel))); // br_if $again
     this.emit(0x0B); this.labelDepth--;
     this.emit(0x0B); this.labelDepth--;
   }

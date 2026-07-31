@@ -174,6 +174,18 @@ export i32 sumOdd(i32[] arr) {
 
 `[§wac-continue-apojox2]` `sumOdd` on `{ 1, 2, 3, 4, 5 }` returns `9`.
 
+`continue` goes to **whatever the loop does between iterations**, not to the top of the body: a
+`for`'s update runs, and a `do-while`'s condition is tested. The do-while case is the one worth
+stating, because it is the only loop whose test is at the bottom:
+
+```wac
+i32 i = 0; i32 sum = 0;
+do { i++; if (i % 2 == 0) { continue; } sum = sum + i; } while (i < 10);
+```
+
+`[§wac-continue-apojox2]` `sum` is `25`. It was `36` — `continue` restarted the body with the
+condition untested, so the loop ran an eleventh iteration.
+
 `break` and `continue` outside a loop are compile errors:
 
 ```wac
