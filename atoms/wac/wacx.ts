@@ -83,7 +83,11 @@ function stem(path: string): string {
  * `wacx run` gets strings; the export's declared parameter types say what they mean. An i64 needs a
  * BigInt and a bool needs 0/1, so guessing from the text would be wrong for both.
  */
-function coerceArg(text: string, type: string): number | bigint | boolean {
+function coerceArg(text: string, type: string): number | bigint | boolean | string {
+  // A string parameter takes the argument as written — no coercion at all, which is the whole
+  // point of a command line. `wacInstance` builds the wasm string. This used to fall through to
+  // `Number(text)` and report "'world' is not a number, but the parameter is string".
+  if (type === "string") return text;
   if (type === "i64" || type === "u64") return BigInt(text);
   if (type === "bool") return text === "true" || text === "1";
   const n = Number(text);
@@ -180,7 +184,7 @@ export async function wacx(argv: string[], cap: WacxCap): Promise<WacxResult> {
     return { code: 1 };
   }
 
-  let coerced: (number | bigint | boolean)[];
+  let coerced: (number | bigint | boolean | string)[];
   try {
     coerced = args.map((a, i) => coerceArg(a, exp.params[i].type));
   } catch (e) {

@@ -36,7 +36,9 @@ export bool even(i32 n) { return n % 2 == 0; }
 export string greet() { return "hi"; }
 export i32[] pair() { return i32[](3, 4); }
 export void nothing() { }
-export i32 boom() { trap; }`;
+export i32 boom() { trap; }
+export i32 nameLen(string s) { return s.len(); }
+export string shout(string who) { return "hi " + who; }`;
 
 Deno.test("[§wac-cli-check-4mkq8wp] check reports nothing and exits 0 for a valid file", async () => {
   const r = await run(["check", "math.wac"], { "math.wac": MATH });
@@ -71,6 +73,20 @@ Deno.test("[§wac-cli-run-7jnq2mv] run calls a function and prints its value", a
   const r = await run(["run", "math.wac", "gcd", "48", "18"], { "math.wac": MATH });
   eq(r.code, 0, "exit code");
   eq(r.out, "6", "the spec's own example");
+});
+
+Deno.test("[§wac-cli-run-7jnq2mv] run passes a string argument as written", async () => {
+  // The most ordinary thing a command line can pass, and it was a usage error: the coercion sent
+  // every argument through `Number()`, so a string parameter reported "'world' is not a number,
+  // but the parameter is string". A string needs no coercion at all — what it needed was a way
+  // *into* the module, which `wacInstance` now builds with the module's own accessors.
+  eq((await run(["run", "math.wac", "nameLen", "hello"], { "math.wac": MATH })).out, "5",
+    "a string argument reaches the function");
+  eq((await run(["run", "math.wac", "shout", "world"], { "math.wac": MATH })).out, "hi world",
+    "and comes back out concatenated");
+  eq((await run(["run", "math.wac", "nameLen", ""], { "math.wac": MATH })).out, "0", "including empty");
+  eq((await run(["run", "math.wac", "nameLen", "héllo"], { "math.wac": MATH })).out, "6",
+    "and the length is in UTF-8 bytes, not codepoints");
 });
 
 Deno.test("[§wac-cli-run-7jnq2mv] run coerces arguments by the declared parameter type", async () => {

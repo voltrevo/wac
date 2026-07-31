@@ -55,7 +55,9 @@ wacx run math.wac gcd 48 18
 `[§wac-cli-run-7jnq2mv]` That example is a test.
 
 Arguments are coerced by the parameter's **declared type**, not guessed from the text: an `i64` takes
-a BigInt and a `bool` accepts `true` or `1`. `[§wac-cli-run-7jnq2mv]` A value that cannot be coerced
+a BigInt and a `bool` accepts `true` or `1`. A `string` parameter takes the argument exactly as
+written, which is the whole point of a command line — `wacx run greet.wac greet world` prints
+`hi world`. `[§wac-cli-run-7jnq2mv]` A value that cannot be coerced
 is a usage error naming it.
 
 A `string` return prints as itself, an array as its space-separated elements, and a `void` function

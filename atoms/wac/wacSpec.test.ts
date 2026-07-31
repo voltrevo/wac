@@ -7725,6 +7725,47 @@ Deno.test("[§wac-is-undefined-type-6qbn3wr] what still works is unaffected", as
 
 // The issue tracker's own invariants. Not a language rule, but the tracker is how the
 // compiler's history is navigated, so a broken one costs real time.
+Deno.test("[§wac-str-tobytes-utf8-r2nf8jt] strings agree with UTF-8 at every boundary", async () => {
+  // A differential sweep against the host's own encoder: 622 operations over ASCII, 2-, 3- and
+  // 4-byte codepoints, checking length in bytes, every byte, every index (including the empty
+  // string a mid-sequence index gives), every slice pair, concatenation and equality. It found
+  // nothing, which is worth a test rather than a note: the string surface is where a hand-written
+  // UTF-8 decoder usually goes wrong, and now a regression there is caught rather than discovered.
+  const inst = await run(`
+    export i32 len(string s) { return s.len(); }
+    export string at(string s, i32 i) { return s[i]; }
+    export string slice(string s, i32 a, i32 b) { return s.slice(a, b); }
+    export i32 byteAt(string s, i32 i) { return s.toBytes()[i]; }
+    export string roundTrip(string s) { return string.fromBytes(s.toBytes()); }
+    export string cat(string a, string b) { return a + b; }
+    export bool same(string a, string b) { return a == b; }
+  `);
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const cases = ["", "a", "hi", "é", "€", "𝄞", "aé€𝄞z"];
+  for (const s of cases) {
+    const bytes = enc.encode(s);
+    eq(inst.call("len", [s]), bytes.length, `len of ${JSON.stringify(s)} is its UTF-8 length`);
+    eq(inst.call("roundTrip", [s]), s, `fromBytes(toBytes(${JSON.stringify(s)}))`);
+    for (let i = 0; i < bytes.length; i++) {
+      eq(inst.call("byteAt", [s, i]), bytes[i], `byte ${i} of ${JSON.stringify(s)}`);
+      let end = i + 1;
+      while (end < bytes.length && (bytes[end] & 0xC0) === 0x80) end++;
+      const want = (bytes[i] & 0xC0) === 0x80 ? "" : dec.decode(bytes.slice(i, end));
+      eq(inst.call("at", [s, i]), want, `index ${i} of ${JSON.stringify(s)}`);
+    }
+    for (let a = 0; a <= bytes.length; a++) {
+      for (let b = a; b <= bytes.length; b++) {
+        eq(inst.call("slice", [s, a, b]), dec.decode(bytes.slice(a, b)),
+          `slice(${JSON.stringify(s)}, ${a}, ${b})`);
+      }
+    }
+    for (const t of cases) {
+      eq(inst.call("cat", [s, t]), s + t, `${JSON.stringify(s)} + ${JSON.stringify(t)}`);
+      eq(inst.call("same", [s, t]), s === t, `${JSON.stringify(s)} == ${JSON.stringify(t)}`);
+    }
+  }
+});
+
 // §wac-ternary-nullable-9pqk3vm — one nullable branch makes the conditional nullable
 Deno.test("[§wac-ternary-nullable-9pqk3vm] a nullable branch widens the conditional", async () => {
   // Issue 0051, reported by agent-b. `c ? S(1) : s` where `s` is `S?` took its type from the
