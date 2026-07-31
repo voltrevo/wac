@@ -27,7 +27,7 @@ export type WacInst = {
  * from one export can be passed to another, which is the only way a host can carry a struct or a
  * boxed `i32?` around. Coercion leaves those alone — `Number()` on a wasm reference throws.
  */
-export type WacArg = number | bigint | boolean | null | object;
+export type WacArg = number | bigint | boolean | null | object | string;
 
 /** Return value types from wac function calls. */
 export type WacVal =
@@ -62,6 +62,11 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
     // Coerce args to match expected wasm types
     const coercedArgs = args.map((a, i) => {
       const t = meta.params[i]?.type ?? "i32";
+      // A string *argument* has to be built inside the module, the mirror of decoding a returned
+      // one. Without this a string parameter was unreachable: `Number("world")` is NaN, and the
+      // engine rejected it with "type incompatibility when transforming from/to JS". It made
+      // `wacx run prog.wac greet world` fail on the most ordinary thing a command line can pass.
+      if (t === "string" && typeof a === "string") return encodeString(rawExports, a);
       return coerceArg(a, t);
     });
 
@@ -104,6 +109,20 @@ const ARRAY_ELEM: Record<string, { suffix: string; big: boolean }> = {
   "f32[]": { suffix: "f32", big: false },
   "f64[]": { suffix: "f64", big: false },
 };
+
+/** Build a wasm string from a JS one, using the module's own accessors. */
+function encodeString(ex: Record<string, unknown>, s: string): unknown {
+  const make = ex.__bind_str_new as ((n: number) => unknown) | undefined;
+  const set = ex.__bind_str_set as ((s: unknown, i: number, b: number) => void) | undefined;
+  if (!make || !set) {
+    throw new Error(
+      "wac: this module has no string accessors, so a string argument cannot be built");
+  }
+  const bytes = new TextEncoder().encode(s);
+  const out = make(bytes.length);
+  for (let i = 0; i < bytes.length; i++) set(out, i, bytes[i]);
+  return out;
+}
 
 function decodeString(ex: Record<string, unknown>, v: unknown): string {
   const len = ex.__bind_str_len as ((s: unknown) => number) | undefined;
