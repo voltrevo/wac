@@ -37,8 +37,22 @@ Shape c = Shape.Rect(3.0, 4.0);
 
 A payload-less variant is a value, not a call — `Shape.Point`, not `Shape.Point()`.
 
-Two enums may use the same variant name; `Shape.Circle` and `Hole.Circle` are
-distinct types.
+A variant name is a file-scope name, exactly like a struct name — which is what lets
+it be used as a type. So two enums in one file cannot share a variant name, and a
+variant cannot share a name with a struct or function:
+
+```wac
+enum Shape { Circle(f64 r) }
+enum Hole  { Circle(f64 r) }   // error: duplicate name 'Circle'
+```
+
+`[§enum-variant-name-collision]` This is a compile error.
+
+The alternative — variants reachable only as `Shape.Circle`, with no file-scope name —
+would avoid the collision and keep an enum of seventeen variants from claiming
+seventeen names. It is rejected because a variant would then not be a type, and being
+able to write `Circle c` is worth more than the namespace saved. Collisions are a
+compile error rather than a silent surprise.
 
 ### Matching
 

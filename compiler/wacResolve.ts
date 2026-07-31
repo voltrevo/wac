@@ -6,8 +6,8 @@
 // Import paths are resolved relative to the importing file's directory.
 
 import {
-  type Program, type FuncDecl, type StructDecl, type MethodDecl,
-  type Param, type WacType, type Expr, type Stmt, type Block, type Lvalue,
+  type Program, type FuncDecl, type StructDecl, type MethodDecl, type EnumDecl,
+  type FieldDecl, type Param, type WacType, type Expr, type Stmt, type Block, type Lvalue,
 } from "./wacParse.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -56,9 +56,41 @@ export type StructEntry = {
   parentEntry: StructEntry | null;
 };
 
+/**
+ * One variant, after desugaring: the synthetic struct that represents it, plus the
+ * tag value the constructor stores and `match` dispatches on.
+ */
+export type VariantEntry = {
+  name: string;
+  tag: number;
+  entry: StructEntry;
+  fields: Param[];
+};
+
+/**
+ * An enum.
+ *
+ * The enum itself and each of its variants are registered as ordinary structs — the
+ * base holds the tag, each variant extends it and adds its payload — so every
+ * downstream stage handles them with the struct machinery it already has. This entry
+ * exists so the *set* of variants survives desugaring, which is what makes
+ * exhaustiveness checkable.
+ */
+export type EnumEntry = {
+  enumDecl: EnumDecl;
+  name: string;
+  base: StructEntry;
+  variants: VariantEntry[];
+  filePath: string;
+};
+
 export type ScopeEntry =
-  | { kind: "func";   entry: FuncEntry }
-  | { kind: "struct"; entry: StructEntry };
+  | { kind: "func";    entry: FuncEntry }
+  | { kind: "struct";  entry: StructEntry }
+  | { kind: "enum";    entry: StructEntry; enumEntry: EnumEntry }
+  // `entry` is the variant's own synthetic struct, so every scope kind exposes the
+  // struct a name denotes and callers that only want that need no special case.
+  | { kind: "variant"; entry: StructEntry; enumEntry: EnumEntry; variant: VariantEntry };
 
 /** Per-file scope: maps the local name used in this file → the resolved entry */
 export type FileScope = Map<string, ScopeEntry>;
@@ -68,6 +100,12 @@ export type ResolveResult = {
   funcs: FuncEntry[];
   /** All struct types in wasm type index order */
   structs: StructEntry[];
+  /**
+   * Every enum, in declaration order. The variants are also present in `structs`;
+   * this exists so the variant *set* survives desugaring, which exhaustiveness
+   * checking needs.
+   */
+  enums: EnumEntry[];
   /** Per-file scope maps */
   fileScopes: Map<string, FileScope>;
   errors: ResolveError[];
@@ -228,6 +266,28 @@ function annotateProgram(prog: Program, scope: FileScope): void {
   }
 }
 
+/**
+ * The synthetic tag field's name.
+ *
+ * Not a legal identifier, so a payload field can never collide with it and a user
+ * cannot read or write it by accident.
+ */
+export const ENUM_TAG_FIELD = "#tag";
+
+/** The file a scope entry was declared in, whatever kind it is. */
+function scopeEntryFile(e: ScopeEntry): string {
+  return e.entry.filePath;
+}
+
+/** Is a scope entry exported from its declaring file? */
+function scopeEntryExported(e: ScopeEntry): boolean {
+  if (e.kind === "func") return e.entry.exportName !== null;
+  if (e.kind === "struct") return e.entry.structDecl.exported;
+  if (e.kind === "enum") return e.enumEntry.enumDecl.exported;
+  // A variant is exported exactly when its enum is: they are one declaration.
+  return e.enumEntry.enumDecl.exported;
+}
+
 export function wacResolve(
   entryPath: string,
   programs: Map<string, Program>,
@@ -235,6 +295,10 @@ export function wacResolve(
   const errors: ResolveError[] = [];
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
+  const enums: EnumEntry[] = [];
+  // Keyed by "file:name" because an enum name is only unique within its own file,
+  // the same reason struct identity is the type index rather than the name.
+  const enumsByName = new Map<string, EnumEntry>();
   const fileScopes = new Map<string, FileScope>();
   const visited = new Set<string>();
   // Track visit-in-progress paths for cycle detection (circular is OK, just don't double-register)
@@ -274,6 +338,78 @@ export function wacResolve(
       };
       structs.push(structEntry);
       scope.set(name, { kind: "struct", entry: structEntry });
+    }
+
+    // ── Phase 1b: desugar enum declarations into structs ─────────────────────
+    //
+    // Each enum becomes a base struct holding the tag plus one subtype per variant
+    // carrying its payload. Registering them as ordinary structs is what lets the
+    // type checker and emitter handle enums with no new machinery: `Shape s` is a
+    // struct-typed local, `s.radius` is a field read on a subtype, and the
+    // subtyping the language already has makes a variant assignable to the enum.
+    for (const item of prog.items) {
+      if (item.tag !== "enum") continue;
+      const { name, line, col } = item;
+      if (scope.has(name)) {
+        err(`duplicate name '${name}'`, filePath, line, col);
+        continue;
+      }
+
+      // The base carries only the tag, so every variant shares one field layout
+      // prefix and a match can read the tag without knowing the variant.
+      const tagField: FieldDecl = {
+        isConst: true,
+        type: { kind: "prim", name: "i32", line, col },
+        name: ENUM_TAG_FIELD,
+        line, col,
+      };
+      const baseDecl: StructDecl = {
+        tag: "struct", isConst: false, exported: item.exported, name,
+        parent: null, fields: [tagField], methods: [], line, col,
+      };
+      const base: StructEntry = {
+        structDecl: baseDecl, name, typeIndex: structs.length, filePath,
+        methods: new Map(), parentEntry: null,
+      };
+      structs.push(base);
+      const variants: VariantEntry[] = [];
+      const enumEntry: EnumEntry = {
+        enumDecl: item, name, base, variants, filePath,
+      };
+      scope.set(name, { kind: "enum", entry: base, enumEntry });
+
+      for (let tag = 0; tag < item.variants.length; tag++) {
+        const v = item.variants[tag];
+        if (scope.has(v.name)) {
+          err(`duplicate name '${v.name}'`, filePath, v.line, v.col);
+          continue;
+        }
+        // A variant lists only its payload; inherited fields are computed later, so
+        // the tag is not repeated here.
+        const variantDecl: StructDecl = {
+          tag: "struct", isConst: false, exported: item.exported, name: v.name,
+          parent: name,
+          fields: v.fields.map((f) => ({
+            isConst: true, type: f.type, name: f.name, line: f.line, col: f.col,
+          })),
+          methods: [], line: v.line, col: v.col,
+        };
+        const vEntry: StructEntry = {
+          structDecl: variantDecl, name: v.name, typeIndex: structs.length,
+          filePath, methods: new Map(), parentEntry: base,
+        };
+        structs.push(vEntry);
+        const variant: VariantEntry = {
+          name: v.name, tag, entry: vEntry, fields: v.fields,
+        };
+        variants.push(variant);
+        // Registered as a variant rather than a plain struct, so a constructor call
+        // can find its tag and `Shape.Circle` can be told from a static method.
+        scope.set(v.name, { kind: "variant", entry: vEntry, enumEntry, variant });
+      }
+
+      enums.push(enumEntry);
+      enumsByName.set(`${filePath}:${name}`, enumEntry);
     }
 
     // ── Phase 2: register local function declarations ─────────────────────────
@@ -357,16 +493,12 @@ export function wacResolve(
         // Only allow importing exported functions and structs that the named
         // file itself declares — importing a symbol does not re-export it
         // [§wac-no-reexport-f7kn4wq].
-        if (found.entry.filePath !== importedPath) {
+        if (scopeEntryFile(found) !== importedPath) {
           err(`'${name}' is not exported from '${importedPath}' — importing a symbol does not re-export it`,
             filePath, line, col);
           continue;
         }
-        if (found.kind === "func" && found.entry.exportName === null) {
-          err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
-          continue;
-        }
-        if (found.kind === "struct" && !found.entry.structDecl.exported) {
+        if (!scopeEntryExported(found)) {
           err(`'${name}' is not exported from '${importedPath}'`, filePath, line, col);
           continue;
         }
@@ -391,7 +523,9 @@ export function wacResolve(
     const parentName = s.structDecl.parent;
     if (!parentName) continue;
     const found = fileScopes.get(s.filePath)?.get(parentName);
-    if (found?.kind === "struct") {
+    // An enum's base is a struct registered under the "enum" kind, and a variant's
+    // synthetic declaration names it as its parent, so both kinds are valid here.
+    if (found?.kind === "struct" || found?.kind === "enum") {
       s.parentEntry = found.entry;
     } else {
       err(`unknown parent struct '${parentName}'`, s.filePath,
@@ -399,7 +533,7 @@ export function wacResolve(
     }
   }
 
-  return { funcs, structs, fileScopes, errors, entryPath };
+  return { funcs, structs, enums, fileScopes, errors, entryPath };
 }
 
 // ── Helpers for consumers ─────────────────────────────────────────────────────
