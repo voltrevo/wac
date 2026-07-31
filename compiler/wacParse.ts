@@ -180,6 +180,14 @@ export type StructDecl = {
 export type FuncDecl = {
   tag: "func"; exported: boolean; returnType: WacType; name: string;
   params: Param[]; body: Block;
+  /**
+   * Type parameter names, for a generic function: `T max<T>(T a, T b)` has `["T"]`.
+   *
+   * As with a generic struct, a declaration with type parameters is a *template* — the resolver
+   * monomorphises it and nothing downstream sees one. Unlike a struct, the arguments are never
+   * written at the use site: they are inferred from the argument types.
+   */
+  typeParams: string[];
 } & Pos;
 
 /** One variant of an enum, with named payload fields. */
@@ -1433,12 +1441,16 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const exported = consume("export");
     const returnType = parseType();
     const name = at("ident") ? advance().text : (err("expected function name"), "?");
+    // `T max<T>(T a, T b)` — after the name, as on a struct. The return type is parsed first and may
+    // itself mention `T`, which reads oddly but matches how every other declaration in wac is
+    // written: type, then name.
+    const typeParams = parseTypeParams();
     expect("(");
     const params: Param[] = [];
     if (!at(")")) { parseParams(params); }
     expect(")");
     const body = parseBlock();
-    return { tag: "func", exported, returnType, name, params, body, ...p };
+    return { tag: "func", exported, returnType, name, params, body, typeParams, ...p };
   }
 
   /** `[export] const <type> <name> = <expr>;` at top level. */

@@ -5,14 +5,14 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0034](open/0034-generics.md) | generics | missing feature | not implemented |
+| [0045](open/0045-nullable-primitives-are-not-boxed.md) | a nullable primitive is neither boxed nor unboxed | bug | invalid wasm |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
 | [0027](open/0027-nested-patterns.md) | patterns are one level deep | missing feature | not implemented |
 
 ## Closed
 
-44 issues, 40 closed.
+45 issues, 41 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
@@ -26,3 +26,8 @@ assumed to have missed a walk until checked.
 0024 came from asking what the probe rounds had not covered: branch coverage is wac's own
 tooling and had never been pointed at `match`, so arms were invisible to it and any coverage
 number over a match was overstated.
+
+Generics (0034) closed with eight of its own, seven of them one family: **a name is unique only
+within its file, and a monomorphised name is not in any file's scope at all**. Every one was a
+lookup keyed on what the author wrote rather than on which declaration was meant. If you are
+touching the resolver, assume a bare name is ambiguous until you have canonicalised it.

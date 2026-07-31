@@ -361,6 +361,20 @@ function warnAt(ctx: Ctx, msg: string, line: number, col: number, span = 1, anno
 
 // ── Main entry point ──────────────────────────────────────────────────────────
 
+/**
+ * Names withheld from a template's diagnostics: every template in the program, of either kind.
+ *
+ * A template body may name another template — `Box<T>` inside `Wrap<T>`, or a call to a generic
+ * function — and neither is a declaration by the time this pass runs. Reporting those would be an
+ * artefact of the mode rather than a finding, so they are deferred to instantiation.
+ */
+function deferredTemplateNames(result: ResolveResult): string[] {
+  return [
+    ...result.templates.map((t) => t.decl.name),
+    ...result.funcTemplates.map((t) => t.decl.name),
+  ];
+}
+
 export function wacTypeCheck(
   result: ResolveResult,
   programs: Map<string, Program>,
@@ -478,7 +492,7 @@ export function wacTypeCheck(
     // method 'get'" is an artefact of the mode rather than a finding. A real mistake involving
     // `Box` inside a template is therefore missed too, which is the same bargain as any
     // T-dependent code — deferred to instantiation, not lost.
-    const deferred = [...decl.typeParams, ...result.templates.map((t) => t.decl.name)];
+    const deferred = [...decl.typeParams, ...deferredTemplateNames(result)];
     const mentionsParam = (msg: string) =>
       deferred.some((t) => new RegExp(`\\b${t}\\b`).test(msg));
     for (const e of tctx.errors) {
@@ -486,6 +500,46 @@ export function wacTypeCheck(
       // above, so nothing about `this` needs suppressing — which is what lets a real mistake in a
       // statement mentioning `this` be reported.
       if (mentionsParam(e.message) || mentionsParam(e.annotation ?? "")) continue;
+      allErrors.push(e);
+    }
+  }
+
+  // The same pass for a generic *function*, which is a template in exactly the same sense: it is
+  // removed from the programs by monomorphisation, so without this a generic function nobody calls
+  // is never checked at all.
+  for (const { decl, filePath } of result.funcTemplates) {
+    const scope = result.fileScopes.get(filePath);
+    if (!scope) continue;
+
+    const opaqueScope: FileScope = new Map(scope);
+    const opaqueMap = new Map(structMap);
+    for (const param of decl.typeParams) {
+      const opaqueDecl: StructDecl = {
+        tag: "struct", isConst: false, exported: false, name: param, parent: null,
+        fields: [], methods: [], typeParams: [], line: decl.line, col: decl.col,
+      };
+      const entry: StructEntry = {
+        structDecl: opaqueDecl, name: param,
+        typeIndex: -1, filePath, methods: new Map(), parentEntry: null,
+      };
+      opaqueScope.set(param, { kind: "struct", entry });
+      opaqueMap.set(param, entry);
+    }
+
+    const tctx: Ctx = {
+      file: filePath, structMap: opaqueMap, structs: result.structs, fileScope: opaqueScope,
+      errors: [], enumByTypeIndex, returnType: decl.returnType, inLoop: 0, thisConst: false,
+    };
+    const env: VarEnv = new Map();
+    for (const p of decl.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+    checkBlock(decl.body, env, tctx);
+
+    // Suppressed on the same terms, plus one more: a generic function's *own* name is not in scope
+    // during this pass either, so a recursive `last(xs, i + 1)` would report as undefined.
+    const deferred = [...decl.typeParams, ...deferredTemplateNames(result)];
+    const mentions = (msg: string) => deferred.some((t) => new RegExp(`\\b${t}\\b`).test(msg));
+    for (const e of tctx.errors) {
+      if (mentions(e.message) || mentions(e.annotation ?? "")) continue;
       allErrors.push(e);
     }
   }
@@ -2515,7 +2569,12 @@ function checkBinaryOp(
   // Comparison: same primitive type → bool
   if (op === "==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=") {
     if (isRefType(lt) || isRefType(rt)) {
-      errAt(ctx, `'${op}' not allowed on reference types — use 'is' for identity`, line, col);
+      // The type is named because it is useful — and because a template checked with opaque type
+      // parameters relies on it: this was the one operator diagnostic that named no type, so
+      // `T max<T>(T a, T b) { return a > b ? a : b; }` reported against code that is fine once T
+      // is a number, and nothing could tell that message apart from a real one.
+      errAt(ctx, `'${op}' not allowed on reference type ${
+        typeName(isRefType(lt) ? lt : rt)} — use 'is' for identity`, line, col);
       return null;
     }
     if (!typeEq(lt, rt)) {
