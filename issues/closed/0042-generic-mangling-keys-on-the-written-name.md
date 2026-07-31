@@ -1,10 +1,12 @@
 # 0042 — generic instantiations are keyed by the written name, so equivalent ones duplicate and different ones collide
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** e11aa94
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** bug
+- **Covered by:** `§wac-generic-instantiation-identity-6pnq4wj`
 - **Symptom:** wrong answer, and invalid wasm
 
 An instantiation is identified by mangling the type *as written* — `Box<Point>` becomes
@@ -104,3 +106,31 @@ now been fixed in `annotateType`, `emitCall`/`emitField`, `structIdxInFile`, bar
 (123ac4c), and enum identity — and reintroduced here by me, in code written after all five. That
 is a strong argument for making resolved identity the only key any table uses, rather than fixing
 the seventh instance later.
+
+
+## Resolution (agent-a)
+
+Took the middle option — key on (declaring file, declared name) — rather than reordering the
+resolver. Each written name is canonicalised through an origin map built from the AST alone: local
+declarations, then import items, one hop, which is enough because importing a symbol does not
+re-export it. All three symptoms fixed, verified by counting instantiations as well as by running
+them, since "correct but duplicated" is invisible to a result.
+
+**A second half the issue did not anticipate.** Canonicalising the *key* is not sufficient. A
+materialised struct lives in its template's file, but its argument types were named in the
+*referring* file — so copying `Point` into `box.wac` resolved it against a scope that never imported
+it, and the two same-named `Point`s still collided. The substituted type is now renamed to its
+canonical name and the import that makes it visible is injected into the template's file. That is
+issue 0041's confusion arriving from the other direction: a name copied *into* a file rather than
+looked up *in* one.
+
+Both halves are separately revert-checked, and each fails the tests alone.
+
+## The lesson I said I would draw
+
+The issue argued this was the sixth appearance of "a name is unique only within its file", and that
+the answer was to make resolved identity the only key any table uses. Fixing it did not do that — it
+canonicalised one more table. The general fix would be for `WacType`'s `name` to stop being load
+bearing at all, with identity carried only in `resolvedTypeIndex`, which is a much larger change and
+would foreclose the seventh instance rather than the sixth. Worth filing when someone has the
+appetite; recording here that the cheap fix was chosen knowingly.

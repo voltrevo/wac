@@ -4,6 +4,11 @@
 //            buffer.md, strings.md, grammar.md
 
 import { wacCompile } from "./wacCompile.ts";
+// The instantiation-count test needs the resolver directly: the count is not visible from a
+// compiled module, and "correct but duplicated" is exactly what it exists to catch.
+import { wacResolve } from "./wacResolve.ts";
+import { wacParse } from "./wacParse.ts";
+import { wacLex } from "./wacLex.ts";
 import { wacInstance } from "./wacInstance.ts";
 import { wacBindgen } from "./wacBindgen.ts";
 import { wacDiag } from "./wacDiag.ts";
@@ -6130,6 +6135,83 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
   ]));
   eq(inst.call("test", []), 6, "the same instantiation used from two files is one struct");
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
+});
+
+Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] instantiations are keyed by identity, not by the written name", async () => {
+  // Issue 0042. Mangling used the name *as written*, which is only unique within a file, so it was
+  // wrong in both directions at once. All three symptoms in one test because they are one cause.
+  const BOX = `export struct Box<T> { T v; T get(const this) { return this.v; } }`;
+
+  // 1. An alias and its target are the same type, so one instantiation — not two.
+  const dedup = await runMulti(new Map([
+    ["p.wac", `export struct Point { i32 x; }
+               export Point mk() { return Point(4); }`],
+    ["box.wac", BOX],
+    ["a.wac", `import { Box } from "./box.wac";
+               import { Point as P, mk } from "./p.wac";
+               export i32 fa() { Box<P> b = Box(mk()); return b.get().x; }`],
+    ["main.wac", `import { Box } from "./box.wac";
+                  import { Point, mk } from "./p.wac";
+                  import { fa } from "./a.wac";
+                  export i32 test() { Box<Point> b = Box(mk()); return b.get().x + fa(); }`],
+  ]));
+  eq(dedup.call("test", []), 8, "Box<P> and Box<Point> are one type");
+
+  // 2. An aliased *template* name resolved to nothing at all: the instantiation was materialised as
+  // `B$i32` while the import rewriting keyed on the declared name, so nothing imported it.
+  const aliasedTemplate = await runMulti(new Map([
+    ["box.wac", BOX],
+    ["a.wac", `import { Box as B } from "./box.wac";
+               export i32 fa() { B<i32> b = B(1); return b.get(); }`],
+    ["main.wac", `import { Box } from "./box.wac";
+                  import { fa } from "./a.wac";
+                  export i32 test() { Box<i32> b = Box(2); return b.get() + fa(); }`],
+  ]));
+  eq(aliasedTemplate.call("test", []), 3, "an aliased generic is usable");
+
+  // 3. Two *different* structs sharing a name must stay apart. This one was a type confusion rather
+  // than a diagnostic: both mangled to `Box$Point`, so one struct served both, and it errored only
+  // because the layouts happened to differ. §wac-samename-struct-4jhq7wn makes the name legal.
+  const apart = await runMulti(new Map([
+    ["box.wac", BOX],
+    ["p1.wac", `export struct Point { i32 x; }
+                export Point mk1() { return Point(1); }`],
+    ["p2.wac", `export struct Point { i32 a; i32 b; }
+                export Point mk2() { return Point(2, 3); }`],
+    ["a.wac", `import { Box } from "./box.wac";
+               import { Point, mk1 } from "./p1.wac";
+               export i32 fa() { Box<Point> b = Box(mk1()); return b.get().x; }`],
+    ["main.wac", `import { Box } from "./box.wac";
+                  import { Point, mk2 } from "./p2.wac";
+                  import { fa } from "./a.wac";
+                  export i32 test() { Box<Point> b = Box(mk2()); return b.get().a * 10 + b.get().b + fa(); }`],
+  ]));
+  eq(apart.call("test", []), 24, "23 from p2's Point, 1 from p1's — two instantiations");
+});
+
+Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] the instantiation count is what identity implies", () => {
+  // Counting is what distinguishes "correct" from "correct but duplicated": the aliased case above
+  // answered correctly while materialising two structs, which is the cost monomorphisation was
+  // allowed to pay once, not twice.
+  const count = (files: Map<string, string>) => {
+    const programs = new Map<string, ReturnType<typeof wacParse>["program"]>();
+    for (const [path, src] of files) programs.set(path, wacParse(wacLex(src).tokens, path).program);
+    return wacResolve("main.wac", programs).genericDisplay.size;
+  };
+  const BOX = `export struct Box<T> { T v; T get(const this) { return this.v; } }`;
+  eq(count(new Map([
+    ["p.wac", `export struct Point { i32 x; }`],
+    ["box.wac", BOX],
+    ["main.wac", `import { Box } from "./box.wac";
+                  // Both spellings of one type, so the count distinguishes identity from text.
+                  import { Point, Point as P } from "./p.wac";
+                  export i32 test() { Box<P> a = Box(Point(1)); Box<Point> b = Box(Point(2)); return a.get().x + b.get().x; }`],
+  ])), 1, "an alias and its target share one instantiation");
+  eq(count(new Map([
+    ["box.wac", BOX],
+    ["main.wac", `import { Box } from "./box.wac";
+                  export i32 test() { Box<i32> a = Box(1); Box<f64> b = Box(2.0); return a.get(); }`],
+  ])), 2, "different arguments are different instantiations");
 });
 
 Deno.test("[§wac-generic-struct-9tkq4wm] instantiations are invariant and diagnostics are demangled", () => {
