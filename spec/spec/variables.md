@@ -70,10 +70,39 @@ const i32 C = 1; C = 2;  // error: cannot assign to constant
 `[§wac-modconst-notconst-r4jn9kq]` A call in an initialiser is a compile error,
 as is a cycle between constants, and assigning to one.
 
-Any type a literal expression can have works, including `string` and the
-unsigned types. Aggregates do not yet: `const P X = P(1)` and `const i32[] T =
-i32[](1, 2)` are both rejected, because they would need storage rather than
-substitution.
+#### Constant arrays
+
+A constant array is written with the literal form, and becomes **one shared
+table built once** when the module is instantiated — not rebuilt at each use.
+That is the whole reason to reach for it: a lookup table written as a function
+returning a fresh array pays for the array on every call.
+
+```wac
+const u32[] K = u32[](0x428a2f98, 0x71374491, 0xb5c0fbcf);
+const i32   N = 3;
+const i32[] DERIVED = i32[](N, N * 2);     // elements may be constant expressions
+```
+
+`[§wac-modconst-array-t8kn4wq]` Every constant array is built in the module's
+global section and none inside a function body.
+
+Because there is exactly one of it, writing through a constant array is a
+compile error — a write would otherwise be visible from every use.
+
+```wac
+const i32[] T = i32[](1, 2);
+T[0] = 9;      // error: cannot assign to constant
+i32 x = T[1];  // reading is fine
+```
+
+`[§wac-modconst-array-const-w2mk9fj]` Element writes, compound assignment and
+`++` through a constant array are all rejected.
+
+The sized form `T[n]()` is not allowed: it has no elements written down to
+evaluate, and would have to be built at run time.
+
+Struct constants are not supported — `const P X = P(1)` is rejected. Scalars,
+strings and arrays are what a compile-time value can be today.
 
 ### Type inference
 

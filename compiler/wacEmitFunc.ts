@@ -10,7 +10,7 @@
 
 import {
   type WacType, type Expr, type Stmt, type Block,
-  type Lvalue, type ElseBranch, type MatchArm,
+  type Lvalue, type ElseBranch, type MatchArm, type ConstDecl,
 } from "./wacParse.ts";
 import {
   type FuncEntry, type StructEntry, type ResolveResult,
@@ -45,6 +45,15 @@ export type WasmTypeCtx = {
   structFields: Map<string, StructFieldInfo[]>;
   /** Mangled function name → wasm function index */
   funcIdx: Map<string, number>;
+  /**
+   * Constant *array* declaration → wasm global index.
+   *
+   * Only arrays appear here. A scalar constant is substituted at each use, but
+   * an array has to be built, and building it per use is exactly the cost these
+   * exist to avoid — so it becomes one immutable global, constructed once in
+   * the global's own initialiser at instantiation.
+   */
+  constGlobalIdx: Map<ConstDecl, number>;
   result: ResolveResult;
   /**
    * Branch-coverage instrumentation state, or undefined when coverage is off.
@@ -765,6 +774,8 @@ class FuncEmitter {
         // compile-time expression, so emitting it inline is the whole
         // implementation — no global, no initialisation order.
         if (e.constRef) {
+          const g = this.ctx.constGlobalIdx.get(e.constRef);
+          if (g !== undefined) { this.emit(0x23, ...uleb(g)); break; } // global.get
           this.emitExpr(e.constRef.init, env, e.constRef.type);
           break;
         }

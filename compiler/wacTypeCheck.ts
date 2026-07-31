@@ -1018,7 +1018,11 @@ function lvalIsConst(lval: Lvalue, env: VarEnv, ctx: Ctx): boolean {
   switch (lval.kind) {
     case "lv-ident": {
       const v = env.get(lval.name);
-      return (v?.isConst || v?.refConst) ?? false;
+      if (v) return (v.isConst || v.refConst) ?? false;
+      // A module-level constant array is one object shared by every use, so a
+      // write through it would be visible everywhere. Const is deep here for
+      // the same reason it is deep anywhere else.
+      return ctx.fileScope.get(lval.name)?.kind === "const";
     }
     case "lv-field":  return lvalIsConst(lval.base, env, ctx);
     case "lv-index":  return lvalIsConst(lval.base, env, ctx);
@@ -1117,6 +1121,18 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
       return notCompileTimeConstant(expr.cond, ctx, seen)
           ?? notCompileTimeConstant(expr.then, ctx, seen)
           ?? notCompileTimeConstant(expr.else_, ctx, seen);
+    case "arrNew": {
+      // The literal form only. `T[n]()` would need the array built at run time,
+      // and its elements are not written down to be evaluated.
+      if (expr.size !== null) {
+        return `a sized array is built at run time — write the elements out`;
+      }
+      for (const el of expr.fixed) {
+        const why = notCompileTimeConstant(el, ctx, seen);
+        if (why !== null) return why;
+      }
+      return null;
+    }
     case "ident": {
       const e = ctx.fileScope.get(expr.name);
       if (e?.kind !== "const") return `'${expr.name}' is not a constant`;

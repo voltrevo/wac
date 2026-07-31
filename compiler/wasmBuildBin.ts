@@ -10,7 +10,7 @@
 
 import {
   type WacType, type FieldDecl, type StructDecl, type FuncDecl,
-  type MethodDecl, type Stmt, type Expr, type Block,
+  type MethodDecl, type Stmt, type Expr, type Block, type ConstDecl,
 } from "./wacParse.ts";
 import {
   type ResolveResult, type FuncEntry, type StructEntry,
@@ -20,6 +20,7 @@ import {
   wacEmitFunc, typeKey, sigKey, wasmValType, heapTypeBytes,
   type WasmTypeCtx, type StructFieldInfo, type CoverageCtx,
 } from "./wacEmitFunc.ts";
+import { wacConstEval } from "./wacConstEval.ts";
 
 // ── LEB128 helpers ────────────────────────────────────────────────────────────
 
@@ -31,6 +32,20 @@ function uleb(n: number): number[] {
     if (n !== 0) b |= 0x80;
     out.push(b);
   } while (n !== 0);
+  return out;
+}
+
+/** SLEB128 for a BigInt — i64 constants exceed a JS number's exact range. */
+function slebBig(n: bigint): number[] {
+  const out: number[] = [];
+  let more = true;
+  while (more) {
+    let b = Number(n & 0x7Fn);
+    n >>= 7n;
+    if ((n === 0n && !(b & 0x40)) || (n === -1n && !!(b & 0x40))) more = false;
+    else b |= 0x80;
+    out.push(b);
+  }
   return out;
 }
 
@@ -85,6 +100,26 @@ function fieldType(t: WacType, ctx: WasmTypeCtx, mutable: boolean): number[] {
 }
 
 /** Collect all array element types used anywhere in the program. */
+/**
+ * Every module-level constant in the program, in a stable order.
+ *
+ * Taken from the declaring file's own scope so an imported alias does not yield
+ * the same constant twice.
+ */
+function moduleConsts(result: ResolveResult): ConstDecl[] {
+  const out: ConstDecl[] = [];
+  const seen = new Set<ConstDecl>();
+  for (const [path, scope] of result.fileScopes) {
+    for (const e of scope.values()) {
+      if (e.kind !== "const" || e.filePath !== path) continue;
+      if (seen.has(e.decl)) continue;
+      seen.add(e.decl);
+      out.push(e.decl);
+    }
+  }
+  return out;
+}
+
 function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>): WacType[] {
   const seen = new Set<string>();
   const types: WacType[] = [];
@@ -171,6 +206,13 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
     scanType(funcReturnType(f));
     if (f.origin.kind === "func") scanBlock(f.origin.decl.body);
     else if (f.origin.kind === "method") scanBlock(f.origin.decl.body);
+  }
+  // Module-level constants. A constant array's type is only mentioned in its
+  // own declaration, so without this the array type is never registered and
+  // every index into it resolves to the wrong type.
+  for (const decl of moduleConsts(result)) {
+    scanType(decl.type);
+    scanExpr(decl.init);
   }
 
   return types;
@@ -351,9 +393,17 @@ function buildTypeCtx(
     }
   }
 
+  // Constant arrays become immutable globals. The coverage counter global, when
+  // present, is index 0 and is emitted first, so these start after it.
+  const constGlobalIdx = new Map<ConstDecl, number>();
+  let nextGlobal = coverage ? 1 : 0;
+  for (const decl of moduleConsts(result)) {
+    if (decl.type.kind === "array") constGlobalIdx.set(decl, nextGlobal++);
+  }
+
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
-    structFields, funcIdx, result,
+    structFields, funcIdx, result, constGlobalIdx,
     helperIdx: new Map<string, number>(),
   };
 }
@@ -1570,14 +1620,72 @@ function covArrayTypeIdx(ctx: WasmTypeCtxFull): number {
  * requires sections in ascending order.
  */
 function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
-  if (!ctx.coverage) return [];
-  const t = covArrayTypeIdx(ctx);
-  const global = [
-    0x63, ...sleb(t),        // (ref null $covArray)
-    0x01,                    // mutable
-    0xD0, ...sleb(t), 0x0B,  // ref.null $covArray; end
-  ];
-  return section(6, vec([global]));
+  const globals: number[][] = [];
+
+  if (ctx.coverage) {
+    const t = covArrayTypeIdx(ctx);
+    globals.push([
+      0x63, ...sleb(t),        // (ref null $covArray)
+      0x01,                    // mutable
+      0xD0, ...sleb(t), 0x0B,  // ref.null $covArray; end
+    ]);
+  }
+
+  // One immutable global per constant array, built by array.new_fixed in its
+  // own initialiser. That is a constant expression, so the array exists once
+  // the module is instantiated and costs nothing per use — which is the entire
+  // point of the feature. Elements must therefore be *values*, not
+  // instructions, which is why they go through wacConstEval first.
+  for (const decl of moduleConsts(ctx.result)) {
+    const gi = ctx.constGlobalIdx.get(decl);
+    if (gi === undefined || decl.type.kind !== "array") continue;
+    const elem = decl.type.elem;
+    const aIdx = ctx.arrTypeIdx.get(typeKey(elem));
+    if (aIdx === undefined) continue;
+
+    const init = decl.init;
+    const elems = init.kind === "arrNew" ? init.fixed : [];
+    const body: number[] = [];
+    for (const el of elems) body.push(...constElemBytes(el, elem, ctx));
+    body.push(0xFB, 0x08, ...uleb(aIdx), ...uleb(elems.length)); // array.new_fixed
+    body.push(0x0B);                                             // end
+
+    globals.push([0x64, ...sleb(aIdx), 0x00, ...body]);          // (ref $arr), immutable
+  }
+
+  if (globals.length === 0) return [];
+  return section(6, vec(globals));
+}
+
+/** A constant array element as a wasm const instruction. */
+function constElemBytes(el: Expr, elem: WacType, ctx: WasmTypeCtxFull): number[] {
+  const lookup = (name: string): Expr | null => {
+    for (const [path, scope] of ctx.result.fileScopes) {
+      const e = scope.get(name);
+      if (e?.kind === "const" && e.filePath === path) return e.decl.init;
+    }
+    return null;
+  };
+  const v = wacConstEval(el, lookup);
+  const name = elem.kind === "prim" ? elem.name : "i32";
+  if (v === null) return [0x41, 0x00]; // unreachable: the type checker rejected it
+
+  if (name === "f32") {
+    const buf = new DataView(new ArrayBuffer(4));
+    buf.setFloat32(0, v.kind === "float" ? v.value : Number(v.kind === "int" ? v.value : 0), true);
+    return [0x43, ...new Uint8Array(buf.buffer)];
+  }
+  if (name === "f64") {
+    const buf = new DataView(new ArrayBuffer(8));
+    buf.setFloat64(0, v.kind === "float" ? v.value : Number(v.kind === "int" ? v.value : 0), true);
+    return [0x44, ...new Uint8Array(buf.buffer)];
+  }
+  const bits: 32 | 64 = (name === "i64" || name === "u64") ? 64 : 32;
+  const raw = v.kind === "int" ? v.value
+            : v.kind === "bool" ? (v.value ? 1n : 0n)
+            : BigInt(Math.trunc(v.value));
+  const wrapped = BigInt.asIntN(bits, raw & ((1n << BigInt(bits)) - 1n));
+  return bits === 64 ? [0x42, ...slebBig(wrapped)] : [0x41, ...sleb(Number(wrapped))];
 }
 
 // ── Element section ───────────────────────────────────────────────────────────
