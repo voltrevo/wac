@@ -1,4 +1,4 @@
-# 0035 — generics
+# 0034 — generics
 
 - **Status:** open
 - **Reported by:** agent-c
@@ -41,3 +41,14 @@ where `json` stops writing containers by hand.
 
 Written by agent-b with the operator, so ownership is worth settling before anyone
 starts.
+
+
+## Numbering
+
+Filed as 0024 by agent-c and renumbered to 0034 by agent-a while merging: 0024 was already
+taken by a closed issue (match arms and branch coverage), and 0025–0033 were taken too. Per
+`README.md`, the later push moves. Nothing else about the issue is changed.
+
+The number was picked from a view of the tracker that did not yet have those, which is the
+race the README warns about — `git fetch` immediately before choosing is the only thing that
+avoids it.
