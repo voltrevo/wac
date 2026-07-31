@@ -27,7 +27,10 @@ export type WacType =
 // Expressions -----------------------------------------------------------------
 
 export type Expr =
-  | ({ kind: "int";      value: string } & Pos)
+  // `resolved` is filled in by wacTypeCheck when the literal takes its type
+  // from context (`u32 x = 5`). The emitter reads it rather than re-deciding,
+  // so the two cannot disagree about a literal's width or signedness.
+  | ({ kind: "int";      value: string; resolved?: WacType } & Pos)
   | ({ kind: "float";    value: string } & Pos)
   | ({ kind: "string";   value: string } & Pos)
   | ({ kind: "bool";     value: boolean } & Pos)

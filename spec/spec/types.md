@@ -73,8 +73,45 @@ No implicit conversions between any types.
 Decimal and hex literals are typed by different rules, because they are used to
 mean different things.
 
+A literal first takes whatever integer type is **expected** of it, provided the
+value has a reading there. That is what lets unsigned code be written without a
+cast on every constant:
+
+```wac
+export u32 twice(u32 x) { return x * 2; }        // 2 is a u32 here
+export i64 five()       { return 5; }            // 5 is an i64 here
+export u64 max()        { return 18446744073709551615; }
+```
+
+`[§wac-litctx-w7kn2mf]` `twice(2147483648)` returns `0` — the `2` is a `u32`,
+so the multiply wraps at 32 bits rather than promoting.
+
+Adoption is only ever a *reinterpretation of the same written value*, never a
+conversion: a literal that does not fit is an error, and a **variable** never
+coerces.
+
+```wac
+u32 a = -1;             // error: -1 has no u32 reading
+i32 b = 5000000000;     // error: does not fit i32
+u32 c(i32 x) { return x; }   // error: variables never coerce
+```
+
+`[§wac-litctx-nofit-k3mq8wl]` Each of these is a compile error.
+
+With no expected type, a literal falls back to its own notation.
+
 A **decimal** literal is a magnitude. It takes the narrowest integer type that
-holds it: `42` is `i32`, `1000000000000` is `i64`.
+holds it: `42` is `i32`, `1000000000000` is `i64`. A decimal past `i64`'s range
+is only writable where a `u64` is expected.
+
+Negation is folded into this, so a signed type's most negative value is
+spellable in decimal even though its magnitude is one past the positive range:
+
+```wac
+export i32 min() { return -2147483648; }
+```
+
+`[§wac-litctx-minint-p9fk4wq]` `min()` returns `-2147483648`.
 
 A **hex** literal is a bit pattern. Its width comes from the digit count — up
 to 8 digits is `i32`, 9 to 16 digits is `i64` — and the digits are read as

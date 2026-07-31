@@ -250,6 +250,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
     // Reporting i32 unconditionally selected the i32 form of the enclosing
     // operator, so `4000000000000 + 1000000000000` emitted i32.add.
     case "int": {
+      // `resolved` is set by wacTypeCheck when the literal took its type from
+      // context. Trusting it is what keeps the two in agreement — deriving a
+      // second opinion here is how the operand and the operator came to
+      // disagree about width before.
+      if (e.resolved) return e.resolved;
       const lit = wacIntLit(e.value);
       return lit.ok && lit.width === 64 ? I64 : I32;
     }
@@ -607,8 +612,14 @@ class FuncEmitter {
         // expectType alone emitted i32.const for an i64-typed literal wherever no
         // type was being pushed down — as a binary operand, for instance — which
         // is invalid wasm rather than a wrong value.
-        const isI64 = lit.width === 64
-          || (expectType?.kind === "prim" && expectType.name === "i64");
+        // A literal typed from context wins: it already knows whether it is a
+        // 32- or 64-bit value, and whether it is signed, so consult it first.
+        const res = e.resolved?.kind === "prim" ? e.resolved.name : undefined;
+        const isI64 = res !== undefined
+          ? (res === "i64" || res === "u64")
+          : lit.width === 64
+            || (expectType?.kind === "prim" &&
+                (expectType.name === "i64" || expectType.name === "u64"));
         if (isI64) {
           this.emit(0x42, ...slebBig(BigInt.asIntN(64, lit.value))); // i64.const
         } else {

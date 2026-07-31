@@ -56,9 +56,9 @@ export i32 trailingComma() { return area(3, 4,); }   // -> 12
 
 // ── 2. PRIMITIVE TYPES AND LITERALS ─────────────────────────────────────────
 
-// i32 i64 f32 f64 bool string      — locals, params, fields, returns
-// i8 i16                           — array elements ONLY (packed, section 9)
-// anyref i31ref                    — abstract refs (section 12)
+// i32 i64 u32 u64 f32 f64 bool string  — locals, params, fields, returns
+// i8 i16                               — array elements ONLY (packed, section 9)
+// anyref i31ref                        — abstract refs (section 12)
 //
 // Integer arithmetic wraps. Float arithmetic is IEEE 754.
 export i32 wrap() { return 2147483647 + 1; }   // -> -2147483648
@@ -75,16 +75,22 @@ export i64 padded()  { return 0x0EDB88320; }    // -> 3988292384  (9 digits, i64
 export i32 grouped() { return 0xEDB8_8320; }    // `_` is a separator, ignored...
 export i32 million() { return 1_000_000; }      // ...and cannot change the width
 
-// A literal's width is intrinsic, not inferred from context, and that cuts both
-// ways: `1000000000000` IS an i64 everywhere, including as an operand of an
-// operator — but a small literal is an i32 and will NOT widen to meet an i64.
-// So `x == 5` where x is i64 is a type error; write `x == 5 as i64`.
+// A literal first takes whatever integer type is EXPECTED of it, as long as the
+// value has a reading there. Without this every constant in unsigned code would
+// need a cast.
+export u32 twiceU(u32 x) { return x * 2; }      // the 2 is a u32, so this wraps
+export i64 fiveWide()    { return 5; }          // and the 5 is an i64
+export u64 uMax()        { return 18446744073709551615; }   // only a u64 holds it
 
-// A consequence to know about: i32's most negative value has no decimal
-// spelling. `-2147483648` is unary minus applied to the literal `2147483648`,
-// which is past i32's range and therefore i64 — so the whole expression is i64.
-// Write it as the bit pattern instead; this is what hex-as-bit-pattern is for.
-export i32 mostNegative() { return 0x80000000; }   // -> -2147483648, as i32
+// Adoption reinterprets the value as written; it never converts. A literal that
+// does not fit is an error, and a VARIABLE never coerces.
+// ERROR: u32 a = -1;                // -1 has no u32 reading
+// ERROR: i32 b = 5000000000;        // does not fit i32
+// ERROR: u32 c(i32 x) { return x; } // variables never coerce, only literals
+
+// Negation folds into the rule, so a signed minimum is spellable in decimal
+// even though its magnitude is one past the positive range.
+export i32 mostNegative() { return -2147483648; }
 
 // bool is a distinct type. `true` is 1 and `false` is 0, but bool is NOT i32.
 // Conditions must be bool; comparisons and `&& || !` produce bool.
@@ -121,8 +127,14 @@ export f64 constRef() {
 //                            never on struct/array refs (use `is`)
 // Logical  && || !          bool only, short-circuiting
 // Bitwise  & | ^ ~          i32 or i64, matching
-// Shift    << >> >>>        i32/i64; also i64 << i32. `>>` sign-extends,
-//                            `>>>` zero-fills. There is no `<<<`.
+// Shift    << >> >>>        integers; also i64 << i32. On a SIGNED type `>>`
+//                            sign-extends and `>>>` zero-fills; on an unsigned
+//                            type `>>` is already logical. There is no `<<<`.
+//
+// Signed and unsigned differ only where the sign bit changes the answer:
+// `/ % < <= > >=` and `>>`. Add, sub, mul, the bitwise ops, `<<`, `==` and
+// `!=` are bit-identical, so they emit the same instruction for both.
+// Unary `-` is NOT defined on unsigned — write `0 - x` for wrapping negation.
 //
 // Precedence, tightest first:
 //   unary - ! ~  |  as as! as~ as@  |  * / %  |  + -  |  << >> >>>
@@ -191,6 +203,19 @@ export bool truthy(i32 x)   { return x as~ bool; }   // 0 -> false, else true
 
 // ERROR: i64 a = x as~ i64;   // i32->i64 is lossless — must use `as`
 // ERROR: f32 b = y as@ f32;   // f64->f32 has no raw form distinct from as~
+
+// SIGNED <-> UNSIGNED is the same four modes over the same bits. wasm has no
+// signed types — an i32 is 32 bits and signedness lives in the instruction —
+// so u32/i32 and u64/i64 share a representation and differ only in which
+// opcode gets emitted. A same-width change therefore moves nothing:
+export u32 bits(i32 x)  { return x as@ u32; }   // -1 -> 4294967295, zero cost
+export u32 chkU(i32 x)  { return x as! u32; }   // traps if x is negative
+export u32 clampU(i32 x) { return x as~ u32; }  // negatives clamp to 0
+// Widening out of u32 is exact, so it is plain `as`:
+//   u32 -> u64, u32 -> i64 (zero-extend), u32 -> f64, bool -> u32
+// ERROR: i32 y = u as i32;   // not lossless either way — use as!/as~/as@
+// ERROR: u64 z = i as@ u64;  // sign- vs zero-extend are different answers,
+//                            // so there is no single "raw" one; go via i64
 
 // REFERENCE casts reuse the same operators, and the compiler picks the meaning
 // from the operand type:
@@ -659,7 +684,6 @@ export i32 shadowing() {
 //   linear memory           no pointers, no mem[addr], no data segments
 //   module-level globals    no top-level constants or variables at all
 //   host function imports   nothing is imported from JS; wasm imports are empty
-//   unsigned types          no u32/u64 — use i32/i64 with `>>>` where needed
 //   char type               string indexing yields a one-character string
 //   type aliases            write the type out
 //   operator overloading, exceptions, threads, async, varargs, default
@@ -684,7 +708,9 @@ export bool selfTest() {
       && factorial(10) == 3628800
       && isEven(42) == 1 && isOdd(42) == 0
       && trailingComma() == 12
-      && wrap() == 0x80000000 && mostNegative() == 0x80000000
+      && wrap() == 0x80000000 && mostNegative() == -2147483648
+      && twiceU(2147483648) == 0 && fiveWide() == 5
+      && uMax() == 18446744073709551615
       && dec() == 42 && decBig() == 1000000000000
       && poly() == -306674912 && padded() == 3988292384
       && (decBig() as@ i32) == -727379968   // as@ keeps the low 32 bits
@@ -719,6 +745,7 @@ export bool selfTest() {
       && dynamicDispatch(Circle(0.0, 0.0, 5.0)) == "circle"
       && dynamicDispatch(Shape(0.0, 0.0)) == "shape"
       && identity()
+      && bits(-1) == 4294967295 && chkU(5) == 5 && clampU(-5) == 0
       && nullability() == 1
       && walk(Node(1, Node(2, Node(3, null)))) == 6
       && walk(null) == 0
