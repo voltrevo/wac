@@ -5694,8 +5694,93 @@ Deno.test(`[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejec
   eq(bad(`const void A = 1; export i32 g() { return 0; }`), true, "void");
   eq(bad(`const i32 A = 1; const i32 A = 2; export i32 g() { return A; }`), true, "duplicate");
   eq(bad(`i32 A() { return 1; } const i32 A = 2; export i32 g() { return A; }`), true, "clashes with a function");
-  eq(bad(`struct P { i32 x; } const P A = P(1); export i32 g() { return A.x; }`), true, "construction");
+  // Construction itself is allowed now (§wac-modconst-ref-9jvq2mt); what is still
+  // rejected is a construction whose arguments are not constant.
+  eq(bad(`struct P { i32 x; } i32 f() { return 1; } const P A = P(f()); export i32 g() { return A.x; }`),
+    true, "construction with a computed argument");
+  eq(bad(`enum E { A(i32 v), B } i32 f() { return 1; } const E X = E.A(f()); export i32 g() { return 0; }`),
+    true, "variant construction with a computed argument");
+  eq(bad(`struct P { i32 x; } i32 P2() { return 1; } const P A = P2(); export i32 g() { return A.x; }`),
+    true, "a plain call that merely looks like construction");
   eq(bad(`const i32 A = 1.5; export i32 g() { return A; }`), true, "wrong type");
+});
+
+// §wac-modconst-ref-9jvq2mt — constants of reference type
+Deno.test(`[§wac-modconst-ref-9jvq2mt] a struct or enum can be a module constant`, async () => {
+  // `struct.new` is a constant instruction in the GC proposal, so a constant is not
+  // limited to scalars. Before this, a dispatch table of variants had to be built inside
+  // a function and so was rebuilt on every call — the same cost the constant-array work
+  // removed for scalar tables.
+  const inst = await run(`
+    enum E { A(i32 v), B }
+    struct P { i32 x; i32 y; }
+    struct Inner { i32 v; }
+    struct Outer { Inner i; i32 n; }
+    struct Named { string s; i32 n; }
+    struct Link { Link? next; i32 v; }
+
+    const E      X      = E.A(7);
+    const E      PLAIN  = E.B;
+    const E[]    TABLE  = E[](E.A(1), E.B, E.A(3));
+    const P      ORIGIN = P(3, 4);
+    const P      BRACED = P { x: 1, y: 2 };
+    const Outer  NEST   = Outer(Inner(6), 1);
+    const Inner[] PS    = Inner[](Inner(1), Inner(2), Inner(4));
+    const Named  HI     = Named("hi", 2);
+    const Link   TAIL   = Link(null, 9);
+
+    export i32 payload()  { match (X) { case A(v): return v; case B: return 0; } }
+    export i32 noPayload() { match (PLAIN) { case A(v): return v; case B: return 5; } }
+    export i32 table() {
+      i32 n = 0;
+      for (i32 i = 0; i < TABLE.len(); i++) { match (TABLE[i]) { case A(v): n += v; case B: n += 100; } }
+      return n;
+    }
+    export i32 plainStruct() { return ORIGIN.x * 10 + ORIGIN.y; }
+    export i32 braced()      { return BRACED.x * 10 + BRACED.y; }
+    export i32 nested()      { return NEST.i.v + NEST.n; }
+    export i32 structArray() { return PS[0].v + PS[1].v + PS[2].v; }   // Inner has .v
+    export i32 withString()  { return HI.s.len() + HI.n; }
+    export i32 withNull()    { return TAIL.v + (TAIL.next is null ? 1 : 0); }
+  `);
+  eq(inst.call("payload", []), 7, "a variant with a payload");
+  eq(inst.call("noPayload", []), 5, "a payload-less variant");
+  eq(inst.call("table", []), 104, "an array of variants — the case that motivated this");
+  eq(inst.call("plainStruct", []), 34, "a struct, positionally");
+  eq(inst.call("braced", []), 12, "a struct, named");
+  eq(inst.call("nested", []), 7, "a struct holding a struct");
+  eq(inst.call("structArray", []), 7, "an array of structs");
+  eq(inst.call("withString", []), 4, "a struct holding a string");
+  eq(inst.call("withNull", []), 10, "a struct holding a null");
+});
+
+Deno.test(`[§wac-modconst-ref-9jvq2mt] a reference constant is one shared value`, async () => {
+  // The point of the feature, and the thing that was wrong at first: a struct constant
+  // was substituted at each use, so two mentions were two objects and the value was
+  // rebuilt every time. Identity is observable through a mutable field, which is what
+  // this checks — an array constant already behaved this way.
+  const inst = await run(`
+    struct P { i32 v; }
+    const P SHARED = P(1);
+    const i32[] K  = i32[](1, 2);
+    P getP()    { return SHARED; }
+    i32[] getK() { return K; }
+    export i32 structIdentity() { P a = getP(); a.v = 42; return getP().v; }
+    export i32 arrayIdentity()  { i32[] a = getK(); a[0] = 42; return getK()[0]; }
+  `);
+  eq(inst.call("structIdentity", []), 42, "both mentions are the same struct");
+  eq(inst.call("arrayIdentity", []), 42, "as was already true of arrays");
+});
+
+Deno.test(`[§wac-modconst-ref-9jvq2mt] writing through a reference constant is refused`, () => {
+  const field = err(`struct P { i32 v; } const P S = P(1); export i32 f() { S.v = 9; return S.v; }`);
+  if (!field.includes("cannot assign")) {
+    throw new Error(`expected an assignment diagnostic for a const struct field, got: ${field}`);
+  }
+  const elem = err(`const i32[] K = i32[](1, 2); export i32 f() { K[0] = 9; return K[0]; }`);
+  if (!elem.includes("cannot assign")) {
+    throw new Error(`expected an assignment diagnostic for a const array element, got: ${elem}`);
+  }
 });
 
 // §wac-modconst-array-t8kn4wq — constant arrays are built once, as globals

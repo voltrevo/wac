@@ -292,6 +292,14 @@ function annotateProgram(prog: Program, scope: FileScope): void {
         for (const p of m.params) annotateType(p.type, scope);
         annotateBlock(m.body, scope);
       }
+    } else if (item.tag === "const") {
+      // A constant's initialiser is an expression like any other and needs its struct
+      // types annotated — without this, `const P ORIGIN = P(3, 4);` reported "undefined
+      // function or struct 'P'", because the annotation pass never reached it. Harmless
+      // while a constant could only be a scalar; not once it can be a struct or a
+      // variant.
+      annotateType(item.type, scope);
+      annotateExpr(item.init, scope);
     } else if (item.tag === "enum") {
       // Payload types need annotating for the same reason struct fields do: the
       // generated variant structs (phase 1b) reuse these very type objects, and

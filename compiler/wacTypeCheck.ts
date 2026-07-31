@@ -14,6 +14,7 @@ import {
 import {
   type ResolveResult, type FuncEntry, type StructEntry, type FileScope,
   type EnumEntry,
+  type VariantEntry,
   funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
@@ -1181,6 +1182,22 @@ function checkConstDecl(decl: ConstDecl, ctx: Ctx): void {
 }
 
 /**
+ * The variant an expression constructs, or null if it constructs none.
+ *
+ * `E.A(1)` is a call whose callee is a field access, and `E.B` is the field access alone.
+ * Resolved through the file scope because the constant check runs before inference, so the
+ * `variantTypeIndex` annotation the emitter later relies on is not there yet.
+ */
+function constVariantOf(expr: Expr, ctx: Ctx): VariantEntry | null {
+  const callee = expr.kind === "call" ? expr.callee : expr;
+  if (callee.kind !== "field") return null;
+  if (callee.expr.kind !== "ident") return null;
+  const ee = ctx.fileScope.get(callee.expr.name);
+  if (ee?.kind !== "enum") return null;
+  return ee.enumEntry.variants.find((v) => v.name === callee.name) ?? null;
+}
+
+/**
  * Why `expr` cannot be evaluated at compile time, or null if it can.
  *
  * `seen` carries the constants already being evaluated, so a cycle is reported
@@ -1202,8 +1219,8 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
           ?? notCompileTimeConstant(expr.then, ctx, seen)
           ?? notCompileTimeConstant(expr.else_, ctx, seen);
     case "arrNew": {
-      // The literal form only. `T[n]()` would need the array built at run time,
-      // and its elements are not written down to be evaluated.
+      // The literal form only. `T[n]()` and `T[n](fill: v)` build the array at run
+      // time from a length that need not be constant.
       if (expr.size !== null) {
         return `a sized array is built at run time — write the elements out`;
       }
@@ -1213,6 +1230,50 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
       }
       return null;
     }
+    // A struct, an enum variant, or anything built out of them. `struct.new` is a
+    // constant instruction in the GC proposal, so these can be built once at
+    // instantiation and shared rather than rebuilt per call — which is what a dispatch
+    // table of variants written as a constant wants.
+    case "construct": {
+      // The parser calls any `ident(...)` a construction, so a plain function call
+      // arrives here too — `P(f())` was accepted as constant because `f()` is itself a
+      // "construct" node with no arguments to reject. Only a name that resolves to a
+      // struct is construction; anything else runs code.
+      // `ctype` may be an array type for `T[](...)`, which the arrNew case handles, so
+      // only a named type can be a struct construction here.
+      const ctype = expr.ctype;
+      if (ctype.kind !== "struct") return `this is computed at run time`;
+      const target = ctx.fileScope.get(ctype.name);
+      if (target?.kind !== "struct" && target?.kind !== "variant") {
+        return `this is computed at run time`;
+      }
+      for (const a of expr.args) {
+        const why = notCompileTimeConstant(a, ctx, seen);
+        if (why !== null) return why;
+      }
+      for (const n of expr.named ?? []) {
+        const why = notCompileTimeConstant(n.val, ctx, seen);
+        if (why !== null) return why;
+      }
+      return null;
+    }
+    case "call": {
+      // Only variant construction — an ordinary call runs code. This resolves the
+      // variant through the file scope rather than reading the `variantTypeIndex`
+      // annotation, because this check runs *before* inference and the annotation is not
+      // set yet.
+      if (constVariantOf(expr, ctx) === null) return `this is computed at run time`;
+      for (const a of expr.args) {
+        const why = notCompileTimeConstant(a, ctx, seen);
+        if (why !== null) return why;
+      }
+      return null;
+    }
+    case "field":
+      // A payload-less variant used as a value. Any other field access reads memory.
+      return constVariantOf(expr, ctx) === null ? `this is computed at run time` : null;
+    case "null":
+      return null;
     case "ident": {
       const e = ctx.fileScope.get(expr.name);
       if (e?.kind !== "const") return `'${expr.name}' is not a constant`;
