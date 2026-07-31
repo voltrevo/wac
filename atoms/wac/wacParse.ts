@@ -35,7 +35,11 @@ export type Expr =
   | ({ kind: "string";   value: string } & Pos)
   | ({ kind: "bool";     value: boolean } & Pos)
   | ({ kind: "null" } & Pos)
-  | ({ kind: "ident";    name: string } & Pos)
+  // `constRef` is set by wacTypeCheck when the name resolves to a module-level
+  // constant. Recording the declaration here means neither typeOfExpr nor the
+  // emitter needs to know which file it is in — the same reason `resolved`
+  // exists on int literals.
+  | ({ kind: "ident";    name: string; constRef?: ConstDecl } & Pos)
   | ({ kind: "unary";    op: string; expr: Expr } & Pos)
   | ({ kind: "binary";   op: string; left: Expr; right: Expr } & Pos)
   | ({ kind: "cast";     op: string; expr: Expr; type: WacType } & Pos)
@@ -143,7 +147,16 @@ export type EnumDecl = {
   variants: VariantDecl[];
 } & Pos;
 
-export type TopLevel = Import | StructDecl | FuncDecl | EnumDecl;
+/**
+ * A module-level constant. `init` must be a compile-time constant expression;
+ * the type checker enforces that and the emitter substitutes it at each use,
+ * so there is no storage and no initialisation order to worry about.
+ */
+export type ConstDecl = {
+  tag: "const"; exported: boolean; type: WacType; name: string; init: Expr;
+} & Pos;
+
+export type TopLevel = Import | StructDecl | FuncDecl | EnumDecl | ConstDecl;
 export type Program  = { items: TopLevel[] };
 
 export type ParseError = { message: string; file: string; line: number; col: number; span?: number; annotation?: string; hint?: string };
@@ -1106,6 +1119,18 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return { tag: "func", exported, returnType, name, params, body, ...p };
   }
 
+  /** `[export] const <type> <name> = <expr>;` at top level. */
+  function parseConstDecl(exported: boolean): ConstDecl {
+    const p = pos();
+    expect("const");
+    const type = parseType();
+    const name = at("ident") ? advance().text : (err("expected constant name"), "?");
+    expect("=");
+    const init = parseExpr();
+    expect(";");
+    return { tag: "const", exported, type, name, init, ...p };
+  }
+
   // ── Main parse loop ───────────────────────────────────────────────────────
 
   const items: TopLevel[] = [];
@@ -1119,6 +1144,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       // the `const` itself, so only the `export` is consumed here.
       advance(); // skip 'export'
       items.push(parseStructDecl(true));
+    } else if (at("const")) {
+      // `const struct` was matched above, so any other `const` is a constant.
+      items.push(parseConstDecl(false));
+    } else if (at("export") && at("const", 1)) {
+      advance(); // skip 'export'
+      items.push(parseConstDecl(true));
     } else if (at("enum")) {
       items.push(parseEnumDecl(false));
     } else if (at("export") && at("enum", 1)) {
