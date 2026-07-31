@@ -15,6 +15,7 @@ import {
   type ResolveResult, type FuncEntry, type StructEntry, type FileScope,
   funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
+import { wacIntLit } from "./wacIntLit.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -852,18 +853,15 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
   switch (expr.kind) {
 
     case "int": {
-      try {
-        const n = BigInt(expr.value);
-        const I32_MAX =  2147483647n, I32_MIN = -2147483648n;
-        const I64_MAX =  9223372036854775807n, I64_MIN = -9223372036854775808n;
-        if (n >= I32_MIN && n <= I32_MAX) return T_I32;
-        if (n >= I64_MIN && n <= I64_MAX) return T_I64;
-        errAt(ctx, `integer literal out of range`, expr.line, expr.col);
-        return null;
-      } catch {
-        errAt(ctx, `invalid integer literal '${expr.value}'`, expr.line, expr.col);
+      const lit = wacIntLit(expr.value);
+      if (!lit.ok) {
+        const msg = lit.reason === "range"
+          ? `integer literal out of range`
+          : `invalid integer literal '${expr.value}'`;
+        errAt(ctx, msg, expr.line, expr.col);
         return null;
       }
+      return lit.width === 32 ? T_I32 : T_I64;
     }
 
     case "float": return T_F64;

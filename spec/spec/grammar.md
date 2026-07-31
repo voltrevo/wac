@@ -165,8 +165,12 @@ type_list      = type , { "," , type } ;
 
 ```ebnf
 IDENT          = letter , { letter | digit | "_" } ;
-INT_LITERAL    = digit , { digit } ;
-FLOAT_LITERAL  = digit , { digit } , "." , digit , { digit } ;
+INT_LITERAL    = DEC_LITERAL | HEX_LITERAL ;
+DEC_LITERAL    = digit , { digit | "_" } ;
+HEX_LITERAL    = "0" , ( "x" | "X" ) , hex_digit , { hex_digit | "_" } ;
+hex_digit      = digit | "a".."f" | "A".."F" ;
+FLOAT_LITERAL  = digit , { digit | "_" } , "." , digit , { digit | "_" } ,
+                 [ ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit | "_" } ] ;
 STRING         = '"' , { string_char } , '"' ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
 string_char    = (* any character except " and \ *) | escape ;

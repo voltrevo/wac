@@ -16,6 +16,7 @@ import {
   type FuncEntry, type StructEntry, type ResolveResult,
   funcParams, funcReturnType, commonAncestor,
 } from "./wacResolve.ts";
+import { wacIntLit } from "./wacIntLit.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -521,11 +522,14 @@ class FuncEmitter {
   emitExpr(e: Expr, env: TypeEnv, expectType?: WacType): void {
     switch (e.kind) {
       case "int": {
+        // Emission only runs after a successful typecheck, which rejects any
+        // literal wacIntLit can't interpret — so this always narrows to ok.
+        const lit = wacIntLit(e.value) as { ok: true; value: bigint; width: 32 | 64 };
         const isI64 = expectType?.kind === "prim" && expectType.name === "i64";
         if (isI64) {
-          this.emit(0x42, ...slebBig(BigInt(e.value))); // i64.const
+          this.emit(0x42, ...slebBig(BigInt.asIntN(64, lit.value))); // i64.const
         } else {
-          this.emit(0x41, ...sleb(parseInt(e.value))); // i32.const (parseInt auto-detects 0x hex)
+          this.emit(0x41, ...sleb(Number(BigInt.asIntN(32, lit.value)))); // i32.const
           this.boxIfNullablePrimitive(expectType, "i32");
         }
         break;
