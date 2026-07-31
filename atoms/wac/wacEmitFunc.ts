@@ -591,7 +591,12 @@ class FuncEmitter {
         // Emission only runs after a successful typecheck, which rejects any
         // literal wacIntLit can't interpret — so this always narrows to ok.
         const lit = wacIntLit(e.value) as { ok: true; value: bigint; width: 32 | 64 };
-        const isI64 = expectType?.kind === "prim" && expectType.name === "i64";
+        // The literal's own width decides as well as the expected type. Relying on
+        // expectType alone emitted i32.const for an i64-typed literal wherever no
+        // type was being pushed down — as a binary operand, for instance — which
+        // is invalid wasm rather than a wrong value.
+        const isI64 = lit.width === 64
+          || (expectType?.kind === "prim" && expectType.name === "i64");
         if (isI64) {
           this.emit(0x42, ...slebBig(BigInt.asIntN(64, lit.value))); // i64.const
         } else {

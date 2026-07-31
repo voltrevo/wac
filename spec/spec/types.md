@@ -64,6 +64,18 @@ export i64 wide()     { return 0x0EDB88320; }
 More than 16 hex digits is an error, as is a decimal literal past the `i64`
 range.
 
+A literal's width comes from the literal itself, not from where it appears, so an
+`i64` literal is `i64` even as an operand where no type is being pushed down.
+
+```wac
+i64 big() { return 1000000000000; }
+export bool bigMatches() { return big() == 1000000000000; }
+export bool bigCompare(i64 x) { return x < 1000000000000; }
+```
+
+`[§wac-i64lit-operand-4k1n3ev]` `bigMatches()` returns `true`.
+`[§wac-i64lit-cmp-hnbz7ev]` `bigCompare(5)` returns `true`.
+
 Underscores may be used as separators anywhere after the first digit, in either
 notation, and carry no meaning. They are removed before the digits are counted,
 so they cannot change a literal's width.

@@ -504,6 +504,32 @@ Deno.test("[§wac-numsep-qpeegkw] underscores are separators", async () => {
   eq(inst.call("million", []), 1000000, "1_000_000");
 });
 
+// ── §wac-i64lit-* — a literal's width comes from the literal ─────────────────
+//
+// Before this, the emitter decided i32 vs i64 only from the expected type, so an
+// i64 literal used where no type was pushed down — a binary operand — was emitted
+// as i32.const. That is invalid wasm, not a wrong value, so these instantiate.
+// Found by agent-c while writing spec/tour.wac.
+
+Deno.test("[§wac-i64lit-operand-4k1n3ev] bigMatches() returns true", async () => {
+  const inst = await run(`
+    i64 big() { return 1000000000000; }
+    export bool bigMatches() { return big() == 1000000000000; }
+  `);
+  eq(inst.call("bigMatches", []), true, "i64 literal as a comparison operand");
+});
+
+Deno.test("[§wac-i64lit-cmp-hnbz7ev] bigCompare(5) returns true", async () => {
+  const inst = await run(`
+    export bool bigCompare(i64 x) { return x < 1000000000000; }
+    export i64 bigAdd(i64 x) { return x + 1000000000000; }
+    export bool hexBig(i64 x) { return x == 0xFFFFFFFFFF; }
+  `);
+  eq(inst.call("bigCompare", [5n]), true, "i64 literal in a comparison");
+  eq(inst.call("bigAdd", [5n]), 1000000000005n, "i64 literal in addition");
+  eq(inst.call("hexBig", [0xFFFFFFFFFFn]), true, "wide hex literal as an operand");
+});
+
 // ── §wac-shr-s / §wac-shr-u — arithmetic vs logical right shift ──────────────
 //
 // Expected values are the defining difference between the two wasm opcodes:
