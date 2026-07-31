@@ -1232,6 +1232,18 @@ function inferCall(
     // this has to be matched before the base expression is inferred — there is no
     // variable of that name to infer.
     if (baseExpr.kind === "ident" && baseExpr.name === "string" && !ctx.fileScope.has("string")) {
+      if (methodName === "fromBytes") {
+        if (args.length !== 1) {
+          errAt(ctx, `'string.fromBytes()' takes 1 argument (bytes)`, expr.line, expr.col);
+          return null;
+        }
+        const bT = inferExpr(args[0], env, ctx);
+        if (bT && !(bT.kind === "array" && bT.elem.kind === "prim" && bT.elem.name === "u8")) {
+          errAt(ctx, `'string.fromBytes()' argument must be u8[], got ${typeName(bT)}`,
+            args[0].line, args[0].col);
+        }
+        return T_STR;
+      }
       if (methodName === "fromCodepoint") {
         if (args.length !== 1) {
           errAt(ctx, `'string.fromCodepoint()' takes 1 argument (codepoint)`, expr.line, expr.col);

@@ -1517,6 +1517,73 @@ Deno.test(`[§wac-str-fromcp-k8nf3wq] arity and argument type are checked`, () =
   if (!c.includes("no static method")) throw new Error(`unexpected: ${c}`);
 });
 
+// ── §wac-str-frombytes-* — string.fromBytes ──────────────────────────────────
+
+Deno.test(`[§wac-str-frombytes-p3kq7wn] hi() returns "hi"`, async () => {
+  const inst = await run(`
+    export bool test() { return string.fromBytes(u8[]('h', 'i')) == "hi"; }
+    export i32 len()   { return string.fromBytes(u8[]('h', 'i')).len(); }
+    export bool empty(){ return string.fromBytes(u8[0]()) == ""; }
+  `);
+  eq(inst.call("test", []), true, `fromBytes("hi") == "hi"`);
+  eq(inst.call("len", []), 2, "two bytes");
+  eq(inst.call("empty", []), true, "an empty array gives the empty string");
+});
+
+Deno.test(`[§wac-str-frombytes-utf8-m9fj2xr] bytes are copied verbatim`, async () => {
+  // Compared against literals, so the bytes must match what the lexer produced
+  // for the same characters — a byte-order or off-by-one error in the copy fails.
+  const inst = await run(`
+    export bool two()   { return string.fromBytes(u8[](0xC3, 0xA9)) == "é"; }
+    export bool three() { return string.fromBytes(u8[](0xE6, 0x97, 0xA5)) == "日"; }
+    export bool four()  { return string.fromBytes(u8[](0xF0, 0x9F, 0x98, 0x80)) == "😀"; }
+    export i32 twoLen() { return string.fromBytes(u8[](0xC3, 0xA9)).len(); }
+    export i32 longer() {
+      u8[] b = u8[300]();
+      for (i32 i = 0; i < 300; i++) { b[i] = 'x'; }
+      return string.fromBytes(b).len();
+    }
+  `);
+  eq(inst.call("two", []), true, "U+00E9 from its two UTF-8 bytes");
+  eq(inst.call("three", []), true, "U+65E5 from its three bytes");
+  eq(inst.call("four", []), true, "U+1F600 from its four bytes");
+  eq(inst.call("twoLen", []), 2, "len is the byte count, not the character count");
+  // Past any plausible inline threshold, so the copy loop is exercised properly.
+  eq(inst.call("longer", []), 300, "300 bytes copy");
+});
+
+Deno.test(`[§wac-str-frombytes-copy-w4nk8dt] the result is a copy, not a view`, async () => {
+  // The important one. Aliasing the caller's array would let a later write mutate
+  // a value the language guarantees is immutable, and nothing else would notice.
+  const inst = await run(`
+    export bool test() {
+      u8[] b = u8[]('a', 'b');
+      string s = string.fromBytes(b);
+      b[0] = 'z';
+      return s == "ab";
+    }
+    export bool sourceStillMutable() {
+      u8[] b = u8[]('a', 'b');
+      string s = string.fromBytes(b);
+      b[0] = 'z';
+      return b[0] == 'z';
+    }
+  `);
+  eq(inst.call("test", []), true, "the string is unaffected by a later write");
+  eq(inst.call("sourceStillMutable", []), true, "and the array is still writable");
+});
+
+Deno.test(`[§wac-str-frombytes-p3kq7wn] arity and argument type are checked`, () => {
+  const a = err(`export string bad() { return string.fromBytes(); }`);
+  if (!a.includes("takes 1 argument")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export string bad() { return string.fromBytes(5); }`);
+  if (!b.includes("must be u8[]")) throw new Error(`unexpected: ${b}`);
+  // i8[] is the same storage but a different type, and signedness is the whole
+  // point of the distinction, so it must not be silently accepted.
+  const c = err(`export string bad(i8[] b) { return string.fromBytes(b); }`);
+  if (!c.includes("must be u8[]")) throw new Error(`unexpected: ${c}`);
+});
+
 // ── §wac-charlit-* — character literals are i32 codepoints ───────────────────
 
 Deno.test("[§wac-charlit-p4kn8wq] letterA() returns 97", async () => {
