@@ -697,6 +697,123 @@ function arrGetOp(elem: WacType): number {
 }
 
 /** Build the bind helper specs needed for a compiled wac module. */
+/**
+ * Memory section (id 5) — a staging buffer for bulk data transfer.
+ *
+ * Without it, moving an array across the boundary costs one exported wasm call
+ * per element: a 1 MiB byte array is a million calls each way, and the copy
+ * dominates any real work. With it, JS does one `TypedArray.set` into wasm memory
+ * and a single call runs a wasm-internal loop into the GC array.
+ *
+ * Starts at zero pages and grows on demand, so a module that never moves bulk
+ * data pays nothing. Section id 5 precedes the global section (6), which wasm
+ * requires.
+ */
+function buildMemorySection(): number[] {
+  // one memory, flags 0 (min only), min 0 pages
+  return section(5, [0x01, 0x00, 0x00]);
+}
+
+const PAGE_BITS = 16;   // 65536 bytes per wasm page
+
+/**
+ * __bind_mem_ensure(bytes) -> i32
+ *
+ * Grow the staging buffer to hold `bytes`, and return its size in bytes. The
+ * caller must re-read `memory.buffer` afterwards: growing detaches the old
+ * ArrayBuffer, so any view built before this call is dead.
+ */
+function makeMemEnsure(): number[] {
+  return [
+    0x01, 0x01, 0x7F,                  // local1 = needed pages
+    // needPages = (bytes + 65535) >>> 16
+    0x20, 0x00,
+    0x41, ...sleb(0xFFFF), 0x6A,
+    0x41, PAGE_BITS, 0x76,
+    0x21, 0x01,
+    // if (memory.size < needPages) memory.grow(needPages - memory.size)
+    0x3F, 0x00,
+    0x20, 0x01,
+    0x49,                              // i32.lt_u
+    0x04, 0x40,
+      0x20, 0x01, 0x3F, 0x00, 0x6B,
+      0x40, 0x00,                      // memory.grow
+      0x1A,                            // drop — the caller checks the returned size
+    0x0B,
+    // return memory.size << 16
+    0x3F, 0x00, 0x41, PAGE_BITS, 0x74,
+    0x0B,
+  ];
+}
+
+/** Byte width, load opcode and store opcode for a bulk-transferable element. */
+function bulkOps(name: string): { width: number; load: number; store: number } | null {
+  const map: Record<string, { width: number; load: number; store: number }> = {
+    i8:  { width: 1, load: 0x2D, store: 0x3A },   // i32.load8_u  / i32.store8
+    i16: { width: 2, load: 0x2F, store: 0x3B },   // i32.load16_u / i32.store16
+    i32: { width: 4, load: 0x28, store: 0x36 },
+    i64: { width: 8, load: 0x29, store: 0x37 },
+    f32: { width: 4, load: 0x2A, store: 0x38 },
+    f64: { width: 8, load: 0x2B, store: 0x39 },
+  };
+  return map[name] ?? null;
+}
+
+/** Multiply the index on the stack by the element width, unless it is 1. */
+function scaleIndex(width: number): number[] {
+  return width === 1 ? [] : [0x41, ...sleb(width), 0x6C];   // i32.const w; i32.mul
+}
+
+/**
+ * __bind_<t>_from_mem(count) -> array
+ *
+ * Allocate an array of `count` elements and fill it from the staging buffer. The
+ * loop runs entirely inside wasm, which is the whole point.
+ */
+function makeFromMem(arrTypeIdx: number, width: number, load: number): number[] {
+  return [
+    // local1 = the array (nullable, so it needs no initialiser), local2 = i
+    0x02, 0x01, 0x63, ...sleb(arrTypeIdx), 0x01, 0x7F,
+    0x20, 0x00, 0xFB, 0x07, ...uleb(arrTypeIdx), 0x21, 0x01,   // array.new_default
+    0x41, 0x00, 0x21, 0x02,                                    // i = 0
+    0x02, 0x40, 0x03, 0x40,                                    // block { loop {
+      0x20, 0x02, 0x20, 0x00, 0x4E, 0x0D, 0x01,                //   if i >= count: break
+      0x20, 0x01, 0x20, 0x02,                                  //   array, index
+      0x20, 0x02, ...scaleIndex(width), load, 0x00, 0x00,      //   load(mem, i*w)
+      0xFB, 0x0E, ...uleb(arrTypeIdx),                         //   array.set
+      0x20, 0x02, 0x41, 0x01, 0x6A, 0x21, 0x02,                //   i++
+      0x0C, 0x00,
+    0x0B, 0x0B,
+    0x20, 0x01, 0xD4,                                          // ref.as_non_null
+    0x0B,
+  ];
+}
+
+/**
+ * __bind_<t>_to_mem(array) -> i32
+ *
+ * Copy an array into the staging buffer and return its length. Assumes the caller
+ * has already called __bind_mem_ensure — writing past the end traps, which is the
+ * correct outcome for a caller that skipped it.
+ */
+function makeToMem(arrTypeIdx: number, width: number, store: number, getOp: number): number[] {
+  return [
+    0x02, 0x01, 0x7F, 0x01, 0x7F,                              // local1 = i, local2 = n
+    0x41, 0x00, 0x21, 0x01,                                    // i = 0
+    0x20, 0x00, 0xFB, 0x0F, 0x21, 0x02,                        // n = array.len
+    0x02, 0x40, 0x03, 0x40,                                    // block { loop {
+      0x20, 0x01, 0x20, 0x02, 0x4E, 0x0D, 0x01,                //   if i >= n: break
+      0x20, 0x01, ...scaleIndex(width),                        //   address = i*w
+      0x20, 0x00, 0x20, 0x01, 0xFB, getOp, ...uleb(arrTypeIdx),//   array.get
+      store, 0x00, 0x00,                                       //   store
+      0x20, 0x01, 0x41, 0x01, 0x6A, 0x21, 0x01,                //   i++
+      0x0C, 0x00,
+    0x0B, 0x0B,
+    0x20, 0x02,
+    0x0B,
+  ];
+}
+
 function buildBindHelpers(
   result: ResolveResult,
   ctx: WasmTypeCtx & { orderedArrayElems: WacType[]; orderedSigs: { params: WacType[]; ret: WacType }[] },
@@ -716,6 +833,24 @@ function buildBindHelpers(
   helpers.push({ name: "__bind_str_get", funcTypeEntry: [0x60, 0x02, ...str, ...i32, 0x01, ...i32],     body: strGetBody });
   helpers.push({ name: "__bind_str_set", funcTypeEntry: [0x60, 0x03, ...str, ...i32, ...i32, 0x00],     body: strSetBody });
   helpers.push({ name: "__bind_str_len", funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],             body: strLenBody });
+
+  // Bulk transfer through the staging buffer. Strings are i8 arrays, so they use
+  // the same shape as a byte array.
+  helpers.push({
+    name: "__bind_mem_ensure",
+    funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...i32],
+    body: makeMemEnsure(),
+  });
+  helpers.push({
+    name: "__bind_str_from_mem",
+    funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...str],
+    body: makeFromMem(si, 1, 0x2D),
+  });
+  helpers.push({
+    name: "__bind_str_to_mem",
+    funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],
+    body: makeToMem(si, 1, 0x3A, 0x0D),
+  });
 
   // Array bind helpers — for each primitive array element type in exported signatures
   const seen = new Set<string>();
@@ -744,6 +879,22 @@ function buildBindHelpers(
       helpers.push({ name: `__bind_arr_${suffix}_get`, funcTypeEntry: [0x60, 0x02, ...aref, ...i32, 0x01, ...vt], body: arrGetBody });
       helpers.push({ name: `__bind_arr_${suffix}_set`, funcTypeEntry: [0x60, 0x03, ...aref, ...i32, ...vt, 0x00], body: arrSetBody });
       helpers.push({ name: `__bind_arr_${suffix}_len`, funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],        body: arrLenBody });
+
+      // Bulk path, for element types that have a memory representation. Anything
+      // else keeps only the per-element accessors above.
+      const bulk = elem.kind === "prim" ? bulkOps(elem.name) : null;
+      if (bulk) {
+        helpers.push({
+          name: `__bind_arr_${suffix}_from_mem`,
+          funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
+          body: makeFromMem(ai, bulk.width, bulk.load),
+        });
+        helpers.push({
+          name: `__bind_arr_${suffix}_to_mem`,
+          funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],
+          body: makeToMem(ai, bulk.width, bulk.store, getOp),
+        });
+      }
     }
   }
 
@@ -1181,6 +1332,11 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
     const nameBytes = new TextEncoder().encode(f.exportName!);
     return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex)];
   });
+  // Export the staging buffer so the host can write into and read out of it.
+  {
+    const nameBytes = new TextEncoder().encode("__bind_mem");
+    entries.push([...uleb(nameBytes.length), ...nameBytes, 0x02, 0x00]);  // kind 2 = memory
+  }
   // Export the coverage helpers so a host can reset and read the counters.
   if (ctx.coverage) {
     for (const name of COVERAGE_HELPERS) {
@@ -1285,13 +1441,14 @@ export function wasmBuildBin(
   const codeSection   = buildCodeSection(ctx);
   const typeSection   = buildTypeSectionFull(ctx);
   const funcSection   = buildFuncSection(ctx);
+  const memorySection = buildMemorySection();
   const globalSection = buildGlobalSection(ctx);
   const exportSection = buildExportSection(result, ctx);
   const elemSection   = buildElemSection(result);
 
   return new Uint8Array([
     ...MAGIC, ...VERSION,
-    ...typeSection, ...funcSection, ...globalSection, ...exportSection,
-    ...elemSection, ...codeSection,
+    ...typeSection, ...funcSection, ...memorySection, ...globalSection,
+    ...exportSection, ...elemSection, ...codeSection,
   ]);
 }
