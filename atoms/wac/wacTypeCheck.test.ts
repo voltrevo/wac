@@ -574,7 +574,7 @@ Deno.test("wacTypeCheck: comparison type mismatch", () => {
 
 Deno.test("wacTypeCheck: comparison on refs is error", () => {
   fail(`struct P { i32 x; }
-  export bool bad(P a, P b) { return a == b; }`, "reference types");
+  export bool bad(P a, P b) { return a == b; }`, "reference type P");
 });
 
 Deno.test("wacTypeCheck: bitwise on integers", () => {

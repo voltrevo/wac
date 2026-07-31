@@ -1,7 +1,8 @@
 # 0034 — generics
 
-- **Status:** open
-- **Scope:** stages A and B are done; C (generic functions) and D remain — see below
+- **Status:** closed
+- **Fixed in:** stages A and B (see below), D as issue 0043, C in this commit
+- **Scope:** all four stages of the design are implemented
 - **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
@@ -77,24 +78,81 @@ an error naming code the author did not write is the difference between this and
 argument — which surfaced two phases later as a bogus "creates a non-null recursive reference"
 error. Worth knowing for Stage C: a generic function's body has the same hazard.
 
-## What remains
+## Stage C implemented (agent-a, 2026-07-31)
 
-**Stage C — generic functions.** `T max<T>(T a, T b)`, with type arguments inferred from the
-argument types. Types alone covered the containers, so this is the smaller half of the demand.
+Generic **functions** work: `T max<T>(T a, T b)`, with type arguments inferred from the argument
+types. `spec/spec/generics.md` documents them and `§wac-generic-fn-5hvq3mt` covers them.
 
-Inference will also lift the one documented limitation of Stage B: a construction in an *argument*
-position must currently name its type, because the callee's signature is not known when
-substitution runs. Doing argument-directed inference means knowing signatures, which is the same
-information.
+There is no explicit form — `max<i32>(x, y)` would be ambiguous with less-than — so **inference is
+the whole interface**. That is only tractable because wac has no declaration type inference: every
+local and parameter states its type, so an argument's type is available from the syntax alone. The
+inference reads literals, variables, fields, array elements, casts, unwraps, `is`, comparisons and
+arithmetic, ternaries, struct constructions, calls to functions and *methods* with declared return
+types, and other instantiations. It returns "not evident" rather than guessing, and the diagnostic
+says to assign the value to a declared variable first.
 
-**Stage D is done** — see issue 0043. Templates are checked at their definition with type
-parameters opaque, so a mistake independent of `T` is caught even in a generic nobody instantiates.
+A parameter's type is a **pattern**: `T[]`, `T?`, `fn[T(T)]` and `Box<T>` all bind T structurally.
+`Box<T>` needed the resolver to read a mangled name back into template plus arguments, since by the
+time functions are monomorphised no argument's type says `Box<i32>` anywhere.
 
-**Not measured yet**, and the design asked for both: code size, since monomorphisation duplicates
-bodies and wac compiles in the browser; and compile time, since the fixpoint runs on every build.
-Neither is likely to bite at current scale — `Vec<i32>` plus `Vec<f64>` is two copies of forty
-lines — but the numbers should exist before a widely-instantiated generic appears in a
-self-hosting compiler.
+Eight bugs found while building it, each with a test that fails without its fix:
+
+1. The initial type sweep skipped generic *struct* bodies but not generic *function* signatures, so
+   `T unbox<T>(Box<T> b)` materialised `Box$T` — exactly the hazard Stage B's notes predicted.
+2. `monomorphise` returned early when no struct was generic, so a program with only generic
+   functions never reached them.
+3. Function names were not in the identity map, so a template and a call site in different files
+   disagreed about which `max` was meant.
+4. Field and method types were keyed by written name, so a *materialised* struct's members were
+   never found — which broke a generic function called from a generic struct's method.
+5. A construction inside a materialised body never took its type arguments from its declared type,
+   because the pass that matches them ran before substitution. **This one also affected generic
+   structs** and is fixed for both.
+6. Imports needed by a materialised function's argument types were injected before those functions
+   existed, so a generic taking a struct from a third file compiled to `expected P__p, got P`.
+7. Two imports from the same file each got their own injected copy of the same name.
+8. Nothing capped recursive instantiation, so `i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }`
+   ran the stack out instead of reporting.
+
+Three deliberate limits, all documented in the spec:
+
+- A type parameter that no parameter's type mentions is unusable, and reported at the call. A return
+  type alone does not determine `T`.
+- A `null` argument and a call through a funcref are not evident.
+- **A construction in an argument position still must name its type.** Stage C's notes predicted
+  inference would lift this; it does not, because the two run in the wrong order — argument-directed
+  inference reads the argument's type, and a bare `Vec(...)` has none until an expected type gives it
+  one. Lifting it means propagating expected types into calls, which is a separate change.
+
+An `export`ed generic function is importable by other wac files but its instantiations are **not**
+wasm exports: the name a host would call is mangled and changes with the file the template lives in.
+A concrete wrapper is the documented way to export one.
+
+Stage D now covers generic functions too, which surfaced a false positive worth recording: an opaque
+`T` makes `a > b` a reference comparison, and that was the one operator diagnostic naming no type, so
+it could not be told apart from a real error and `max` itself was unwritable. The message now names
+the type.
+
+## Measured, since the design asked (agent-a, 2026-07-31)
+
+**Code size: monomorphisation costs exactly what writing the containers by hand costs.** The same
+`Vec` instantiated at *k* element types, against *k* hand-written copies, byte for byte:
+
+| instantiations | generic | hand-written |
+|---|---|---|
+| 1 | 1954 | 1954 |
+| 2 | 2250 | 2250 |
+| 4 | 2843 | 2843 |
+| 8 | 4043 | 4043 |
+
+Identical at every k — ~296 bytes per further `Vec`, ~72 per further `max`. So the growth is real
+and linear, and it is not *overhead*: it is the size of the code the feature replaced.
+
+**Compile time is within noise of the same code written out** — 1.96 ms against 2.25 ms at eight
+instantiations, best of five after warm-up, the generic version faster on this run. The fixpoint
+pass does not show up at this scale.
+
+Both were listed as unmeasured in the section below; they are measured now.
 
 
 ## How well tested, asked and answered (agent-a)
@@ -123,13 +181,11 @@ of a generic would be meaningless.
 
 **Still untested, and worth naming rather than leaving implied:**
 
-- **Code size and compile time**, which the design asked for. Not measured. Unlikely to bite at two
-  instantiations of forty lines, but the numbers should exist before a widely-instantiated generic
-  appears in a self-hosting compiler.
-- **`wacc`'s parser knows nothing about generics.** The differential test is green only because no
+- ~~**Code size and compile time**~~ — measured above.
+- **`wacc`'s parser knows nothing about generics** (or about generic functions). The differential test is green only because no
   `.wac` file in wac-mono uses one yet; the first that does will fail it loudly, which is intended
   but is a real gap between the two implementations.
-- **A generic template that is never instantiated is never checked** — the documented C++ bargain.
-  Stage D would address it.
+- ~~**A generic template that is never instantiated is never checked**~~ — Stage D, issue 0043, and
+  now for generic functions as well.
 - **Deep instantiation chains** beyond the depth cap's boundary case: I tested that the cap fires,
   not that a legitimately deep chain just under it works.

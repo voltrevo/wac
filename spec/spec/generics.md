@@ -166,8 +166,121 @@ difference between this feature and a C++ template error.
 The last is capped at 24 levels of nesting and reported. Rust has the same limit for the same
 reason: there is no way to tell an infinite family from a merely deep one.
 
-### Not yet
+## Generic functions
 
-Generic **functions** — `T max<T>(T a, T b)` — are not implemented. Types alone cover the
-containers that motivated the feature; functions would buy `sort`, `map` and `max`, with the type
-arguments inferred from the argument types. Tracked as part of issue 0034.
+A function may take type parameters, written after its name as on a struct:
+
+```wac
+T max<T>(T a, T b) { return a > b ? a : b; }
+
+export i32 f() {
+  i32 x = 3;
+  i32 y = 7;
+  return max(x, y);          // T is i32, from the arguments
+}
+```
+
+`[§wac-generic-fn-5hvq3mt]` This works, and so does `max` on `f64` in the same program: each
+distinct set of type arguments produces a separate concrete function, exactly as for a struct.
+
+### Type arguments are inferred, never written
+
+There is no `max<i32>(x, y)`. Angle brackets are type syntax only — the same ambiguity with
+less-than — and a call is an expression, so **inference is the whole interface**. It is tractable
+because wac has no declaration type inference: every local and every parameter states its type, so
+an argument's type is available from the syntax alone.
+
+An argument's type is evident when it is a literal, a variable, a field, an array element, a cast,
+an unwrap, a struct construction, or a call to a function or method whose return type is declared:
+
+```wac
+Vec<i32> v = ...;
+i32 a = max(v.get(0), v.get(1));    // a method's declared return type
+i32 b = max(p.x, 0);                // a field, and a literal
+i32 c = max(max(a, b), c);          // a call to an instantiation, resolved innermost first
+```
+
+`[§wac-generic-fn-5hvq3mt]` All of these infer. What does not is a `null` argument and a call
+through a funcref, neither of which states a type where the call is written:
+
+```wac
+i32 d = id(null);                   // error: argument 1's type is not evident here
+```
+
+`[§wac-generic-fn-5hvq3mt]` The diagnostic says to assign the value to a declared variable first,
+which is the fix.
+
+Because inference is argument-directed, **a type parameter that no parameter's type mentions is
+unusable**:
+
+```wac
+T zero<T>() { return 0; }           // error at every call: nothing determines T
+```
+
+`[§wac-generic-fn-5hvq3mt]` Reported at the call, and terminal — a call cannot name its type
+arguments, so there is no way to supply what inference could not find. A return type alone does not
+determine `T`; that is a deliberate limit rather than an oversight, and lifting it would mean
+propagating an expected type into a call, which is the same restriction the struct case documents
+above.
+
+Two arguments must agree:
+
+```wac
+i32 x = 1;
+f64 y = 2.0;
+max(x, y);                          // error: they imply different types for the same parameter
+```
+
+`[§wac-generic-fn-5hvq3mt]` The types are compared by *identity*, not by spelling, on the same terms
+as instantiation identity above.
+
+### What a type parameter may stand for
+
+`[§wac-generic-fn-5hvq3mt]` Anything a struct's type argument may be: a primitive, a string, a
+struct, an enum, an array, a nullable, a funcref, or an instantiation of a generic struct. A
+parameter may also be a *structure* containing the type parameter rather than the parameter itself:
+
+```wac
+i32 count<T>(T[] xs) { return xs.len(); }            // T from the element type
+T unbox<T>(Box<T> b) { return b.v; }                 // T from inside an instantiation
+T orElse<T>(T? a, T d) { ... }                       // T from inside a nullable
+T applyTo<T>(fn[T(T)] f, T x) { return f(x); }       // T from a funcref signature
+```
+
+`[§wac-generic-fn-5hvq3mt]` Each of these infers structurally, one direction only: the parameter's
+type is the pattern and the argument's type is matched against it.
+
+### Recursion, and calls between generics
+
+`[§wac-generic-fn-5hvq3mt]` A generic function may call itself, call another generic function, and
+be called from a generic struct's method — where the struct's own type parameter supplies the
+argument type. As for structs, a generic that instantiates itself with a *larger* argument never
+terminates and is capped at 24 levels and reported:
+
+```wac
+i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }   // error, at the cap
+```
+
+### Across modules, and exports
+
+`[§wac-generic-fn-5hvq3mt]` A materialised function belongs to the **template's** file, like a
+materialised struct, and importing the template is enough — the import is rewritten to the
+instantiations the file uses. Any type the substitution carried in from a third file is imported
+too.
+
+An `export`ed generic function is importable by other wac files, but its instantiations are **not
+wasm exports**: the name a host would have to call is a mangled one the author never wrote, and it
+changes with the file the template lives in. `[§wac-generic-fn-5hvq3mt]` To export a generic to the
+host, write a concrete wrapper:
+
+```wac
+export i32 maxI32(i32 a, i32 b) { return max(a, b); }
+```
+
+### Checking
+
+A generic function is checked on the same terms as a generic struct: once at its definition with its
+type parameters opaque, and again per instantiation against the substituted types.
+`[§wac-generic-fn-5hvq3mt]` A mistake independent of `T` is reported at the definition even if
+nothing calls the function; anything depending on what `T` is — including arithmetic and comparison
+on a `T` — is deferred to instantiation.

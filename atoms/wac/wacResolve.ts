@@ -8,7 +8,9 @@
 import {
   type Program, type FuncDecl, type StructDecl, type MethodDecl, type EnumDecl, type ConstDecl,
   type FieldDecl, type Param, type WacType, type Expr, type Stmt, type Block, type Lvalue,
+  type MatchArm,
 } from "./wacParse.ts";
+import { wacIntLit } from "./wacIntLit.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -134,6 +136,8 @@ export type ResolveResult = {
    * never, for a template nobody instantiates [issue 0043].
    */
   templates: { decl: StructDecl; filePath: string }[];
+  /** The generic *function* templates, kept and checked the same way. */
+  funcTemplates: { decl: FuncDecl; filePath: string }[];
   /**
    * `Vec$i32` -> `Vec<i32>`, for every monomorphised generic.
    *
@@ -360,7 +364,10 @@ function scopeEntryFile(e: ScopeEntry): string {
 
 /** Is a scope entry exported from its declaring file? */
 function scopeEntryExported(e: ScopeEntry): boolean {
-  if (e.kind === "func") return e.entry.exportName !== null;
+  // The declaration, not `exportName`: those two agree everywhere except a monomorphised generic
+  // function, which is importable by another wac file but deliberately not a wasm export — see
+  // where `exportName` is assigned.
+  if (e.kind === "func") return e.entry.origin.kind === "func" && e.entry.origin.decl.exported;
   if (e.kind === "struct") return e.entry.structDecl.exported;
   if (e.kind === "enum") return e.enumEntry.enumDecl.exported;
   if (e.kind === "const") return e.exported;
@@ -410,6 +417,16 @@ function buildOrigins(programs: Map<string, Program>): Map<string, Map<string, N
     const here = new Map<string, NameOrigin>();
     for (const item of prog.items) {
       if (item.tag === "struct" || item.tag === "enum") {
+        here.set(item.name, { file: filePath, name: item.name });
+      }
+    }
+    // Functions second, and only where the name is free. wac has one namespace for structs and
+    // functions — 'undefined function or struct' is a single diagnostic — so a collision is an
+    // error the resolver reports; here the struct simply wins and the error is unaffected.
+    // Functions are in this map at all because a *generic function* is identified the same way a
+    // generic struct is: declared name plus declaring file, following import aliases.
+    for (const item of prog.items) {
+      if (item.tag === "func" && !here.has(item.name)) {
         here.set(item.name, { file: filePath, name: item.name });
       }
     }
@@ -655,7 +672,10 @@ function eachTypeInPrograms(
       // would be materialised as `Box$T` — with the parameter name treated as an argument.
       // Template bodies are rewritten during materialisation, once T is known, and must not be
       // visited before that.
-      if (skipTemplates && item.tag === "struct" && item.typeParams.length > 0) continue;
+      // A generic *function* has the same hazard, from its signature as much as its body:
+      // `T unbox<T>(Box<T> b)` would materialise `Box$T` before anything knows what T is.
+      if (skipTemplates && (item.tag === "struct" || item.tag === "func") &&
+          item.typeParams.length > 0) continue;
       if (item.tag === "struct") {
         for (const f of item.fields) t(f.type);
         for (const m of item.methods) { t(m.returnType); for (const p of m.params) t(p.type); visitBlockTypes(m.body, t); }
@@ -763,6 +783,188 @@ function visitExprTypes(e: Expr, t: (x: WacType) => void): void {
   }
 }
 
+
+// ── Generic functions ─────────────────────────────────────────────────────────
+//
+// `T max<T>(T a, T b)` is a template too, but its arguments are never written at the use site:
+// `max(3, 7)` infers `T = i32` from the arguments. Angle brackets in an expression are ambiguous with
+// less-than, so there is no explicit form to fall back on — inference is the whole interface.
+//
+// That is tractable here only because **wac has no type inference for declarations**. Every local and
+// parameter states its type, so an argument expression's type is almost always available
+// syntactically, without a symbol table. `inferArgType` below is that reading; where it cannot see an
+// answer it says so rather than guessing, because a wrong guess would silently instantiate the wrong
+// function.
+
+/** A local scope for inferring argument types: parameter and local declarations, innermost last. */
+type LocalTypes = Map<string, WacType>[];
+
+function lookupLocal(env: LocalTypes, name: string): WacType | undefined {
+  for (let i = env.length - 1; i >= 0; i--) {
+    const t = env[i].get(name);
+    if (t !== undefined) return t;
+  }
+  return undefined;
+}
+
+/**
+ * The type of an argument expression, or null when it cannot be read off the source.
+ *
+ * Deliberately incomplete. It covers what appears in practice at a call site — a literal, a named
+ * value, a field, an element, a cast, a construction, or a call to something whose return type is
+ * declared — and returns null for anything else so the caller can report that rather than instantiate
+ * a template with a guess.
+ */
+function inferArgType(
+  e: Expr, env: LocalTypes, filePath: string,
+  origins: Map<string, Map<string, NameOrigin>>,
+  funcReturns: Map<string, WacType>,
+  structFields: Map<string, Map<string, WacType>>,
+): WacType | null {
+  const pos = { line: e.line, col: e.col };
+  switch (e.kind) {
+    case "int": {
+      const lit = wacIntLit(e.value);
+      return { kind: "prim", name: lit.ok && lit.width === 64 ? "i64" : "i32", ...pos };
+    }
+    case "float":  return { kind: "prim", name: "f64", ...pos };
+    case "string": return { kind: "prim", name: "string", ...pos };
+    case "bool":   return { kind: "prim", name: "bool", ...pos };
+    case "ident":  return lookupLocal(env, e.name) ?? null;
+    case "cast":   return e.type;
+    case "unary":  return inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+    case "is":     return { kind: "prim", name: "bool", ...pos };
+    case "unwrap": {
+      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      return t !== null && t.kind === "nullable" ? t.inner : t;
+    }
+    case "binary": {
+      // A comparison is bool; anything else takes the left operand's type, which is what the type
+      // checker concludes for every arithmetic and bitwise operator.
+      if (["==", "!=", "<", "<=", ">", ">=", "&&", "||"].includes(e.op)) {
+        return { kind: "prim", name: "bool", ...pos };
+      }
+      return inferArgType(e.left, env, filePath, origins, funcReturns, structFields);
+    }
+    case "ternary":
+      return inferArgType(e.then, env, filePath, origins, funcReturns, structFields)
+        ?? inferArgType(e.else_, env, filePath, origins, funcReturns, structFields);
+    case "index": {
+      const t = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      if (t === null) return null;
+      if (t.kind === "array") return t.elem;
+      // A string index yields a one-character string.
+      if (t.kind === "prim" && t.name === "string") return t;
+      return null;
+    }
+    case "field": {
+      const base = inferArgType(e.expr, env, filePath, origins, funcReturns, structFields);
+      if (base === null) return null;
+      const named = base.kind === "nullable" ? base.inner : base;
+      if (named.kind !== "struct") return null;
+      const key = canonName(named.name, filePath, origins);
+      return structFields.get(key)?.get(e.name) ?? null;
+    }
+    case "arrNew": return { kind: "array", elem: e.elem, ...pos };
+    case "construct": {
+      // The parser calls every `name(...)` a construction, so this is also how a *call* arrives.
+      if (e.ctype.kind !== "struct") return null;
+      const key = canonName(e.ctype.name, filePath, origins);
+      const ret = funcReturns.get(key);
+      if (ret !== undefined) return ret;          // a call, so its declared return type
+      if (structFields.has(key)) return e.ctype;  // a construction, so the struct itself
+      return null;
+    }
+    case "call": {
+      // `max(s.get(), x)` — a method call, which is the one call shape worth reading here because
+      // it is how idiomatic wac gets at a container's contents. `structFields` holds method return
+      // types alongside field types, so the receiver's struct is all that is needed.
+      if (e.callee.kind !== "field") return null;
+      const base = inferArgType(e.callee.expr, env, filePath, origins, funcReturns, structFields);
+      if (base === null) return null;
+      const named = base.kind === "nullable" ? base.inner : base;
+      if (named.kind !== "struct") return null;
+      return structFields.get(canonName(named.name, filePath, origins))?.get(e.callee.name) ?? null;
+    }
+    // A funcref call, `null`, and `++`/`--` as expressions are not read: a funcref's own type is
+    // where its return type lives and this pass has not resolved names to declarations, and `null`
+    // has no type of its own at all.
+    default: return null;
+  }
+}
+
+/**
+ * An inferred type, together with the file whose scope its names were resolved in.
+ *
+ * The file travels with the type because a bare `Point` means whatever that file imported, and an
+ * inferred binding can come from somewhere other than the call site — see `StructInst`.
+ */
+type Bound = { type: WacType; file: string };
+
+/** What a monomorphised struct name was made from, so inference can take it apart again. */
+type StructInst = { canon: string; args: WacType[]; file: string };
+
+/**
+ * Bind type parameters by matching a template's parameter type against an argument's actual type.
+ *
+ * Structural and one-directional: `T[]` against `i32[]` binds `T = i32`. `Box<T>` against a
+ * monomorphised `Box$i32` binds `T = i32` too, but only by looking the name up in `inst` — by the
+ * time functions are monomorphised the structs already are, so the argument's type no longer says
+ * `Box<i32>` anywhere.
+ */
+function unifyParam(
+  param: WacType, actual: Bound, params: Set<string>, out: Map<string, Bound>,
+  ctx: {
+    inst: Map<string, StructInst>;
+    origins: Map<string, Map<string, NameOrigin>>;
+    paramFile: string;
+  },
+): boolean {
+  const rec = (p: WacType, a: WacType, file: string) =>
+    unifyParam(p, { type: a, file }, params, out, ctx);
+
+  if (param.kind === "struct" && params.has(param.name)) {
+    const existing = out.get(param.name);
+    if (existing === undefined) { out.set(param.name, actual); return true; }
+    // Two arguments must agree: `max(1, 2.5)` has no single T, and picking one would be a guess.
+    // Compared as mangled names so the two are judged by identity rather than by spelling.
+    return mangleType(existing.type, existing.file, ctx.origins) ===
+           mangleType(actual.type, actual.file, ctx.origins);
+  }
+  if (param.kind === "array" && actual.type.kind === "array") {
+    return rec(param.elem, actual.type.elem, actual.file);
+  }
+  if (param.kind === "nullable" && actual.type.kind === "nullable") {
+    return rec(param.inner, actual.type.inner, actual.file);
+  }
+  if (param.kind === "funcref" && actual.type.kind === "funcref") {
+    // A different arity binds nothing rather than failing: `false` means "these arguments conflict",
+    // and two signatures of different lengths are instead a shape mismatch, which the caller
+    // reports by naming the parameter and the argument.
+    if (param.params.length !== actual.type.params.length) return true;
+    for (let i = 0; i < param.params.length; i++) {
+      if (!rec(param.params[i], actual.type.params[i], actual.file)) return false;
+    }
+    return rec(param.ret, actual.type.ret, actual.file);
+  }
+  if (param.kind === "struct" && param.typeArgs !== undefined && param.typeArgs.length > 0 &&
+      actual.type.kind === "struct") {
+    // `Box<T>` against `Box$i32`. The instantiation's arguments were written in whichever file first
+    // asked for it, so they carry that file rather than this one.
+    const made = ctx.inst.get(actual.type.name);
+    if (made === undefined) return true;
+    if (made.canon !== canonName(param.name, ctx.paramFile, ctx.origins)) return true;
+    if (made.args.length !== param.typeArgs.length) return true;
+    for (let i = 0; i < param.typeArgs.length; i++) {
+      if (!rec(param.typeArgs[i], made.args[i], made.file)) return false;
+    }
+    return true;
+  }
+  // Nothing to bind here, and no reason to reject: a mismatch between two concrete types is the type
+  // checker's to report, against the substituted copy, where the message names real types.
+  return true;
+}
+
 /**
  * Replace every generic reference with its monomorphised struct, materialising as it goes.
  *
@@ -783,6 +985,8 @@ export function monomorphise(
   display?: Map<string, string>,
   /** Collects the templates, which are removed from the programs but still want checking. */
   keep?: { decl: StructDecl; filePath: string }[],
+  /** The generic *function* templates, kept for the same reason. */
+  keepFuncs?: { decl: FuncDecl; filePath: string }[],
 ): void {
   const origins = buildOrigins(programs);
 
@@ -802,13 +1006,17 @@ export function monomorphise(
     templates.get(canonName(name, file, origins));
   if (templates.size === 0) {
     // Still worth checking: a generic reference to something that is not a template is an
-    // error the user should see rather than a silent bare-name lookup later.
+    // error the user should see rather than a silent bare-name lookup later. In the non-empty
+    // case the sweep below reports the same thing with more context, so this runs only here.
     reportStrayArgs(programs, err);
-    return;
+    // No early return: generic *functions* are handled further down and a file may have those
+    // without a single generic struct. Every loop between here and there is a no-op on an
+    // empty template set.
   }
 
   // Materialised structs, by mangled name, so each is built once however often it is written.
   const made = new Map<string, StructDecl>();
+  const structInst = new Map<string, StructInst>();
   const madeIn = new Map<string, string>();   // mangled name -> file it belongs to
   const usedIn = new Map<string, Set<string>>();  // file -> mangled names it refers to
   const noteUse = (file: string, mangled: string) => {
@@ -849,6 +1057,9 @@ export function monomorphise(
     };
     made.set(mangled, decl);
     madeIn.set(mangled, tpl.filePath);
+    // Kept so generic-function inference can read `Box$i32` back as `Box<i32>`: by the time
+    // functions are monomorphised no argument's type says `Box<i32>` any more.
+    structInst.set(mangled, { canon: canonName(name, file, origins), args, file });
     // The *written* name, not the canonical one: a diagnostic must show what the author typed.
     display?.set(mangled, `${name}<${args.map((a) => displayType(a, display)).join(", ")}>`);
     // Now rewrite any generic references the substituted copy itself contains.
@@ -926,6 +1137,10 @@ export function monomorphise(
       t(m.returnType);
       for (const p of m.params) t(p.type);
       visitBlockTypes(m.body, t);
+      // After the types are rewritten, not before: `applyExpected` matches a construction against
+      // its declared type by mangled name, and inside a template that name is still `Box<T>`. The
+      // sweep at the top of the file cannot do this one, because it skips template bodies.
+      inferConstructions(m.body, m.returnType, file);
     }
   };
 
@@ -1055,21 +1270,28 @@ export function monomorphise(
     }
   }
 
-  // Inject the imports the materialised structs need for their argument types. Registered as
+  // Inject the imports the materialised copies need for their argument types. Registered as
   // ordinary import items, so the export rules apply — importing a type that is not exported is
   // still an error, reported against the file that asked for the instantiation.
-  for (const { inFile, alias, name, from } of needImports.values()) {
-    const prog = programs.get(inFile);
-    if (prog === undefined) continue;
-    const already = prog.items.some((it) =>
-      it.tag === "import" && it.items.some((x) => x.alias === alias));
-    if (already) continue;
-    prog.items.unshift({
-      tag: "import", path: relativeImportPath(inFile, from),
-      items: [{ name, alias, line: 0, col: 0 }],
-      line: 0, col: 0,
-    });
+  //
+  // Idempotent, and called again after the generic *functions* are materialised: those register
+  // needs of their own, and a first-cut version of this feature ran the injection only here, so a
+  // generic function taking a struct from a third file compiled to `expected P__p, got P`.
+  function injectNeededImports(): void {
+    for (const { inFile, alias, name, from } of needImports.values()) {
+      const prog = programs.get(inFile);
+      if (prog === undefined) continue;
+      const already = prog.items.some((it) =>
+        it.tag === "import" && it.items.some((x) => x.alias === alias));
+      if (already) continue;
+      prog.items.unshift({
+        tag: "import", path: relativeImportPath(inFile, from),
+        items: [{ name, alias, line: 0, col: 0 }],
+        line: 0, col: 0,
+      });
+    }
   }
+  injectNeededImports();
 
   // Templates themselves are removed and the materialised copies take their place.
   for (const [filePath, prog] of programs) {
@@ -1079,6 +1301,376 @@ export function monomorphise(
       if (madeIn.get(mangled) === filePath) prog.items.push(decl);
     }
   }
+
+  // ── Generic functions ───────────────────────────────────────────────────────
+  //
+  // Collected after the struct work, so a generic function may take or return a monomorphised struct.
+  const funcTemplates = new Map<string, { decl: FuncDecl; filePath: string }>();
+  for (const [filePath, prog] of programs) {
+    for (const item of prog.items) {
+      if (item.tag === "func" && item.typeParams.length > 0) {
+        funcTemplates.set(canonName(item.name, filePath, origins), { decl: item, filePath });
+        keepFuncs?.push({ decl: item, filePath });
+      }
+    }
+  }
+
+  if (funcTemplates.size > 0) {
+    // What `inferArgType` needs to read a call's arguments: every function's declared return type and
+    // every struct's fields, keyed canonically so an alias resolves to the same entry.
+    const funcReturns = new Map<string, WacType>();
+    const structFieldTypes = new Map<string, Map<string, WacType>>();
+    const enumVariants = new Map<string, Map<string, WacType[]>>();
+    for (const [filePath, prog] of programs) {
+      for (const item of prog.items) {
+        // Keyed through `canonName`, which is what every lookup uses. A hand-written name is in
+        // `origins` and canonicalises to `Name__file`; a *materialised* one is not, and
+        // canonicalises to itself — so both sides agree either way. Keying on the written form
+        // meant a materialised struct's fields were never found [the `this.v` case].
+        if (item.tag === "func") {
+          funcReturns.set(canonName(item.name, filePath, origins), item.returnType);
+        } else if (item.tag === "struct") {
+          const fields = new Map<string, WacType>();
+          for (const f of item.fields) fields.set(f.name, f.type);
+          for (const m of item.methods) fields.set(m.name, m.returnType);
+          structFieldTypes.set(canonName(item.name, filePath, origins), fields);
+        } else if (item.tag === "enum") {
+          // Payload types per variant, so a `match` arm's bindings have types during this pass:
+          // `case A(v): f(v)` has to know what `v` is. Enums have not desugared yet — generics run
+          // first, by design — so the variants are still here to read.
+          const variants = new Map<string, WacType[]>();
+          for (const v of item.variants) variants.set(v.name, v.fields.map((f) => f.type));
+          enumVariants.set(canonName(item.name, filePath, origins), variants);
+          const fields = new Map<string, WacType>();
+          for (const m of item.methods) fields.set(m.name, m.returnType);
+          structFieldTypes.set(canonName(item.name, filePath, origins), fields);
+        }
+      }
+    }
+
+    const madeFuncs = new Map<string, FuncDecl>();
+    const funcMadeIn = new Map<string, string>();
+    const funcUsedIn = new Map<string, Set<string>>();
+
+    /** Materialise a generic function for one set of inferred arguments. */
+    // Nesting depth of the materialisation *in progress*, which is exactly a counter because the
+    // walk is depth-first and synchronous: a call inside a copy is rewritten before the copy is
+    // finished. `i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }` recurses with a bigger
+    // argument every time and would otherwise run until the stack ends.
+    let funcDepth = 0;
+    let cappedReported = false;
+
+    const materialiseFunc = (
+      tpl: { decl: FuncDecl; filePath: string }, bound: Map<string, Bound>,
+      callFile: string, at: At,
+    ): string | null => {
+      if (funcDepth > MAX_INSTANTIATION_DEPTH) {
+        // Reported once: every frame below the cap would say the same thing about the same call.
+        if (!cappedReported) {
+          cappedReported = true;
+          err(`generic instantiation of '${tpl.decl.name}' nests more than ` +
+              `${MAX_INSTANTIATION_DEPTH} deep — a generic function that calls itself with a ` +
+              `larger argument never terminates`,
+            callFile, at.line, at.col);
+        }
+        return null;
+      }
+      const args = tpl.decl.typeParams.map((p) => bound.get(p)!);
+      // Mangled one argument at a time rather than through `mangle`, because each argument may have
+      // been resolved in a different file — see `Bound`.
+      const mangled = `${tpl.decl.name}__${fileTag(tpl.filePath)}$` +
+        args.map((a) => mangleType(a.type, a.file, origins)).join("$");
+      let set = funcUsedIn.get(callFile);
+      if (set === undefined) { set = new Set(); funcUsedIn.set(callFile, set); }
+      set.add(mangled);
+      if (madeFuncs.has(mangled)) return mangled;
+
+      const sub = new Map<string, WacType>();
+      tpl.decl.typeParams.forEach((p, i) =>
+        sub.set(p, visibleFrom(args[i].type, args[i].file, tpl.filePath)));
+      const decl: FuncDecl = {
+        // `exported` is inherited, as a materialised struct's is: a call from another file reaches
+        // the instantiation through an injected import, and an import of something not exported is
+        // an error. The wasm module therefore exports the mangled name too, which is why
+        // `genericDisplay` carries the demangling for anything that reports it.
+        ...tpl.decl, name: mangled, typeParams: [],
+        returnType: substType(tpl.decl.returnType, sub),
+        params: tpl.decl.params.map((prm) => ({ ...prm, type: substType(prm.type, sub) })),
+        body: substBlock(tpl.decl.body, sub),
+      };
+      madeFuncs.set(mangled, decl);
+      funcMadeIn.set(mangled, tpl.filePath);
+      display?.set(mangled,
+        `${tpl.decl.name}<${args.map((a) => displayType(a.type, display)).join(", ")}>`);
+      // So a nested call reads back: `max(max(a, b), c)` rewrites the inner call first, and the
+      // outer one then infers from `max$i32`'s declared return type.
+      funcReturns.set(mangled, decl.returnType);
+      // The copy may itself name generic structs, or call other generic functions.
+      const t = (x: WacType) => rewriteType(x, 1, tpl.filePath);
+      t(decl.returnType);
+      for (const prm of decl.params) t(prm.type);
+      visitBlockTypes(decl.body, t);
+      inferConstructions(decl.body, decl.returnType, tpl.filePath);
+      funcDepth++;
+      rewriteCallsIn(decl.body, tpl.filePath, decl.params, decl.returnType);
+      funcDepth--;
+      return mangled;
+    };
+
+    /** An arm's bindings as locals, typed from the variant's payload. Empty if anything is unknown. */
+    // Written as consts rather than declarations because they live inside a block: `deno lint`'s
+    // no-inner-declarations, and the same shape every other nested helper in this file uses. They
+    // are mutually recursive, which is fine — none is *called* until the walk starts below.
+    const armBindings = (
+      arm: MatchArm, subject: WacType | null, filePath: string,
+    ): Map<string, WacType> => {
+      const out = new Map<string, WacType>();
+      if (subject === null || arm.variant === null) return out;
+      const named = subject.kind === "nullable" ? subject.inner : subject;
+      if (named.kind !== "struct") return out;
+      const payload = enumVariants.get(canonName(named.name, filePath, origins))?.get(arm.variant);
+      if (payload === undefined) return out;
+      // `_` is the wildcard, and a pattern may bind fewer names than the variant has fields.
+      arm.bindings.forEach((name, i) => {
+        if (name !== "_" && i < payload.length) out.set(name, payload[i]);
+      });
+      return out;
+    };
+
+    /** Walk a body, inferring and rewriting every call to a generic function. */
+    const rewriteCallsIn = (
+      body: Block, filePath: string, params: Param[], _ret: WacType,
+    ): void => {
+      const env: LocalTypes = [new Map(params.map((p) => [p.name, p.type]))];
+      walkStmtsForCalls(body.stmts, env, filePath);
+    };
+
+    const walkStmtsForCalls = (stmts: Stmt[], env: LocalTypes, filePath: string): void => {
+      env.push(new Map());
+      for (const st of stmts) {
+        // The declaration is visited before its own name is in scope, so `T x = f(x)` refers to an
+        // outer `x` — which is what block scoping means and what the checker will agree with.
+        visitExprsForCalls(st, env, filePath);
+        if (st.kind === "var") env[env.length - 1].set(st.name, st.type);
+      }
+      env.pop();
+    };
+
+    const visitExprsForCalls = (st: Stmt, env: LocalTypes, filePath: string): void => {
+      const expr = (e: Expr) => rewriteCallExpr(e, env, filePath);
+      switch (st.kind) {
+        case "var": expr(st.init); return;
+        case "assign": expr(st.rhs); return;
+        case "if":
+          expr(st.cond);
+          walkStmtsForCalls(st.then.stmts, env, filePath);
+          if (st.els?.kind === "else-if") visitExprsForCalls(st.els.stmt, env, filePath);
+          else if (st.els?.kind === "else-block") walkStmtsForCalls(st.els.block.stmts, env, filePath);
+          return;
+        case "while": case "dowhile":
+          expr(st.cond); walkStmtsForCalls(st.body.stmts, env, filePath); return;
+        case "for": {
+          env.push(new Map());
+          if (st.init) { visitExprsForCalls(st.init, env, filePath);
+            if (st.init.kind === "var") env[env.length - 1].set(st.init.name, st.init.type); }
+          if (st.cond) expr(st.cond);
+          if (st.update) visitExprsForCalls(st.update, env, filePath);
+          walkStmtsForCalls(st.body.stmts, env, filePath);
+          env.pop();
+          return;
+        }
+        case "switch":
+          expr(st.expr);
+          for (const c of st.cases) {
+            if (c.value !== "default") expr(c.value);
+            walkStmtsForCalls(c.body, env, filePath);
+          }
+          return;
+        case "match": {
+          expr(st.subject);
+          // An arm's bindings are locals for the length of the arm, and their types come from the
+          // variant's payload — positionally, which is what the pattern syntax means.
+          const subject = inferArgType(
+            st.subject, env, filePath, origins, funcReturns, structFieldTypes);
+          for (const a of st.arms) {
+            env.push(armBindings(a, subject, filePath));
+            walkStmtsForCalls(a.body, env, filePath);
+            env.pop();
+          }
+          return;
+        }
+        case "return": if (st.value) expr(st.value); return;
+        case "block": walkStmtsForCalls(st.block.stmts, env, filePath); return;
+        case "expr": expr(st.expr); return;
+        default: return;
+      }
+    };
+
+    /** Rewrite a call to a generic function, and recurse into its subexpressions. */
+    const rewriteCallExpr = (e: Expr, env: LocalTypes, filePath: string): void => {
+      // Depth first, so `outer(inner(1))` resolves `inner` before `outer` reads its return type.
+      switch (e.kind) {
+        case "construct":
+          for (const a of e.args) rewriteCallExpr(a, env, filePath);
+          for (const n of e.named ?? []) rewriteCallExpr(n.val, env, filePath);
+          break;
+        case "call":
+          rewriteCallExpr(e.callee, env, filePath);
+          for (const a of e.args) rewriteCallExpr(a, env, filePath);
+          return;
+        case "unary": case "unwrap": case "field": case "cast":
+          rewriteCallExpr(e.expr, env, filePath); return;
+        case "binary":
+          rewriteCallExpr(e.left, env, filePath); rewriteCallExpr(e.right, env, filePath); return;
+        case "ternary":
+          rewriteCallExpr(e.cond, env, filePath);
+          rewriteCallExpr(e.then, env, filePath);
+          rewriteCallExpr(e.else_, env, filePath);
+          return;
+        case "index":
+          rewriteCallExpr(e.expr, env, filePath); rewriteCallExpr(e.idx, env, filePath); return;
+        case "arrNew":
+          if (e.size) rewriteCallExpr(e.size, env, filePath);
+          if (e.fill) rewriteCallExpr(e.fill, env, filePath);
+          for (const x of e.fixed) rewriteCallExpr(x, env, filePath);
+          return;
+        case "matchExpr": {
+          rewriteCallExpr(e.subject, env, filePath);
+          const subject = inferArgType(
+            e.subject, env, filePath, origins, funcReturns, structFieldTypes);
+          for (const a of e.arms) {
+            env.push(armBindings(a, subject, filePath));
+            walkStmtsForCalls(a.body, env, filePath);
+            if (a.value) rewriteCallExpr(a.value, env, filePath);
+            env.pop();
+          }
+          return;
+        }
+        default: return;
+      }
+
+      // Only a `construct` reaches here — which is what a plain call parses as.
+      if (e.kind !== "construct" || e.ctype.kind !== "struct") return;
+      const tpl = funcTemplates.get(canonName(e.ctype.name, filePath, origins));
+      if (tpl === undefined) return;
+
+      if (e.args.length !== tpl.decl.params.length) {
+        err(`'${tpl.decl.name}' takes ${tpl.decl.params.length} argument(s), got ${e.args.length}`,
+          filePath, e.line, e.col);
+        return;
+      }
+      const bound = new Map<string, Bound>();
+      const actuals: WacType[] = [];
+      const paramNames = new Set(tpl.decl.typeParams);
+      const ctx = { inst: structInst, origins, paramFile: tpl.filePath };
+      for (let i = 0; i < e.args.length; i++) {
+        const actual = inferArgType(e.args[i], env, filePath, origins, funcReturns, structFieldTypes);
+        if (actual === null) {
+          err(`cannot infer ${tpl.decl.typeParams.map((t) => `'${t}'`).join(", ")} for ` +
+              `'${tpl.decl.name}': argument ${i + 1}'s type is not evident here. ` +
+              `Assign it to a declared variable first.`,
+            filePath, e.args[i].line, e.args[i].col);
+          return;
+        }
+        if (!unifyParam(tpl.decl.params[i].type, { type: actual, file: filePath },
+                        paramNames, bound, ctx)) {
+          err(`'${tpl.decl.name}' cannot take these arguments together: ` +
+              `they imply different types for the same type parameter`,
+            filePath, e.line, e.col);
+          return;
+        }
+        actuals.push(actual);
+      }
+      const missing = tpl.decl.typeParams.filter((t) => !bound.has(t));
+      if (missing.length > 0) {
+        // Two different failures, and they want different messages. A parameter no *parameter type*
+        // mentions can never be determined by any call, so saying so once is the whole story. One
+        // that is mentioned failed on this call's argument shapes, and the useful thing to name is
+        // which argument was supposed to supply it.
+        const mentions = (t: WacType, name: string): boolean => {
+          switch (t.kind) {
+            case "prim":     return false;
+            case "array":    return mentions(t.elem, name);
+            case "nullable": return mentions(t.inner, name);
+            case "funcref":  return t.params.some((x) => mentions(x, name)) || mentions(t.ret, name);
+            case "struct":
+              return t.name === name || (t.typeArgs ?? []).some((a) => mentions(a, name));
+          }
+        };
+        const unmentioned = missing.filter(
+          (t) => !tpl.decl.params.some((prm) => mentions(prm.type, t)));
+        if (unmentioned.length > 0) {
+          // Terminal rather than a suggestion to write the arguments: a call cannot name them,
+          // since `f<i32>(…)` would be ambiguous with less-than.
+          err(`'${tpl.decl.name}' has type parameter(s) ${
+                unmentioned.map((t) => `'${t}'`).join(", ")} ` +
+              `that no parameter's type mentions, so a call cannot determine ${
+                unmentioned.length > 1 ? "them" : "it"} — a call cannot name its type arguments`,
+            filePath, e.line, e.col);
+          return;
+        }
+        const which = missing[0];
+        const at = tpl.decl.params.findIndex((prm) => mentions(prm.type, which));
+        err(`cannot infer '${which}' for '${tpl.decl.name}': argument ${at + 1} is ${
+              displayType(actuals[at], display)}, and the parameter is ${
+              displayType(tpl.decl.params[at].type, display)} — the shapes do not match`,
+          filePath, e.args[at].line, e.args[at].col);
+        return;
+      }
+      const made = materialiseFunc(tpl, bound, filePath, e);
+      // Left alone when the cap trips: the error above is the one to read, and renaming the call to
+      // an instantiation that was never built would only add a second, stranger one.
+      if (made !== null) (e.ctype as { name: string }).name = made;
+    };
+
+    // Every hand-written body, then the templates' own copies via materialiseFunc.
+    for (const [filePath, prog] of programs) {
+      for (const item of prog.items) {
+        if (item.tag === "func" && item.typeParams.length === 0) {
+          rewriteCallsIn(item.body, filePath, item.params, item.returnType);
+        } else if (item.tag === "struct" || item.tag === "enum") {
+          for (const m of item.methods) {
+            const params = m.hasThis
+              ? [{ isConst: m.thisConst, type: { kind: "struct" as const, name: item.name, line: m.line, col: m.col }, name: "this", line: m.line, col: m.col }, ...m.params]
+              : m.params;
+            rewriteCallsIn(m.body, filePath, params, m.returnType);
+          }
+        }
+      }
+    }
+
+    // Replace the templates with their instantiations, in the template's own file.
+    for (const [filePath, prog] of programs) {
+      prog.items = prog.items.filter(
+        (it) => !(it.tag === "func" && it.typeParams.length > 0));
+      for (const [mangled, decl] of madeFuncs) {
+        if (funcMadeIn.get(mangled) === filePath) prog.items.push(decl);
+      }
+    }
+    // A call in another file reaches the instantiation by import, as a struct does.
+    for (const [filePath, prog] of programs) {
+      // Two `import ... from "./lib.wac"` statements in one file both resolve to the same file, so
+      // the injected name has to be claimed once rather than added to each of them — importing the
+      // same name twice is an error.
+      const injected = new Set<string>();
+      for (const item of prog.items) {
+        if (item.tag !== "import") continue;
+        const from = resolvePath(filePath, item.path);
+        const extra: typeof item.items = [];
+        for (const mangled of funcUsedIn.get(filePath) ?? []) {
+          if (funcMadeIn.get(mangled) !== from) continue;
+          if (item.items.some((x) => x.alias === mangled)) continue;
+          if (injected.has(mangled)) continue;
+          injected.add(mangled);
+          extra.push({ name: mangled, alias: mangled, line: 0, col: 0 });
+        }
+        item.items = [...item.items.filter((it) =>
+          funcTemplates.get(`${it.name}__${fileTag(from)}`) === undefined), ...extra];
+      }
+    }
+    injectNeededImports();
+  }
+
 }
 
 /**
@@ -1111,9 +1703,10 @@ export function wacResolve(
   // be rewriting generated code [see ~/notes/living/wac/generics-design.md].
   const genericDisplay = new Map<string, string>();
   const templateDecls: { decl: StructDecl; filePath: string }[] = [];
+  const funcTemplateDecls: { decl: FuncDecl; filePath: string }[] = [];
   monomorphise(programs,
     (msg, file, line, col) => errors.push({ message: msg, file, line, col }),
-    genericDisplay, templateDecls);
+    genericDisplay, templateDecls, funcTemplateDecls);
   const funcs: FuncEntry[] = [];
   const structs: StructEntry[] = [];
   const enums: EnumEntry[] = [];
@@ -1266,7 +1859,12 @@ export function wacResolve(
         continue;
       }
       const mangledName = `${fileStem}$${name}`;
-      const exportName = item.exported ? name : null;
+      // A monomorphised copy is not wasm-exported even though its template said `export`: the name
+      // a host would have to call is `max__m$i32`, which the author never wrote and which changes
+      // with the file it lives in. `export` still governs whether another *wac* file may import it,
+      // which is how the call site in that file reaches the instantiation. A stable wasm export of
+      // a generic means writing a concrete wrapper — `export i32 maxI32(i32 a, i32 b)`.
+      const exportName = item.exported && !genericDisplay.has(name) ? name : null;
       const funcIndex = funcs.length;
       const entry: FuncEntry = {
         origin: { kind: "func", decl: item },
@@ -1408,7 +2006,10 @@ export function wacResolve(
     }
   }
 
-  return { funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay, templates: templateDecls };
+  return {
+    funcs, structs, enums, fileScopes, errors, entryPath, genericDisplay,
+    templates: templateDecls, funcTemplates: funcTemplateDecls,
+  };
 }
 
 // ── Helpers for consumers ─────────────────────────────────────────────────────

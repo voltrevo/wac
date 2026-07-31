@@ -6060,12 +6060,20 @@ Deno.test("[§wac-generic-struct-9tkq4wm] generics nest, and compose with arrays
       return outer.get(0).get(0);
     }
     export i32 genericField() { Box<i32> b = Box(5); Wrap<i32> w = Wrap(b); return w.peek(); }
+    // Box(this.v) has to find its type arguments in the declared type of b, which is only a
+    // concrete type after substitution — so the pass that matches the two runs on the materialised
+    // copy, not on the template. Before that it reported "Box is generic and needs type arguments".
+    struct Holder<T> { T v; Box<T> boxed(const this) { Box<T> b = Box(this.v); return b; } }
+    export i32 constructInMethod() { Holder<i32> h = Holder(4); return h.boxed().get(); }
     export i32 twoParams()    { Pair<i32, f64> p = Pair(4, 1.5); return p.getFirst(); }
     export i32 arrayOf()      { Box<i32>[] a = Box<i32>[2](fill: Box(4)); return a[0].get() + a[1].get(); }
     export i32 inTernary()    { Box<i32> b = true ? Box(3) : Box(4); return b.get(); }
   `);
   eq(inst.call("nested", []), 9, "Vec<Vec<i32>> — the `>>` the lexer munched is split by the parser");
   eq(inst.call("genericField", []), 5, "a generic holding a generic, substituted through");
+  eq(inst.call("constructInMethod", []), 4,
+    "a construction inside a template's own method, which takes its arguments from the " +
+    "declared type only after that type has been substituted");
   eq(inst.call("twoParams", []), 4, "two type parameters");
   eq(inst.call("arrayOf", []), 8, "an array of a generic, with a fill");
   eq(inst.call("inTernary", []), 3, "and both ternary branches take the expected type");
@@ -6160,6 +6168,308 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
   ]));
   eq(inst.call("test", []), 6, "the same instantiation used from two files is one struct");
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
+});
+
+// §wac-generic-fn-5hvq3mt — generic functions, with argument-directed inference
+Deno.test("[§wac-generic-fn-5hvq3mt] a generic function infers its type arguments from the call", async () => {
+  // Issue 0034 Stage C. There is no `max<i32>(x, y)` — angle brackets are type syntax only — so
+  // inference is the whole interface. It is tractable because wac has no declaration type
+  // inference: every local and parameter states its type, so an argument's type is syntactic.
+  const inst = await run(`
+    T max<T>(T a, T b) { return a > b ? a : b; }
+    struct P { i32 v; i32 get(const this) { return this.v; } }
+    export i32 ints() { i32 x = 3; i32 y = 7; return max(x, y); }
+    export i32 both() {
+      i32 x = 3; i32 y = 7;
+      f64 p = 2.0; f64 q = 1.0;
+      return max(x, y) + (max(p, q) as! i32);
+    }
+    export i32 literals() { return max(3, 7); }
+    export i32 nested() { i32 a = 1; i32 b = 2; i32 c = 3; return max(max(a, b), c); }
+    export i32 fromMethod() { P s = P(4); i32 x = 1; return max(s.get(), x); }
+    export i32 fromField() { P s = P(6); return max(s.v, 2); }
+    export i32 fromCast() { f64 d = 5.0; i32 one = 1; return max(d as! i32, one); }
+    export i32 fromIndex() { i32[] xs = i32[](4, 9); return max(xs[0], xs[1]); }
+  `);
+  eq(inst.call("ints", []), 7, "two i32 locals");
+  eq(inst.call("both", []), 9, "two instantiations of one template coexist");
+  eq(inst.call("literals", []), 7, "a literal's own type is enough");
+  eq(inst.call("nested", []), 3, "an inner call resolves first, so its return type is known");
+  eq(inst.call("fromMethod", []), 4, "a method's declared return type");
+  eq(inst.call("fromField", []), 6, "a field's declared type");
+  eq(inst.call("fromCast", []), 5, "a cast states its own type");
+  eq(inst.call("fromIndex", []), 9, "an array element's type comes from the array");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] a type parameter may be anything, including inside a structure", async () => {
+  // The parameter's type is a *pattern* matched against the argument's: `T[]` against `i32[]` binds
+  // T to i32, and `Box<T>` against a monomorphised `Box$i32` does too — which needs the resolver to
+  // read a mangled name back, since by then no argument's type says `Box<i32>` anywhere.
+  const inst = await run(`
+    struct Box<T> { T v; }
+    struct P { i32 v; }
+    enum E { A(i32 v), B }
+    T id<T>(T a) { return a; }
+    i32 count<T>(T[] xs) { return xs.len(); }
+    T unbox<T>(Box<T> b) { return b.v; }
+    T applyTo<T>(fn[T(T)] f, T x) { return f(x); }
+    i32 inc(i32 a) { return a + 1; }
+    T orElse<T>(T? a, T d) { if (a is null) { return d; } return a!; }
+    export i32 structArg() { P p = P(4); P q = id(p); return q.v; }
+    export i32 enumArg() {
+      E e = E.A(7);
+      E f = id(e);
+      return match (f) { case A(x): x, case B: 0 };
+    }
+    export i32 stringArg() { string s = "hey"; string t = id(s); return t.len(); }
+    export i32 arrayElem() { i32[] xs = i32[3](); return count(xs); }
+    export i32 insideGeneric() { Box<i32> b = Box(5); return unbox(b); }
+    export i32 insideFuncref() { fn[i32(i32)] f = inc; i32 x = 5; return applyTo(f, x); }
+    export i32 insideNullable() { P? absent = null; P d = P(3); return orElse(absent, d).v; }
+    export i32 arrayOfGeneric() { Box<i32>[] a = Box<i32>[2](fill: Box(6)); return unbox(a[0]); }
+  `);
+  eq(inst.call("structArg", []), 4, "a struct argument");
+  eq(inst.call("enumArg", []), 7, "an enum argument, so functions substitute before enums desugar");
+  eq(inst.call("stringArg", []), 3, "a string argument");
+  eq(inst.call("arrayElem", []), 3, "T from an array's element type");
+  eq(inst.call("insideGeneric", []), 5, "T from inside an instantiation of a generic struct");
+  eq(inst.call("insideFuncref", []), 6, "T from a funcref's signature");
+  eq(inst.call("insideNullable", []), 3, "T from inside a nullable — a reference, see issue 0045");
+  eq(inst.call("arrayOfGeneric", []), 6, "an array of instantiations, one of them passed on");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] generic functions compose with the rest of the language", async () => {
+  const inst = await run(`
+    struct Box<T> { T v; }
+    T max<T>(T a, T b) { return a > b ? a : b; }
+    T id<T>(T a) { return a; }
+    T twice<T>(T a) { return id(id(a)); }
+    Box<T> wrap<T>(T v) { Box<T> b = Box(v); return b; }
+    T last<T>(T[] xs, i32 i) { if (i >= xs.len() - 1) { return xs[i]; } return last(xs, i + 1); }
+    struct S { i32 v; i32 big(const this, i32 o) { return max(this.v, o); } }
+    struct Holder<T> {
+      T v;
+      // The struct's own type parameter supplies the call's: this body is substituted first, so by
+      // the time the call is looked at the argument is a concrete type.
+      T larger(const this, T o) { return max(this.v, o); }
+    }
+    export i32 viaMethod() { S s = S(4); return s.big(11); }
+    export i32 genericInGeneric() { Holder<i32> h = Holder(3); return h.larger(8); }
+    export i32 callsAnother() { i32 a = 42; return twice(a); }
+    export i32 returnsGeneric() { i32 x = 6; Box<i32> b = wrap(x); return b.v; }
+    export i32 recursive() { i32[] xs = i32[](1, 2, 3, 9); return last(xs, 0); }
+    export i32 twoParams() { i32 x = 3; f64 y = 1.0; return firstOf(x, y); }
+    A firstOf<A, B>(A a, B b) { return a; }
+  `);
+  eq(inst.call("viaMethod", []), 11, "called from an ordinary method");
+  eq(inst.call("genericInGeneric", []), 8, "called from a generic method, T from the struct");
+  eq(inst.call("callsAnother", []), 42, "a generic function calling a generic function");
+  eq(inst.call("returnsGeneric", []), 6, "returning an instantiation of a generic struct");
+  eq(inst.call("recursive", []), 9, "recursion, which instantiates once and calls itself");
+  eq(inst.call("twoParams", []), 3, "two type parameters, bound independently");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] a generic function crosses module boundaries", async () => {
+  // As for a struct: the copy belongs to the template's file, so the export and import rules apply
+  // unchanged and the import naming the template is rewritten to the instantiations used. `P` here
+  // is the case that needs the *third* file's import injected into lib.wac, where the copy lands.
+  const inst = await runMulti(new Map([
+    ["p.wac",   `export struct P { i32 v; }`],
+    ["lib.wac", `export T max<T>(T a, T b) { return a > b ? a : b; }
+                 export T first<T>(T a, T b) { return a; }`],
+    ["a.wac",   `import { max } from "./lib.wac";
+                 export i32 fromA() { i32 x = 1; i32 y = 4; return max(x, y); }`],
+    ["main.wac", `import { max } from "./lib.wac";
+                  import { first } from "./lib.wac";
+                  import { P } from "./p.wac";
+                  import { fromA } from "./a.wac";
+                  export i32 test() { i32 a = 2; i32 b = 5; return max(a, b) + fromA(); }
+                  export i32 structArg() { P a = P(3); P b = P(8); return first(a, b).v; }`],
+  ]));
+  eq(inst.call("test", []), 9, "one instantiation shared by two files");
+  eq(inst.call("structArg", []), 3, "a struct from a third file, imported into the template's file");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] an instantiation is not a wasm export", () => {
+  // `export` still governs whether another wac file may import it — the test above depends on that
+  // — but the host would have to call `max__main$i32`, a name the author never wrote and one that
+  // changes with the file the template lives in. A concrete wrapper is the stable way out.
+  const r = wacCompile(new Map([["main.wac", `
+    export T max<T>(T a, T b) { return a > b ? a : b; }
+    export i32 maxI32(i32 a, i32 b) { return max(a, b); }
+  `]]), "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  const names = r.compiled.exports.map((e) => e.name).filter((n) => !n.startsWith("__bind"));
+  eq(names.join(","), "maxI32", "the wrapper is exported and the instantiation is not");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors", () => {
+  const cases: [string, string, string][] = [
+    ["two arguments implying different types",
+     `T max<T>(T a, T b) { return a > b ? a : b; }
+      export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }`,
+     "different types for the same type parameter"],
+    ["a type parameter no parameter mentions",
+     `T zero<T>() { return 0; }
+      export i32 f() { return zero(); }`,
+     "a call cannot name its type arguments"],
+    ["an argument whose type is not evident",
+     `T id<T>(T a) { return a; }
+      export i32 f() { i32 x = id(null); return x; }`,
+     "not evident here"],
+    ["a call through a funcref, whose return type is not read here",
+     `T id<T>(T a) { return a; }
+      i32 inc(i32 a) { return a + 1; }
+      export i32 f() { fn[i32(i32)] g = inc; return id(g(1)); }`,
+     "not evident here"],
+    ["the wrong number of arguments",
+     `T max<T>(T a, T b) { return a > b ? a : b; }
+      export i32 f() { i32 x = 1; return max(x); }`,
+     "takes 2 argument(s), got 1"],
+    ["a generic that calls itself with a larger argument",
+     `struct Box<T> { T v; }
+      i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }
+      export i32 f() { i32 x = 1; return grow(x); }`,
+     "never terminates"],
+  ];
+  for (const [what, src, want] of cases) {
+    const m = err(src);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] a generic function is checked at its definition too", async () => {
+  // Stage D's pass applies to functions as well: a generic function nobody calls is removed from
+  // the program by monomorphisation, so without this it is never checked at all.
+  const m = err(`
+    T oops<T>(T a) { i32 x = "hello"; return a; }
+    export i32 f() { return 1; }
+  `);
+  if (!m.includes("expected i32")) {
+    throw new Error(`a T-independent mistake should be reported at the definition, got: ${m}`);
+  }
+  // And the other half: arithmetic and comparison on an opaque T must *not* be reported, or `max`
+  // itself would be unwritable. This was the one operator diagnostic that named no type, so it
+  // could not be told apart from a real one until it did.
+  const inst = await run(`
+    T max<T>(T a, T b) { return a > b ? a : b; }
+    T sum<T>(T a, T b) { return a + b; }
+    export i32 f() { i32 x = 2; i32 y = 3; return max(x, y) + sum(x, y); }
+  `);
+  eq(inst.call("f", []), 8, "comparison and arithmetic on a T are deferred to instantiation");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] a call is found in every statement position", async () => {
+  // The recurring failure in this compiler is a new construct reaching only the walks its own tests
+  // happen to use. Finding a generic call needs its own walk over statements, so every statement
+  // form gets one call, and each is checked by its answer rather than by compiling.
+  const inst = await run(`
+    T id<T>(T a) { return a; }
+    enum E { A(i32 v), B }
+    export i32 inAssign()  { i32 a = 0; a = id(7); return a; }
+    export i32 inIf()      { i32 x = 1; if (id(x) == 1) { return id(10); } else { return id(20); } }
+    export i32 inElseIf()  { i32 x = 2; if (id(x) == 1) { return 1; } else if (id(x) == 2) { return 12; } return 0; }
+    export i32 inWhile()   { i32 n = 0; while (id(n) < 3) { n = n + id(1); } return n; }
+    export i32 inDoWhile() { i32 n = 0; do { n = n + id(2); } while (id(n) < 4); return n; }
+    export i32 inFor()     { i32 s = 0; for (i32 i = id(0); i < id(3); i = i + id(1)) { s = s + id(i); } return s; }
+    export i32 inSwitch()  { i32 x = 2; switch (id(x)) { case id(2): return 22; default: return 0; } }
+    export i32 inMatch()   { E e = E.A(5); match (id(e)) { case A(v): return id(v); case B: return 0; } }
+    export i32 inBlock()   { i32 x = 3; { return id(x) * 3; } }
+    export i32 inExprStmt(){ i32 x = 4; id(x); return x; }
+    export i32 inTernary() { i32 x = 5; return true ? id(x) : id(0); }
+    export i32 inNamedArg(){ Holder h = Holder { v: id(6) }; return h.v; }
+    struct Holder { i32 v; }
+  `);
+  eq(inst.call("inAssign", []), 7, "the right-hand side of an assignment");
+  eq(inst.call("inIf", []), 10, "an if condition and both branches");
+  eq(inst.call("inElseIf", []), 12, "an else-if, which is a statement rather than a block");
+  eq(inst.call("inWhile", []), 3, "a while condition and body");
+  eq(inst.call("inDoWhile", []), 4, "a do-while, whose condition is checked after the body");
+  eq(inst.call("inFor", []), 3, "a for's init, condition, update and body");
+  eq(inst.call("inSwitch", []), 22, "a switch subject and a case value");
+  eq(inst.call("inMatch", []), 5, "a match subject and an arm body");
+  eq(inst.call("inBlock", []), 9, "a bare block");
+  eq(inst.call("inExprStmt", []), 4, "a call whose value is discarded");
+  eq(inst.call("inTernary", []), 5, "both ternary branches");
+  eq(inst.call("inNamedArg", []), 6, "a named construction argument");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] every evident argument shape infers", async () => {
+  // The other half of the same walk: an argument is an expression, and its type has to be read from
+  // the syntax. Each form here is one case of that reading, and a wrong answer would mean the wrong
+  // instantiation was chosen rather than a compile failure.
+  const inst = await run(`
+    T id<T>(T a) { return a; }
+    i32 which<T>(T a) { return 1; }
+    struct P { i32 v; }
+    export i32 floatLit()   { return (id(1.5) * 2.0) as~ i32; }
+    export bool boolLit()   { return id(true); }
+    export i32 stringLit()  { return id("abc").len(); }
+    export i32 unary()      { i32 x = 4; return -id(-x); }
+    export bool isExpr()    { P? p = null; return id(p is null); }
+    export i32 unwrap()     { P? p = P(7); return id(p!).v; }
+    export i32 comparison() { i32 x = 1; return id(x < 2) ? 1 : 0; }
+    export i32 arithmetic() { i32 x = 3; return id(x + 1); }
+    export i32 ternaryArg() { i32 x = 8; return id(true ? x : 0); }
+    export i32 stringIndex() { string s = "xyz"; return id(s[1]).len(); }
+    export i32 arrayArg()   { return which(i32[2]()); }
+    export i32 constructArg() { return id(P(9)).v; }
+    export i32 nested()     { i32 x = 2; return id(id(id(x))); }
+  `);
+  eq(inst.call("floatLit", []), 3, "a float literal is f64");
+  eq(inst.call("boolLit", []), true, "a bool literal");
+  eq(inst.call("stringLit", []), 3, "a string literal");
+  eq(inst.call("unary", []), 4, "a unary operand's type is the operand's");
+  eq(inst.call("isExpr", []), true, "an is-expression is bool");
+  eq(inst.call("unwrap", []), 7, "an unwrap drops the nullable");
+  eq(inst.call("comparison", []), 1, "a comparison is bool whatever its operands are");
+  eq(inst.call("arithmetic", []), 4, "arithmetic takes the left operand's type");
+  eq(inst.call("ternaryArg", []), 8, "a ternary takes its then-branch's type");
+  eq(inst.call("stringIndex", []), 1, "a string index is a one-character string");
+  eq(inst.call("arrayArg", []), 1, "an array construction states its element type");
+  eq(inst.call("constructArg", []), 9, "a struct construction is the struct");
+  eq(inst.call("nested", []), 2, "and an instantiation's own declared return type");
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] an argument that does not fit the parameter's shape is named", () => {
+  // Distinct from "no parameter mentions T", which is a property of the declaration and can never be
+  // satisfied. This one is about *this* call, so the message names the argument and the parameter.
+  const cases: [string, string][] = [
+    [`struct Box<T> { T v; }
+      struct P { i32 v; }
+      T unbox<T>(Box<T> b) { return b.v; }
+      export i32 f() { P p = P(1); return unbox(p); }`,
+     "argument 1 is P, and the parameter is Box<T>"],
+    [`struct Box<T> { T v; }
+      struct Bag<T> { T v; }
+      T unbox<T>(Box<T> b) { return b.v; }
+      export i32 f() { Bag<i32> g = Bag(1); return unbox(g); }`,
+     "argument 1 is Bag<i32>"],
+    [`i32 count<T>(T[] xs) { return xs.len(); }
+      export i32 f() { i32 x = 1; return count(x); }`,
+     "the parameter is T[]"],
+  ];
+  for (const [src, want] of cases) {
+    const m = err(src);
+    if (!m.includes(want)) {
+      throw new Error(`expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+    if (m.includes("$")) throw new Error(`a mangled name reached a diagnostic: ${m}`);
+  }
+});
+
+Deno.test("[§wac-generic-fn-5hvq3mt] no diagnostic shows a mangled name", () => {
+  // The instantiation trace is the whole difference between this and a C++ template error: an
+  // error inside substituted code must name types the author wrote.
+  const m = err(`
+    struct Box<T> { T v; }
+    T unbox<T>(Box<T> b) { return b.v; }
+    export i32 f() { Box<f64> b = Box(1.0); i32 x = unbox(b); return x; }
+  `);
+  if (m.includes("$")) throw new Error(`a mangled name reached a diagnostic: ${m}`);
+  if (!m.includes("f64")) throw new Error(`expected the real types in: ${m}`);
 });
 
 // §wac-overflow-detect-8jqm4wn — the idioms for detecting overflow
