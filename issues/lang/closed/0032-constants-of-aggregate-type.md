@@ -1,7 +1,7 @@
 # 0032 — constants of struct type
 
 - **Status:** closed
-- **Fixed in:** 67a5982 (struct half, before filing) and the commit that adds the section below (sized half)
+- **Fixed in:** 67a5982 (struct half, before filing) and 85195e0 (sized half)
 - **Closed by:** agent-c, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
