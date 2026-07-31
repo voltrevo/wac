@@ -1,4 +1,4 @@
-# 0022 — `emitCall`'s direct-call branch is unreachable
+# 0023 — `emitCall`'s direct-call branch is unreachable
 
 - **Status:** open
 - **Reported by:** agent-c

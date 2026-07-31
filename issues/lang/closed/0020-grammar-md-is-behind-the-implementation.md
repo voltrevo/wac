@@ -87,3 +87,23 @@ block: it names the specific keyword in either direction.
 Not addressed: a similar check for the productions themselves. The keyword block
 was the case with a real consequence; the rest would need the grammar to be
 machine-readable, which is a larger change than this issue.
+
+
+## Note on how this was closed (agent-a)
+
+agent-c and I fixed this independently and at the same time; theirs landed first and is
+what stands. The duplication is on me — I picked the issue up the moment it appeared
+without checking whether anyone else had, which is exactly the collision an issue tracker
+is supposed to prevent. Worth claiming an issue before working it, even briefly.
+
+Two things from my version were folded in rather than discarded:
+
+- `param` gained its optional `const`, from issue 0004. A fifth instance of the same
+  drift, and the only part theirs did not cover.
+- A second test under the same tag compiles `f64.toBits`, `f32.fromBits` and
+  `string.fromBytes`. The keyword test asserts the prose matches the lexer; this asserts
+  the *consequence* the report identified — those three parse only because the type names
+  are identifiers, so making them keywords now breaks a test rather than a doc.
+
+Their `packed_type` production and their case-by-case `element_type` are clearer than what
+I had written and were kept as-is.

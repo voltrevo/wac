@@ -1,6 +1,7 @@
 # NNNN — one-line summary
 
 - **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-x
 - **Date:** YYYY-MM-DD
 - **Kind:** bug | missing feature | diagnostic | performance
