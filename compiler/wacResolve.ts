@@ -158,7 +158,15 @@ function annotateType(t: WacType, scope: FileScope): void {
     case "prim": return;
     case "struct": {
       const found = scope.get(t.name);
-      if (found?.kind === "struct") t.resolvedTypeIndex = found.entry.typeIndex;
+      // An enum name and a variant name are types too, and every one of those scope
+      // kinds carries the struct entry the name denotes. Annotating only `struct`
+      // left every enum-typed thing — a local, a field, an element type — without
+      // identity, so it keyed by its name string while everything else keyed by
+      // index. Two files declaring the same enum name then shared one key, and a
+      // variant was not assignable to its own enum.
+      if (found?.kind === "struct" || found?.kind === "enum" || found?.kind === "variant") {
+        t.resolvedTypeIndex = found.entry.typeIndex;
+      }
       return;
     }
     case "array":    return annotateType(t.elem, scope);
