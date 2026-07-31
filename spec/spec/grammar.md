@@ -196,7 +196,8 @@ FLOAT_LITERAL  = digit , { digit | "_" } , "." , digit , { digit | "_" } ,
 STRING         = '"' , { string_char } , '"' ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
 string_char    = (* any character except " and \ *) | escape ;
-escape         = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "0" ) ;
+char_content   = (* any single character except ' and \ *) | escape ;
+escape         = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "'" | "0" ) ;
 letter         = "a"..."z" | "A"..."Z" | "_" ;
 digit          = "0"..."9" ;
 ```

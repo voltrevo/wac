@@ -120,6 +120,34 @@ export i32 million()  { return 1_000_000; }
 
 `[§wac-numsep-qpeegkw]` `grouped()` returns `-306674912` and `million()` returns `1000000`.
 
+### Character literals
+
+`'a'` is an integer literal spelled as a character. Its value is the Unicode
+codepoint and its type follows the decimal rule above, so every character
+literal is an `i32`. There is no distinct character type.
+
+```wac
+export i32 letterA() { return 'a'; }
+export i32 newline() { return '\n'; }
+export i32 quote()   { return '\''; }
+export i32 emoji()   { return '😀'; }
+```
+
+`[§wac-charlit-p4kn8wq]` `letterA()` returns `97`.
+`[§wac-charlit-esc-h7mf2xj]` `newline()` returns `10` and `quote()` returns `39`.
+`[§wac-charlit-cp-r3jw9kt]` `emoji()` returns `128512` — the codepoint, not a
+UTF-8 byte. Only for ASCII does a character literal equal one byte of the
+corresponding string, so `'é'` is `233` while `"é".len()` is `2`.
+
+Escapes are those of string literals plus `\'`: `\n` `\t` `\r` `\\` `\'` `\"`
+`\0`.
+
+`[§wac-charlit-empty-m8qf5np]` `''` is a compile error.
+`[§wac-charlit-multi-w2nk7dr]` `'ab'` is a compile error.
+
+Because a character literal is an integer, it can be a `switch` case, which is
+its main use — scanning bytes reads as `case 'x':` rather than `case 0x78:`.
+
 ### bool
 
 A distinct type. `true` is 1, `false` is 0, but `bool` is not interchangeable

@@ -84,7 +84,7 @@ Node n = Node(42, null);   // val=42, next=null
 A struct has a default value (usable with `T()` and `T[N]()`) if all its
 fields have defaults:
 
-- Primitives: `0`, `0.0`, `false`, `'\0'`
+- Primitives: `0`, `0.0`, `false`
 - Nullable references (`T?`): `null`
 - Non-null struct references (`T`): `T()` if T itself has a default (recursive)
 - Non-null array references (`T[]`): an empty (zero-length) array — always

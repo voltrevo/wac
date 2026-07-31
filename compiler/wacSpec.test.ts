@@ -1439,6 +1439,79 @@ Deno.test("[§wac-const-struct-g9apxwr] writing any field of const struct is err
   `);
 });
 
+// ── §wac-charlit-* — character literals are i32 codepoints ───────────────────
+
+Deno.test("[§wac-charlit-p4kn8wq] letterA() returns 97", async () => {
+  const inst = await run(`export i32 letterA() { return 'a'; }`);
+  eq(inst.call("letterA", []), 97, "'a' is 97");
+});
+
+Deno.test("[§wac-charlit-esc-h7mf2xj] escapes in character literals", async () => {
+  const inst = await run(`
+    export i32 newline() { return '\\n'; }
+    export i32 quote()   { return '\\''; }
+    export i32 tab()     { return '\\t'; }
+    export i32 cr()      { return '\\r'; }
+    export i32 nul()     { return '\\0'; }
+    export i32 bslash()  { return '\\\\'; }
+    export i32 dquote()  { return '\\"'; }
+  `);
+  eq(inst.call("newline", []), 10, "\\n is 10");
+  eq(inst.call("quote", []), 39, "\\' is 39");
+  eq(inst.call("tab", []), 9, "\\t is 9");
+  eq(inst.call("cr", []), 13, "\\r is 13");
+  eq(inst.call("nul", []), 0, "\\0 is 0");
+  eq(inst.call("bslash", []), 92, "\\\\ is 92");
+  eq(inst.call("dquote", []), 34, "\\\" is 34");
+});
+
+Deno.test("[§wac-charlit-cp-r3jw9kt] a character literal is a codepoint, not a byte", async () => {
+  // The distinction only shows above ASCII, so both cases are non-ASCII and are
+  // checked against the string byte length they are NOT equal to.
+  const inst = await run(`
+    export i32 emoji()    { return '😀'; }
+    export i32 eacute()   { return 'é'; }
+    export i32 eacuteLen() { return "é".len(); }
+  `);
+  eq(inst.call("emoji", []), 128512, "U+1F600 is 128512");
+  eq(inst.call("eacute", []), 233, "U+00E9 is 233");
+  eq(inst.call("eacuteLen", []), 2, "the same character is 2 UTF-8 bytes as a string");
+});
+
+Deno.test("[§wac-charlit-empty-m8qf5np] '' is a compile error", () => {
+  const msg = err(`export i32 bad() { return ''; }`);
+  if (!msg.includes("empty character literal")) {
+    throw new Error(`unexpected error: ${msg}`);
+  }
+});
+
+Deno.test("[§wac-charlit-multi-w2nk7dr] 'ab' is a compile error", () => {
+  const msg = err(`export i32 bad() { return 'ab'; }`);
+  if (!msg.includes("exactly one character")) {
+    throw new Error(`unexpected error: ${msg}`);
+  }
+});
+
+Deno.test("[§wac-charlit-p4kn8wq] character literals work as switch cases", async () => {
+  // The reason to have them at all: a byte scanner reads as case 'x'. This also
+  // proves they reach the emitter as ordinary integer constants, since switch
+  // requires i32 case values.
+  const inst = await run(`
+    export i32 classify(i32 c) {
+      switch (c) {
+        case '{': { return 1; }
+        case '}': { return 2; }
+        case '\\n': { return 3; }
+        default:  { return 0; }
+      }
+    }
+  `);
+  eq(inst.call("classify", [123]), 1, "'{' is 123");
+  eq(inst.call("classify", [125]), 2, "'}' is 125");
+  eq(inst.call("classify", [10]), 3, "'\\n' is 10");
+  eq(inst.call("classify", [65]), 0, "'A' hits default");
+});
+
 // ── §wac-struct-export-* — export on a struct, alone and with const ──────────
 
 Deno.test("[§wac-struct-export-m3kq8wp] only an exported struct can be imported", async () => {
