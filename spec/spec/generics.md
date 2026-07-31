@@ -93,6 +93,26 @@ export i32 f() { Box<i32> b = Box(2); return b.get(); }
 `[§wac-generic-struct-9tkq4wm]` This works, an alias works, and two files instantiating `Box<i32>`
 share one struct rather than getting a copy each.
 
+### Instantiations are identified by identity, not by spelling
+
+Two references name the same instantiation exactly when they name the same template with the same
+argument *types* — not the same argument *text*. A name is only unique within its file, so an alias
+collapses onto its target and two same-named types stay apart:
+
+```wac
+import { Point, Point as P } from "./p.wac";
+Box<P> a = ...;        // one instantiation, not two
+Box<Point> b = ...;
+```
+
+`[§wac-generic-instantiation-identity-6pnq4wj]` `Box<P>` and `Box<Point>` are one struct. An aliased
+*template* is usable — `import { Box as B }` then `B<i32>`. And two different structs that happen to
+share a name, which `§wac-samename-struct-4jhq7wn` permits, give two instantiations rather than one.
+
+That last one was a type confusion rather than a diagnostic before it was fixed: both spellings
+mangled alike, one struct served both, and it surfaced as an error only because the two layouts
+happened to differ. See issue 0042.
+
 ### No constraints
 
 There is no `T: Default` and there are no traits. A template's body is checked when it is

@@ -382,19 +382,108 @@ type Template = { decl: StructDecl; filePath: string };
 /** A source location as the *parser* records it — line and col, no file. */
 type At = { line: number; col: number };
 
-function mangle(name: string, args: WacType[]): string {
-  // `$` is already the method-mangling separator and cannot appear in an IDENT, so a mangled
-  // name can never collide with a written one — the same trick `#tag` uses for enums.
-  return `${name}$${args.map(mangleType).join("$")}`;
+/**
+ * Where a written type name was declared: the file, and the name as declared there.
+ *
+ * A name is only unique within its file, so mangling by the name *as written* was wrong in both
+ * directions at once [issue 0042]: `Box<P>` and `Box<Point>` for an alias `P` produced two
+ * instantiations of one type, and two different structs both called `Point` produced one
+ * instantiation used for both — a type confusion rather than a diagnostic.
+ *
+ * This is computed from the AST alone, before any scopes exist, which is what lets it run in a
+ * pre-pass. One hop is enough: importing a symbol does not re-export it, so an import must name
+ * the declaring file directly.
+ */
+type NameOrigin = { file: string; name: string };
+
+function buildOrigins(programs: Map<string, Program>): Map<string, Map<string, NameOrigin>> {
+  const byFile = new Map<string, Map<string, NameOrigin>>();
+  for (const [filePath, prog] of programs) {
+    const here = new Map<string, NameOrigin>();
+    for (const item of prog.items) {
+      if (item.tag === "struct" || item.tag === "enum") {
+        here.set(item.name, { file: filePath, name: item.name });
+      }
+    }
+    byFile.set(filePath, here);
+  }
+  // Imports second, so a local declaration wins — which matches the resolver, where a duplicate
+  // import is an error rather than a shadow.
+  for (const [filePath, prog] of programs) {
+    const here = byFile.get(filePath)!;
+    for (const item of prog.items) {
+      if (item.tag !== "import") continue;
+      const from = resolvePath(filePath, item.path);
+      for (const it of item.items) {
+        if (here.has(it.alias)) continue;
+        here.set(it.alias, { file: from, name: it.name });
+      }
+    }
+  }
+  return byFile;
 }
 
-function mangleType(t: WacType): string {
+/**
+ * A relative import path from one file to another, as `resolvePath` will read it back.
+ *
+ * Needed because a materialised struct lives in its *template's* file while its argument types were
+ * named in the *referring* file. Copying `Point` into box.wac would resolve against box.wac's scope,
+ * which never imported it — so the import is injected and the substituted type renamed to match.
+ */
+function relativeImportPath(from: string, to: string): string {
+  const fromDir = from.includes("/") ? from.slice(0, from.lastIndexOf("/")).split("/") : [];
+  const toParts = to.split("/");
+  let i = 0;
+  while (i < fromDir.length && i < toParts.length - 1 && fromDir[i] === toParts[i]) i++;
+  const up = fromDir.length - i;
+  const rest = toParts.slice(i).join("/");
+  return up === 0 ? `./${rest}` : `${"../".repeat(up)}${rest}`;
+}
+
+/** A file path as a mangled-name component: `packages/a/b.wac` becomes `packages_a_b`. */
+function fileTag(path: string): string {
+  return path.replace(/\.wac$/, "").replace(/[^A-Za-z0-9]/g, "_");
+}
+
+/**
+ * The identity of a written name, as a string that is equal exactly when the types are.
+ *
+ * A primitive is itself. Anything else is qualified by its declaring file, so an alias collapses
+ * onto its target and two same-named structs stay apart.
+ */
+function canonName(name: string, file: string, origins: Map<string, Map<string, NameOrigin>>): string {
+  const origin = origins.get(file)?.get(name);
+  // Unknown names are left alone: they are reported later by the type checker, and inventing an
+  // identity for one here would only make that message stranger.
+  if (origin === undefined) return name;
+  return `${origin.name}__${fileTag(origin.file)}`;
+}
+
+function mangle(
+  name: string, args: WacType[], file: string, origins: Map<string, Map<string, NameOrigin>>,
+): string {
+  // `$` is already the method-mangling separator and cannot appear in an IDENT, so a mangled
+  // name can never collide with a written one — the same trick `#tag` uses for enums.
+  return `${name}$${args.map((a) => mangleType(a, file, origins)).join("$")}`;
+}
+
+function mangleType(
+  t: WacType, file: string, origins: Map<string, Map<string, NameOrigin>>,
+): string {
   switch (t.kind) {
     case "prim":     return t.name;
-    case "struct":   return t.typeArgs && t.typeArgs.length > 0 ? mangle(t.name, t.typeArgs) : t.name;
-    case "array":    return `${mangleType(t.elem)}_arr`;
-    case "nullable": return `${mangleType(t.inner)}_opt`;
-    case "funcref":  return `fn_${t.params.map(mangleType).join("_")}_to_${mangleType(t.ret)}`;
+    case "struct":
+      if (t.typeArgs && t.typeArgs.length > 0) {
+        // A nested instantiation is already canonical by construction: it was materialised under a
+        // canonical name, and referring to it by that name keeps the outer key stable.
+        return mangle(canonName(t.name, file, origins), t.typeArgs, file, origins);
+      }
+      return canonName(t.name, file, origins);
+    case "array":    return `${mangleType(t.elem, file, origins)}_arr`;
+    case "nullable": return `${mangleType(t.inner, file, origins)}_opt`;
+    case "funcref":
+      return `fn_${t.params.map((p) => mangleType(p, file, origins)).join("_")}_to_${
+        mangleType(t.ret, file, origins)}`;
   }
 }
 
@@ -412,10 +501,6 @@ function displayType(t: WacType, display?: Map<string, string>): string {
     case "funcref":
       return `fn[${displayType(t.ret, display)}(${t.params.map((p) => displayType(p, display)).join(", ")})]`;
   }
-}
-
-function typeArgsKey(args: WacType[]): string {
-  return args.map(mangleType).join(",");
 }
 
 // ── Substitution ──────────────────────────────────────────────────────────────
@@ -689,30 +774,25 @@ export function monomorphise(
    */
   display?: Map<string, string>,
 ): void {
+  const origins = buildOrigins(programs);
+
+  // Templates are keyed by *identity* — declared name plus declaring file — so an alias and its
+  // target find the same one, and two same-named templates in different files stay apart.
   const templates = new Map<string, Template>();
   for (const [filePath, prog] of programs) {
     for (const item of prog.items) {
       if (item.tag === "struct" && item.typeParams.length > 0) {
-        templates.set(item.name, { decl: item, filePath });
+        templates.set(`${item.name}__${fileTag(filePath)}`, { decl: item, filePath });
       }
     }
   }
-  // An import alias names the same template: `import { Vec as V }` then `V<i32>`. Registered
-  // under the alias too, since this pass runs before imports are resolved and would otherwise
-  // report `V` as not generic.
-  for (const prog of programs.values()) {
-    for (const item of prog.items) {
-      if (item.tag !== "import") continue;
-      for (const it of item.items) {
-        const tpl = templates.get(it.name);
-        if (tpl !== undefined && it.alias !== it.name) templates.set(it.alias, tpl);
-      }
-    }
-  }
+  /** The template a name refers to *in this file*, following an import alias. */
+  const templateFor = (name: string, file: string): Template | undefined =>
+    templates.get(canonName(name, file, origins));
   if (templates.size === 0) {
     // Still worth checking: a generic reference to something that is not a template is an
     // error the user should see rather than a silent bare-name lookup later.
-    reportStrayArgs(programs, templates, err);
+    reportStrayArgs(programs, err);
     return;
   }
 
@@ -727,7 +807,7 @@ export function monomorphise(
   };
 
   const materialise = (name: string, args: WacType[], depth: number, at: At, file: string): string | null => {
-    const tpl = templates.get(name);
+    const tpl = templateFor(name, file);
     if (tpl === undefined) return null;
     if (args.length !== tpl.decl.typeParams.length) {
       err(`'${name}' takes ${tpl.decl.typeParams.length} type argument(s), got ${args.length}`,
@@ -740,11 +820,12 @@ export function monomorphise(
         file, at.line, at.col);
       return null;
     }
-    const mangled = mangle(name, args);
+    // The instantiation's own name is canonical too, so `B<i32>` and `Box<i32>` agree.
+    const mangled = mangle(canonName(name, file, origins), args, file, origins);
     if (made.has(mangled)) return mangled;
 
     const sub = new Map<string, WacType>();
-    tpl.decl.typeParams.forEach((p, i) => sub.set(p, args[i]));
+    tpl.decl.typeParams.forEach((p, i) => sub.set(p, visibleFrom(args[i], file, tpl.filePath)));
     // Registered before its body is walked, so a self-reference finds it rather than recursing.
     const decl: StructDecl = {
       ...tpl.decl, name: mangled, typeParams: [],
@@ -757,11 +838,46 @@ export function monomorphise(
     };
     made.set(mangled, decl);
     madeIn.set(mangled, tpl.filePath);
+    // The *written* name, not the canonical one: a diagnostic must show what the author typed.
     display?.set(mangled, `${name}<${args.map((a) => displayType(a, display)).join(", ")}>`);
     // Now rewrite any generic references the substituted copy itself contains.
     rewriteDecl(decl, depth + 1, tpl.filePath);
     return mangled;
   };
+
+  /**
+   * Rename any struct inside `t` so it resolves from `inFile`, injecting the import that makes it.
+   *
+   * An argument was written in `fromFile`, where a bare `Point` may be an import; the substituted
+   * copy lands in `inFile`, where it may mean nothing or — worse — something else. Both are the
+   * same confusion as issue 0041, arriving from the other direction.
+   */
+  const visibleFrom = (t: WacType, fromFile: string, inFile: string): WacType => {
+    switch (t.kind) {
+      case "prim": return t;
+      case "array":    return { ...t, elem: visibleFrom(t.elem, fromFile, inFile) };
+      case "nullable": return { ...t, inner: visibleFrom(t.inner, fromFile, inFile) };
+      case "funcref":
+        return {
+          ...t, params: t.params.map((p) => visibleFrom(p, fromFile, inFile)),
+          ret: visibleFrom(t.ret, fromFile, inFile),
+        };
+      case "struct": {
+        // An already-materialised instantiation lives in its own template's file and is imported by
+        // the same mechanism, so it is handled by the recursive case below via its name.
+        const origin = origins.get(fromFile)?.get(t.name);
+        if (origin === undefined) return t;                 // unknown; reported later
+        if (origin.file === inFile) return t;               // already local to the target
+        const alias = `${origin.name}__${fileTag(origin.file)}`;
+        needImports.set(`${inFile}\u0000${alias}`,
+          { inFile, alias, name: origin.name, from: origin.file });
+        return { ...t, name: alias };
+      }
+    }
+  };
+
+  /** Imports to inject so a materialised struct's argument types resolve. */
+  const needImports = new Map<string, { inFile: string; alias: string; name: string; from: string }>();
 
   // Rewriting a reference in place is what makes this a pre-pass: after it, `typeArgs` is gone
   // and the type is an ordinary struct reference by mangled name.
@@ -780,7 +896,7 @@ export function monomorphise(
       return;
     }
     for (const a of args) rewriteType(a, depth, file);
-    if (!templates.has(t.name)) {
+    if (templateFor(t.name, file) === undefined) {
       err(`'${t.name}' is not generic, so it takes no type arguments`, file, t.line, t.col);
       delete (t as { typeArgs?: WacType[] }).typeArgs;
       return;
@@ -875,12 +991,15 @@ export function monomorphise(
     if (e.kind !== "construct") return;
     const ctype = e.ctype;
     if (ctype.kind !== "struct") return;
-    if (!templates.has(ctype.name)) return;
+    if (templateFor(ctype.name, filePath) === undefined) return;
     if (ctype.typeArgs !== undefined && ctype.typeArgs.length > 0) return;   // already named
     // The expected type must be the same template, monomorphised by the sweep above.
     const want = expected.kind === "nullable" ? expected.inner : expected;
     if (want.kind !== "struct") return;
-    const prefix = `${ctype.name}$`;
+    // The expected type has already been rewritten to a canonical mangled name, so the prefix to
+    // match is the canonical one — `Box__box$i32`, not `Box$i32`. Testing the written prefix made
+    // every construction fail to find its arguments once mangling became canonical [issue 0042].
+    const prefix = `${canonName(ctype.name, filePath, origins)}$`;
     if (!want.name.startsWith(prefix)) return;
     (ctype as { name: string }).name = want.name;
     if (want.resolvedTypeIndex !== undefined) {
@@ -893,7 +1012,7 @@ export function monomorphise(
   // so a construction whose arguments come from its declaration is not flagged before the
   // propagation above has run.
   eachTypeInPrograms(programs, (t, filePath) => {
-    if (t.kind === "struct" && templates.has(t.name) &&
+    if (t.kind === "struct" && templateFor(t.name, filePath) !== undefined &&
         (t.typeArgs === undefined || t.typeArgs.length === 0)) {
       err(`'${t.name}' is generic and needs type arguments, as in '${t.name}<i32>' — or an ` +
           `expected type to take them from, such as a declared variable's type`,
@@ -910,17 +1029,35 @@ export function monomorphise(
       if (item.tag !== "import") continue;
       const rewritten: typeof item.items = [];
       for (const it of item.items) {
-        const tpl = templates.get(it.name);
+        // The item names the template as the *importing* file writes it, so resolve through the
+        // declaring file to find the template regardless of alias.
+        const tpl = templates.get(`${it.name}__${fileTag(resolvePath(filePath, item.path))}`);
         if (tpl === undefined) { rewritten.push(it); continue; }
         for (const mangled of usedIn.get(filePath) ?? []) {
           // Only the instantiations of *this* template, and only if it came from this import.
           if (madeIn.get(mangled) !== tpl.filePath) continue;
-          if (!mangled.startsWith(`${tpl.decl.name}$`)) continue;
+          if (!mangled.startsWith(`${tpl.decl.name}__${fileTag(tpl.filePath)}$`)) continue;
           rewritten.push({ ...it, name: mangled, alias: mangled });
         }
       }
       item.items = rewritten;
     }
+  }
+
+  // Inject the imports the materialised structs need for their argument types. Registered as
+  // ordinary import items, so the export rules apply — importing a type that is not exported is
+  // still an error, reported against the file that asked for the instantiation.
+  for (const { inFile, alias, name, from } of needImports.values()) {
+    const prog = programs.get(inFile);
+    if (prog === undefined) continue;
+    const already = prog.items.some((it) =>
+      it.tag === "import" && it.items.some((x) => x.alias === alias));
+    if (already) continue;
+    prog.items.unshift({
+      tag: "import", path: relativeImportPath(inFile, from),
+      items: [{ name, alias, line: 0, col: 0 }],
+      line: 0, col: 0,
+    });
   }
 
   // Templates themselves are removed and the materialised copies take their place.
@@ -933,13 +1070,18 @@ export function monomorphise(
   }
 }
 
-/** Report `Foo<i32>` where `Foo` is not generic, when there are no templates at all. */
+/**
+ * Report `Foo<i32>` when the program declares no templates at all.
+ *
+ * Only reached in that case, so nothing can be generic and every argument list is stray — no name
+ * resolution is needed.
+ */
 function reportStrayArgs(
-  programs: Map<string, Program>, templates: Map<string, Template>,
+  programs: Map<string, Program>,
   err: (msg: string, file: string, line: number, col: number) => void,
 ): void {
   eachTypeInPrograms(programs, (t, filePath) => {
-    if (t.kind === "struct" && t.typeArgs && t.typeArgs.length > 0 && !templates.has(t.name)) {
+    if (t.kind === "struct" && t.typeArgs && t.typeArgs.length > 0) {
       err(`'${t.name}' is not generic, so it takes no type arguments`, filePath, t.line, t.col);
       delete (t as { typeArgs?: WacType[] }).typeArgs;
     }
