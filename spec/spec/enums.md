@@ -96,6 +96,41 @@ elsewhere in the language.
 
 `[§enum-match-ignore]` `isRound(Shape.Circle(1.0))` returns `true`.
 
+### An arm body is an ordinary block
+
+Anything legal in a block is legal in an arm: locals, struct construction, array
+creation, function references, nested control flow. There is nothing an arm restricts.
+
+`[§enum-arm-walks-kubc3rt]` A type or function reference appearing *only* inside an
+arm works exactly as it does anywhere else. Worth stating because it was not true:
+five separate walks over statements had no `match` case, so a struct construct, an
+array type, or a funcref signature reachable only through an arm was invisible to
+them — and each failed at wasm validation or as a bogus "undefined function", never
+at the point of the mistake.
+
+### Break inside an arm
+
+`break` in an arm binds to the enclosing loop, not to the `match`:
+
+```wac
+while (true) {
+  match (e) {
+    case Done:      break;      // leaves the loop
+    case Working:   { }
+  }
+}
+```
+
+This differs from `switch`, where `break` leaves the switch. The reason is that arms
+have no fallthrough, so there is nothing for a local `break` to mean — making it reach
+the loop is the only reading that does anything, and it is what a tree walk with a
+worklist wants.
+
+`[§enum-match-break-loop]` The break leaves the loop, and the return checker knows
+it does: a `while (true)` whose only exit is a `break` inside an arm is not an
+infinite loop, so a function that falls off the end after it is still a missing-return
+error.
+
 ### Exhaustiveness
 
 A `match` must cover every variant. This is the point of the feature: the compiler
@@ -242,6 +277,18 @@ export i32 sum(Tree t) {
 ```
 
 `[§enum-recursive]` `sum(Tree.Node(Tree.Leaf(1), Tree.Leaf(2)))` returns `3`.
+
+A payload field may be any type a struct field may be, including an array of structs:
+
+```wac
+enum Holder { Some(P[] xs), None }
+```
+
+`[§enum-arm-payload-struct-array]` This works. It did not at first: the variant
+structs are generated inside the resolver and are not part of the item list the
+type-annotation pass walks, so a payload of struct type was keyed by name while every
+other reference to the same struct was keyed by index — and `P[]` interned as two
+distinct array types, which surfaced only as a wasm validation failure.
 
 Payload fields hold references, so this needs no indirection syntax. Construction is
 bottom-up, so a non-null reference is always available by the time it is needed.
