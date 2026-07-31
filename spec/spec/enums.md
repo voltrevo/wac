@@ -4,10 +4,15 @@
 exercised**. Treat a surprise here as a likely compiler bug rather than as
 intended behaviour, and check the known gaps before working around one.*
 
-**Known gap, open:** an **imported** enum is not recognised as an enum, so `match`
-on a value whose type came from another file fails with `match requires an enum
-value`. An enum and the code matching on it must currently live in the same file.
-This is the common case for anything real, so it is the first thing to hit.
+Enums work across files: declare one in a module, import it, `match` on it. `[§enum-cross-file]`
+
+The enum's name must be in scope in the file that matches on it, since the arms name
+its variants. When it is not, the diagnostic says so specifically rather than claiming
+the value is not an enum. `[§enum-cross-file]`
+
+Two files may declare enums with the same name, and even variants with the same name.
+`[§enum-name-identity]` This is worth stating only because it did not work: three
+separate places resolved an enum by its name where they meant its identity.
 
 The feature's tests were written alongside its implementation, from the same
 understanding, so they agree with each other about more than they should. The first

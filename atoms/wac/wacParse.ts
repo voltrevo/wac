@@ -45,9 +45,14 @@ export type Expr =
   | ({ kind: "cast";     op: string; expr: Expr; type: WacType } & Pos)
   | ({ kind: "is";       expr: Expr; not: boolean; rhs: WacType | "null" | Expr } & Pos)
   | ({ kind: "ternary";  cond: Expr; then: Expr; else_: Expr } & Pos)
-  | ({ kind: "call";     callee: Expr; args: Expr[] } & Pos)
+  | ({ kind: "call";     callee: Expr; args: Expr[]; variantTypeIndex?: number } & Pos)
   | ({ kind: "index";    expr: Expr; idx: Expr } & Pos)
-  | ({ kind: "field";    expr: Expr; name: string } & Pos)
+  // `variantTypeIndex` is filled in by the type checker when this field access is
+  // really a payload-less variant value (`Shape.Point`), and likewise on the `call`
+  // node for `Shape.Circle(2.0)`. The emitter needs the *resolved* variant, and it
+  // has no file scope to resolve a name in — it used to search the program's enums by
+  // name, which picked the wrong enum whenever two files declared the same name.
+  | ({ kind: "field";    expr: Expr; name: string; variantTypeIndex?: number } & Pos)
   | ({ kind: "unwrap";   expr: Expr } & Pos)
   | ({ kind: "construct"; ctype: WacType; args: Expr[]; named?: { name: string; val: Expr }[] } & Pos)
   | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[] } & Pos)

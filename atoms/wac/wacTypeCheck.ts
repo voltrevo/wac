@@ -278,6 +278,15 @@ type Ctx = {
   structMap: Map<string, StructEntry>;
   structs: StructEntry[];
   fileScope: FileScope;
+  /**
+   * Every enum in the program, by its base struct's type index.
+   *
+   * `enumOfType` resolves through the file scope, which is right — naming an enum's
+   * variants in patterns should require the enum to be in scope. But it cannot tell
+   * "this is not an enum" from "this is an enum you did not import", and those want
+   * very different diagnostics. This map answers the second question.
+   */
+  enumByTypeIndex: Map<number, EnumEntry>;
   errors: TypeCheckError[];
   // per-function:
   returnType: WacType;
@@ -318,13 +327,16 @@ export function wacTypeCheck(
     }
   }
 
+  const enumByTypeIndex = new Map<number, EnumEntry>();
+  for (const e of result.enums) enumByTypeIndex.set(e.base.typeIndex, e);
+
   // Per-file structural checks (packed types, override, recursive default)
   for (const [filePath, fileScope] of result.fileScopes) {
     const prog = programs.get(filePath);
     if (!prog) continue;
     const ctx: Ctx = {
       file: filePath, structMap, structs: result.structs, fileScope, errors: [],
-      returnType: T_VOID, inLoop: 0, thisConst: false,
+      enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
     };
     for (const item of prog.items) {
       if (item.tag === "struct") checkStructShape(item, ctx);
@@ -342,7 +354,7 @@ export function wacTypeCheck(
 
     const ctx: Ctx = {
       file: funcEntry.filePath, structMap, structs: result.structs, fileScope: scope, errors: [],
-      returnType: T_VOID, inLoop: 0, thisConst: false,
+      enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
     };
     const env: VarEnv = new Map();
 
@@ -693,8 +705,23 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
 
       const enumEntry = enumOfType(subjType, ctx);
       if (!enumEntry) {
-        errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
-          stmt.subject.line, stmt.subject.col);
+        // The subject may well be an enum that this file never imported — in which
+        // case "match requires an enum value, got TyKind" is true, unhelpful, and
+        // points at the wrong thing. Say which it is.
+        const unimported = subjType.kind === "struct" &&
+          subjType.resolvedTypeIndex !== undefined
+            ? ctx.enumByTypeIndex.get(subjType.resolvedTypeIndex)
+            : undefined;
+        if (unimported) {
+          errAt(ctx,
+            `'${typeName(subjType)}' is an enum, but it is not in scope in this file`,
+            stmt.subject.line, stmt.subject.col, exprText(stmt.subject).length,
+            undefined,
+            `import it: import { ${unimported.name} } from "...";`);
+        } else {
+          errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
+            stmt.subject.line, stmt.subject.col);
+        }
         return false;
       }
 
@@ -1525,6 +1552,7 @@ function inferCall(
         };
         // A variant is a struct, so argument checking is the ordinary one; the only
         // difference is that the compiler supplies the tag.
+        expr.variantTypeIndex = variant.entry.typeIndex;
         return checkArgList(args, variant.fields.map(f => f.type), variantType, expr, env, ctx);
       }
     }
@@ -1694,7 +1722,9 @@ function checkArgList(
 
 function inferFieldAccess(
   baseExpr: Expr, fieldName: string,
-  pos: { line: number; col: number },
+  // The caller passes the field node itself, which is what lets a payload-less
+  // variant be recorded here for the emitter to use.
+  pos: { line: number; col: number; variantTypeIndex?: number },
   env: VarEnv, ctx: Ctx,
 ): WacType | null {
   // Shape.Point — a payload-less variant is a value, not a call.
@@ -1715,6 +1745,7 @@ function inferFieldAccess(
           `write it as ${baseExpr.name}.${fieldName}(...)`);
         return null;
       }
+      pos.variantTypeIndex = variant.entry.typeIndex;
       return { kind: "struct", name: variant.name,
                resolvedTypeIndex: variant.entry.typeIndex, line: pos.line, col: pos.col };
     }
