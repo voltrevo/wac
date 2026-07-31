@@ -117,6 +117,28 @@ function isInteger(t: WacType): boolean {
 function isUnsigned(t: WacType): boolean {
   return t.kind === "prim" && (t.name === "u32" || t.name === "u64");
 }
+
+/** Can this literal be read as `target`?
+ *
+ *  A decimal literal is a magnitude, so it fits when it is within the type's
+ *  range. A hex literal is a bit pattern of a fixed width, so it fits any type
+ *  at least that wide — `0xFFFFFFFF` is -1 as i32 and 4294967295 as u32, both
+ *  the same bits, and widening zero-extends because a bit pattern has no sign
+ *  to extend. A hex pattern wider than the target does not fit at all. */
+function literalFits(
+  lit: { hex: boolean; magnitude: bigint; width: 32 | 64 },
+  target: string,
+): boolean {
+  const targetWidth = target === "i32" || target === "u32" ? 32 : 64;
+  if (lit.hex) return lit.width <= targetWidth;
+  const max: Record<string, bigint> = {
+    i32: 2147483647n,
+    u32: 4294967295n,
+    i64: 9223372036854775807n,
+    u64: 18446744073709551615n,
+  };
+  return lit.magnitude <= max[target];
+}
 function isFloat(t: WacType): boolean {
   return t.kind === "prim" && (t.name === "f32" || t.name === "f64");
 }
@@ -507,7 +529,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         errAt(ctx, `variable type cannot be 'void'`, stmt.line, stmt.col);
       }
       ctx.varDeclPrefix = `${typeName(stmt.type)} ${stmt.name} = `;
-      const initType = inferExpr(stmt.init, env, ctx);
+      const initType = inferExpr(stmt.init, env, ctx, stmt.type);
       ctx.varDeclPrefix = undefined;
       if (initType && initType.kind === "nullable" && stmt.type.kind !== "nullable" &&
           (stmt.type.kind === "struct" || stmt.type.kind === "array")) {
@@ -533,7 +555,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
 
     case "assign": {
       const lType = checkLval(stmt.lval, env, ctx, /* writing */ true);
-      const rType = inferExpr(stmt.rhs, env, ctx);
+      const rType = inferExpr(stmt.rhs, env, ctx, lType);
       if (!lType || !rType) return false;
       if (stmt.op === "=") {
         checkAssign(lType, rType, stmt.rhs.line, stmt.rhs.col, ctx);
@@ -674,7 +696,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
 
     case "return": {
       if (stmt.value) {
-        const vType = inferExpr(stmt.value, env, ctx);
+        const vType = inferExpr(stmt.value, env, ctx, ctx.returnType);
         if (vType) {
           if (isVoid(ctx.returnType)) {
             errAt(ctx, `void function cannot return a value`, stmt.line, stmt.col);
@@ -906,7 +928,7 @@ function exprText(e: Expr): string {
  * Infer the type of an expression. Returns null and pushes an error if the
  * expression is ill-typed. Avoids cascading errors — callers should guard on null.
  */
-function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
+function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null): WacType | null {
   switch (expr.kind) {
 
     case "int": {
@@ -916,6 +938,24 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
           ? `integer literal out of range`
           : `invalid integer literal '${expr.value}'`;
         errAt(ctx, msg, expr.line, expr.col);
+        return null;
+      }
+      // Contextual typing: an integer literal takes the integer type expected
+      // of it whenever the value has a reading there. This is what makes
+      // `u32 x = 5` and `i64 n = 5` work — without it every literal in
+      // unsigned code would need a cast. Recorded on the node so the emitter
+      // uses the same answer instead of re-deriving it.
+      if (expected && expected.kind === "prim" && isInteger(expected)) {
+        if (literalFits(lit, expected.name)) {
+          expr.resolved = expected;
+          return expected;
+        }
+        // Falls through to the intrinsic width, which then fails the normal
+        // assignability check with the ordinary "expected X, got Y" message.
+      }
+      if (!lit.fitsI64) {
+        errAt(ctx, `integer literal out of range`, expr.line, expr.col,
+          expr.value.length, `${expr.value} exceeds i64 — only u64 can hold it`);
         return null;
       }
       return lit.width === 32 ? T_I32 : T_I64;
@@ -957,7 +997,21 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
     }
 
     case "unary": {
-      const t = inferExpr(expr.expr, env, ctx);
+      // `-2147483648` is unary minus over the literal 2147483648, which is one
+      // past i32's positive range — so without help the operand widens to i64
+      // and i32's most negative value becomes unspellable in decimal. Negation
+      // of a literal against a signed target therefore allows one extra step,
+      // exactly the asymmetry of two's complement.
+      if (expr.op === "-" && expr.expr.kind === "int" &&
+          expected?.kind === "prim" && (expected.name === "i32" || expected.name === "i64")) {
+        const lit = wacIntLit(expr.expr.value);
+        const limit = expected.name === "i32" ? 2147483648n : 9223372036854775808n;
+        if (lit.ok && !lit.hex && lit.magnitude <= limit) {
+          expr.expr.resolved = expected;
+          return expected;
+        }
+      }
+      const t = inferExpr(expr.expr, env, ctx, expected);
       if (!t) return null;
       if (expr.op === "!") {
         if (!typeEq(t, T_BOOL)) {
@@ -969,6 +1023,14 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
       if (expr.op === "-") {
         if (!isNumeric(t)) {
           errAt(ctx, `unary '-' requires numeric type, got ${typeName(t)}`, expr.line, expr.col);
+          return null;
+        }
+        // An unsigned type has no negative values, so negation has no meaning
+        // there. Wrapping negation is still available as `0 - x`, which says
+        // what it does.
+        if (isUnsigned(t)) {
+          errAt(ctx, `unary '-' is not defined on ${typeName(t)}`, expr.line, expr.col,
+            1, `${typeName(t)} has no negative values`, `use \`0 - x\` for wrapping negation`);
           return null;
         }
         return t;
@@ -985,8 +1047,16 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx): WacType | null {
     }
 
     case "binary": {
-      const lt = inferExpr(expr.left, env, ctx);
-      const rt = inferExpr(expr.right, env, ctx);
+      // An operand that is a bare literal takes its type from the other side,
+      // so `x * 2` works whatever integer type x has. Infer the left first,
+      // offer it to the right, then — if the left was itself a literal and so
+      // guessed its own width — re-infer it against what the right turned out
+      // to be, which is what makes `2 * x` work as well as `x * 2`.
+      let lt = inferExpr(expr.left, env, ctx, expected);
+      const rt = inferExpr(expr.right, env, ctx, lt ?? expected);
+      if (expr.left.kind === "int" && rt && isInteger(rt) && lt && !typeEq(lt, rt)) {
+        lt = inferExpr(expr.left, env, ctx, rt);
+      }
       if (!lt || !rt) return null;
       return checkBinaryOp(expr.op, lt, rt, expr.line, expr.col, ctx);
     }
@@ -1292,7 +1362,7 @@ function checkArgList(
   }
   const n = Math.min(args.length, params.length);
   for (let i = 0; i < n; i++) {
-    const at = inferExpr(args[i], env, ctx);
+    const at = inferExpr(args[i], env, ctx, params[i]);
     if (at) {
       // If the argument sits on a later line than the call opens on, point
       // the diagnostic's leading context back at the call line.
@@ -1425,7 +1495,7 @@ function inferConstruct(
         errAt(ctx, `struct '${ctype.name}' has no field '${name}'`, expr.line, expr.col);
         continue;
       }
-      const vt = inferExpr(val, env, ctx);
+      const vt = inferExpr(val, env, ctx, field.type);
       if (vt) checkAssign(field.type, vt, val.line, val.col, ctx);
     }
   } else if (args.length === 0) {
@@ -1443,7 +1513,7 @@ function inferConstruct(
     }
     const n = Math.min(args.length, fields.length);
     for (let i = 0; i < n; i++) {
-      const at = inferExpr(args[i], env, ctx);
+      const at = inferExpr(args[i], env, ctx, fields[i].type);
       if (at) checkAssign(fields[i].type, at, args[i].line, args[i].col, ctx);
     }
     for (let i = n; i < args.length; i++) inferExpr(args[i], env, ctx);
@@ -1464,7 +1534,7 @@ function inferArrNew(
     // assignment does [see checkLval lv-index and arrays.md].
     const written = isPackedElem(elem) ? T_I32 : elem;
     for (const e of fixed) {
-      const et = inferExpr(e, env, ctx);
+      const et = inferExpr(e, env, ctx, written);
       if (et) checkAssign(written, et, e.line, e.col, ctx);
     }
   } else if (size !== null) {

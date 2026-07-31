@@ -3932,3 +3932,53 @@ Deno.test(`[§wac-usign-clamp-r4mk9xf] as~ i32 -> u32 clamps a negative to 0`, a
   eq(i.call("clamp", [-5]), 0, "clamp(-5) == 0");
   eq(i.call("clamp", [7]), 7, "clamp(7) == 7");
 });
+
+// ── Contextual literal typing ────────────────────────────────────────────────
+
+// §wac-litctx-w7kn2mf — a literal takes the integer type expected of it
+Deno.test(`[§wac-litctx-w7kn2mf] integer literals adopt the expected type`, async () => {
+  const i = await run(`
+    struct Hdr { u32 magic; u32 len; }
+    u32 addU(u32 a, u32 b) { return a + b; }
+    export u32 twice(u32 x)  { return x * 2; }
+    export u32 mask(u32 x)   { return x & 0xFF; }
+    export u32 leftLit(u32 x) { return 2 * x; }
+    export i64 wideInit()    { return 5; }
+    export u64 uMax()        { return 18446744073709551615; }
+    export u32 args()        { return addU(1, 2); }
+    export u32 fields()      { Hdr h = Hdr(7, 9); return h.magic + h.len; }
+    export u32 elems()       { u32[] a = u32[](1, 4000000000); return a[1]; }
+  `);
+  eq(i.call("twice", [2147483648]), 0, "u32 * 2 wraps — literal is u32, not i32");
+  eq(i.call("mask", [0xDEAD]), 0xAD, "hex literal adopts u32");
+  eq(i.call("leftLit", [2147483648]), 0, "literal on the left of the operator too");
+  eq(i.call("wideInit", []), 5n, "i64 n = 5 — previously an error");
+  eq(i.call("uMax", []), 18446744073709551615n, "a decimal only u64 can hold");
+  eq(i.call("args", []), 3, "call arguments adopt the parameter type");
+  eq(i.call("fields", []), 16, "struct fields adopt the field type");
+  eq(i.call("elems", []), 4000000000, "array literal elements adopt the element type");
+});
+
+// §wac-litctx-nofit-k3mq8wl — adoption requires the value to fit
+Deno.test(`[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected`, () => {
+  const bad = (src: string) => {
+    const r = wacCompile(new Map([["main.wac", src]]), "main.wac");
+    return !r.ok;
+  };
+  eq(bad(`u32 f() { return -1; }`), true, "-1 has no u32 reading");
+  eq(bad(`i32 f() { return 5000000000; }`), true, "5000000000 exceeds i32");
+  eq(bad(`u32 f() { return 5000000000; }`), true, "5000000000 exceeds u32");
+  eq(bad(`u64 f() { return 18446744073709551616; }`), true, "past u64 max");
+  eq(bad(`i64 f() { return 9223372036854775808; }`), true, "needs u64, none expected");
+  eq(bad(`u32 f(i32 x) { return x; }`), true, "a variable still never coerces");
+});
+
+// §wac-litctx-minint-p9fk4wq — the most negative value is spellable in decimal
+Deno.test(`[§wac-litctx-minint-p9fk4wq] -2147483648 is an i32`, async () => {
+  const i = await run(`
+    export i32 minI32() { return -2147483648; }
+    export i64 minI64() { return -9223372036854775808; }
+  `);
+  eq(i.call("minI32", []), -2147483648, "i32 min");
+  eq(i.call("minI64", []), -9223372036854775808n, "i64 min");
+});
