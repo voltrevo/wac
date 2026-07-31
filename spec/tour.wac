@@ -135,6 +135,8 @@ export f64 constRef() {
 // `/ % < <= > >=` and `>>`. Add, sub, mul, the bitwise ops, `<<`, `==` and
 // `!=` are bit-identical, so they emit the same instruction for both.
 // Unary `-` is NOT defined on unsigned — write `0 - x` for wrapping negation.
+// ERROR: u32 f(u32 x) { return x >>> 1; }   // redundant: `>>` is already
+//                                           // logical on an unsigned type
 //
 // Precedence, tightest first:
 //   unary - ! ~  |  as as! as~ as@  |  * / %  |  + -  |  << >> >>>
@@ -305,7 +307,8 @@ export i32 forever(i32 target) {
 //        after it — the loop can now finish.
 
 // switch has NO fallthrough — each case is its own block. Scrutinee and case
-// values must be i32. Compiles to br_table.
+// values must be a 32-bit integer — i32 or u32, since br_table dispatches on
+// 32 bits and signedness plays no part in an equality match.
 export i32 classify(i32 day) {
   switch (day) {
     case 0: { return 0; }
@@ -314,7 +317,8 @@ export i32 classify(i32 day) {
   }
 }
 
-// Ternary: both branches must agree on type. For reference branches the result
+// Ternary: both branches must agree on type, and a bare literal branch adopts
+// the other's type, so `u32 x = c ? 1 : 2` works. For reference branches the result
 // type is their closest common ancestor (walk both parent chains, take the
 // nearest shared struct). No common ancestor is a compile error.
 export i32 ternary(i32 a, i32 b) { return a > b ? a : b; }

@@ -841,7 +841,7 @@ Deno.test("wacTypeCheck: bitwise type mismatch (i32 & i64)", () => {
 });
 
 Deno.test("wacTypeCheck: shift on float is error", () => {
-  fail("export f64 bad(f64 x) { return x << 1; }", "i32 or i64");
+  fail("export f64 bad(f64 x) { return x << 1; }", "requires an integer type");
 });
 
 // ── String literal type ───────────────────────────────────────────────────────

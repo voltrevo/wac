@@ -324,6 +324,13 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         if (baseT.kind === "prim" && baseT.name === "string") {
           if (fe.name === "slice") return { kind: "prim", name: "string", line: 0, col: 0 };
           if (fe.name === "indexOf") return I32;
+          if (fe.name === "toBytes") {
+            return {
+              kind: "array",
+              elem: { kind: "prim", name: "u8", line: 0, col: 0 },
+              line: 0, col: 0,
+            };
+          }
         }
         const sName = structName(baseT);
         if (sName) {
@@ -1399,6 +1406,11 @@ class FuncEmitter {
           this.emitExpr(fe.expr, env); // push string
           for (const arg of e.args) this.emitExpr(arg, env);
           this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_indexof")!)); // call __str_indexof
+          return;
+        }
+        if (fe.name === "toBytes") {
+          this.emitExpr(fe.expr, env); // push string
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_to_bytes")!));
           return;
         }
       }

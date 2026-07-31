@@ -93,13 +93,24 @@ export i64 shiftLogic64(i64 x, i32 n) { return x >>> n; }
 
 `[§wac-shr-u64-2jujzws]` `shiftLogic64(-16, 4)` returns `1152921504606846975`.
 
-`>>>` requires `i32` or `i64`, like the other shifts.
+`>>>` requires an integer type, like the other shifts. On an unsigned type it
+is a compile error rather than a synonym: `>>` there is already the logical
+shift, so `>>>` asks for what it is already getting, and rejecting it keeps
+`>>>` a signal that a *signed* value is deliberately being shifted as unsigned.
+
+```wac
+export u32 bad(u32 x) { return x >>> 1; }   // error: '>>>' is redundant on u32
+export u32 good(u32 x) { return x >> 1; }   // logical, because x is unsigned
+```
+
+`[§wac-shr-u-redundant-m3kq7wn]` `x >>> 1` on a `u32` is a compile error;
+`x >> 1` compiles and shifts logically.
 
 ```wac
 export f64 badShift(f64 x) { return x >>> 1; }   // error: f64 not allowed
 ```
 
-`[§wac-shr-u-float-s95dlzw]` This is a compile error: `'>>>' requires i32 or i64, got f64`.
+`[§wac-shr-u-float-s95dlzw]` This is a compile error: `'>>>' requires an integer type, got f64`.
 
 Logical (`&&`, `||`, `!`) require `bool` operands, return `bool`. Short-circuit
 evaluation.
