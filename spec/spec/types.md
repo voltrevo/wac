@@ -35,6 +35,46 @@ export i32 wrap32() { return 2147483647 + 1; }
 
 No implicit conversions between any types.
 
+### Integer literals
+
+Decimal and hex literals are typed by different rules, because they are used to
+mean different things.
+
+A **decimal** literal is a magnitude. It takes the narrowest integer type that
+holds it: `42` is `i32`, `1000000000000` is `i64`.
+
+A **hex** literal is a bit pattern. Its width comes from the digit count — up
+to 8 digits is `i32`, 9 to 16 digits is `i64` — and the digits are read as
+two's complement at that width. So an 8-digit hex literal with the high bit set
+is negative, which lets masks and polynomials be written as the constants they
+are rather than as their signed decimal equivalents.
+
+```wac
+export i32 poly()     { return 0xEDB88320; }
+export i32 allOnes()  { return 0xFFFFFFFF; }
+export i32 signBit()  { return 0x80000000; }
+export i64 wide()     { return 0x0EDB88320; }
+```
+
+`[§wac-hexlit-i32-47spr0b]` `poly()` returns `-306674912`.
+`[§wac-hexlit-ones-9bg3jtx]` `allOnes()` returns `-1`.
+`[§wac-hexlit-sign-8wckct3]` `signBit()` returns `-2147483648`.
+`[§wac-hexlit-pad-9qw60ul]` `wide()` returns `3988292384` — padding to 9 digits selects `i64`, giving the positive value.
+
+More than 16 hex digits is an error, as is a decimal literal past the `i64`
+range.
+
+Underscores may be used as separators anywhere after the first digit, in either
+notation, and carry no meaning. They are removed before the digits are counted,
+so they cannot change a literal's width.
+
+```wac
+export i32 grouped()  { return 0xEDB8_8320; }
+export i32 million()  { return 1_000_000; }
+```
+
+`[§wac-numsep-qpeegkw]` `grouped()` returns `-306674912` and `million()` returns `1000000`.
+
 ### bool
 
 A distinct type. `true` is 1, `false` is 0, but `bool` is not interchangeable

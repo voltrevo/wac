@@ -237,6 +237,43 @@ Deno.test("[§wac-shift64-rhgzpth] shiftMixed(1, 32) returns 4294967296n", async
   eq(inst.call("shiftMixed", [1n, 32]), 4294967296n, "1 << 32");
 });
 
+// ── §wac-hexlit-* / §wac-numsep-* — integer literal notation ────────────────
+//
+// Hex is a bit pattern typed by digit count; decimal is a magnitude. Values
+// verified in Python: 0xEDB88320 - (1<<32) == -306674912, and 0x0EDB88320 at 9
+// digits stays positive at 3988292384. wacIntLit.test.ts covers the rule
+// exhaustively at the unit level; these tags check it end to end through the
+// emitted binary, where a wrong width would encode a different constant.
+
+Deno.test("[§wac-hexlit-i32-47spr0b] poly() returns -306674912", async () => {
+  const inst = await run(`export i32 poly() { return 0xEDB88320; }`);
+  eq(inst.call("poly", []), -306674912, "CRC-32 polynomial as i32");
+});
+
+Deno.test("[§wac-hexlit-ones-9bg3jtx] allOnes() returns -1", async () => {
+  const inst = await run(`export i32 allOnes() { return 0xFFFFFFFF; }`);
+  eq(inst.call("allOnes", []), -1, "0xFFFFFFFF");
+});
+
+Deno.test("[§wac-hexlit-sign-8wckct3] signBit() returns -2147483648", async () => {
+  const inst = await run(`export i32 signBit() { return 0x80000000; }`);
+  eq(inst.call("signBit", []), -2147483648, "0x80000000");
+});
+
+Deno.test("[§wac-hexlit-pad-9qw60ul] wide() returns 3988292384n", async () => {
+  const inst = await run(`export i64 wide() { return 0x0EDB88320; }`);
+  eq(inst.call("wide", []), 3988292384n, "9 digits selects i64");
+});
+
+Deno.test("[§wac-numsep-qpeegkw] underscores are separators", async () => {
+  const inst = await run(`
+    export i32 grouped() { return 0xEDB8_8320; }
+    export i32 million() { return 1_000_000; }
+  `);
+  eq(inst.call("grouped", []), -306674912, "0xEDB8_8320 == 0xEDB88320");
+  eq(inst.call("million", []), 1000000, "1_000_000");
+});
+
 // ── §wac-shr-s / §wac-shr-u — arithmetic vs logical right shift ──────────────
 //
 // Expected values are the defining difference between the two wasm opcodes:
