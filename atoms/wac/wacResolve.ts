@@ -38,6 +38,17 @@ export type FuncEntry = {
 
 // A struct type entry in the flat type table.
 export type StructEntry = {
+  /**
+   * Set when this struct was generated for an `enum` rather than written by hand:
+   * `"base"` for the enum's own struct, `"variant"` for one of its variants.
+   *
+   * What needs it is defaultability. The base struct's only field is the i32 tag,
+   * which has a default, so the ordinary rule concluded that an enum has a default —
+   * but a bare base is no variant at all, and a default-constructed variant carries
+   * tag 0 rather than its own. Both are values no `match` can handle, and they were
+   * reachable through `S()` on a struct with an enum field and through `E[n]()`.
+   */
+  enumRole?: "base" | "variant";
   structDecl: StructDecl;
   /** Declared struct name — only unique within its own file */
   name: string;
@@ -398,6 +409,7 @@ export function wacResolve(
         parent: null, fields: [tagField], methods: [], line, col,
       };
       const base: StructEntry = {
+        enumRole: "base",
         structDecl: baseDecl, name, typeIndex: structs.length, filePath,
         methods: new Map(), parentEntry: null,
       };
@@ -425,6 +437,7 @@ export function wacResolve(
           methods: [], line: v.line, col: v.col,
         };
         const vEntry: StructEntry = {
+          enumRole: "variant",
           structDecl: variantDecl, name: v.name, typeIndex: structs.length,
           filePath, methods: new Map(), parentEntry: base,
         };
