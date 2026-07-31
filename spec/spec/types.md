@@ -162,8 +162,10 @@ export i32 million()  { return 1_000_000; }
 ### Float representation
 
 `f64.toBits(x)` is the IEEE 754 bit pattern of `x` as a `u64`, and
-`f64.fromBits(b)` is the reverse. Both are reinterpretations — the bits are
-unchanged and nothing is rounded, checked or trapped.
+`f64.fromBits(b)` is the reverse. `f32` has the same pair against `u32`. All four
+are reinterpretations — the bits are unchanged and nothing is rounded, checked or
+trapped. Each float pairs only with the unsigned integer of its own width; there is
+no conversion between widths hiding in them.
 
 ```wac
 export u64 one()  { return f64.toBits(1.0); }
@@ -176,6 +178,13 @@ export f64 back() { return f64.fromBits(0x3FF0000000000000); }
 `x`, and the two round-trip NaN's payload bits unchanged.
 `[§wac-f64bits-zero-w2nk6dq]` `f64.toBits(-0.0) != f64.toBits(0.0)` — the sign bit
 is visible even though `-0.0 == 0.0`.
+
+```wac
+export u32 oneF32() { return f32.toBits(1.0 as~ f32); }
+```
+
+`[§wac-f32bits-m4kq2wp]` `oneF32()` returns `0x3F800000`, and
+`f32.fromBits(f32.toBits(x)) == x` for any non-NaN `f32`.
 
 This is the only way to see a float's representation. Without it a program cannot
 decompose a float into sign, exponent and mantissa, so nothing that needs the
