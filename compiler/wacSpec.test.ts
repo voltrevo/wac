@@ -237,6 +237,81 @@ Deno.test("[§wac-shift64-rhgzpth] shiftMixed(1, 32) returns 4294967296n", async
   eq(inst.call("shiftMixed", [1n, 32]), 4294967296n, "1 << 32");
 });
 
+// ── §wac-fmod-* — float remainder ────────────────────────────────────────────
+//
+// JavaScript's % on numbers is C fmod, so it is a valid oracle for the f64 case
+// and every expected value below was cross-checked against Python's math.fmod.
+// The values are chosen to fail loudly for a wrong implementation:
+//   - modF(1.0, 0.1): a - trunc(a/b)*b gives -2.2e-16 (wrong sign, wrong
+//     magnitude) because 1.0/0.1 is 10.000000000000002.
+//   - modF(1e300, 3.0): the naive form gives garbage, since trunc(1e300/3) has
+//     no fractional precision left to subtract with.
+//   - Before float % was implemented it emitted f64.div, so modF(7.0, 2.0)
+//     returned 3.5 — every one of these caught that.
+
+Deno.test("[§wac-fmod-ox2ga90] modF(7.0, 2.0) returns 1.0", async () => {
+  const inst = await run(`export f64 modF(f64 a, f64 b) { return a % b; }`);
+  eq(inst.call("modF", [7.0, 2.0]), 1.0, "7 % 2");
+  eq(inst.call("modF", [5.5, 1.5]), 1.0, "5.5 % 1.5");
+});
+
+Deno.test("[§wac-fmod-round-lji73wg] modF(1.0, 0.1) is exact, not trunc-based", async () => {
+  const inst = await run(`export f64 modF(f64 a, f64 b) { return a % b; }`);
+  const got = inst.call("modF", [1.0, 0.1]) as number;
+  eq(got, 0.09999999999999995, "1.0 % 0.1");
+  eq(got, 1.0 % 0.1, "matches the C fmod definition");
+  if (got < 0) throw new Error("remainder must not be negative for positive operands");
+});
+
+Deno.test("[§wac-fmod-sign-l3ief80] the sign follows the left operand", async () => {
+  const inst = await run(`export f64 modF(f64 a, f64 b) { return a % b; }`);
+  eq(inst.call("modF", [-7.0, 2.0]), -1.0, "-7 % 2");
+  eq(inst.call("modF", [7.0, -2.0]), 1.0, "7 % -2");
+  eq(inst.call("modF", [-7.0, -2.0]), -1.0, "-7 % -2");
+  // -0.0 must stay negative, so the result cannot be built from |x| alone.
+  const negZero = inst.call("modF", [-0.0, 5.0]) as number;
+  if (!Object.is(negZero, -0)) throw new Error(`-0.0 % 5.0 gave ${negZero}, expected -0`);
+});
+
+Deno.test("[§wac-fmod-large-wfr4moy] modF(1e300, 3.0) returns exactly 0.0", async () => {
+  const inst = await run(`export f64 modF(f64 a, f64 b) { return a % b; }`);
+  eq(inst.call("modF", [1e300, 3.0]), 0.0, "1e300 % 3");
+  eq(inst.call("modF", [1e16, 3.0]), 1.0, "1e16 % 3");
+  eq(inst.call("modF", [123456.789, 1000.0]), 456.7890000000043, "123456.789 % 1000");
+});
+
+Deno.test("[§wac-fmod-zero-f9hnqhr] division by zero is NaN; modulo infinity is the dividend", async () => {
+  const inst = await run(`
+    export f64 modF(f64 a, f64 b) { return a % b; }
+    export f64 inf() { return 1.0 / 0.0; }
+  `);
+  const nan = inst.call("modF", [7.0, 0.0]) as number;
+  if (!Number.isNaN(nan)) throw new Error(`7.0 % 0.0 gave ${nan}, expected NaN`);
+  const infinity = inst.call("inf", []) as number;
+  eq(inst.call("modF", [7.0, infinity]), 7.0, "7 % inf");
+  const infMod = inst.call("modF", [infinity, 2.0]) as number;
+  if (!Number.isNaN(infMod)) throw new Error(`inf % 2.0 gave ${infMod}, expected NaN`);
+});
+
+Deno.test("[§wac-fmod-f32-t52576z] f32 remainder", async () => {
+  const inst = await run(`
+    export f32 modF32(f32 a, f32 b) { return a % b; }
+    export f32 modF32Compound(f32 a, f32 b) { f32 x = a; x %= b; return x; }
+  `);
+  eq(inst.call("modF32", [5.5, 1.5]), 1.0, "f32 5.5 % 1.5");
+  eq(inst.call("modF32", [7.0, 2.0]), 1.0, "f32 7 % 2");
+  eq(inst.call("modF32Compound", [7.0, 2.0]), 1.0, "f32 7 %= 2");
+});
+
+Deno.test("[§wac-fmod-ox2ga90] compound %= uses the same remainder", async () => {
+  const inst = await run(`
+    export f64 modAssign(f64 a, f64 b) { f64 x = a; x %= b; return x; }
+  `);
+  eq(inst.call("modAssign", [7.0, 2.0]), 1.0, "7 %= 2");
+  eq(inst.call("modAssign", [1.0, 0.1]), 0.09999999999999995, "1.0 %= 0.1");
+  eq(inst.call("modAssign", [-7.0, 2.0]), -1.0, "-7 %= 2");
+});
+
 // ── §wac-hexlit-* / §wac-numsep-* — integer literal notation ────────────────
 //
 // Hex is a bit pattern typed by digit count; decimal is a magnitude. Values

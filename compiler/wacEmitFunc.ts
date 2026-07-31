@@ -40,7 +40,7 @@ export type WasmTypeCtx = {
   /** Wasm type index for the i8 string array type */
   stringTypeIdx: number;
   /** Wasm function indices for built-in string helper functions (by name) */
-  strHelperIdx: Map<string, number>;
+  helperIdx: Map<string, number>;
   /** All fields (including inherited) for each struct, in order */
   structFields: Map<string, StructFieldInfo[]>;
   /** Mangled function name → wasm function index */
@@ -680,8 +680,8 @@ class FuncEmitter {
 
     // String operations via helper functions
     if (isStr) {
-      const cmpIdx = this.ctx.strHelperIdx.get("__str_cmp")!;
-      const concatIdx = this.ctx.strHelperIdx.get("__str_concat")!;
+      const cmpIdx = this.ctx.helperIdx.get("__str_cmp")!;
+      const concatIdx = this.ctx.helperIdx.get("__str_concat")!;
       if (op === "+") {
         this.emit(0x10, ...uleb(concatIdx)); // call __str_concat
         return;
@@ -738,7 +738,11 @@ class FuncEmitter {
       "-":   { i32:[0x6B], i64:[0x7D], f32:[0x93], f64:[0xA1] },
       "*":   { i32:[0x6C], i64:[0x7E], f32:[0x94], f64:[0xA2] },
       "/":   { i32:[0x6D], i64:[0x7F], f32:[0x95], f64:[0xA3] },
-      "%":   { i32:[0x6F], i64:[0x81], f32:[0x95], f64:[0xA3] },
+      // wasm has no f32.rem/f64.rem — float % is a call to the fmod helper,
+      // which takes both operands off the stack just as an opcode would.
+      "%":   { i32:[0x6F], i64:[0x81],
+               f32:[0x10, ...uleb(this.ctx.helperIdx.get("__fmodf")!)],
+               f64:[0x10, ...uleb(this.ctx.helperIdx.get("__fmod")!)] },
       "&":   { i32:[0x71], i64:[0x83], f32:[],     f64:[]     },
       "|":   { i32:[0x72], i64:[0x84], f32:[],     f64:[]     },
       "^":   { i32:[0x73], i64:[0x85], f32:[],     f64:[]     },
@@ -1046,7 +1050,7 @@ class FuncEmitter {
     if (t.kind === "prim" && t.name === "string") {
       this.emitExpr(e.expr, env);
       this.emitExpr(e.idx, env);
-      this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_idx")!)); // call __str_idx
+      this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_idx")!)); // call __str_idx
       return;
     }
     const elem = t.kind === "array" ? t.elem
@@ -1105,13 +1109,13 @@ class FuncEmitter {
         if (fe.name === "slice") {
           this.emitExpr(fe.expr, env); // push string
           for (const arg of e.args) this.emitExpr(arg, env);
-          this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_slice")!)); // call __str_slice
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_slice")!)); // call __str_slice
           return;
         }
         if (fe.name === "indexOf") {
           this.emitExpr(fe.expr, env); // push string
           for (const arg of e.args) this.emitExpr(arg, env);
-          this.emit(0x10, ...uleb(this.ctx.strHelperIdx.get("__str_indexof")!)); // call __str_indexof
+          this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_indexof")!)); // call __str_indexof
           return;
         }
       }
@@ -1549,7 +1553,10 @@ class FuncEmitter {
       "-":  { i32:[0x6B], i64:[0x7D], f32:[0x93], f64:[0xA1] },
       "*":  { i32:[0x6C], i64:[0x7E], f32:[0x94], f64:[0xA2] },
       "/":  { i32:[0x6D], i64:[0x7F], f32:[0x95], f64:[0xA3] },
-      "%":  { i32:[0x6F], i64:[0x81], f32:[0x95], f64:[0xA3] },
+      // See emitBinary: float % is a helper call, not an opcode.
+      "%":  { i32:[0x6F], i64:[0x81],
+              f32:[0x10, ...uleb(this.ctx.helperIdx.get("__fmodf")!)],
+              f64:[0x10, ...uleb(this.ctx.helperIdx.get("__fmod")!)] },
       "&":  { i32:[0x71], i64:[0x83], f32:[],     f64:[]     },
       "|":  { i32:[0x72], i64:[0x84], f32:[],     f64:[]     },
       "^":  { i32:[0x73], i64:[0x85], f32:[],     f64:[]     },
