@@ -105,10 +105,17 @@ function typeName(t: WacType): string {
 
 function isNumeric(t: WacType): boolean {
   return t.kind === "prim" &&
-    (t.name === "i32" || t.name === "i64" || t.name === "f32" || t.name === "f64");
+    (t.name === "i32" || t.name === "i64" || t.name === "u32" || t.name === "u64" ||
+     t.name === "f32" || t.name === "f64");
 }
 function isInteger(t: WacType): boolean {
-  return t.kind === "prim" && (t.name === "i32" || t.name === "i64");
+  return t.kind === "prim" &&
+    (t.name === "i32" || t.name === "i64" || t.name === "u32" || t.name === "u64");
+}
+/** True for the unsigned integer types. Signedness selects the wasm opcode
+ *  (div_u vs div_s, lt_u vs lt_s, shr_u vs shr_s); it never changes storage. */
+function isUnsigned(t: WacType): boolean {
+  return t.kind === "prim" && (t.name === "u32" || t.name === "u64");
 }
 function isFloat(t: WacType): boolean {
   return t.kind === "prim" && (t.name === "f32" || t.name === "f64");
@@ -1668,7 +1675,16 @@ function isLosslessNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "i32"    && tn === "f64")   ||
          (fn === "f32"    && tn === "f64")   ||
          (fn === "bool"   && tn === "i32")   ||
-         (fn === "i31ref" && tn === "i32");   // 31 bits always fit in 32
+         (fn === "bool"   && tn === "u32")   ||
+         (fn === "i31ref" && tn === "i32")   ||  // 31 bits always fit in 32
+         // Unsigned widenings. Every u32 fits in u64, in i64 and exactly in f64,
+         // so these are zero-extend / exact and never need a checked form.
+         (fn === "u32"    && tn === "u64")   ||
+         (fn === "u32"    && tn === "i64")   ||
+         (fn === "u32"    && tn === "f64");
+  // Deliberately absent: i32 <-> u32 and i64 <-> u64. They are the same bits but
+  // not the same values — a negative i32 has no u32 reading, and a u32 above
+  // 2^31-1 has no i32 reading. Use `as!` to check, or `as@` to reinterpret.
 }
 
 /** Pairs where `as@` has a genuinely distinct raw/bit-level form from `as~`
@@ -1678,7 +1694,20 @@ function isRawNumericCast(fn: string | null, tn: string | null): boolean {
   if (!fn || !tn) return false;
   return (fn === "i64" && tn === "i32") ||
          (fn === "f64" && tn === "i32") ||
-         (fn === "f32" && tn === "i32");
+         (fn === "f32" && tn === "i32") ||
+         // Same-width signedness changes: a pure reinterpretation of the bits,
+         // emitting no instructions at all. This is what `as@` means, so it is
+         // the right spelling for it — `as!` gives you the checked version.
+         (fn === "i32" && tn === "u32") ||
+         (fn === "u32" && tn === "i32") ||
+         (fn === "i64" && tn === "u64") ||
+         (fn === "u64" && tn === "i64") ||
+         // Unsigned narrowing and float->unsigned, matching the signed rows.
+         (fn === "u64" && tn === "u32") ||
+         (fn === "u64" && tn === "i32") ||
+         (fn === "i64" && tn === "u32") ||
+         (fn === "f64" && tn === "u32") ||
+         (fn === "f32" && tn === "u32");
 }
 
 function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
@@ -1694,7 +1723,28 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
          (fn === "i64"  && tn === "f32")  ||
          (fn === "i32"  && tn === "f32")  ||
          (fn === "i32"  && tn === "bool") ||
-         (fn === "i32"  && tn === "i31ref");  // 31-bit, may overflow
+         (fn === "i32"  && tn === "i31ref") ||  // 31-bit, may overflow
+         // Signedness changes at the same width: same bits, different value.
+         (fn === "i32"  && tn === "u32")  ||
+         (fn === "u32"  && tn === "i32")  ||
+         (fn === "i64"  && tn === "u64")  ||
+         (fn === "u64"  && tn === "i64")  ||
+         // Unsigned narrowing, mirroring the signed rows above.
+         (fn === "u64"  && tn === "u32")  ||
+         (fn === "u64"  && tn === "i32")  ||
+         (fn === "i64"  && tn === "u32")  ||
+         (fn === "u32"  && tn === "i32")  ||
+         // Unsigned <-> float. u32->f32 and u64->f64/f32 lose precision;
+         // float->unsigned may be fractional, negative, or out of range.
+         (fn === "u32"  && tn === "f32")  ||
+         (fn === "u64"  && tn === "f64")  ||
+         (fn === "u64"  && tn === "f32")  ||
+         (fn === "f64"  && tn === "u32")  ||
+         (fn === "f64"  && tn === "u64")  ||
+         (fn === "f32"  && tn === "u32")  ||
+         (fn === "f32"  && tn === "u64")  ||
+         (fn === "i32"  && tn === "u64")  ||  // negative has no u64 reading
+         (fn === "u32"  && tn === "bool");
 }
 
 // ── Type compatibility check (assignment / argument passing) ──────────────────

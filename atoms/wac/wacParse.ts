@@ -111,7 +111,7 @@ export type ParseResult = { program: Program; errors: ParseError[] };
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 const PRIM_TYPES = new Set([
-  "i32", "i64", "f32", "f64", "bool", "void", "string",
+  "i32", "i64", "u32", "u64", "f32", "f64", "bool", "void", "string",
   "anyref", "i31ref", "i8", "i16",
 ]);
 

@@ -6,6 +6,8 @@
 |----------|-----------|-------|
 | i32      | i32       | 32-bit signed integer, -2147483648 to 2147483647 |
 | i64      | i64       | 64-bit signed integer |
+| u32      | i32       | 32-bit unsigned integer, 0 to 4294967295 |
+| u64      | i64       | 64-bit unsigned integer, 0 to 18446744073709551615 |
 | f32      | f32       | 32-bit IEEE 754 float, ~7 decimal digits |
 | f64      | f64       | 64-bit IEEE 754 float, ~15 decimal digits |
 | bool     | i32       | Type-checked: conditionals must be bool, not interchangeable with i32 |
@@ -14,6 +16,37 @@
 | i16      | i16 (packed) | Array element only — no locals, params, or struct fields |
 
 Integer arithmetic wraps on overflow. Float arithmetic follows IEEE 754.
+
+### Signed and unsigned
+
+Wasm has no signed types — an `i32` is 32 bits, and signedness lives in the
+*instruction* (`div_s` vs `div_u`, `lt_s` vs `lt_u`, `shr_s` vs `shr_u`). wac
+works the same way: `u32` and `i32` compile to the same wasm type and the same
+storage, and the wac type decides which opcode is emitted. Nothing about the
+representation is visible.
+
+So the two differ only where the sign bit changes the answer:
+
+| operation | i32 | u32 |
+|---|---|---|
+| `/` `%` | signed | unsigned |
+| `<` `<=` `>` `>=` | signed | unsigned |
+| `>>` | arithmetic (sign-extends) | logical (zero-fills) |
+| `+` `-` `*` `&` `|` `^` `<<` `==` `!=` | identical — same bits either way |
+
+`>>>` still means "logical shift" and is accepted on unsigned types, where it
+is the same instruction as `>>`.
+
+```wac
+export u32 half(u32 x) { return x / (2 as@ u32); }
+export i32 halfSigned(i32 x) { return x / 2; }
+```
+
+`[§wac-udiv-3kf9wqm]` `half(4294967295)` returns `2147483647`, where
+`halfSigned(-1)` — the same 32 bits — returns `0`.
+
+There are no implicit conversions between signed and unsigned, in either
+direction. See [casts.md](casts.md) for how to move between them.
 
 ```wac
 export i32 int32()  { return 42; }

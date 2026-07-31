@@ -787,6 +787,97 @@ Deno.test("wasmBuildBin: i64 arithmetic", async () => {
 // The operands are 0x4321...8ACE and 0x1122...3488 with results computed in
 // Python, so that a truncation to 32 bits or a wrong operator width cannot
 // coincidentally produce the expected value.
+// u32/u64 share i32/i64's storage; only the opcode differs. Each case below is
+// one where signed and unsigned give *different* answers, so it fails if the
+// signed opcode is emitted by mistake. Values from Python.
+Deno.test("wasmBuildBin: unsigned arithmetic uses the unsigned opcodes", async () => {
+  const e = await inst(`
+    export u32 div32(u32 a, u32 b) { return a / b; }
+    export u32 rem32(u32 a, u32 b) { return a % b; }
+    export u32 shr32(u32 a, u32 b) { return a >> b; }
+    export i32 shr32s(i32 a, i32 b) { return a >> b; }
+    export bool lt32(u32 a, u32 b) { return a < b; }
+    export bool ge32(u32 a, u32 b) { return a >= b; }
+    export u32 sub32(u32 a, u32 b) { return a - b; }
+    export u64 div64(u64 a, u64 b) { return a / b; }
+    export bool lt64(u64 a, u64 b) { return a < b; }
+    export u64 mul64(u64 a, u64 b) { return a * b; }
+  `);
+  const M32 = 4294967295, M64 = 18446744073709551615n;
+  // Signed would give 0 (-1/3), 0xFFFFFFFF>>4 signed would give -1.
+  eq(e.div32(M32, 3), 1431655765, "u32 /");
+  eq(e.rem32(M32, 7), 3, "u32 %");
+  eq((e.shr32(0xDEADBEEF, 4) as number) >>> 0, 233495534, "u32 >> is logical");
+  eq(e.shr32s(0xDEADBEEF | 0, 4), -34939922, "i32 >> stays arithmetic");
+  eq(e.lt32(1, M32), 1, "u32 < : 1 < 4294967295");
+  eq(e.ge32(M32, 1), 1, "u32 >= : 4294967295 >= 1");
+  eq((e.sub32(3, 10) as number) >>> 0, 4294967289, "u32 - wraps");
+  eq(e.div64(M64, 3n), 6148914691236517205n, "u64 /");
+  eq(e.lt64(1n, M64), 1, "u64 <");
+  eq(BigInt.asUintN(64, e.mul64(0x123456789n, 0x9ABCDn) as bigint), 3097226520652725n, "u64 *");
+});
+
+// Same-width signedness changes move no bits: `as@` must emit nothing, and
+// `as!` must emit only a range check.
+Deno.test("wasmBuildBin: unsigned casts", async () => {
+  const e = await inst(`
+    export u32 raw(i32 a)      { return a as@ u32; }
+    export i32 rawBack(u32 a)  { return a as@ i32; }
+    export u64 widen(u32 a)    { return a as u32 as u64; }
+    export u32 chk(i32 a)      { return a as! u32; }
+    export i32 chkBack(u32 a)  { return a as! i32; }
+    export u32 clampNeg(i32 a) { return a as~ u32; }
+    export u32 satF(f64 x)     { return x as~ u32; }
+    export u32 rawF(f64 x)     { return x as@ u32; }
+    export f64 wideF(u64 x)    { return x as~ f64; }
+  `);
+  const M32 = 4294967295;
+  eq((e.raw(-1) as number) >>> 0, M32, "i32 -1 as@ u32 = 2^32-1");
+  eq(e.rawBack(M32), -1, "u32 2^32-1 as@ i32 = -1");
+  eq(BigInt.asUintN(64, e.widen(M32) as bigint), 4294967295n, "u32 -> u64 zero-extends");
+  eq((e.chk(5) as number) >>> 0, 5, "as! passes in range");
+  eq(e.chkBack(5), 5, "as! passes in range, back");
+  eq((e.clampNeg(-5) as number) >>> 0, 0, "as~ clamps negative to 0");
+  eq((e.satF(1e30) as number) >>> 0, M32, "as~ saturates to u32 max");
+  eq((e.rawF(NaN) as number) >>> 0, 0, "as@ maps NaN to 0");
+  eq(e.wideF(18446744073709551615n), 18446744073709552000, "u64 -> f64 rounds");
+});
+
+Deno.test("wasmBuildBin: unsigned checked casts trap out of range", async () => {
+  const e = await inst(`
+    export u32 chk(i32 a)     { return a as! u32; }
+    export i32 chkBack(u32 a) { return a as! i32; }
+    export u64 chk64(i64 a)   { return a as! u64; }
+    export u32 narrow(u64 a)  { return a as! u32; }
+  `);
+  const traps = (f: () => unknown) => {
+    try { f(); return false; } catch { return true; }
+  };
+  eq(traps(() => e.chk(-1)), true, "negative i32 -> u32 traps");
+  eq(traps(() => e.chkBack(4294967295)), true, "u32 above i32 max traps");
+  eq(traps(() => e.chk64(-1n)), true, "negative i64 -> u64 traps");
+  eq(traps(() => e.narrow(4294967296n)), true, "u64 above u32 max traps");
+  eq((e.narrow(4294967295n) as number) >>> 0, 4294967295, "u64 at u32 max is fine");
+});
+
+Deno.test("wasmBuildBin: unsigned in arrays, struct fields and funcrefs", async () => {
+  const e = await inst(`
+    struct Hdr { u32 magic; u64 len; }
+    u32 twice(u32 x) { return x * (2 as@ u32); }
+    export u32 elem() {
+      u32[] a = u32[2]();
+      a[0] = 4294967295 as@ u32;
+      a[1] = a[0] >> (4 as@ u32);
+      return a[1];
+    }
+    export u64 field()  { Hdr h = Hdr(0 as@ u32, (-1 as i64) as@ u64); return h.len; }
+    export u32 viaRef(u32 x) { fn[u32(u32)] f = twice; return f(x); }
+  `);
+  eq((e.elem() as number) >>> 0, 268435455, "u32[] element, logical shift");
+  eq(BigInt.asUintN(64, e.field() as bigint), 18446744073709551615n, "u64 struct field");
+  eq((e.viaRef(2147483648) as number) >>> 0, 0, "u32 through a funcref, wrapping");
+});
+
 Deno.test("wasmBuildBin: i64 literals as operands of binary ops", async () => {
   const e = await inst(`
     export i64 addLit(i64 x)  { return x + 1234605616436508552; }
