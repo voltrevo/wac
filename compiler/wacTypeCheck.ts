@@ -57,6 +57,24 @@ const T_I31  = prim("i31ref");
 /** Sentinel for the `null` literal — compatible with any T? */
 const T_NULL = prim("null");
 
+/** Is this the type of the `null` literal? */
+function isNullT(t: WacType): boolean {
+  return t.kind === "prim" && t.name === "null";
+}
+
+/**
+ * `T?` for a `T` that can hold null, or null when the type has no nullable form.
+ *
+ * Already-nullable types come back unchanged; a numeric primitive has no nullable
+ * form, so there is nothing to widen a `null` branch against.
+ */
+function nullableOf(t: WacType): WacType | null {
+  if (t.kind === "nullable") return t;
+  if (t.kind === "struct" || t.kind === "array" || t.kind === "funcref") return nullable(t);
+  if (t.kind === "prim" && t.name === "string") return nullable(t);
+  return null;
+}
+
 function structType(name: string, resolvedTypeIndex?: number): WacType {
   return { kind: "struct", name, resolvedTypeIndex, line: 0, col: 0 };
 }
@@ -1389,6 +1407,12 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
           expr.line, expr.col);
         return tt;
       }
+      // One branch being `null` makes the result nullable. Without this the wider
+      // side never wins, because `null` is assignable to no non-nullable type and no
+      // type is assignable to `null` — so `cond ? S(1) : null` was rejected outright
+      // for every struct, array and funcref, not just for enums.
+      if (isNullT(tt) && nullableOf(et) !== null) return nullableOf(et)!;
+      if (isNullT(et) && nullableOf(tt) !== null) return nullableOf(tt)!;
       // Other widenings (null → T?, T → T?, T? → S?): the wider side wins.
       if (isAssignable(et, tt, ctx)) return tt;
       if (isAssignable(tt, et, ctx)) return et;
@@ -2232,8 +2256,17 @@ function isNarrowingNumericCast(fn: string | null, tn: string | null): boolean {
 function enumOfType(t: WacType, ctx: Ctx): EnumEntry | null {
   if (t.kind !== "struct") return null;
   const found = ctx.fileScope.get(t.name);
-  if (found?.kind !== "enum") return null;
-  return found.enumEntry;
+  if (found?.kind === "enum") return found.enumEntry;
+  // A *variant* is an enum value too, so it can be matched. `match (Shape.Circle(2.0))`
+  // is the accidental way to reach this and `Circle c = ...; match (c)` the deliberate
+  // one; both were rejected with "match requires an enum value, got Circle", which
+  // names the value's type as the reason it cannot be used.
+  //
+  // The arms still have to cover the whole enum. Narrowing the requirement to what the
+  // static type admits would need flow analysis, and an arm that cannot be reached
+  // costs nothing — the tag comparison never selects it.
+  if (found?.kind === "variant") return found.enumEntry;
+  return null;
 }
 
 // ── Type compatibility check (assignment / argument passing) ──────────────────

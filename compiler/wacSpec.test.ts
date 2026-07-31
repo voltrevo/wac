@@ -4866,6 +4866,80 @@ Deno.test("[§enum-match-basic] the subject is evaluated exactly once", async ()
   eq(inst.call("calls", []), 1, "the subject expression ran once");
 });
 
+Deno.test("[§enum-match-variant-subject] a variant-typed value can be matched", async () => {
+  // `match (Shape.Circle(2.0))` types its subject as `Circle`, not `Shape`, and so did
+  // a variable declared `Circle c`. Both were rejected with "match requires an enum
+  // value, got Circle" — naming the value's own type as the reason it could not be
+  // used. A variant is an enum value; the arms still cover the whole enum, since
+  // narrowing that requirement to the static type would need flow analysis and an
+  // unreachable arm costs nothing.
+  const inst = await run(`${SHAPES}
+    export f64 direct() {
+      match (Shape.Rect(3.0, 4.0)) {
+        case Point:      return 0.0;
+        case Circle(r):  return r;
+        case Rect(w, h): return w * h;
+      }
+    }
+    export f64 viaVariable() {
+      Circle c = Shape.Circle(2.5);
+      match (c) {
+        case Point:      return 0.0;
+        case Circle(r):  return r;
+        case Rect(w, h): return w * h;
+      }
+    }
+  `);
+  eq(inst.call("direct", []), 12.0, "matched a construction expression");
+  eq(inst.call("viaVariable", []), 2.5, "matched a variable of variant type");
+});
+
+Deno.test("[§wac-ternary-null-3kx9ba2] a null branch makes a ternary nullable", async () => {
+  // `cond ? S(1) : null` was rejected outright: `null` is assignable to no
+  // non-nullable type and no type is assignable to `null`, so neither side could win
+  // the widening and the branches were called incompatible. Nothing to do with enums —
+  // every struct, array and funcref had it.
+  const inst = await run(`
+    struct S { i32 v; }
+    S? pick(bool y) { return y ? S(1) : null; }
+    S? pickFlipped(bool y) { return y ? null : S(2); }
+    export i32 taken()   { S? r = pick(true);         return r is null ? -1 : r!.v; }
+    export i32 skipped() { S? r = pick(false);        return r is null ? -1 : r!.v; }
+    export i32 flipped() { S? r = pickFlipped(false); return r is null ? -1 : r!.v; }
+    export i32 inLocal() { S? r = true ? S(3) : null; return r is null ? -1 : r!.v; }
+    export i32 arrays()  { i32[]? a = true ? i32[2]() : null; return a is null ? -1 : a!.len(); }
+  `);
+  eq(inst.call("taken", []), 1, "the value branch");
+  eq(inst.call("skipped", []), -1, "the null branch");
+  eq(inst.call("flipped", []), 2, "null on the left");
+  eq(inst.call("inLocal", []), 3, "as a local initialiser");
+  eq(inst.call("arrays", []), 2, "and for an array type");
+});
+
+Deno.test("[§wac-ternary-null-3kx9ba2] a ternary emits both branches at the result type", async () => {
+  // Accepting the above exposed the next layer: the emitter typed the ternary as its
+  // then-branch, so the block was declared non-nullable while the else branch pushed
+  // `ref.null any`. Two places computing one type and disagreeing — the same shape as
+  // the i64-literal split. The branches are now emitted against the result type, which
+  // is what a `null` branch needs to emit a typed null at all.
+  const inst = await run(`
+    struct S { i32 v; }
+    export f64 floatBranch(bool y) { return y ? 1.5 : 2.5; }
+    export i32 nested(bool a, bool b) {
+      S? r = a ? (b ? S(1) : null) : S(2);
+      return r is null ? -1 : r!.v;
+    }
+    export i32 outer(bool a) {
+      S? r = a ? null : (true ? S(4) : null);
+      return r is null ? -1 : r!.v;
+    }
+  `);
+  near(inst.call("floatBranch", [1]) as number, 1.5, "an ordinary ternary is unaffected");
+  eq(inst.call("nested", [1, 0]), -1, "a null nested inside another ternary");
+  eq(inst.call("nested", [1, 1]), 1, "and its value branch");
+  eq(inst.call("outer", [0]), 4, "a nullable ternary inside a nullable ternary");
+});
+
 Deno.test("[§enum-name-identity] two files may declare the same enum name", async () => {
   // Three separate bugs met here, all of them "resolved by name where identity was
   // meant", and none of them reachable with a single file:
