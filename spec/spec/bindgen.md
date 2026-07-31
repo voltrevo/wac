@@ -257,6 +257,29 @@ mutations back to the caller automatically: a `void`-returning function's
 array parameter is copied in, and whatever it does to that copy inside wasm
 is simply discarded once the call returns.
 
+### How the copy happens
+
+Arrays and strings move through a linear-memory staging buffer, exported as
+`__bind_mem`. Going in, the caller writes the whole array with one
+`TypedArray.set` and a single call copies it into a GC array wasm-side; coming
+out, the reverse. So a transfer costs a constant number of boundary crossings
+rather than one per element, which for a 1 MiB byte array is the difference
+between three calls and two million.
+
+The buffer starts at zero pages and grows on demand, so a module that never moves
+bulk data pays nothing for it. Growing detaches the previous `ArrayBuffer`, which
+is why the generated code re-reads `__bind_mem.buffer` after every grow rather
+than caching a view.
+
+The buffer is reused by every transfer, so a returned typed array is always a
+copy rather than a view onto it.
+
+```wac
+export i8[] echoBytes(i8[] data) { return data; }
+```
+
+`[§wac-bind-bulk-70zh5tg]` `echoBytes` round-trips byte arrays unchanged at 0, 1, 65535, 65536 and 65537 bytes — the sizes either side of a wasm page — and a previously returned array is unaffected by a later call.
+
 A function whose caller needs to observe a mutation must return the array
 explicitly — see `bubbleSort` above, which returns `arr` rather than being
 `void`. This applies uniformly regardless of how many array parameters a
