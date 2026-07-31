@@ -238,6 +238,12 @@ function annotateStmt(s: Stmt, scope: FileScope): void {
         for (const st of c.body) annotateStmt(st, scope);
       }
       return;
+    case "match":
+      annotateExpr(s.subject, scope);
+      for (const arm of s.arms) {
+        for (const st of arm.body) annotateStmt(st, scope);
+      }
+      return;
     case "return":  if (s.value) annotateExpr(s.value, scope); return;
     case "break": case "continue": case "trap": return;
     case "block":   return annotateBlock(s.block, scope);
@@ -261,6 +267,16 @@ function annotateProgram(prog: Program, scope: FileScope): void {
         annotateType(m.returnType, scope);
         for (const p of m.params) annotateType(p.type, scope);
         annotateBlock(m.body, scope);
+      }
+    } else if (item.tag === "enum") {
+      // Payload types need annotating for the same reason struct fields do: the
+      // generated variant structs (phase 1b) reuse these very type objects, and
+      // they are not in `prog.items` for this walk to reach. Without this, a
+      // payload of struct type keys by name while every other reference to the
+      // same struct keys by index — so `P[]` interns as two array types and a
+      // variant constructor fails wasm validation.
+      for (const v of item.variants) {
+        for (const f of v.fields) annotateType(f.type, scope);
       }
     }
   }

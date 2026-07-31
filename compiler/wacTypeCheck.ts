@@ -500,6 +500,12 @@ function stmtHasLoopBreak(stmt: Stmt): boolean {
       if (stmt.els.kind === "else-if") return stmtHasLoopBreak(stmt.els.stmt);
       return hasLoopBreak(stmt.els.block);
     }
+    // Unlike `switch`, a `match` arm is not a break target — arms have no
+    // fallthrough, so there is nothing for a `break` to mean locally and the
+    // emitter lets it bind to the enclosing loop. Missing this let
+    // `while (true) { match (e) { case A: break; ... } }` pass the return check as
+    // an infinite loop, and then trap on the `unreachable` the emitter appends.
+    case "match": return stmt.arms.some(a => a.body.some(stmtHasLoopBreak));
     // A break in any of these binds to the inner construct, not to us.
     case "while": case "for": case "dowhile": case "switch": return false;
     default: return false;
