@@ -36,6 +36,25 @@ export i32 testEscapes() {
 `[§wac-str-esc-h9qm3v7]` `testEscapes()` returns `5` — each escape is a single
 byte.
 
+An escape is one byte wherever it sits, including with text after it. The
+resolved character is never rescanned, so a `\\` does not consume what follows
+it:
+
+```wac
+export i32 escMid()    { return "a\\b".len(); }
+export i32 escDouble() { return "\\\\".len(); }
+export i32 escRun()    { return "[\\]^_".len(); }
+```
+
+`[§wac-str-esc-mid-w7kn3qf]` `escMid()` returns `3` — `a`, one backslash, `b`.
+`[§wac-str-esc-dbl-h2mf9xp]` `escDouble()` returns `2` — two backslashes, not one.
+`[§wac-str-esc-run-r5jw4kt]` `escRun()` returns `5` — a backslash mid-run leaves
+the following characters alone.
+
+These are separate requirements from the one above because a literal whose only
+escape sits at the very end cannot distinguish a correct implementation from one
+that rescans: there is nothing after the escape left to lose.
+
 ### Length
 
 `.len()` returns byte length.
@@ -182,6 +201,57 @@ s[0] = "H";              // error: strings are immutable
 ```
 
 `[§wac-str-immut-m3hd7qz]` Assigning to a string index is a compile error.
+
+### Building a string from a codepoint
+
+`string.fromCodepoint(cp)` returns the one-character string whose Unicode scalar
+is `cp`, UTF-8 encoded.
+
+This is the only way to reach a character that is not already written down
+somewhere. Literals, `+` and `slice` can only produce characters that appear in
+the source or in an input, so without it text whose content is computed — a
+`\uXXXX` escape decoder, a codepoint arithmetic routine — cannot be expressed.
+
+```wac
+export string letterA()  { return string.fromCodepoint(65); }
+export i32    emojiLen() { return string.fromCodepoint(128512).len(); }
+```
+
+`[§wac-str-fromcp-k8nf3wq]` `letterA()` returns `"A"`.
+`[§wac-str-fromcp-utf8-r4mj7xt]` The result is UTF-8, so its `len()` is 1, 2, 3 or
+4 bytes according to the scalar: `128512` gives 4.
+
+It traps rather than substituting a replacement character when the value has no
+encoding, because there is no correct string to return and a silent U+FFFD would
+hide the caller's mistake.
+
+`[§wac-str-fromcp-trap-h6qw2np]` A negative value, a value above `0x10FFFF`, or a
+surrogate in `0xD800..0xDFFF` traps.
+
+### Building a string from bytes
+
+`string.fromBytes(bytes)` returns a string holding a copy of `bytes`, which are
+taken to be UTF-8.
+
+```wac
+export string hi() { return string.fromBytes(u8[]('h', 'i')); }
+```
+
+`[§wac-str-frombytes-p3kq7wn]` `hi()` returns `"hi"`.
+`[§wac-str-frombytes-utf8-m9fj2xr]` The bytes are copied verbatim, so
+`u8[](0xC3, 0xA9)` gives `"é"` — one character, two bytes.
+
+It is a copy, not a view. Writing to the array afterwards does not change the
+string, which is what lets `string` stay immutable.
+
+`[§wac-str-frombytes-copy-w4nk8dt]` After `string s = string.fromBytes(b);`,
+assigning to `b[0]` leaves `s` unchanged.
+
+The bytes are **not validated**. Ill-formed UTF-8 produces a string whose
+indexing returns `""` at the bad offset — the same thing that happens when
+`slice` lands in the middle of a character — and whose `len()` is still the byte
+count. Validating on every call would cost a second pass for a guarantee the type
+does not otherwise make; a caller that needs one should check before converting.
 
 ### String methods
 

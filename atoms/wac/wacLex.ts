@@ -129,6 +129,67 @@ export function wacLex(source: string): LexResult {
     emit("string", result, startLine, startCol);
   }
 
+  /**
+   * Character literal — `'a'`, `'\n'`, `'\''`.
+   *
+   * Emitted as an `int` token holding the Unicode codepoint in decimal, because
+   * wac has no character type: a character literal *is* an integer literal with
+   * a friendlier spelling. Typing, widening and emission then follow the same
+   * rules as any decimal literal, and nothing downstream needs to know.
+   *
+   * On a malformed literal an `int` token is still emitted, so one bad literal
+   * produces one error rather than derailing the parse behind it.
+   */
+  function lexChar(startLine: number, startCol: number): void {
+    advance(); // consume opening quote
+
+    if (pos >= source.length) {
+      errors.push({ message: `unterminated character literal`, line: startLine, col: startCol });
+      emit("int", "0", startLine, startCol);
+      return;
+    }
+
+    let cp: number;
+    if (peek() === "'") {
+      advance();
+      errors.push({ message: `empty character literal`, line: startLine, col: startCol });
+      emit("int", "0", startLine, startCol);
+      return;
+    }
+
+    if (peek() === "\\") {
+      advance();
+      const esc = advance();
+      const escapes: Record<string, number> = {
+        n: 0x0A, t: 0x09, r: 0x0D, "\\": 0x5C, "'": 0x27, '"': 0x22, "0": 0x00,
+      };
+      const mapped = escapes[esc];
+      if (mapped === undefined) {
+        errors.push({ message: `unknown escape sequence '\\${esc}'`, line: startLine, col: startCol });
+        cp = esc.codePointAt(0) ?? 0;
+      } else {
+        cp = mapped;
+      }
+    } else {
+      cp = source.codePointAt(pos)!;
+      advance();
+      // Above the BMP the source holds a surrogate pair, which is two units.
+      if (cp > 0xFFFF) advance();
+    }
+
+    if (peek() !== "'") {
+      errors.push({
+        message: `character literal must hold exactly one character`,
+        line: startLine,
+        col: startCol,
+      });
+      while (pos < source.length && peek() !== "'" && peek() !== "\n") advance();
+    }
+    if (peek() === "'") advance();
+
+    emit("int", String(cp), startLine, startCol);
+  }
+
   function lexNumber(startLine: number, startCol: number): void {
     let text = "";
     // Hex literal
@@ -167,6 +228,9 @@ export function wacLex(source: string): LexResult {
 
     // String literal
     if (ch === '"') { lexString(startLine, startCol); continue; }
+
+    // Character literal
+    if (ch === "'") { lexChar(startLine, startCol); continue; }
 
     // Number literal
     if (/[0-9]/.test(ch)) { lexNumber(startLine, startCol); continue; }

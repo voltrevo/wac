@@ -1446,6 +1446,278 @@ Deno.test("[§wac-const-struct-g9apxwr] writing any field of const struct is err
   `);
 });
 
+// ── §wac-str-fromcp-* — string.fromCodepoint ─────────────────────────────────
+
+Deno.test(`[§wac-str-fromcp-k8nf3wq] letterA() returns "A"`, async () => {
+  // Compared against a real literal, so the bytes have to match what the lexer
+  // and emitter produce for "A" — not merely be self-consistent.
+  const inst = await run(`
+    export bool test() { return string.fromCodepoint(65) == "A"; }
+  `);
+  eq(inst.call("test", []), true, `fromCodepoint(65) == "A"`);
+});
+
+Deno.test(`[§wac-str-fromcp-utf8-r4mj7xt] the result is UTF-8 at every width`, async () => {
+  // Each case is checked two ways: the byte length, and equality with the literal
+  // spelling of the same character. A wrong lead byte or a missing continuation
+  // byte fails the second even when the first passes.
+  const inst = await run(`
+    export bool eq1() { return string.fromCodepoint(65) == "A"; }
+    export bool eq2() { return string.fromCodepoint(233) == "é"; }
+    export bool eq3() { return string.fromCodepoint(26085) == "日"; }
+    export bool eq4() { return string.fromCodepoint(128512) == "😀"; }
+    export i32 len1() { return string.fromCodepoint(65).len(); }
+    export i32 len2() { return string.fromCodepoint(233).len(); }
+    export i32 len3() { return string.fromCodepoint(26085).len(); }
+    export i32 len4() { return string.fromCodepoint(128512).len(); }
+    export bool bounds() {
+      return string.fromCodepoint(0x7F).len() == 1
+          && string.fromCodepoint(0x80).len() == 2
+          && string.fromCodepoint(0x7FF).len() == 2
+          && string.fromCodepoint(0x800).len() == 3
+          && string.fromCodepoint(0xFFFF).len() == 3
+          && string.fromCodepoint(0x10000).len() == 4;
+    }
+  `);
+  eq(inst.call("eq2", []), true, "U+00E9 encodes as é");
+  eq(inst.call("eq3", []), true, "U+65E5 encodes as 日");
+  eq(inst.call("eq4", []), true, "U+1F600 encodes as 😀");
+  eq(inst.call("len1", []), 1, "ASCII is 1 byte");
+  eq(inst.call("len2", []), 2, "U+00E9 is 2 bytes");
+  eq(inst.call("len3", []), 3, "U+65E5 is 3 bytes");
+  eq(inst.call("len4", []), 4, "U+1F600 is 4 bytes");
+  eq(inst.call("bounds", []), true, "every width boundary lands in the right branch");
+});
+
+Deno.test(`[§wac-str-fromcp-trap-h6qw2np] values with no encoding trap`, async () => {
+  const inst = await run(`
+    export i32 low()   { return string.fromCodepoint(0xD800).len(); }
+    export i32 high()  { return string.fromCodepoint(0xDFFF).len(); }
+    export i32 big()   { return string.fromCodepoint(0x110000).len(); }
+    export i32 neg()   { return string.fromCodepoint(0 - 1).len(); }
+    export i32 justOk(){ return string.fromCodepoint(0xD7FF).len(); }
+    export i32 alsoOk(){ return string.fromCodepoint(0xE000).len(); }
+  `);
+  traps(() => inst.call("low", []), "a low surrogate has no UTF-8 form");
+  traps(() => inst.call("high", []), "a high surrogate has no UTF-8 form");
+  traps(() => inst.call("big", []), "above U+10FFFF");
+  traps(() => inst.call("neg", []), "negative");
+  // Either side of the surrogate block must still work, or the range check is
+  // too wide and would reject valid text.
+  eq(inst.call("justOk", []), 3, "U+D7FF is valid");
+  eq(inst.call("alsoOk", []), 3, "U+E000 is valid");
+});
+
+Deno.test(`[§wac-str-fromcp-k8nf3wq] arity and argument type are checked`, () => {
+  const a = err(`export string bad() { return string.fromCodepoint(); }`);
+  if (!a.includes("takes 1 argument")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export string bad() { return string.fromCodepoint(1.5); }`);
+  if (!b.includes("must be i32")) throw new Error(`unexpected: ${b}`);
+  const c = err(`export string bad() { return string.nosuch(1); }`);
+  if (!c.includes("no static method")) throw new Error(`unexpected: ${c}`);
+});
+
+// ── §wac-str-frombytes-* — string.fromBytes ──────────────────────────────────
+
+Deno.test(`[§wac-str-frombytes-p3kq7wn] hi() returns "hi"`, async () => {
+  const inst = await run(`
+    export bool test() { return string.fromBytes(u8[]('h', 'i')) == "hi"; }
+    export i32 len()   { return string.fromBytes(u8[]('h', 'i')).len(); }
+    export bool empty(){ return string.fromBytes(u8[0]()) == ""; }
+  `);
+  eq(inst.call("test", []), true, `fromBytes("hi") == "hi"`);
+  eq(inst.call("len", []), 2, "two bytes");
+  eq(inst.call("empty", []), true, "an empty array gives the empty string");
+});
+
+Deno.test(`[§wac-str-frombytes-utf8-m9fj2xr] bytes are copied verbatim`, async () => {
+  // Compared against literals, so the bytes must match what the lexer produced
+  // for the same characters — a byte-order or off-by-one error in the copy fails.
+  const inst = await run(`
+    export bool two()   { return string.fromBytes(u8[](0xC3, 0xA9)) == "é"; }
+    export bool three() { return string.fromBytes(u8[](0xE6, 0x97, 0xA5)) == "日"; }
+    export bool four()  { return string.fromBytes(u8[](0xF0, 0x9F, 0x98, 0x80)) == "😀"; }
+    export i32 twoLen() { return string.fromBytes(u8[](0xC3, 0xA9)).len(); }
+    export i32 longer() {
+      u8[] b = u8[300]();
+      for (i32 i = 0; i < 300; i++) { b[i] = 'x'; }
+      return string.fromBytes(b).len();
+    }
+  `);
+  eq(inst.call("two", []), true, "U+00E9 from its two UTF-8 bytes");
+  eq(inst.call("three", []), true, "U+65E5 from its three bytes");
+  eq(inst.call("four", []), true, "U+1F600 from its four bytes");
+  eq(inst.call("twoLen", []), 2, "len is the byte count, not the character count");
+  // Past any plausible inline threshold, so the copy loop is exercised properly.
+  eq(inst.call("longer", []), 300, "300 bytes copy");
+});
+
+Deno.test(`[§wac-str-frombytes-copy-w4nk8dt] the result is a copy, not a view`, async () => {
+  // The important one. Aliasing the caller's array would let a later write mutate
+  // a value the language guarantees is immutable, and nothing else would notice.
+  const inst = await run(`
+    export bool test() {
+      u8[] b = u8[]('a', 'b');
+      string s = string.fromBytes(b);
+      b[0] = 'z';
+      return s == "ab";
+    }
+    export bool sourceStillMutable() {
+      u8[] b = u8[]('a', 'b');
+      string s = string.fromBytes(b);
+      b[0] = 'z';
+      return b[0] == 'z';
+    }
+  `);
+  eq(inst.call("test", []), true, "the string is unaffected by a later write");
+  eq(inst.call("sourceStillMutable", []), true, "and the array is still writable");
+});
+
+Deno.test(`[§wac-str-frombytes-p3kq7wn] arity and argument type are checked`, () => {
+  const a = err(`export string bad() { return string.fromBytes(); }`);
+  if (!a.includes("takes 1 argument")) throw new Error(`unexpected: ${a}`);
+  const b = err(`export string bad() { return string.fromBytes(5); }`);
+  if (!b.includes("must be u8[]")) throw new Error(`unexpected: ${b}`);
+  // i8[] is the same storage but a different type, and signedness is the whole
+  // point of the distinction, so it must not be silently accepted.
+  const c = err(`export string bad(i8[] b) { return string.fromBytes(b); }`);
+  if (!c.includes("must be u8[]")) throw new Error(`unexpected: ${c}`);
+});
+
+// ── §wac-charlit-* — character literals are i32 codepoints ───────────────────
+
+Deno.test("[§wac-charlit-p4kn8wq] letterA() returns 97", async () => {
+  const inst = await run(`export i32 letterA() { return 'a'; }`);
+  eq(inst.call("letterA", []), 97, "'a' is 97");
+});
+
+Deno.test("[§wac-charlit-esc-h7mf2xj] escapes in character literals", async () => {
+  const inst = await run(`
+    export i32 newline() { return '\\n'; }
+    export i32 quote()   { return '\\''; }
+    export i32 tab()     { return '\\t'; }
+    export i32 cr()      { return '\\r'; }
+    export i32 nul()     { return '\\0'; }
+    export i32 bslash()  { return '\\\\'; }
+    export i32 dquote()  { return '\\"'; }
+  `);
+  eq(inst.call("newline", []), 10, "\\n is 10");
+  eq(inst.call("quote", []), 39, "\\' is 39");
+  eq(inst.call("tab", []), 9, "\\t is 9");
+  eq(inst.call("cr", []), 13, "\\r is 13");
+  eq(inst.call("nul", []), 0, "\\0 is 0");
+  eq(inst.call("bslash", []), 92, "\\\\ is 92");
+  eq(inst.call("dquote", []), 34, "\\\" is 34");
+});
+
+Deno.test("[§wac-charlit-cp-r3jw9kt] a character literal is a codepoint, not a byte", async () => {
+  // The distinction only shows above ASCII, so both cases are non-ASCII and are
+  // checked against the string byte length they are NOT equal to.
+  const inst = await run(`
+    export i32 emoji()    { return '😀'; }
+    export i32 eacute()   { return 'é'; }
+    export i32 eacuteLen() { return "é".len(); }
+  `);
+  eq(inst.call("emoji", []), 128512, "U+1F600 is 128512");
+  eq(inst.call("eacute", []), 233, "U+00E9 is 233");
+  eq(inst.call("eacuteLen", []), 2, "the same character is 2 UTF-8 bytes as a string");
+});
+
+Deno.test("[§wac-charlit-empty-m8qf5np] '' is a compile error", () => {
+  const msg = err(`export i32 bad() { return ''; }`);
+  if (!msg.includes("empty character literal")) {
+    throw new Error(`unexpected error: ${msg}`);
+  }
+});
+
+Deno.test("[§wac-charlit-multi-w2nk7dr] 'ab' is a compile error", () => {
+  const msg = err(`export i32 bad() { return 'ab'; }`);
+  if (!msg.includes("exactly one character")) {
+    throw new Error(`unexpected error: ${msg}`);
+  }
+});
+
+Deno.test("[§wac-charlit-p4kn8wq] character literals work as switch cases", async () => {
+  // The reason to have them at all: a byte scanner reads as case 'x'. This also
+  // proves they reach the emitter as ordinary integer constants, since switch
+  // requires i32 case values.
+  const inst = await run(`
+    export i32 classify(i32 c) {
+      switch (c) {
+        case '{': { return 1; }
+        case '}': { return 2; }
+        case '\\n': { return 3; }
+        default:  { return 0; }
+      }
+    }
+  `);
+  eq(inst.call("classify", [123]), 1, "'{' is 123");
+  eq(inst.call("classify", [125]), 2, "'}' is 125");
+  eq(inst.call("classify", [10]), 3, "'\\n' is 10");
+  eq(inst.call("classify", [65]), 0, "'A' hits default");
+});
+
+// ── §wac-struct-export-* — export on a struct, alone and with const ──────────
+
+Deno.test("[§wac-struct-export-m3kq8wp] only an exported struct can be imported", async () => {
+  const exported = new Map([
+    ["lib.wac", `export struct Open { i32 v; }`],
+    ["main.wac", `
+      import { Open } from "./lib.wac";
+      export i32 test() { return Open(7).v; }
+    `],
+  ]);
+  const r = wacCompile(exported, "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  eq((await wacInstance(r.compiled)).call("test", []), 7, "exported struct is importable");
+
+  const hidden = new Map([
+    ["lib.wac", `struct Shut { i32 v; }`],
+    ["main.wac", `
+      import { Shut } from "./lib.wac";
+      export i32 test() { return Shut(7).v; }
+    `],
+  ]);
+  const bad = wacCompile(hidden, "main.wac");
+  if (bad.ok) throw new Error("importing a non-exported struct should fail");
+  if (!bad.diagnostics[0].message.includes("not exported")) {
+    throw new Error(`unexpected error: ${bad.diagnostics[0].message}`);
+  }
+});
+
+Deno.test("[§wac-struct-export-const-r7nf4jq] export const struct: both modifiers apply", async () => {
+  // Two independent claims, so two checks. Parsing alone is not enough — a parser
+  // that consumed `const` and dropped it would pass a compile-only test while
+  // silently making the fields mutable.
+  const files = new Map([
+    ["lib.wac", `
+      export const struct Frozen {
+        i32 w;
+        i32 h;
+        Frozen of(i32 w, i32 h) { return Frozen(w, h); }
+      }
+    `],
+    ["main.wac", `
+      import { Frozen } from "./lib.wac";
+      export i32 area() { Frozen f = Frozen.of(137, 429); return f.w * f.h; }
+    `],
+  ]);
+  const r = wacCompile(files, "main.wac");
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  // 137 * 429 = 58773 — not a value a truncation or a swapped field could produce.
+  eq((await wacInstance(r.compiled)).call("area", []), 58773, "exported and usable");
+
+  const mutating = new Map([
+    ["lib.wac", `export const struct Frozen { i32 w; }`],
+    ["main.wac", `
+      import { Frozen } from "./lib.wac";
+      export void bad() { Frozen f = Frozen(1); f.w = 2; }
+    `],
+  ]);
+  const bad = wacCompile(mutating, "main.wac");
+  if (bad.ok) throw new Error("const struct fields must stay immutable when exported");
+});
+
 // ── §wac-subpos-order-m7kx3qf — subtype positional construction order ─────────
 
 Deno.test("[§wac-subpos-order-m7kx3qf] Rect(x,y,w,h) parent fields first", async () => {
@@ -2504,10 +2776,50 @@ Deno.test(`[§wac-str-emoji-m4jw7rk] emoji.len() returns 10 for "hello 😀"`, a
 // ── §wac-str-esc-h9qm3v7 — testEscapes() returns 5 ─────────────────────────
 
 Deno.test(`[§wac-str-esc-h9qm3v7] testEscapes() returns 5`, async () => {
-  // "h\te\n\r\0" = h, tab, e, newline, carriage-return, null = but only 5 visible
-  // Actually: "hell\0" = 5 bytes (h, e, l, l, null)
-  const inst = await run(`export i32 testEscapes() { string s = "hell\\0"; return s.len(); }`);
-  eq(inst.call("testEscapes", []), 5, `"hell\\0".len() = 5`);
+  // The spec's own program: five one-character strings, one per escape form. The
+  // previous version of this test compiled `"hell\0"` instead, which returns 5
+  // without ever exercising `\\` or `\"` — the two that were actually broken.
+  const inst = await run(`
+    export i32 testEscapes() {
+      string nl = "\\n";
+      string tab = "\\t";
+      string nul = "\\0";
+      string bs = "\\\\";
+      string qt = "\\"";
+      return nl.len() + tab.len() + nul.len() + bs.len() + qt.len();
+    }
+  `);
+  eq(inst.call("testEscapes", []), 5, "each of the five escapes is one byte");
+});
+
+// ── §wac-str-esc-mid-* — an escape does not consume what follows it ──────────
+
+Deno.test(`[§wac-str-esc-mid-w7kn3qf] escMid() returns 3`, async () => {
+  const inst = await run(`export i32 escMid() { return "a\\\\b".len(); }`);
+  eq(inst.call("escMid", []), 3, `"a\\b" is a, backslash, b`);
+});
+
+Deno.test(`[§wac-str-esc-dbl-h2mf9xp] escDouble() returns 2`, async () => {
+  const inst = await run(`export i32 escDouble() { return "\\\\\\\\".len(); }`);
+  eq(inst.call("escDouble", []), 2, `"\\\\" is two backslashes`);
+});
+
+Deno.test(`[§wac-str-esc-run-r5jw4kt] escRun() returns 5`, async () => {
+  const inst = await run(`export i32 escRun() { return "[\\\\]^_".len(); }`);
+  eq(inst.call("escRun", []), 5, `"[\\]^_" keeps every character after the escape`);
+});
+
+Deno.test(`[§wac-str-esc-mid-w7kn3qf] the characters around an escape are the right ones`, async () => {
+  // Length alone would also pass if the escape emitted two backslashes and
+  // dropped the `b`, so check the characters themselves. Compared inside wac
+  // because a `string` cannot cross wacInstance's boundary.
+  const inst = await run(`
+    export bool escChars() {
+      string s = "a\\\\b";
+      return s[0] == "a" && s[1] == "\\\\" && s[2] == "b";
+    }
+  `);
+  eq(inst.call("escChars", []), true, `"a\\b" is exactly a, backslash, b`);
 });
 
 // ── §wac-str-len-p2hd9xf — strLen() returns 3 ──────────────────────────────

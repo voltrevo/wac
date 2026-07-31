@@ -41,7 +41,7 @@ param          = type , IDENT ;
 ### Struct declarations
 
 ```ebnf
-struct_decl    = [ "const" ] , "struct" , IDENT , [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
+struct_decl    = [ "export" ] , [ "const" ] , "struct" , IDENT , [ ":" , IDENT ] , "{" , { struct_member } , "}" ;
 
 struct_member  = field_decl | method_decl ;
 
@@ -196,7 +196,8 @@ FLOAT_LITERAL  = digit , { digit | "_" } , "." , digit , { digit | "_" } ,
 STRING         = '"' , { string_char } , '"' ;
 CHAR_LITERAL   = "'" , char_content , "'" ;
 string_char    = (* any character except " and \ *) | escape ;
-escape         = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "0" ) ;
+char_content   = (* any single character except ' and \ *) | escape ;
+escape         = "\\" , ( "n" | "t" | "r" | "\\" | '"' | "'" | "0" ) ;
 letter         = "a"..."z" | "A"..."Z" | "_" ;
 digit          = "0"..."9" ;
 ```
