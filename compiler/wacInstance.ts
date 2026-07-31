@@ -67,9 +67,14 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
 
 /** Coerce a JS value to the wasm type expected for a parameter. */
 function coerceArg(v: WacArg, t: string): unknown {
+  // u64 shares i64's wasm type; wrap into the low 64 bits so a JS value above
+  // i64::MAX (which a u64 legitimately reaches) is accepted rather than thrown
+  // on by BigInt conversion at the boundary.
   if (t === "i64") return BigInt(v);
+  if (t === "u64") return BigInt.asIntN(64, BigInt(v));
   if (t === "bool") return v ? 1 : 0;
   if (t === "f32" || t === "f64") return Number(v);
+  if (t === "u32") return Number(v) | 0;   // reinterpret into i32's range
   return Number(v); // i32, i8, i16, etc.
 }
 
@@ -77,6 +82,9 @@ function coerceArg(v: WacArg, t: string): unknown {
 function coerceResult(v: unknown, t: string): WacVal {
   if (v === undefined || v === null) return null;
   if (t === "i64") return BigInt(v as bigint | number);
+  // The wasm value is the raw 64 or 32 bits; read it back as unsigned.
+  if (t === "u64") return BigInt.asUintN(64, BigInt(v as bigint | number));
+  if (t === "u32") return (v as number) >>> 0;
   if (t === "bool") return (v as number) !== 0;
   if (t === "void") return undefined;
   return Number(v as number | bigint);

@@ -3894,3 +3894,41 @@ Deno.test("(audit-26) is/as! between statically unrelated struct types produces 
   const warning = (r.diagnostics ?? []).find((d: { severity?: string }) => d.severity === "warning");
   eq(!!warning, true, "should include a warning-severity diagnostic for the unrelated is-test");
 });
+
+// ── Unsigned integers ────────────────────────────────────────────────────────
+
+// §wac-udiv-3kf9wqm — the same 32 bits divide differently depending on the type
+Deno.test(`[§wac-udiv-3kf9wqm] u32 and i32 divide the same bits differently`, async () => {
+  const i = await run(`
+    export u32 half(u32 x) { return x / (2 as@ u32); }
+    export i32 halfSigned(i32 x) { return x / 2; }
+  `);
+  eq(i.call("half", [4294967295]), 2147483647, "half(4294967295) == 2147483647");
+  eq(i.call("halfSigned", [-1]), 0, "halfSigned(-1) == 0 — same bits, signed");
+});
+
+// §wac-usign-raw-m2kf7wq — as@ between signednesses is a pure reinterpretation
+Deno.test(`[§wac-usign-raw-m2kf7wq] as@ reinterprets i32 <-> u32 losslessly`, async () => {
+  const i = await run(`
+    export u32 bits(i32 x)     { return x as@ u32; }
+    export i32 roundTrip(i32 x) { return x as@ u32 as@ i32; }
+  `);
+  eq(i.call("bits", [-1]), 4294967295, "bits(-1) == 4294967295");
+  eq(i.call("roundTrip", [-1]), -1, "reinterpreting twice returns the original");
+});
+
+// §wac-usign-chk-p8jn3wl — as! traps when the value has no unsigned reading
+Deno.test(`[§wac-usign-chk-p8jn3wl] as! i32 -> u32 traps on a negative`, async () => {
+  const i = await run(`export u32 check(i32 x) { return x as! u32; }`);
+  eq(i.call("check", [5]), 5, "check(5) == 5");
+  let trapped = false;
+  try { i.call("check", [-1]); } catch { trapped = true; }
+  eq(trapped, true, "check(-1) traps");
+});
+
+// §wac-usign-clamp-r4mk9xf — as~ clamps rather than trapping
+Deno.test(`[§wac-usign-clamp-r4mk9xf] as~ i32 -> u32 clamps a negative to 0`, async () => {
+  const i = await run(`export u32 clamp(i32 x) { return x as~ u32; }`);
+  eq(i.call("clamp", [-5]), 0, "clamp(-5) == 0");
+  eq(i.call("clamp", [7]), 7, "clamp(7) == 7");
+});

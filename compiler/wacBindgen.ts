@@ -22,10 +22,10 @@ import type { WacCompiled, WacExport } from "./wacCompile.ts";
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
 const PRIM_MAP: Record<string, string> = {
-  i32: "number", i8: "number", i16: "number",
+  i32: "number", i8: "number", i16: "number", u32: "number",
   f32: "number", f64: "number",
   bool: "boolean",
-  i64: "bigint",
+  i64: "bigint", u64: "bigint",
   void: "void",
   string: "string",
 };

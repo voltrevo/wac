@@ -185,6 +185,39 @@ f32 y = x as@ f32;    // error: no raw conversion for f64 -> f32, use as~
 
 `[§wac-raw-noalt-k3jf7wq]` `x as@ f32` is a compile error.
 
+#### Signed and unsigned
+
+A same-width signedness change (`i32` <-> `u32`, `i64` <-> `u64`) keeps every
+bit and changes only how they are read. That is exactly what `as@` means, so
+`as@` is the spelling for it — and it emits no instructions at all. `as!` gives
+the checked version, trapping when the value has no reading in the destination
+type; `as~` clamps instead.
+
+```wac
+export u32 bits(i32 x)   { return x as@ u32; }   // -1 becomes 4294967295
+export u32 check(i32 x)  { return x as! u32; }   // traps if x is negative
+export u32 clamp(i32 x)  { return x as~ u32; }   // negatives clamp to 0
+```
+
+`[§wac-usign-raw-m2kf7wq]` `bits(-1)` returns `4294967295` and
+`bits(-1) as@ i32` returns `-1` again.
+`[§wac-usign-chk-p8jn3wl]` `check(5)` returns `5`; `check(-1)` traps.
+`[§wac-usign-clamp-r4mk9xf]` `clamp(-5)` returns `0`.
+
+Widening out of `u32` is exact, so it uses plain `as`:
+
+```
+u32 -> u64    zero-extend
+u32 -> i64    zero-extend — every u32 fits in i64
+u32 -> f64    exact — every u32 is representable
+bool -> u32   false->0, true->1
+```
+
+Everything else follows the same rule as the signed rows: `as!` to check, `as~`
+to round and clamp, `as@` where a distinct raw form exists. Note that `i32 ->
+u64` has no `as@` form, because sign-extending and zero-extending are different
+answers and neither is "the raw one" — go through `i64` or `u32` explicitly.
+
 #### Cast errors
 
 Using the wrong cast variant is a compile error:

@@ -150,8 +150,12 @@ export function sigKey(params: WacType[], ret: WacType): string {
 export function wasmValType(t: WacType, ctx: WasmTypeCtx): number[] {
   switch (t.kind) {
     case "prim": {
+      // u32/u64 are the same wasm types as i32/i64 — wasm has no signed types,
+      // only signed and unsigned *instructions*. Signedness is carried by the
+      // wac type and decides which opcode gets emitted, never the storage.
       const map: Record<string, number | undefined> = {
-        i32: 0x7F, i64: 0x7E, f32: 0x7D, f64: 0x7C, bool: 0x7F,
+        i32: 0x7F, i64: 0x7E, u32: 0x7F, u64: 0x7E,
+        f32: 0x7D, f64: 0x7C, bool: 0x7F,
         anyref: 0x6E, i31ref: 0x6C,
       };
       const code = map[t.name];
@@ -811,33 +815,44 @@ class FuncEmitter {
       return;
     }
 
+    // Six columns, not four: u32/u64 share i32/i64's storage but need the
+    // unsigned opcode for the operations where the sign bit matters —
+    // div_u, rem_u, shr_u and the four ordering comparisons. Everything else
+    // (add, sub, mul, the bitwise ops, shl, eq, ne) is bit-identical for both
+    // signednesses and simply repeats the signed column.
     const p = lt.kind === "prim" ? lt.name : "i32";
     const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
+            : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";
-    type KT = "i32" | "i64" | "f32" | "f64";
+    type KT = "i32" | "i64" | "u32" | "u64" | "f32" | "f64";
     const ops: Record<string, Record<KT, number[]>> = {
-      "+":   { i32:[0x6A], i64:[0x7C], f32:[0x92], f64:[0xA0] },
-      "-":   { i32:[0x6B], i64:[0x7D], f32:[0x93], f64:[0xA1] },
-      "*":   { i32:[0x6C], i64:[0x7E], f32:[0x94], f64:[0xA2] },
-      "/":   { i32:[0x6D], i64:[0x7F], f32:[0x95], f64:[0xA3] },
+      "+":   { i32:[0x6A], i64:[0x7C], u32:[0x6A], u64:[0x7C], f32:[0x92], f64:[0xA0] },
+      "-":   { i32:[0x6B], i64:[0x7D], u32:[0x6B], u64:[0x7D], f32:[0x93], f64:[0xA1] },
+      "*":   { i32:[0x6C], i64:[0x7E], u32:[0x6C], u64:[0x7E], f32:[0x94], f64:[0xA2] },
+      //                               div_u       div_u
+      "/":   { i32:[0x6D], i64:[0x7F], u32:[0x6E], u64:[0x80], f32:[0x95], f64:[0xA3] },
       // wasm has no f32.rem/f64.rem — float % is a call to the fmod helper,
       // which takes both operands off the stack just as an opcode would.
-      "%":   { i32:[0x6F], i64:[0x81],
+      //                               rem_u       rem_u
+      "%":   { i32:[0x6F], i64:[0x81], u32:[0x70], u64:[0x82],
                f32:[0x10, ...uleb(this.ctx.helperIdx.get("__fmodf")!)],
                f64:[0x10, ...uleb(this.ctx.helperIdx.get("__fmod")!)] },
-      "&":   { i32:[0x71], i64:[0x83], f32:[],     f64:[]     },
-      "|":   { i32:[0x72], i64:[0x84], f32:[],     f64:[]     },
-      "^":   { i32:[0x73], i64:[0x85], f32:[],     f64:[]     },
-      "<<":  { i32:[0x74], i64:[0x86], f32:[],     f64:[]     },
-      ">>":  { i32:[0x75], i64:[0x87], f32:[],     f64:[]     },
-      ">>>": { i32:[0x76], i64:[0x88], f32:[],     f64:[]     },
-      "==":  { i32:[0x46], i64:[0x51], f32:[0x5B], f64:[0x61] },
-      "!=":  { i32:[0x47], i64:[0x52], f32:[0x5C], f64:[0x62] },
-      "<":   { i32:[0x48], i64:[0x53], f32:[0x5D], f64:[0x63] },
-      "<=":  { i32:[0x4C], i64:[0x57], f32:[0x5F], f64:[0x65] },
-      ">":   { i32:[0x4A], i64:[0x55], f32:[0x5E], f64:[0x64] },
-      ">=":  { i32:[0x4E], i64:[0x59], f32:[0x60], f64:[0x66] },
+      "&":   { i32:[0x71], i64:[0x83], u32:[0x71], u64:[0x83], f32:[],     f64:[]     },
+      "|":   { i32:[0x72], i64:[0x84], u32:[0x72], u64:[0x84], f32:[],     f64:[]     },
+      "^":   { i32:[0x73], i64:[0x85], u32:[0x73], u64:[0x85], f32:[],     f64:[]     },
+      "<<":  { i32:[0x74], i64:[0x86], u32:[0x74], u64:[0x86], f32:[],     f64:[]     },
+      //                               shr_u       shr_u  — `>>` on an unsigned
+      //                               type is already the logical shift
+      ">>":  { i32:[0x75], i64:[0x87], u32:[0x76], u64:[0x88], f32:[],     f64:[]     },
+      ">>>": { i32:[0x76], i64:[0x88], u32:[0x76], u64:[0x88], f32:[],     f64:[]     },
+      "==":  { i32:[0x46], i64:[0x51], u32:[0x46], u64:[0x51], f32:[0x5B], f64:[0x61] },
+      "!=":  { i32:[0x47], i64:[0x52], u32:[0x47], u64:[0x52], f32:[0x5C], f64:[0x62] },
+      //                               lt_u        lt_u
+      "<":   { i32:[0x48], i64:[0x53], u32:[0x49], u64:[0x54], f32:[0x5D], f64:[0x63] },
+      "<=":  { i32:[0x4C], i64:[0x57], u32:[0x4D], u64:[0x58], f32:[0x5F], f64:[0x65] },
+      ">":   { i32:[0x4A], i64:[0x55], u32:[0x4B], u64:[0x56], f32:[0x5E], f64:[0x64] },
+      ">=":  { i32:[0x4E], i64:[0x59], u32:[0x4F], u64:[0x5A], f32:[0x60], f64:[0x66] },
     };
     const oc = ops[op]?.[k as KT] ?? [];
     this.emit(...oc);
@@ -895,8 +910,149 @@ class FuncEmitter {
     this.emitNumericCast(fromT.name, toT.name, e.op);
   }
 
+  /** Trap unless the i32 on the stack satisfies a predicate, leaving it there.
+   *  `cmp` is the comparison opcode applied against `bound`; it must be the
+   *  *failing* condition. Used by the checked (`as!`) signedness changes. */
+  private guardI32(bound: number, cmp: number): void {
+    const t = this.tempI32Local;
+    this.emit(0x22, ...uleb(t));         // local.tee $t
+    this.emit(0x41, ...sleb(bound));     // i32.const bound
+    this.emit(cmp);                      // compare — true means out of range
+    this.emit(0x04, 0x40, 0x00, 0x0B);   // if { unreachable }
+    this.emit(0x20, ...uleb(t));         // local.get $t
+  }
+
+  private guardI64(bound: bigint, cmp: number): void {
+    const t = this.tempI64Local;
+    this.emit(0x22, ...uleb(t));
+    this.emit(0x42, ...slebBig(bound));
+    this.emit(cmp);
+    this.emit(0x04, 0x40, 0x00, 0x0B);
+    this.emit(0x20, ...uleb(t));
+  }
+
+  /** Conversions where either side is unsigned. Returns true if handled.
+   *
+   *  Signedness is a property of the wac type, not of the storage, so a
+   *  same-width change (i32<->u32, i64<->u64) moves no bits: `as@` emits
+   *  nothing at all, and `as!` emits only a range check. The float and
+   *  narrowing rows mirror their signed equivalents with the _u opcodes. */
+  private emitUnsignedCast(from: string, to: string, op: string): boolean {
+    const I32MAX = 2147483647, U32MAX = 4294967295n;
+    const I64MAX = 9223372036854775807n;
+
+    if (op === "as") {
+      // Widening out of u32 is always exact: zero-extend, or convert.
+      if (from === "u32" && (to === "u64" || to === "i64")) { this.emit(0xAD); return true; } // i64.extend_i32_u
+      if (from === "u32" && to === "f64") { this.emit(0xB8); return true; }  // f64.convert_i32_u
+      if (from === "bool" && to === "u32") return true;                       // already 0 or 1
+    }
+
+    if (op === "as@") {
+      // Same width: a reinterpretation, so there is nothing to emit.
+      if ((from === "i32" && to === "u32") || (from === "u32" && to === "i32") ||
+          (from === "i64" && to === "u64") || (from === "u64" && to === "i64")) return true;
+      if ((from === "u64" && (to === "u32" || to === "i32")) ||
+          (from === "i64" && to === "u32")) { this.emit(0xA7); return true; }  // i32.wrap_i64
+      if (from === "f64" && to === "u32") { this.emit(0xFC, 0x03); return true; } // trunc_sat_f64_u
+      if (from === "f32" && to === "u32") { this.emit(0xFC, 0x01); return true; } // trunc_sat_f32_u
+    }
+
+    if (op === "as~") {
+      if (from === "u32" && to === "f32") { this.emit(0xB3); return true; }  // f32.convert_i32_u
+      if (from === "u64" && to === "f64") { this.emit(0xBA); return true; }  // f64.convert_i64_u
+      if (from === "u64" && to === "f32") { this.emit(0xB5); return true; }  // f32.convert_i64_u
+      // Round to nearest, then saturate — never traps, matching the signed rows.
+      if (from === "f64" && to === "u32") { this.emit(0x9E, 0xFC, 0x03); return true; }
+      if (from === "f32" && to === "u32") { this.emit(0x90, 0xFC, 0x01); return true; }
+      if (from === "f64" && to === "u64") { this.emit(0x9E, 0xFC, 0x07); return true; }
+      if (from === "f32" && to === "u64") { this.emit(0x90, 0xFC, 0x05); return true; }
+      if (from === "u32" && to === "bool") { this.emit(0x45, 0x45); return true; } // x != 0
+      // Same-width signedness change, clamping instead of trapping.
+      if (from === "i32" && to === "u32") {  // negatives clamp to 0
+        const t = this.tempI32Local;
+        this.emit(0x22, ...uleb(t));
+        this.emit(0x41, 0x00, 0x48);                 // i32.const 0; i32.lt_s
+        this.emit(0x04, 0x7F, 0x41, 0x00, 0x05);     // if (i32) { 0 } else {
+        this.emit(0x20, ...uleb(t), 0x0B);           //   $t }
+        return true;
+      }
+      if (from === "u32" && to === "i32") {  // above i32 max clamps to i32 max
+        const t = this.tempI32Local;
+        this.emit(0x22, ...uleb(t));
+        this.emit(0x41, ...sleb(I32MAX), 0x4B);      // i32.const MAX; i32.gt_u
+        this.emit(0x04, 0x7F, 0x41, ...sleb(I32MAX), 0x05);
+        this.emit(0x20, ...uleb(t), 0x0B);
+        return true;
+      }
+    }
+
+    if (op === "as!") {
+      // Same width: check the value has a reading in the destination type.
+      if (from === "i32" && to === "u32") { this.guardI32(0, 0x48); return true; }        // x < 0
+      if (from === "u32" && to === "i32") { this.guardI32(I32MAX, 0x4B); return true; }   // x >u MAX
+      if (from === "i64" && to === "u64") { this.guardI64(0n, 0x53); return true; }       // x < 0
+      if (from === "u64" && to === "i64") { this.guardI64(I64MAX, 0x56); return true; }   // x >u MAX
+      if (from === "i32" && to === "u64") { this.guardI32(0, 0x48); this.emit(0xAD); return true; }
+      // Narrowing: range-check at 64 bits, then wrap.
+      if (from === "u64" && to === "u32") { this.guardI64(U32MAX, 0x56); this.emit(0xA7); return true; }
+      if (from === "u64" && to === "i32") { this.guardI64(BigInt(I32MAX), 0x56); this.emit(0xA7); return true; }
+      if (from === "i64" && to === "u32") {
+        // Must be in [0, 2^32) — reject negatives and anything too large.
+        this.guardI64(0n, 0x53);
+        this.guardI64(U32MAX, 0x55);   // i64.gt_s is fine here: already non-negative
+        this.emit(0xA7);
+        return true;
+      }
+      // float -> unsigned: the trapping trunc opcodes reject negative,
+      // fractional and out-of-range inputs, and NaN.
+      if (from === "f64" && to === "u32") { this.emit(0xAB); return true; } // i32.trunc_f64_u
+      if (from === "f32" && to === "u32") { this.emit(0xA9); return true; } // i32.trunc_f32_u
+      if (from === "f64" && to === "u64") { this.emit(0xB1); return true; } // i64.trunc_f64_u
+      if (from === "f32" && to === "u64") { this.emit(0xAF); return true; } // i64.trunc_f32_u
+      // unsigned -> float: exact iff converting back round-trips. Mirrors the
+      // signed i64->f32/f64 cases, with 2^64 as the saturation boundary.
+      if (from === "u32" && to === "f32") {
+        const i = this.tempI32Local, b = this.tempF32Local;
+        this.emit(0x22, ...uleb(i));
+        this.emit(0xB3);                   // f32.convert_i32_u  (c)
+        this.emit(0x22, ...uleb(b));
+        this.emit(0xBB);                   // f64.promote_f32
+        this.emit(0x20, ...uleb(i));
+        this.emit(0xB8);                   // f64.convert_i32_u  (exact for all u32)
+        this.emit(0x62);                   // f64.ne
+        this.emit(0x04, 0x40, 0x00, 0x0B);
+        this.emit(0x20, ...uleb(b));
+        return true;
+      }
+      if (from === "u64" && (to === "f64" || to === "f32")) {
+        const isF32 = to === "f32";
+        const l = this.tempI64Local, d = isF32 ? this.tempF32Local : this.tempF64Local;
+        this.emit(0x22, ...uleb(l));
+        this.emit(isF32 ? 0xB5 : 0xBA);          // fN.convert_i64_u  (c)
+        this.emit(0x21, ...uleb(d));
+        this.emit(0x20, ...uleb(d));
+        this.emit(0xFC, isF32 ? 0x05 : 0x07);    // i64.trunc_sat_fN_u (back)
+        this.emit(0x20, ...uleb(l));
+        this.emit(0x52);                         // i64.ne
+        this.emit(0x20, ...uleb(d));
+        if (isF32) this.emit(0x43, 0x00, 0x00, 0x80, 0x5F);                       // f32.const 2^64
+        else       this.emit(0x44, 0, 0, 0, 0, 0, 0, 0xF0, 0x43);                 // f64.const 2^64
+        this.emit(isF32 ? 0x5B : 0x61);          // fN.eq  (saturation boundary)
+        this.emit(0x72);                         // i32.or
+        this.emit(0x04, 0x40, 0x00, 0x0B);
+        this.emit(0x20, ...uleb(d));
+        return true;
+      }
+    }
+    return false;
+  }
+
   private emitNumericCast(from: string, to: string, op: string): void {
     if (from === to) return;
+    if (from === "u32" || from === "u64" || to === "u32" || to === "u64") {
+      if (this.emitUnsignedCast(from, to, op)) return;
+    }
     // Lossless (as)
     if (op === "as") {
       if (from === "i32"  && to === "i64") { this.emit(0xAC); return; } // i32.extend_s
@@ -1639,25 +1795,28 @@ class FuncEmitter {
       return;
     }
 
+    // Mirrors emitBinary's table — see there for why unsigned needs its own
+    // columns rather than sharing the signed ones.
     const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
+            : p === "u32" ? "u32" : p === "u64" ? "u64"
             : p === "f32" ? "f32" : "f64";
-    type KT = "i32"|"i64"|"f32"|"f64";
+    type KT = "i32"|"i64"|"u32"|"u64"|"f32"|"f64";
     const ops: Record<string, Record<KT, number[]>> = {
-      "+":  { i32:[0x6A], i64:[0x7C], f32:[0x92], f64:[0xA0] },
-      "-":  { i32:[0x6B], i64:[0x7D], f32:[0x93], f64:[0xA1] },
-      "*":  { i32:[0x6C], i64:[0x7E], f32:[0x94], f64:[0xA2] },
-      "/":  { i32:[0x6D], i64:[0x7F], f32:[0x95], f64:[0xA3] },
+      "+":  { i32:[0x6A], i64:[0x7C], u32:[0x6A], u64:[0x7C], f32:[0x92], f64:[0xA0] },
+      "-":  { i32:[0x6B], i64:[0x7D], u32:[0x6B], u64:[0x7D], f32:[0x93], f64:[0xA1] },
+      "*":  { i32:[0x6C], i64:[0x7E], u32:[0x6C], u64:[0x7E], f32:[0x94], f64:[0xA2] },
+      "/":  { i32:[0x6D], i64:[0x7F], u32:[0x6E], u64:[0x80], f32:[0x95], f64:[0xA3] },
       // See emitBinary: float % is a helper call, not an opcode.
-      "%":  { i32:[0x6F], i64:[0x81],
+      "%":  { i32:[0x6F], i64:[0x81], u32:[0x70], u64:[0x82],
               f32:[0x10, ...uleb(this.ctx.helperIdx.get("__fmodf")!)],
               f64:[0x10, ...uleb(this.ctx.helperIdx.get("__fmod")!)] },
-      "&":  { i32:[0x71], i64:[0x83], f32:[],     f64:[]     },
-      "|":  { i32:[0x72], i64:[0x84], f32:[],     f64:[]     },
-      "^":  { i32:[0x73], i64:[0x85], f32:[],     f64:[]     },
-      "<<": { i32:[0x74], i64:[0x86], f32:[],     f64:[]     },
-      ">>": { i32:[0x75], i64:[0x87], f32:[],     f64:[]     },
-      ">>>":{ i32:[0x76], i64:[0x88], f32:[],     f64:[]     },
+      "&":  { i32:[0x71], i64:[0x83], u32:[0x71], u64:[0x83], f32:[],     f64:[]     },
+      "|":  { i32:[0x72], i64:[0x84], u32:[0x72], u64:[0x84], f32:[],     f64:[]     },
+      "^":  { i32:[0x73], i64:[0x85], u32:[0x73], u64:[0x85], f32:[],     f64:[]     },
+      "<<": { i32:[0x74], i64:[0x86], u32:[0x74], u64:[0x86], f32:[],     f64:[]     },
+      ">>": { i32:[0x75], i64:[0x87], u32:[0x76], u64:[0x88], f32:[],     f64:[]     },
+      ">>>":{ i32:[0x76], i64:[0x88], u32:[0x76], u64:[0x88], f32:[],     f64:[]     },
     };
     this.emit(...(ops[op]?.[k as KT] ?? []));
   }
