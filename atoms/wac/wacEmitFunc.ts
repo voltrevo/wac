@@ -46,6 +46,16 @@ export type WasmTypeCtx = {
   /** Mangled function name → wasm function index */
   funcIdx: Map<string, number>;
   /**
+   * The file whose function is being emitted.
+   *
+   * A bare function name means whatever the *calling file's* scope says it
+   * means. funcIdx and result.funcs are both global and first-match-wins, so
+   * resolving through either one makes two files that each declare a private
+   * `helper` share whichever was registered first — silently, and with the
+   * wrong signature. Mutated as emission proceeds, like the coverage state.
+   */
+  currentFile: string;
+  /**
    * Constant *array* declaration → wasm global index.
    *
    * Only arrays appear here. A scalar constant is substituted at each use, but
@@ -375,6 +385,8 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         const v = env.get(e.callee.name);
         if (v?.kind === "funcref") return v.ret;
         const calleeName = (e.callee as { kind: "ident"; name: string }).name;
+        const scoped = ctx.result.fileScopes.get(ctx.currentFile)?.get(calleeName);
+        if (scoped?.kind === "func") return funcReturnType(scoped.entry);
         const fi2 = ctx.result.funcs.find(f =>
           f.mangledName === calleeName || f.exportName === calleeName ||
           (f.origin.kind === "func" && f.origin.decl.name === calleeName));
@@ -420,6 +432,10 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       // For struct types, return the struct type; for function-named constructs, return the func return type.
       if (e.ctype.kind === "struct" && !ctx.structTypeIdx.has((e.ctype as { name: string }).name)) {
         const ctypeName = (e.ctype as { name: string }).name;
+        // The calling file's scope decides, for the same reason as in
+        // emitConstruct: a bare name is not globally unique.
+        const scopedFn = ctx.result.fileScopes.get(ctx.currentFile)?.get(ctypeName);
+        if (scopedFn?.kind === "func") return funcReturnType(scopedFn.entry);
         const fi = ctx.result.funcs.find(f =>
           f.mangledName === ctypeName ||
           (f.origin.kind === "func" && f.origin.decl.name === ctypeName));
@@ -791,7 +807,7 @@ class FuncEmitter {
           case "-":
             if (prim === "f32") { this.emitExpr(e.expr, env); this.emit(0x8C); }  // f32.neg
             else if (prim === "f64") { this.emitExpr(e.expr, env); this.emit(0x9A); } // f64.neg
-            else if (prim === "i64") {
+            else if (prim === "i64" || prim === "u64") {
               this.emitExpr(e.expr, env);
               this.emit(0x42, 0x7F, 0x7E); // i64.const -1; i64.mul
             } else {
@@ -802,7 +818,9 @@ class FuncEmitter {
           case "!": this.emitExpr(e.expr, env); this.emit(0x45); break; // i32.eqz
           case "~":
             this.emitExpr(e.expr, env);
-            if (prim === "i64") this.emit(0x42, 0x7F, 0x85); // i64.const -1; i64.xor
+            // Width, not signedness, decides here — but u64 has to be named
+            // explicitly or it falls through to the 32-bit form.
+            if (prim === "i64" || prim === "u64") this.emit(0x42, 0x7F, 0x85); // i64.const -1; i64.xor
             else this.emit(0x41, 0x7F, 0x73);                 // i32.const -1; i32.xor
             break;
         }
@@ -1668,7 +1686,14 @@ class FuncEmitter {
     // Direct function call: funcName(args)
     if (e.callee.kind === "ident") {
       const name = (e.callee as { name: string }).name;
-      const fIdx = this.ctx.funcIdx.get(name);
+      // Resolve through the calling file's own scope first. ctx.funcIdx also
+      // maps bare names, but globally and first-wins, so two files that each
+      // declare a private `helper` would both reach whichever was registered
+      // first — silently, and with the wrong signature.
+      const scoped = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(name);
+      const fIdx = scoped?.kind === "func"
+        ? scoped.entry.funcIndex
+        : this.ctx.funcIdx.get(name);
       if (fIdx !== undefined) {
         const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
         this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
@@ -1698,7 +1723,15 @@ class FuncEmitter {
       // (The parser uses "construct" for any ident(...) that isn't a prim type.)
       const tIdx  = e.ctype.resolvedTypeIndex ?? this.ctx.structTypeIdx.get(sName);
       if (tIdx === undefined) {
-        const fIdx = this.ctx.funcIdx.get(sName);
+        // The parser calls any `ident(...)` a construction, so an ordinary call
+        // to a plain function arrives here. Resolve it through the calling
+        // file's scope: ctx.funcIdx maps bare names globally and first-wins, so
+        // two files each declaring a private `helper` would both reach
+        // whichever was registered first, with the wrong signature.
+        const scopedFn = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(sName);
+        const fIdx = scopedFn?.kind === "func"
+          ? scopedFn.entry.funcIndex
+          : this.ctx.funcIdx.get(sName);
         if (fIdx !== undefined) {
           const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
           this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
@@ -2502,6 +2535,7 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   emitter.tempF32Local = localIdx + 2;
   emitter.tempF64Local = localIdx + 3;
   emitter.tempAnyLocal = localIdx + 4;
+  ctx.currentFile = entry.filePath;
 
   const localsVec: number[] = [];
   localsVec.push(...uleb(groups.length + 5));

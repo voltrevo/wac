@@ -5215,3 +5215,44 @@ Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is r
   // Reading is fine.
   eq(bad(`const i32[] T = i32[](1, 2); export i32 f() { return T[1]; }`), false, "reads are allowed");
 });
+
+// §wac-samename-private-k9fw3nm — a bare call means what the *calling file* says
+Deno.test(`[§wac-samename-private-k9fw3nm] same-named private functions do not collide`, async () => {
+  // imports.md promises two files may each define `max`. That held for exported
+  // names, which are mangled and imported explicitly, but a *private* helper was
+  // resolved through a global bare-name map on a first-registered-wins basis —
+  // so the second file's calls silently reached the first file's function, with
+  // its signature. Different widths make that a wasm validation failure; same
+  // widths would have been a wrong answer with no error at all.
+  const files = new Map([
+    ["/a.wac", `i32 helper(i32 x) { return x * 2; }\nexport i32 fromA(i32 x) { return helper(x); }`],
+    ["/b.wac", `i64 helper(i64 x) { return x * 3; }\nexport i64 fromB(i64 x) { return helper(x); }`],
+    ["/c.wac", `i32 helper(i32 x) { return x + 100; }\nexport i32 fromC(i32 x) { return helper(x); }`],
+    ["/main.wac", `import { fromA } from "/a.wac";\nimport { fromB } from "/b.wac";\nimport { fromC } from "/c.wac";
+      export i32 a(i32 x) { return fromA(x); }
+      export i64 b(i64 x) { return fromB(x); }
+      export i32 c(i32 x) { return fromC(x); }`],
+  ]);
+  const r = wacCompile(files, "/main.wac");
+  eq(r.ok, true, "compiles");
+  if (!r.ok) return;
+  const i = await wacInstance(r.compiled);
+  eq(i.call("a", [5]), 10, "a.wac's helper doubles");
+  eq(i.call("b", [5n]), 15n, "b.wac's helper triples, at 64 bits");
+  eq(i.call("c", [5]), 105, "c.wac's helper adds 100 — same width as a's, different body");
+});
+
+// §wac-u64-unary-p3mk8wq — unary operators at 64-bit width on unsigned
+Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async () => {
+  // The emitter tested for i64 by name, so u64 fell through to the 32-bit form
+  // and emitted i32.xor against an i64 operand.
+  const i = await run(`
+    export u64 notU64(u64 x) { return ~x; }
+    export u32 notU32(u32 x) { return ~x; }
+    export i64 notI64(i64 x) { return ~x; }
+  `);
+  eq(i.call("notU64", [0n]), 18446744073709551615n, "~0 fills all 64 bits");
+  eq(i.call("notU64", [18446744073709551615n]), 0n, "and back");
+  eq(i.call("notU32", [0]), 4294967295, "~0 at 32 bits");
+  eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
+});
