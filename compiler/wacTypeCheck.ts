@@ -680,7 +680,16 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
           `expected bool, found ${typeName(cType)}`,
           `use a comparison: if (${condName} != 0) { ... }`);
       }
-      const thenRet = checkBlock(stmt.then, new Map(env), ctx);
+      // `if (s is Circle)` narrows `s` inside the then-block. See narrowedByCond for
+      // exactly when, and why this is a scope rule rather than flow analysis.
+      const thenEnv: VarEnv = new Map(env);
+      const narrowed = narrowedByCond(stmt.cond, env, ctx);
+      if (narrowed !== null) {
+        thenEnv.set(narrowed.name, { type: narrowed.type, isConst: true });
+        stmt.narrowName = narrowed.name;
+        stmt.narrowTypeIndex = narrowed.type.resolvedTypeIndex;
+      }
+      const thenRet = checkBlock(stmt.then, thenEnv, ctx);
       const elseRet = checkElse(stmt.els, env, ctx);
       // All paths return only if both then and else terminate
       return thenRet && elseRet !== null && elseRet;
@@ -744,141 +753,22 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     }
 
     case "match": {
-      const subjType = inferExpr(stmt.subject, env, ctx);
-      if (!subjType) return false;
-
-      // A nullable subject would need a null case, which is deferred; `s!` or an
-      // `is null` check first is the answer for now.
-      if (subjType.kind === "nullable") {
-        errAt(ctx, `match requires a non-null value, got ${typeName(subjType)}`,
-          stmt.subject.line, stmt.subject.col,
-          exprText(stmt.subject).length, undefined,
-          `unwrap it first: match (${exprText(stmt.subject)}!)`);
-        return false;
-      }
-
-      const enumEntry = enumOfType(subjType, ctx);
-      if (!enumEntry) {
-        // The subject may well be an enum that this file never imported — in which
-        // case "match requires an enum value, got TyKind" is true, unhelpful, and
-        // points at the wrong thing. Say which it is.
-        const unimported = subjType.kind === "struct" &&
-          subjType.resolvedTypeIndex !== undefined
-            ? ctx.enumByTypeIndex.get(subjType.resolvedTypeIndex)
-            : undefined;
-        if (unimported) {
-          errAt(ctx,
-            `'${typeName(subjType)}' is an enum, but it is not in scope in this file`,
-            stmt.subject.line, stmt.subject.col, exprText(stmt.subject).length,
-            undefined,
-            `import it: import { ${unimported.name} } from "...";`);
-        } else {
-          errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
-            stmt.subject.line, stmt.subject.col);
-        }
-        return false;
-      }
-
-      // Narrowing is a shadowing binding, so it needs a name to shadow. A subject
-      // that is not a plain variable still matches; its arms just narrow nothing.
-      stmt.enumBaseTypeIndex = enumEntry.base.typeIndex;
-
-      const subjectName = stmt.subject.kind === "ident" ? stmt.subject.name : null;
-
-      const covered = new Set<string>();
-      let elseArm: MatchArm | null = null;
+      // The whole of the arm machinery is shared with the expression form; only what is
+      // done *with* an arm differs. See checkMatchArms.
       let allReturn = true;
-
-      for (const arm of stmt.arms) {
-        const armEnv: VarEnv = new Map(env);
-
-        if (arm.variant === null) {
-          if (elseArm) {
-            errAt(ctx, `duplicate else arm`, arm.line, arm.col);
-          }
-          elseArm = arm;
-        } else {
-          const variant = enumEntry.variants.find(v => v.name === arm.variant);
-          if (!variant) {
-            errAt(ctx, `'${arm.variant}' is not a variant of '${enumEntry.name}'`,
-              arm.line, arm.col, arm.variant.length);
-            continue;
-          }
-          if (covered.has(arm.variant)) {
-            errAt(ctx, `duplicate case for '${arm.variant}'`, arm.line, arm.col,
-              arm.variant.length);
-          }
-          covered.add(arm.variant);
-          arm.tag = variant.tag;
-          arm.variantTypeIndex = variant.entry.typeIndex;
-          arm.bindingTypes = variant.fields.map(f => f.type);
-
-          // Omitting the parentheses ignores every payload; naming any binding means
-          // naming all of them, so a miscount is a mistake rather than a shorthand.
-          if (arm.bindings.length > 0 && arm.bindings.length !== variant.fields.length) {
-            errAt(ctx,
-              `case '${arm.variant}' binds ${arm.bindings.length} name(s) but the variant has ${variant.fields.length}`,
-              arm.line, arm.col, arm.variant.length);
-          }
-
-          // The subject narrows to the variant type, as a const shadowing binding.
-          if (subjectName !== null) {
-            armEnv.set(subjectName, {
-              type: { kind: "struct", name: variant.name,
-                      resolvedTypeIndex: variant.entry.typeIndex,
-                      line: arm.line, col: arm.col },
-              isConst: true,
-            });
-          }
-
-          const bound = new Set<string>();
-          for (let i = 0; i < arm.bindings.length && i < variant.fields.length; i++) {
-            const name = arm.bindings[i];
-            if (name === "_") continue;   // a deliberate discard, and may repeat
-            if (bound.has(name)) {
-              errAt(ctx, `duplicate binding '${name}' in case '${arm.variant}'`,
-                arm.line, arm.col, name.length);
-              continue;
-            }
-            if (name === subjectName) {
-              errAt(ctx,
-                `binding '${name}' collides with the matched subject`,
-                arm.line, arm.col, name.length);
-              continue;
-            }
-            bound.add(name);
-            armEnv.set(name, { type: variant.fields[i].type, isConst: true });
-          }
-        }
-
+      const ok = checkMatchArms(stmt.subject, stmt.arms, env, ctx, stmt, (arm, armEnv) => {
         let terminated = false;
         for (const st of arm.body) {
           if (terminated) break;
           terminated = checkStmt(st, armEnv, ctx);
         }
         if (!terminated) allReturn = false;
-      }
-
-      const exhaustive = covered.size === enumEntry.variants.length;
-      if (elseArm === null && !exhaustive) {
-        const missing = enumEntry.variants
-          .filter(v => !covered.has(v.name)).map(v => `'${v.name}'`);
-        errAt(ctx, `match does not cover ${missing.join(", ")}`, stmt.line, stmt.col,
-          5, undefined,
-          missing.length === 1
-            ? `add a case for it, or an else arm`
-            : `add cases for them, or an else arm`);
-      }
-      // A covering match plus an else arm is a mistake, not dead code: either a
-      // variant was removed and the else is now stale, or the arms are wrong.
-      if (elseArm !== null && exhaustive) {
-        errAt(ctx, `else arm is unreachable — all variants are covered`,
-          elseArm.line, elseArm.col, 4);
-      }
-
+      });
+      if (ok === null) return false;
+      stmt.enumBaseTypeIndex = ok.baseTypeIndex;
       // A match only guarantees a return if control cannot fall past it, which needs
       // every arm to terminate *and* every value to reach an arm.
-      return allReturn && (elseArm !== null || exhaustive);
+      return allReturn && ok.total;
     }
 
     case "switch": {
@@ -1150,6 +1040,7 @@ function exprText(e: Expr): string {
         e.rhs === "null" ? "null" : isWacType(e.rhs) ? typeName(e.rhs) : exprText(e.rhs)}`;
     case "construct": return `${typeName(e.ctype)}(${e.args.map(exprText).join(", ")})`;
     case "arrNew":    return `${typeName(e.elem)}[](...)`;
+    case "matchExpr": return `match (${exprText(e.subject)}) { ... }`;
     case "incr-expr":
       return e.prefix ? `${e.op}${lvalText(e.lval)}` : `${lvalText(e.lval)}${e.op}`;
   }
@@ -1173,7 +1064,10 @@ function checkConstDecl(decl: ConstDecl, ctx: Ctx): void {
   if (why !== null) {
     errAt(ctx, `constant '${decl.name}' needs a compile-time value`,
       decl.init.line, decl.init.col, 0, why,
-      `only literals, operators over them, casts and other constants are allowed`);
+      // The rule has widened twice — construction (0002) and sized arrays (0032) — so
+      // this now describes what is allowed rather than listing a narrower set.
+      `allowed: literals, the operators over them, casts, other constants, and ` +
+      `construction of a struct, a variant or an array out of those`);
     return;
   }
   const env: VarEnv = new Map();
@@ -1205,6 +1099,253 @@ function undefinedTypeNameIn(t: WacType, ctx: Ctx): string | null {
       return undefinedTypeNameIn(t.ret, ctx);
     }
   }
+}
+
+/**
+ * The type of a construct with several branches, given two branch types at a time.
+ *
+ * Shared by the ternary and by `match` used as an expression, so the two cannot drift.
+ * That mattered enough to extract: the ternary already had to learn that a `null` branch
+ * widens the other one [see issue 0011], and a second copy of this reasoning would have
+ * had to learn it again.
+ *
+ * `what` names the construct in diagnostics — "ternary branches", "match arms" — so the
+ * message says which thing has incompatible types.
+ */
+function unifyBranches(
+  a: WacType, b: WacType, what: string,
+  at: { line: number; col: number }, ctx: Ctx,
+): WacType {
+  if (typeEq(a, b)) return a;
+
+  // Struct branches type to their closest common ancestor — this covers one branch being
+  // the other's ancestor (the result is that ancestor) as well as sibling subtypes of a
+  // shared parent, which is what makes two variants of one enum unify to the enum.
+  if (a.kind === "struct" && b.kind === "struct") {
+    const ae = entryOfType(a, ctx);
+    const be = entryOfType(b, ctx);
+    const lca = ae && be ? commonAncestor(ae, be) : null;
+    if (lca) return structType(lca.name, lca.typeIndex);
+    errAt(ctx, `${what} have no common ancestor: ${typeName(a)} and ${typeName(b)}`,
+      at.line, at.col);
+    return a;
+  }
+
+  // A `null` branch makes the result nullable. Without this the wider side never wins,
+  // because `null` is assignable to no non-nullable type and no type is assignable to
+  // `null` — so `cond ? S(1) : null` was rejected outright for every struct, array and
+  // funcref.
+  if (isNullT(a) && nullableOf(b) !== null) return nullableOf(b)!;
+  if (isNullT(b) && nullableOf(a) !== null) return nullableOf(a)!;
+
+  // Other widenings (null → T?, T → T?, T? → S?): the wider side wins.
+  if (isAssignable(b, a, ctx)) return a;
+  if (isAssignable(a, b, ctx)) return b;
+
+  errAt(ctx, `${what} have incompatible types: ${typeName(a)} and ${typeName(b)}`,
+    at.line, at.col);
+  return a;
+}
+
+/**
+ * Check a `match`'s subject and arm headers, and run `onArm` for each arm's contents.
+ *
+ * Shared by the statement form and the expression form, which differ only in what an arm
+ * holds — statements or a value. Everything else is identical and was worth extracting
+ * rather than copying: variant resolution, the positional bindings, the `_` discard, the
+ * narrowing shadow, duplicate and unreachable-arm checks, and exhaustiveness. A second copy
+ * would have had to relearn each of those, and the narrowing rule in particular is subtle
+ * enough that two versions would drift.
+ *
+ * Returns the enum's base type index and whether the arms are total (exhaustive, or an
+ * `else` is present), or null if the subject is not something that can be matched.
+ */
+function checkMatchArms(
+  subject: Expr, arms: MatchArm[], env: VarEnv, ctx: Ctx,
+  at: { line: number; col: number },
+  onArm: (arm: MatchArm, armEnv: VarEnv) => void,
+): { baseTypeIndex: number; total: boolean } | null {
+  const subjType = inferExpr(subject, env, ctx);
+  if (!subjType) return null;
+
+  // A nullable subject would need a null case, which is deferred; `s!` or an `is null`
+  // check first is the answer for now.
+  if (subjType.kind === "nullable") {
+    errAt(ctx, `match requires a non-null value, got ${typeName(subjType)}`,
+      subject.line, subject.col, exprText(subject).length, undefined,
+      `unwrap it first: match (${exprText(subject)}!)`);
+    return null;
+  }
+
+  const enumEntry = enumOfType(subjType, ctx);
+  if (!enumEntry) {
+    // The subject may well be an enum that this file never imported — in which case
+    // "match requires an enum value, got TyKind" is true, unhelpful, and points at the
+    // wrong thing. Say which it is.
+    const unimported = subjType.kind === "struct" && subjType.resolvedTypeIndex !== undefined
+      ? ctx.enumByTypeIndex.get(subjType.resolvedTypeIndex)
+      : undefined;
+    if (unimported) {
+      errAt(ctx, `'${typeName(subjType)}' is an enum, but it is not in scope in this file`,
+        subject.line, subject.col, exprText(subject).length, undefined,
+        `import it: import { ${unimported.name} } from "...";`);
+    } else {
+      errAt(ctx, `match requires an enum value, got ${typeName(subjType)}`,
+        subject.line, subject.col);
+    }
+    return null;
+  }
+
+  // Narrowing is a shadowing binding, so it needs a name to shadow. A subject that is not
+  // a plain variable still matches; its arms just narrow nothing.
+  const subjectName = subject.kind === "ident" ? subject.name : null;
+
+  const covered = new Set<string>();
+  let elseArm: MatchArm | null = null;
+
+  for (const arm of arms) {
+    const armEnv: VarEnv = new Map(env);
+
+    if (arm.variant === null) {
+      if (elseArm) errAt(ctx, `duplicate else arm`, arm.line, arm.col);
+      elseArm = arm;
+    } else {
+      const variant = enumEntry.variants.find(v => v.name === arm.variant);
+      if (!variant) {
+        errAt(ctx, `'${arm.variant}' is not a variant of '${enumEntry.name}'`,
+          arm.line, arm.col, arm.variant.length);
+        continue;
+      }
+      if (covered.has(arm.variant)) {
+        errAt(ctx, `duplicate case for '${arm.variant}'`, arm.line, arm.col,
+          arm.variant.length);
+      }
+      covered.add(arm.variant);
+      arm.tag = variant.tag;
+      arm.variantTypeIndex = variant.entry.typeIndex;
+      arm.bindingTypes = variant.fields.map(f => f.type);
+
+      // Omitting the parentheses ignores every payload; naming any binding means naming
+      // all of them, so a miscount is a mistake rather than a shorthand.
+      if (arm.bindings.length > 0 && arm.bindings.length !== variant.fields.length) {
+        errAt(ctx,
+          `case '${arm.variant}' binds ${arm.bindings.length} name(s) but the variant has ${variant.fields.length}`,
+          arm.line, arm.col, arm.variant.length);
+      }
+
+      // The subject narrows to the variant type, as a const shadowing binding.
+      if (subjectName !== null) {
+        armEnv.set(subjectName, {
+          type: { kind: "struct", name: variant.name,
+                  resolvedTypeIndex: variant.entry.typeIndex,
+                  line: arm.line, col: arm.col },
+          isConst: true,
+        });
+      }
+
+      const bound = new Set<string>();
+      for (let i = 0; i < arm.bindings.length && i < variant.fields.length; i++) {
+        const name = arm.bindings[i];
+        if (name === "_") continue;   // a deliberate discard, and may repeat
+        if (bound.has(name)) {
+          errAt(ctx, `duplicate binding '${name}' in case '${arm.variant}'`,
+            arm.line, arm.col, name.length);
+          continue;
+        }
+        if (name === subjectName) {
+          errAt(ctx, `binding '${name}' collides with the matched subject`,
+            arm.line, arm.col, name.length);
+          continue;
+        }
+        bound.add(name);
+        armEnv.set(name, { type: variant.fields[i].type, isConst: true });
+      }
+    }
+
+    onArm(arm, armEnv);
+  }
+
+  const exhaustive = covered.size === enumEntry.variants.length;
+  if (elseArm === null && !exhaustive) {
+    const missing = enumEntry.variants
+      .filter(v => !covered.has(v.name)).map(v => `'${v.name}'`);
+    errAt(ctx, `match does not cover ${missing.join(", ")}`, at.line, at.col,
+      5, undefined,
+      missing.length === 1
+        ? `add a case for it, or an else arm`
+        : `add cases for them, or an else arm`);
+  }
+  // A covering match plus an else arm is a mistake, not dead code: either a variant was
+  // removed and the else is now stale, or the arms are wrong.
+  if (elseArm !== null && exhaustive) {
+    errAt(ctx, `else arm is unreachable — all variants are covered`,
+      elseArm.line, elseArm.col, 4);
+  }
+
+  return {
+    baseTypeIndex: enumEntry.base.typeIndex,
+    total: elseArm !== null || exhaustive,
+  };
+}
+
+/**
+ * The narrowing an `if` condition licenses, or null if it licenses none.
+ *
+ * Only the exact shape `ident is Type` narrows, and only inside the then-block. That makes
+ * this a **scope rule** rather than flow-sensitive typing, which is what keeps it sound
+ * without any analysis:
+ *
+ *   - the extent is the block, which the parser has already delimited;
+ *   - the introduced binding is `const`, so it cannot be reassigned to something outside the
+ *     narrowed type — the same reason a `match` arm's narrowing is const;
+ *   - the outer binding is untouched, so nothing about what holds *after* the block changes,
+ *     and an early `return` inside it has nothing to invalidate.
+ *
+ * Anything else — a negation, an `&&`, a field or index on the left, a non-struct type — does
+ * not narrow. That is a much smaller language than flow-sensitive typing, and deliberately so
+ * [see issue 0029].
+ *
+ * The type must be a *subtype* of what the name already has, since narrowing to an unrelated
+ * type would describe a test that can never pass, and `is` already warns about that.
+ */
+function narrowedByCond(
+  cond: Expr, env: VarEnv, ctx: Ctx,
+): { name: string; type: WacType & { kind: "struct" } } | null {
+  // `A && B` narrows from *either* operand: reaching the then-block means both held, so both
+  // are available as premises. (An earlier version consulted only the left, on the reasoning
+  // that a right-hand narrowing "would have to hold for the left to have been evaluated" —
+  // that is the question for narrowing *inside* the condition, not for the block, and the
+  // block is all this rule governs.) `||` narrows from neither, since one branch alone may
+  // have held.
+  //
+  // The parentheses are not optional: `is` binds looser than `&&`, so `x is T && more` parses
+  // as `x is (T && more)` [see operators.md].
+  if (cond.kind === "binary" && cond.op === "&&") {
+    return narrowedByCond(cond.left, env, ctx) ?? narrowedByCond(cond.right, env, ctx);
+  }
+  if (cond.kind !== "is") return null;
+  if (cond.not) return null;                       // `is not` tells us nothing about the then
+  if (cond.expr.kind !== "ident") return null;     // nothing to shadow otherwise
+  const rhs = cond.rhs;
+  if (rhs === "null" || typeof rhs !== "object" || !("kind" in rhs)) return null;
+  if (rhs.kind !== "struct") return null;          // arrays and prims have no subtyping here
+
+  const current = env.get(cond.expr.name);
+  if (current === undefined) return null;
+  // Narrowing something already narrower, or unrelated, is not a narrowing.
+  const from = current.type.kind === "nullable" ? current.type.inner : current.type;
+  if (from.kind !== "struct") return null;
+  if (typeEq(from, rhs)) return null;
+  const fromEntry = entryOfType(from, ctx);
+  const toEntry = entryOfType(rhs, ctx);
+  if (!fromEntry || !toEntry) return null;
+  // The target has to be below the current type, or the test can never pass.
+  let walk: StructEntry | null = toEntry;
+  while (walk !== null) {
+    if (walk.typeIndex === fromEntry.typeIndex) return { name: cond.expr.name, type: rhs };
+    walk = walk.parentEntry;
+  }
+  return null;
 }
 
 /**
@@ -1245,10 +1386,22 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
           ?? notCompileTimeConstant(expr.then, ctx, seen)
           ?? notCompileTimeConstant(expr.else_, ctx, seen);
     case "arrNew": {
-      // The literal form only. `T[n]()` and `T[n](fill: v)` build the array at run
-      // time from a length that need not be constant.
       if (expr.size !== null) {
-        return `a sized array is built at run time — write the elements out`;
+        // A sized array is constant when its *length* is: `array.new_default` and
+        // `array.new` are both constant instructions, so `i32[8]()` and
+        // `i32[8](fill: -1)` can be built in a global's initialiser like any other
+        // constant. What is not allowed is a length that has to be computed.
+        const whySize = notCompileTimeConstant(expr.size, ctx, seen);
+        if (whySize !== null) {
+          return `an array's length must be constant here — ${whySize}`;
+        }
+        if (expr.fill !== undefined) {
+          const whyFill = notCompileTimeConstant(expr.fill, ctx, seen);
+          if (whyFill !== null) return whyFill;
+        } else if (!hasDefault(expr.elem, ctx)) {
+          return `'${typeName(expr.elem)}' has no default value — give one with 'fill:'`;
+        }
+        return null;
       }
       for (const el of expr.fixed) {
         const why = notCompileTimeConstant(el, ctx, seen);
@@ -1556,6 +1709,42 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
         }
         return T_BOOL;
       }
+      // A *qualified* variant name — `s is Shape.Empty` — parses as an expression, not a
+      // type, because the parser sees `IDENT "." IDENT` and reads it as a field access or
+      // a construction. Left alone, the test became reference identity against a freshly
+      // built variant and so was always false, silently; and for a variant with a payload
+      // it failed with "needs a payload", a message about construction when nothing was
+      // being constructed. Both are wrong for what is plainly a type test.
+      //
+      // `Shape.Empty` is the natural thing to write, since it is how the variant is
+      // constructed and how the docs introduce it, so accepting it is better than
+      // rejecting it in favour of the bare form.
+      const qualified = constVariantOf(expr.rhs as Expr, ctx);
+      if (qualified !== null) {
+        if ((expr.rhs as Expr).kind === "call") {
+          // `s is Shape.Circle(1.0)` — a payload written in a type test. Silently false
+          // before, since it compared against a new object.
+          errAt(ctx, `a type test takes the variant name without a payload`,
+            expr.line, expr.col, 1, undefined,
+            `write 'is ${qualified.name}' or 'is <enum>.${qualified.name}'`);
+          return T_BOOL;
+        }
+        if (!isRefType(lt)) {
+          errAt(ctx, `'is' type test requires a reference type, got ${typeName(lt)}`,
+            expr.line, expr.col);
+        }
+        // Rewrite the node into the type it means, rather than annotating it. The node
+        // becomes indistinguishable from the one `s is Empty` produces, so the emitter
+        // needs no case for this and cannot disagree with the checker about it — which is
+        // the failure mode that has cost the most on this compiler.
+        expr.rhs = {
+          kind: "struct", name: qualified.name,
+          resolvedTypeIndex: qualified.entry.typeIndex,
+          line: expr.line, col: expr.col,
+        };
+        return T_BOOL;
+      }
+
       // Reference identity: expr is Expr
       const rhsType = inferExpr(expr.rhs as Expr, env, ctx);
       if (!rhsType) return null;
@@ -1580,31 +1769,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
         tt = inferExpr(expr.then, env, ctx, et);
       }
       if (!tt || !et) return tt ?? et;
-      if (typeEq(tt, et)) return tt;
-      // Struct branches type to their closest common ancestor — this covers
-      // one branch being the other's ancestor (the result is that ancestor)
-      // as well as sibling subtypes of a shared parent.
-      if (tt.kind === "struct" && et.kind === "struct") {
-        const te = entryOfType(tt, ctx);
-        const ee = entryOfType(et, ctx);
-        const lca = te && ee ? commonAncestor(te, ee) : null;
-        if (lca) return structType(lca.name, lca.typeIndex);
-        errAt(ctx, `ternary branches have no common ancestor: ${typeName(tt)} and ${typeName(et)}`,
-          expr.line, expr.col);
-        return tt;
-      }
-      // One branch being `null` makes the result nullable. Without this the wider
-      // side never wins, because `null` is assignable to no non-nullable type and no
-      // type is assignable to `null` — so `cond ? S(1) : null` was rejected outright
-      // for every struct, array and funcref, not just for enums.
-      if (isNullT(tt) && nullableOf(et) !== null) return nullableOf(et)!;
-      if (isNullT(et) && nullableOf(tt) !== null) return nullableOf(tt)!;
-      // Other widenings (null → T?, T → T?, T? → S?): the wider side wins.
-      if (isAssignable(et, tt, ctx)) return tt;
-      if (isAssignable(tt, et, ctx)) return et;
-      errAt(ctx, `ternary branches have incompatible types: ${typeName(tt)} and ${typeName(et)}`,
-        expr.line, expr.col);
-      return tt;
+      return unifyBranches(tt, et, "ternary branches", expr, ctx);
     }
 
     case "call": {
@@ -1655,6 +1820,31 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
 
     case "arrNew": {
       return inferArrNew(expr, env, ctx);
+    }
+
+    case "matchExpr": {
+      // Arms must be total — there is no falling off the end of an expression — so an
+      // inexhaustive match with no `else` is already an error from checkMatchArms, and a
+      // value still has to be produced for the diagnostics to be about one thing.
+      let result: WacType | null = null;
+      const armTypes: (WacType | null)[] = [];
+      const ok = checkMatchArms(expr.subject, expr.arms, env, ctx, expr, (arm, armEnv) => {
+        // Each arm is offered the expected type, exactly as a ternary's branches are, so
+        // `f32 x = match (s) { ... 1.5 ... }` and `u32 n = match (s) { ... 5 ... }` work.
+        armTypes.push(arm.value ? inferExpr(arm.value, armEnv, ctx, expected ?? result) : null);
+        const last = armTypes[armTypes.length - 1];
+        // Unify as we go, so the expected type offered to later arms is informed by
+        // earlier ones — the same reason the ternary passes `tt` to its else branch.
+        if (last) result = result === null ? last : unifyBranches(result, last, "match arms", expr, ctx);
+      });
+      if (ok === null) return null;
+      expr.enumBaseTypeIndex = ok.baseTypeIndex;
+      if (!ok.total) return null;      // already reported; no usable result type
+      if (result === null) return null;
+      // Record the result so the emitter does not re-derive it. Two places computing one
+      // type is how the i64-literal and ternary bugs happened.
+      expr.resultType = result;
+      return result;
     }
   }
 }

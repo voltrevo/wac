@@ -149,6 +149,25 @@ function variantStructType(typeIndex: number, ctx: WasmTypeCtx): WacType | null 
 }
 
 /**
+ * A method on a struct or anything it inherits from.
+ *
+ * `StructEntry.methods` is the struct's own map, so a subtype's lookup has to walk `parentEntry`
+ * — which is also how an enum's methods are reached from a variant, since the variants are
+ * generated subtypes of the enum's base.
+ */
+function lookupMethod(
+  name: string, resolvedIndex: number | undefined, method: string, ctx: WasmTypeCtx,
+): FuncEntry | undefined {
+  let entry = resolveStructEntry(name, ctx, resolvedIndex);
+  while (entry) {
+    const found = entry.methods.get(method);
+    if (found) return found;
+    entry = entry.parentEntry ?? undefined;
+  }
+  return undefined;
+}
+
+/**
  * Is this expression the literal `null`?
  *
  * Checked syntactically rather than by type: the null literal types as `anyref` here,
@@ -390,6 +409,10 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       }
       return tt;
     }
+    case "matchExpr":
+      // The checker records the unified arm type; re-deriving it here is exactly the
+      // mistake that produced the i64-literal and ternary-variant bugs.
+      return e.resultType ?? VOID;
     case "cast": return e.type;
     case "is": return BOOL;
     case "unwrap": {
@@ -436,7 +459,12 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         }
         const sName = structName(baseT);
         if (sName) {
-          const meth = resolveStructEntry(sName, ctx, structResolvedIndex(baseT))?.methods.get(fe.name);
+          // Walk the parent chain: `methods` holds only a struct's *own* methods, so an
+          // inherited one missed the lookup, this fell through, and the expression ended up
+          // typed f64 — which made `s.get() + 1` emit `f64.add` for two i32s [issue 0040].
+          // The type checker already walks the chain; keeping a second, shorter answer here
+          // is the disagreement this compiler produces most often.
+          const meth = lookupMethod(sName, structResolvedIndex(baseT), fe.name, ctx);
           if (meth) return funcReturnType(meth);
         }
       }
@@ -575,6 +603,8 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
   keyMap: WeakMap<Stmt, string>;
   armKeys: WeakMap<MatchArm, string>;
   bindingKeys: WeakMap<MatchArm, string[]>;
+  /** The shadow local an `if (x is T)` introduces for `x` inside its then-block. */
+  narrowKeys: WeakMap<Stmt, string>;
 } {
   const decls: LocalDecl[] = [];
   const count = new Map<string, number>(); // how many times each name has been declared
@@ -587,70 +617,187 @@ function collectLocals(stmts: Stmt[], reserved: string[] = []): {
   // A match arm is not a Stmt, so its narrowed shadow and its payload bindings need
   // their own key maps rather than riding on keyMap.
   const armKeys = new WeakMap<MatchArm, string>();
+  const narrowKeys = new WeakMap<Stmt, string>();
   const bindingKeys = new WeakMap<MatchArm, string[]>();
   function walk(ss: Stmt[]): void {
     for (const s of ss) {
+      // Every expression position has to be visited, because `match` used as an expression
+      // declares locals for its arm bindings. Until it did, no expression declared anything
+      // and this pass could ignore them entirely — so these calls are the new part, and
+      // missing one shows up as an arm binding that reads as nothing and a stack left short
+      // at validation, nowhere near the cause.
       if (s.kind === "var") {
         const n = count.get(s.name) ?? 0;
         count.set(s.name, n + 1);
         const key = n === 0 ? s.name : `${s.name}$${n}`;
         decls.push({ name: key, type: s.type });
         keyMap.set(s, key);
+        walkExpr(s.init);
       } else if (s.kind === "if") {
+        walkExpr(s.cond);
+        // `if (x is T)` shadows `x` at the narrower type inside the then-block, which needs
+        // a local of its own. Keyed like a match arm's shadow, for the same reason: the key
+        // must not collide with a parameter or local of the same name, and this pass does not
+        // know those names.
+        if (s.narrowName !== undefined && s.narrowTypeIndex !== undefined) {
+          const n = count.get(`#narrow:${s.narrowName}`) ?? 0;
+          count.set(`#narrow:${s.narrowName}`, n + 1);
+          const key = `#narrow:${s.narrowName}:${n}`;
+          decls.push({
+            name: key,
+            type: { kind: "struct", name: s.narrowName,
+                    resolvedTypeIndex: s.narrowTypeIndex, line: s.line, col: s.col },
+          });
+          narrowKeys.set(s, key);
+        }
         walk(s.then.stmts);
         if (s.els?.kind === "else-block") walk(s.els.block.stmts);
         else if (s.els?.kind === "else-if") walk([s.els.stmt]);
       } else if (s.kind === "while" || s.kind === "dowhile") {
+        walkExpr(s.cond);
         walk(s.body.stmts);
       } else if (s.kind === "for") {
         if (s.init) walk([s.init]);
+        if (s.cond) walkExpr(s.cond);
+        if (s.update) walk([s.update]);
         walk(s.body.stmts);
       } else if (s.kind === "switch") {
-        for (const c of s.cases) walk(c.body);
-      } else if (s.kind === "match") {
-        // An arm's payload bindings and its narrowed shadow of the subject are
-        // locals. Their types come from the type checker's annotations, since this
-        // pass has no access to the enum table.
-        const subjName = s.subject.kind === "ident" ? s.subject.name : null;
-        for (const arm of s.arms) {
-          if (arm.variant === null) { walk(arm.body); continue; }
-
-          if (subjName !== null && arm.variantTypeIndex !== undefined) {
-            // The key must not collide with a parameter of the same name, and this
-            // pass does not know the parameter names — so the shadow gets a key that
-            // cannot be written in source and therefore cannot clash with anything.
-            const n = count.get(`#match:${subjName}`) ?? 0;
-            count.set(`#match:${subjName}`, n + 1);
-            const key = `#match:${subjName}:${n}`;
-            decls.push({
-              name: key,
-              type: { kind: "struct", name: arm.variant,
-                      resolvedTypeIndex: arm.variantTypeIndex, line: arm.line, col: arm.col },
-            });
-            armKeys.set(arm, key);
-          }
-
-          const bkeys: string[] = [];
-          for (let i = 0; i < arm.bindings.length; i++) {
-            const name = arm.bindings[i];
-            const type = arm.bindingTypes?.[i];
-            if (name === "_" || type === undefined) { bkeys.push(""); continue; }
-            const n = count.get(name) ?? 0;
-            count.set(name, n + 1);
-            const key = n === 0 ? name : `${name}$${n}`;
-            decls.push({ name: key, type });
-            bkeys.push(key);
-          }
-          bindingKeys.set(arm, bkeys);
-          walk(arm.body);
+        walkExpr(s.expr);
+        for (const c of s.cases) {
+          if (c.value !== "default") walkExpr(c.value);
+          walk(c.body);
         }
+      } else if (s.kind === "match") {
+        walkExpr(s.subject);
+        armLocals(s.arms, s.subject, (body) => walk(body));
       } else if (s.kind === "block") {
         walk(s.block.stmts);
+      } else if (s.kind === "return") {
+        if (s.value) walkExpr(s.value);
+      } else if (s.kind === "assign") {
+        walkLvalExpr(s.lval);
+        walkExpr(s.rhs);
+      } else if (s.kind === "incr") {
+        walkLvalExpr(s.lval);
+      } else if (s.kind === "expr") {
+        walkExpr(s.expr);
       }
     }
   }
+  /**
+   * Allocate the locals an arm needs: its payload bindings and the narrowed shadow of the
+   * subject. Types come from the type checker's annotations, since this pass has no access
+   * to the enum table.
+   *
+   * `onBody` is how the caller recurses into whatever the arm holds — statements for the
+   * statement form, an expression for the expression form.
+   */
+  function armLocals(
+    arms: MatchArm[], subject: Expr,
+    onBody: (body: Stmt[]) => void,
+  ): void {
+    const subjName = subject.kind === "ident" ? subject.name : null;
+    for (const arm of arms) {
+      if (arm.variant === null) {
+        onBody(arm.body);
+        if (arm.value) walkExpr(arm.value);
+        continue;
+      }
+
+      if (subjName !== null && arm.variantTypeIndex !== undefined) {
+        // The key must not collide with a parameter of the same name, and this pass does
+        // not know the parameter names — so the shadow gets a key that cannot be written
+        // in source and therefore cannot clash with anything.
+        const n = count.get(`#match:${subjName}`) ?? 0;
+        count.set(`#match:${subjName}`, n + 1);
+        const key = `#match:${subjName}:${n}`;
+        decls.push({
+          name: key,
+          type: { kind: "struct", name: arm.variant,
+                  resolvedTypeIndex: arm.variantTypeIndex, line: arm.line, col: arm.col },
+        });
+        armKeys.set(arm, key);
+      }
+
+      const bkeys: string[] = [];
+      for (let i = 0; i < arm.bindings.length; i++) {
+        const name = arm.bindings[i];
+        const type = arm.bindingTypes?.[i];
+        if (name === "_" || type === undefined) { bkeys.push(""); continue; }
+        const n = count.get(name) ?? 0;
+        count.set(name, n + 1);
+        const key = n === 0 ? name : `${name}$${n}`;
+        decls.push({ name: key, type });
+        bkeys.push(key);
+      }
+      bindingKeys.set(arm, bkeys);
+      onBody(arm.body);
+      if (arm.value) walkExpr(arm.value);
+    }
+  }
+
+  /**
+   * Walk an expression looking for `match` used as one.
+   *
+   * Nothing else in an expression declares a local, which is why this pass walked only
+   * statements until now — and why the walk has to be added rather than extended. A
+   * `matchExpr` nested anywhere an expression can appear needs its arm locals allocated, so
+   * "anywhere" is what this covers.
+   */
+  function walkExpr(e: Expr): void {
+    switch (e.kind) {
+      case "matchExpr":
+        walkExpr(e.subject);
+        armLocals(e.arms, e.subject, (body) => walk(body));
+        return;
+      case "unary": case "unwrap":
+        return walkExpr(e.expr);
+      case "binary":
+        walkExpr(e.left); return walkExpr(e.right);
+      case "cast":
+        return walkExpr(e.expr);
+      case "is":
+        walkExpr(e.expr);
+        // The right side is a type, the string "null", or an expression; only the last
+        // can contain a nested match.
+        if (typeof e.rhs === "object" && "kind" in e.rhs &&
+            !["prim", "struct", "array", "nullable", "funcref"].includes(e.rhs.kind)) {
+          walkExpr(e.rhs as Expr);
+        }
+        return;
+      case "ternary":
+        walkExpr(e.cond); walkExpr(e.then); return walkExpr(e.else_);
+      case "call":
+        walkExpr(e.callee); for (const a of e.args) walkExpr(a); return;
+      case "index":
+        walkExpr(e.expr); return walkExpr(e.idx);
+      case "field":
+        return walkExpr(e.expr);
+      case "construct":
+        for (const a of e.args) walkExpr(a);
+        for (const n of e.named ?? []) walkExpr(n.val);
+        return;
+      case "arrNew":
+        if (e.size) walkExpr(e.size);
+        if (e.fill) walkExpr(e.fill);
+        for (const el of e.fixed) walkExpr(el);
+        return;
+      case "incr-expr":
+        return walkLvalExpr(e.lval);
+      // Leaves: nothing nested to find.
+      case "int": case "float": case "string": case "bool": case "null": case "ident":
+        return;
+    }
+  }
+
+  /** Expressions reachable through an lvalue — an index, or a nested base. */
+  function walkLvalExpr(lv: Lvalue): void {
+    if (lv.kind === "lv-index") { walkLvalExpr(lv.base); walkExpr(lv.idx); return; }
+    if (lv.kind === "lv-field" || lv.kind === "lv-unwrap") return walkLvalExpr(lv.base);
+  }
+
   walk(stmts);
-  return { decls, keyMap, armKeys, bindingKeys };
+  return { decls, keyMap, armKeys, bindingKeys, narrowKeys };
 }
 
 // ── String encoding ───────────────────────────────────────────────────────────
@@ -696,6 +843,8 @@ class FuncEmitter {
   armKeys: WeakMap<MatchArm, string> = new WeakMap();
   /** Maps a match arm to its payload binding keys, "" where the binding is `_`. */
   bindingKeys: WeakMap<MatchArm, string[]> = new WeakMap();
+  /** Maps an `if (x is T)` to the key of the shadow it introduces for `x`. */
+  narrowKeys: WeakMap<Stmt, string> = new WeakMap();
   private ctx: WasmTypeCtx;
   private returnType: WacType;
   private loopStack: LoopCtx[] = [];
@@ -924,6 +1073,7 @@ class FuncEmitter {
       case "index":  this.emitIndex(e, env); break;
       case "construct": this.emitConstruct(e, env); break;
       case "arrNew":    this.emitArrNew(e, env); break;
+      case "matchExpr": this.emitMatchExpr(e, env); break;
     }
   }
 
@@ -1757,24 +1907,18 @@ class FuncEmitter {
       }
     }
 
-    // Direct function call: funcName(args)
-    if (e.callee.kind === "ident") {
-      const name = (e.callee as { name: string }).name;
-      // Resolve through the calling file's own scope first. ctx.funcIdx also
-      // maps bare names, but globally and first-wins, so two files that each
-      // declare a private `helper` would both reach whichever was registered
-      // first — silently, and with the wrong signature.
-      const scoped = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(name);
-      const fIdx = scoped?.kind === "func"
-        ? scoped.entry.funcIndex
-        : this.ctx.funcIdx.get(name);
-      if (fIdx !== undefined) {
-        const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
-        this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
-        this.emit(0x10, ...uleb(fIdx)); // call
-        return;
-      }
-    }
+    // There is deliberately no `e.callee.kind === "ident"` branch here.
+    //
+    // `foo(1)` never arrives as a call: the parser calls every `ident(...)` a
+    // *construction*, because it cannot tell a struct name from a function name without
+    // a symbol table. So a direct call to a plain function is emitted by
+    // `emitConstruct`, in the branch where the name resolves to no struct type.
+    //
+    // A branch for it did exist and was unreachable, which cost real time once: while
+    // fixing bare-name resolution in 123ac4c the fix was applied here first, changed
+    // nothing, and only then was the live path found. Anyone changing call emission will
+    // look here, so this comment is the point of the change rather than an aside.
+    // `typeOfExpr`'s "construct" case is arranged the same way, for the same reason.
 
     // Funcref indirect call: f(args)
     const calleeT = typeOfExpr(e.callee, env, this.ctx);
@@ -1798,7 +1942,10 @@ class FuncEmitter {
       const tIdx  = e.ctype.resolvedTypeIndex ?? this.ctx.structTypeIdx.get(sName);
       if (tIdx === undefined) {
         // The parser calls any `ident(...)` a construction, so an ordinary call
-        // to a plain function arrives here. Resolve it through the calling
+        // to a plain function arrives here — this is where *every* direct call is
+        // emitted, not a fallback. `emitCall` handles only the shapes the parser does
+        // produce as calls: a method call, an indirect funcref call, and variant
+        // construction. Resolve it through the calling
         // file's scope: ctx.funcIdx maps bare names globally and first-wins, so
         // two files each declaring a private `helper` would both reach
         // whichever was registered first, with the wrong signature.
@@ -2296,7 +2443,32 @@ class FuncEmitter {
     this.emit(0x04, 0x40); // if void
     this.labelDepth++;
     this.emitCovPoint("then", s.then.line, s.then.col);
+
+    // `if (x is T)` narrows `x` inside the then-block. The condition has already tested the
+    // type, so the cast cannot fail — it is the same unchecked downcast a `match` arm emits,
+    // and for the same reason: the test that would justify it has just been performed.
+    const narrowKey = s.narrowName !== undefined ? this.narrowKeys.get(s) : undefined;
+    const savedKeys = narrowKey !== undefined ? new Map(this.nameToKey) : null;
+    const savedEnv = narrowKey !== undefined ? new Map(env) : null;
+    if (narrowKey !== undefined && s.narrowName !== undefined) {
+      const local = this.localMap.get(narrowKey);
+      const source = this.localMap.get(this.nameToKey.get(s.narrowName) ?? s.narrowName);
+      if (local && source) {
+        this.emit(0x20, ...uleb(source.idx));                       // local.get x
+        this.emit(0xFB, 0x16, ...sleb(s.narrowTypeIndex!));         // ref.cast (ref T)
+        this.emit(0x21, ...uleb(local.idx));                        // local.set shadow
+        this.nameToKey.set(s.narrowName, narrowKey);
+        env.set(s.narrowName, local.type);
+      }
+    }
+
     this.emitBlock(s.then, env);
+
+    if (savedKeys && savedEnv) {
+      restoreScope(this.nameToKey, savedKeys);
+      restoreScope(env, savedEnv);
+    }
+
     if (s.els) { this.emit(0x05); this.emitElse(s.els, env); }
     this.emit(0x0B); // end
     this.labelDepth--;
@@ -2406,6 +2578,48 @@ class FuncEmitter {
    * cannot fail — the tag already established which variant this is — so the only
    * cost of narrowing is the cast instruction itself.
    */
+  /**
+   * Bring an arm's bindings into scope: the narrowed shadow of the subject, and the payload.
+   *
+   * Shared by the statement and expression forms of `match`. Both read out of
+   * `this.tempAnyLocal`, which the caller has already loaded with the subject — evaluated
+   * once, whichever form it is.
+   */
+  private bindArm(arm: MatchArm, subject: Expr, env: TypeEnv): void {
+    // The narrowed shadow of the subject, if there was a name to shadow.
+    const armKey = this.armKeys.get(arm);
+    if (armKey !== undefined && subject.kind === "ident") {
+      const local = this.localMap.get(armKey);
+      if (local) {
+        this.emit(0x20, ...uleb(this.tempAnyLocal));
+        this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));     // ref.cast (ref variant)
+        this.emit(0x21, ...uleb(local.idx));
+        this.nameToKey.set(subject.name, armKey);
+        env.set(subject.name, local.type);
+      }
+    }
+
+    // Payload bindings, read off the variant's own fields. Bindings are positional, so the
+    // field is the i-th *payload* field — looking it up by the binding's name would never
+    // match, since `case Circle(r)` binds `r` to a field called `radius`.
+    const bkeys = this.bindingKeys.get(arm) ?? [];
+    const payloadFields = (this.ctx.structFields.get(`@${arm.variantTypeIndex}`) ?? [])
+      .filter(f => f.name !== ENUM_TAG_FIELD);
+    for (let i = 0; i < bkeys.length; i++) {
+      const key = bkeys[i];
+      if (key === "") continue;                                    // `_` binds nothing
+      const local = this.localMap.get(key);
+      const field = payloadFields[i];
+      if (!local || !field) continue;
+      this.emit(0x20, ...uleb(this.tempAnyLocal));
+      this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));
+      this.emit(0xFB, 0x02, ...uleb(arm.variantTypeIndex!), ...uleb(field.absIdx));
+      this.emit(0x21, ...uleb(local.idx));
+      this.nameToKey.set(arm.bindings[i], key);
+      env.set(arm.bindings[i], local.type);
+    }
+  }
+
   private emitMatch(s: Stmt & { kind: "match" }, env: TypeEnv): void {
     const baseIdx = s.enumBaseTypeIndex;
     if (baseIdx === undefined) { this.emit(0x00); return; }   // unchecked match
@@ -2451,40 +2665,7 @@ class FuncEmitter {
 
       const savedKeys = new Map(this.nameToKey);
       const savedEnv = new Map(env);
-
-      // The narrowed shadow of the subject, if there was a name to shadow.
-      const armKey = this.armKeys.get(arm);
-      if (armKey !== undefined && s.subject.kind === "ident") {
-        const local = this.localMap.get(armKey);
-        if (local) {
-          this.emit(0x20, ...uleb(this.tempAnyLocal));
-          this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));    // ref.cast (ref variant)
-          this.emit(0x21, ...uleb(local.idx));
-          this.nameToKey.set(s.subject.name, armKey);
-          env.set(s.subject.name, local.type);
-        }
-      }
-
-      // Payload bindings, read off the variant's own fields.
-      const bkeys = this.bindingKeys.get(arm) ?? [];
-      // Bindings are positional, so the field is the i-th *payload* field — looking it
-      // up by the binding's name would never match, since `case Circle(r)` binds `r`
-      // to a field called `radius`.
-      const payloadFields = (this.ctx.structFields.get(`@${arm.variantTypeIndex}`) ?? [])
-        .filter(f => f.name !== ENUM_TAG_FIELD);
-      for (let i = 0; i < bkeys.length; i++) {
-        const key = bkeys[i];
-        if (key === "") continue;                                  // `_` binds nothing
-        const local = this.localMap.get(key);
-        const field = payloadFields[i];
-        if (!local || !field) continue;
-        this.emit(0x20, ...uleb(this.tempAnyLocal));
-        this.emit(0xFB, 0x16, ...sleb(arm.variantTypeIndex!));
-        this.emit(0xFB, 0x02, ...uleb(arm.variantTypeIndex!), ...uleb(field.absIdx));
-        this.emit(0x21, ...uleb(local.idx));
-        this.nameToKey.set(arm.bindings[i], key);
-        env.set(arm.bindings[i], local.type);
-      }
+      this.bindArm(arm, s.subject, env);
 
       for (const st of arm.body) this.emitStmt(st, env);
 
@@ -2501,6 +2682,78 @@ class FuncEmitter {
     }
 
     // Close every `if` opened above.
+    for (let i = 0; i < opened; i++) {
+      this.emit(0x0B);
+      this.labelDepth--;
+    }
+  }
+
+  /**
+   * `match` as an expression: the same dispatch as `emitMatch`, but every arm leaves a
+   * value and the blocks carry a result type.
+   *
+   * The two are not merged because the shapes genuinely differ — a statement's arms emit
+   * into a void block and an expression's must each produce exactly one value of the
+   * result type — and a merged version would be a parameter-driven fork at every step.
+   * What they *do* share is the checker's arm analysis [see checkMatchArms], which is where
+   * the subtle rules live.
+   */
+  private emitMatchExpr(e: Expr & { kind: "matchExpr" }, env: TypeEnv): void {
+    const baseIdx = e.enumBaseTypeIndex;
+    const resT = e.resultType;
+    if (baseIdx === undefined || resT === undefined) { this.emit(0x00); return; }
+
+    // Subject once into the scratch local, as the statement form does.
+    this.emitExpr(e.subject, env);
+    this.emit(0x21, ...uleb(this.tempAnyLocal));
+
+    const baseFields = this.ctx.structFields.get(`@${baseIdx}`) ?? [];
+    const tagField = baseFields.find(f => f.name === ENUM_TAG_FIELD);
+    this.emit(0x20, ...uleb(this.tempAnyLocal));
+    this.emit(0xFB, 0x16, ...sleb(baseIdx));                      // ref.cast (ref base)
+    this.emit(0xFB, 0x02, ...uleb(baseIdx), ...uleb(tagField?.absIdx ?? 0)); // struct.get
+    this.emit(0x21, ...uleb(this.tempI32Local));
+
+    const variantArms = e.arms.filter(a => a.variant !== null);
+    const elseArm = e.arms.find(a => a.variant === null);
+
+    let opened = 0;
+    for (const arm of variantArms) {
+      this.emit(0x20, ...uleb(this.tempI32Local));
+      this.emit(0x41, ...sleb(arm.tag ?? 0));
+      this.emit(0x46);                                            // i32.eq
+      this.emit(0x04, ...this.blockType(resT));                   // if (result T)
+      this.labelDepth++;
+      opened++;
+
+      // Arms are branches, so they are counted, exactly as the statement form's are.
+      this.emitCovPoint("case", arm.line, arm.col);
+
+      const savedKeys = new Map(this.nameToKey);
+      const savedEnv = new Map(env);
+      this.bindArm(arm, e.subject, env);
+      if (arm.value) this.emitExpr(arm.value, env, resT);
+      restoreScope(this.nameToKey, savedKeys);
+      restoreScope(env, savedEnv);
+
+      this.emit(0x05);                                            // else
+    }
+
+    // The innermost else. The arms are total — the checker rejects an expression match that
+    // is not — so this is only reached when an `else` arm exists; without one the value is
+    // unreachable rather than absent, which keeps the block's type honest.
+    if (elseArm) {
+      this.emitCovPoint("case", elseArm.line, elseArm.col);
+      const savedKeys = new Map(this.nameToKey);
+      const savedEnv = new Map(env);
+      this.bindArm(elseArm, e.subject, env);
+      if (elseArm.value) this.emitExpr(elseArm.value, env, resT);
+      restoreScope(this.nameToKey, savedKeys);
+      restoreScope(env, savedEnv);
+    } else {
+      this.emit(0x00);                                            // unreachable
+    }
+
     for (let i = 0; i < opened; i++) {
       this.emit(0x0B);
       this.labelDepth--;
@@ -2603,10 +2856,11 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   // answer rather than an error.
   const paramNames = new Set([...params.map(p => p.name),
     ...(entry.origin.kind === "method" && entry.origin.decl.hasThis ? ["this"] : [])]);
-  const { decls: allLocals, keyMap, armKeys, bindingKeys } =
+  const { decls: allLocals, keyMap, armKeys, bindingKeys, narrowKeys } =
     collectLocals(body.stmts, [...paramNames]);
   emitter.keyMap = keyMap;
   emitter.armKeys = armKeys;
+  emitter.narrowKeys = narrowKeys;
   emitter.bindingKeys = bindingKeys;
   for (const d of allLocals) {
     if (!emitter.localMap.has(d.name)) {

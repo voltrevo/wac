@@ -1,8 +1,13 @@
 ## Enums and match
 
-*Implemented, except where marked otherwise below — but **new and thinly
-exercised**. Treat a surprise here as a likely compiler bug rather than as
-intended behaviour, and check the known gaps before working around one.*
+*Implemented, except where marked otherwise below.*
+
+*This feature has been exercised hard: `wacc`'s AST, `json` and `fmt` all use it, and five
+rounds of deliberately probing shapes no consumer had reached turned up thirteen compiler bugs,
+all fixed and all with tests named after the behaviour they pin. Twelve of the thirteen
+typechecked cleanly and failed at instantiation or ran wrong, so if you find a surprise here,
+**run it rather than trusting that it compiles** — and file it (see `issues/`) rather than
+working around it.*
 
 Enums work across files: declare one in a module, import it, `match` on it. `[§enum-cross-file]`
 
@@ -188,6 +193,31 @@ Listing the same variant twice is likewise an error:
 
 `[§enum-match-duplicate]` `case Circle(r): ... case Circle(r2): ...` is a compile
 error.
+
+### Testing for a variant
+
+`is` accepts a variant name, bare or qualified by the enum:
+
+```wac
+if (s is Circle)       { ... }
+if (s is Shape.Circle) { ... }     // the same test
+```
+
+`[§enum-is-qualified-8jkq4wp]` Both mean the same thing, for a variant with a payload as
+readily as one without — a type test needs no payload.
+
+The qualified form is worth stating because it used to be silently wrong. `Shape.Empty` on
+the right of `is` parses as an expression rather than a type, so the test became reference
+identity against a freshly constructed variant and was always false; a variant *with* a
+payload failed instead with "needs a payload", a message about construction when nothing was
+being constructed. It is also the spelling this document teaches, since it is how a variant
+is built.
+
+Writing a payload in a type test is an error rather than silently false:
+`[§enum-is-qualified-8jkq4wp]` `s is Shape.Circle(1.0)` is a compile error.
+
+`is` does not narrow `s` — see 0029 in the issue tracker, and use `match` when you need the
+payload.
 
 ### Matching a variant
 
@@ -429,12 +459,96 @@ subject, so a nullable one is `match (s!)` or an `is null` check first. Extendin
 `[§enum-match-nullable]` `match (s)` where `s` is `Shape?` is a compile error:
 `match requires a non-null value`.
 
-### What this is not yet
+### match as an expression
 
-Each of these is tracked as an issue, so the reasoning lives in one place rather than being
-re-derived: `match` as an expression (0026), nested patterns (0027), methods on enums
-(0028), narrowing outside `match` (0029), an integer representation for payload-less enums
-(0030), and `br_table` dispatch (0031).
+`match` also works where a value is wanted. Arms give an expression after the colon and are
+comma-separated; the arm header is exactly the statement form's, so there is one arm syntax
+to learn:
+
+```wac
+f64 area(Shape s) {
+  return match (s) {
+    case Point:      0.0,
+    case Circle(r):  3.14159 * r * r,
+    case Rect(w, h): w * h,
+  };
+}
+```
+
+`[§enum-match-expr-4wnq7bk]` A trailing comma is allowed, as in every other list. Narrowing
+works inside an arm's value just as it does inside an arm's statements, and a match
+expression may appear anywhere an expression may — including inside another one.
+
+The arms' types are unified exactly as a ternary's two branches are (see control.md), and by
+the same code: two variants of one enum unify to the enum, a `null` arm makes the result
+nullable, and an integer or float literal arm takes the type expected of the whole
+expression. `[§enum-match-expr-4wnq7bk]`
+
+An expression `match` must be **total** — exhaustive, or carrying an `else`. There is no
+falling off the end of an expression, so this is a stricter requirement than the statement
+form's, where an uncovered variant merely means control continues.
+`[§enum-match-expr-4wnq7bk]` And the arms must agree on a type: mixing them is an error
+naming the arms.
+
+### Methods
+
+An enum may declare methods after its variants. They attach to the enum itself, so `this` is
+the enum type and `match (this)` is how a method reaches a variant:
+
+```wac
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+
+  f64 area(const this) {
+    match (this) {
+      case Point:            return 0.0;
+      case Circle(r):        return 3.14159 * r * r;
+      case Rect(w, h):       return w * h;
+    }
+  }
+  f64 twiceArea(const this) { return this.area() * 2.0; }
+}
+```
+
+`[§enum-methods-6vkq2wn]` `Shape.Rect(3.0, 4.0).area()` is `12.0`, and a method may be
+called on an enum-typed variable, take parameters beside `this`, use a mutable `this`, and
+call another method through `this`.
+
+Variants come first and are comma-separated; methods follow. A method is recognised by its
+shape — a type, a name, and a parameter list — which a variant cannot have, so no separator
+is needed.
+
+Two shapes are refused, both deliberately:
+
+**No `override`.** `[§enum-methods-6vkq2wn]` The variants are compiler-generated subtypes of
+the enum, so an override would mean per-variant virtual dispatch — a different feature with
+its own design questions, and better refused than half-supported.
+
+**No static methods.** `[§enum-methods-6vkq2wn]` A static method would be called
+`Shape.make()`, which is already how a variant is constructed. That spelling has to mean one
+thing, so a method here must take `this` until the ambiguity is resolved deliberately. For
+the same reason a method may not take a variant's name.
+`[§enum-methods-6vkq2wn]`
+
+### What this is not
+
+**No nested patterns.** `case Node(Leaf(v), r)` is not accepted; patterns are one level deep,
+and a nested `match` inside the arm is the way to write it. That workaround is exact — it
+computes the same thing, only longer — which is why this is the one deferred item left
+undone. Nesting would also replace the exhaustiveness check with a pattern-matrix analysis,
+and exhaustiveness being obviously correct is worth more than the shorthand. Tracked as issue
+0027, with what would change the decision.
+
+**Payload-less enums still allocate**, and `match` still dispatches through a comparison
+chain rather than `br_table`. Both are measured in issues 0030 and 0031: a 20-variant dispatch
+costs 2.5 ns, within 15% of the same chain over a plain `i32`, and a payload-less construction
+costs 0.9 ns more than an integer. Neither is worth the representation split or the shared
+`emitSwitch` change today.
+
+Everything else once listed here is implemented: `match` as an expression (0026), methods
+(0028), and narrowing outside `match` in its restricted `if (x is T)` form (0029).
 
 **Not an expression.** `match` is a statement. The expression form is on the
 roadmap and needs result-type unification across arms, which is a separate step; the

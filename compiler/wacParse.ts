@@ -63,6 +63,12 @@ export type Expr =
   // `T[n](fill: v)` — named-argument syntax because `T[n](v)` would be ambiguous with
   // indexing a funcref array and calling it, `arr[i](5)`.
   | ({ kind: "arrNew";   elem: WacType; size: Expr | null; fixed: Expr[]; fill?: Expr } & Pos)
+  // `match` in expression position: every arm gives a value rather than statements.
+  // `enumBaseTypeIndex` is filled in by the checker, exactly as on the statement form.
+  // `resultType` is the unified arm type, filled in by the checker so the emitter can
+  // declare the block's result without re-deriving it.
+  | ({ kind: "matchExpr"; subject: Expr; arms: MatchArm[]; enumBaseTypeIndex?: number;
+       resultType?: WacType } & Pos)
   // ++/-- as an expression: postfix evaluates to the old value, prefix to the
   // new one. The operand must be an lvalue (variable, field, array element).
   | ({ kind: "incr-expr"; op: "++" | "--"; prefix: boolean; lval: Lvalue } & Pos);
@@ -80,7 +86,11 @@ export type Stmt =
   | ({ kind: "var";      isConst: boolean; type: WacType; name: string; init: Expr } & Pos)
   | ({ kind: "assign";   op: string; lval: Lvalue; rhs: Expr } & Pos)
   | ({ kind: "incr";     op: "++" | "--"; lval: Lvalue } & Pos)
-  | ({ kind: "if";       cond: Expr; then: Block; els: ElseBranch } & Pos)
+  // `narrowName`/`narrowTypeIndex` are filled in by the type checker when the condition is
+  // `ident is Type`: the name is shadowed at the narrower type inside the then-block, which
+  // the emitter needs a local and a cast for [see issue 0029].
+  | ({ kind: "if";       cond: Expr; then: Block; els: ElseBranch;
+       narrowName?: string; narrowTypeIndex?: number } & Pos)
   | ({ kind: "while";    cond: Expr; body: Block } & Pos)
   | ({ kind: "for";      init: Stmt | null; cond: Expr | null; update: Stmt | null; body: Block } & Pos)
   | ({ kind: "dowhile";  body: Block; cond: Expr } & Pos)
@@ -109,6 +119,13 @@ export type MatchArm = {
   variant: string | null;
   bindings: string[];
   body: Stmt[];
+  /**
+   * The arm's value, when the `match` is an expression rather than a statement. `body` is
+   * empty in that case and this is set; the two forms share everything else, including the
+   * annotations below, so the checker and emitter differ only in what they do with the
+   * arm's contents.
+   */
+  value?: Expr;
   /**
    * Filled in by the type checker, consumed by the emitter — the same
    * annotate-then-consume arrangement the resolver uses for `resolvedTypeIndex`.
@@ -163,6 +180,12 @@ export type VariantDecl = {
 export type EnumDecl = {
   tag: "enum"; exported: boolean; name: string;
   variants: VariantDecl[];
+  /**
+   * Methods declared in the enum body, after the variants. They attach to the enum's
+   * generated base struct, so `this` is the enum type and `match (this)` is how a method
+   * reaches a variant.
+   */
+  methods: MethodDecl[];
 } & Pos;
 
 /**
@@ -574,6 +597,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       expect(")");
       return e;
     }
+
+    // `match (subject) { case P: value, ... }` as an expression. Reuses `case P:` from the
+    // statement form so there is one arm syntax in the language; what follows the colon is
+    // an expression, and arms are comma-separated. Which form is being parsed is decided by
+    // position, not by syntax, so nothing is ambiguous.
+    if (at("match")) return parseMatchExpr();
 
     // fn[R(P)][](args) — array of funcref construction
     if (at("fn")) {
@@ -997,6 +1026,53 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     return { kind: "match", subject, arms, ...p };
   }
 
+  /**
+   * `match` as an expression.
+   *
+   * Deliberately close to `parseMatchStmt`: the arm header is identical, so a reader who
+   * knows one knows the other, and the checker shares its arm handling between them. The
+   * only difference is what follows the colon.
+   */
+  function parseMatchExpr(): Expr {
+    const p = pos();
+    expect("match");
+    expect("(");
+    const subject = parseExpr();
+    expect(")");
+    expect("{");
+
+    const arms: MatchArm[] = [];
+    while (!at("}") && !at("eof")) {
+      const ap = pos();
+      if (consume("else")) {
+        expect(":");
+        arms.push({ variant: null, bindings: [], body: [], value: parseExpr(), ...ap });
+      } else if (consume("case")) {
+        const variant = at("ident") ? advance().text : (err("expected variant name"), "?");
+        const bindings: string[] = [];
+        if (consume("(")) {
+          if (!at(")")) {
+            do {
+              if (at(")")) break;   // trailing comma
+              bindings.push(at("ident") ? advance().text : (err("expected binding name"), "?"));
+            } while (consume(","));
+          }
+          expect(")");
+        }
+        expect(":");
+        arms.push({ variant, bindings, body: [], value: parseExpr(), ...ap });
+      } else {
+        err(`expected 'case' or 'else' in match`);
+        advance();
+        continue;
+      }
+      // A trailing comma after the last arm is allowed, as in every other list.
+      if (!consume(",")) break;
+    }
+    expect("}");
+    return { kind: "matchExpr", subject, arms, ...p };
+  }
+
   /** An arm body runs to the next `case`, `else` or the closing brace. */
   function parseArmBody(): Stmt[] {
     const body: Stmt[] = [];
@@ -1140,8 +1216,14 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const name = at("ident") ? advance().text : (err("expected enum name"), "?");
     expect("{");
 
+    // Variants first, comma-separated, then methods. A method is recognised by its shape —
+    // `type name(this, ...) { ... }` — which a variant can never have, so the two are
+    // distinguishable without a separator keyword. The variant list ends at the first thing
+    // that is not `IDENT` or `IDENT(...)` followed by a comma.
     const variants: VariantDecl[] = [];
+    const methods: MethodDecl[] = [];
     while (!at("}") && !at("eof")) {
+      if (looksLikeEnumMethod()) break;
       const vp = pos();
       const vname = at("ident") ? advance().text : (err("expected variant name"), "?");
       const fields: Param[] = [];
@@ -1152,8 +1234,71 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       variants.push({ name: vname, fields, ...vp });
       if (!consume(",")) break;
     }
+
+    while (!at("}") && !at("eof")) {
+      const mp = pos();
+      // `override` has no meaning here: the variants are compiler-generated subtypes of the
+      // base, so an override would be per-variant virtual dispatch — a different feature
+      // with its own design questions. Rejected rather than quietly accepted.
+      if (at("override")) {
+        err(`'override' is not allowed on an enum method`);
+        advance();
+      }
+      const returnType = parseType();
+      const mname = at("ident") ? advance().text : (err("expected method name"), "?");
+      expect("(");
+      let hasThis = false;
+      let thisConst = false;
+      const params: Param[] = [];
+      if (!at(")")) {
+        if (at("const") && tok(1).text === "this") {
+          thisConst = true; advance(); hasThis = true; advance();
+          if (consume(",")) parseParams(params);
+        } else if (at("this")) {
+          hasThis = true; advance();
+          if (consume(",")) parseParams(params);
+        } else {
+          parseParams(params);
+        }
+      }
+      expect(")");
+      // A static method on an enum would be written `Shape.make()`, which is already how a
+      // variant is constructed. Allowing both would make that spelling ambiguous, so a
+      // method here must take `this` until that ambiguity is decided deliberately.
+      if (!hasThis) {
+        err(`an enum method must take 'this' — 'Shape.name()' is how a variant is constructed`);
+      }
+      methods.push({
+        isOverride: false, returnType, name: mname, hasThis, thisConst, params,
+        body: parseBlock(), ...mp,
+      });
+    }
+
     expect("}");
-    return { tag: "enum", exported, name, variants, ...p };
+    return { tag: "enum", exported, name, variants, methods, ...p };
+  }
+
+  /**
+   * Does a method declaration start here, rather than another variant?
+   *
+   * A variant is `IDENT` or `IDENT(...)`; a method is a *type* followed by a name and a
+   * parameter list. The distinguishing shape is what follows the first identifier: a
+   * variant is followed by `,`, `}` or `(`, a method by another identifier (its name) or by
+   * a type suffix. `override` is unambiguous on its own.
+   */
+  function looksLikeEnumMethod(): boolean {
+    if (at("override")) return true;
+    if (at("void") || at("fn")) return true;
+    if (!at("ident")) return false;
+    // Skip the type's own suffixes: `i32[] name(...)`, `Node? name(...)`.
+    let j = cur + 1;
+    while (j < tokens.length) {
+      if (tokens[j]?.kind === "[" && tokens[j + 1]?.kind === "]") { j += 2; }
+      else if (tokens[j]?.kind === "?") { j++; }
+      else break;
+    }
+    // A second identifier followed by `(` is a method; anything else is a variant.
+    return tokens[j]?.kind === "ident" && tokens[j + 1]?.kind === "(";
   }
 
   function parseFuncDecl(): FuncDecl {
