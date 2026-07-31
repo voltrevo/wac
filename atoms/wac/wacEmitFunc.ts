@@ -1757,24 +1757,18 @@ class FuncEmitter {
       }
     }
 
-    // Direct function call: funcName(args)
-    if (e.callee.kind === "ident") {
-      const name = (e.callee as { name: string }).name;
-      // Resolve through the calling file's own scope first. ctx.funcIdx also
-      // maps bare names, but globally and first-wins, so two files that each
-      // declare a private `helper` would both reach whichever was registered
-      // first — silently, and with the wrong signature.
-      const scoped = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(name);
-      const fIdx = scoped?.kind === "func"
-        ? scoped.entry.funcIndex
-        : this.ctx.funcIdx.get(name);
-      if (fIdx !== undefined) {
-        const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
-        this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
-        this.emit(0x10, ...uleb(fIdx)); // call
-        return;
-      }
-    }
+    // There is deliberately no `e.callee.kind === "ident"` branch here.
+    //
+    // `foo(1)` never arrives as a call: the parser calls every `ident(...)` a
+    // *construction*, because it cannot tell a struct name from a function name without
+    // a symbol table. So a direct call to a plain function is emitted by
+    // `emitConstruct`, in the branch where the name resolves to no struct type.
+    //
+    // A branch for it did exist and was unreachable, which cost real time once: while
+    // fixing bare-name resolution in 123ac4c the fix was applied here first, changed
+    // nothing, and only then was the live path found. Anyone changing call emission will
+    // look here, so this comment is the point of the change rather than an aside.
+    // `typeOfExpr`'s "construct" case is arranged the same way, for the same reason.
 
     // Funcref indirect call: f(args)
     const calleeT = typeOfExpr(e.callee, env, this.ctx);
@@ -1798,7 +1792,10 @@ class FuncEmitter {
       const tIdx  = e.ctype.resolvedTypeIndex ?? this.ctx.structTypeIdx.get(sName);
       if (tIdx === undefined) {
         // The parser calls any `ident(...)` a construction, so an ordinary call
-        // to a plain function arrives here. Resolve it through the calling
+        // to a plain function arrives here — this is where *every* direct call is
+        // emitted, not a fallback. `emitCall` handles only the shapes the parser does
+        // produce as calls: a method call, an indirect funcref call, and variant
+        // construction. Resolve it through the calling
         // file's scope: ctx.funcIdx maps bare names globally and first-wins, so
         // two files each declaring a private `helper` would both reach
         // whichever was registered first, with the wrong signature.
