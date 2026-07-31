@@ -1173,7 +1173,10 @@ function checkConstDecl(decl: ConstDecl, ctx: Ctx): void {
   if (why !== null) {
     errAt(ctx, `constant '${decl.name}' needs a compile-time value`,
       decl.init.line, decl.init.col, 0, why,
-      `only literals, operators over them, casts and other constants are allowed`);
+      // The rule has widened twice — construction (0002) and sized arrays (0032) — so
+      // this now describes what is allowed rather than listing a narrower set.
+      `allowed: literals, the operators over them, casts, other constants, and ` +
+      `construction of a struct, a variant or an array out of those`);
     return;
   }
   const env: VarEnv = new Map();
@@ -1245,10 +1248,22 @@ function notCompileTimeConstant(expr: Expr, ctx: Ctx, seen: Set<string>): string
           ?? notCompileTimeConstant(expr.then, ctx, seen)
           ?? notCompileTimeConstant(expr.else_, ctx, seen);
     case "arrNew": {
-      // The literal form only. `T[n]()` and `T[n](fill: v)` build the array at run
-      // time from a length that need not be constant.
       if (expr.size !== null) {
-        return `a sized array is built at run time — write the elements out`;
+        // A sized array is constant when its *length* is: `array.new_default` and
+        // `array.new` are both constant instructions, so `i32[8]()` and
+        // `i32[8](fill: -1)` can be built in a global's initialiser like any other
+        // constant. What is not allowed is a length that has to be computed.
+        const whySize = notCompileTimeConstant(expr.size, ctx, seen);
+        if (whySize !== null) {
+          return `an array's length must be constant here — ${whySize}`;
+        }
+        if (expr.fill !== undefined) {
+          const whyFill = notCompileTimeConstant(expr.fill, ctx, seen);
+          if (whyFill !== null) return whyFill;
+        } else if (!hasDefault(expr.elem, ctx)) {
+          return `'${typeName(expr.elem)}' has no default value — give one with 'fill:'`;
+        }
+        return null;
       }
       for (const el of expr.fixed) {
         const why = notCompileTimeConstant(el, ctx, seen);
