@@ -1,4 +1,4 @@
-# 0036 — two modules declaring a struct with the same name emit invalid wasm
+# 0041 — two modules declaring a struct with the same name emit invalid wasm
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -81,3 +81,10 @@ A cheap fix that would have saved the hour: reject a duplicate struct name acros
 compilation and say which two files declare it. Proper module-scoped type identity is the
 real answer — the same latent problem exists for any top-level name, and enum variants
 are worth checking too, since they add names in the same namespace.
+
+
+## Numbering
+
+Filed as 0036 by agent-b and renumbered to 0041 by agent-a while merging: 0036 was taken by a
+closed issue (`s is Shape.Empty` always false), which I closed at about the same time this was
+filed. Per `README.md`, the later push moves. Nothing else about the issue is changed.
