@@ -1614,6 +1614,18 @@ class FuncEmitter {
   /** Emit the operation opcode for compound assignment (op without '='). */
   private emitBinOpCode(op: string, t: WacType): void {
     const p = t.kind === "prim" ? t.name : "i32";
+
+    // `s += t` on strings is concatenation, which is a helper call rather than an
+    // opcode [see strings.md]. Without this, "string" falls through the numeric
+    // mapping below to the f64 column and emits f64.add on two string refs —
+    // invalid wasm.
+    if (p === "string") {
+      if (op === "+") {
+        this.emit(0x10, ...uleb(this.ctx.helperIdx.get("__str_concat")!));
+      }
+      return;
+    }
+
     const k = p === "bool" || p === "i8" || p === "i16" ? "i32"
             : p === "i32" ? "i32" : p === "i64" ? "i64"
             : p === "f32" ? "f32" : "f64";
