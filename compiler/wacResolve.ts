@@ -218,6 +218,12 @@ function annotateExpr(e: Expr, scope: FileScope): void {
       for (const a of e.args) annotateExpr(a, scope);
       for (const n of e.named ?? []) annotateExpr(n.val, scope);
       return;
+    case "matchExpr":
+      annotateExpr(e.subject, scope);
+      for (const arm of e.arms) {
+        if (arm.value) annotateExpr(arm.value, scope);
+      }
+      return;
     case "arrNew":
       annotateType(e.elem, scope);
       if (e.size) annotateExpr(e.size, scope);

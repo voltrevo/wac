@@ -143,6 +143,14 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
   }
 
   function scanExpr(e: Expr): void {
+    if (e.kind === "matchExpr") {
+      // Arm values are subexpressions, so a type used only inside one has to be collected
+      // here — the same omission as the match *statement*'s arms in issue 0005.
+      scanExpr(e.subject);
+      for (const arm of e.arms) {
+        if (arm.value) scanExpr(arm.value);
+      }
+    }
     if (e.kind === "arrNew") {
       scanType(e.elem);
       scanType({ kind: "array", elem: e.elem, line: 0, col: 0 });

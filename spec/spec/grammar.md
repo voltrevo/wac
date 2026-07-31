@@ -106,6 +106,12 @@ do_while_stmt  = "do" , block , "while" , "(" , expr , ")" , ";" ;
 switch_stmt    = "switch" , "(" , expr , ")" , "{" , { case_clause } , [ default_clause ] , "}" ;
 
 match_stmt     = "match" , "(" , expr , ")" , "{" , { match_arm } , "}" ;
+
+(* The same header, with a value instead of statements. Which form is parsed is decided by
+   position — statement or expression — so the two cannot be confused. *)
+match_expr     = "match" , "(" , expr , ")" , "{" , [ match_value_arm ,
+                 { "," , match_value_arm } , [ "," ] ] , "}" ;
+match_value_arm = ( "case" , IDENT , [ "(" , [ binding_list ] , ")" ] | "else" ) , ":" , expr ;
 match_arm      = "case" , IDENT , [ "(" , [ binding_list ] , ")" ] , ":" , { statement }
                | "else" , ":" , { statement } ;
 binding_list   = IDENT , { "," , IDENT } , [ "," ] ;
@@ -161,6 +167,7 @@ primary_expr   = INT_LITERAL
                | IDENT , [ "." , IDENT ] , "(" , [ arg_list ] , ")"   (* function/static call *)
                | IDENT                                                  (* variable *)
                | "(" , expr , ")"                                       (* grouping *)
+               | match_expr                                              (* see above *)
                | construction_expr ;
 
 construction_expr = type_name , "(" , [ arg_list ] , ")"               (* positional or default *)

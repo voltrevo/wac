@@ -5959,6 +5959,90 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
 });
 
+// §enum-match-expr-4wnq7bk — `match` as an expression
+Deno.test("[§enum-match-expr-4wnq7bk] match can be an expression", async () => {
+  // Issue 0026, and the last of the six items enums.md had listed as deferred. Arms give a
+  // value after the colon and are comma-separated; the arm header is identical to the
+  // statement form, so there is one arm syntax in the language.
+  const inst = await run(`${SHAPES}
+    f64 area(Shape s) {
+      return match (s) { case Point: 0.0, case Circle(r): 3.14159 * r * r, case Rect(w, h): w * h };
+    }
+    f64 twice(f64 x) { return x * 2.0; }
+    export f64 initialiser() {
+      Shape s = Shape.Rect(3.0, 4.0);
+      f64 a = match (s) { case Point: 0.0, case Circle(r): r, case Rect(w, h): w * h, };
+      return a;
+    }
+    export f64 returned()  { return area(Shape.Rect(2.0, 5.0)); }
+    export f64 elseArm()   { Shape s = Shape.Point; return match (s) { case Circle(r): r, else: 9.0 }; }
+    export f64 narrowed()  {
+      Shape s = Shape.Rect(2.0, 3.0);
+      return match (s) { case Point: 0.0, case Circle: s.radius, case Rect: s.width * s.height };
+    }
+    export f64 nested() {
+      Shape a = Shape.Circle(2.0);
+      Shape b = Shape.Point;
+      return match (a) {
+        case Point:     0.0,
+        case Circle(r): match (b) { case Point: r, else: 0.0 },
+        case Rect(w, h): w,
+      };
+    }
+    export f64 asArgument() {
+      Shape s = Shape.Circle(1.5);
+      return twice(match (s) { case Circle(r): r, else: 0.0 });
+    }
+  `);
+  near(inst.call("initialiser", []) as number, 12.0, "a trailing comma is allowed too");
+  near(inst.call("returned", []) as number, 10.0, "as a return value");
+  near(inst.call("elseArm", []) as number, 9.0, "with an else arm");
+  near(inst.call("narrowed", []) as number, 6.0, "the subject narrows inside an arm value");
+  near(inst.call("nested", []) as number, 2.0, "a match expression inside a match expression");
+  near(inst.call("asArgument", []) as number, 3.0, "and in an argument position");
+});
+
+Deno.test("[§enum-match-expr-4wnq7bk] arm types unify the way ternary branches do", async () => {
+  // The unification is literally the ternary's, extracted rather than reimplemented — which
+  // is why a `null` arm widens and an integer arm takes the expected type without either
+  // rule being written twice.
+  const inst = await run(`${SHAPES}
+    struct P { i32 v; }
+    export i64 integers()  { Shape s = Shape.Point; i64 n = match (s) { case Point: 1, else: 2 }; return n; }
+    export f32 floats()    { Shape s = Shape.Point; f32 x = match (s) { case Point: 1.5, else: 2.5 }; return x; }
+    export i32 nullArm()   {
+      Shape s = Shape.Point;
+      P? p = match (s) { case Point: null, else: P(1) };
+      return p is null ? 7 : p!.v;
+    }
+    export f64 toTheEnum() {
+      Shape s = Shape.Point;
+      // Two arms give different *variants*, so the result is their common ancestor: Shape.
+      Shape t = match (s) { case Point: Shape.Circle(1.0), case Circle(r): Shape.Point, case Rect(w, h): Shape.Point };
+      return match (t) { case Circle(r): r, else: 0.0 };
+    }
+  `);
+  eq(inst.call("integers", []), 1n, "an integer arm takes the expected i64");
+  near(inst.call("floats", []) as number, 1.5, "and a float arm the expected f32");
+  eq(inst.call("nullArm", []), 7, "a null arm widens the result to nullable");
+  near(inst.call("toTheEnum", []) as number, 1.0, "two variants unify to their enum");
+});
+
+Deno.test("[§enum-match-expr-4wnq7bk] an expression match must be total and consistent", () => {
+  const inexhaustive = err(`${SHAPES}
+    export f64 f() { Shape s = Shape.Point; return match (s) { case Point: 0.0 }; }`);
+  if (!inexhaustive.includes("does not cover")) {
+    throw new Error(`expected the exhaustiveness diagnostic, got: ${inexhaustive}`);
+  }
+  // There is no falling off the end of an expression, so this matters more here than in the
+  // statement form — and the arms must agree on a type, named as arms rather than branches.
+  const mixed = err(`${SHAPES}
+    export f64 f() { Shape s = Shape.Point; return match (s) { case Point: 0.0, else: "x" }; }`);
+  if (!mixed.includes("match arms have incompatible types")) {
+    throw new Error(`expected the arm-type diagnostic, got: ${mixed}`);
+  }
+});
+
 // §enum-is-qualified-8jkq4wp — a qualified variant name works in an `is` test
 Deno.test("[§enum-is-qualified-8jkq4wp] `s is Shape.Empty` means what `s is Empty` means", async () => {
   // Reported by agent-c as issue 0036. The qualified form parses as an expression, not a

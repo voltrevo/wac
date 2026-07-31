@@ -454,12 +454,43 @@ subject, so a nullable one is `match (s!)` or an `is null` check first. Extendin
 `[§enum-match-nullable]` `match (s)` where `s` is `Shape?` is a compile error:
 `match requires a non-null value`.
 
+### match as an expression
+
+`match` also works where a value is wanted. Arms give an expression after the colon and are
+comma-separated; the arm header is exactly the statement form's, so there is one arm syntax
+to learn:
+
+```wac
+f64 area(Shape s) {
+  return match (s) {
+    case Point:      0.0,
+    case Circle(r):  3.14159 * r * r,
+    case Rect(w, h): w * h,
+  };
+}
+```
+
+`[§enum-match-expr-4wnq7bk]` A trailing comma is allowed, as in every other list. Narrowing
+works inside an arm's value just as it does inside an arm's statements, and a match
+expression may appear anywhere an expression may — including inside another one.
+
+The arms' types are unified exactly as a ternary's two branches are (see control.md), and by
+the same code: two variants of one enum unify to the enum, a `null` arm makes the result
+nullable, and an integer or float literal arm takes the type expected of the whole
+expression. `[§enum-match-expr-4wnq7bk]`
+
+An expression `match` must be **total** — exhaustive, or carrying an `else`. There is no
+falling off the end of an expression, so this is a stricter requirement than the statement
+form's, where an uncovered variant merely means control continues.
+`[§enum-match-expr-4wnq7bk]` And the arms must agree on a type: mixing them is an error
+naming the arms.
+
 ### What this is not yet
 
 Each of these is tracked as an issue, so the reasoning lives in one place rather than being
-re-derived: `match` as an expression (0026), nested patterns (0027), methods on enums
-(0028), narrowing outside `match` (0029), an integer representation for payload-less enums
-(0030), and `br_table` dispatch (0031).
+re-derived: nested patterns (0027), methods on enums (0028), narrowing outside `match`
+(0029), an integer representation for payload-less enums (0030), and `br_table` dispatch
+(0031).
 
 **Not an expression.** `match` is a statement. The expression form is on the
 roadmap and needs result-type unification across arms, which is a separate step; the
