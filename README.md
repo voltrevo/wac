@@ -59,7 +59,7 @@ export f64 run() {
 npm install
 npm run dev      # dev server with playground
 npm run build    # production build
-deno test        # run compiler tests
+deno test -A     # run compiler tests (bindgen tests write to a temp dir)
 ```
 
 ## License
