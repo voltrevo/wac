@@ -22,7 +22,12 @@ export type WacInst = {
 };
 
 /** Acceptable JS argument types for wac function calls. */
-export type WacArg = number | bigint | boolean;
+/**
+ * `object` and `null` are here because a reference is a legitimate argument: a value returned
+ * from one export can be passed to another, which is the only way a host can carry a struct or a
+ * boxed `i32?` around. Coercion leaves those alone — `Number()` on a wasm reference throws.
+ */
+export type WacArg = number | bigint | boolean | null | object;
 
 /** Return value types from wac function calls. */
 export type WacVal =
@@ -140,7 +145,19 @@ function decodeArray(
 // ── Type coercion helpers ─────────────────────────────────────────────────────
 
 /** Coerce a JS value to the wasm type expected for a parameter. */
+/** Does this exported type cross the boundary as an opaque wasm reference? */
+function isRefTypeStr(t: string): boolean {
+  // A nullable of anything, and any name that is not a primitive: a struct, an enum, an array of
+  // a non-numeric element. The numeric and string cases are all named explicitly below.
+  return t.endsWith("?") || t.startsWith("fn[") ||
+    !["i32", "i64", "u32", "u64", "i8", "i16", "u8", "u16", "f32", "f64", "bool", "void",
+      "string"].includes(t) && !t.endsWith("[]");
+}
+
 function coerceArg(v: WacArg, t: string): unknown {
+  // A reference goes through untouched. Anything else would be `Number()` of an object, which
+  // throws, and there is nothing to convert: the value came out of wasm in the first place.
+  if (isRefTypeStr(t) || v === null || typeof v === "object") return v;
   // u64 shares i64's wasm type; wrap into the low 64 bits so a JS value above
   // i64::MAX (which a u64 legitimately reaches) is accepted rather than thrown
   // on by BigInt conversion at the boundary.
@@ -155,6 +172,9 @@ function coerceArg(v: WacArg, t: string): unknown {
 /** Coerce a wasm return value to the appropriate JS type. */
 function coerceResult(v: unknown, t: string): WacVal {
   if (v === undefined || v === null) return null;
+  // A reference is handed back as it is. `Number()` of one throws, which is how a nullable
+  // primitive returned to the host used to fail [issue 0045].
+  if (isRefTypeStr(t)) return v as WacVal;
   if (t === "i64") return BigInt(v as bigint | number);
   // The wasm value is the raw 64 or 32 bits; read it back as unsigned.
   if (t === "u64") return BigInt.asUintN(64, BigInt(v as bigint | number));

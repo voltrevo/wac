@@ -73,7 +73,10 @@ function isNullT(t: WacType): boolean {
 function nullableOf(t: WacType): WacType | null {
   if (t.kind === "nullable") return t;
   if (t.kind === "struct" || t.kind === "array" || t.kind === "funcref") return nullable(t);
-  if (t.kind === "prim" && t.name === "string") return nullable(t);
+  // Every primitive but `void` can be nullable now that a nullable primitive is boxed rather
+  // than truncated to 31 bits [issue 0045]. Before that this returned null for them, so
+  // `cond ? 1 : null` had no type and the ternary was rejected.
+  if (t.kind === "prim" && t.name !== "void") return nullable(t);
   return null;
 }
 
@@ -1699,10 +1702,14 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // `u32 x = 5` and `i64 n = 5` work — without it every literal in
       // unsigned code would need a cast. Recorded on the node so the emitter
       // uses the same answer instead of re-deriving it.
-      if (expected && expected.kind === "prim" && isInteger(expected)) {
-        if (literalFits(lit, expected.name)) {
-          expr.resolved = expected;
-          return expected;
+      // Through a nullable, too: the expected type of the literal in `u8? a = 200` is `u8?`,
+      // and the literal itself is a `u8` that the emitter then boxes. Without this the
+      // literal typed as i32 and the assignment failed with "expected u8?, got i32".
+      const intWant = expected?.kind === "nullable" ? expected.inner : expected;
+      if (intWant && intWant.kind === "prim" && isInteger(intWant)) {
+        if (literalFits(lit, intWant.name)) {
+          expr.resolved = intWant;
+          return intWant;
         }
         // Falls through to the intrinsic width, which then fails the normal
         // assignability check with the ordinary "expected X, got Y" message.
@@ -1727,10 +1734,11 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // f64 as readily as for f32 — `0.1` is inexact in both — so requiring exactness
       // would reject `f32 pi = 3.14159;` and make the rule useless. Overflow to
       // infinity is a different matter and is refused.
-      if (expected && expected.kind === "prim" && expected.name === "f32") {
+      const floatWant = expected?.kind === "nullable" ? expected.inner : expected;
+      if (floatWant && floatWant.kind === "prim" && floatWant.name === "f32") {
         if (floatLiteralFitsF32(expr.value)) {
-          expr.resolved = expected;
-          return expected;
+          expr.resolved = floatWant;
+          return floatWant;
         }
         errAt(ctx, `float literal out of range for f32`, expr.line, expr.col,
           expr.value.length, `${expr.value} overflows f32`,

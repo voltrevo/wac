@@ -719,7 +719,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (!at("ident")) return false;
     // Primitive type names: only for array construction (e.g. i32[N]() or i32[]())
     if (PRIM_TYPES.has(t.text)) {
-      return at("(", 1) || at("[", 1);
+      // `?` as well as `[`: `i32?[3]()` is an array of nullable primitives, which is the same
+      // shape as `Node?[3]()` and was accepted only for the named case.
+      return at("(", 1) || at("[", 1) || (at("?", 1) && at("[", 2));
     }
     // i31ref / anyref as construction (anyref used for i31ref casts etc.)
     if (t.text === "anyref" || t.text === "i31ref") return false;

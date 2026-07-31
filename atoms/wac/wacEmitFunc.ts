@@ -14,7 +14,7 @@ import {
 } from "./wacParse.ts";
 import {
   type FuncEntry, type StructEntry, type ResolveResult,
-  funcParams, funcReturnType, commonAncestor, ENUM_TAG_FIELD,
+  funcParams, funcReturnType, commonAncestor, ENUM_TAG_FIELD, boxStructName, needsBoxing,
 } from "./wacResolve.ts";
 import { wacIntLit } from "./wacIntLit.ts";
 import { wacFloatLit } from "./wacFloatLit.ts";
@@ -180,15 +180,18 @@ function isNullLit(e: Expr): boolean {
 }
 
 /** `T?` for a type that has a nullable form, else null. Mirrors the type checker. */
+/**
+ * `T?` for a `T` that can be one — which is now every type but `void`.
+ *
+ * Mirrors the type checker's own `nullableOf`, and the mirroring is the point: this is the
+ * function the comment in `typeOfExpr`'s ternary case is about. When the checker learned that a
+ * primitive can be nullable [issue 0045] and this did not, `cond ? 1 : null` type-checked as
+ * `i32?` and then emitted a block declared `i32` with a `ref.null` in one arm.
+ */
 function nullableOf(t: WacType): WacType | null {
   if (t.kind === "nullable") return t;
-  if (t.kind === "struct" || t.kind === "array" || t.kind === "funcref") {
-    return { kind: "nullable", inner: t, line: 0, col: 0 };
-  }
-  if (t.kind === "prim" && t.name === "string") {
-    return { kind: "nullable", inner: t, line: 0, col: 0 };
-  }
-  return null;
+  if (t.kind === "prim" && (t.name === "void" || t.name === "null")) return null;
+  return { kind: "nullable", inner: t, line: 0, col: 0 };
 }
 
 export function typeKey(t: WacType): string {
@@ -946,24 +949,69 @@ class FuncEmitter {
     return this.labelDepth - savedDepth - 1;
   }
 
-  // ── Helper: box a raw i32 value via ref.i31 when the slot is a nullable primitive ──
+  // ── Nullable primitives: boxed, because no wasm numeric type has a null ──
 
   /**
-   * A literal of type `i32`/`bool` is a raw i32 on the wasm stack, but a
-   * nullable-primitive-typed slot (`i32?`, `bool?`) is represented as anyref
-   * — box it with ref.i31 so the value satisfies that type. i31ref is a
-   * subtype of anyref, so no further conversion is needed.
+   * Box the value on the stack into the struct that represents `P?`.
+   *
+   * `i32?` is stored as anyref, so an i32 going into one has to become a reference. A
+   * one-field struct rather than `ref.i31`, which is free but holds only 31 bits: it would
+   * truncate exactly the values a program is most careful about [issue 0045]. The struct is
+   * synthesised by the resolver, so `struct.new` is all this needs.
    */
-  private boxIfNullablePrimitive(expectType: WacType | undefined, primName: "i32" | "bool"): void {
-    if (expectType?.kind === "nullable" &&
-        expectType.inner.kind === "prim" && expectType.inner.name === primName) {
-      this.emit(0xFB, 0x1C); // ref.i31
-    }
+  private boxPrim(prim: string): void {
+    const idx = this.ctx.structTypeIdx.get(boxStructName(prim));
+    if (idx === undefined) return;    // no `P?` in the program, so nothing to box into
+    this.emit(0xFB, 0x00, ...uleb(idx));   // struct.new $#box$P
+  }
+
+  /** The other direction: `x!` on a `P?`, which is a cast and a field read. */
+  private unboxPrim(prim: string): void {
+    const idx = this.ctx.structTypeIdx.get(boxStructName(prim));
+    if (idx === undefined) return;
+    this.emit(0xFB, 0x16, ...uleb(idx));        // ref.cast (ref $#box$P) — also the null check
+    this.emit(0xFB, 0x02, ...uleb(idx), 0x00); // struct.get $#box$P 0
+  }
+
+  /**
+   * The expected type worth pushing into an expression, or nothing.
+   *
+   * Two reasons to push one: `null` has no type of its own, and a value going into a nullable
+   * primitive has to be boxed. Not otherwise — a literal's width comes from what the checker
+   * resolved, and pushing a type down unconditionally made the two disagree.
+   */
+  private hintFor(t: WacType | undefined, arg: Expr): WacType | undefined {
+    if (t === undefined) return undefined;
+    if (arg.kind === "null") return t;
+    if (t.kind === "nullable" && needsBoxing(t.inner)) return t;
+    return undefined;
+  }
+
+  /**
+   * Box a just-emitted value if its slot is a nullable primitive and it is not one already.
+   *
+   * One hook rather than one per position: every expected-type position already threads
+   * `expectType` through `emitExpr`, so this covers a declaration, an assignment, a call's
+   * argument, a return, a field, an array element, a ternary branch and a match arm at once.
+   */
+  private boxForExpected(e: Expr, env: TypeEnv, expectType: WacType | undefined): void {
+    if (expectType?.kind !== "nullable" || !needsBoxing(expectType.inner)) return;
+    const want = (expectType.inner as { name: string }).name;
+    const got = typeOfExpr(e, env, this.ctx);
+    // Only a *raw* value of that primitive needs it. A `P?` value is already boxed, and
+    // `null` is already a reference.
+    if (got.kind !== "prim" || got.name !== want) return;
+    this.boxPrim(want);
   }
 
   // ── Expression emitter ──
 
   emitExpr(e: Expr, env: TypeEnv, expectType?: WacType): void {
+    this.emitExprRaw(e, env, expectType);
+    this.boxForExpected(e, env, expectType);
+  }
+
+  private emitExprRaw(e: Expr, env: TypeEnv, expectType?: WacType): void {
     switch (e.kind) {
       case "int": {
         // Emission only runs after a successful typecheck, which rejects any
@@ -985,7 +1033,6 @@ class FuncEmitter {
           this.emit(0x42, ...slebBig(BigInt.asIntN(64, lit.value))); // i64.const
         } else {
           this.emit(0x41, ...sleb(Number(BigInt.asIntN(32, lit.value)))); // i32.const
-          this.boxIfNullablePrimitive(expectType, "i32");
         }
         break;
       }
@@ -1011,7 +1058,6 @@ class FuncEmitter {
       }
       case "bool": {
         this.emit(0x41, e.value ? 1 : 0); // i32.const
-        this.boxIfNullablePrimitive(expectType, "bool");
         break;
       }
       case "null": {
@@ -1093,7 +1139,15 @@ class FuncEmitter {
       case "cast":   this.emitCast(e, env); break;
       case "is":     this.emitIs(e, env); break;
       case "incr-expr": this.emitIncrExpr(e, env); break;
-      case "unwrap": this.emitExpr(e.expr, env); this.emit(0xD4); break; // ref.as_non_null
+      case "unwrap": {
+        this.emitExpr(e.expr, env);
+        const inner = typeOfExpr(e, env, this.ctx);
+        // A boxed primitive needs unwrapping in the other sense too: `ref.cast` is the null
+        // check *and* the way to the field, so `ref.as_non_null` would be redundant.
+        if (needsBoxing(inner)) this.unboxPrim((inner as { name: string }).name);
+        else this.emit(0xD4);  // ref.as_non_null
+        break;
+      }
       case "call":   this.emitCall(e, env); break;
       case "field":  this.emitField(e, env); break;
       case "index":  this.emitIndex(e, env); break;
@@ -2017,14 +2071,13 @@ class FuncEmitter {
         // Named: reorder to field declaration order
         for (const f of fields) {
           const na = e.named.find(n => n.name === f.name)!;
-          this.emitExpr(na.val, env);
+          this.emitExpr(na.val, env, this.hintFor(f.type, na.val));
         }
       } else {
         // Positional: emit in order, passing field type as hint for null args
         for (let i = 0; i < e.args.length; i++) {
           const ft = i < fields.length ? fields[i].type : undefined;
-          const isNull = e.args[i].kind === "null";
-          this.emitExpr(e.args[i], env, isNull ? ft : undefined);
+          this.emitExpr(e.args[i], env, this.hintFor(ft, e.args[i]));
         }
       }
       this.emit(0xFB, 0x00, ...uleb(tIdx)); // struct.new $t
@@ -2173,7 +2226,12 @@ class FuncEmitter {
       case "var": {
         const init = s.init;
         const isNull = init.kind === "null";
-        this.emitExpr(init, env, isNull ? s.type : undefined);
+        // The declared type is pushed down for `null` (which has no type of its own) and for a
+        // nullable primitive (whose value has to be boxed on the way in). Not otherwise: a
+        // literal's width comes from what the checker resolved, and pushing a type down here
+        // once made the two disagree.
+        const wantsBox = s.type.kind === "nullable" && needsBoxing(s.type.inner);
+        this.emitExpr(init, env, isNull || wantsBox ? s.type : undefined);
         const varKey = this.keyMap.get(s) ?? s.name;
         this.emit(0x21, ...uleb(this.localMap.get(varKey)!.idx)); // local.set
         this.nameToKey.set(s.name, varKey); // update scope: name → unique key
@@ -2287,8 +2345,7 @@ class FuncEmitter {
         this.emitCompoundRhs(rhs, env, lt, op.slice(0,-1));
         this.emitBinOpCode(op.slice(0,-1), lt);
       } else {
-        const isNull = rhs.kind === "null";
-        this.emitExpr(rhs, env, isNull ? lvalType(lval, env, this.ctx) : undefined);
+        this.emitExpr(rhs, env, this.hintFor(lvalType(lval, env, this.ctx), rhs));
       }
       this.emit(0x21, ...uleb(idx)); // local.set
     } else if (lval.kind === "lv-field") {
@@ -2317,8 +2374,7 @@ class FuncEmitter {
       this.emitBinOpCode(op.slice(0,-1), ft);
     } else {
       this.emitLvalGet(lval.base, env); // base ref for struct.set
-      const isNull = rhs.kind === "null";
-      this.emitExpr(rhs, env, isNull ? ft : undefined);
+      this.emitExpr(rhs, env, this.hintFor(ft, rhs));
     }
     this.emit(0xFB, 0x05, ...uleb(tIdx), ...uleb(fi.absIdx)); // struct.set
   }
@@ -2352,8 +2408,7 @@ class FuncEmitter {
     } else {
       this.emitLvalGet(lval.base, env); // arr ref
       this.emitExpr(lval.idx, env);     // idx
-      const isNull = rhs.kind === "null";
-      this.emitExpr(rhs, env, isNull ? elem : undefined);
+      this.emitExpr(rhs, env, this.hintFor(elem, rhs));
     }
     this.emit(0xFB, 0x0E, ...uleb(aIdx)); // array.set
   }
