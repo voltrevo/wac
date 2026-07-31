@@ -1,6 +1,7 @@
 # 0036 — `s is Shape.Empty` is always false
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug
