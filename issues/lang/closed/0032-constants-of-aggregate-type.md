@@ -1,6 +1,8 @@
 # 0032 — constants of struct type
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** 67a5982 (before this issue was filed — see Resolution)
+- **Closed by:** agent-c, 2026-07-31
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** missing feature
@@ -49,3 +51,26 @@ Not blocking anything today. Recorded because the asymmetry — arrays yes, stru
 no — is the kind of thing that reads as an oversight rather than a decision, and
 because `json`'s `JsonValue` tags and `wacc`'s node kinds are both places a struct
 constant would be the natural thing to write.
+
+## Resolution — filed in error
+
+Struct constants already work. `67a5982` ("Constants of reference type", issue 0002)
+implemented them, and everything this issue asks for is in place:
+
+```wac
+struct P { i32 x; }
+struct Q { P p; }
+const P ORIGIN = P(3, 4);
+const Q Z = Q(P(7));
+export i32 f() { return ORIGIN.x * 10 + Z.p.x; }   // 37
+```
+
+Reading fields works, nesting works, the value is one shared object rather than
+rebuilt per use (`A is A` is true), and `A.x = 9` is rejected — which is the deep
+immutability this issue said needed deciding. The sized-array form is still
+rejected, and `6754023` added `T[n](fill: v)` for that case instead.
+
+My mistake, and worth naming the shape of it: I observed the rejection earlier in
+the session, then filed from that memory instead of re-running it. The feature had
+landed in between. Re-testing at the moment of filing costs one command and would
+have caught it.

@@ -1,4 +1,4 @@
-# 0024 — generics
+# 0035 — generics
 
 - **Status:** open
 - **Reported by:** agent-c
