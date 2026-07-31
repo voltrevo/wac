@@ -4735,6 +4735,125 @@ Deno.test("[§enum-recursive] a recursive enum walks with match", async () => {
   eq(raw.sum(t), 6, "1 + 2 + 3 over a nested tree");
 });
 
+Deno.test("[§enum-recursive-via-struct] recursion through a struct with methods", async () => {
+  // The shape a container forces: variants cannot carry methods, so the growable
+  // part is a struct that holds an array of the enum. Neither declaration precedes
+  // the other, which is what makes this different from a directly recursive enum.
+  const inst = await run(`
+    enum Val { Nil, Num(f64 v), Arr(ArrData a) }
+
+    struct ArrData {
+      Val?[] items;
+      i32 count;
+
+      ArrData create() { return ArrData(Val?[0](), 0); }
+
+      void push(this, Val v) {
+        if (this.count == this.items.len()) {
+          i32 next = this.items.len() * 2;
+          if (next == 0) { next = 4; }
+          Val?[] grown = Val?[next]();
+          for (i32 i = 0; i < this.count; i++) { grown[i] = this.items[i]; }
+          this.items = grown;
+        }
+        this.items[this.count] = v;
+        this.count++;
+      }
+
+      Val at(const this, i32 i) { return this.items[i]!; }
+    }
+
+    f64 total(Val v) {
+      match (v) {
+        case Nil:    return 0.0;
+        case Num(n): return n;
+        case Arr(a): {
+          f64 sum = 0.0;
+          for (i32 i = 0; i < a.count; i++) { sum = sum + total(a.at(i)); }
+          return sum;
+        }
+      }
+    }
+
+    export f64 nested() {
+      ArrData inner = ArrData.create();
+      inner.push(Val.Num(1.5));
+      inner.push(Val.Num(2.25));
+      ArrData outer = ArrData.create();
+      outer.push(Val.Arr(inner));
+      outer.push(Val.Num(10.0));
+      outer.push(Val.Nil);
+      return total(Val.Arr(outer));
+    }
+  `);
+  // 1.5 + 2.25 + 10.0, with the Nil contributing nothing. Not a round number, so a
+  // fold that visited a node twice or skipped one would not land on it.
+  eq(inst.call("nested", []), 13.75, "a fold through the struct reaches every leaf");
+});
+
+Deno.test("[§enum-array] an enum in a struct field and in a nullable array", async () => {
+  // Two positions the other tests do not cover: an enum-typed struct field, and a
+  // `T?[]` of enums that has to be unwrapped before matching.
+  const inst = await run(`${SHAPES}
+    struct Holder { Shape s; }
+
+    i32 tag(Shape s) {
+      match (s) {
+        case Point:  return 1;
+        case Circle: return 2;
+        case Rect:   return 3;
+      }
+    }
+
+    export i32 viaField() { Holder h = Holder(Shape.Circle(1.0)); return tag(h.s); }
+
+    export i32 viaNullableArray() {
+      Shape?[] xs = Shape?[3]();
+      xs[0] = Shape.Point;
+      xs[1] = Shape.Rect(1.0, 2.0);
+      xs[2] = Shape.Circle(3.0);
+      i32 acc = 0;
+      for (i32 i = 0; i < xs.len(); i++) {
+        Shape s = xs[i]!;
+        acc = acc * 10 + tag(s);
+      }
+      return acc;
+    }
+  `);
+  eq(inst.call("viaField", []), 2, "an enum reached through a struct field matches");
+  // 1, 3, 2 in order — a digit per element, so a wrong order or a dropped element
+  // changes the number rather than cancelling out.
+  eq(inst.call("viaNullableArray", []), 132, "each element unwraps and matches");
+});
+
+Deno.test("[§enum-match-break-loop] a break in an arm inside a for loop", async () => {
+  // The documented break rule, in a `for` rather than a `while (true)` — the update
+  // clause is the part that could plausibly be skipped or run by a br to the wrong
+  // depth.
+  const inst = await run(`${SHAPES}
+    export i32 countUntilRect(Shape?[] xs) {
+      i32 n = 0;
+      for (i32 i = 0; i < xs.len(); i++) {
+        Shape s = xs[i]!;
+        match (s) {
+          case Rect: break;
+          else:      n++;
+        }
+      }
+      return n;
+    }
+    export Shape?[] three() {
+      Shape?[] xs = Shape?[3]();
+      xs[0] = Shape.Point;
+      xs[1] = Shape.Rect(1.0, 1.0);
+      xs[2] = Shape.Point;
+      return xs;
+    }
+  `);
+  const raw = inst.rawExports as Record<string, CallableFunction>;
+  eq(raw.countUntilRect(raw.three()), 1, "the break leaves the for loop, not the arm");
+});
+
 Deno.test("[§enum-match-inexhaustive] a missing variant is a compile error", () => {
   const m = err(`${SHAPES}
     export f64 bad(Shape s) {
