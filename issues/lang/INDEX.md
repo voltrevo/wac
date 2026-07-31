@@ -16,13 +16,12 @@ has been fixed and why.
 | [0029](open/0029-narrowing-outside-match.md) | `if (s is Circle)` does not narrow `s` | missing feature | compile error |
 | [0028](open/0028-methods-on-enums.md) | an enum cannot have methods | missing feature | not implemented |
 | [0027](open/0027-nested-patterns.md) | patterns are one level deep | missing feature | not implemented |
-| [0026](open/0026-match-as-an-expression.md) | `match` is a statement, not an expression | missing feature | not implemented |
 | [0025](open/0025-coverage-tool-covers-only-gzip.md) | the coverage tool measures gzip and nothing else | missing feature | wrong answer, no error |
 | [0018](open/0018-accept-exponent-without-point.md) | should `1e9` be a float literal? (a decision, not a defect) | missing feature | compile error |
 
 ## Closed
 
-38 issues, 24 closed.
+38 issues, 25 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
