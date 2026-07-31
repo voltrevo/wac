@@ -1,6 +1,7 @@
 # 0038 — `string.fromBytes` accepts invalid UTF-8, and indexing it yields a non-character
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** bug

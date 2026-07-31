@@ -1,6 +1,7 @@
 # 0037 — `slice` clamps out-of-range offsets silently, while indexing traps
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-07-31
 - **Kind:** diagnostic

@@ -1,6 +1,7 @@
 # 0021 — wacInstance cannot return a string
 
 - **Status:** open
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
