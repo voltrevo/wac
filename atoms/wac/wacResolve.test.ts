@@ -541,3 +541,124 @@ Deno.test("wacResolve: deep parent dir path (../../)", () => {
   if (r.errors.length > 0) throw new Error(`errors: ${r.errors.map(e => e.message)}`);
   if (r.funcs.length !== 2) throw new Error(`funcs: ${r.funcs.length}`);
 });
+
+// ── enum desugaring ───────────────────────────────────────────────────────────
+//
+// An enum becomes a base struct holding the tag plus one subtype per variant, so
+// every later stage handles enums with the struct machinery it already has. These
+// tests pin that shape, because the type checker and emitter both depend on it.
+
+function resolveSrc(files: Record<string, string>, entry = "main.wac") {
+  const programs = new Map<string, Program>();
+  for (const [path, src] of Object.entries(files)) {
+    const { tokens } = wacLex(src);
+    const { program } = wacParse(tokens, path);
+    programs.set(path, program);
+  }
+  return wacResolve(entry, programs);
+}
+
+const SHAPE_SRC = `enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+}`;
+
+Deno.test("wacResolve: an enum becomes a base struct plus one subtype per variant", () => {
+  const r = resolveSrc({ "main.wac": SHAPE_SRC });
+  if (r.errors.length) throw new Error(`errors: ${r.errors.map(e => e.message).join("; ")}`);
+
+  // Base first, then variants in declaration order, so type indices are stable.
+  const names = r.structs.map(s => s.name).join(",");
+  if (names !== "Shape,Point,Circle,Rect") throw new Error(`structs are ${names}`);
+
+  // Only the base carries the tag; a variant lists just its payload, because
+  // inherited fields are computed later.
+  if (r.structs[0].structDecl.fields.length !== 1) throw new Error("base should hold exactly the tag");
+  if (r.structs[0].structDecl.fields[0].name !== "#tag") throw new Error("tag field misnamed");
+  if (r.structs[1].structDecl.fields.length !== 0) throw new Error("Point should have no fields");
+  if (r.structs[3].structDecl.fields.map(f => f.name).join(",") !== "width,height") {
+    throw new Error("Rect payload wrong");
+  }
+
+  // Every variant extends the base, which is what makes it assignable to the enum.
+  for (const s of r.structs.slice(1)) {
+    if (s.parentEntry?.name !== "Shape") throw new Error(`${s.name} parent is ${s.parentEntry?.name}`);
+  }
+});
+
+Deno.test("wacResolve: tags are assigned in declaration order", () => {
+  const r = resolveSrc({ "main.wac": SHAPE_SRC });
+  const e = r.enums[0];
+  if (e.variants.map(v => `${v.name}=${v.tag}`).join(",") !== "Point=0,Circle=1,Rect=2") {
+    throw new Error(`tags are ${e.variants.map(v => `${v.name}=${v.tag}`).join(",")}`);
+  }
+  // The variant entry points at the same struct that landed in `structs`.
+  if (e.variants[1].entry !== r.structs[2]) throw new Error("variant entry is not the registered struct");
+});
+
+Deno.test("wacResolve: the tag field name cannot be written in source", () => {
+  // `#tag` is not a legal identifier, so a payload field can never collide with it
+  // and user code cannot read or write it.
+  const { tokens, errors } = wacLex(`enum E { A(i32 #tag) }`);
+  void tokens;
+  if (errors.length === 0) throw new Error("expected '#' to be rejected by the lexer");
+});
+
+Deno.test("wacResolve: enum and variant names occupy the file scope", () => {
+  const r = resolveSrc({ "main.wac": SHAPE_SRC });
+  const scope = r.fileScopes.get("main.wac")!;
+  if (scope.get("Shape")?.kind !== "enum") throw new Error("Shape should be an enum entry");
+  if (scope.get("Circle")?.kind !== "variant") throw new Error("Circle should be a variant entry");
+  // Every kind exposes the struct its name denotes, so callers that only want that
+  // need no special case.
+  const circle = scope.get("Circle")!;
+  if (circle.kind !== "variant") throw new Error("Circle should be a variant");
+  if (circle.entry.name !== "Circle") throw new Error("variant entry misses its struct");
+  if (circle.variant.tag !== 1) throw new Error(`Circle tag is ${circle.variant.tag}`);
+});
+
+Deno.test("wacResolve: a variant name collides like any other file-scope name", () => {
+  // [§enum-variant-name-collision] Being usable as a type is what costs a name.
+  const two = resolveSrc({ "main.wac": `enum A { Circle(f64 r) }\nenum B { Circle(f64 r) }` });
+  if (!two.errors.some(e => e.message.includes("duplicate name 'Circle'"))) {
+    throw new Error(`expected a duplicate-name error, got: ${two.errors.map(e => e.message).join("; ")}`);
+  }
+  const withStruct = resolveSrc({ "main.wac": `struct Circle { f64 r; }\nenum A { Circle(f64 r) }` });
+  if (!withStruct.errors.some(e => e.message.includes("duplicate name 'Circle'"))) {
+    throw new Error("a variant should collide with a struct of the same name");
+  }
+  const enumVsStruct = resolveSrc({ "main.wac": `struct Shape { f64 r; }\nenum Shape { A }` });
+  if (!enumVsStruct.errors.some(e => e.message.includes("duplicate name 'Shape'"))) {
+    throw new Error("an enum should collide with a struct of the same name");
+  }
+});
+
+Deno.test("wacResolve: a payload may name the enum being declared", () => {
+  // Recursion is the point of the feature; payload fields hold references, so this
+  // needs no indirection.
+  const r = resolveSrc({ "main.wac": `enum Tree { Leaf(i32 v), Node(Tree l, Tree r) }` });
+  if (r.errors.length) throw new Error(`errors: ${r.errors.map(e => e.message).join("; ")}`);
+  const node = r.structs.find(s => s.name === "Node")!;
+  const l = node.structDecl.fields[0];
+  if (l.type.kind !== "struct" || l.type.name !== "Tree") throw new Error("Node.l should be a Tree");
+});
+
+Deno.test("wacResolve: an exported enum exports its variants too", () => {
+  // They are one declaration, so importing a variant of an exported enum works.
+  const r = resolveSrc({
+    "main.wac": `import { Circle } from "./lib.wac";\nf64 f(Circle c) { return c.radius; }`,
+    "lib.wac": `export enum Shape { Point, Circle(f64 radius) }`,
+  });
+  if (r.errors.length) throw new Error(`errors: ${r.errors.map(e => e.message).join("; ")}`);
+});
+
+Deno.test("wacResolve: a non-exported enum's variants are not importable", () => {
+  const r = resolveSrc({
+    "main.wac": `import { Circle } from "./lib.wac";\nf64 f(Circle c) { return c.radius; }`,
+    "lib.wac": `enum Shape { Point, Circle(f64 radius) }`,
+  });
+  if (!r.errors.some(e => e.message.includes("not exported"))) {
+    throw new Error(`expected a not-exported error, got: ${r.errors.map(e => e.message).join("; ")}`);
+  }
+});
