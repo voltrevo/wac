@@ -1,8 +1,6 @@
 ## Enums and match
 
-*Partially implemented. The lexer and parser accept everything below; the type
-checker rejects a `match` with "match is not yet implemented" until the remaining
-stages land, so no tagged behaviour here is testable yet.*
+*Implemented, except where marked otherwise below.*
 
 An enum is a type with a fixed set of variants, each optionally carrying payload
 fields. It compiles to the struct hierarchy you would otherwise write by hand: a
@@ -308,11 +306,14 @@ struct Rect : Shape { f64 width; f64 height; }
 
 with `tag` assigned in declaration order and set by each constructor.
 
-`match` compiles to a `br_table` on the tag, then one unchecked downcast in the
-selected arm. The tag matters: a chain of `ref.test` per arm would need one type test
-per variant, so a 17-variant AST walk would average eight or nine tests per node. A
-table is one jump regardless of variant count, and that is the difference between
-this being convenient and being the right way to write a tree walk.
+`match` compiles to a comparison chain on the tag, then one downcast in the selected
+arm. A `br_table` would be one jump regardless of variant count and is what the tag
+makes possible, but `emitSwitch` uses a comparison chain for the same reason —
+correctness first — so `match` matches it and the table remains a later change that
+touches nothing but this function.
+
+Even as a chain, the tag earns its place: the alternative is a `ref.test` per arm,
+and an integer comparison is cheaper than a type test.
 
 The tag is also why exhaustiveness is checkable at all: the compiler knows the
 complete variant set from the declaration, so a missing arm is a static fact rather
