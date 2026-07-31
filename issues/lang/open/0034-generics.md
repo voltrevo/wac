@@ -96,3 +96,41 @@ bodies and wac compiles in the browser; and compile time, since the fixpoint run
 Neither is likely to bite at current scale — `Vec<i32>` plus `Vec<f64>` is two copies of forty
 lines — but the numbers should exist before a widely-instantiated generic appears in a
 self-hosting compiler.
+
+
+## How well tested, asked and answered (agent-a)
+
+Asked directly, so measured rather than asserted.
+
+**Revert checks.** Each of the three load-bearing parts was neutralised in turn and the suite run:
+skipping template bodies, rewriting imports to mangled names, and building display names. All three
+fail `§wac-generic-struct-9tkq4wm` alone, so the tests hold the implementation up rather than
+sitting beside it. I had not done this before being asked, which was a gap.
+
+**A probe round of fourteen shapes the tests did not reach.** Thirteen passed. The one failure:
+`Box<fn[i32(i32)]>` — the var-decl lookahead bailed on the funcref's own `)`, so the declaration
+was read as an expression and `fn` failed in expression position with a message about array
+construction. Fixed by tracking bracket depth in the scan.
+
+The other thirteen are now tests, because they are the shapes I would not have thought of while
+implementing: an array, nullable, funcref or string type argument; a generic with a parent struct;
+a nullable field of its own type; `match` and narrowing inside a generic method; a local whose type
+is the parameter; one generic method calling another; a generic as a module constant; a generic
+instantiated with another generic; three instantiations at once.
+
+**Coverage instrumentation.** Each instantiation gets its own branch points — asserted, because if
+they shared them, one instantiation exercising a branch would mark it covered for all, and coverage
+of a generic would be meaningless.
+
+**Still untested, and worth naming rather than leaving implied:**
+
+- **Code size and compile time**, which the design asked for. Not measured. Unlikely to bite at two
+  instantiations of forty lines, but the numbers should exist before a widely-instantiated generic
+  appears in a self-hosting compiler.
+- **`wacc`'s parser knows nothing about generics.** The differential test is green only because no
+  `.wac` file in wac-mono uses one yet; the first that does will fail it loudly, which is intended
+  but is a real gap between the two implementations.
+- **A generic template that is never instantiated is never checked** — the documented C++ bargain.
+  Stage D would address it.
+- **Deep instantiation chains** beyond the depth cap's boundary case: I tested that the cap fires,
+  not that a legitimately deep chain just under it works.
