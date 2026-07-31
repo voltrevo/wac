@@ -411,3 +411,122 @@ Deno.test("wacCompile: coverage points carry the declaring file across imports",
   const libThen = m.points.findIndex(p => p.file === "lib.wac" && p.kind === "then");
   eq(m.counts()[libThen], 1, "the imported file's branch was counted");
 });
+
+// ── Bulk array/string marshalling ─────────────────────────────────────────────
+//
+// Arrays and strings cross the boundary through a linear-memory staging buffer:
+// one TypedArray.set in, one wasm-internal loop into the GC array, and the reverse
+// coming out. Previously this was one exported call per element, which dominated
+// any real work.
+//
+// The buffer starts at zero pages and grows on demand, so the cases worth pinning
+// are the ones around growth: empty input, exact page multiples, and sizes either
+// side of a page boundary. Growing detaches the old ArrayBuffer, so a stale view
+// is the failure mode to watch for.
+
+/** Compile with bindgen and import the generated module. */
+async function bindgenModule(src: string): Promise<Record<string, unknown>> {
+  const { wacBindgen } = await import("./wacBindgen.ts");
+  const r = compile(src);
+  if (!r.ok) throw new Error(`compile failed: ${r.diagnostics.map(e => e.message).join("; ")}`);
+  const ts = wacBindgen(r.compiled);
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/gen.ts`;
+  await Deno.writeTextFile(path, ts);
+  const mod = await import(`file://${path}`);
+  await Deno.remove(dir, { recursive: true });
+  return mod;
+}
+
+Deno.test("[§wac-bind-bulk-70zh5tg] wacBindgen: byte arrays round trip across page boundaries", async () => {
+  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const echo = mod.echo as (d: Uint8Array) => Uint8Array;
+
+  // 65536 is one wasm page. These straddle zero, one and two pages, which is
+  // where the grow logic and any stale view would show up.
+  for (const n of [0, 1, 2, 255, 65535, 65536, 65537, 131072, 200000]) {
+    const input = new Uint8Array(n);
+    for (let i = 0; i < n; i++) input[i] = (i * 31 + 7) & 0xFF;
+    const out = echo(input);
+    if (out.length !== n) throw new Error(`n=${n}: got ${out.length} bytes`);
+    for (let i = 0; i < n; i++) {
+      if (out[i] !== input[i]) throw new Error(`n=${n}: byte ${i} differs`);
+    }
+  }
+});
+
+Deno.test("wacBindgen: 0xFF survives the round trip unsigned", async () => {
+  // i8 reads zero-extend, and the staging buffer is a Uint8Array on the JS side,
+  // so a sign-extension mistake anywhere would show up as 255 becoming -1.
+  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const echo = mod.echo as (d: Uint8Array) => Uint8Array;
+  const out = echo(new Uint8Array([0, 1, 127, 128, 254, 255]));
+  eq(Array.from(out).join(","), "0,1,127,128,254,255", "high bytes unchanged");
+});
+
+Deno.test("wacBindgen: several arrays in one call do not clobber each other", async () => {
+  // They share one staging buffer, so this only works because from_mem copies into
+  // a GC array before the next argument is written.
+  const mod = await bindgenModule(`
+    export i32 sums(i8[] a, i8[] b) {
+      i32 total = 0;
+      for (i32 i = 0; i < a.len(); i++) { total += a[i]; }
+      for (i32 i = 0; i < b.len(); i++) { total -= b[i]; }
+      return total;
+    }
+  `);
+  const sums = mod.sums as (a: Uint8Array, b: Uint8Array) => number;
+  const a = new Uint8Array(1000).fill(5);
+  const b = new Uint8Array(1000).fill(2);
+  eq(sums(a, b), 3000, "5*1000 - 2*1000");
+  // Different lengths, so a stale length would show up too.
+  eq(sums(new Uint8Array(10).fill(1), new Uint8Array(5).fill(1)), 5, "uneven lengths");
+});
+
+Deno.test("wacBindgen: wider element types round trip", async () => {
+  const mod = await bindgenModule(`
+    export i32[] echo32(i32[] d) { return d; }
+    export f64[] echoF64(f64[] d) { return d; }
+  `);
+  const echo32 = mod.echo32 as (d: Int32Array) => Int32Array;
+  const echoF64 = mod.echoF64 as (d: Float64Array) => Float64Array;
+
+  // Element widths of 4 and 8 mean the index has to be scaled; an unscaled
+  // address would alias elements onto each other.
+  const ints = Int32Array.from([0, 1, -1, 2147483647, -2147483648, 123456789]);
+  const gotInts = echo32(ints);
+  eq(Array.from(gotInts).join(","), Array.from(ints).join(","), "i32[] round trip");
+
+  const floats = Float64Array.from([0, -0, 1.5, -1.5, Math.PI, 1e300, 5e-324]);
+  const gotFloats = echoF64(floats);
+  for (let i = 0; i < floats.length; i++) {
+    if (!Object.is(gotFloats[i], floats[i])) {
+      throw new Error(`f64 element ${i}: got ${gotFloats[i]}, want ${floats[i]}`);
+    }
+  }
+  // 4096 elements is 32 KiB of f64, enough to need a grow.
+  const big = Float64Array.from({ length: 4096 }, (_, i) => i * 1.5);
+  const gotBig = echoF64(big);
+  if (gotBig.length !== big.length || gotBig[4095] !== big[4095]) {
+    throw new Error("large f64[] round trip failed");
+  }
+});
+
+Deno.test("wacBindgen: strings round trip, including multi-byte and long", async () => {
+  const mod = await bindgenModule(`export string echo(string s) { return s; }`);
+  const echo = mod.echo as (s: string) => string;
+  for (const s of ["", "a", "hello world", "héllo → 😀", "x".repeat(100000)]) {
+    const out = echo(s);
+    if (out !== s) throw new Error(`string round trip failed for length ${s.length}`);
+  }
+});
+
+Deno.test("wacBindgen: a returned array is a copy, not a live view", async () => {
+  // The staging buffer is reused, so a returned view would be silently
+  // overwritten by the next call.
+  const mod = await bindgenModule(`export i8[] echo(i8[] d) { return d; }`);
+  const echo = mod.echo as (d: Uint8Array) => Uint8Array;
+  const first = echo(new Uint8Array([1, 2, 3]));
+  echo(new Uint8Array([9, 9, 9, 9, 9, 9]));
+  eq(Array.from(first).join(","), "1,2,3", "the earlier result is unaffected");
+});
