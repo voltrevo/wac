@@ -41,15 +41,42 @@ bool eq = a == b;            // error: == not allowed on struct types
 
 Bitwise (`&`, `|`, `^`, `~`) require matching types — `i32` or `i64` only.
 
-Shift (`<<`, `>>`) allow `i64 << i32` and `i64 >> i32` in addition to matching
-types. The compiler internally widens the i32 shift amount to i64 for the wasm
-instruction.
+Shift (`<<`, `>>`, `>>>`) allow `i64 << i32` and `i64 >> i32` in addition to
+matching types. The compiler internally widens the i32 shift amount to i64 for
+the wasm instruction.
 
 ```wac
 export i64 shiftMixed(i64 x, i32 n) { return x << n; }
 ```
 
 `[§wac-shift64-rhgzpth]` `shiftMixed(1, 32)` returns `4294967296`.
+
+`>>` is an arithmetic shift — it copies the sign bit. `>>>` is a logical shift —
+it fills with zeros, so the result of `>>>` on a negative value is positive.
+There is no `<<<`: left shift discards high bits either way.
+
+```wac
+export i32 shiftArith(i32 x, i32 n) { return x >> n; }
+export i32 shiftLogic(i32 x, i32 n) { return x >>> n; }
+```
+
+`[§wac-shr-s-z073930]` `shiftArith(-16, 1)` returns `-8`.
+`[§wac-shr-u-ft3yabj]` `shiftLogic(-16, 1)` returns `2147483640`.
+`[§wac-shr-u-neg1-d3b1hey]` `shiftLogic(-1, 28)` returns `15`.
+
+```wac
+export i64 shiftLogic64(i64 x, i32 n) { return x >>> n; }
+```
+
+`[§wac-shr-u64-2jujzws]` `shiftLogic64(-16, 4)` returns `1152921504606846975`.
+
+`>>>` requires `i32` or `i64`, like the other shifts.
+
+```wac
+export f64 badShift(f64 x) { return x >>> 1; }   // error: f64 not allowed
+```
+
+`[§wac-shr-u-float-s95dlzw]` This is a compile error: `'>>>' requires i32 or i64, got f64`.
 
 Logical (`&&`, `||`, `!`) require `bool` operands, return `bool`. Short-circuit
 evaluation.
@@ -137,9 +164,30 @@ export i32 preIncr() {
 Used alone as a statement (`x++;` or `++x;`), the result value is simply
 discarded — this is the common case, e.g. in a `for` loop's update clause.
 
-Compound operators: `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `|=`,
-`^=`. Same type rules as the underlying operator. Compound assignment remains
-a statement only, not an expression.
+Compound operators: `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `>>>=`, `&=`,
+`|=`, `^=`. Same type rules as the underlying operator. Compound assignment
+remains a statement only, not an expression.
+
+Because the type rules match the underlying operator, `i64 <<= i32` is allowed
+wherever `i64 << i32` is, and applies to every assignable target — locals,
+struct fields, and array elements.
+
+```wac
+struct Bits { i64 v; }
+
+export i64 compoundShiftLocal(i64 x, i32 n) { x >>>= n; return x; }
+export i64 compoundShiftField(i64 x, i32 n) { Bits b = Bits(x); b.v <<= n; return b.v; }
+export i64 compoundShiftElem(i64 x, i32 n) {
+  i64[] a = i64[1]();
+  a[0] = x;
+  a[0] <<= n;
+  return a[0];
+}
+```
+
+`[§wac-cshift-local-e85g9us]` `compoundShiftLocal(-16, 4)` returns `1152921504606846975`.
+`[§wac-cshift-field-abx403z]` `compoundShiftField(1, 4)` returns `16`.
+`[§wac-cshift-elem-emvdry9]` `compoundShiftElem(1, 4)` returns `16`.
 
 ### Full type summary
 
@@ -152,9 +200,11 @@ Comparison (==, !=, <, <=, >, >=): T*T->bool for any primitive T
 Logical (&&, ||):                  bool*bool->bool
 Logical (!):                       bool->bool
 Bitwise (&, |, ^, ~):             i32*i32->i32, i64*i64->i64
-Shift (<<, >>):                    T*T->T for i32, i64
+Shift (<<, >>, >>>):               T*T->T for i32, i64
                                     Also: i64*i32->i64
                                     Not allowed on floats or bool
+                                    >> is arithmetic (sign-extends),
+                                    >>> is logical (zero-fills)
 Compound (+=, -=, etc):            Same rules as base operator
 ++, --:                            i32 and i64 only, expression or statement
                                     (postfix: old value, prefix: new value)
@@ -174,7 +224,7 @@ Null (!):                          T? -> T (traps on null)
 | 2     | `as` `as!` `as~` `as@` | left          |
 | 3     | `* / %`                | left          |
 | 4     | `+ -`                  | left          |
-| 5     | `<< >>`                | left          |
+| 5     | `<< >> >>>`            | left          |
 | 6     | `< <= > >=`            | left          |
 | 7     | `== !=`                | left          |
 | 8     | `&`                    | left          |

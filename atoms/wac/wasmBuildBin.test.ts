@@ -279,6 +279,36 @@ Deno.test("wasmBuildBin: compound assignment +=, -=, *=", async () => {
   eq(e.compound(5), 27, "compound(5)");
 });
 
+// Compound shifts take a separate emit path from += / *= : the shift amount is
+// widened only when the target is i64. Cover both sides of that decision —
+// an i32 target (no widening) and an i64 target with an i64 amount (already
+// wide) — so neither branch depends on the i64×i32 spec tests alone.
+Deno.test("wasmBuildBin: compound shift on i32 target needs no widening", async () => {
+  const e = await inst(`
+    export i32 shiftI32(i32 x, i32 n) {
+      i32 a = x;
+      a <<= n;
+      a >>= 1;
+      a >>>= 1;
+      return a;
+    }
+  `);
+  // 3 << 4 = 48; 48 >> 1 = 24; 24 >>> 1 = 12
+  eq(e.shiftI32(3, 4), 12, "shiftI32(3, 4)");
+});
+
+Deno.test("wasmBuildBin: compound shift i64 target with i64 amount", async () => {
+  const e = await inst(`
+    export i64 shiftI64(i64 x, i64 n) {
+      i64 a = x;
+      a <<= n;
+      return a;
+    }
+  `);
+  // 3 << 40 = 3298534883328
+  eq(e.shiftI64(3n, 40n), 3298534883328n, "shiftI64(3, 40)");
+});
+
 Deno.test("wasmBuildBin: increment and decrement", async () => {
   const e = await inst(`
     export i32 incrTest(i32 n) {

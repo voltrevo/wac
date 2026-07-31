@@ -1446,8 +1446,9 @@ class FuncEmitter {
       const idx = this.localMap.get(key)!.idx;
       if (op !== "=") {
         this.emit(0x20, ...uleb(idx)); // local.get (current value)
-        this.emitExpr(rhs, env);
-        this.emitBinOpCode(op.slice(0,-1), lvalType(lval, env, this.ctx));
+        const lt = lvalType(lval, env, this.ctx);
+        this.emitCompoundRhs(rhs, env, lt, op.slice(0,-1));
+        this.emitBinOpCode(op.slice(0,-1), lt);
       } else {
         const isNull = rhs.kind === "null";
         this.emitExpr(rhs, env, isNull ? lvalType(lval, env, this.ctx) : undefined);
@@ -1475,7 +1476,7 @@ class FuncEmitter {
       this.emitLvalGet(lval.base, env); // base ref for struct.set (stays on stack)
       this.emitLvalGet(lval.base, env); // base ref for struct.get
       this.emit(0xFB, 0x02, ...uleb(tIdx), ...uleb(fi.absIdx)); // struct.get (read old)
-      this.emitExpr(rhs, env);
+      this.emitCompoundRhs(rhs, env, ft, op.slice(0,-1));
       this.emitBinOpCode(op.slice(0,-1), ft);
     } else {
       this.emitLvalGet(lval.base, env); // base ref for struct.set
@@ -1503,8 +1504,12 @@ class FuncEmitter {
       this.emitExpr(lval.idx, env);     // idx for array.set
       this.emitLvalGet(lval.base, env); // arr ref for array.get
       this.emitExpr(lval.idx, env);     // idx for array.get
-      this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get (read old)
-      this.emitExpr(rhs, env);
+      // packed elements must read through array.get_u — array.get is invalid on
+      // i8/i16 arrays and would fail wasm validation [see arrays.md]
+      const packed = elem.kind === "prim" && (elem.name === "i8" || elem.name === "i16");
+      if (packed) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u (read old)
+      else        this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get   (read old)
+      this.emitCompoundRhs(rhs, env, elem, op.slice(0,-1));
       this.emitBinOpCode(op.slice(0,-1), elem);
     } else {
       this.emitLvalGet(lval.base, env); // arr ref
@@ -1513,6 +1518,19 @@ class FuncEmitter {
       this.emitExpr(rhs, env, isNull ? elem : undefined);
     }
     this.emit(0xFB, 0x0E, ...uleb(aIdx)); // array.set
+  }
+
+  /** Emit the rhs of a compound assignment, widening an i32 shift amount when
+   *  the target is i64 — `i64 <<= i32` is legal, same as the binary form
+   *  [see operators.md]. Mirrors the widening in emitBinary. */
+  private emitCompoundRhs(rhs: Expr, env: TypeEnv, target: WacType, op: string): void {
+    this.emitExpr(rhs, env);
+    if (op !== "<<" && op !== ">>" && op !== ">>>") return;
+    if (!(target.kind === "prim" && target.name === "i64")) return;
+    const rt = typeOfExpr(rhs, env, this.ctx);
+    if (rt.kind === "prim" && rt.name === "i32") {
+      this.emit(0xAC); // i64.extend_i32_s
+    }
   }
 
   /** Emit the operation opcode for compound assignment (op without '='). */
@@ -1533,6 +1551,7 @@ class FuncEmitter {
       "^":  { i32:[0x73], i64:[0x85], f32:[],     f64:[]     },
       "<<": { i32:[0x74], i64:[0x86], f32:[],     f64:[]     },
       ">>": { i32:[0x75], i64:[0x87], f32:[],     f64:[]     },
+      ">>>":{ i32:[0x76], i64:[0x88], f32:[],     f64:[]     },
     };
     this.emit(...(ops[op]?.[k as KT] ?? []));
   }

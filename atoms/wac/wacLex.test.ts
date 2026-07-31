@@ -132,16 +132,43 @@ Deno.test("wacLex: logical operators", () => {
 });
 
 Deno.test("wacLex: bitwise operators", () => {
-  const t = tok("a & b | c ^ d ~ e << f >> g");
-  const ops = t.filter(([k]) => ["&", "|", "^", "~", "<<", ">>"].includes(k as string)).map(([k]) => k);
-  if (ops.join(" ") !== "& | ^ ~ << >>") throw new Error("bitwise ops: " + ops.join(" "));
+  const t = tok("a & b | c ^ d ~ e << f >> g >>> h");
+  const ops = t.filter(([k]) => ["&", "|", "^", "~", "<<", ">>", ">>>"].includes(k as string)).map(([k]) => k);
+  if (ops.join(" ") !== "& | ^ ~ << >> >>>") throw new Error("bitwise ops: " + ops.join(" "));
 });
 
 Deno.test("wacLex: compound assignment operators", () => {
-  const t = tok("+= -= *= /= %= &= |= ^= <<= >>=");
+  const t = tok("+= -= *= /= %= &= |= ^= <<= >>= >>>=");
   const ops = t.filter(([k]) => k.endsWith("=") && k.length > 1 && k !== "==" && k !== "!=" && k !== "<=" && k !== ">=").map(([k]) => k);
-  const expected = "+= -= *= /= %= &= |= ^= <<= >>=";
+  const expected = "+= -= *= /= %= &= |= ^= <<= >>= >>>=";
   if (ops.join(" ") !== expected) throw new Error("compound ops: " + ops.join(" "));
+});
+
+// The `>` family is the lexer's deepest maximal-munch chain: > >= >> >>= >>> >>>=.
+// Each prefix must not steal characters from the longer form, and the longer
+// forms must not swallow a following distinct token.
+Deno.test("wacLex: > family munches maximally and in the right order", () => {
+  const cases: [string, string[]][] = [
+    [">",      [">"]],
+    [">=",     [">="]],
+    [">>",     [">>"]],
+    [">>=",    [">>="]],
+    [">>>",    [">>>"]],
+    [">>>=",   [">>>="]],
+    [">>>>",   [">>>", ">"]],
+    [">>>>=",  [">>>", ">="]],
+    [">> >",   [">>", ">"]],
+    [">>> =",  [">>>", "="]],
+    ["a>>>=b", ["ident", ">>>=", "ident"]],
+    ["a>>>b",  ["ident", ">>>", "ident"]],
+    ["a>=b",   ["ident", ">=", "ident"]],
+  ];
+  for (const [src, want] of cases) {
+    const got = kinds(src).filter((k) => k !== "eof");
+    if (got.join(" ") !== want.join(" ")) {
+      throw new Error(`lexing '${src}': got [${got.join(" ")}], want [${want.join(" ")}]`);
+    }
+  }
 });
 
 Deno.test("wacLex: increment and decrement", () => {
