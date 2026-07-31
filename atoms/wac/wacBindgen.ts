@@ -39,6 +39,10 @@ const ARRAY_MAP: Record<string, string> = {
   "f64[]": "Float64Array",
 };
 
+const ARRAY_ELEM_WIDTH: Record<string, number> = {
+  "i8[]": 1, "i16[]": 2, "i32[]": 4, "i64[]": 8, "f32[]": 4, "f64[]": 8,
+};
+
 const ARRAY_ELEM_PREFIX: Record<string, string> = {
   "i8[]":  "__bind_arr_i8",
   "i16[]": "__bind_arr_i16",
@@ -65,13 +69,14 @@ function arrayToWasmHelper(elemType: string, jsType: string): string {
   const isBigInt = elemType === "i64[]";
   const convert = isBigInt ? "" : "";
   void convert;
+  const width = ARRAY_ELEM_WIDTH[elemType];
   return `function _arrayToWasm_${elemType.replace("[]", "")}(js: ${jsType}): unknown {
   const n = js.length;
-  const wa = (_exports.${prefix}_new as CallableFunction)(n);
-  for (let i = 0; i < n; i++) {
-    (_exports.${prefix}_set as CallableFunction)(wa, i, js[i]);
-  }
-  return wa;
+  // One bulk write into the staging buffer, then one call to copy it into a GC
+  // array wasm-side. The old per-element loop cost n calls across the boundary.
+  _memEnsure(n * ${width});
+  new ${jsType}(_memBuffer(), 0, n).set(js);
+  return (_exports.${prefix}_from_mem as CallableFunction)(n);
 }`;
 }
 
@@ -80,34 +85,47 @@ function arrayFromWasmHelper(elemType: string, jsType: string): string {
   const isBigInt = elemType === "i64[]";
   const elemCast = isBigInt ? " as bigint" : " as number";
   const elemBase = elemType.replace("[]", "");
+  void elemCast;
+  const width = ARRAY_ELEM_WIDTH[elemType];
   return `function _arrayFromWasm_${elemBase}(wa: unknown): ${jsType} {
   const n = (_exports.${prefix}_len as CallableFunction)(wa) as number;
-  const js = new ${jsType}(n);
-  for (let i = 0; i < n; i++) {
-    js[i] = (_exports.${prefix}_get as CallableFunction)(wa, i)${elemCast};
-  }
-  return js;
+  _memEnsure(n * ${width});
+  (_exports.${prefix}_to_mem as CallableFunction)(wa);
+  // slice() rather than a view: the caller keeps this, and the next transfer
+  // overwrites the buffer.
+  return new ${jsType}(_memBuffer(), 0, n).slice();
 }`;
 }
 
 // ── String helpers ────────────────────────────────────────────────────────────
 
+// Staging-buffer access. Growing the memory detaches the old ArrayBuffer, so
+// `_memBuffer()` is re-read after every `_memEnsure` rather than cached.
+const MEM_ACCESS = `const _mem = _exports.__bind_mem as WebAssembly.Memory;
+
+function _memEnsure(bytes: number): void {
+  const have = (_exports.__bind_mem_ensure as CallableFunction)(bytes) as number;
+  if (have < bytes) {
+    throw new Error(\`wac: could not grow the transfer buffer to \${bytes} bytes\`);
+  }
+}
+
+function _memBuffer(): ArrayBuffer {
+  return _mem.buffer as ArrayBuffer;
+}`;
+
 const STRING_TO_WASM = `function _stringToWasm(s: string): unknown {
   const bytes = new TextEncoder().encode(s);
-  const wa = (_exports.__bind_str_new as CallableFunction)(bytes.length);
-  for (let i = 0; i < bytes.length; i++) {
-    (_exports.__bind_str_set as CallableFunction)(wa, i, bytes[i]);
-  }
-  return wa;
+  _memEnsure(bytes.length);
+  new Uint8Array(_memBuffer(), 0, bytes.length).set(bytes);
+  return (_exports.__bind_str_from_mem as CallableFunction)(bytes.length);
 }`;
 
 const STRING_FROM_WASM = `function _stringFromWasm(wa: unknown): string {
   const n = (_exports.__bind_str_len as CallableFunction)(wa) as number;
-  const bytes = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    bytes[i] = (_exports.__bind_str_get as CallableFunction)(wa, i) as number;
-  }
-  return new TextDecoder().decode(bytes);
+  _memEnsure(n);
+  (_exports.__bind_str_to_mem as CallableFunction)(wa);
+  return new TextDecoder().decode(new Uint8Array(_memBuffer(), 0, n));
 }`;
 
 // ── Function wrapper generation ───────────────────────────────────────────────
@@ -209,6 +227,10 @@ export function wacBindgen(compiled: WacCompiled): string {
   parts.push(
     `const _instance = await WebAssembly.instantiate(_wasm);\nconst _exports = _instance.instance.exports;`,
   );
+
+  // Staging-buffer access, needed by every bulk path below.
+  const needsBulk = needsString || paramArrayTypes.size > 0 || retArrayTypes.size > 0;
+  if (needsBulk) parts.push(MEM_ACCESS);
 
   // String helpers
   if (needsString) {
