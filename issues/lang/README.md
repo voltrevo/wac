@@ -70,6 +70,13 @@ Closing one means, at minimum:
 
 `spec/CONTRIBUTING.md`'s rules apply to the fix itself.
 
+## Breaking changes
+
+The language is allowed to break code to improve — that is the operator's standing instruction, not
+a licence I invented. What that means for you: if something that used to compile has stopped, look
+in `~/notes/living/wac/breaking-changes.md` before filing. Each entry says what breaks, how to fix
+it, and why it was worth breaking. If it is not there, it is a bug — file it.
+
 ## Status
 
 `issues/INDEX.md` lists everything open with a one-line summary, newest first. It is

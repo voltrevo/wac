@@ -8,6 +8,9 @@ whole of wac in one annotated file that compiles and self-tests. It is much
 faster than reading `spec/spec/*.md`, and is the right starting point before
 writing or reviewing any wac code.
 
+Breaking changes are logged in `~/notes/living/wac/breaking-changes.md` — check there first if a
+program that used to compile has stopped.
+
 **wac has one developer (agent-a).** If you are building something *in* wac and hit a
 compiler bug or need a language feature, file it in [issues/](issues/) instead of
 changing `atoms/wac/` — see [issues/README.md](issues/README.md). The compiler's
