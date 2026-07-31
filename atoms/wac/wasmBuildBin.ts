@@ -562,7 +562,7 @@ function buildTypeCtxFull(
  */
 const STRING_AND_MATH_HELPERS = [
   "__str_concat", "__str_cmp", "__str_idx", "__str_slice", "__str_indexof",
-  "__str_from_cp", "__str_from_bytes",
+  "__str_from_cp", "__str_from_bytes", "__str_to_bytes",
   "__fmod", "__fmodf",
 ] as const;
 
@@ -602,13 +602,15 @@ function helperFuncTypes(si: number, u8ArrIdx: number, coverage: boolean): numbe
   // __str_from_bytes(u8[]) -> str
   const u8arr    = [0x64, ...sleb(u8ArrIdx)];
   const fromBytes = [0x60, 0x01, ...u8arr, 0x01, ...str];
+  // __str_to_bytes(str) -> u8[]
+  const toBytes  = [0x60, 0x01, ...str, 0x01, ...u8arr];
   // __fmod(f64, f64) -> f64
   const f64    = [0x7C];
   const fmod   = [0x60, 0x02, ...f64, ...f64, 0x01, ...f64];
   // __fmodf(f32, f32) -> f32
   const f32    = [0x7D];
   const fmodf  = [0x60, 0x02, ...f32, ...f32, 0x01, ...f32];
-  const base = [concat, cmp, idx, slice, iof, fromCp, fromBytes, fmod, fmodf];
+  const base = [concat, cmp, idx, slice, iof, fromCp, fromBytes, toBytes, fmod, fmodf];
   if (!coverage) return base;
   // __cov_init() -> void, __cov_len() -> i32, __cov_get(i32) -> i32
   return [
@@ -681,6 +683,7 @@ function buildHelperBodies(
     makeIndexOf(si),
     makeFromCodepoint(si),
     makeFromBytes(si, u8ArrIdx),
+    makeToBytes(si, u8ArrIdx),
     makeFmod(),
     makeFmodF(fmodIdx),
   ];
@@ -1220,6 +1223,30 @@ function makeFromBytes(si: number, u8ArrIdx: number): number[] {
     0x20, 0x02, 0x41, 0x00, 0x20, 0x00, 0x41, 0x00, 0x20, 0x01,
     0xFB, 0x11, ...uleb(si), ...uleb(u8ArrIdx),
     // return ref.as_non_null result
+    0x20, 0x02, 0xD4,
+    0x0B,
+  ];
+}
+
+/**
+ * __str_to_bytes(s:str) -> u8[]
+ *
+ * The mirror of __str_from_bytes: a fresh u8[] holding the string's UTF-8 bytes.
+ * A copy for the same reason — handing out the string's own storage would give
+ * the caller a writable view of an immutable value.
+ */
+function makeToBytes(si: number, u8ArrIdx: number): number[] {
+  const nullableArr = [0x63, ...sleb(u8ArrIdx)];
+  return [
+    // locals: local1 = len(i32), local2 = result(nullable u8[])
+    0x02, 0x01, 0x7F, 0x01, ...nullableArr,
+    // len = array.len(s)
+    0x20, 0x00, 0xFB, 0x0F, 0x21, 0x01,
+    // result = array.new_default $u8(len)
+    0x20, 0x01, 0xFB, 0x07, ...uleb(u8ArrIdx), 0x21, 0x02,
+    // array.copy $u8 $str (result, 0, s, 0, len)
+    0x20, 0x02, 0x41, 0x00, 0x20, 0x00, 0x41, 0x00, 0x20, 0x01,
+    0xFB, 0x11, ...uleb(u8ArrIdx), ...uleb(si),
     0x20, 0x02, 0xD4,
     0x0B,
   ];
