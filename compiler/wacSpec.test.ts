@@ -6137,6 +6137,67 @@ Deno.test("[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries", 
   eq(inst.call("viaAlias", []), 5, "and a second instantiation from the same import");
 });
 
+// §wac-generic-template-check-2wkq7nm — templates are checked with opaque type parameters
+Deno.test("[§wac-generic-template-check-2wkq7nm] a mistake independent of T is caught at the definition", () => {
+  // Issue 0043 (Stage D). A generic was otherwise checked only when instantiated, so a template
+  // nobody instantiates was never checked at all. Each is now checked once with its parameters
+  // bound to a struct that has no members, which catches everything structurally wrong regardless
+  // of what T turns out to be.
+  const cases: [string, string, string][] = [
+    ["a string assigned to i32",
+     `struct Vec<T> { T[] data; i32 n; void oops(this) { i32 x = "hello"; } }`, "expected i32"],
+    ["arithmetic on a string",
+     `struct V<T> { T[] d; i32 n; void bad(this) { this.n = this.n + "x"; } }`, "i32"],
+    ["a call with the wrong arity",
+     `i32 needsTwo(i32 a, i32 b) { return a + b; }
+      struct V<T> { T[] d; i32 bad(const this) { return needsTwo(1); } }`, "expected 2 argument"],
+  ];
+  for (const [what, tpl, want] of cases) {
+    // Nothing instantiates the template: before this pass, none of these was reported at all.
+    const m = err(`${tpl}\nexport i32 f() { return 1; }`);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
+});
+
+Deno.test("[§wac-generic-template-check-2wkq7nm] anything depending on T is still deferred", async () => {
+  // The other half, and the harder one: an opaque `T` fails almost every ordinary check, so a
+  // permissive rule is needed or valid templates become unreportable. These all compile.
+  const inst = await run(`
+    struct Vec<T> {
+      T[] data; i32 n;
+      T first(const this) { return this.data[0]; }
+      void set(this, T x) { this.data[0] = x; }
+      i32 viaLocal(const this, T seed) { T[] a = T[2](fill: seed); return a.len(); }
+      i32 len(const this) { return this.n; }
+      i32 viaOther(const this) { return this.len(); }
+    }
+    // A template naming another template cannot be checked either: Box<T> is not a type until
+    // T is known, so its members are unknowable rather than absent.
+    struct Box<T> { T v; T get(const this) { return this.v; } }
+    struct Wrap<T> { Box<T> inner; T peek(const this) { return this.inner.get(); } }
+    export i32 f() { Vec<i32> v = Vec(i32[](7), 1); return v.first() + v.viaOther(); }
+  `);
+  eq(inst.call("f", []), 8, "the template still works when instantiated");
+});
+
+Deno.test("[§wac-generic-template-check-2wkq7nm] a T-independent mistake is reported once, not per instantiation", () => {
+  // A template checked at its definition *and* at each instantiation would report the same mistake
+  // once per use. Two instantiations here; the diagnostic should appear once.
+  const r = wacCompile(new Map([["main.wac", `
+    struct Vec<T> { T[] data; i32 n; void oops(this) { i32 x = "hello"; } }
+    export i32 f() {
+      Vec<i32> a = Vec(i32[](), 0);
+      Vec<f64> b = Vec(f64[](), 0);
+      return a.n + b.n;
+    }
+  `]]), "main.wac");
+  if (r.ok) throw new Error("expected the template mistake to be reported");
+  const hits = r.diagnostics.filter((d) => d.message.includes("expected i32"));
+  eq(hits.length, 1, "reported once for the template, not once per instantiation");
+});
+
 Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] instantiations are keyed by identity, not by the written name", async () => {
   // Issue 0042. Mangling used the name *as written*, which is only unique within a file, so it was
   // wrong in both directions at once. All three symptoms in one test because they are one cause.

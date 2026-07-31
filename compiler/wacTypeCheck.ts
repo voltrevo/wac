@@ -400,6 +400,95 @@ export function wacTypeCheck(
     allErrors.push(...ctx.errors);
   }
 
+  // ── Templates, checked once with their parameters opaque ────────────────────
+  //
+  // A generic is otherwise only checked when instantiated, so a template nobody instantiates is
+  // never checked at all and a mistake independent of `T` is not reported until someone uses it
+  // [issue 0043]. Each template is checked here with every type parameter bound to a struct that
+  // has no fields and no methods, so:
+  //
+  //   i32 x = "hello";            is an error now — nothing to do with T
+  //   this.data.noSuchMethod();   is not checkable — depends on what T is, and is deferred
+  //
+  // Diagnostics that mention a type parameter are withheld, because an opaque `T` fails almost
+  // every ordinary check. That suppression is by *name*, which is coarse — but it errs toward
+  // permissive, and the cost of a false negative is a missed error at definition time, which is
+  // exactly the status quo. A false positive would instead make a valid template unreportable,
+  // which is worse. When Stage D is revisited, this is the part to sharpen.
+  for (const { decl, filePath } of result.templates) {
+    const scope = result.fileScopes.get(filePath);
+    if (!scope) continue;
+
+    // Synthetic entries so the parameter names resolve to *something* with no members.
+    const opaqueScope: FileScope = new Map(scope);
+    const opaqueMap = new Map(structMap);
+    for (const param of decl.typeParams) {
+      const opaqueDecl: StructDecl = {
+        tag: "struct", isConst: false, exported: false, name: param, parent: null,
+        fields: [], methods: [], typeParams: [], line: decl.line, col: decl.col,
+      };
+      const entry: StructEntry = {
+        structDecl: opaqueDecl, name: param,
+        // A negative index cannot collide with a real one, and nothing emits from this pass.
+        typeIndex: -1, filePath, methods: new Map(), parentEntry: null,
+      };
+      opaqueScope.set(param, { kind: "struct", entry });
+      opaqueMap.set(param, entry);
+    }
+
+    // The template itself, so `this.n` and `this.data` resolve. Without it every statement
+    // mentioning `this` failed, and suppressing those took most of a method body with them —
+    // `this.n = this.n + "x"` went unreported, which is exactly the kind of mistake this pass is
+    // for.
+    const selfEntry: StructEntry = {
+      structDecl: decl, name: decl.name, typeIndex: -1, filePath,
+      methods: new Map(), parentEntry: null,
+    };
+    opaqueScope.set(decl.name, { kind: "struct", entry: selfEntry });
+    opaqueMap.set(decl.name, selfEntry);
+    // Its own methods, so one template method may call another.
+    for (const m of decl.methods) {
+      selfEntry.methods.set(m.name, {
+        origin: { kind: "method", decl: m, structName: decl.name, structTypeIndex: -1 },
+        mangledName: `#template$${decl.name}$${m.name}`, exportName: null,
+        funcIndex: -1, filePath,
+      });
+    }
+
+    const tctx: Ctx = {
+      file: filePath, structMap: opaqueMap, structs: result.structs, fileScope: opaqueScope,
+      errors: [], enumByTypeIndex, returnType: T_VOID, inLoop: 0, thisConst: false,
+    };
+    for (const m of decl.methods) {
+      tctx.returnType = m.returnType;
+      tctx.thisConst = m.thisConst;
+      const env: VarEnv = new Map();
+      if (m.hasThis) {
+        env.set("this", { type: structType(decl.name, undefined), isConst: m.thisConst });
+      }
+      for (const p of m.params) env.set(p.name, { type: p.type, isConst: p.isConst });
+      checkBlock(m.body, env, tctx);
+    }
+
+    // Withheld: anything naming a type parameter, and anything naming *another template*.
+    //
+    // `struct Wrap<T> { Box<T> inner; ... this.inner.get() ... }` cannot be checked here: `Box<T>`
+    // is not a type until T is known, so its members are unknowable and "struct 'Box' has no
+    // method 'get'" is an artefact of the mode rather than a finding. A real mistake involving
+    // `Box` inside a template is therefore missed too, which is the same bargain as any
+    // T-dependent code — deferred to instantiation, not lost.
+    const deferred = [...decl.typeParams, ...result.templates.map((t) => t.decl.name)];
+    const mentionsParam = (msg: string) =>
+      deferred.some((t) => new RegExp(`\\b${t}\\b`).test(msg));
+    for (const e of tctx.errors) {
+      // Only diagnostics naming a type parameter are withheld. The template itself is registered
+      // above, so nothing about `this` needs suppressing — which is what lets a real mistake in a
+      // statement mentioning `this` be reported.
+      if (mentionsParam(e.message) || mentionsParam(e.annotation ?? "")) continue;
+      allErrors.push(e);
+    }
+  }
+
   // Type-check each function / method body
   for (const funcEntry of result.funcs) {
     const prog     = programs.get(funcEntry.filePath);
@@ -443,7 +532,23 @@ export function wacTypeCheck(
     allErrors.push(...ctx.errors);
   }
 
-  return allErrors;
+  // One diagnostic per (file, line, col, message).
+  //
+  // Monomorphisation duplicates a template's body per instantiation, and those copies keep the
+  // template's own positions — so a mistake independent of `T` was reported once for the template
+  // and once more for every instantiation [issue 0043]. Deduplicating by position is more honest
+  // than suppressing the instantiation-time pass, since two instantiations *can* fail differently
+  // and those messages differ; identical text at one position is one mistake however many copies
+  // of the code exist.
+  const seen = new Set<string>();
+  const deduped: TypeCheckError[] = [];
+  for (const e of allErrors) {
+    const key = `${e.file}:${e.line}:${e.col}:${e.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(e);
+  }
+  return deduped;
 }
 
 // ── Structural checks ─────────────────────────────────────────────────────────

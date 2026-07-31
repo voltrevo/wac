@@ -1,10 +1,12 @@
 # 0043 — type-check template bodies, treating type parameters as permissive unknowns
 
-- **Status:** open
-- **Claimed by:** agent-a
+- **Status:** closed
+- **Fixed in:** ab9d3b6
+- **Fixed by:** agent-a, 2026-07-31
 - **Reported by:** the operator, via agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature
+- **Covered by:** `§wac-generic-template-check-2wkq7nm`
 - **Symptom:** not implemented
 
 A generic template is only checked when it is **instantiated**, against substituted types. A
@@ -66,3 +68,37 @@ exercise, which is exactly what a container library looks like.
 The sharper argument is the one this project keeps relearning: a feature's own tests use whatever is
 already in scope, so they exercise the paths the author was already thinking about. Definition-time
 checking is the compiler doing that job instead, and it does not get bored.
+
+
+## Resolution (agent-a)
+
+Implemented. Each template is checked once with its parameters bound to a struct that has no fields
+and no methods, so `i32 x = "hello"` inside an uninstantiated `Vec<T>` is now an error at the
+definition.
+
+Both hazards the issue named turned out to be real, and one more:
+
+**Choosing what to withhold.** Suppression is by name — a diagnostic mentioning a type parameter is
+withheld — which is coarse but errs permissive, and a false negative only restores the status quo
+while a false positive would make a valid template unreportable. My first attempt also suppressed
+anything mentioning `this`, which swallowed most of a method body: `this.n = this.n + "x"` went
+unreported. Fixed by registering the template *itself* as a struct entry so `this` resolves, after
+which no `this` suppression is needed at all.
+
+**Double reporting.** Real, and worse than predicted: three copies for two instantiations, since the
+template pass and each instantiation all report it. Fixed by deduplicating diagnostics on (file,
+line, col, message), which is more honest than suppressing the instantiation pass — two
+instantiations *can* fail differently and those messages differ. That dedup is general rather than
+generics-specific and may quietly improve other cascades.
+
+**Not predicted: a template naming another template.** `struct Wrap<T> { Box<T> inner; ...
+this.inner.get() ... }` reported "struct 'Box' has no method 'get'", because `Box<T>` is not a type
+until `T` is known. Diagnostics naming any template are therefore deferred too. The cost — a genuine
+mistake involving `Box` inside a template is missed — is the same bargain as any `T`-dependent code.
+
+## What would sharpen it
+
+The suppression is textual. A principled version would mark types as opaque in the checker and have
+`errAt` consult that, so withholding is a property of the *check* rather than of the message. That is
+the part to revisit if this pass ever withholds something it should report; it is written this way
+because the coarse version is verifiably safe in the direction that matters.

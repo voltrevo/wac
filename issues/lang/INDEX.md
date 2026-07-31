@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0043](open/0043-check-template-bodies-with-opaque-type-params.md) | type-check template bodies, treating type parameters as permissive unknowns | missing feature | not implemented |
 | [0035](open/0035-wacx-is-specified-but-does-not-exist.md) | `wacx` is specified as the entry point but does not exist | missing feature | not implemented |
 | [0033](open/0033-unchecked-integer-overflow.md) | no way to detect integer overflow | missing feature | wrong answer |
 | [0034](open/0034-generics.md) | generics | missing feature | not implemented |
@@ -16,7 +15,7 @@ has been fixed and why.
 
 ## Closed
 
-43 issues, 35 closed.
+43 issues, 36 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
