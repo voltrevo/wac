@@ -4475,3 +4475,26 @@ Deno.test(`[§wac-string-default-k2mf9wq] string defaults to the empty string`, 
   eq(i.call("dynamicSize", [4]), 4, "size may be a runtime value");
   eq(i.call("arrayLiteral", []), 3, "the literal form still works");
 });
+
+// §wac-fnref-static-n7kq3wm — static methods are referenceable, like any function
+Deno.test(`[§wac-fnref-static-n7kq3wm] a static method reference is its own signature`, async () => {
+  const i = await run(`
+    struct Counter {
+      i32 count;
+      Counter create(i32 initial) { return Counter(initial); }
+      i32 twice(i32 x) { return x * 2; }
+      void inc(this) { this.count++; }
+    }
+    export i32 viaFactory() { fn[Counter(i32)] f = Counter.create; return f(7).count; }
+    export i32 viaPlain()   { fn[i32(i32)] f = Counter.twice; return f(21); }
+    export i32 viaInstance() {
+      fn[void(Counter)] bump = Counter.inc;   // receiver is a leading parameter
+      Counter c = Counter.create(0);
+      bump(c); bump(c);
+      return c.count;
+    }
+  `);
+  eq(i.call("viaFactory", []), 7, "static constructor as a value");
+  eq(i.call("viaPlain", []), 42, "static method with no receiver");
+  eq(i.call("viaInstance", []), 2, "instance references still carry the receiver");
+});

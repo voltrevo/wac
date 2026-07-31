@@ -1444,12 +1444,22 @@ function inferFieldAccess(
     const se = ctx.fileScope.get(baseExpr.name);
     if (se?.kind === "struct") {
       const m = lookupMethod(se.entry, fieldName);
-      if (m && m.origin.kind === "method" && m.origin.decl.hasThis) {
-        // Instance method reference: Counter.inc → fn[void(Counter)] funcref
+      if (m && m.origin.kind === "method") {
+        // A method reference is the underlying function. An instance method
+        // takes its receiver as an explicit leading parameter — there are no
+        // closures, so `Counter.inc` is fn[void(Counter)]. A static method has
+        // no receiver, so it is simply its declared signature
+        // [see funcrefs.md].
         const mdecl = m.origin.decl;
-        const selfType: WacType = { kind: "struct", name: se.entry.name, resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0 };
-        const allParams = [selfType, ...mdecl.params.map(p => p.type)];
-        return { kind: "funcref", params: allParams, ret: mdecl.returnType, line: pos.line, col: pos.col };
+        const params = mdecl.params.map(p => p.type);
+        if (mdecl.hasThis) {
+          const selfType: WacType = {
+            kind: "struct", name: se.entry.name,
+            resolvedTypeIndex: se.entry.typeIndex, line: 0, col: 0,
+          };
+          params.unshift(selfType);
+        }
+        return { kind: "funcref", params, ret: mdecl.returnType, line: pos.line, col: pos.col };
       }
       errAt(ctx, `cannot use static method '${baseExpr.name}.${fieldName}' as a value`,
         pos.line, pos.col);

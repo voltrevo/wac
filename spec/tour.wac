@@ -636,16 +636,12 @@ struct Counter {
 }
 export i32 methodRefs() {
   fn[void(Counter)] bump = Counter.inc;      // `this` becomes a parameter
-  Counter c = Counter.create(0);
+  fn[Counter(i32)] make = Counter.create;    // static: just its own signature
+  Counter c = make(0);
   bump(c);
   bump(c);
   (Counter.inc)(c);                          // inline form, same as c.inc()
   // ERROR: fn[void()] f = c.inc;            // cannot capture `this`
-  // ERROR: fn[Counter(i32)] f = Counter.create;
-  //        A STATIC method cannot be taken as a value: "cannot use static
-  //        method 'Counter.create' as a value". Only instance methods can.
-  //        NOTE: spec/spec/funcrefs.md shows the static form as valid — the
-  //        compiler rejects it. The compiler is right about itself here.
   return c.count;                            // -> 3
 }
 

@@ -127,6 +127,11 @@ fn[Counter(i32)] factory = Counter.create;
 fn[void(Counter)] increment = Counter.inc;
 ```
 
+A static method has no receiver, so its reference is simply its declared
+signature.
+
+`[§wac-fnref-static-n7kq3wm]` `factory(7)` returns a Counter with count 7.
+
 Instance method references give you the underlying function with `this` as the
 first parameter:
 
