@@ -331,6 +331,10 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         const fe = e.callee as { kind: "field"; expr: Expr; name: string };
         // Builtin statics on `string`, matched before typing the base: `string`
         // is an identifier here and names no variable.
+        if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "f64") {
+          if (fe.name === "toBits") return { kind: "prim", name: "u64", line: 0, col: 0 };
+          if (fe.name === "fromBits") return { kind: "prim", name: "f64", line: 0, col: 0 };
+        }
         if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "string"
             && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
           return { kind: "prim", name: "string", line: 0, col: 0 };
@@ -1447,6 +1451,12 @@ class FuncEmitter {
       // Static method call: TypeName.method(args)
       if (fe.expr.kind === "ident") {
         const typeName = (fe.expr as { name: string }).name;
+        if (typeName === "f64" && (fe.name === "toBits" || fe.name === "fromBits")) {
+          // Single reinterpret opcodes: i64.reinterpret_f64 / f64.reinterpret_i64.
+          for (const arg of e.args) this.emitExpr(arg, env);
+          this.emit(fe.name === "toBits" ? 0xBD : 0xBF);
+          return;
+        }
         if (typeName === "string" && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
           const helper = fe.name === "fromCodepoint" ? "__str_from_cp" : "__str_from_bytes";
           for (const arg of e.args) this.emitExpr(arg, env);
