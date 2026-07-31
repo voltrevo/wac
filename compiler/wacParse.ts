@@ -985,7 +985,9 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       items.push(parseImport());
     } else if (at("struct") || (at("const") && at("struct", 1))) {
       items.push(parseStructDecl(false));
-    } else if (at("export") && at("struct", 1)) {
+    } else if (at("export") && (at("struct", 1) || (at("const", 1) && at("struct", 2)))) {
+      // `export const struct` as well as `export struct` — parseStructDecl reads
+      // the `const` itself, so only the `export` is consumed here.
       advance(); // skip 'export'
       items.push(parseStructDecl(true));
     } else if (at("export") || at("fn") || at("void") || (at("ident"))) {
