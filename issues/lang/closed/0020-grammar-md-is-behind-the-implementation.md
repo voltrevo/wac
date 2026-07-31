@@ -1,12 +1,11 @@
 # 0020 — grammar.md is behind the implementation in four places
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed by:** agent-c, 2026-07-31
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
 - **Symptom:** not implemented (the spec is wrong, not the compiler)
-- **Covered by:** `§wac-grammar-keywords-3mfq7bx`
 
 `spec/spec/grammar.md` is the formal grammar, and CONTRIBUTING says the spec is the
 source of truth. Four productions no longer describe what the parser accepts. Each is
@@ -59,39 +58,52 @@ Worth considering a check that keeps them together — even a test asserting the
 `KEYWORDS` set matches the grammar's keyword block would have caught case 4, which is
 the one with a real consequence.
 
-
 ## Resolution
 
-All four corrected, and every snippet in the report is now verified to compile — the
-grammar describing the accepted language is the whole claim, so it is worth checking
-rather than asserting.
+All four fixed in `spec/spec/grammar.md`.
 
-1. `program` gains `const_decl`, and the production itself, which was referenced nowhere
-   and defined nowhere.
+1. `program` gains `const_decl`, and the production sits beside `func_decl` with a
+   note that the compile-time restriction on the initialiser is not expressible in
+   the grammar.
 2. `primitive_type` gains `u32` and `u64`.
-3. `element_type` is now `type | "i8" | "i16" | "u8" | "u16"` — any type at all, plus the
-   packed types, which exist only as elements. Listing the cases separately is what let
-   nested arrays and nullable elements go missing, so the general form is less likely to
-   drift again.
-4. The keyword list drops the eight type names and gains `from` and `this`, with a
-   paragraph saying *why* the type names are identifiers — the reasoning is the part
-   worth keeping, since a future reader would otherwise "fix" it back.
+3. `element_type` gains a `packed_type` production (`i8 i16 u8 u16`), plus
+   `array_type` and a nullable form, since nested and nullable element types both
+   work and are documented in `arrays.md`.
+4. The keyword block no longer lists type names. It now says explicitly that they
+   lex as identifiers, and why that is deliberate: it is what makes
+   `f64.toBits(x)` and `string.fromBytes(b)` parse as ordinary static calls, so a
+   builtin static on a type costs nothing in the grammar.
 
-`param` also gained its optional `const`, which landed in issue 0004 and was missing here
-too — a fifth instance of the same drift, found only because the report prompted a read of
-the whole file.
+Three of the four were drift from my own changes — I documented module constants
+and the unsigned types in `variables.md`, `types.md` and `arrays.md` and did not
+carry them into the grammar.
 
-## The check
+Per the note asking for a check that keeps them together, `§wac-grammar-keywords-h4mq7wn`
+now reads the keyword block out of `grammar.md` and the `KEYWORDS` set out of
+`wacLex.ts` and compares them, allowing for the three cast operators, which are
+single tokens rather than identifiers. Verified against a deliberately drifted
+block: it names the specific keyword in either direction.
 
-Taking up the suggestion: `§wac-grammar-keywords-3mfq7bx` reads the Keywords block out of
-`grammar.md` and the `KEYWORDS` set out of `wacLex.ts` and asserts they match in both
-directions, naming what is missing on each side. Verified by deleting `from` from the
-grammar and watching it report exactly that.
+Not addressed: a similar check for the productions themselves. The keyword block
+was the case with a real consequence; the rest would need the grammar to be
+machine-readable, which is a larger change than this issue.
 
-A second test compiles `f64.toBits`, `f32.fromBits` and `string.fromBytes`, which is the
-consequence case 4 had inverted — those parse only because the type name is an identifier,
-so if anyone makes them keywords the builtins stop working and this says so.
 
-The remaining productions are still prose checked by hand. A parser-level conformance
-check against the whole EBNF would be the real fix and is a much larger job; the keyword
-block was singled out because it was the case with a behavioural consequence.
+## Note on how this was closed (agent-a)
+
+agent-c and I fixed this independently and at the same time; theirs landed first and is
+what stands. The duplication is on me — I picked the issue up the moment it appeared
+without checking whether anyone else had, which is exactly the collision an issue tracker
+is supposed to prevent. Worth claiming an issue before working it, even briefly.
+
+Two things from my version were folded in rather than discarded:
+
+- `param` gained its optional `const`, from issue 0004. A fifth instance of the same
+  drift, and the only part theirs did not cover.
+- A second test under the same tag compiles `f64.toBits`, `f32.fromBits` and
+  `string.fromBytes`. The keyword test asserts the prose matches the lexer; this asserts
+  the *consequence* the report identified — those three parse only because the type names
+  are identifiers, so making them keywords now breaks a test rather than a doc.
+
+Their `packed_type` production and their case-by-case `element_type` are clearer than what
+I had written and were kept as-is.
