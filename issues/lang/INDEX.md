@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0047](open/0047-two-instantiations-of-a-generic-collapse-when-one-argument-is-an-enum.md) | two instantiations of a generic collapse when a type argument is an enum | bug | invalid wasm |
 | [0046](open/0046-an-unknown-type-name-in-a-declaration-is-not-reported-as-one.md) | an unknown type name in a declaration or cast is not reported as unknown | diagnostic | compile error |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
