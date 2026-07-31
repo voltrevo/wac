@@ -909,3 +909,32 @@ Deno.test("wacParse: struct member error recovery with multi-token garbage", () 
   const errs = fail("struct Foo { i32 method garbage tokens }");
   if (errs.length === 0) throw new Error("expected errors");
 });
+
+Deno.test("wacParse: a bare `string` in an expression is not a string literal", () => {
+  // at() falls back to comparing token text, so at("string") also matches the
+  // identifier `string`. The literal case must test the token kind, or
+  // `string.fromCodepoint(65)` parses as `"string".fromCodepoint(65)` and any
+  // bare `string` silently becomes the literal "string".
+  const { tokens } = wacLex(`export string f() { return string.fromCodepoint(65); }`);
+  const { program } = wacParse(tokens, "main.wac");
+  const fn = program.items[0] as { body: { stmts: Array<{ value: unknown }> } };
+  const ret = fn.body.stmts[0].value as { kind: string; callee: { expr: { kind: string; name?: string } } };
+  if (ret.kind !== "call") throw new Error(`expected a call, got ${ret.kind}`);
+  if (ret.callee.expr.kind !== "ident") {
+    throw new Error(`receiver should be an ident, got ${ret.callee.expr.kind}`);
+  }
+  if (ret.callee.expr.name !== "string") {
+    throw new Error(`receiver should be named string, got ${ret.callee.expr.name}`);
+  }
+});
+
+Deno.test("wacParse: a real string literal is still a string literal", () => {
+  // The other side of the same change: matching on kind must not stop actual
+  // literals from parsing.
+  const { tokens } = wacLex(`export string f() { return "hello"; }`);
+  const { program } = wacParse(tokens, "main.wac");
+  const fn = program.items[0] as { body: { stmts: Array<{ value: { kind: string; value?: string } }> } };
+  const ret = fn.body.stmts[0].value;
+  if (ret.kind !== "string") throw new Error(`expected a string literal, got ${ret.kind}`);
+  if (ret.value !== "hello") throw new Error(`expected "hello", got ${ret.value}`);
+});

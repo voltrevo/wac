@@ -488,7 +488,10 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     if (at("false")) { advance(); return { kind: "bool", value: false, ...p }; }
     if (at("int"))   { const v = advance().text; return { kind: "int", value: v, ...p }; }
     if (at("float")) { const v = advance().text; return { kind: "float", value: v, ...p }; }
-    if (at("string")){ const v = advance().text; return { kind: "string", value: v, ...p }; }
+    // Matched on kind, not through at(): at() falls back to comparing token text,
+    // so at("string") also matches the *identifier* `string` and would turn a
+    // bare `string` in an expression into the literal "string".
+    if (tok().kind === "string") { const v = advance().text; return { kind: "string", value: v, ...p }; }
     // `this` keyword as expression (inside method bodies)
     if (at("this"))  { advance(); return { kind: "ident", name: "this", ...p }; }
 
