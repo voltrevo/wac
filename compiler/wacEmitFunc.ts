@@ -331,9 +331,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
         const fe = e.callee as { kind: "field"; expr: Expr; name: string };
         // Builtin statics on `string`, matched before typing the base: `string`
         // is an identifier here and names no variable.
-        if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "f64") {
-          if (fe.name === "toBits") return { kind: "prim", name: "u64", line: 0, col: 0 };
-          if (fe.name === "fromBits") return { kind: "prim", name: "f64", line: 0, col: 0 };
+        const floatBase = fe.expr.kind === "ident" ? (fe.expr as { name: string }).name : "";
+        if (floatBase === "f64" || floatBase === "f32") {
+          const bits = floatBase === "f64" ? "u64" : "u32";
+          if (fe.name === "toBits") return { kind: "prim", name: bits, line: 0, col: 0 };
+          if (fe.name === "fromBits") return { kind: "prim", name: floatBase, line: 0, col: 0 };
         }
         if (fe.expr.kind === "ident" && (fe.expr as { name: string }).name === "string"
             && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
@@ -1591,10 +1593,17 @@ class FuncEmitter {
       // Static method call: TypeName.method(args)
       if (fe.expr.kind === "ident") {
         const typeName = (fe.expr as { name: string }).name;
-        if (typeName === "f64" && (fe.name === "toBits" || fe.name === "fromBits")) {
-          // Single reinterpret opcodes: i64.reinterpret_f64 / f64.reinterpret_i64.
+        if ((typeName === "f64" || typeName === "f32")
+            && (fe.name === "toBits" || fe.name === "fromBits")) {
+          // Single reinterpret opcodes, one pair per width:
+          //   i64.reinterpret_f64 0xBD / f64.reinterpret_i64 0xBF
+          //   i32.reinterpret_f32 0xBC / f32.reinterpret_i32 0xBE
           for (const arg of e.args) this.emitExpr(arg, env);
-          this.emit(fe.name === "toBits" ? 0xBD : 0xBF);
+          if (typeName === "f64") {
+            this.emit(fe.name === "toBits" ? 0xBD : 0xBF);
+          } else {
+            this.emit(fe.name === "toBits" ? 0xBC : 0xBE);
+          }
           return;
         }
         if (typeName === "string" && (fe.name === "fromCodepoint" || fe.name === "fromBytes")) {
