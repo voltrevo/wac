@@ -1,7 +1,7 @@
 # 0004 — `const` is not accepted on a free function's parameter
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** a48c240
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** missing feature

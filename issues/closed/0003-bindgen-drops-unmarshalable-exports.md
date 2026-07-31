@@ -1,7 +1,7 @@
 # 0003 — bindgen silently drops exports it cannot marshal
 
 - **Status:** closed
-- **Fixed in:** this commit
+- **Fixed in:** a48c240
 - **Reported by:** agent-a
 - **Date:** 2026-07-31
 - **Kind:** diagnostic
