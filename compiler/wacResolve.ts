@@ -421,7 +421,11 @@ export function wacResolve(
       };
       const baseDecl: StructDecl = {
         tag: "struct", isConst: false, exported: item.exported, name,
-        parent: null, fields: [tagField], methods: [], line, col,
+        // The enum's methods belong to the base struct, so `this` is the enum type and
+        // `match (this)` is how a method reaches a variant. Nothing further is needed:
+        // from here on the base is an ordinary struct with methods, and every later phase
+        // handles it with the machinery it already has.
+        parent: null, fields: [tagField], methods: item.methods, line, col,
       };
       const base: StructEntry = {
         enumRole: "base",
@@ -519,9 +523,16 @@ export function wacResolve(
 
     // ── Phase 3: register methods for all structs in this file ───────────────
     for (const item of prog.items) {
-      if (item.tag !== "struct") continue;
+      // An enum's methods live on its generated base struct, so this pass has to see enums
+      // too. Registering methods only for `tag === "struct"` left an enum's methods parsed,
+      // attached to the base's declaration, and invisible to every lookup — the same
+      // omission as issue 0005, which is now the sixth walk to have needed an enum case.
+      if (item.tag !== "struct" && item.tag !== "enum") continue;
       const structScopeEntry = scope.get(item.name);
-      if (!structScopeEntry || structScopeEntry.kind !== "struct") continue;
+      if (!structScopeEntry) continue;
+      // A struct name resolves to `struct`, an enum name to `enum`; both carry the struct
+      // entry the name denotes.
+      if (structScopeEntry.kind !== "struct" && structScopeEntry.kind !== "enum") continue;
       const structEntry = structScopeEntry.entry;
 
       const methodNames = new Set<string>();
@@ -531,9 +542,15 @@ export function wacResolve(
           err(`duplicate method '${mname}' in struct '${item.name}'`, filePath, line, col);
           continue;
         }
-        // Check for field/method collision
-        const hasField = item.fields.some(f => f.name === mname);
-        if (hasField) {
+        // A method may not share a name with a field. For an enum the analogous clash is
+        // with a *variant*, because `E.name` would then mean two things — and it is a
+        // clash worth reporting rather than resolving by precedence.
+        if (item.tag === "enum") {
+          if (item.variants.some(v => v.name === mname)) {
+            err(`'${mname}' is already a variant of enum '${item.name}'`, filePath, line, col);
+            continue;
+          }
+        } else if (item.fields.some(f => f.name === mname)) {
           err(`'${mname}' already declared as field in struct '${item.name}'`, filePath, line, col);
           continue;
         }
@@ -550,7 +567,10 @@ export function wacResolve(
         structEntry.methods.set(mname, methodEntry);
       }
 
-      // Also check for duplicate fields
+      // Also check for duplicate fields. An enum has none of its own — its base carries
+      // only the synthetic tag, and payload fields are checked per variant where they are
+      // declared.
+      if (item.tag === "enum") continue;
       const fieldNames = new Set<string>();
       for (const field of item.fields) {
         if (fieldNames.has(field.name)) {

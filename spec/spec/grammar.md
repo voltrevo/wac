@@ -55,7 +55,8 @@ field_decl     = [ "const" ] , type , IDENT , ";" ;
 
 method_decl    = [ "override" ] , type , IDENT , "(" , [ method_params ] , ")" , block ;
 
-enum_decl      = [ "export" ] , "enum" , IDENT , "{" , [ variant_list ] , "}" ;
+enum_decl      = [ "export" ] , "enum" , IDENT , "{" , [ variant_list ] ,
+                 { method_decl } , "}" ;   (* a method must take `this` [see enums.md] *)
 variant_list   = variant , { "," , variant } , [ "," ] ;
 variant        = IDENT , [ "(" , [ param_list ] , ")" ] ;
 method_params  = this_param , [ "," , [ param_list ] ]

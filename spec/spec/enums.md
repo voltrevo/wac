@@ -485,12 +485,55 @@ form's, where an uncovered variant merely means control continues.
 `[§enum-match-expr-4wnq7bk]` And the arms must agree on a type: mixing them is an error
 naming the arms.
 
+### Methods
+
+An enum may declare methods after its variants. They attach to the enum itself, so `this` is
+the enum type and `match (this)` is how a method reaches a variant:
+
+```wac
+enum Shape {
+  Point,
+  Circle(f64 radius),
+  Rect(f64 width, f64 height),
+
+  f64 area(const this) {
+    match (this) {
+      case Point:            return 0.0;
+      case Circle(r):        return 3.14159 * r * r;
+      case Rect(w, h):       return w * h;
+    }
+  }
+  f64 twiceArea(const this) { return this.area() * 2.0; }
+}
+```
+
+`[§enum-methods-6vkq2wn]` `Shape.Rect(3.0, 4.0).area()` is `12.0`, and a method may be
+called on an enum-typed variable, take parameters beside `this`, use a mutable `this`, and
+call another method through `this`.
+
+Variants come first and are comma-separated; methods follow. A method is recognised by its
+shape — a type, a name, and a parameter list — which a variant cannot have, so no separator
+is needed.
+
+Two shapes are refused, both deliberately:
+
+**No `override`.** `[§enum-methods-6vkq2wn]` The variants are compiler-generated subtypes of
+the enum, so an override would mean per-variant virtual dispatch — a different feature with
+its own design questions, and better refused than half-supported.
+
+**No static methods.** `[§enum-methods-6vkq2wn]` A static method would be called
+`Shape.make()`, which is already how a variant is constructed. That spelling has to mean one
+thing, so a method here must take `this` until the ambiguity is resolved deliberately. For
+the same reason a method may not take a variant's name.
+`[§enum-methods-6vkq2wn]`
+
 ### What this is not yet
 
 Each of these is tracked as an issue, so the reasoning lives in one place rather than being
-re-derived: nested patterns (0027), methods on enums (0028), narrowing outside `match`
-(0029), an integer representation for payload-less enums (0030), and `br_table` dispatch
-(0031).
+re-derived: nested patterns (0027), narrowing outside `match` (0029), an integer
+representation for payload-less enums (0030), and `br_table` dispatch (0031). The last two
+are measured in their issues — the numbers are small, and neither is worth the surface it
+would cost today.
 
 **Not an expression.** `match` is a statement. The expression form is on the
 roadmap and needs result-type unification across arms, which is a separate step; the
