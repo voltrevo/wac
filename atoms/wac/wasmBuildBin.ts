@@ -143,6 +143,14 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
   }
 
   function scanExpr(e: Expr): void {
+    if (e.kind === "matchExpr") {
+      // Arm values are subexpressions, so a type used only inside one has to be collected
+      // here — the same omission as the match *statement*'s arms in issue 0005.
+      scanExpr(e.subject);
+      for (const arm of e.arms) {
+        if (arm.value) scanExpr(arm.value);
+      }
+    }
     if (e.kind === "arrNew") {
       scanType(e.elem);
       scanType({ kind: "array", elem: e.elem, line: 0, col: 0 });
@@ -1662,8 +1670,27 @@ function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
       if (aIdx === undefined) continue;
 
       const init = decl.init;
-      const elems = init.kind === "arrNew" ? init.fixed : [];
       const body: number[] = [];
+
+      if (init.kind === "arrNew" && init.size !== null) {
+        // A sized constant array: the length is a constant expression, so it can be
+        // evaluated here and handed to array.new_default or array.new — both of which
+        // are constant instructions.
+        const n = constIntValue(init.size, ctx);
+        if (init.fill !== undefined) {
+          body.push(...constValueBytes(init.fill, elem, ctx));
+          body.push(0x41, ...sleb(n));
+          body.push(0xFB, 0x06, ...uleb(aIdx));                    // array.new
+        } else {
+          body.push(0x41, ...sleb(n));
+          body.push(0xFB, 0x07, ...uleb(aIdx));                    // array.new_default
+        }
+        body.push(0x0B);
+        globals.push([0x64, ...sleb(aIdx), 0x00, ...body]);
+        continue;
+      }
+
+      const elems = init.kind === "arrNew" ? init.fixed : [];
       for (const el of elems) body.push(...constValueBytes(el, elem, ctx));
       body.push(0xFB, 0x08, ...uleb(aIdx), ...uleb(elems.length)); // array.new_fixed
       body.push(0x0B);                                             // end
@@ -1689,6 +1716,29 @@ function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
 
   if (globals.length === 0) return [];
   return section(6, vec(globals));
+}
+
+/**
+ * A constant expression's value as an i32, for an array length.
+ *
+ * The type checker has already established it is constant, so a failure here would be a
+ * disagreement between the two rather than a user error; 0 keeps the module valid and the
+ * length wrong, which a test would catch immediately.
+ */
+function constIntValue(e: Expr, ctx: WasmTypeCtxFull): number {
+  const lookup = (name: string): Expr | null => {
+    for (const [path, scope] of ctx.result.fileScopes) {
+      const found = scope.get(name);
+      if (found?.kind === "const" && found.filePath === path) return found.decl.init;
+    }
+    return null;
+  };
+  const v = wacConstEval(e, lookup);
+  if (v === null) return 0;
+  return v.kind === "int" ? Number(v.value)
+       : v.kind === "float" ? Math.trunc(v.value)
+       : v.kind === "bool" ? (v.value ? 1 : 0)
+       : 0;
 }
 
 /**

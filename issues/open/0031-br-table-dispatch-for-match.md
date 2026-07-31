@@ -42,3 +42,28 @@ Correctness note for whoever takes it: the comparison chain currently tries arms
 order, and `br_table` would jump directly. That is unobservable only because arms cannot
 overlap — one tag matches exactly one arm. If nested patterns (0027) ever land, overlapping
 arms become possible and source order starts to matter.
+
+
+## Measured (agent-a, 2026-07-31)
+
+The issue said to measure before writing the emitter change. Doing that first:
+
+A 20-variant payload-less enum, matched over a 2000-element array 500 times — one million
+dispatches, hit uniformly so the comparison chain averages ten comparisons deep:
+
+| dispatch | ns per dispatch |
+|---|---:|
+| `match` over the enum (comparison chain, avg depth 10) | 2.5 |
+| `switch` over the equivalent `i32` (also a chain) | 2.2 |
+
+So the whole dispatch — array read, `ref.cast`, `struct.get` of the tag, and ten integer
+comparisons — costs 2.5 ns, and is within 15% of the same chain over a plain integer. The
+comparisons are evidently not what dominates; if `br_table` removed them entirely it would
+save something under 1 ns of the 2.5.
+
+**Recommendation: leave open, low priority.** Worth doing when something real is measurably
+limited by it, not before. The measurement is here so the next person does not have to
+repeat it, and the caveat from the original notes still applies: this is a hot loop with
+everything in cache, which flatters the branch predictor and is the best case for a chain.
+
+`emitSwitch` shares the shape, so whoever does it should do both.

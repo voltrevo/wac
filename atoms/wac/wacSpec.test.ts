@@ -3219,19 +3219,33 @@ Deno.test("[§wac-override-dispatch-r2km6jf] getName dispatches dynamically via 
     struct Shape { i32 tag; i32 getTag(const this) { return this.tag; } }
     struct Circle : Shape { i32 radius; override i32 getTag(const this) { return 42; } }
     i32 dispatch(Shape s) {
-      if (s is Circle) { return (s as! Circle).getTag(); }
+      // s is narrowed to Circle inside the block [see wac-narrow-if-2mkq8vp], so the
+      // (s as! Circle) this test used to need is now a redundant upcast and rejected as
+      // one. That is the point of the narrowing; the dispatch it demonstrates is unchanged.
+      if (s is Circle) { return s.getTag(); }
       return s.getTag();
+    }
+    // The cast is still how you get there when narrowing does not apply — from a field, for
+    // instance, where there is no name to shadow.
+    struct Holder { Shape s; }
+    i32 viaField(Holder h) {
+      if (h.s is Circle) { return (h.s as! Circle).getTag(); }
+      return h.s.getTag();
     }
     export i32 testDynDispatch() {
       Circle c = Circle(0, 5);
       Shape s = Shape(99);
       return dispatch(c) * 100 + dispatch(s);
     }
+    export i32 testViaField() {
+      return viaField(Holder(Circle(0, 5))) * 100 + viaField(Holder(Shape(99)));
+    }
   `);
   // c is Circle → (c as! Circle).getTag() = 42
   // s is Shape (not Circle) → s.getTag() = 99
   // result: 42 * 100 + 99 = 4299
   eq(inst.call("testDynDispatch", []), 4299, "dynamic dispatch: Circle → 42, Shape → 99");
+  eq(inst.call("testViaField", []), 4299, "and through a field, where the cast is still needed");
 });
 
 // ── §wac-bind-* — TypeScript bindgen ─────────────────────────────────────────
@@ -5852,6 +5866,56 @@ Deno.test(`[§wac-modconst-array-t8kn4wq] a constant array is one shared table`,
   eq(count(codeSec, [0xFB, 0x08]), 0, "and none rebuilt inside a function body");
 });
 
+// §wac-modconst-sized-5wnq8kt — a sized array can be a constant
+Deno.test(`[§wac-modconst-sized-5wnq8kt] a constant array may be written in the sized form`, async () => {
+  // Reported as the second half of issue 0032. `array.new_default` and `array.new` are
+  // both constant instructions, so a sized array is as constant as a literal one — what
+  // has to be constant is the *length*, not the elements.
+  const inst = await run(`
+    struct P { i32 v; }
+    enum E { A(i32 v), B }
+    const i32   N     = 5;
+    const i32[] ZEROS = i32[8]();
+    const i32[] ONES  = i32[4](fill: -1);
+    const i32[] BYN   = i32[N]();
+    const i32[] BYEXP = i32[N * 2]();
+    const P[]   PS    = P[3](fill: P(7));
+    const E[]   ES    = E[3](fill: E.A(4));
+    export i32 zeros() { return ZEROS.len() * 10 + ZEROS[0]; }
+    export i32 ones()  { return ONES.len() * 10 + ONES[3]; }
+    export i32 byN()   { return BYN.len(); }
+    export i32 byExp() { return BYEXP.len(); }
+    export i32 structs() { return PS.len() * 10 + PS[2].v; }
+    export i32 enums() {
+      i32 n = 0;
+      for (i32 i = 0; i < ES.len(); i++) { match (ES[i]) { case A(v): n += v; case B: n += 1; } }
+      return n;
+    }
+  `);
+  eq(inst.call("zeros", []), 80, "eight elements, default-filled");
+  eq(inst.call("ones", []), 39, "four elements of -1");
+  eq(inst.call("byN", []), 5, "a length from another constant");
+  eq(inst.call("byExp", []), 10, "a length from an expression over constants — N is 5");
+  eq(inst.call("structs", []), 37, "struct elements need fill, and take it");
+  eq(inst.call("enums", []), 12, "and so do enum elements");
+});
+
+Deno.test(`[§wac-modconst-sized-5wnq8kt] the length must be constant and the elements defaultable`, () => {
+  const computed = err(`i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }`);
+  if (!computed.includes("needs a compile-time value")) {
+    throw new Error(`expected a compile-time diagnostic for a computed length, got: ${computed}`);
+  }
+  // An enum has no default, so the sized form needs `fill:` — the same rule as outside a
+  // constant, and the diagnostic says which.
+  const noDefault = wacCompile(new Map([["main.wac",
+    `enum E { A(i32 v), B } const E[] T = E[3](); export i32 f() { return T.len(); }`]]), "main.wac");
+  if (noDefault.ok) throw new Error("expected an enum sized array with no fill to be rejected");
+  const ann = noDefault.diagnostics[0].annotation ?? "";
+  if (!ann.includes("fill:")) {
+    throw new Error(`expected the diagnostic to suggest 'fill:', got: ${ann}`);
+  }
+});
+
 // §wac-modconst-array-const-w2mk9fj — a constant table cannot be written through
 Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is rejected`, () => {
   const bad = (src: string) => !wacCompile(new Map([["main.wac", src]]), "main.wac").ok;
@@ -5859,8 +5923,11 @@ Deno.test(`[§wac-modconst-array-const-w2mk9fj] writing to a constant array is r
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] = 9; }`), true, "element write");
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0] += 1; }`), true, "compound write");
   eq(bad(`const i32[] T = i32[](1, 2); export void f() { T[0]++; }`), true, "increment");
-  // A sized array has no elements written down to evaluate.
-  eq(bad(`const i32[] T = i32[8](); export i32 f() { return T[0]; }`), true, "sized form");
+  // The sized form is allowed now (§wac-modconst-sized-5wnq8kt) and is still read-only.
+  eq(bad(`const i32[] T = i32[8](); export void f() { T[0] = 9; }`), true, "sized form, written");
+  // What a constant cannot have is a length that must be computed.
+  eq(bad(`i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }`),
+    true, "sized form with a computed length");
   // Reading is fine.
   eq(bad(`const i32[] T = i32[](1, 2); export i32 f() { return T[1]; }`), false, "reads are allowed");
 });
@@ -5904,6 +5971,337 @@ Deno.test(`[§wac-u64-unary-p3mk8wq] '~' on a u64 is a 64-bit operation`, async 
   eq(i.call("notU64", [18446744073709551615n]), 0n, "and back");
   eq(i.call("notU32", [0]), 4294967295, "~0 at 32 bits");
   eq(i.call("notI64", [0n]), -1n, "signed is unchanged");
+});
+
+// §wac-inherited-method-type-9dkq3wv — an inherited method's result type
+Deno.test("[§wac-inherited-method-type-9dkq3wv] an inherited method's result is typed correctly", async () => {
+  // Issue 0040. `typeOfExpr` resolved a method through the struct's *own* method map, so an
+  // inherited one missed, the expression ended up typed f64, and `s.get() + 1` emitted
+  // `f64.add` for two i32s. Two things had to coincide for it to show: the method inherited,
+  // and its result feeding an operator so that something asks for its type. The call on its
+  // own was always emitted correctly, by a path that does walk the chain — so this was the
+  // checker and the emitter holding two answers, which is this compiler's most common bug.
+  const inst = await run(`
+    struct Base { i32 a; i32 get(const this) { return this.a; } f64 half(const this) { return 0.5; } }
+    struct Sub : Base { i32 b; }
+    struct Deeper : Sub { i32 c; }
+    enum E { A(i32 v), B, i32 val(const this) { return match (this) { case A(v): v, case B: 0 }; } }
+
+    export i32 oneLevel()   { Sub s = Sub(4, 5); return s.get() + 1; }
+    export i32 twoLevels()  { Deeper d = Deeper(4, 5, 6); return d.get() + 1; }
+    export i32 ownMethod()  { Base b = Base(4); return b.get() + 1; }
+    export f64 floatToo()   { Sub s = Sub(4, 5); return s.half() + 0.25; }
+    // An enum's methods live on its generated base, so calling one on a narrowed variant is
+    // an inherited call — which is how this was found.
+    export i32 viaNarrowing() { E e = E.A(9); if (e is A) { return e.val() + e.v; } return 0; }
+  `);
+  eq(inst.call("oneLevel", []), 5, "inherited one level, feeding an operator");
+  eq(inst.call("twoLevels", []), 5, "and two levels down");
+  eq(inst.call("ownMethod", []), 5, "a struct's own method still works");
+  near(inst.call("floatToo", []) as number, 0.75, "an inherited f64 method is not broken the other way");
+  eq(inst.call("viaNarrowing", []), 18, "an enum method on a narrowed variant");
+});
+
+// §wac-narrow-if-2mkq8vp — `if (x is T)` narrows x in the then-block
+Deno.test("[§wac-narrow-if-2mkq8vp] `if (x is T)` narrows x", async () => {
+  // Issue 0029. Only the exact shape `ident is Type` narrows, and only in the then-block,
+  // which makes this a scope rule rather than flow-sensitive typing — the same mechanism a
+  // match arm uses: a const shadowing binding with a lexical extent.
+  const inst = await run(`
+    enum Shape { Point, Circle(f64 radius), Rect(f64 w, f64 h) }
+    struct Base { i32 a; }
+    struct Sub : Base { i32 b; }
+    struct Deeper : Sub { i32 c; }
+    export f64 variant()   { Shape s = Shape.Circle(2.5); if (s is Circle) { return s.radius; } return 0.0; }
+    export f64 notTaken()  { Shape s = Shape.Point;       if (s is Circle) { return s.radius; } return 7.0; }
+    export i32 structs()   { Base x = Sub(1, 2);          if (x is Sub) { return x.b; } return 0; }
+    export i32 nested()    { Base x = Deeper(1, 2, 3);    if (x is Sub) { if (x is Deeper) { return x.c; } return x.b; } return 0; }
+    export f64 elseIf()    {
+      Shape s = Shape.Rect(2.0, 3.0);
+      if (s is Circle) { return s.radius; } else if (s is Rect) { return s.w * s.h; }
+      return 0.0;
+    }
+    export f64 afterwards() {
+      // The outer binding is untouched, which is why no analysis is needed for what holds
+      // after the block.
+      Shape s = Shape.Circle(1.5);
+      if (s is Circle) { f64 unused = s.radius; }
+      return match (s) { case Circle(r): r, else: 0.0 };
+    }
+  `);
+  near(inst.call("variant", []) as number, 2.5, "an enum variant");
+  near(inst.call("notTaken", []) as number, 7.0, "the branch not taken is unaffected");
+  eq(inst.call("structs", []), 2, "a hand-written struct hierarchy, not just enums");
+  eq(inst.call("nested", []), 3, "narrowing inside a narrowing");
+  near(inst.call("elseIf", []) as number, 6.0, "an else-if arm narrows too");
+  near(inst.call("afterwards", []) as number, 1.5, "and the outer binding still has its own type");
+});
+
+Deno.test("[§wac-narrow-if-2mkq8vp] && narrows from either operand, || from neither", async () => {
+  // Reaching the block means both operands of `&&` held, so both are available as premises.
+  // One branch of `||` holding is not enough, so it narrows from neither.
+  const inst = await run(`
+    enum Shape { Point, Circle(f64 radius) }
+    export f64 left()  { Shape s = Shape.Circle(2.0); f64 k = 1.0; if ((s is Circle) && k > 0.0) { return s.radius; } return 0.0; }
+    export f64 right() { Shape s = Shape.Circle(3.0); f64 k = 1.0; if (k > 0.0 && (s is Circle)) { return s.radius; } return 0.0; }
+    export f64 chain() { Shape s = Shape.Circle(4.0); f64 k = 1.0; if ((s is Circle) && k > 0.0 && k < 5.0) { return s.radius; } return 0.0; }
+  `);
+  near(inst.call("left", []) as number, 2.0, "from the left operand");
+  near(inst.call("right", []) as number, 3.0, "from the right operand");
+  near(inst.call("chain", []) as number, 4.0, "and through a chain");
+
+  const orCond = err(`
+    enum Shape { Point, Circle(f64 radius) }
+    export f64 f() { Shape s = Shape.Circle(1.0); if ((s is Circle) || true) { return s.radius; } return 0.0; }`);
+  if (!orCond.includes("has no field 'radius'")) {
+    throw new Error(`|| should not narrow, got: ${orCond}`);
+  }
+});
+
+Deno.test("[§wac-narrow-if-2mkq8vp] what does not narrow, and the const rule", () => {
+  const cases: [string, string, string][] = [
+    ["`is not`", `if (s is not Point) { return s.radius; }`, "has no field 'radius'"],
+    ["assigning to the narrowed name", `if (s is Circle) { s = Shape.Point; } return 0.0;`, "cannot assign to const"],
+  ];
+  for (const [what, body, want] of cases) {
+    const m = err(`
+      enum Shape { Point, Circle(f64 radius) }
+      export f64 f() { Shape s = Shape.Circle(1.0); ${body} return 0.0; }`);
+    if (!m.includes(want)) {
+      throw new Error(`${what}: expected a diagnostic containing ${JSON.stringify(want)}, got: ${m}`);
+    }
+  }
+});
+
+// §enum-methods-6vkq2wn — methods on an enum
+Deno.test("[§enum-methods-6vkq2wn] an enum may have methods", async () => {
+  // Issue 0028. The methods attach to the enum's generated base struct, so `this` is the
+  // enum type and `match (this)` is how a method reaches a variant. Nothing downstream
+  // needed teaching: from the resolver on, the base is an ordinary struct with methods.
+  const inst = await run(`
+    enum Shape {
+      Point,
+      Circle(f64 radius),
+      Rect(f64 w, f64 h),
+
+      f64 area(const this) {
+        match (this) {
+          case Point:      return 0.0;
+          case Circle(r):  return 3.0 * r * r;
+          case Rect(w, h): return w * h;
+        }
+      }
+      f64 twiceArea(const this) { return this.area() * 2.0; }
+      f64 scaled(const this, f64 k) { return this.area() * k; }
+    }
+    export f64 onLiteral()  { return Shape.Rect(3.0, 4.0).area(); }
+    export f64 onVariable() { Shape s = Shape.Circle(2.0); return s.area(); }
+    export f64 calling()    { return Shape.Rect(2.0, 3.0).twiceArea(); }
+    export f64 withArg()    { return Shape.Rect(2.0, 3.0).scaled(10.0); }
+    export f64 onPoint()    { Shape s = Shape.Point; return s.area(); }
+  `);
+  near(inst.call("onLiteral", []) as number, 12.0, "called on a constructed variant");
+  near(inst.call("onVariable", []) as number, 12.0, "and on an enum-typed variable");
+  near(inst.call("calling", []) as number, 12.0, "a method calling another through `this`");
+  near(inst.call("withArg", []) as number, 60.0, "a method with parameters beside `this`");
+  near(inst.call("onPoint", []) as number, 0.0, "and a payload-less variant");
+});
+
+Deno.test("[§enum-methods-6vkq2wn] a method may use the expression form and a mutable this", async () => {
+  const inst = await run(`
+    enum E {
+      A(i32 v), B,
+      i32 val(const this) { return match (this) { case A(v): v, case B: 0 }; }
+      i32 mutableThis(this) { return match (this) { case A(v): v * 2, case B: 1 }; }
+    }
+    export i32 exprForm() { return E.A(9).val(); }
+    export i32 mutThis()  { return E.A(4).mutableThis(); }
+  `);
+  eq(inst.call("exprForm", []), 9, "match as an expression inside a method");
+  eq(inst.call("mutThis", []), 8, "and a non-const receiver");
+});
+
+Deno.test("[§enum-methods-6vkq2wn] an enum method's body is reachable to every walk", async () => {
+  // The three tests above all passed while the resolver's annotation pass ignored enum
+  // method bodies entirely, because none of them named a type that appears nowhere else.
+  // This one does: `Q`, `Q[]` and `helper()` exist only inside the method, and without the
+  // annotation the construct reported "undefined function or struct 'Q'".
+  //
+  // Seventh appearance of issue 0005's shape, and the reason to write the test this way
+  // round: a feature's own tests will use whatever is already in scope, so they do not
+  // exercise the walks. A type reachable *only* through the new construct does.
+  const inst = await run(`
+    struct Q { i32 v; }
+    i32 helper() { return 3; }
+    enum E {
+      A(i32 v), B,
+      i32 sum(const this) {
+        Q[] qs = Q[2](fill: Q(helper()));
+        i32 base = match (this) { case A(v): v, case B: 0 };
+        return base + qs[0].v + qs[1].v;
+      }
+    }
+    export i32 f() { return E.A(4).sum(); }
+  `);
+  eq(inst.call("f", []), 10, "4 from the payload, plus two Q(3)s built inside the method");
+});
+
+Deno.test("[§enum-methods-6vkq2wn] the two shapes that are refused, and why", () => {
+  // `override` would be per-variant virtual dispatch — the variants are compiler-generated
+  // subtypes of the base — which is a different feature with its own questions. Refused
+  // rather than quietly accepted and half-working.
+  const over = err(`enum E { A, B, override i32 val(const this) { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!over.includes("'override' is not allowed")) {
+    throw new Error(`expected the override diagnostic, got: ${over}`);
+  }
+  // A static method would be written `E.make()`, which is already how a variant is
+  // constructed, so that spelling has to mean one thing until it is decided deliberately.
+  const stat = err(`enum E { A, B, i32 make() { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!stat.includes("must take 'this'")) {
+    throw new Error(`expected the static-method diagnostic, got: ${stat}`);
+  }
+  // And a method may not take a variant's name, since `E.name` would mean two things.
+  const clash = err(`enum E { A(i32 v), B, i32 A(const this) { return 0; } }
+    export i32 f() { return 1; }`);
+  if (!clash.includes("already a variant")) {
+    throw new Error(`expected the variant-clash diagnostic, got: ${clash}`);
+  }
+});
+
+// §enum-match-expr-4wnq7bk — `match` as an expression
+Deno.test("[§enum-match-expr-4wnq7bk] match can be an expression", async () => {
+  // Issue 0026, and the last of the six items enums.md had listed as deferred. Arms give a
+  // value after the colon and are comma-separated; the arm header is identical to the
+  // statement form, so there is one arm syntax in the language.
+  const inst = await run(`${SHAPES}
+    f64 area(Shape s) {
+      return match (s) { case Point: 0.0, case Circle(r): 3.14159 * r * r, case Rect(w, h): w * h };
+    }
+    f64 twice(f64 x) { return x * 2.0; }
+    export f64 initialiser() {
+      Shape s = Shape.Rect(3.0, 4.0);
+      f64 a = match (s) { case Point: 0.0, case Circle(r): r, case Rect(w, h): w * h, };
+      return a;
+    }
+    export f64 returned()  { return area(Shape.Rect(2.0, 5.0)); }
+    export f64 elseArm()   { Shape s = Shape.Point; return match (s) { case Circle(r): r, else: 9.0 }; }
+    export f64 narrowed()  {
+      Shape s = Shape.Rect(2.0, 3.0);
+      return match (s) { case Point: 0.0, case Circle: s.radius, case Rect: s.width * s.height };
+    }
+    export f64 nested() {
+      Shape a = Shape.Circle(2.0);
+      Shape b = Shape.Point;
+      return match (a) {
+        case Point:     0.0,
+        case Circle(r): match (b) { case Point: r, else: 0.0 },
+        case Rect(w, h): w,
+      };
+    }
+    export f64 asArgument() {
+      Shape s = Shape.Circle(1.5);
+      return twice(match (s) { case Circle(r): r, else: 0.0 });
+    }
+  `);
+  near(inst.call("initialiser", []) as number, 12.0, "a trailing comma is allowed too");
+  near(inst.call("returned", []) as number, 10.0, "as a return value");
+  near(inst.call("elseArm", []) as number, 9.0, "with an else arm");
+  near(inst.call("narrowed", []) as number, 6.0, "the subject narrows inside an arm value");
+  near(inst.call("nested", []) as number, 2.0, "a match expression inside a match expression");
+  near(inst.call("asArgument", []) as number, 3.0, "and in an argument position");
+});
+
+Deno.test("[§enum-match-expr-4wnq7bk] arm types unify the way ternary branches do", async () => {
+  // The unification is literally the ternary's, extracted rather than reimplemented — which
+  // is why a `null` arm widens and an integer arm takes the expected type without either
+  // rule being written twice.
+  const inst = await run(`${SHAPES}
+    struct P { i32 v; }
+    export i64 integers()  { Shape s = Shape.Point; i64 n = match (s) { case Point: 1, else: 2 }; return n; }
+    export f32 floats()    { Shape s = Shape.Point; f32 x = match (s) { case Point: 1.5, else: 2.5 }; return x; }
+    export i32 nullArm()   {
+      Shape s = Shape.Point;
+      P? p = match (s) { case Point: null, else: P(1) };
+      return p is null ? 7 : p!.v;
+    }
+    export f64 toTheEnum() {
+      Shape s = Shape.Point;
+      // Two arms give different *variants*, so the result is their common ancestor: Shape.
+      Shape t = match (s) { case Point: Shape.Circle(1.0), case Circle(r): Shape.Point, case Rect(w, h): Shape.Point };
+      return match (t) { case Circle(r): r, else: 0.0 };
+    }
+  `);
+  eq(inst.call("integers", []), 1n, "an integer arm takes the expected i64");
+  near(inst.call("floats", []) as number, 1.5, "and a float arm the expected f32");
+  eq(inst.call("nullArm", []), 7, "a null arm widens the result to nullable");
+  near(inst.call("toTheEnum", []) as number, 1.0, "two variants unify to their enum");
+});
+
+Deno.test("[§enum-match-expr-4wnq7bk] an expression match must be total and consistent", () => {
+  const inexhaustive = err(`${SHAPES}
+    export f64 f() { Shape s = Shape.Point; return match (s) { case Point: 0.0 }; }`);
+  if (!inexhaustive.includes("does not cover")) {
+    throw new Error(`expected the exhaustiveness diagnostic, got: ${inexhaustive}`);
+  }
+  // There is no falling off the end of an expression, so this matters more here than in the
+  // statement form — and the arms must agree on a type, named as arms rather than branches.
+  const mixed = err(`${SHAPES}
+    export f64 f() { Shape s = Shape.Point; return match (s) { case Point: 0.0, else: "x" }; }`);
+  if (!mixed.includes("match arms have incompatible types")) {
+    throw new Error(`expected the arm-type diagnostic, got: ${mixed}`);
+  }
+});
+
+// §enum-is-qualified-8jkq4wp — a qualified variant name works in an `is` test
+Deno.test("[§enum-is-qualified-8jkq4wp] `s is Shape.Empty` means what `s is Empty` means", async () => {
+  // Reported by agent-c as issue 0036. The qualified form parses as an expression, not a
+  // type, so the test became reference identity against a freshly constructed variant and
+  // was always false — silently for a payload-less variant, and with "needs a payload" for
+  // one with a payload, a message about construction when nothing was being constructed.
+  //
+  // The same inversion as 0022: the meaningless spelling passed quietly while a sensible
+  // one was rejected. And it is the spelling the docs teach, since it is how the variant is
+  // constructed in the first place.
+  const inst = await run(`${SHAPES}
+    export i32 barePoint()      { Shape s = Shape.Point;         return (s is Point) ? 1 : 0; }
+    export i32 qualPoint()      { Shape s = Shape.Point;         return (s is Shape.Point) ? 1 : 0; }
+    export i32 qualPointFalse() { Shape s = Shape.Circle(1.0);   return (s is Shape.Point) ? 1 : 0; }
+    export i32 qualPayload()    { Shape s = Shape.Circle(1.0);   return (s is Shape.Circle) ? 1 : 0; }
+    export i32 qualNot()        { Shape s = Shape.Point;         return (s is not Shape.Circle) ? 1 : 0; }
+    export i32 qualRect()       { Shape s = Shape.Rect(1.0, 2.0); return (s is Shape.Rect) ? 1 : 0; }
+  `);
+  eq(inst.call("barePoint", []), 1, "the bare form, which always worked");
+  eq(inst.call("qualPoint", []), 1, "the qualified form now agrees with it");
+  eq(inst.call("qualPointFalse", []), 0, "and is false when it should be, not always");
+  eq(inst.call("qualPayload", []), 1, "a variant with a payload needs none for a type test");
+  eq(inst.call("qualNot", []), 1, "`is not` too");
+  eq(inst.call("qualRect", []), 1, "and a multi-field variant");
+});
+
+Deno.test("[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected", () => {
+  // `s is Shape.Circle(1.0)` was silently false — it compared against a new object. It is
+  // now an error, since a type test has no use for a payload and writing one means the
+  // author expected something else to happen.
+  const m = err(`${SHAPES}
+    export i32 f() { Shape s = Shape.Circle(1.0); return (s is Shape.Circle(1.0)) ? 1 : 0; }`);
+  if (!m.includes("without a payload")) {
+    throw new Error(`expected the no-payload diagnostic, got: ${m}`);
+  }
+});
+
+Deno.test("[§enum-is-qualified-8jkq4wp] ordinary reference identity is unaffected", async () => {
+  // The qualified-variant path must not swallow a genuine identity test against something
+  // that merely looks similar — a field holding a reference, read off a struct.
+  const inst = await run(`
+    struct Inner { i32 v; }
+    struct Holder { Inner i; }
+    export i32 sameField() { Inner x = Inner(1); Holder h = Holder(x); return (h.i is x) ? 1 : 0; }
+    export i32 diffField() { Holder h = Holder(Inner(1)); Inner y = Inner(1); return (h.i is y) ? 1 : 0; }
+  `);
+  eq(inst.call("sameField", []), 1, "a field holding the same reference");
+  eq(inst.call("diffField", []), 0, "and a different one");
 });
 
 // §wac-is-undefined-type-6qbn3wr — `is` against a name that does not exist
@@ -5993,6 +6391,33 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   if (dupes.length > 0) {
     throw new Error(`duplicate issue numbers:\n${
       dupes.map(([n, w]) => `  ${n}: ${w.join(", ")}`).join("\n")}`);
+  }
+
+  // INDEX.md's counts and its row set are maintained by hand, and have been wrong in both
+  // directions more than once — an issue closed without its row removed, and a total that
+  // no longer matched the directory. Both are trivially checkable against the files.
+  const index = await Deno.readTextFile(new URL("INDEX.md", dir));
+  const open = [...seen].filter(([, w]) => w[0].startsWith("open/")).map(([n]) => n);
+  const closed = [...seen].filter(([, w]) => w[0].startsWith("closed/")).map(([n]) => n);
+
+  const counts = index.match(/^(\d+) issues, (\d+) closed\./m);
+  if (!counts) throw new Error("INDEX.md needs a line of the form 'N issues, M closed.'");
+  if (Number(counts[1]) !== seen.size || Number(counts[2]) !== closed.length) {
+    throw new Error(
+      `INDEX.md says ${counts[1]} issues and ${counts[2]} closed; ` +
+      `the directory has ${seen.size} and ${closed.length}`);
+  }
+
+  // Every open issue needs a row, and no closed one may keep its row — a stale row is a
+  // link to a file that has moved.
+  const listed = new Set([...index.matchAll(/\| \[(\d{4})\]/g)].map((m) => m[1]));
+  const missingRow = open.filter((n) => !listed.has(n)).sort();
+  const staleRow = closed.filter((n) => listed.has(n)).sort();
+  if (missingRow.length > 0 || staleRow.length > 0) {
+    throw new Error(
+      `INDEX.md's rows disagree with the directory\n` +
+      (missingRow.length ? `  open with no row: ${missingRow.join(" ")}\n` : "") +
+      (staleRow.length ? `  closed but still listed: ${staleRow.join(" ")}\n` : ""));
   }
 });
 

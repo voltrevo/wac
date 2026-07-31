@@ -101,8 +101,21 @@ i32 x = T[1];  // reading is fine
 `[§wac-modconst-array-const-w2mk9fj]` Element writes, compound assignment and
 `++` through a constant array are all rejected.
 
-The sized form `T[n]()` is not allowed, nor is `T[n](fill: v)`: neither has its
-elements written down to evaluate, and the length need not be constant.
+The sized forms work too, provided the **length** is constant — the elements do not have to
+be written down, because `array.new_default` and `array.new` are constant instructions like
+`array.new_fixed`:
+
+```wac
+const i32   N     = 5;
+const i32[] ZEROS = i32[8]();          // eight zeros, built once
+const i32[] ONES  = i32[4](fill: -1);
+const i32[] BYN   = i32[N * 2]();      // a length over other constants
+```
+
+`[§wac-modconst-sized-5wnq8kt]` All of these work. A length that must be computed does not:
+`i32[n()]()` is a compile error. And an element type with no default still needs `fill:`,
+exactly as outside a constant, with a diagnostic that says so.
+`[§wac-modconst-sized-5wnq8kt]`
 
 #### Constant structs and enums
 
