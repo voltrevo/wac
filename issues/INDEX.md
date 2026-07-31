@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0047](open/0047-two-instantiations-of-a-generic-collapse-when-one-argument-is-an-enum.md) | two instantiations of a generic collapse when a type argument is an enum | bug | invalid wasm |
+| [0048](open/0048-a-bare-type-name-resolves-outside-the-file-scope.md) | a type name resolves outside the file that wrote it, and picks wrong when two match | bug | wrong answer |
 | [0046](open/0046-an-unknown-type-name-in-a-declaration-is-not-reported-as-one.md) | an unknown type name in a declaration or cast is not reported as unknown | diagnostic | compile error |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
 | [0030](open/0030-payload-less-enum-as-integer.md) | a payload-less enum allocates instead of being an integer | performance | not implemented |
@@ -13,7 +13,7 @@ has been fixed and why.
 
 ## Closed
 
-46 issues, 42 closed.
+49 issues, 44 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

@@ -11,9 +11,24 @@ working around it.*
 
 Enums work across files: declare one in a module, import it, `match` on it. `[§enum-cross-file]`
 
-The enum's name must be in scope in the file that matches on it, since the arms name
-its variants. When it is not, the diagnostic says so specifically rather than claiming
-the value is not an enum. `[§enum-cross-file]`
+The enum's name does **not** have to be in scope in the file that matches on it. An arm names
+variants, and a variant is resolved through the enum the subject *is* rather than through the
+file's scope — so a value obtained from an imported function or read out of an imported
+container can be matched without naming its type:
+
+```wac
+import { Holder, mk } from "./k.wac";   // Kind itself is not imported
+export i32 f() {
+  Holder h = mk();
+  match (h.kind) { case A: return 1; case B: return 2; }
+}
+```
+
+`[§enum-cross-file]` This works. It is the same rule as reading a field whose type you never
+imported, and requiring the import was an inconsistency rather than a decision: it rejected
+`match (xs.get(0))` on a `Vec<JsonValue>` in a file that had imported `JsonValue`, because the
+element type came back under the name the *template's* file knows it by. An enum is identified by
+its type index, not by a name that is only unique within one file.
 
 Two files may declare enums with the same name, and even variants with the same name.
 `[§enum-name-identity]` This is worth stating only because it did not work: three

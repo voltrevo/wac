@@ -148,10 +148,12 @@ export type ResolveResult = {
    */
   enumTemplates: { decl: EnumDecl; filePath: string }[];
   /**
-   * `Vec$i32` -> `Vec<i32>`, for every monomorphised generic.
+   * Every name the compiler invented, and what to show instead.
    *
-   * Diagnostics render struct names through this, so a message never shows a mangled name the
-   * author did not write.
+   * `Vec$i32` -> `Vec<i32>` for each monomorphised generic, and `Point__p` -> `Point` for the
+   * cross-file alias a substituted argument type is renamed to. Diagnostics render names through
+   * this, so a message never shows one the author did not write — which is the whole difference
+   * between this feature and a C++ template error.
    */
   genericDisplay: Map<string, string>;
 };
@@ -1133,14 +1135,33 @@ export function monomorphise(
           ret: visibleFrom(t.ret, fromFile, inFile),
         };
       case "struct": {
-        // An already-materialised instantiation lives in its own template's file and is imported by
-        // the same mechanism, so it is handled by the recursive case below via its name.
+        // A name this pass invented earlier — an alias it minted, or a materialised instantiation.
+        // `origins` was built from the *written* programs, so it has never heard of either, and
+        // returning the type unchanged meant the import was not injected. That is a nested
+        // instantiation losing its argument's type: `V<P>` materialises `Option<P>` into Option's
+        // own file, where `P__main` then resolved to nothing, so both `Option<P>` and `Option<S>`
+        // took whatever the fallback found and became one type [issue 0047, agent-b].
+        const invented = aliasOrigin.get(t.name);
+        if (invented !== undefined) {
+          if (invented.from === inFile) return { ...t, name: invented.name };
+          needImports.set(`${inFile}\u0000${t.name}`,
+            { inFile, alias: t.name, name: invented.name, from: invented.from });
+          return { ...t };                                  // already canonical
+        }
+        // A *materialised* name needs nothing here: it is registered as used in whichever file
+        // referred to it, and the import-rewriting pass below turns that into an import. Tried a
+        // branch for it and could not construct a shape that needed one, so there is not one.
         const origin = origins.get(fromFile)?.get(t.name);
         if (origin === undefined) return t;                 // unknown; reported later
         if (origin.file === inFile) return t;               // already local to the target
         const alias = `${origin.name}__${fileTag(origin.file)}`;
         needImports.set(`${inFile}\u0000${alias}`,
           { inFile, alias, name: origin.name, from: origin.file });
+        // The alias is a name the author never wrote, so a diagnostic must not show it — the same
+        // rule as for a mangled instantiation. `Vec<JsonValue>`'s element type reaches the caller
+        // bearing this name, and a message about it used to read `V__v`.
+        display?.set(alias, origin.name);
+        aliasOrigin.set(alias, { name: origin.name, from: origin.file });
         return { ...t, name: alias };
       }
     }
@@ -1148,6 +1169,14 @@ export function monomorphise(
 
   /** Imports to inject so a materialised struct's argument types resolve. */
   const needImports = new Map<string, { inFile: string; alias: string; name: string; from: string }>();
+
+  /**
+   * Every canonical alias this pass has minted, and what it stands for.
+   *
+   * Needed because substitution is recursive: the argument of a nested instantiation may be a name
+   * the pass invented for an outer one, and `origins` only knows names the author wrote.
+   */
+  const aliasOrigin = new Map<string, { name: string; from: string }>();
 
   // Rewriting a reference in place is what makes this a pre-pass: after it, `typeArgs` is gone
   // and the type is an ordinary struct reference by mangled name.

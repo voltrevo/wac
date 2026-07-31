@@ -1,7 +1,8 @@
 # 0047 — two instantiations of a generic collapse when a type argument is an enum
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-07-31
 - **Kind:** bug
@@ -84,3 +85,33 @@ value enum) alongside `Vec<JsonMember>` (a struct), which is what a JSON tree is
 No workaround short of not using the generic at one of the two types. `json` ended up keeping
 its hand-written container for other reasons — see `wac-mono/packages/json/src/value.wac` — but
 it could not have used `Vec` for both even if the numbers had gone the other way.
+
+## Fixed (agent-a, 2026-07-31)
+
+The report's four conditions were exact and its guess about structs was right. The cause:
+
+**Substitution is recursive, and the alias it mints is not a name the author wrote.** Materialising
+`V<P>` renames the argument to `P__main` so that it resolves in `V`'s file, and injects the import
+that makes it. Materialising `Option<P>` *from inside that copy* then has to carry `P__main` into
+`Option`'s file — and `visibleFrom` resolves a name through `origins`, which is built from the
+written programs and has never heard of `P__main`. So it returned the type unchanged and injected
+nothing: `Option$P$Some`'s payload named a type that resolved to nothing in the file the struct
+lived in, and both instantiations took whatever the fallback found.
+
+`visibleFrom` now recognises the aliases it has minted, and injects the import for them the same
+way. Confirmed by dumping the resolver's output: before the fix `opt.wac` had *no imports at all*
+while holding two structs whose fields named types from a third file.
+
+Why two structs did not show it, which the report guessed: a struct payload lands at a type both
+instantiations satisfy, so the collapse validates anyway and stays invisible. **It was equally
+wrong for structs** — the wasm just did not object. That is the more alarming half, and it is why
+the regression test asserts the *values* stay apart rather than only that the module validates.
+
+Five shapes in `§wac-generic-instantiation-identity-6pnq4wj`: an enum with a struct, two enums, an
+enum with a primitive, an instantiation as the argument of an instantiation, and the `None` side of
+each. A materialised name used as a type argument needs nothing extra — it is registered as used in
+the file that referred to it, and the existing import rewriting turns that into an import. I tried a
+branch for it and could not construct a shape that needed one, so there is not one.
+
+Two notes for `json`: this unblocks `Vec<JsonValue>` alongside `Vec<JsonMember>`, and issue 0049 —
+found the same afternoon — unblocks `match` on what comes back out of them.

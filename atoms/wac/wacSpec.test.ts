@@ -5607,17 +5607,20 @@ Deno.test("[§enum-cross-file] an enum works across files", async () => {
   eq(inst.call("area", [3.0]), 9.0, "matched an imported enum");
 });
 
-Deno.test("[§enum-cross-file] an enum not in scope says so, rather than 'not an enum'", () => {
-  // `t.kind` here has an enum type, but this file never imported the enum's name, so
-  // the scope lookup failed and the diagnostic said "match requires an enum value,
-  // got Kind" — true, and pointing at the wrong problem. Cost me a wrong conclusion
-  // about a compiler bug that did not exist, which is a good measure of how much a
-  // diagnostic that names the wrong cause is worth.
-  const m = errMulti(new Map([
+Deno.test("[§enum-cross-file] matching does not require the enum's name in scope", async () => {
+  // It used to, and the diagnostic said so clearly — which was a good message for a rule that
+  // should not have existed. An arm resolves its variants through the enum the subject *is*, not
+  // through the file's scope, so nothing here needs the name; requiring it rejected
+  // `match (xs.get(0))` on a `Vec<JsonValue>` in a file that had imported `JsonValue`, because a
+  // container hands its element back under the name the *template's* file knows it by.
+  //
+  // Reported by agent-b against `packages/std`'s Vec (issue 0049). The narrower shape is this one:
+  // an enum reached through an imported struct, with the enum's own name never mentioned.
+  const inst = await runMulti(new Map([
     ["k.wac", `
       export enum Kind { A, B }
       export struct Holder { Kind kind; i32 n; }
-      export Holder mk() { return Holder(Kind.A, 1); }
+      export Holder mk() { return Holder(Kind.B, 1); }
     `],
     ["main.wac", `
       import { Holder, mk } from "./k.wac";
@@ -5630,9 +5633,106 @@ Deno.test("[§enum-cross-file] an enum not in scope says so, rather than 'not an
       }
     `],
   ]));
-  if (!m.includes("is an enum, but it is not in scope")) {
-    throw new Error(`expected the not-in-scope diagnostic, got: ${m}`);
+  eq(inst.call("f", []), 2, "the arm for the variant the value holds");
+});
+
+Deno.test("[§enum-cross-file] an enum inside a generic container crosses files", async () => {
+  // Issue 0049, in its original shape: the element type comes back from the *template's*
+  // file, so it bears that file's name for the enum and not this one's. Identifying an enum by
+  // name rather than by type index made a legal program fail — the eighth instance of that
+  // family in this compiler.
+  const inst = await runMulti(new Map([
+    ["v.wac", `
+      export enum V {
+        Null, Bool(bool value), Num(f64 v)
+        i32 tag(const this) { return match (this) { case Null: 0, case Bool(_): 1, case Num(_): 2 }; }
+      }`],
+    ["vec.wac", `
+      export struct Vec<T> {
+        T[] data; i32 n;
+        Vec<T> create() { return Vec(T[](), 0); }
+        void push(this, T v) {
+          if (this.n == this.data.len()) {
+            T[] next = T[this.n == 0 ? 4 : this.n * 2](fill: v);
+            for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
+            this.data = next;
+          }
+          this.data[this.n] = v; this.n++;
+        }
+        T get(const this, i32 i) { return this.data[i]; }
+        i32 len(const this) { return this.n; }
+      }`],
+    ["main.wac", `
+      import { V } from "./v.wac";
+      import { Vec } from "./vec.wac";
+      export i32 matched() {
+        Vec<V> xs = Vec.create();
+        xs.push(V.Bool(true));
+        xs.push(V.Null);
+        return xs.len() * 10 + match (xs.get(0)) { case Bool(b): b ? 1 : 0, case Null: 5, case Num(_): 6 };
+      }
+      export i32 method()   { Vec<V> xs = Vec.create(); xs.push(V.Num(1.0)); return xs.get(0).tag(); }
+      export i32 narrowed() { Vec<V> xs = Vec.create(); xs.push(V.Bool(true)); V got = xs.get(0); return got is Bool ? 1 : 0; }
+      export i32 cast()     { Vec<V> xs = Vec.create(); xs.push(V.Bool(true)); V got = xs.get(0); return (got as! Bool).value ? 1 : 0; }
+      export i32 passedOn() { Vec<V> a = Vec.create(); a.push(V.Null); Vec<V> b = Vec.create(); b.push(a.get(0)); return b.get(0).tag(); }
+    `],
+  ]));
+  eq(inst.call("matched", []), 21, "match on an element of a generic container");
+  eq(inst.call("method", []), 2, "a method on one");
+  eq(inst.call("narrowed", []), 1, "an is-test against a variant");
+  eq(inst.call("cast", []), 1, "a cast to a variant");
+  eq(inst.call("passedOn", []), 0, "and putting one back into another container");
+});
+
+Deno.test("[§enum-cross-file] a subject narrowed to a variant can be matched again", async () => {
+  // The other half of identifying an enum by index: inside `case Bool(_)` the subject's type is
+  // the *variant*, and matching it again has to find the enum from that. The variant's name is no
+  // more in scope than the enum's, so the index has to answer for variants too.
+  const inst = await runMulti(new Map([
+    ["v.wac", `export enum V { Null, Bool(bool value), Num(f64 v) }`],
+    ["vec.wac", `export struct Vec<T> { T[] data; i32 n;
+      Vec<T> create() { return Vec(T[](), 0); }
+      void push(this, T v) {
+        T[] next = T[this.n + 1](fill: v);
+        for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }
+        this.data = next; this.data[this.n] = v; this.n++;
+      }
+      T get(const this, i32 i) { return this.data[i]; } }`],
+    ["main.wac", `
+      import { V } from "./v.wac";
+      import { Vec } from "./vec.wac";
+      export i32 f() {
+        Vec<V> xs = Vec.create();
+        xs.push(V.Bool(true));
+        V v = xs.get(0);
+        match (v) {
+          case Bool(_): { return match (v) { case Bool(b): b ? 6 : 0, case Null: 1, case Num(_): 2 }; }
+          case Null: return 1;
+          case Num(_): return 2;
+        }
+      }`],
+  ]));
+  eq(inst.call("f", []), 6, "the inner match resolves the enum from the narrowed variant's index");
+});
+
+Deno.test("[§enum-cross-file] a diagnostic names the type as the author wrote it", () => {
+  // A substituted argument type is renamed to a canonical alias so it resolves in the template's
+  // file, and that alias is a name nobody wrote — so it goes through the same demangling as an
+  // instantiation. Without it this message read `got V__v`.
+  const m = errMulti(new Map([
+    ["v.wac", `export enum V { Null, Bool(bool value) }`],
+    ["vec.wac", `export struct Vec<T> { T[] data; i32 n;
+      Vec<T> create() { return Vec(T[](), 0); }
+      T get(const this, i32 i) { return this.data[i]; } }`],
+    ["main.wac", `
+      import { V } from "./v.wac";
+      import { Vec } from "./vec.wac";
+      export i32 f() { Vec<V> xs = Vec.create(); i32 x = xs.get(0); return x; }`],
+  ]));
+  if (!m.includes("expected i32, got V")) {
+    throw new Error(`expected the written name in the diagnostic, got: ${m}`);
   }
+  if (m.includes("__")) throw new Error(`an invented name leaked into a diagnostic: ${m}`);
 });
 
 Deno.test("[§enum-arm-walks-kubc3rt] an arm body is reachable to every AST walk", async () => {
@@ -6940,6 +7040,80 @@ Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] instantiations are key
   eq(apart.call("test", []), 24, "23 from p2's Point, 1 from p1's — two instantiations");
 });
 
+Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] a nested instantiation keeps its argument", async () => {
+  // agent-b's report, issue 0047. Four things together: two instantiations, at least one argument
+  // an enum, the generic in another module, and a method whose return type mentions a *second*
+  // generic from a third module. `Option<P>` and `Option<S>` became one type and the module did
+  // not validate — `struct.new[1] expected (ref 0), found (ref 1)`, the two payloads that should
+  // have stayed apart.
+  //
+  // The cause is that substitution is recursive and the alias it mints is not a name the author
+  // wrote: materialising `V<P>` renames the argument to `P__main` so it resolves in V's file, and
+  // materialising `Option<P>` from inside that copy then had to carry `P__main` into *Option's*
+  // file — where the pass no longer recognised its own alias, injected no import, and left the
+  // payload type resolving to whatever the fallback found.
+  //
+  // Two structs did not show it: agent-b guessed why, and was right — a struct payload lands at a
+  // type both instantiations satisfy, so the collapse is invisible until an enum pins it exactly.
+  const inst = await runMulti(new Map([
+    ["opt.wac", `export enum Option<T> {
+      Some(T v), None
+      bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+    }`],
+    ["vbox.wac", `import { Option } from "./opt.wac";
+      export struct V<T> {
+        T[] data; i32 n;
+        V<T> create() { return V(T[](), 0); }
+        void put(this, T v) { T[] d = T[1](fill: v); this.data = d; this.n = 1; }
+        Option<T> first(const this) { return this.n == 0 ? Option.None : Option.Some(this.data[0]); }
+      }`],
+    ["main.wac", `
+      import { V } from "./vbox.wac";
+      // Neither is exported: a type argument does not have to be, and the import the compiler
+      // injects to make the copy resolve is exempt from the export rule.
+      enum P { A(i32 x) }
+      enum Q { B(i32 y) }
+      struct S { i32 y; }
+      i32 pOf(P p) { return match (p) { case A(x): x }; }
+      export i32 enumAndStruct() {
+        V<P> a = V.create(); a.put(P.A(7));
+        V<S> b = V.create(); b.put(S(3));
+        return pOf(a.first().orElse(P.A(0))) * 10 + b.first().orElse(S(0)).y;
+      }
+      export i32 twoEnums() {
+        V<P> a = V.create(); a.put(P.A(4));
+        V<Q> b = V.create(); b.put(Q.B(5));
+        return pOf(a.first().orElse(P.A(0))) * 10 +
+               match (b.first().orElse(Q.B(0))) { case B(v): v };
+      }
+      export i32 withAPrimitive() {
+        V<P> a = V.create(); a.put(P.A(1));
+        V<i32> c = V.create(); c.put(9);
+        return pOf(a.first().orElse(P.A(0))) * 10 + c.first().orElse(0);
+      }
+      // A third level: the argument of the outer instantiation is itself an instantiation, which
+      // is the other kind of invented name — one the pass materialised rather than aliased.
+      export i32 nested() {
+        V<V<P>> outer = V.create();
+        V<P> inner = V.create(); inner.put(P.A(8));
+        outer.put(inner);
+        return pOf(outer.first().orElse(V.create()).first().orElse(P.A(0)));
+      }
+      export i32 absent() {
+        V<P> a = V.create();
+        V<S> b = V.create(); b.put(S(1));
+        return (a.first().isSome() ? 1 : 0) * 10 + (b.first().isSome() ? 1 : 0);
+      }
+    `],
+  ]));
+  eq(inst.call("enumAndStruct", []), 73, "an enum and a struct argument stay apart");
+  eq(inst.call("twoEnums", []), 45, "so do two enums");
+  eq(inst.call("withAPrimitive", []), 19, "and an enum alongside a primitive");
+  eq(inst.call("nested", []), 8, "an instantiation as the argument of an instantiation");
+  eq(inst.call("absent", []), 1, "and the None case of each is its own");
+});
+
 Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] the instantiation count is what identity implies", () => {
   // Counting is what distinguishes "correct" from "correct but duplicated": the aliased case above
   // answered correctly while materialising two structs, which is the cost monomorphisation was
@@ -6947,7 +7121,12 @@ Deno.test("[§wac-generic-instantiation-identity-6pnq4wj] the instantiation coun
   const count = (files: Map<string, string>) => {
     const programs = new Map<string, ReturnType<typeof wacParse>["program"]>();
     for (const [path, src] of files) programs.set(path, wacParse(wacLex(src).tokens, path).program);
-    return wacResolve("main.wac", programs).genericDisplay.size;
+    // Only the *instantiation* entries: `genericDisplay` also carries the cross-file aliases a
+    // substituted argument type is renamed to, which are names the author never wrote for the same
+    // reason and want demangling by the same map. An instantiation's display name is the one with
+    // the angle brackets.
+    const display = wacResolve("main.wac", programs).genericDisplay;
+    return [...display.values()].filter((v) => v.includes("<")).length;
   };
   const BOX = `export struct Box<T> { T v; T get(const this) { return this.v; } }`;
   eq(count(new Map([
