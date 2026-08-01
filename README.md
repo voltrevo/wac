@@ -63,6 +63,18 @@ m.set(1, 99);
 m.get(1).toObject();     // { tag: "Some", v: 99 }
 ```
 
+## What a wac module requires
+
+MVP plus non-trapping float→int conversions, reference types, typed function references, and
+garbage collection — Chrome 119+, Firefox 120+, Safari 18.2+, Node 22+, Deno. All shipped, none
+behind a flag.
+
+That is the floor, and it is deliberate: nothing is emitted from a proposal that is not broadly
+supported. There are no bulk-memory, exception-handling, tail-call or SIMD opcodes in the emitter.
+A feature that would cross this line — JSPI, for instance, which the callback design happens to
+make available to a host that wants it — is a decision to take explicitly, not a convenience to
+adopt because an engine you have to hand supports it.
+
 ## Development
 
 ```sh
