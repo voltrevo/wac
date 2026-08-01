@@ -360,7 +360,7 @@ class Gen {
    * are generated with the iteration they fire on chosen up front — which is the shape that found
    * the do-while bug, where `continue` skipped the condition.
    */
-  private loop(depth: number, form: "while" | "for" | "dowhile"): void {
+  private loop(_depth: number, form: "while" | "for" | "dowhile"): void {
     const trips = 1 + this.rng.int(4);
     const acc = this.inScope("i32")[0] ?? this.declare("i32", this.literal("i32"));
     const i = this.fresh("i");
