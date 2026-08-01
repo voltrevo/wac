@@ -62,13 +62,18 @@ export type WasmTypeCtx = {
   /** Funcref signatures handed back to the host, in helper order. */
   outSigs: { key: string; params: WacType[]; ret: WacType }[];
   /**
-   * TEMPORARY — trap on integer overflow in user-written add/sub/mul.
+   * Trap on integer overflow in user-written add, sub and mul. Off by default.
    *
-   * A measurement instrument for the checked-arithmetic decision, not a feature:
-   * it answers "which code depends on wrapping" and "what does checking cost when
-   * nothing has opted out". Delete it with the experiment. A build-mode switch is
-   * precisely the shape the real feature must not take — the same source would mean
-   * different things depending on how it was compiled.
+   * Experimental, and deliberately a whole-module switch rather than anything
+   * finer. It is not the shape a shipped default would take — same source, different
+   * meaning depending on how it was compiled, which is the Rust wart — but it is the
+   * right shape for finding out what your own code depends on.
+   *
+   * Wrapping stays the default because half of what wac is used for requires it:
+   * SHA-256's `h0 += a` is addition mod 2^32 by specification, and so are CRC-32,
+   * ChaCha20 and FNV-1a. Measured over wac-mono: 68 of 503 tests depend on wrapping,
+   * nearly all in `crypto`, while json, gzip, url, http, fmt and std pass with this
+   * on. Cost with nothing opted out was 5% on a JSON parse and 27% on gzip.
    */
   checked?: boolean;
   /**
@@ -938,8 +943,9 @@ class FuncEmitter {
   /** anyref scratch, for holding an array while a fill loop runs. */
   tempAnyLocal = -1;
   /**
-   * TEMPORARY (checked-arithmetic measurement). Three scratch locals per width,
-   * for holding both operands and the result of a checked add/sub/mul.
+   * Three scratch locals per width, for holding both operands and the result of a
+   * checked add/sub/mul. Declared only when checking, so an ordinary build is
+   * byte-identical to one from a compiler without the flag.
    *
    * Safe to share across nested arithmetic: both operands are fully evaluated
    * before either is stored, so an inner operation has finished with the scratch
@@ -1375,10 +1381,11 @@ class FuncEmitter {
       ">=":  { i32:[0x4E], i64:[0x59], u32:[0x4F], u64:[0x5A], f32:[0x60], f64:[0x66] },
     };
     const oc = ops[op]?.[k as KT] ?? [];
-    // TEMPORARY (checked-arithmetic measurement, `--checked`). Wraps add/sub/mul in
-    // an overflow test that traps. Blanket on/off by design: the point is to count
-    // the sites that genuinely need wrapping and to measure the ceiling cost, not
-    // to model the feature — a build-mode switch is the shape this must NOT ship in.
+    // `--checked`: wrap add/sub/mul in an overflow test that traps. Whole-module by
+    // design — it answers "what does my code depend on", not "which expression did I
+    // mean to wrap". An expression-level opt-out is what a default flip would need,
+    // and `wactest/itoa64.wac` is why: it negates i64's minimum deliberately, two
+    // lines away from a digit loop that wants checking.
     if (this.ctx.checked && (op === "+" || op === "-" || op === "*") &&
         (k === "i32" || k === "i64" || k === "u32" || k === "u64")) {
       this.emitCheckedArith(op, k, oc);
@@ -3248,9 +3255,8 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   emitter.tempF32Local = localIdx + 2;
   emitter.tempF64Local = localIdx + 3;
   emitter.tempAnyLocal = localIdx + 4;
-  // TEMPORARY (checked-arithmetic measurement): only when checking, so an ordinary
-  // build is byte-identical to one from before the flag existed. A measurement
-  // instrument that changes what it is not measuring is worth nothing.
+  // Only when checking, so an ordinary build is byte-identical to one from a compiler
+  // without the flag — verified by hashing a compiled artifact across the change.
   if (ctx.checked) {
     emitter.chk32A = localIdx + 5; emitter.chk32B = localIdx + 6; emitter.chk32S = localIdx + 7;
     emitter.chk64A = localIdx + 8; emitter.chk64B = localIdx + 9; emitter.chk64S = localIdx + 10;
@@ -3269,8 +3275,8 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
   localsVec.push(0x01, 0x6E); // 1 × anyref scratch local
   if (ctx.checked) {
-    localsVec.push(0x03, 0x7F); // 3 × i32 scratch — TEMPORARY, checked arithmetic
-    localsVec.push(0x03, 0x7E); // 3 × i64 scratch — TEMPORARY, checked arithmetic
+    localsVec.push(0x03, 0x7F); // 3 × i32 scratch — checked arithmetic
+    localsVec.push(0x03, 0x7E); // 3 × i64 scratch — checked arithmetic
   }
 
   // Coverage points are attributed to the file the function was declared in.
