@@ -5,6 +5,7 @@
 
 import { wacCompile } from "./wacCompile.ts";
 import { fuzz } from "../../tools/fuzz.ts";
+import { fuzzBoundary } from "../../tools/fuzzBoundary.ts";
 // The instantiation-count test needs the resolver directly: the count is not visible from a
 // compiled module, and "correct but duplicated" is exactly what it exists to catch.
 import { wacResolve } from "./wacResolve.ts";
@@ -8466,6 +8467,23 @@ Deno.test("generated programs compute what they were built to compute", async ()
     throw new Error(
       `${failures.length} of 150 generated programs disagreed.\n` +
       `seed ${f.seed}: want ${f.want}, got ${f.got}\n${f.src}`);
+  }
+});
+
+Deno.test("generated values survive the crossing unchanged", async () => {
+  // `tools/fuzzBoundary.ts` round-trips a generated value through the bindgen wrappers and
+  // back. The oracle is free — what went in is what must come out — which is the one thing
+  // the hand-written sweeps kept getting wrong about themselves.
+  //
+  // It covers what examples chosen by hand do not: packed array elements, empty arrays of
+  // non-nullable references, a boxed null against a boxed value, setters as well as getters,
+  // and the same value sent out to a host function and taken straight back.
+  const failures = await fuzzBoundary(12, 7777);
+  if (failures.length > 0) {
+    const f = failures[0];
+    throw new Error(
+      `${failures.length} crossings disagreed.\n` +
+      `seed ${f.seed}, type ${f.type}: ${f.detail}\n${f.src}`);
   }
 });
 
