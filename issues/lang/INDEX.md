@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0054](open/0054-a-callback-with-an-array-in-its-signature-calls-a-helper-bindgen-never-emits.md) | a callback with an array in its signature calls a helper bindgen never emits | bug | wrong answer |
 | [0054](open/0054-hex-literal-sign-extends-into-64-bit.md) | a hex literal in [2^31, 2^32) sign-extends when the target is 64-bit | bug | wrong answer |
 | [0053](open/0053-bindgen-could-offer-suspending-callbacks-jspi.md) | bindgen could offer suspending callbacks, and the engine already does | missing feature | not implemented |
 | [0052](open/0052-deep-const-is-escapable-by-passing-the-reference.md) | deep const is escapable by passing the reference to a mutating function | bug | wrong answer |
