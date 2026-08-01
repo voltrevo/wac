@@ -153,12 +153,34 @@ sees it; where it does not — `string[]` — the first element is the fill, and
 from `array.new_fixed` with no elements, which is the only way to make one when there is no value to
 repeat.
 
+### Static methods, and how a struct gets built
+
+A static method — one declared without `this` — binds as a static class member. `[§wac-bind-static-6wnq3kv]`
+It is how a struct with an invariant is constructed from JavaScript, since there is no other
+constructor, and it composes with callbacks:
+
+```ts
+const m = Map_i32_i32.create((k) => k * 2654435761 % 2147483647, (a, b) => a === b);
+m.set(1, 99);
+m.get(1).toObject();     // { tag: "Some", v: 99 }
+```
+
+That is `std`'s generic `Map`, built and driven entirely from JavaScript with host functions for
+hashing and equality.
+
+**`export struct` is a reachability root.** A struct built only by its own static is mentioned by no
+exported function, so without this it was bound nowhere even though the language had already been
+told it is public. A bound struct's *method signatures* are followed too — `Map.get` returns
+`Option<V>`, and without following it the one accessor a map exists for was missing from its class.
+
+A member the boundary cannot carry is named in `__bindgenSkipped` like a skipped export, rather than
+dropped in silence.
+
 ### Not yet supported in bindgen
 
 - Function references *returned* from an export — JavaScript cannot call a wasm function reference,
   so there is nothing to hand back. Passing one *in* is supported, above.
 - Nullable primitives (`i32?`)
-- Static methods — an instance method binds, a static one does not yet
 
 Functions using unsupported types in their signature are omitted from the
 generated file with a comment explaining why, and the reasons are exported as

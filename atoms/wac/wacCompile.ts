@@ -35,7 +35,13 @@ export type WacStruct = {
   /** What to call it — a generic instantiation reads as `Vec<i32>` rather than its mangled name. */
   display: string;
   fields: { name: string; type: string; isConst: boolean }[];
-  methods: { name: string; params: { name: string; type: string }[]; ret: string }[];
+  methods: {
+    name: string;
+    params: { name: string; type: string }[];
+    ret: string;
+    /** A static method has no receiver: it binds as `Cls.name(...)`. */
+    isStatic: boolean;
+  }[];
 };
 
 /** An enum a JS caller can reach: a tag, per-variant payloads, and methods. */
@@ -225,6 +231,7 @@ export function wacCompile(
       name: m.name,
       params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
       ret: typeStr(m.ret),
+      isStatic: m.isStatic,
     })),
   }));
   const structs: WacStruct[] = meta.structs.map((s) => ({
@@ -236,6 +243,7 @@ export function wacCompile(
       name: m.name,
       params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
       ret: typeStr(m.ret),
+      isStatic: m.isStatic,
     })),
   }));
   const callbacks: WacCallback[] = meta.callbacks.map((c) => ({

@@ -8748,3 +8748,45 @@ Deno.test("[§wac-bind-arr-ref-4jkq8wn] a method returning an array has the help
   `) as unknown as { buf(n: number): { data(): Int32Array } };
   eq([...mod.buf(5).data()].join(","), "5,5,5", "the method's array return works");
 });
+
+// ── §wac-bind-static-6wnq3kv ──────────────────────────────────────────────────
+// A static method binds as a static class member. It is how a struct with an
+// invariant gets built from JavaScript at all: there is no other constructor.
+
+Deno.test("[§wac-bind-static-6wnq3kv] a struct is built by its own static, callbacks and all", async () => {
+  const mod = await importBindgen(`
+    export struct Box {
+      i32 v;
+      fn[i32(i32)] f;
+      Box of(i32 v, fn[i32(i32)] f) { return Box(v, f); }
+      i32 apply(const this) { return this.f(this.v); }
+      Box with(const this, i32 v) { return Box(v, this.f); }
+    }
+  `) as unknown as {
+    Box: {
+      of(v: number, f: (x: number) => number): { apply(): number; with(v: number): { apply(): number } };
+    };
+  };
+  // Nothing exports a function mentioning Box: `export struct` is the root. A struct
+  // built only by its own static was reachable from nothing and bound nowhere.
+  const b = mod.Box.of(20, (x) => x + 1);
+  eq(b.apply(), 21, "the static built it and the host function is held in a field");
+  eq(b.with(41).apply(), 42, "and travels with a copy made wac-side");
+});
+
+Deno.test("[§wac-bind-static-6wnq3kv] a member the boundary cannot carry says so", async () => {
+  const r = wacCompile(new Map([["m.wac", `
+    i32 twice(i32 x) { return x * 2; }
+    export struct Holder {
+      i32 n;
+      fn[i32(i32)] pick(const this) { return twice; }
+    }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  // A method used to be dropped in silence — the same failure the export skip list
+  // exists to prevent, one level down. The class arrives missing the accessor it was
+  // wanted for, and nothing says why.
+  eq(/Holder\.pick\(\) — return type 'fn\[i32\(i32\)\]'/.test(ts), true,
+    "the dropped method is named in the skip list");
+});

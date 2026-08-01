@@ -261,17 +261,28 @@ export type CallbackSig = { key: string; params: WacType[]; ret: WacType };
  * yet reachable this way, because a static method — which is how a container
  * takes its comparator — is not bound at all yet.
  */
-function collectCallbackSigs(result: ResolveResult): CallbackSig[] {
+function collectCallbackSigs(result: ResolveResult, ctx: BindWalkCtx): CallbackSig[] {
   const seen = new Set<string>();
   const sigs: CallbackSig[] = [];
+  const add = (t: WacType): void => {
+    if (t.kind !== "funcref") return;
+    const key = sigKey(t.params, t.ret);
+    if (seen.has(key)) return;
+    seen.add(key);
+    sigs.push({ key, params: t.params, ret: t.ret });
+  };
   for (const f of result.funcs) {
     if (!f.exportName) continue;
-    for (const t of fullParamTypes(f)) {
-      if (t.kind !== "funcref") continue;
-      const key = sigKey(t.params, t.ret);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      sigs.push({ key, params: t.params, ret: t.ret });
+    fullParamTypes(f).forEach(add);
+  }
+  // A bound struct's methods take host functions too — which is what a container
+  // needs, since a `Map<K,V>` takes its equality as `fn[bool(K,K)]` and is built by
+  // a static method. Reachability reads only the two type maps, both of which exist
+  // before any function index does, so this does not depend on itself.
+  const binds = reachableBinds(result, ctx);
+  for (const s of [...binds.structs, ...binds.enums.map((e) => e.base)]) {
+    for (let e: StructEntry | null = s; e; e = e.parentEntry) {
+      for (const [, fe] of e.methods) funcParams(fe).forEach((p) => add(p.type));
     }
   }
   return sigs;
@@ -437,7 +448,7 @@ function buildTypeCtx(
   // Imported dispatchers occupy the lowest function indices, so every defined
   // function sits funcBase above its position in result.funcs. The map holds
   // *emitted* indices; converting back is wacEmitFunc's job.
-  const cbSigs = collectCallbackSigs(result);
+  const cbSigs = collectCallbackSigs(result, { structTypeIdx, structFields });
   const funcBase = cbSigs.length;
   const funcIdx = new Map<string, number>();
   for (const f of result.funcs) funcIdx.set(f.mangledName, f.funcIndex + funcBase);
@@ -1090,7 +1101,12 @@ function bindableType(t: WacType): boolean {
  * nested array yields both itself and its element, so `i32[][]` gets helpers at
  * both levels.
  */
-function reachableArrays(result: ResolveResult, ctx: WasmTypeCtx): (WacType & { kind: "array" })[] {
+type BindWalkCtx = Pick<WasmTypeCtx, "structTypeIdx" | "structFields">;
+
+function reachableArrays(
+  result: ResolveResult,
+  ctx: BindWalkCtx & Pick<WasmTypeCtx, "arrTypeIdx">,
+): (WacType & { kind: "array" })[] {
   const found = new Map<string, WacType & { kind: "array" }>();
   const seenStruct = new Set<number>();
 
@@ -1126,7 +1142,7 @@ function reachableArrays(result: ResolveResult, ctx: WasmTypeCtx): (WacType & { 
 }
 
 function reachableBinds(
-  result: ResolveResult, ctx: WasmTypeCtx,
+  result: ResolveResult, ctx: BindWalkCtx,
 ): { structs: StructEntry[]; enums: EnumEntry[] } {
   const byIndex = new Map(result.structs.map((s) => [s.typeIndex, s]));
   const enumByBase = new Map(result.enums.map((e) => [e.base.typeIndex, e]));
@@ -1164,12 +1180,33 @@ function reachableBinds(
     for (const f of ctx.structFields.get(`@${idx}`) ?? []) {
       if (bindableType(f.type)) visitType(f.type);
     }
+    // A method's signature reaches types too, and a method that returns one nothing
+    // bound is a method bindgen silently drops: `Map.get` returns `Option<V>`, so
+    // without this the one accessor a map exists for was missing from its class.
+    for (const [, fe] of entry.methods) {
+      for (const p of funcParams(fe)) { if (bindableType(p.type)) visitType(p.type); }
+      const ret = funcReturnType(fe);
+      if (bindableType(ret)) visitType(ret);
+    }
   };
 
   for (const f of result.funcs) {
     if (!f.exportName || f.filePath !== result.entryPath) continue;
     for (const p of funcParams(f)) visitType(p.type);
     visitType(funcReturnType(f));
+  }
+  // `export struct` is a root in its own right. Without this a struct built only by
+  // its own static method — which is how a type with an invariant is constructed —
+  // was reachable from nothing and bound nowhere, even though the language had
+  // already been told it is public.
+  for (const s of result.structs) {
+    if (s.filePath !== result.entryPath || !s.structDecl.exported) continue;
+    if (s.enumRole !== undefined) continue;
+    visitType({ kind: "struct", name: s.name, resolvedTypeIndex: s.typeIndex, line: 0, col: 0 });
+  }
+  for (const e of result.enums) {
+    if (e.base.filePath !== result.entryPath || !e.enumDecl.exported) continue;
+    visitType({ kind: "struct", name: e.base.name, resolvedTypeIndex: e.base.typeIndex, line: 0, col: 0 });
   }
   return { structs, enums };
 }
@@ -2074,8 +2111,12 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         // An override shadows the parent's, and the derived struct is walked first.
         if (seenMethods.has(mname)) continue;
         seenMethods.add(mname);
-        if (fe.origin.kind === "method" && !fe.origin.decl.hasThis) continue;  // static: stage 2
-        const nameBytes = new TextEncoder().encode(`__bind_m_${bindName(s.name)}_${mname}`);
+        // A static method takes no receiver, so it binds as a static class member and
+        // is exported under its own prefix — a struct may have an instance `get` and a
+        // static `get` and they are different functions.
+        const isStatic = fe.origin.kind === "method" && !fe.origin.decl.hasThis;
+        const prefix = isStatic ? "__bind_sm_" : "__bind_m_";
+        const nameBytes = new TextEncoder().encode(`${prefix}${bindName(s.name)}_${mname}`);
         entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex + ctx.funcBase)]);
       }
     }
@@ -2410,7 +2451,13 @@ export type BindStructInfo = {
   /** What to call it in the generated wrapper — a generic instantiation reads as `Vec<i32>`. */
   display: string;
   fields: { name: string; type: WacType; isConst: boolean }[];
-  methods: { name: string; params: { name: string; type: WacType }[]; ret: WacType }[];
+  methods: {
+    name: string;
+    params: { name: string; type: WacType }[];
+    ret: WacType;
+    /** A static method takes no receiver and binds as a static class member. */
+    isStatic: boolean;
+  }[];
 };
 
 /** An enum a JS caller can reach: its variants, their payloads, and its methods. */
@@ -2465,11 +2512,12 @@ export function wasmBindMeta(
       for (const [mname, fe] of e.methods) {
         if (seen.has(mname)) continue;
         seen.add(mname);
-        if (fe.origin.kind !== "method" || !fe.origin.decl.hasThis) continue;
+        if (fe.origin.kind !== "method") continue;
         methods.push({
           name: mname,
           params: fe.origin.decl.params.map((p) => ({ name: p.name, type: p.type })),
           ret: fe.origin.decl.returnType,
+          isStatic: !fe.origin.decl.hasThis,
         });
       }
     }

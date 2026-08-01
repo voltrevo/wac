@@ -89,6 +89,14 @@ let callbacksByType: Map<string, WacCallback & { index: number }> = new Map();
  * element through the same accessors a struct field uses.
  */
 let arraysByWac: Map<string, WacArray> = new Map();
+/**
+ * Members left out of a generated class, with the reason.
+ *
+ * A method whose signature the boundary cannot carry used to be dropped in
+ * silence, which is the same failure the export skip list exists to prevent: the
+ * class arrives missing the one accessor it was wanted for and nothing says why.
+ */
+let skippedMembers: string[] = [];
 
 /**
  * The TypeScript class name for a struct or enum — `Vec<i32>` becomes `Vec_i32`.
@@ -328,12 +336,33 @@ function genStructClass(s: WacStruct): string {
   }
 
   for (const m of s.methods) {
-    if (m.params.some((p) => tsType(p.type) === null)) continue;
-    if (m.ret !== "void" && tsType(m.ret) === null) continue;
-    const ps = m.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ");
-    const args = ["this.ref", ...m.params.map((p) => toWasm(p.type, p.name))].join(", ");
-    const call = `(_exports.__bind_m_${s.bind}_${m.name} as CallableFunction)(${args})`;
-    lines.push(`  ${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
+    const badParam = m.params.find((p) => tsType(p.type) === null && !callbacksByType.has(p.type));
+    if (badParam) {
+      skippedMembers.push(
+        `${cls}.${m.name}() — parameter '${badParam.name}: ${badParam.type}' not yet supported in bindgen`,
+      );
+      continue;
+    }
+    if (m.ret !== "void" && tsType(m.ret) === null) {
+      skippedMembers.push(
+        `${cls}.${m.name}() — return type '${m.ret}' not yet supported in bindgen`,
+      );
+      continue;
+    }
+    const ps = m.params.map((p) => {
+      const cb = callbacksByType.get(p.type);
+      return `${p.name}: ${cb ? cbTsType(cb)! : tsType(p.type)}`;
+    }).join(", ");
+    const wasmArg = (p: { name: string; type: string }) => {
+      const cb = callbacksByType.get(p.type);
+      return cb ? `_fnref${cb.index}(${p.name})` : toWasm(p.type, p.name);
+    };
+    // A static method has no receiver, so it takes no `this.ref` and becomes a static
+    // class member — which is how a struct gets constructed from JavaScript at all.
+    const args = (m.isStatic ? [] : ["this.ref"]).concat(m.params.map(wasmArg)).join(", ");
+    const exportName = `${m.isStatic ? "__bind_sm_" : "__bind_m_"}${s.bind}_${m.name}`;
+    const call = `(_exports.${exportName} as CallableFunction)(${args})`;
+    lines.push(`  ${m.isStatic ? "static " : ""}${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
     lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
     lines.push(`  }`);
   }
@@ -697,6 +726,7 @@ export function wacBindgen(compiled: WacCompiled): string {
 
   // Struct and enum wrappers, before the functions that mention them.
   const skipped: string[] = [];
+  skippedMembers = [];
   for (const st of compiled.structs) parts.push(genStructClass(st));
   for (const en of compiled.enums) {
     const r = genEnumClass(en);
@@ -723,6 +753,7 @@ export function wacBindgen(compiled: WacCompiled): string {
   // where their export went. Naming it as a real export puts it where the person
   // looking will find it, and a module whose every export was skipped stops looking
   // like a module that failed to build.
+  skipped.push(...skippedMembers);
   if (skipped.length > 0) {
     const list = skipped.map((r) => `  ${JSON.stringify(r)},`).join("\n");
     parts.push(
