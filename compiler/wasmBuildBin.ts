@@ -13,7 +13,7 @@ import {
   type MethodDecl, type Stmt, type Expr, type Block, type ConstDecl,
 } from "./wacParse.ts";
 import {
-  type ResolveResult, type FuncEntry, type StructEntry,
+  type ResolveResult, type FuncEntry, type StructEntry, type EnumEntry,
   funcParams, funcReturnType, ENUM_TAG_FIELD,
 } from "./wacResolve.ts";
 import {
@@ -542,6 +542,8 @@ type WasmTypeCtxFull = WasmTypeCtx & {
   bindHelpers: BindHelperSpec[];
   /** The structs a JS caller can reach, so the export section can expose their methods too. */
   bindStructs: StructEntry[];
+  /** The enums a JS caller can reach, bound as a tag plus per-variant accessors. */
+  bindEnums: EnumEntry[];
 };
 
 function buildTypeCtxFull(
@@ -628,10 +630,10 @@ function buildTypeCtxFull(
 
   // Bind helpers come after the builtin helpers
   const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
-  const bindStructs = reachableStructs(result, partialCtx);
-  const bindHelpers = buildBindHelpers(result, partialCtx);
+  const { structs: bindStructs, enums: bindEnums } = reachableBinds(result, partialCtx);
+  const bindHelpers = buildBindHelpers(result, { ...partialCtx, bindStructs, bindEnums });
 
-  return { ...partialCtx, bindHelpers, bindStructs };
+  return { ...partialCtx, bindHelpers, bindStructs, bindEnums };
 }
 
 // ── Builtin helper function signatures ────────────────────────────────────────
@@ -950,9 +952,13 @@ function bindFieldValType(t: WacType, ctx: WasmTypeCtx): number[] {
  * Transitive because a `Node` with a `Node? next` is one type from the outside and two from here,
  * and because an exported function returning a `Tree` is useless if its children are unreachable.
  */
-function reachableStructs(result: ResolveResult, ctx: WasmTypeCtx): StructEntry[] {
+function reachableBinds(
+  result: ResolveResult, ctx: WasmTypeCtx,
+): { structs: StructEntry[]; enums: EnumEntry[] } {
   const byIndex = new Map(result.structs.map((s) => [s.typeIndex, s]));
-  const out: StructEntry[] = [];
+  const enumByBase = new Map(result.enums.map((e) => [e.base.typeIndex, e]));
+  const structs: StructEntry[] = [];
+  const enums: EnumEntry[] = [];
   const seen = new Set<number>();
 
   const visitType = (t: WacType): void => {
@@ -962,13 +968,21 @@ function reachableStructs(result: ResolveResult, ctx: WasmTypeCtx): StructEntry[
     if (t.kind !== "struct") return;
     // The index is the identity; the name is a fallback for a type no pass annotated.
     const idx = t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name);
-    if (idx === undefined) return;
+    if (idx === undefined || seen.has(idx)) return;
+    const en = enumByBase.get(idx);
+    if (en) {
+      seen.add(idx);
+      enums.push(en);
+      // A payload is reachable through the variant it belongs to.
+      for (const v of en.variants) for (const f of v.fields) visitType(f.type);
+      return;
+    }
     const entry = byIndex.get(idx);
-    // An enum's base and its variants are structs too, but a tagged union is a different shape at
-    // the boundary and gets its own stage — accessors for them alone would be misleading.
-    if (!entry || seen.has(idx) || entry.enumRole !== undefined) return;
+    // A *variant*'s own struct is reached through its enum, not on its own: at the boundary the
+    // enum is one thing with a tag, and binding a variant separately would say otherwise.
+    if (!entry || entry.enumRole !== undefined) return;
     seen.add(idx);
-    out.push(entry);
+    structs.push(entry);
     for (const f of ctx.structFields.get(`@${idx}`) ?? []) visitType(f.type);
   };
 
@@ -977,12 +991,17 @@ function reachableStructs(result: ResolveResult, ctx: WasmTypeCtx): StructEntry[
     for (const p of funcParams(f)) visitType(p.type);
     visitType(funcReturnType(f));
   }
-  return out;
+  return { structs, enums };
 }
 
 function buildBindHelpers(
   result: ResolveResult,
-  ctx: WasmTypeCtx & { orderedArrayElems: WacType[]; orderedSigs: { params: WacType[]; ret: WacType }[] },
+  ctx: WasmTypeCtx & {
+    orderedArrayElems: WacType[];
+    orderedSigs: { params: WacType[]; ret: WacType }[];
+    bindStructs: StructEntry[];
+    bindEnums: EnumEntry[];
+  },
 ): BindHelperSpec[] {
   const helpers: BindHelperSpec[] = [];
   const si = ctx.stringTypeIdx;
@@ -1030,7 +1049,7 @@ function buildBindHelpers(
   // O(size) per crossing, loses identity so mutation cannot flow back, and cannot represent a cycle
   // — which `json`'s tree and every linked structure are. The copy is generated *on top* of these
   // accessors instead, as `toObject()`, so the caller picks per call site.
-  for (const s of reachableStructs(result, ctx)) {
+  for (const s of ctx.bindStructs) {
     const fields = ctx.structFields.get(`@${s.typeIndex}`) ?? [];
     const sref = [0x64, ...sleb(s.typeIndex)];
     const safe = bindName(s.name);
@@ -1065,6 +1084,60 @@ function buildBindHelpers(
           funcTypeEntry: [0x60, 0x02, ...sref, ...vt, 0x00],
           body: [0x00, 0x20, 0x00, 0x20, 0x01, 0xFB, 0x05, ...uleb(s.typeIndex),
             ...uleb(f.absIdx), 0x0B],
+        });
+      }
+    }
+  }
+
+  // ── Enum bind helpers ───────────────────────────────────────────────────────
+  //
+  // An enum is a base struct carrying the tag plus a subtype per variant, so a JS caller needs
+  // three things: read the tag, build a variant, and read a variant's payload. The payload getters
+  // cast from the base to the variant, which traps if the tag says otherwise — the same protection
+  // `match` gives, arriving as an exception instead of a wrong answer.
+  for (const en of ctx.bindEnums) {
+    const baseIdx = en.base.typeIndex;
+    const bref = [0x64, ...sleb(baseIdx)];
+    const eSafe = bindName(en.name);
+    const tagField = (ctx.structFields.get(`@${baseIdx}`) ?? [])
+      .find((f) => f.name === ENUM_TAG_FIELD);
+    if (!tagField) continue;
+
+    helpers.push({
+      name: `__bind_e_${eSafe}_tag`,
+      funcTypeEntry: [0x60, 0x01, ...bref, 0x01, 0x7F],
+      body: [0x00, 0x20, 0x00, 0xFB, 0x02, ...uleb(baseIdx), ...uleb(tagField.absIdx), 0x0B],
+    });
+
+    for (const v of en.variants) {
+      const vIdx = v.entry.typeIndex;
+      const vFields = (ctx.structFields.get(`@${vIdx}`) ?? [])
+        .filter((f) => f.name !== ENUM_TAG_FIELD);
+      const vSafe = bindName(v.name);
+
+      // `new` takes the payload and supplies the tag, so a caller cannot build one with the wrong
+      // tag. The declared result is the *base*, which a variant satisfies by subtyping.
+      const params: number[] = [];
+      for (const f of vFields) params.push(...bindFieldValType(f.type, ctx));
+      helpers.push({
+        name: `__bind_e_${eSafe}_${vSafe}_new`,
+        funcTypeEntry: [0x60, ...uleb(vFields.length), ...params, 0x01, ...bref],
+        body: [0x00, 0x41, ...sleb(v.tag),
+          ...vFields.flatMap((_, i) => [0x20, ...uleb(i)]),
+          0xFB, 0x00, ...uleb(vIdx), 0x0B],
+      });
+
+      for (const f of vFields) {
+        const getOp = f.type.kind === "prim" && (f.type.name === "u8" || f.type.name === "u16")
+          ? 0x04
+          : f.type.kind === "prim" && (f.type.name === "i8" || f.type.name === "i16")
+          ? 0x03
+          : 0x02;
+        helpers.push({
+          name: `__bind_e_${eSafe}_${vSafe}_get_${f.name}`,
+          funcTypeEntry: [0x60, 0x01, ...bref, 0x01, ...bindFieldValType(f.type, ctx)],
+          body: [0x00, 0x20, 0x00, 0xFB, 0x16, ...uleb(vIdx),
+            0xFB, getOp, ...uleb(vIdx), ...uleb(f.absIdx), 0x0B],
         });
       }
     }
@@ -1715,7 +1788,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
   // every one of them — so the README's own example, a `Point` with a `distanceSq`, had no callable
   // entry point from JavaScript at all. Exporting is all it takes: no new code, one export entry
   // pointing at the function that is already there.
-  for (const s of ctx.bindStructs) {
+  for (const s of [...ctx.bindStructs, ...ctx.bindEnums.map((e) => e.base)]) {
     const seenMethods = new Set<string>();
     for (let e: StructEntry | null = s; e; e = e.parentEntry) {
       for (const [mname, fe] of e.methods) {
@@ -2054,16 +2127,25 @@ export type BindStructInfo = {
   methods: { name: string; params: { name: string; type: WacType }[]; ret: WacType }[];
 };
 
+/** An enum a JS caller can reach: its variants, their payloads, and its methods. */
+export type BindEnumInfo = {
+  bind: string;
+  wac: string;
+  display: string;
+  variants: { name: string; tag: number; fields: { name: string; type: WacType }[] }[];
+  methods: BindStructInfo["methods"];
+};
+
 /** The bind metadata for a module, alongside the binary. */
-export function wasmBindStructs(
+export function wasmBindMeta(
   result: ResolveResult,
   programs: Map<string, unknown>,
-): BindStructInfo[] {
+): { structs: BindStructInfo[]; enums: BindEnumInfo[] } {
   const ctx = buildTypeCtxFull(result, programs, false);
-  return ctx.bindStructs.map((s) => {
+  const methodsOf = (root: StructEntry): BindStructInfo["methods"] => {
     const methods: BindStructInfo["methods"] = [];
     const seen = new Set<string>();
-    for (let e: StructEntry | null = s; e; e = e.parentEntry) {
+    for (let e: StructEntry | null = root; e; e = e.parentEntry) {
       for (const [mname, fe] of e.methods) {
         if (seen.has(mname)) continue;
         seen.add(mname);
@@ -2075,15 +2157,32 @@ export function wasmBindStructs(
         });
       }
     }
+    return methods;
+  };
+  const enums: BindEnumInfo[] = ctx.bindEnums.map((en) => ({
+    bind: bindName(en.name),
+    wac: en.name,
+    display: result.genericDisplay.get(en.name) ?? en.name,
+    variants: en.variants.map((v) => ({
+      name: v.name,
+      tag: v.tag,
+      fields: (ctx.structFields.get(`@${v.entry.typeIndex}`) ?? [])
+        .filter((f) => f.name !== ENUM_TAG_FIELD)
+        .map((f) => ({ name: f.name, type: f.type })),
+    })),
+    methods: methodsOf(en.base),
+  }));
+  const structs = ctx.bindStructs.map((s) => {
     return {
       bind: bindName(s.name),
       wac: s.name,
       display: result.genericDisplay.get(s.name) ?? s.name,
       fields: (ctx.structFields.get(`@${s.typeIndex}`) ?? [])
         .map((f) => ({ name: f.name, type: f.type, isConst: f.isConst })),
-      methods,
+      methods: methodsOf(s),
     };
   });
+  return { structs, enums };
 }
 
 export function wasmBuildBin(
