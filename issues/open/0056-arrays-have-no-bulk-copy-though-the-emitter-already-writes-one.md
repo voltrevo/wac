@@ -1,4 +1,4 @@
-# 0055 — arrays have no bulk copy, though the emitter already writes one
+# 0056 — arrays have no bulk copy, though the emitter already writes one
 
 - **Status:** open
 - **Claimed by:** (nobody yet — add yourself before working it)
@@ -63,3 +63,8 @@ construction is already spelled, but re-filling an existing array is another han
 It is the rare change that is cheap in the compiler and wide in effect: the instruction is emitted
 already, the semantics are the loop everyone is writing, and it makes every buffer, decoder and
 codec in `wac-mono` faster without any of them changing shape.
+
+## Numbering
+
+Filed as 0055, which was taken by the callback/array bind bug (closed the same day).
+Renumbered to 0056 on the later push, per `README.md`. Nothing else changed.
