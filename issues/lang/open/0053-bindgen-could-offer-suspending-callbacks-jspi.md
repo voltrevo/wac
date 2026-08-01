@@ -72,10 +72,21 @@ the choice has to be made per module.
 
 ## Caveats, all checked
 
-- **Deno has it; Node 22 does not** without a flag. `WebAssembly.Suspending` and
-  `WebAssembly.promising` are functions under Deno 2.9 / V8 14.9 and `undefined` under Node
-  v22.23. Anything generated has to keep working where JSPI is absent, so this is an addition to
-  the bindings rather than a change to them.
+- **Availability is uneven, and this has to be additive because of it.** What was measured here,
+  rather than recalled:
+
+  | runtime | result |
+  |---|---|
+  | Deno 2.9 / V8 14.9 | `WebAssembly.Suspending` and `promising` present; **verified end to end** |
+  | Node 22.23 / V8 12.4 | current names absent. `--experimental-wasm-jspi` makes `WebAssembly.Function` and `WebAssembly.Suspender` appear, but `Suspender` has only a constructor and no methods, and the suspending import does not link. **Not usable.** |
+  | Node 24+, browsers | **not measured** — no other runtime is reachable from this container |
+
+  For browsers the recollection is that Chrome shipped JSPI in 2025 and that Firefox and Safari
+  had not; that is exactly the kind of fact that moves, and nobody should act on it without
+  checking. The check is three lines: `typeof WebAssembly.Suspending`.
+
+  The design consequence does not depend on any of it: **generate the synchronous bindings as
+  now, and offer suspension as an addition**, so a module keeps working where JSPI is missing.
 - **Misuse is loud.** Calling a suspending import from a non-promising export throws
   `trying to suspend without WebAssembly.promising` — a clear message, not corruption.
 - **The synchronous path is unaffected.** The same module instantiated with a plain function
