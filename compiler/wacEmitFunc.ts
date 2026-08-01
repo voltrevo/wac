@@ -62,6 +62,16 @@ export type WasmTypeCtx = {
   /** Funcref signatures handed back to the host, in helper order. */
   outSigs: { key: string; params: WacType[]; ret: WacType }[];
   /**
+   * TEMPORARY — trap on integer overflow in user-written add/sub/mul.
+   *
+   * A measurement instrument for the checked-arithmetic decision, not a feature:
+   * it answers "which code depends on wrapping" and "what does checking cost when
+   * nothing has opted out". Delete it with the experiment. A build-mode switch is
+   * precisely the shape the real feature must not take — the same source would mean
+   * different things depending on how it was compiled.
+   */
+  checked?: boolean;
+  /**
    * The file whose function is being emitted.
    *
    * A bare function name means whatever the *calling file's* scope says it
@@ -927,6 +937,16 @@ class FuncEmitter {
   tempF64Local = -1;
   /** anyref scratch, for holding an array while a fill loop runs. */
   tempAnyLocal = -1;
+  /**
+   * TEMPORARY (checked-arithmetic measurement). Three scratch locals per width,
+   * for holding both operands and the result of a checked add/sub/mul.
+   *
+   * Safe to share across nested arithmetic: both operands are fully evaluated
+   * before either is stored, so an inner operation has finished with the scratch
+   * by the time an outer one writes to it.
+   */
+  chk32A = -1; chk32B = -1; chk32S = -1;
+  chk64A = -1; chk64B = -1; chk64S = -1;
 
   constructor(ctx: WasmTypeCtx, returnType: WacType) {
     this.ctx = ctx;
@@ -1355,7 +1375,92 @@ class FuncEmitter {
       ">=":  { i32:[0x4E], i64:[0x59], u32:[0x4F], u64:[0x5A], f32:[0x60], f64:[0x66] },
     };
     const oc = ops[op]?.[k as KT] ?? [];
+    // TEMPORARY (checked-arithmetic measurement, `--checked`). Wraps add/sub/mul in
+    // an overflow test that traps. Blanket on/off by design: the point is to count
+    // the sites that genuinely need wrapping and to measure the ceiling cost, not
+    // to model the feature — a build-mode switch is the shape this must NOT ship in.
+    if (this.ctx.checked && (op === "+" || op === "-" || op === "*") &&
+        (k === "i32" || k === "i64" || k === "u32" || k === "u64")) {
+      this.emitCheckedArith(op, k, oc);
+      return;
+    }
     this.emit(...oc);
+  }
+
+  /**
+   * A checked add/sub/mul: operands are on the stack, result left on the stack,
+   * `unreachable` on overflow.
+   *
+   * Add and sub use the sign identities, which cost a handful of instructions.
+   * Signed 32-bit multiply widens to 64 and range-checks, which is exact and cheap.
+   * 64-bit multiply verifies by division — the slow strategy, chosen here because it
+   * is obviously correct; a shipped version would decompose into 32-bit halves.
+   */
+  private emitCheckedArith(op: string, k: string, oc: number[]): void {
+    const is64 = k === "i64" || k === "u64";
+    const uns = k === "u32" || k === "u64";
+    const [A, B, S] = is64
+      ? [this.chk64A, this.chk64B, this.chk64S]
+      : [this.chk32A, this.chk32B, this.chk32S];
+    const get = (i: number) => [0x20, ...uleb(i)];
+    const set = (i: number) => [0x21, ...uleb(i)];
+    // wasm opcodes, 32-bit then 64-bit
+    const XOR = is64 ? 0x85 : 0x73, AND = is64 ? 0x83 : 0x71;
+    const LT_S = is64 ? 0x53 : 0x48, LT_U = is64 ? 0x54 : 0x49;
+    const CONST0 = is64 ? [0x42, 0x00] : [0x41, 0x00];
+    const trapIf = (cond: number[]) => this.emit(...cond, 0x04, 0x40, 0x00, 0x0B); // if; unreachable; end
+
+    this.emit(...set(B), ...set(A));                       // pop b, then a
+    this.emit(...get(A), ...get(B), ...oc, ...set(S));     // s = a op b, stashed not left
+
+    if (op === "*") {
+      if (!is64) {
+        // Redo the multiply at 64 bits and compare: exact, and no division.
+        const ext = uns ? 0xAD : 0xAC;                      // i64.extend_i32_u / _s
+        this.emit(...get(A), ext, ...get(B), ext, 0x7E, ...set(this.chk64S));
+        const hi = uns ? [0x42, ...slebBig(4294967295n)] : [0x42, ...slebBig(2147483647n)];
+        const lo = uns ? [0x42, 0x00] : [0x42, ...slebBig(-2147483648n)];
+        trapIf([...get(this.chk64S), ...hi, 0x55]);          // > max  (i64.gt_s)
+        trapIf([...get(this.chk64S), ...lo, 0x53]);          // < min  (i64.lt_s)
+        this.emit(...get(S));
+      } else {
+        // Verify by division: a != 0 && s / a != b  =>  overflow. i64.div_s traps on
+        // MIN / -1, so the signed form guards that pair separately.
+        const DIV = uns ? 0x80 : 0x7F;
+        const NE = 0x52, EQZ = 0x50;
+        if (!uns) {
+          trapIf([...get(A), 0x42, ...slebBig(-1n), 0x51,
+                  ...get(B), 0x42, ...slebBig(-9223372036854775808n), 0x51, 0x71]);
+          trapIf([...get(B), 0x42, ...slebBig(-1n), 0x51,
+                  ...get(A), 0x42, ...slebBig(-9223372036854775808n), 0x51, 0x71]);
+        }
+        // A real branch, not an `and`: wasm evaluates both sides, and the division
+        // itself traps on a zero divisor — so `a != 0 && s / a != b` written as `and`
+        // trapped on every `0 * x`. The sweep caught it; the hand-written version
+        // looked obviously correct.
+        this.emit(...get(A), EQZ, 0x45, 0x04, 0x40);        // if (a != 0) {
+        trapIf([...get(S), ...get(A), DIV, ...get(B), NE]); //   trap if s / a != b
+        this.emit(0x0B);                                    // }
+        this.emit(...get(S));
+      }
+      return;
+    }
+
+    if (uns) {
+      // Unsigned add overflows iff the sum is below either operand; unsigned sub
+      // iff the subtrahend exceeds the minuend.
+      trapIf(op === "+"
+        ? [...get(S), ...get(A), LT_U]
+        : [...get(A), ...get(B), LT_U]);
+      this.emit(...get(S));
+      return;
+    }
+    // Signed: add overflows iff the operands agree in sign and the sum differs;
+    // sub iff the operands differ in sign and the result differs from the minuend.
+    trapIf(op === "+"
+      ? [...get(A), ...get(S), XOR, ...get(B), ...get(S), XOR, AND, ...CONST0, LT_S]
+      : [...get(A), ...get(B), XOR, ...get(A), ...get(S), XOR, AND, ...CONST0, LT_S]);
+    this.emit(...get(S));
   }
 
   private emitCast(
@@ -3143,10 +3248,17 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   emitter.tempF32Local = localIdx + 2;
   emitter.tempF64Local = localIdx + 3;
   emitter.tempAnyLocal = localIdx + 4;
+  // TEMPORARY (checked-arithmetic measurement): only when checking, so an ordinary
+  // build is byte-identical to one from before the flag existed. A measurement
+  // instrument that changes what it is not measuring is worth nothing.
+  if (ctx.checked) {
+    emitter.chk32A = localIdx + 5; emitter.chk32B = localIdx + 6; emitter.chk32S = localIdx + 7;
+    emitter.chk64A = localIdx + 8; emitter.chk64B = localIdx + 9; emitter.chk64S = localIdx + 10;
+  }
   ctx.currentFile = entry.filePath;
 
   const localsVec: number[] = [];
-  localsVec.push(...uleb(groups.length + 5));
+  localsVec.push(...uleb(groups.length + (ctx.checked ? 7 : 5)));
   for (const g of groups) {
     localsVec.push(...uleb(g.count));
     localsVec.push(...wasmValType(g.type, ctx));
@@ -3156,6 +3268,10 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   localsVec.push(0x01, 0x7D); // 1 × f32 scratch local
   localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
   localsVec.push(0x01, 0x6E); // 1 × anyref scratch local
+  if (ctx.checked) {
+    localsVec.push(0x03, 0x7F); // 3 × i32 scratch — TEMPORARY, checked arithmetic
+    localsVec.push(0x03, 0x7E); // 3 × i64 scratch — TEMPORARY, checked arithmetic
+  }
 
   // Coverage points are attributed to the file the function was declared in.
   if (ctx.coverage) {

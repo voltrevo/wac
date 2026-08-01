@@ -8989,3 +8989,51 @@ Deno.test("[§wac-bind-callback-7pqm4wk] a callback's own types get their helper
   eq(mod.fromStruct(() => mod.P.of(42)), 42, "a struct the host built");
   eq(mod.toStruct((p) => p.x), 7, "and one it was handed");
 });
+
+// ── TEMPORARY: checked-arithmetic measurement ─────────────────────────────────
+// Not a spec tag, because `--checked` is an instrument rather than a feature. The
+// test exists so the instrument is trustworthy while the decision is being made:
+// a measurement taken with a broken tool is worse than no measurement.
+// Delete this with the flag.
+
+Deno.test("checked arithmetic traps exactly when the value does not fit", async () => {
+  const src = `
+    export i32 addI32(i32 a, i32 b) { return a + b; }
+    export i32 subI32(i32 a, i32 b) { return a - b; }
+    export i32 mulI32(i32 a, i32 b) { return a * b; }
+    export u32 addU32(u32 a, u32 b) { return a + b; }
+    export u32 subU32(u32 a, u32 b) { return a - b; }
+    export i64 addI64(i64 a, i64 b) { return a + b; }
+    export i64 mulI64(i64 a, i64 b) { return a * b; }
+    export u64 mulU64(u64 a, u64 b) { return a * b; }
+  `;
+  const off = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  const on = wacCompile(new Map([["m.wac", src]]), "m.wac", { checked: true });
+  if (!off.ok || !on.ok) throw new Error("compile failed");
+  const a = await wacInstance(off.compiled), b = await wacInstance(on.compiled);
+  const call = (i: typeof a, f: string, x: unknown, y: unknown) => {
+    try { return String(i.call(f, [x, y] as never[])); } catch { return "TRAP"; }
+  };
+  const I32MAX = 2147483647, I64MIN = -9223372036854775808n;
+
+  // Wrapping is unchanged with the flag off — the instrument must not disturb what
+  // it is not measuring. The whole binary is byte-identical, which is stronger.
+  eq(call(a, "addI32", I32MAX, 1), "-2147483648", "wraps without the flag");
+  eq(call(b, "addI32", I32MAX, 1), "TRAP", "and traps with it");
+
+  // In-range answers are the same either way, at every op and width.
+  for (const [f, x, y, want] of [
+    ["addI32", 2, 2, "4"], ["subI32", 5, 3, "2"], ["mulI32", 6, 7, "42"],
+    ["addU32", 2, 2, "4"], ["subU32", 5, 3, "2"],
+    ["addI64", 2n, 2n, "4"], ["mulI64", 6n, 7n, "42"], ["mulU64", 6n, 7n, "42"],
+  ] as [string, unknown, unknown, string][]) {
+    eq(call(b, f, x, y), want, `${f} in range`);
+    eq(call(a, f, x, y), want, `${f} in range, unchecked`);
+  }
+
+  // Zero times anything is the case a hand-written check gets wrong: `a != 0 && s/a != b`
+  // written as an `and` still evaluates the division, and i64.div_s traps on a zero
+  // divisor. A differential sweep found it; reading the code did not.
+  eq(call(b, "mulI64", 0n, I64MIN), "0", "0 * MIN does not trap");
+  eq(call(b, "mulI64", I64MIN, -1n), "TRAP", "but MIN * -1 does");
+});

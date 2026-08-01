@@ -2687,10 +2687,11 @@ export function wasmBindMeta(
 export function wasmBuildBin(
   result: ResolveResult,
   programs: Map<string, unknown>,
-  options: { coverage?: CoverageCtx } = {},
+  options: { coverage?: CoverageCtx; checked?: boolean } = {},
 ): Uint8Array {
   const ctx = buildTypeCtxFull(result, programs, options.coverage !== undefined);
   ctx.coverage = options.coverage;
+  ctx.checked = options.checked;   // TEMPORARY — see WasmTypeCtx.checked
 
   const MAGIC   = [0x00, 0x61, 0x73, 0x6D];
   const VERSION = [0x01, 0x00, 0x00, 0x00];
