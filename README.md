@@ -63,6 +63,12 @@ m.set(1, 99);
 m.get(1).toObject();     // { tag: "Some", v: 99 }
 ```
 
+## Integer overflow
+
+Integer arithmetic wraps, because half of what wac is used for requires it: SHA-256's `h0 += a` is addition mod 2³² by specification, and so are CRC-32, ChaCha20 and FNV-1a.
+
+`wacx --checked` compiles a module that traps on overflow in `+`, `-` and `*` instead. It is a whole-module switch and experimental — the point is to find out what your own code depends on. Measured over wac-mono: 68 of 503 tests depend on wrapping, nearly all in `crypto`, while json, gzip, url, http, fmt and std pass with it on. The cost with nothing opted out was 5% on a JSON parse and 27% on gzip.
+
 ## What a wac module requires
 
 MVP plus non-trapping float→int conversions, reference types, typed function references, and

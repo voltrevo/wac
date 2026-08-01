@@ -121,7 +121,10 @@ export type WacxResult = { code: number };
  * that into a process exit.
  */
 export async function wacx(argv: string[], cap: WacxCap): Promise<WacxResult> {
-  const [command, entry, ...rest] = argv;
+  // `--checked` is a whole-module switch, so it is stripped wherever it appears rather
+  // than having to sit in a fixed position.
+  const checked = argv.includes("--checked");
+  const [command, entry, ...rest] = argv.filter((a) => a !== "--checked");
 
   if (command === undefined || command === "--help" || command === "-h") {
     cap.out(USAGE);
@@ -146,7 +149,7 @@ export async function wacx(argv: string[], cap: WacxCap): Promise<WacxResult> {
     return { code: 1 };
   }
 
-  const result = wacCompile(files, entry);
+  const result = wacCompile(files, entry, { checked });
   if (!result.ok) {
     cap.err(wacDiag(result.diagnostics, files));
     return { code: 1 };
@@ -221,5 +224,8 @@ const USAGE = `wacx — the wac compiler CLI
   wacx run     <file.wac> <fn> [args]  compile, instantiate, and call fn
   wacx compile <file.wac>              write <file>.wasm
   wacx bindgen <file.wac>              write <file>.wac.ts
+
+  --checked   trap on integer overflow in +, - and * (experimental; default is
+              to wrap, which is what SHA-256 and CRC-32 are specified to do)
 
 Exit codes: 0 success, 1 a compile or usage error, 2 the program trapped.`;

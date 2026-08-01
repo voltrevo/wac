@@ -25,12 +25,9 @@ import type { WacType } from "./wacParse.ts";
 export type WacCompileOptions = {
   coverage?: boolean;
   /**
-   * TEMPORARY — trap on integer overflow in user-written add/sub/mul.
-   *
-   * A measurement instrument for the checked-arithmetic decision: it answers which
-   * code depends on wrapping, and what checking costs when nothing has opted out.
-   * Delete it with the experiment; the shipped feature must not be a build-mode
-   * switch.
+   * Trap on integer overflow in user-written add, sub and mul. Off by default;
+   * `wacx --checked` turns it on. Experimental — see `WasmTypeCtx.checked` for what
+   * it costs and what depends on wrapping.
    */
   checked?: boolean;
 };

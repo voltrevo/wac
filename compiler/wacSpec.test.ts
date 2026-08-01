@@ -8990,11 +8990,11 @@ Deno.test("[§wac-bind-callback-7pqm4wk] a callback's own types get their helper
   eq(mod.toStruct((p) => p.x), 7, "and one it was handed");
 });
 
-// ── TEMPORARY: checked-arithmetic measurement ─────────────────────────────────
-// Not a spec tag, because `--checked` is an instrument rather than a feature. The
-// test exists so the instrument is trustworthy while the decision is being made:
-// a measurement taken with a broken tool is worse than no measurement.
-// Delete this with the flag.
+// ── --checked, the experimental overflow-trapping flag ────────────────────────
+// No spec tag: wrapping is what the language specifies, and this is a switch for
+// finding out what a given program depends on. The test is here because a flag
+// people run against their own code has to be trustworthy — two bugs in it were
+// found by measurement rather than by reading it.
 
 Deno.test("checked arithmetic traps exactly when the value does not fit", async () => {
   const src = `
