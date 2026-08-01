@@ -3651,6 +3651,28 @@ Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to sw
   eq(threw, true, "a wrong-variant read throws rather than returning nonsense");
 });
 
+Deno.test("[§wac-bind-struct-5kqn2wj] only what the boundary can carry is followed", async () => {
+  // Reachability stops at a field the boundary cannot express. Running this over `json` showed why:
+  // `Map`'s `slots` is an array of nullable structs, which nothing binds yet, and following it
+  // anyway pulled `MapEntry` — a type `std` never exported — into the generated file as a class
+  // nobody could use. A container's contents reach JavaScript through its *methods*, which do bind.
+  const r = wacCompile(new Map([["m.wac", `
+    struct Hidden { i32 secret; }
+    export struct Holder {
+      Hidden?[] slots;
+      i32 n;
+      i32 count(const this) { return this.n; }
+    }
+    export Holder make() { return Holder(Hidden?[2](), 0); }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  eq(ts.includes("export class Holder"), true, "the exported struct is bound");
+  eq(ts.includes("count()"), true, "and its method, which is how the contents are reached");
+  eq(ts.includes("class Hidden"), false, "a type reachable only through an unbindable field is not");
+  eq(ts.includes("get slots"), false, "and the field it hides behind has no accessor");
+});
+
 Deno.test("[§wac-bind-enum-3nqk7vm] a generic enum binds under its written name", async () => {
   const mod = await importBindgen(`
     export enum Option<T> {

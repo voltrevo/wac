@@ -952,6 +952,21 @@ function bindFieldValType(t: WacType, ctx: WasmTypeCtx): number[] {
  * Transitive because a `Node` with a `Node? next` is one type from the outside and two from here,
  * and because an exported function returning a `Tree` is useless if its children are unreachable.
  */
+/**
+ * Can a value of this type cross to JavaScript today?
+ *
+ * The list the generated file can express: numbers, strings, arrays of primitives, and a struct or
+ * enum reference — each optionally nullable. An array of structs, a funcref and a nested array are
+ * still beyond it, and a field of such a type is not a route to anything.
+ */
+function bindableType(t: WacType): boolean {
+  if (t.kind === "nullable") return bindableType(t.inner);
+  if (t.kind === "prim") return t.name !== "void";
+  if (t.kind === "struct") return true;
+  if (t.kind === "array") return t.elem.kind === "prim" && t.elem.name !== "string";
+  return false;                                   // funcref
+}
+
 function reachableBinds(
   result: ResolveResult, ctx: WasmTypeCtx,
 ): { structs: StructEntry[]; enums: EnumEntry[] } {
@@ -973,8 +988,10 @@ function reachableBinds(
     if (en) {
       seen.add(idx);
       enums.push(en);
-      // A payload is reachable through the variant it belongs to.
-      for (const v of en.variants) for (const f of v.fields) visitType(f.type);
+      // A payload is reachable through the variant it belongs to, on the same terms.
+      for (const v of en.variants) {
+        for (const f of v.fields) if (bindableType(f.type)) visitType(f.type);
+      }
       return;
     }
     const entry = byIndex.get(idx);
@@ -983,7 +1000,12 @@ function reachableBinds(
     if (!entry || entry.enumRole !== undefined) return;
     seen.add(idx);
     structs.push(entry);
-    for (const f of ctx.structFields.get(`@${idx}`) ?? []) visitType(f.type);
+    // Only through a field the boundary can actually carry. `Map`'s `slots` is an array of
+    // nullable structs, which nothing binds yet — following it anyway pulled `MapEntry`, a type
+    // `std` never exported, into the generated file as a class nobody could use.
+    for (const f of ctx.structFields.get(`@${idx}`) ?? []) {
+      if (bindableType(f.type)) visitType(f.type);
+    }
   };
 
   for (const f of result.funcs) {

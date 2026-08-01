@@ -74,9 +74,19 @@ let structsByWac: Map<string, WacStruct> = new Map();
 /** The enums of the module being generated, by the name a type refers to them by. */
 let enumsByWac: Map<string, WacEnum> = new Map();
 
-/** The TypeScript class name for a struct — `Vec<i32>` becomes `Vec_i32`. */
+/**
+ * The TypeScript class name for a struct or enum — `Vec<i32>` becomes `Vec_i32`.
+ *
+ * An array argument reads as `Arr` rather than as the punctuation it is made of, because
+ * `Map<u8[], i32>` sanitised character by character gives `Map_u8____i32`, which is not a name
+ * anyone would ship.
+ */
 function className(s: { display: string }): string {
-  return s.display.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+$/, "");
+  return s.display
+    .replace(/\[\]/g, "Arr")
+    .replace(/[^A-Za-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/_+$/, "");
 }
 
 function tsType(wacType: string): string | null {
