@@ -213,6 +213,18 @@ Where nothing is expected of it, a literal keeps the width its own notation
 gives it — including as an operand of an operator, so an `i64` literal stays
 `i64` rather than narrowing to meet the other side.
 
+The **other operand counts as an expectation**, in either order and whether or not the literal is
+negated:
+
+```wac
+export bool f(i32 x) { return -2147483648 <= x; }   // the literal is an i32
+export bool g(i32 x) { return x >= -2147483648; }   // and so is this one
+```
+
+`[§wac-int-context-9wkq4mz]` Both compile. `-2147483648` is a unary minus over a magnitude that
+needs 64 bits, so with genuinely nothing expected of it — `i64 n = -2147483648 + 1;` — it is an
+i64 and the arithmetic around it is too. That is the same rule, not an exception to it.
+
 ```wac
 i64 big() { return 1000000000000; }
 export bool bigMatches() { return big() == 1000000000000; }
