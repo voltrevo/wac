@@ -27,7 +27,12 @@ export type WacInst = {
  * from one export can be passed to another, which is the only way a host can carry a struct or a
  * boxed `i32?` around. Coercion leaves those alone — `Number()` on a wasm reference throws.
  */
-export type WacArg = number | bigint | boolean | null | object | string;
+export type WacArg =
+  | number | bigint | boolean | null | object | string
+  // A function argument is a host function the module may call. It is reachable
+  // only through the parameter it arrives on: the module has no way to name one
+  // it was not given.
+  | ((...a: never[]) => unknown);
 
 /** Return value types from wac function calls. */
 export type WacVal =
@@ -45,8 +50,35 @@ export type WacVal =
  * Returns a WacInst with raw exports and a typed call helper.
  */
 export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
-  const { instance } = await WebAssembly.instantiate(compiled.wasm as BufferSource, {});
+  // One registry per callback signature, and one dispatcher import reading it.
+  // Values cross raw here — this is the untyped surface, and a caller who reaches
+  // for it is already handling references itself.
+  const registries = (compiled.callbacks ?? []).map(() => [] as WacArg[]);
+  const imports: WebAssembly.Imports = {};
+  (compiled.callbacks ?? []).forEach((cb, j) => {
+    imports.wac ??= {} as WebAssembly.ModuleImports;
+    imports.wac[cb.field] = (slot: number, ...args: unknown[]) =>
+      (registries[j][slot] as (...a: unknown[]) => unknown)(...args);
+  });
+  const { instance } = await WebAssembly.instantiate(compiled.wasm as BufferSource, imports);
   const rawExports = instance.exports;
+
+  /** Register a host function and get back the funcref to pass in. */
+  function toFuncref(fn: WacArg, type: string): unknown {
+    const j = (compiled.callbacks ?? []).findIndex((c) => c.type === type);
+    if (j < 0) throw new Error(`wac: '${type}' is not a callback this module takes`);
+    const reg = registries[j];
+    let slot = reg.indexOf(fn);
+    if (slot < 0) {
+      slot = reg.length;
+      const limit = compiled.callbacks![j].slots;
+      if (slot >= limit) {
+        throw new RangeError(`wac: at most ${limit} distinct ${type} functions can be passed`);
+      }
+      reg.push(fn);
+    }
+    return (rawExports[compiled.callbacks![j].helper] as CallableFunction)(slot);
+  }
 
   // Build an index from export name to its metadata
   const exportMap = new Map<string, WacExport>();
@@ -67,6 +99,7 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
       // engine rejected it with "type incompatibility when transforming from/to JS". It made
       // `wacx run prog.wac greet world` fail on the most ordinary thing a command line can pass.
       if (t === "string" && typeof a === "string") return encodeString(rawExports, a);
+      if (typeof a === "function") return toFuncref(a, t);
       return coerceArg(a, t);
     });
 
@@ -177,6 +210,7 @@ function coerceArg(v: WacArg, t: string): unknown {
   // A reference goes through untouched. Anything else would be `Number()` of an object, which
   // throws, and there is nothing to convert: the value came out of wasm in the first place.
   if (isRefTypeStr(t) || v === null || typeof v === "object") return v;
+  if (typeof v === "function") return v; // registered before it reaches here
   // u64 shares i64's wasm type; wrap into the low 64 bits so a JS value above
   // i64::MAX (which a u64 legitimately reaches) is accepted rather than thrown
   // on by BigInt conversion at the boundary.

@@ -18,7 +18,7 @@
 // Unsupported types (struct, nullable, funcref, nested arrays) cause the function
 // to be omitted with a comment.
 
-import type { WacCompiled, WacExport, WacStruct, WacEnum } from "./wacCompile.ts";
+import type { WacCompiled, WacExport, WacStruct, WacEnum, WacCallback } from "./wacCompile.ts";
 
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
@@ -73,6 +73,14 @@ const ARRAY_ELEM_PREFIX: Record<string, string> = {
 let structsByWac: Map<string, WacStruct> = new Map();
 /** The enums of the module being generated, by the name a type refers to them by. */
 let enumsByWac: Map<string, WacEnum> = new Map();
+/**
+ * The funcref signatures the host may supply a function for, by the type as written.
+ *
+ * Only signatures an exported function actually takes are here, which is what
+ * makes a callback a capability: a module that asks for no function cannot be
+ * given one, and one it is given reaches only as far as the value goes.
+ */
+let callbacksByType: Map<string, WacCallback & { index: number }> = new Map();
 
 /**
  * The TypeScript class name for a struct or enum — `Vec<i32>` becomes `Vec_i32`.
@@ -101,6 +109,66 @@ function tsType(wacType: string): string | null {
     if (inner) return `${className(inner)} | null`;
   }
   return null; // unsupported
+}
+
+/**
+ * The TypeScript type of a host function for one wac funcref signature, or null
+ * if some parameter of it cannot cross.
+ */
+/**
+ * Only in parameter position. A funcref *returned* stays unbindable: JavaScript
+ * cannot call a wasm function reference, so there is nothing to hand back.
+ */
+function cbTsType(cb: WacCallback): string | null {
+  const params: string[] = [];
+  for (let i = 0; i < cb.params.length; i++) {
+    const t = tsType(cb.params[i]);
+    if (t === null) return null;
+    params.push(`a${i}: ${t}`);
+  }
+  const ret = cb.ret === "void" ? "void" : tsType(cb.ret);
+  if (ret === null) return null;
+  return `(${params.join(", ")}) => ${ret}`;
+}
+
+/**
+ * The registry and dispatcher for one callback signature.
+ *
+ * The module imports one dispatcher per signature and gets back a *slot number*
+ * ahead of the wac arguments; the registry says which host function that slot
+ * holds. Registering by identity means passing the same function twice costs one
+ * slot, so a callback used in a loop does not exhaust the pool.
+ *
+ * A registered function is held for the life of the module. wac has no way to
+ * say it has dropped one, and freeing a slot that the module still holds a
+ * funcref for would turn a live call into a call on whatever took its place.
+ */
+function genCallbackRegistry(cb: WacCallback & { index: number }): string {
+  const j = cb.index;
+  const fnTs = cbTsType(cb)!;
+  const args = cb.params.map((t, i) => fromWasm(t, `a${i}`)).join(", ");
+  const call = `_cbs${j}[_slot](${args})`;
+  const body = cb.ret === "void" ? `{ ${call}; }` : `${toWasm(cb.ret, `(${call})`)}`;
+  const wasmParams = cb.params.map((_, i) => `a${i}: unknown`).join(", ");
+  return [
+    `const _cbs${j}: (${fnTs})[] = [];`,
+    `const _cbd${j} = (_slot: number${wasmParams ? ", " + wasmParams : ""}) =>`,
+    `  ${body};`,
+    `/** Register \`f\` and hand back the \`${cb.type}\` to pass into the module. */`,
+    `function _fnref${j}(f: ${fnTs}): unknown {`,
+    `  let _slot = _cbs${j}.indexOf(f);`,
+    `  if (_slot < 0) {`,
+    `    _slot = _cbs${j}.length;`,
+    `    if (_slot >= ${cb.slots}) {`,
+    `      throw new RangeError(`,
+    `        "at most ${cb.slots} distinct ${cb.type} functions can be passed to this module",`,
+    `      );`,
+    `    }`,
+    `    _cbs${j}.push(f);`,
+    `  }`,
+    `  return (_exports.${cb.helper} as CallableFunction)(_slot);`,
+    `}`,
+  ].join("\n");
 }
 
 /** The struct or enum a type names, if it is one — with or without a trailing `?`. */
@@ -373,6 +441,13 @@ type WrapperResult =
 function genWrapper(exp: WacExport): WrapperResult {
   // Check all types are supported
   for (const p of exp.params) {
+    const cb = callbacksByType.get(p.type);
+    if (cb) {
+      if (cbTsType(cb) === null) {
+        return { skip: true, reason: `${exp.name}() — parameter '${p.name}: ${p.type}' not yet supported in bindgen` };
+      }
+      continue;
+    }
     if (!isSupported(p.type)) {
       return { skip: true, reason: `${exp.name}() — parameter '${p.name}: ${p.type}' not yet supported in bindgen` };
     }
@@ -385,7 +460,10 @@ function genWrapper(exp: WacExport): WrapperResult {
   const jsName = exp.name;
 
   // Build TypeScript parameter list
-  const tsParams = exp.params.map(p => `${p.name}: ${tsType(p.type)!}`).join(", ");
+  const tsParams = exp.params.map((p) => {
+    const cb = callbacksByType.get(p.type);
+    return `${p.name}: ${cb ? cbTsType(cb)! : tsType(p.type)!}`;
+  }).join(", ");
   const tsRet = tsType(exp.ret) ?? "void";
 
   // Build the body
@@ -396,6 +474,11 @@ function genWrapper(exp: WacExport): WrapperResult {
   // rejected above.
   const wasmArgs: string[] = [];
   for (const p of exp.params) {
+    const cb = callbacksByType.get(p.type);
+    if (cb) {
+      wasmArgs.push(`_fnref${cb.index}(${p.name})`);
+      continue;
+    }
     if (p.type === "string" || ARRAY_MAP[p.type]) {
       lines.push(`  const _w_${p.name} = ${toWasm(p.type, p.name)};`);
       wasmArgs.push(`_w_${p.name}`);
@@ -457,6 +540,9 @@ export function wacBindgen(compiled: WacCompiled): string {
   // everywhere below.
   structsByWac = new Map(compiled.structs.map((s) => [s.wac, s]));
   enumsByWac = new Map(compiled.enums.map((e) => [e.wac, e]));
+  callbacksByType = new Map(
+    (compiled.callbacks ?? []).map((c, i) => [c.type, { ...c, index: i }]),
+  );
 
   // Determine which helpers are needed
   const allTypes = compiled.exports.flatMap(e => [
@@ -490,8 +576,30 @@ export function wacBindgen(compiled: WacCompiled): string {
   parts.push(
     `const _wasm = Uint8Array.from(\n  atob("${base64}"),\n  (c) => c.charCodeAt(0),\n);`,
   );
+  // The host functions the module can be given. A module that takes none has no
+  // imports at all, and instantiates exactly as it did before.
+  const allCbs = [...callbacksByType.values()];
+  if (allCbs.length > 0) {
+    const fields: string[] = [];
+    for (const cb of allCbs) {
+      // Every declared import must be supplied or the module will not
+      // instantiate — including one whose types this file cannot marshal. That
+      // one gets a stub that says so if it is ever reached, which it cannot be:
+      // the export taking it was skipped for the same reason.
+      if (cbTsType(cb) === null) {
+        fields.push(`    ${cb.field}: () => {`);
+        fields.push(`      throw new TypeError("${cb.type} cannot cross the boundary");`);
+        fields.push(`    },`);
+        continue;
+      }
+      parts.push(genCallbackRegistry(cb));
+      fields.push(`    ${cb.field}: _cbd${cb.index},`);
+    }
+    parts.push(`const _imports = {\n  wac: {\n${fields.join("\n")}\n  },\n};`);
+  }
+  const importArg = allCbs.length > 0 ? "_wasm, _imports" : "_wasm";
   parts.push(
-    `const _instance = await WebAssembly.instantiate(_wasm);\nconst _exports = _instance.instance.exports;`,
+    `const _instance = await WebAssembly.instantiate(${importArg});\nconst _exports = _instance.instance.exports;`,
   );
 
   // Staging-buffer access, needed by every bulk path below.

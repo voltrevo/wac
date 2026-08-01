@@ -97,10 +97,49 @@ This costs less than it sounds, and running it over `json` is what showed why. A
 its contents through **methods**, and methods bind: `JsonArray` arrives with `push`, `len` and
 `get(i)`, so a JSON tree is walkable from JavaScript without an array of structs ever crossing.
 
+### A host function is passed in, never ambient
+
+An exported function may take a `fn[R(P…)]` parameter, and JavaScript passes an ordinary function
+for it. `[§wac-bind-callback-7pqm4wk]`
+
+```wac
+export i32 fold(fn[i32(i32,i32)] f, i32[] xs) {
+  i32 acc = 0;
+  for (i32 i = 0; i < xs.len(); i++) { acc = f(acc, xs[i]); }
+  return acc;
+}
+```
+
+```ts
+import { fold } from "./sum.wac.ts";
+fold((a, b) => a + b, [1, 2, 3, 4, 5]);   // 15
+```
+
+**Passing it is the only way in.** wac has no import syntax, so nothing a program can write names a
+host function; what it can call is a value it was handed, for as long as it holds it. A module that
+takes no `fn[…]` parameter has no imports at all — that is checkable on the binary, and the test
+checks it. Capability, not ambient authority: the host decides what a module can reach by deciding
+what to pass.
+
+How it works: the module imports one *dispatcher* per signature — never per parameter — which takes
+a slot number ahead of the wac arguments. Each registered function gets a distinct wasm function
+standing for it, because a JS closure is not a wasm function and `ref.func` needs one that exists at
+compile time. Sixteen per signature can be live at once; registration is by identity, so passing the
+same function in a loop costs one slot, and running out raises a `RangeError` naming the signature
+rather than reusing a slot.
+
+A registered function is held for the life of the module. wac cannot say it has dropped one, and
+freeing a slot the module still holds a funcref for would turn a live call into a call on whatever
+took its place.
+
+The parameters and return of a callback marshal exactly as an export's do: primitives, strings,
+arrays, structs and enums all cross, and a callback returning a struct hands back the reference.
+
 ### Not yet supported in bindgen
 
 - Arrays of structs — reach them through the container's methods
-- Function references
+- Function references *returned* from an export — JavaScript cannot call a wasm function reference,
+  so there is nothing to hand back. Passing one *in* is supported, above.
 - Nested arrays
 
 Functions using unsupported types in their signature are omitted from the

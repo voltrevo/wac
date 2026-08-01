@@ -233,6 +233,50 @@ function collectArrayTypes(result: ResolveResult, programs: Map<string, unknown>
   return types;
 }
 
+/**
+ * How many host functions of one signature can be live at a time.
+ *
+ * A JS function is not a wasm function, so each one the host hands in needs a
+ * distinct wasm function to stand for it — and those are fixed at compile time.
+ * Sixteen per signature is far past what a callback-taking API asks for, and the
+ * host is told plainly when it runs out rather than silently reusing a slot.
+ */
+const CALLBACK_SLOTS = 16;
+
+/** A funcref signature the host can supply a function for. */
+export type CallbackSig = { key: string; params: WacType[]; ret: WacType };
+
+/**
+ * The callback signatures this module exposes: funcref types in the parameters
+ * of an exported function.
+ *
+ * This is the whole of the no-ambient-access design. The module's only imports
+ * are dispatchers generated here, and nothing in wac can name one — there is no
+ * import syntax in the language. A host function becomes reachable by being
+ * passed to an export as a value, and stops being reachable when the program
+ * drops it. A wac program that is never handed a function cannot call out, and
+ * that property is structural rather than a convention.
+ *
+ * Only exported *functions* are scanned. A method that takes a callback is not
+ * yet reachable this way, because a static method — which is how a container
+ * takes its comparator — is not bound at all yet.
+ */
+function collectCallbackSigs(result: ResolveResult): CallbackSig[] {
+  const seen = new Set<string>();
+  const sigs: CallbackSig[] = [];
+  for (const f of result.funcs) {
+    if (!f.exportName) continue;
+    for (const t of fullParamTypes(f)) {
+      if (t.kind !== "funcref") continue;
+      const key = sigKey(t.params, t.ret);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sigs.push({ key, params: t.params, ret: t.ret });
+    }
+  }
+  return sigs;
+}
+
 /** Collect all unique funcref signatures used in the program. */
 function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacType }[] {
   const seen = new Set<string>();
@@ -389,21 +433,27 @@ function buildTypeCtx(
   }
 
   // 6. Function index map (by mangled name and by short name for same-file calls)
+  //
+  // Imported dispatchers occupy the lowest function indices, so every defined
+  // function sits funcBase above its position in result.funcs. The map holds
+  // *emitted* indices; converting back is wacEmitFunc's job.
+  const cbSigs = collectCallbackSigs(result);
+  const funcBase = cbSigs.length;
   const funcIdx = new Map<string, number>();
-  for (const f of result.funcs) funcIdx.set(f.mangledName, f.funcIndex);
+  for (const f of result.funcs) funcIdx.set(f.mangledName, f.funcIndex + funcBase);
   // Also map by the declared function name so calls using the short name resolve correctly.
   // Mangled names take precedence; short names only added if not already present.
   for (const f of result.funcs) {
     if (f.origin.kind === "func") {
       const shortName = f.origin.decl.name;
-      if (!funcIdx.has(shortName)) funcIdx.set(shortName, f.funcIndex);
+      if (!funcIdx.has(shortName)) funcIdx.set(shortName, f.funcIndex + funcBase);
     }
   }
   // Also add aliases from all file scopes (for renamed imports like `{ foo as fooB }`).
   for (const scope of result.fileScopes.values()) {
     for (const [alias, entry] of scope) {
       if (entry.kind === "func" && !funcIdx.has(alias)) {
-        funcIdx.set(alias, entry.entry.funcIndex);
+        funcIdx.set(alias, entry.entry.funcIndex + funcBase);
       }
     }
   }
@@ -428,7 +478,7 @@ function buildTypeCtx(
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
     structFields, funcIdx, result, constGlobalIdx, currentFile: "",
-    helperIdx: new Map<string, number>(),
+    helperIdx: new Map<string, number>(), cbSigs, funcBase,
   };
 }
 
@@ -532,6 +582,17 @@ type BindHelperSpec = {
   funcTypeEntry: number[];
   /** Wasm function body bytes (locals + instructions + 0x0B). */
   body: number[];
+  /**
+   * Declare the function with an existing type index instead of the appended
+   * one. A callback trampoline has to *be* the wac signature type — a
+   * structurally identical copy is a different type under wasm's isorecursive
+   * typing, and `ref.func` on it would not satisfy `(ref $sig)`. The entry in
+   * `funcTypeEntry` is still appended so index arithmetic elsewhere is
+   * unchanged; it simply goes unreferenced.
+   */
+  typeIdx?: number;
+  /** Not exported: a trampoline is reachable only as a funcref value. */
+  internal?: boolean;
 };
 
 type WasmTypeCtxFull = WasmTypeCtx & {
@@ -622,7 +683,7 @@ function buildTypeCtxFull(
   const helperIdx = new Map<string, number>();
   const helpers = builtinHelpers(coverage);
   for (let i = 0; i < helpers.length; i++) {
-    helperIdx.set(helpers[i], numUserFuncs + i);
+    helperIdx.set(helpers[i], base.funcBase + numUserFuncs + i);
   }
 
   // Populate base.helperIdx (WasmTypeCtx) and the full ctx one
@@ -631,7 +692,8 @@ function buildTypeCtxFull(
   // Bind helpers come after the builtin helpers
   const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
   const { structs: bindStructs, enums: bindEnums } = reachableBinds(result, partialCtx);
-  const bindHelpers = buildBindHelpers(result, { ...partialCtx, bindStructs, bindEnums });
+  const bindBaseIdx = base.funcBase + numUserFuncs + helpers.length;
+  const bindHelpers = buildBindHelpers(result, { ...partialCtx, bindStructs, bindEnums, bindBaseIdx });
 
   return { ...partialCtx, bindHelpers, bindStructs, bindEnums };
 }
@@ -1023,6 +1085,8 @@ function buildBindHelpers(
     orderedSigs: { params: WacType[]; ret: WacType }[];
     bindStructs: StructEntry[];
     bindEnums: EnumEntry[];
+    /** Wasm function index of the first bind helper. */
+    bindBaseIdx: number;
   },
 ): BindHelperSpec[] {
   const helpers: BindHelperSpec[] = [];
@@ -1209,6 +1273,47 @@ function buildBindHelpers(
         });
       }
     }
+  }
+
+  // ── Host callbacks ────────────────────────────────────────────────────────
+  // Per signature: CALLBACK_SLOTS trampolines — distinct wasm functions, each of
+  // the *wac* signature type, each calling the imported dispatcher with its own
+  // slot number — and one selector turning a slot number into the matching
+  // funcref, which is how a host function gets into wac at all.
+  for (let j = 0; j < ctx.cbSigs.length; j++) {
+    const sig = ctx.cbSigs[j];
+    const sigIdx = ctx.sigTypeIdx.get(sig.key)!;
+    const sigEntry = encodeFuncType(sig.params, sig.ret, ctx);
+    const trampIdx: number[] = [];
+    for (let k = 0; k < CALLBACK_SLOTS; k++) {
+      const fwd = sig.params.flatMap((_, i) => [0x20, ...uleb(i)]); // local.get i
+      trampIdx.push(ctx.bindBaseIdx + helpers.length);
+      helpers.push({
+        name: `__bind_tramp_${j}_${k}`,
+        funcTypeEntry: sigEntry,
+        typeIdx: sigIdx,
+        internal: true,
+        body: [0x00, 0x41, ...sleb(k), ...fwd, 0x10, ...uleb(j), 0x0B],
+      });
+    }
+    // slot → funcref. The `if` carries no result type and each arm returns
+    // instead: a reference type in block-type position is encoded ambiguously
+    // (valtype or type index), and returning sidesteps the question.
+    const sel: number[] = [0x00];
+    for (let k = 0; k < CALLBACK_SLOTS; k++) {
+      sel.push(
+        0x20, 0x00, 0x41, ...sleb(k), 0x46, // local.get 0; i32.const k; i32.eq
+        0x04, 0x40,                          // if
+        0xD2, ...uleb(trampIdx[k]), 0x0F,    //   ref.func tramp_k; return
+        0x0B,                                // end
+      );
+    }
+    sel.push(0x00, 0x0B); // unreachable (slot out of range); end
+    helpers.push({
+      name: `__bind_fnref_${j}`,
+      funcTypeEntry: [0x60, 0x01, 0x7F, 0x01, 0x64, ...sleb(sigIdx)],
+      body: sel,
+    });
   }
 
   return helpers;
@@ -1745,6 +1850,17 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
     entries.push(bh.funcTypeEntry);
   }
 
+  // Callback dispatcher signatures, last so nothing above shifts. A dispatcher
+  // takes the slot number ahead of the wac parameters: one import serves every
+  // host function of that signature, and the slot says which.
+  for (const sig of ctx.cbSigs) {
+    const paramBytes = sig.params.flatMap(p => encodeValType(p, ctx));
+    const isVoid = sig.ret.kind === "prim" && sig.ret.name === "void";
+    const retBytes = isVoid ? [] : encodeValType(sig.ret, ctx);
+    entries.push([0x60, ...uleb(sig.params.length + 1), 0x7F, ...paramBytes,
+      ...uleb(retBytes.length > 0 ? 1 : 0), ...retBytes]);
+  }
+
   // Wrap all types in a single rec group so they can mutually forward-reference.
   // V8 rejects forward references (e.g. struct field → later func sig) outside rec groups.
   const recGroup = [0x4E, ...uleb(entries.length), ...entries.flat()];
@@ -1755,6 +1871,34 @@ function buildTypeSectionFull(ctx: WasmTypeCtxFull): number[] {
 function helperTypeIdx(ctx: WasmTypeCtxFull, helperIdx: number): number {
   // type indices: structs + string + arrays + userSigs + helperIdx
   return ctx.result.structs.length + 1 + ctx.orderedArrayElems.length + ctx.orderedSigs.length + helperIdx;
+}
+
+// ── Import section ────────────────────────────────────────────────────────────
+
+/** Type index of the dispatcher for callback signature `j`. */
+function dispatchTypeIdx(ctx: WasmTypeCtxFull, j: number): number {
+  return helperTypeIdx(ctx, builtinHelpers(ctx.coverage !== undefined).length) +
+    ctx.bindHelpers.length + j;
+}
+
+/**
+ * One import per callback signature, or no import section at all.
+ *
+ * A module that takes no host function has no imports, so it still instantiates
+ * with nothing supplied — which is what every existing caller does, and what
+ * keeps "a wac module needs nothing from its host" true for the programs where
+ * it was true before.
+ */
+function buildImportSection(ctx: WasmTypeCtxFull): number[] {
+  if (ctx.cbSigs.length === 0) return [];
+  const enc = new TextEncoder();
+  const entries = ctx.cbSigs.map((_, j) => {
+    const mod = enc.encode("wac");
+    const field = enc.encode(`cb${j}`);
+    return [...uleb(mod.length), ...mod, ...uleb(field.length), ...field,
+      0x00, ...uleb(dispatchTypeIdx(ctx, j))];
+  });
+  return section(2, vec(entries));
 }
 
 // ── Function section ──────────────────────────────────────────────────────────
@@ -1777,7 +1921,7 @@ function buildFuncSection(ctx: WasmTypeCtxFull): number[] {
   // Add bind helper functions: their type indices follow the builtin helper sigs
   const bindBaseTypeIdx = helperTypeIdx(ctx, builtinHelpers(ctx.coverage !== undefined).length);
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
-    typeIdxEntries.push(...uleb(bindBaseTypeIdx + i));
+    typeIdxEntries.push(...uleb(ctx.bindHelpers[i].typeIdx ?? bindBaseTypeIdx + i));
   }
   const totalFuncs = ctx.result.funcs.length + builtinHelpers(ctx.coverage !== undefined).length + ctx.bindHelpers.length;
   return section(3, [...uleb(totalFuncs), ...typeIdxEntries]);
@@ -1790,7 +1934,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
   const exported = result.funcs.filter(f => f.exportName !== null && f.filePath === result.entryPath);
   const entries: number[][] = exported.map(f => {
     const nameBytes = new TextEncoder().encode(f.exportName!);
-    return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex)];
+    return [...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(f.funcIndex + ctx.funcBase)];
   });
   // Export the staging buffer so the host can write into and read out of it.
   {
@@ -1819,14 +1963,16 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         seenMethods.add(mname);
         if (fe.origin.kind === "method" && !fe.origin.decl.hasThis) continue;  // static: stage 2
         const nameBytes = new TextEncoder().encode(`__bind_m_${bindName(s.name)}_${mname}`);
-        entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex)]);
+        entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex + ctx.funcBase)]);
       }
     }
   }
 
   // Also export bind helpers so generated TS wrappers can call them
-  const bindBaseIdx = result.funcs.length + builtinHelpers(ctx.coverage !== undefined).length; // after the builtin helpers
+  const bindBaseIdx = ctx.funcBase + result.funcs.length +
+    builtinHelpers(ctx.coverage !== undefined).length; // after the builtin helpers
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
+    if (ctx.bindHelpers[i].internal) continue;
     const nameBytes = new TextEncoder().encode(ctx.bindHelpers[i].name);
     entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(bindBaseIdx + i)]);
   }
@@ -2122,11 +2268,16 @@ function constElemBytes(el: Expr, elem: WacType, ctx: WasmTypeCtxFull): number[]
 // ── Element section ───────────────────────────────────────────────────────────
 
 /** Declarative element section: declares all functions that may be used via ref.func. */
-function buildElemSection(result: ResolveResult): number[] {
-  const n = result.funcs.length;
-  if (n === 0) return [];
+function buildElemSection(ctx: WasmTypeCtxFull): number[] {
+  const idxs = ctx.result.funcs.map(f => f.funcIndex + ctx.funcBase);
+  // A callback trampoline is reached only by ref.func, so it has to be declared
+  // here as well or the selector fails validation.
+  const bindBaseIdx = ctx.funcBase + ctx.result.funcs.length +
+    builtinHelpers(ctx.coverage !== undefined).length;
+  ctx.bindHelpers.forEach((h, i) => { if (h.internal) idxs.push(bindBaseIdx + i); });
+  if (idxs.length === 0) return [];
   // flags=3: declarative, elemkind=0x00 (funcref), then func indices
-  const segment = [0x03, 0x00, ...uleb(n), ...result.funcs.flatMap(f => uleb(f.funcIndex))];
+  const segment = [0x03, 0x00, ...uleb(idxs.length), ...idxs.flatMap(uleb)];
   return section(9, vec([segment]));
 }
 
@@ -2158,11 +2309,26 @@ export type BindEnumInfo = {
   methods: BindStructInfo["methods"];
 };
 
+/**
+ * A funcref signature the host can supply a function for.
+ *
+ * `field` is the import the host must provide — a dispatcher taking a slot
+ * number ahead of the wac parameters — and `helper` is the export that turns a
+ * slot number into the funcref to pass in.
+ */
+export type BindCallbackInfo = {
+  helper: string;
+  field: string;
+  params: WacType[];
+  ret: WacType;
+  slots: number;
+};
+
 /** The bind metadata for a module, alongside the binary. */
 export function wasmBindMeta(
   result: ResolveResult,
   programs: Map<string, unknown>,
-): { structs: BindStructInfo[]; enums: BindEnumInfo[] } {
+): { structs: BindStructInfo[]; enums: BindEnumInfo[]; callbacks: BindCallbackInfo[] } {
   const ctx = buildTypeCtxFull(result, programs, false);
   const methodsOf = (root: StructEntry): BindStructInfo["methods"] => {
     const methods: BindStructInfo["methods"] = [];
@@ -2194,6 +2360,13 @@ export function wasmBindMeta(
     })),
     methods: methodsOf(en.base),
   }));
+  const callbacks: BindCallbackInfo[] = ctx.cbSigs.map((sig, j) => ({
+    helper: `__bind_fnref_${j}`,
+    field: `cb${j}`,
+    params: sig.params,
+    ret: sig.ret,
+    slots: CALLBACK_SLOTS,
+  }));
   const structs = ctx.bindStructs.map((s) => {
     return {
       bind: bindName(s.name),
@@ -2204,7 +2377,7 @@ export function wasmBindMeta(
       methods: methodsOf(s),
     };
   });
-  return { structs, enums };
+  return { structs, enums, callbacks };
 }
 
 export function wasmBuildBin(
@@ -2225,14 +2398,15 @@ export function wasmBuildBin(
   const codeSection   = buildCodeSection(ctx);
   const typeSection   = buildTypeSectionFull(ctx);
   const funcSection   = buildFuncSection(ctx);
+  const importSection = buildImportSection(ctx);
   const memorySection = buildMemorySection();
   const globalSection = buildGlobalSection(ctx);
   const exportSection = buildExportSection(result, ctx);
-  const elemSection   = buildElemSection(result);
+  const elemSection   = buildElemSection(ctx);
 
   return new Uint8Array([
     ...MAGIC, ...VERSION,
-    ...typeSection, ...funcSection, ...memorySection, ...globalSection,
+    ...typeSection, ...importSection, ...funcSection, ...memorySection, ...globalSection,
     ...exportSection, ...elemSection, ...codeSection,
   ]);
 }

@@ -3295,10 +3295,13 @@ const MIXED_SRC = `
   struct Point { f64 x; f64 y; }
   export i32 simple() { return 42; }
   export Point getOrigin() { return Point(0.0, 0.0); }
-  // Still beyond the boundary: a funcref has no JavaScript representation, and an array of arrays
-  // has no bulk form. A struct used to be in this company and is not any more.
+  // Still beyond the boundary: an array of arrays has no bulk form, and a funcref
+  // *returned* has no JavaScript representation — a host function passed *in* is a
+  // different matter and binds. A struct used to be in this company too.
   export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
   export i32 nested(i32[][] g) { return g.len(); }
+  i32 twice(i32 x) { return x * 2; }
+  export fn[i32(i32)] pick() { return twice; }
 `;
 
 /** Create an i32[] wasm GC array from a JS Int32Array using exported bind helpers. */
@@ -3564,9 +3567,13 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function simple(): number"), true, "simple() included");
   eq(ts.includes("// skipped:"), true, "skipped comment present");
-  eq(ts.includes("viaFunc"), true, "a funcref parameter is named in the skip comment");
-  eq(ts.includes("function viaFunc"), false, "and is not exported as a function");
+  eq(ts.includes("pick"), true, "a funcref return is named in the skip comment");
+  eq(ts.includes("function pick"), false, "and is not exported as a function");
   eq(ts.includes("nested"), true, "so is a nested array");
+  // A funcref *parameter* is the other direction and does bind: the host hands the
+  // function in, so it never needs a JS representation of a wasm function.
+  eq(/function viaFunc\(f: \(a0: number\) => number\)/.test(ts), true,
+    "a host function passed in is bound, not skipped");
   // A struct return used to be in this list. It is a class now.
   eq(ts.includes("function getOrigin(): Point"), true, "a struct return is bound, not skipped");
   eq(ts.includes("export class Point"), true, "and its class is generated");
@@ -3583,16 +3590,16 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
 Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound module", async () => {
   const r = wacCompile(new Map([["main.wac", `
     i32 twice(i32 x) { return x * 2; }
-    export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
     export fn[i32(i32)] pick() { return twice; }
+    export i32 grid(i32[][] g) { return g.len(); }
   `]]), "main.wac");
   if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
-  // Every export here mentions a funcref, so the module's whole surface is skipped. That produced
+  // Every export here is unbindable, so the module's whole surface is skipped. That produced
   // a file with no exports whatsoever and no indication why — the reason is a real export now.
   eq(ts.includes("__bindgenSkipped"), true, "an all-skipped module still exports the reason");
-  eq(/viaFunc\(\) — parameter 'f: fn/.test(ts), true, "and names the parameter case");
-  eq(/pick\(\) — return type 'fn/.test(ts), true, "and the return-type case");
+  eq(/pick\(\) — return type 'fn/.test(ts), true, "and names the funcref-return case");
+  eq(/grid\(\) — parameter 'g: i32\[\]\[\]'/.test(ts), true, "and the nested-array case");
 });
 
 Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to switch on", async () => {
@@ -8576,4 +8583,97 @@ Deno.test(`[§wac-grammar-keywords-h4mq7wn] grammar.md's keyword list matches KE
       `  in KEYWORDS but not documented: ${missing.join(", ") || "(none)"}\n` +
       `  documented but not a keyword:   ${extra.join(", ") || "(none)"}`);
   }
+});
+
+// ── §wac-bind-callback-7pqm4wk ────────────────────────────────────────────────
+// A host function passed in, and called from wac. The whole design is that it is
+// *passed*: the module imports a dispatcher per signature, nothing in wac can name
+// one, and a module the host never hands a function to cannot call out at all.
+
+Deno.test("[§wac-bind-callback-7pqm4wk] a host function passed in is called from wac", async () => {
+  const mod = await importBindgen(`
+    export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }
+    export i32 fold(fn[i32(i32,i32)] f, i32[] xs) {
+      i32 acc = 0;
+      for (i32 i = 0; i < xs.len(); i++) { acc = f(acc, xs[i]); }
+      return acc;
+    }
+    export void each(fn[void(i32)] f, i32 n) { for (i32 i = 0; i < n; i++) { f(i); } }
+  `) as unknown as {
+    apply(f: (x: number) => number, x: number): number;
+    fold(f: (a: number, b: number) => number, xs: number[]): number;
+    each(f: (i: number) => void, n: number): void;
+  };
+  eq(mod.apply((x) => x * 2, 21), 42, "the host function computed the answer");
+  eq(mod.fold((a, b) => a + b, [1, 2, 3, 4, 5]), 15, "called once per element, in order");
+
+  const seen: number[] = [];
+  mod.each((i) => { seen.push(i); }, 4);
+  eq(seen.join(","), "0,1,2,3", "a void callback runs for its effect");
+
+  // Re-entrancy: the host function calls back into the module while wac is on the stack.
+  eq(mod.apply((x) => mod.apply((y) => y * 3, x), 5), 15, "the callback may call back in");
+});
+
+Deno.test("[§wac-bind-callback-7pqm4wk] each function gets its own identity, and the pool is finite", async () => {
+  const mod = await importBindgen(`
+    export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }
+  `) as unknown as { apply(f: (x: number) => number, x: number): number };
+
+  // Two functions of one signature are two functions. A JS closure is not a wasm
+  // function, so each one needs a distinct wasm function to stand for it — getting
+  // that wrong would silently route one to the other.
+  const inc = (x: number) => x + 1;
+  const ten = (x: number) => x * 10;
+  eq(mod.apply(inc, 1), 2, "the first");
+  eq(mod.apply(ten, 1), 10, "and the second, not the first again");
+
+  // Registering by identity: the same function passed a hundred times costs one slot,
+  // so an ordinary loop does not exhaust the pool.
+  for (let i = 0; i < 100; i++) eq(mod.apply(inc, i), i + 1, "reuse stays correct");
+
+  // And when it genuinely runs out, it says so rather than reusing a slot.
+  let msg = "";
+  try {
+    for (let i = 0; i < 40; i++) mod.apply((x) => x + i, 0);
+  } catch (e) { msg = (e as Error).message; }
+  eq(/at most 16 distinct fn\[i32\(i32\)\] functions/.test(msg), true, `clear limit, got: ${msg}`);
+});
+
+Deno.test("[§wac-bind-callback-7pqm4wk] a module can only call out through what it was handed", () => {
+  // The no-ambient-access property, asserted on the binary rather than described.
+  const plain = wacCompile(new Map([["m.wac", `export i32 f(i32 x) { return x + 1; }`]]), "m.wac");
+  if (!plain.ok) throw new Error(plain.diagnostics.map((e) => e.message).join("; "));
+  const plainMod = new WebAssembly.Module(plain.compiled.wasm as BufferSource);
+  eq(WebAssembly.Module.imports(plainMod).length, 0,
+    "a module that takes no function imports nothing at all");
+  eq(plain.compiled.callbacks.length, 0, "and declares no callback");
+
+  const cb = wacCompile(new Map([["m.wac", `
+    export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }
+    export i32 also(fn[i32(i32)] g) { return g(2); }
+  `]]), "m.wac");
+  if (!cb.ok) throw new Error(cb.diagnostics.map((e) => e.message).join("; "));
+  const imports = WebAssembly.Module.imports(
+    new WebAssembly.Module(cb.compiled.wasm as BufferSource),
+  );
+  eq(imports.length, 1, "one import per *signature*, not per parameter");
+  eq(imports[0].module, "wac", "under the module's own name");
+  eq(imports[0].kind, "function", "and it is the dispatcher");
+  eq(cb.compiled.callbacks[0].type, "fn[i32(i32)]", "the signature is reported to the host");
+
+  // The import is not reachable from wac: there is no import syntax in the language, so
+  // the dispatcher has no name a program could call. What a program can call is the
+  // funcref it was given, for as long as it holds it.
+  eq(cb.compiled.exports.some((e) => e.name === cb.compiled.callbacks[0].helper), false,
+    "the funcref helper is not a wac export — it is bind surface");
+});
+
+Deno.test("[§wac-bind-callback-7pqm4wk] wacInstance takes a host function too", async () => {
+  const r = wacCompile(new Map([["m.wac", `
+    export i32 apply(fn[i32(i32)] f, i32 x) { return f(x); }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const inst = await wacInstance(r.compiled);
+  eq(inst.call("apply", [(x: number) => x * 3, 14]), 42, "the untyped surface passes one as well");
 });
