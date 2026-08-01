@@ -55,6 +55,14 @@ export f64 run() {
 
 An export may take a JavaScript function — `export i32 fold(fn[i32(i32,i32)] f, i32[] xs)` is called as `fold((a, b) => a + b, [1, 2, 3])`. Passing it is the only way a host function becomes reachable: wac has no import syntax, so a module that takes no `fn[…]` parameter has no wasm imports at all and cannot call out. What a module can reach is what you hand it.
 
+Arrays of references (`string[]`, arrays of structs, nested arrays), nullable primitives (`number | null`), static methods, and functions returned from wac all cross too — enough that `std`'s generic `Map` can be built and driven entirely from JavaScript:
+
+```ts
+const m = Map_i32_i32.create((k) => hash(k), (a, b) => a === b);
+m.set(1, 99);
+m.get(1).toObject();     // { tag: "Some", v: 99 }
+```
+
 ## Development
 
 ```sh
