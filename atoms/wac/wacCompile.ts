@@ -22,7 +22,18 @@ import type { WacType } from "./wacParse.ts";
  * are larger and slower, so this is off by default and should never be what
  * ships. With it off the output is byte-for-byte what it was before.
  */
-export type WacCompileOptions = { coverage?: boolean };
+export type WacCompileOptions = {
+  coverage?: boolean;
+  /**
+   * TEMPORARY — trap on integer overflow in user-written add/sub/mul.
+   *
+   * A measurement instrument for the checked-arithmetic decision: it answers which
+   * code depends on wrapping, and what checking costs when nothing has opted out.
+   * Delete it with the experiment; the shipped feature must not be a build-mode
+   * switch.
+   */
+  checked?: boolean;
+};
 
 export type WacParam    = { name: string; type: string };
 export type WacExport   = { name: string; params: WacParam[]; ret: string };
@@ -226,7 +237,7 @@ export function wacCompile(
 
   // Phase 5: emit wasm binary (cannot fail after successful typecheck)
   const coverage = options.coverage ? { points: [], file: entry } : undefined;
-  const wasm = wasmBuildBin(resolveResult, programs, { coverage });
+  const wasm = wasmBuildBin(resolveResult, programs, { coverage, checked: options.checked });
   const exports = extractExports(resolveResult);
   const meta = wasmBindMeta(resolveResult, programs);
   const enums: WacEnum[] = meta.enums.map((e) => ({
