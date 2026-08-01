@@ -8957,3 +8957,35 @@ Deno.test("[§wac-hex-width-3nkq7wm] a hex literal is read at the width it is re
     eq(String(inst.call(fn, args as never[])), want, `${fn}(${args.join(",")})`);
   }
 });
+
+Deno.test("[§wac-bind-callback-7pqm4wk] a callback's own types get their helpers", async () => {
+  // Issue 0055. A callback crosses in the *opposite* direction to an export: the host
+  // produces the return value and consumes the parameters. So `fn[u8[]()]` needs the
+  // to-wasm helper for its return, where an export returning `u8[]` needs from-wasm.
+  // Reading the direction off the export alone emitted neither, and the dispatcher
+  // called a function that did not exist — throwing on first use, with nothing in the
+  // skip list to suggest the export was anything but supported.
+  const mod = await importBindgen(`
+    export struct P { i32 x; P of(i32 x) { return P(x); } }
+    export i32 fromArr(fn[u8[]()] read)      { return read().len(); }
+    export i32 toArr(fn[i32(i32[])] sum)     { return sum(i32[2](fill: 3)); }
+    export i32 fromStr(fn[string()] read)    { return read().len(); }
+    export i32 toStr(fn[i32(string)] f)      { return f("abcd"); }
+    export i32 fromStruct(fn[P()] mk)        { return mk().x; }
+    export i32 toStruct(fn[i32(P)] f)        { return f(P(7)); }
+  `) as unknown as {
+    P: { of(x: number): { x: number } };
+    fromArr(read: () => Uint8Array): number;
+    toArr(sum: (xs: Int32Array) => number): number;
+    fromStr(read: () => string): number;
+    toStr(f: (s: string) => number): number;
+    fromStruct(mk: () => { x: number }): number;
+    toStruct(f: (p: { x: number }) => number): number;
+  };
+  eq(mod.fromArr(() => new Uint8Array([1, 2, 3])), 3, "an array the host produced");
+  eq(mod.toArr((xs) => xs.reduce((a, b) => a + b, 0)), 6, "and one it consumed");
+  eq(mod.fromStr(() => "héllo"), 6, "a string out of the host, in bytes");
+  eq(mod.toStr((s) => s.length), 4, "and into it");
+  eq(mod.fromStruct(() => mod.P.of(42)), 42, "a struct the host built");
+  eq(mod.toStruct((p) => p.x), 7, "and one it was handed");
+});

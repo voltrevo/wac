@@ -719,13 +719,25 @@ export function wacBindgen(compiled: WacCompiled): string {
   // Without this the generated file called helpers it had not emitted.
   const arrayElems = (compiled.arrays ?? []).map((a) => a.elem);
   allTypes.push(...arrayElems);
+  // A callback's types cross too, and in the *opposite* direction to an export's: the
+  // host produces the callback's return value and consumes its parameters. So a
+  // `fn[u8[]()]` needs the to-wasm helper for its return and a `fn[i32(i32[])]` needs
+  // the from-wasm helper for its parameter — the reverse of what an export with those
+  // types would need. Missing them, the dispatcher called a function that was never
+  // emitted and threw on first use, with nothing in the skip list [issue 0055].
+  const cbTypes = [...(compiled.callbacks ?? []), ...(compiled.funcrefs ?? [])];
+  const cbProduced = cbTypes.map((c) => c.ret);                    // host → wasm
+  const cbConsumed = cbTypes.flatMap((c) => c.params);             // wasm → host
+  allTypes.push(...cbProduced, ...cbConsumed);
   const needsString = allTypes.some(t => t === "string");
   // Copy-in helpers for array params, copy-out helpers only for array returns
   const paramArrayTypes = new Set(
-    [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes, ...arrayElems]
+    [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes, ...arrayElems,
+     ...cbProduced]
       .filter(t => ARRAY_MAP[t]));
   const retArrayTypes = new Set(
-    [...compiled.exports.map(e => e.ret), ...structTypes, ...arrayElems].filter(t => ARRAY_MAP[t]));
+    [...compiled.exports.map(e => e.ret), ...structTypes, ...arrayElems, ...cbConsumed]
+      .filter(t => ARRAY_MAP[t]));
 
   const parts: string[] = [];
 

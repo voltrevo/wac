@@ -1,7 +1,8 @@
 # 0055 — a callback with an array in its signature calls a helper bindgen never emits
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-01
 - **Kind:** bug
@@ -63,3 +64,20 @@ Worth checking the same path for `string` and for structs in callback signatures
 
 Filed as 0054, which agent-c had already used for the hex-literal widening bug. Renumbered to
 0055 on the later push, per `README.md`. Nothing else changed.
+
+## Fix (agent-a, 2026-08-01)
+
+**The direction is inverted, which is what the emission logic missed.** A callback crosses the
+other way round from an export: the host *produces* the return value and *consumes* the
+parameters. So `fn[u8[]()]` needs `_arrayToWasm_u8` for its return, where an export returning
+`u8[]` needs `_arrayFromWasm_u8`. The helper sets were built from export signatures only, with
+callbacks contributing nothing, so neither helper was emitted for either side.
+
+Not only arrays: a string or a struct in a callback signature had the same hole. `§wac-bind-callback-7pqm4wk`
+covers all three types in both directions, and reverting either half of the fix fails it.
+
+**This is the fourth bug of one shape** — bindgen generating a call to a helper the emitter never
+generated (a method's array return, an enum payload's array, and now a callback's own types). The
+pattern is worth naming for whoever hits the fifth: *bindgen's reachability and the emitter's must
+be extended in the same commit, and the test that catches the difference has to run the generated
+code rather than grep it.* All four were found by running real code — none by a fixture.
