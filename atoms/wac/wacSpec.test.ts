@@ -3569,7 +3569,7 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
   eq(ts.includes("// skipped:"), true, "skipped comment present");
   eq(ts.includes("pick"), true, "a funcref return is named in the skip comment");
   eq(ts.includes("function pick"), false, "and is not exported as a function");
-  eq(ts.includes("nested"), true, "so is a nested array");
+  eq(/function nested\(g: Int32Array\[\]\)/.test(ts), true, "a nested array binds now too");
   // A funcref *parameter* is the other direction and does bind: the host hands the
   // function in, so it never needs a JS representation of a wasm function.
   eq(/function viaFunc\(f: \(a0: number\) => number\)/.test(ts), true,
@@ -3591,7 +3591,8 @@ Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound m
   const r = wacCompile(new Map([["main.wac", `
     i32 twice(i32 x) { return x * 2; }
     export fn[i32(i32)] pick() { return twice; }
-    export i32 grid(i32[][] g) { return g.len(); }
+    struct Opaque { fn[i32(i32)] f; }
+    export Opaque wrap(fn[i32(i32)] f) { return Opaque(f); }
   `]]), "main.wac");
   if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
@@ -3599,7 +3600,9 @@ Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound m
   // a file with no exports whatsoever and no indication why — the reason is a real export now.
   eq(ts.includes("__bindgenSkipped"), true, "an all-skipped module still exports the reason");
   eq(/pick\(\) — return type 'fn/.test(ts), true, "and names the funcref-return case");
-  eq(/grid\(\) — parameter 'g: i32\[\]\[\]'/.test(ts), true, "and the nested-array case");
+  // `wrap` binds — Opaque is a class — but its funcref field has no accessor, so the
+  // class is the empty shell that proves reachability stopped where it should.
+  eq(ts.includes("get f"), false, "a funcref field is still not readable");
 });
 
 Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to switch on", async () => {
@@ -3658,26 +3661,32 @@ Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to sw
   eq(threw, true, "a wrong-variant read throws rather than returning nonsense");
 });
 
-Deno.test("[§wac-bind-struct-5kqn2wj] only what the boundary can carry is followed", async () => {
-  // Reachability stops at a field the boundary cannot express. Running this over `json` showed why:
-  // `Map`'s `slots` is an array of nullable structs, which nothing binds yet, and following it
-  // anyway pulled `MapEntry` — a type `std` never exported — into the generated file as a class
-  // nobody could use. A container's contents reach JavaScript through its *methods*, which do bind.
+Deno.test("[§wac-bind-struct-5kqn2wj] only what the boundary can carry is followed", () => {
+  // Reachability stops at a field the boundary cannot express — a funcref, which has no
+  // JavaScript representation coming *out*. Following it anyway would put a type nothing
+  // can use into the generated file as a class nobody can call.
+  //
+  // An array of structs used to be in this company. It binds now, so a private type does
+  // reach the surface when a public struct holds an array of it; the alternative is a
+  // field that cannot be read at all, and comprehensiveness won that trade.
   const r = wacCompile(new Map([["m.wac", `
     struct Hidden { i32 secret; }
+    struct Unreachable { i32 v; }
     export struct Holder {
       Hidden?[] slots;
+      fn[i32(Unreachable)] callback;
       i32 n;
       i32 count(const this) { return this.n; }
     }
-    export Holder make() { return Holder(Hidden?[2](), 0); }
+    export Holder make(fn[i32(Unreachable)] f) { return Holder(Hidden?[2](), f, 0); }
   `]]), "m.wac");
   if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("export class Holder"), true, "the exported struct is bound");
-  eq(ts.includes("count()"), true, "and its method, which is how the contents are reached");
-  eq(ts.includes("class Hidden"), false, "a type reachable only through an unbindable field is not");
-  eq(ts.includes("get slots"), false, "and the field it hides behind has no accessor");
+  eq(ts.includes("count()"), true, "and its method");
+  eq(ts.includes("class Hidden"), true, "a struct reached through an array field binds now");
+  eq(ts.includes("get slots"), true, "and the field itself is readable");
+  eq(ts.includes("get callback"), false, "a funcref field still has no accessor");
 });
 
 Deno.test("[§wac-bind-enum-3nqk7vm] a generic enum binds under its written name", async () => {
@@ -8676,4 +8685,66 @@ Deno.test("[§wac-bind-callback-7pqm4wk] wacInstance takes a host function too",
   if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
   const inst = await wacInstance(r.compiled);
   eq(inst.call("apply", [(x: number) => x * 3, 14]), 42, "the untyped surface passes one as well");
+});
+
+// ── §wac-bind-arr-ref-4jkq8wn ─────────────────────────────────────────────────
+// An array whose element is a reference: `string[]`, an array of structs, and a
+// nested array are all the same mechanism — per-element accessors, because none
+// of them has a memory representation to copy in bulk.
+
+Deno.test("[§wac-bind-arr-ref-4jkq8wn] arrays of references cross both ways", async () => {
+  const mod = await importBindgen(`
+    export struct P {
+      i32 x;
+      i32 get(const this) { return this.x; }
+    }
+    export P one(i32 x) { return P(x); }
+    export i32 sumOf(P[] ps) {
+      i32 t = 0;
+      for (i32 i = 0; i < ps.len(); i++) { t = t + ps[i].x; }
+      return t;
+    }
+    export P[] mk(i32 n) { return P[n](fill: P(7)); }
+    export i32 deep(i32[][] g) {
+      i32 t = 0;
+      for (i32 i = 0; i < g.len(); i++) { t = t + g[i].len(); }
+      return t;
+    }
+    export string[] names() { return string[2](fill: "hi"); }
+    export i32 totalLen(string[] xs) {
+      i32 t = 0;
+      for (i32 i = 0; i < xs.len(); i++) { t = t + xs[i].len(); }
+      return t;
+    }
+  `) as unknown as {
+    one(x: number): { x: number };
+    sumOf(ps: { x: number }[]): number;
+    mk(n: number): { x: number }[];
+    deep(g: Int32Array[]): number;
+    names(): string[];
+    totalLen(xs: string[]): number;
+  };
+
+  eq(mod.sumOf([mod.one(1), mod.one(2), mod.one(39)]), 42, "an array of structs goes in");
+  eq(mod.mk(3).map((p) => p.x).join(","), "7,7,7", "and comes back as wrapped classes");
+  eq(mod.sumOf([]), 0, "an empty one crosses too — array.new has no value to repeat, " +
+    "so it is built by array.new_fixed with no elements");
+  eq(mod.deep([new Int32Array([1, 2]), new Int32Array([3])]), 3, "a nested array nests");
+  eq(mod.names().join(","), "hi,hi", "a string array decodes each element");
+  eq(mod.totalLen(["ab", "cde"]), 5, "and encodes each one going in");
+});
+
+Deno.test("[§wac-bind-arr-ref-4jkq8wn] a method returning an array has the helpers it calls", async () => {
+  // The helpers were emitted for arrays in an exported *function* signature only, while
+  // bindgen wrote JS for arrays in struct fields and method signatures as well. The
+  // generated file called `__bind_arr_i32_len`, which the module did not export, and
+  // `buf.data()` failed at the call rather than at build time.
+  const mod = await importBindgen(`
+    export struct Buf {
+      i32 n;
+      i32[] data(const this) { return i32[3](fill: this.n); }
+    }
+    export Buf buf(i32 n) { return Buf(n); }
+  `) as unknown as { buf(n: number): { data(): Int32Array } };
+  eq([...mod.buf(5).data()].join(","), "5,5,5", "the method's array return works");
 });
