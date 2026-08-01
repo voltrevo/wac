@@ -97,6 +97,22 @@ let arraysByWac: Map<string, WacArray> = new Map();
  * class arrives missing the one accessor it was wanted for and nothing says why.
  */
 let skippedMembers: string[] = [];
+/**
+ * Primitives with a boxed nullable form in this module.
+ *
+ * `i32?` is a one-field struct wasm-side, so it arrives as a reference the host can
+ * do nothing with unless it reads the box. With the accessors it is `number | null`,
+ * which is what a JavaScript caller means by a nullable number.
+ */
+let boxedPrims: Set<string> = new Set();
+/**
+ * Funcref signatures handed back, by the type as written.
+ *
+ * JavaScript cannot call a wasm function reference. It can call an export that does
+ * the `call_ref` for it, so a returned funcref arrives as a closure holding the
+ * reference — the mirror of a host function going the other way.
+ */
+let outFuncrefsByType: Map<string, WacCallback & { index: number }> = new Map();
 
 /**
  * The TypeScript class name for a struct or enum — `Vec<i32>` becomes `Vec_i32`.
@@ -121,6 +137,10 @@ function tsType(wacType: string): string | null {
     const elem = tsType(arr.elem);
     return elem === null ? null : `${elem}[]`;
   }
+  const boxed = boxedPrim(wacType);
+  if (boxed) return `${PRIM_MAP[boxed]} | null`;
+  const out = outFuncrefsByType.get(wacType);
+  if (out) return cbTsType(out);
   // A struct or an enum crosses as an opaque reference wrapped in a generated class, and a nullable
   // one as that class or null — which is what JavaScript already means by an absent object.
   const named = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
@@ -130,6 +150,13 @@ function tsType(wacType: string): string | null {
     if (inner) return `${className(inner)} | null`;
   }
   return null; // unsupported
+}
+
+/** The primitive a `P?` boxes, if this type is one the module boxes. */
+function boxedPrim(wacType: string): string | null {
+  if (!wacType.endsWith("?")) return null;
+  const inner = wacType.slice(0, -1);
+  return boxedPrims.has(inner) && PRIM_MAP[inner] ? inner : null;
 }
 
 /**
@@ -336,7 +363,15 @@ function genStructClass(s: WacStruct): string {
   }
 
   for (const m of s.methods) {
-    const badParam = m.params.find((p) => tsType(p.type) === null && !callbacksByType.has(p.type));
+    // A funcref parameter is carried only when there is a dispatcher for it *and*
+    // its own signature can be expressed — a callback that itself takes a function
+    // has a dispatcher and no TypeScript type, and asserting past that produced a
+    // member with `undefined` where its type should be.
+    const badParam = m.params.find((p) => {
+      const cb = callbacksByType.get(p.type);
+      if (cb) return cbTsType(cb) === null;
+      return p.type.startsWith("fn[") || tsType(p.type) === null;
+    });
     if (badParam) {
       skippedMembers.push(
         `${cls}.${m.name}() — parameter '${badParam.name}: ${badParam.type}' not yet supported in bindgen`,
@@ -387,6 +422,10 @@ function toWasm(wacType: string, expr: string): string {
   if (ARRAY_MAP[wacType]) return `_arrayToWasm_${wacType.replace("[]", "")}(${expr})`;
   const arr = arraysByWac.get(wacType);
   if (arr) return `_arrayToWasm_${arr.suffix}(${expr})`;
+  const box = boxedPrim(wacType);
+  if (box) {
+    return `(${expr} === null ? null : (_exports.__bind_opt_${box}_new as CallableFunction)(${expr}))`;
+  }
   const st = structOf(wacType);
   if (st) return st.nullable ? `(${expr} === null ? null : ${expr}.ref)` : `${expr}.ref`;
   return expr;
@@ -398,6 +437,18 @@ function fromWasm(wacType: string, expr: string): string {
   if (ARRAY_MAP[wacType]) return `_arrayFromWasm_${wacType.replace("[]", "")}(${expr})`;
   const arr = arraysByWac.get(wacType);
   if (arr) return `_arrayFromWasm_${arr.suffix}(${expr})`;
+  const box = boxedPrim(wacType);
+  if (box) {
+    return `((_b) => _b === null || _b === undefined ? null : ` +
+      `${fromWasm(box, `(_exports.__bind_opt_${box}_get as CallableFunction)(_b)`)})(${expr})`;
+  }
+  const out = outFuncrefsByType.get(wacType);
+  if (out) {
+    const args = out.params.map((_, i) => `a${i}`).join(", ");
+    const call = `(_exports.${out.helper} as CallableFunction)(_f${args ? ", " + args : ""})`;
+    const body = out.ret === "void" ? `{ ${call}; }` : fromWasm(out.ret, call);
+    return `((_f) => (${args}) => ${body})(${expr})`;
+  }
   const st = structOf(wacType);
   if (st) {
     const cls = className(st.s);
@@ -526,6 +577,11 @@ function genWrapper(exp: WacExport): WrapperResult {
   // Check all types are supported
   for (const p of exp.params) {
     const cb = callbacksByType.get(p.type);
+    if (p.type.startsWith("fn[") && !cb) {
+      // Callable coming out, not going in: there is no dispatcher for this one, so
+      // passing a host function would reach the engine as a raw JS value.
+      return { skip: true, reason: `${exp.name}() — parameter '${p.name}: ${p.type}' not yet supported in bindgen` };
+    }
     if (cb) {
       if (cbTsType(cb) === null) {
         return { skip: true, reason: `${exp.name}() — parameter '${p.name}: ${p.type}' not yet supported in bindgen` };
@@ -582,7 +638,10 @@ function genWrapper(exp: WacExport): WrapperResult {
     const elemBase = exp.ret.replace("[]", "");
     lines.push(`  const _result = ${callExpr};`);
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
-  } else if (structOf(exp.ret) || arraysByWac.has(exp.ret)) {
+  } else if (
+    structOf(exp.ret) || arraysByWac.has(exp.ret) || boxedPrim(exp.ret) ||
+    outFuncrefsByType.has(exp.ret)
+  ) {
     lines.push(`  return ${fromWasm(exp.ret, callExpr)};`);
   } else if (exp.ret === "u64") {
     // wac's u64 is wasm's i64, which is right — signedness lives in the instruction, not the
@@ -629,6 +688,10 @@ export function wacBindgen(compiled: WacCompiled): string {
   );
   // Only the reference-element ones: a primitive array keeps its bulk path below,
   // which is one copy rather than a call per element.
+  boxedPrims = new Set(compiled.boxed ?? []);
+  outFuncrefsByType = new Map(
+    (compiled.funcrefs ?? []).map((c, i) => [c.type, { ...c, index: i }]),
+  );
   arraysByWac = new Map(
     (compiled.arrays ?? []).filter((a) => !ARRAY_MAP[a.type]).map((a) => [a.type, a]),
   );

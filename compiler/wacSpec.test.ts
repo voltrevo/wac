@@ -3295,13 +3295,14 @@ const MIXED_SRC = `
   struct Point { f64 x; f64 y; }
   export i32 simple() { return 42; }
   export Point getOrigin() { return Point(0.0, 0.0); }
-  // Still beyond the boundary: an array of arrays has no bulk form, and a funcref
-  // *returned* has no JavaScript representation — a host function passed *in* is a
-  // different matter and binds. A struct used to be in this company too.
+  // Still beyond the boundary: a *higher-order* funcref, whose own parameter is a
+  // function. Structs, nested arrays and funcrefs in both directions used to be in
+  // this company and are not any more.
   export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
   export i32 nested(i32[][] g) { return g.len(); }
   i32 twice(i32 x) { return x * 2; }
   export fn[i32(i32)] pick() { return twice; }
+  export i32 manyFns(fn[i32(i32)][] fs) { return fs.len(); }
 `;
 
 /** Create an i32[] wasm GC array from a JS Int32Array using exported bind helpers. */
@@ -3567,9 +3568,10 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function simple(): number"), true, "simple() included");
   eq(ts.includes("// skipped:"), true, "skipped comment present");
-  eq(ts.includes("pick"), true, "a funcref return is named in the skip comment");
-  eq(ts.includes("function pick"), false, "and is not exported as a function");
-  eq(/function nested\(g: Int32Array\[\]\)/.test(ts), true, "a nested array binds now too");
+  eq(ts.includes("manyFns"), true, "an array of functions is named in the skip comment");
+  eq(ts.includes("function manyFns"), false, "and is not exported as a function");
+  eq(/function pick\(\): \(a0: number\) => number/.test(ts), true,
+    "a funcref return binds as a closure over a call_ref helper");
   // A funcref *parameter* is the other direction and does bind: the host hands the
   // function in, so it never needs a JS representation of a wasm function.
   eq(/function viaFunc\(f: \(a0: number\) => number\)/.test(ts), true,
@@ -3589,20 +3591,18 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
 
 Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound module", async () => {
   const r = wacCompile(new Map([["main.wac", `
-    i32 twice(i32 x) { return x * 2; }
-    export fn[i32(i32)] pick() { return twice; }
-    struct Opaque { fn[i32(i32)] f; }
-    export Opaque wrap(fn[i32(i32)] f) { return Opaque(f); }
+    export i32 many(fn[i32(i32)][] fs) { return fs.len(); }
+    export i32 maybeFn(fn[i32(i32)]? f) { return 0; }
   `]]), "main.wac");
   if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
   // Every export here is unbindable, so the module's whole surface is skipped. That produced
   // a file with no exports whatsoever and no indication why — the reason is a real export now.
   eq(ts.includes("__bindgenSkipped"), true, "an all-skipped module still exports the reason");
-  eq(/pick\(\) — return type 'fn/.test(ts), true, "and names the funcref-return case");
-  // `wrap` binds — Opaque is a class — but its funcref field has no accessor, so the
-  // class is the empty shell that proves reachability stopped where it should.
-  eq(ts.includes("get f"), false, "a funcref field is still not readable");
+  eq(/maybeFn\(\) — parameter 'f: fn\[i32\(i32\)\]\?'/.test(ts), true,
+    "and names the nullable-funcref case");
+  eq(/many\(\) — parameter 'fs: fn\[i32\(i32\)\]\[\]'/.test(ts), true,
+    "and an array of functions, which has no element conversion");
 });
 
 Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to switch on", async () => {
@@ -8776,10 +8776,9 @@ Deno.test("[§wac-bind-static-6wnq3kv] a struct is built by its own static, call
 
 Deno.test("[§wac-bind-static-6wnq3kv] a member the boundary cannot carry says so", async () => {
   const r = wacCompile(new Map([["m.wac", `
-    i32 twice(i32 x) { return x * 2; }
     export struct Holder {
       i32 n;
-      fn[i32(i32)] pick(const this) { return twice; }
+      i32 pick(const this, fn[i32(i32)][] fs) { return this.n; }
     }
   `]]), "m.wac");
   if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
@@ -8787,6 +8786,77 @@ Deno.test("[§wac-bind-static-6wnq3kv] a member the boundary cannot carry says s
   // A method used to be dropped in silence — the same failure the export skip list
   // exists to prevent, one level down. The class arrives missing the accessor it was
   // wanted for, and nothing says why.
-  eq(/Holder\.pick\(\) — return type 'fn\[i32\(i32\)\]'/.test(ts), true,
+  eq(/Holder\.pick\(\) — parameter 'fs: fn\[i32\(i32\)\]\[\]'/.test(ts), true,
     "the dropped method is named in the skip list");
+});
+
+// ── §wac-bind-opt-prim-8mkq5wn ────────────────────────────────────────────────
+
+Deno.test("[§wac-bind-opt-prim-8mkq5wn] a nullable primitive crosses as `T | null`", async () => {
+  const mod = await importBindgen(`
+    export i32? maybe(i32 x) { return x > 0 ? x : null; }
+    export i32 readOpt(i32? x) { return x is null ? -1 : x!; }
+    export i64? big(bool yes) { return yes ? 9007199254740993 : null; }
+    export bool? flag(i32 x) { return x == 0 ? null : x > 0; }
+  `) as unknown as {
+    maybe(x: number): number | null;
+    readOpt(x: number | null): number;
+    big(yes: boolean): bigint | null;
+    flag(x: number): boolean | null;
+  };
+  eq(mod.maybe(5), 5, "a present value is the value");
+  eq(mod.maybe(-1), null, "and an absent one is null, not an opaque reference");
+  eq(mod.readOpt(null), -1, "null goes back in");
+  // The box exists because ref.i31 held 31 bits: this value came back as -147483648.
+  eq(mod.readOpt(2000000000), 2000000000, "and all 32 bits survive the round trip");
+  eq(mod.big(true), 9007199254740993n, "i64 keeps its bigint");
+  eq(mod.flag(-1), false, "and bool its boolean");
+});
+
+// ── §wac-bind-fnref-out-2pkq9wm ───────────────────────────────────────────────
+
+Deno.test("[§wac-bind-fnref-out-2pkq9wm] a returned function arrives callable", async () => {
+  const mod = await importBindgen(`
+    i32 twice(i32 x) { return x * 2; }
+    i32 negate(i32 x) { return 0 - x; }
+    export fn[i32(i32)] pick(bool t) { return t ? twice : negate; }
+    export struct Ops {
+      i32 tag;
+      Ops of(i32 tag) { return Ops(tag); }
+      fn[i32(i32)] chosen(const this) { return this.tag == 0 ? twice : negate; }
+    }
+    export i32 higher(fn[i32(fn[i32(i32)])] f) { return f(twice); }
+  `) as unknown as {
+    pick(t: boolean): (x: number) => number;
+    Ops: { of(tag: number): { chosen(): (x: number) => number } };
+    higher(f: (g: (x: number) => number) => number): number;
+  };
+  // JavaScript cannot call a wasm function reference, so it arrives as a closure
+  // over an export that does the call_ref — the mirror of a host function going in.
+  eq(mod.pick(true)(21), 42, "the wac function is callable");
+  eq(mod.pick(false)(21), -21, "and it is the one that was chosen");
+  eq(mod.Ops.of(1).chosen()(21), -21, "a method returns one too");
+  // Both directions compose: wac calls a host function, handing it a wac function.
+  // This works whether or not some other export happens to return that signature.
+  eq(mod.higher((g) => g(21)), 42, "a host function receives a wac function and calls it");
+});
+
+Deno.test("[§wac-bind-static-6wnq3kv] a type reached only through a method binds", async () => {
+  // `Map.get` returns `Option<V>`, which no field and no exported function mentions.
+  // Following only fields left the one accessor a map exists for missing from its
+  // class, with the enum unbound and the method silently dropped.
+  const mod = await importBindgen(`
+    enum Found { Yes(i32 v), No }
+    export struct Table {
+      i32 v;
+      Table of(i32 v) { return Table(v); }
+      Found lookup(const this, i32 k) { return k == 0 ? Found.Yes(this.v) : Found.No; }
+    }
+  `) as unknown as {
+    Table: { of(v: number): { lookup(k: number): { tag: string; toObject(): unknown } } };
+  };
+  const t = mod.Table.of(42);
+  eq(t.lookup(0).tag, "Yes", "the method is bound and its enum with it");
+  eq(JSON.stringify(t.lookup(0).toObject()), '{"tag":"Yes","v":42}', "payload and all");
+  eq(t.lookup(1).tag, "No", "and the other variant");
 });

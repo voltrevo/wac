@@ -59,6 +59,8 @@ export type WasmTypeCtx = {
   funcBase: number;
   /** Funcref signatures the host can supply a function for, in import order. */
   cbSigs: { key: string; params: WacType[]; ret: WacType }[];
+  /** Funcref signatures handed back to the host, in helper order. */
+  outSigs: { key: string; params: WacType[]; ret: WacType }[];
   /**
    * The file whose function is being emitted.
    *

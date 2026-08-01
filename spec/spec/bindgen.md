@@ -176,11 +176,33 @@ told it is public. A bound struct's *method signatures* are followed too — `Ma
 A member the boundary cannot carry is named in `__bindgenSkipped` like a skipped export, rather than
 dropped in silence.
 
+### Nullable primitives
+
+`i32?` crosses as `number | null`. `[§wac-bind-opt-prim-8mkq5wn]` It is a one-field struct wasm-side —
+a box, so that a nullable i32 keeps all 32 bits rather than the 31 a `ref.i31` holds — and the host
+reads and writes it through accessors rather than receiving a reference it can do nothing with.
+
+### Functions handed back
+
+A funcref *returned* from an export or a method arrives as an ordinary JavaScript function.
+`[§wac-bind-fnref-out-2pkq9wm]` JavaScript cannot call a wasm function reference, but it can call an
+export that does the `call_ref`, so the value is a closure holding the reference — the mirror of a
+host function going the other way.
+
+```ts
+pick(true)(21);              // 42
+Ops.of(1).chosen()(21);      // a method returns one too
+higher((g) => g(21));        // wac hands a wac function *to* a host function
+```
+
+The two directions compose: a host function may receive a wac function as an argument and call it.
+That holds whether or not any export happens to return that signature, because a function inside a
+callback's signature gets a helper too.
+
 ### Not yet supported in bindgen
 
-- Function references *returned* from an export — JavaScript cannot call a wasm function reference,
-  so there is nothing to hand back. Passing one *in* is supported, above.
-- Nullable primitives (`i32?`)
+- Arrays of functions (`fn[i32(i32)][]`) and nullable functions (`fn[i32(i32)]?`) — the element and
+  null cases have no conversion yet.
 
 Functions using unsupported types in their signature are omitted from the
 generated file with a comment explaining why, and the reasons are exported as

@@ -108,6 +108,17 @@ export type WacCompiled = {
   /** Array types the boundary can carry, including arrays of references. */
   arrays: WacArray[];
   /**
+   * Primitives with a boxed nullable form in this module, e.g. `["i32"]` when the
+   * program mentions `i32?`. A boxed value crosses as `number | null`.
+   */
+  boxed: string[];
+  /**
+   * Funcref signatures handed back to the host, each with the export that calls
+   * one. A returned wasm function reference is not callable from JavaScript, so it
+   * arrives as a closure over that helper.
+   */
+  funcrefs: WacCallback[];
+  /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
    * what turns counts into per-file, per-line coverage.
@@ -260,9 +271,20 @@ export function wacCompile(
     suffix: a.suffix,
     fill: a.fill,
   }));
+  const funcrefs: WacCallback[] = meta.funcrefs.map((c) => ({
+    helper: c.helper,
+    field: c.field,
+    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }),
+    params: c.params.map(typeStr),
+    ret: typeStr(c.ret),
+    slots: c.slots,
+  }));
   return {
     ok: true,
-    compiled: { wasm, exports, structs, enums, callbacks, arrays, coverage: coverage?.points },
+    compiled: {
+      wasm, exports, structs, enums, callbacks, arrays,
+      boxed: meta.boxed, funcrefs, coverage: coverage?.points,
+    },
     diagnostics,
   };
 }
