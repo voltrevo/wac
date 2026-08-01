@@ -51,7 +51,9 @@ export f64 run() {
 
 ## TypeScript bindgen
 
-`wacBindgen` produces a self-contained `.ts` file with the wasm binary base64-encoded inline and typed wrapper functions. Zero runtime dependencies. Primitive arrays (`i32[]`, `f64[]`, etc.) automatically marshal between JS typed arrays and WasmGC arrays.
+`wacBindgen` produces a self-contained `.ts` file with the wasm binary base64-encoded inline and typed wrapper functions. Zero runtime dependencies. Primitive arrays (`i32[]`, `f64[]`, etc.) automatically marshal between JS typed arrays and WasmGC arrays, and structs and enums cross as generated classes.
+
+An export may take a JavaScript function — `export i32 fold(fn[i32(i32,i32)] f, i32[] xs)` is called as `fold((a, b) => a + b, [1, 2, 3])`. Passing it is the only way a host function becomes reachable: wac has no import syntax, so a module that takes no `fn[…]` parameter has no wasm imports at all and cannot call out. What a module can reach is what you hand it.
 
 ## Development
 

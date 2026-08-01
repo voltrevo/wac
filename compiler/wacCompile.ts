@@ -47,6 +47,26 @@ export type WacEnum = {
   methods: WacStruct["methods"];
 };
 
+/**
+ * A signature the host can hand a function in for.
+ *
+ * Passing a function is the *only* way one becomes callable from wac: the module
+ * imports a dispatcher per signature, and nothing in the language can name it.
+ * A module the host never gives a function to cannot call out at all.
+ */
+export type WacCallback = {
+  /** Export that turns a slot number into the funcref to pass in. */
+  helper: string;
+  /** Import field the host supplies the dispatcher under, in module "wac". */
+  field: string;
+  /** The wac funcref type this serves, as written — e.g. `fn[i32(i32)]`. */
+  type: string;
+  params: string[];
+  ret: string;
+  /** How many functions of this signature can be live at once. */
+  slots: number;
+};
+
 export type WacCompiled = {
   wasm: Uint8Array;
   exports: WacExport[];
@@ -60,6 +80,8 @@ export type WacCompiled = {
   structs: WacStruct[];
   /** The enums reachable from an exported signature, bound as a tagged union. */
   enums: WacEnum[];
+  /** Funcref signatures an exported function takes, one host dispatcher each. */
+  callbacks: WacCallback[];
   /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
@@ -197,9 +219,17 @@ export function wacCompile(
       ret: typeStr(m.ret),
     })),
   }));
+  const callbacks: WacCallback[] = meta.callbacks.map((c) => ({
+    helper: c.helper,
+    field: c.field,
+    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }),
+    params: c.params.map(typeStr),
+    ret: typeStr(c.ret),
+    slots: c.slots,
+  }));
   return {
     ok: true,
-    compiled: { wasm, exports, structs, enums, coverage: coverage?.points },
+    compiled: { wasm, exports, structs, enums, callbacks, coverage: coverage?.points },
     diagnostics,
   };
 }

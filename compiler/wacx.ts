@@ -88,6 +88,15 @@ function coerceArg(text: string, type: string): number | bigint | boolean | stri
   // point of a command line. `wacInstance` builds the wasm string. This used to fall through to
   // `Number(text)` and report "'world' is not a number, but the parameter is string".
   if (type === "string") return text;
+  // A host function is passed by a program, not typed at a shell. Saying so beats the
+  // engine's "type incompatibility when transforming from/to JS", which is what a
+  // funcref parameter used to produce.
+  if (type.startsWith("fn[")) {
+    throw new Error(
+      `the parameter is ${type} — a function has to be passed from JavaScript, ` +
+      `so run this export through 'wacx bindgen' output instead`,
+    );
+  }
   if (type === "i64" || type === "u64") return BigInt(text);
   if (type === "bool") return text === "true" || text === "1";
   const n = Number(text);

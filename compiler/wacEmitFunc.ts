@@ -47,6 +47,19 @@ export type WasmTypeCtx = {
   /** Mangled function name → wasm function index */
   funcIdx: Map<string, number>;
   /**
+   * How many imported functions precede the defined ones in the wasm function
+   * index space — one per host-callback signature, zero for a module with no
+   * callbacks.
+   *
+   * Imports occupy the lowest indices, so every *emitted* function index is a
+   * position in `result.funcs` plus this. `funcIdx` and `helperIdx` already hold
+   * emitted indices; `FuncEntry.funcIndex` is a position. Converting between
+   * them is the only reason this is here.
+   */
+  funcBase: number;
+  /** Funcref signatures the host can supply a function for, in import order. */
+  cbSigs: { key: string; params: WacType[]; ret: WacType }[];
+  /**
    * The file whose function is being emitted.
    *
    * A bare function name means whatever the *calling file's* scope says it
@@ -2167,10 +2180,12 @@ class FuncEmitter {
         // whichever was registered first, with the wrong signature.
         const scopedFn = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(sName);
         const fIdx = scopedFn?.kind === "func"
-          ? scopedFn.entry.funcIndex
+          ? scopedFn.entry.funcIndex + this.ctx.funcBase
           : this.ctx.funcIdx.get(sName);
         if (fIdx !== undefined) {
-          const callee = this.ctx.result.funcs[fIdx]; // funcs are in funcIndex order
+          // funcs are in funcIndex order, and funcIndex is a position — so the
+          // emitted index has to come back down through funcBase to index it.
+          const callee = this.ctx.result.funcs[fIdx - this.ctx.funcBase];
           this.emitArgs(e.args, callee ? funcParams(callee).map(p => p.type) : [], env);
           this.emit(0x10, ...uleb(fIdx));
           return;
