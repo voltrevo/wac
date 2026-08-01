@@ -114,7 +114,11 @@ export type CoveragePoint = {
   col: number;
   kind:
     | "entry" | "then" | "else" | "loop" | "case"
-    | "ternary-then" | "ternary-else" | "and-rhs" | "or-rhs";
+    | "ternary-then" | "ternary-else" | "and-rhs" | "or-rhs"
+    // Only in trace mode: a memory access whose *index* is recorded. A secret
+    // index is a cache-timing leak even when control flow never varies, which is
+    // the whole gap branch coverage cannot see.
+    | "index";
 };
 
 export type CoverageCtx = {
@@ -122,6 +126,16 @@ export type CoverageCtx = {
   points: CoveragePoint[];
   /** File currently being emitted, for attributing points. */
   file: string;
+  /**
+   * Record an ordered *trace* rather than per-point counts, and instrument array
+   * indices as well as branches.
+   *
+   * Two runs that differ only in a secret must produce the same trace; the first
+   * differing event is where the secret reached something an observer can see.
+   * Counts alone cannot show this — a loop that runs the same number of times in a
+   * different order compares equal, and an index leak has no branch at all.
+   */
+  trace?: boolean;
 };
 
 // ── LEB128 helpers ────────────────────────────────────────────────────────────
@@ -951,6 +965,9 @@ class FuncEmitter {
    * before either is stored, so an inner operation has finished with the scratch
    * by the time an outer one writes to it.
    */
+  /** Cursor scratch for trace instrumentation. Its own local: the index being
+   *  recorded is held in tempI32Local, which this must not clobber. */
+  tempTraceLocal = -1;
   chk32A = -1; chk32B = -1; chk32S = -1;
   chk64A = -1; chk64B = -1; chk64S = -1;
 
@@ -991,6 +1008,7 @@ class FuncEmitter {
 
     const index = cov.points.length;
     cov.points.push({ index, file: cov.file, line, col, kind });
+    if (cov.trace) { this.emitTraceAppend(index, [0x41, 0x00]); return; }
 
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(I32))!;
     this.emit(0x23, 0x00);                        // global.get 0
@@ -1001,6 +1019,53 @@ class FuncEmitter {
     this.emit(0x41, 0x01);                        // i32.const 1
     this.emit(0x6A);                              // i32.add
     this.emit(0xFB, 0x0E, ...uleb(aIdx));         // array.set
+  }
+
+  /**
+   * Record an index expression, leaving it on the stack for the access that follows.
+   *
+   * Woven into the access rather than emitted beside it, because the value being
+   * recorded is the one about to be consumed — `local.tee` keeps a copy without
+   * disturbing the stack.
+   */
+  private emitTraceIndex(line: number, col: number): void {
+    const cov = this.ctx.coverage;
+    if (!cov?.trace) return;
+    const index = cov.points.length;
+    cov.points.push({ index, file: cov.file, line, col, kind: "index" });
+    this.emit(0x22, ...uleb(this.tempI32Local));   // local.tee — keep the index
+    this.emitTraceAppend(index, [0x20, ...uleb(this.tempI32Local)]);
+  }
+
+  /**
+   * Append `(site, value)` to the trace log.
+   *
+   * The log is the coverage array used as a journal: slot 0 is the write cursor and
+   * events follow in pairs. That avoids a second global, and the host reads it with
+   * the accessors coverage already exports.
+   *
+   * The bounds test is a branch, but on the cursor rather than on anything the
+   * program computed, so it never varies between two runs of the same length —
+   * which is the only property this instrumentation has to preserve.
+   */
+  private emitTraceAppend(site: number, valueBytes: number[]): void {
+    const aIdx = this.ctx.arrTypeIdx.get(typeKey(I32))!;
+    const cur = this.tempTraceLocal;
+    const arr = () => this.emit(0x23, 0x00);              // global.get 0
+
+    arr(); this.emit(0x41, 0x00, 0xFB, 0x0B, ...uleb(aIdx)); // cursor = log[0]
+    this.emit(0x22, ...uleb(cur));
+    this.emit(0x41, 0x03, 0x6A);                          // cursor + 3
+    arr(); this.emit(0xFB, 0x0F);                         // array.len
+    this.emit(0x49);                                      // i32.lt_u
+    this.emit(0x04, 0x40);                                // if (room)
+    arr(); this.emit(0x20, ...uleb(cur), 0x41, 0x01, 0x6A);
+    this.emit(0x41, ...sleb(site), 0xFB, 0x0E, ...uleb(aIdx));   // log[cur+1] = site
+    arr(); this.emit(0x20, ...uleb(cur), 0x41, 0x02, 0x6A);
+    this.emit(...valueBytes, 0xFB, 0x0E, ...uleb(aIdx));         // log[cur+2] = value
+    arr(); this.emit(0x41, 0x00, 0x20, ...uleb(cur), 0x41, 0x02, 0x6A);
+    this.emit(0xFB, 0x0E, ...uleb(aIdx));                        // log[0] = cur + 2
+    this.emit(0x0B);                                      // end
   }
 
   // ── Block type encoding ──
@@ -2090,6 +2155,7 @@ class FuncEmitter {
     const aIdx = this.ctx.arrTypeIdx.get(typeKey(elem))!;
     this.emitExpr(e.expr, env);
     this.emitExpr(e.idx, env);
+    this.emitTraceIndex(e.idx.line ?? 0, e.idx.col ?? 0);
     // Packed elements are narrower than any value wasm computes with, so the
     // read has to extend them. Which way is exactly what the element type says:
     // i8/i16 sign-extend, u8/u16 zero-extend. Same storage either way.
@@ -3255,16 +3321,17 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   emitter.tempF32Local = localIdx + 2;
   emitter.tempF64Local = localIdx + 3;
   emitter.tempAnyLocal = localIdx + 4;
+  emitter.tempTraceLocal = localIdx + 5;
   // Only when checking, so an ordinary build is byte-identical to one from a compiler
   // without the flag — verified by hashing a compiled artifact across the change.
   if (ctx.checked) {
-    emitter.chk32A = localIdx + 5; emitter.chk32B = localIdx + 6; emitter.chk32S = localIdx + 7;
-    emitter.chk64A = localIdx + 8; emitter.chk64B = localIdx + 9; emitter.chk64S = localIdx + 10;
+    emitter.chk32A = localIdx + 6; emitter.chk32B = localIdx + 7; emitter.chk32S = localIdx + 8;
+    emitter.chk64A = localIdx + 9; emitter.chk64B = localIdx + 10; emitter.chk64S = localIdx + 11;
   }
   ctx.currentFile = entry.filePath;
 
   const localsVec: number[] = [];
-  localsVec.push(...uleb(groups.length + (ctx.checked ? 7 : 5)));
+  localsVec.push(...uleb(groups.length + 6 + (ctx.checked ? 2 : 0)));
   for (const g of groups) {
     localsVec.push(...uleb(g.count));
     localsVec.push(...wasmValType(g.type, ctx));
@@ -3274,6 +3341,7 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   localsVec.push(0x01, 0x7D); // 1 × f32 scratch local
   localsVec.push(0x01, 0x7C); // 1 × f64 scratch local
   localsVec.push(0x01, 0x6E); // 1 × anyref scratch local
+  localsVec.push(0x01, 0x7F); // 1 × i32 trace-cursor scratch
   if (ctx.checked) {
     localsVec.push(0x03, 0x7F); // 3 × i32 scratch — checked arithmetic
     localsVec.push(0x03, 0x7E); // 3 × i64 scratch — checked arithmetic
