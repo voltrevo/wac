@@ -1157,6 +1157,14 @@ function reachableArrays(
 ): (WacType & { kind: "array" })[] {
   const found = new Map<string, WacType & { kind: "array" }>();
   const seenStruct = new Set<number>();
+  const enumByBase = new Map(result.enums.map((e) => [e.base.typeIndex, e]));
+
+  const methodTypes = (entry: StructEntry): void => {
+    for (const [, fe] of entry.methods) {
+      for (const p of funcParams(fe)) visit(p.type);
+      visit(funcReturnType(fe));
+    }
+  };
 
   const visit = (t: WacType): void => {
     if (t.kind === "nullable") return visit(t.inner);
@@ -1172,13 +1180,18 @@ function reachableArrays(
     const idx = t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name);
     if (idx === undefined || seenStruct.has(idx)) return;
     seenStruct.add(idx);
+    // An enum's payloads live in its *variants*, not in the base — so a `Str(u8[] bytes)`
+    // reaches a `u8[]` that walking the base alone never sees. bindgen still generated the
+    // accessor for it, and called a helper the module did not export.
+    const en = enumByBase.get(idx);
+    if (en) {
+      for (const v of en.variants) for (const f of v.fields) visit(f.type);
+      return methodTypes(en.base);
+    }
     const entry = result.structs.find((s) => s.typeIndex === idx);
     if (!entry) return;
     for (const f of ctx.structFields.get(`@${idx}`) ?? []) visit(f.type);
-    for (const [, fe] of entry.methods) {
-      for (const p of funcParams(fe)) visit(p.type);
-      visit(funcReturnType(fe));
-    }
+    methodTypes(entry);
   };
 
   for (const f of result.funcs) {
@@ -1213,6 +1226,11 @@ function reachableBinds(
       // A payload is reachable through the variant it belongs to, on the same terms.
       for (const v of en.variants) {
         for (const f of v.fields) if (bindableType(f.type)) visitType(f.type);
+      }
+      for (const [, fe] of en.base.methods) {
+        for (const p of funcParams(fe)) if (bindableType(p.type)) visitType(p.type);
+        const ret = funcReturnType(fe);
+        if (bindableType(ret)) visitType(ret);
       }
       return;
     }

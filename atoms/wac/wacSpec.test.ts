@@ -8878,3 +8878,20 @@ Deno.test("[§wac-bind-static-6wnq3kv] a type reached only through a method bind
   eq(JSON.stringify(t.lookup(0).toObject()), '{"tag":"Yes","v":42}', "payload and all");
   eq(t.lookup(1).tag, "No", "and the other variant");
 });
+
+Deno.test("[§wac-bind-arr-ref-4jkq8wn] an array inside an enum payload has its helpers", async () => {
+  // An enum's payloads live in its *variants*, not in the base, so walking the base alone
+  // never saw the `u8[]` in `Str(u8[] bytes)`. bindgen generated the accessor anyway and
+  // called `__bind_arr_u8_len`, which the module did not export — found by walking a real
+  // `json` tree from TypeScript, not by a fixture.
+  const mod = await importBindgen(`
+    export enum Token { Empty, Str(u8[] bytes), Nums(i32[] xs) }
+    export Token str() { return Token.Str(u8[3](fill: 65)); }
+    export Token nums() { return Token.Nums(i32[2](fill: 7)); }
+  `) as unknown as {
+    str(): { tag: string; Str_bytes: Uint8Array };
+    nums(): { Nums_xs: Int32Array };
+  };
+  eq([...mod.str().Str_bytes].join(","), "65,65,65", "the payload array crosses");
+  eq([...mod.nums().Nums_xs].join(","), "7,7", "and so does one in another variant");
+});
