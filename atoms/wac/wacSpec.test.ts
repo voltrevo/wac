@@ -3295,6 +3295,10 @@ const MIXED_SRC = `
   struct Point { f64 x; f64 y; }
   export i32 simple() { return 42; }
   export Point getOrigin() { return Point(0.0, 0.0); }
+  // Still beyond the boundary: a funcref has no JavaScript representation, and an array of arrays
+  // has no bulk form. A struct used to be in this company and is not any more.
+  export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
+  export i32 nested(i32[][] g) { return g.len(); }
 `;
 
 /** Create an i32[] wasm GC array from a JS Int32Array using exported bind helpers. */
@@ -3341,6 +3345,110 @@ function wasmStringToJs(exports: WebAssembly.Exports, wa: unknown): string {
   for (let i = 0; i < n; i++) bytes[i] = getFn(wa, i);
   return new TextDecoder().decode(bytes);
 }
+
+/** Write a generated module to a temp file and import it — the only real test of generated code. */
+async function importBindgen(src: string): Promise<Record<string, never>> {
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const path = await Deno.makeTempFile({ suffix: ".ts" });
+  await Deno.writeTextFile(path, wacBindgen(r.compiled));
+  try {
+    return await import(`file://${path}`);
+  } finally {
+    await Deno.remove(path);
+  }
+}
+
+Deno.test("[§wac-bind-struct-5kqn2wj] a struct crosses as a class, by reference", async () => {
+  // The README's own headline example — a `Point` with methods — had no way out of the language:
+  // bindgen omitted every export whose signature mentioned a struct, and a method was not
+  // wasm-exported at all. A struct now crosses as an opaque reference wrapped in a generated class,
+  // which is what makes identity and mutation survive the boundary.
+  const mod = await importBindgen(`
+    export struct Point {
+      f64 x;
+      f64 y;
+      Point create(f64 x, f64 y) { return Point(x, y); }
+      f64 distanceSq(const this, Point other) {
+        f64 dx = this.x - other.x;
+        f64 dy = this.y - other.y;
+        return dx * dx + dy * dy;
+      }
+      void shift(this, f64 dx) { this.x = this.x + dx; }
+    }
+    export Point origin() { return Point(0.0, 0.0); }
+    export f64 lenSq(Point p) { return p.x * p.x + p.y * p.y; }
+    export f64 run() { Point a = Point(0.0, 0.0); Point b = Point(3.0, 4.0); return a.distanceSq(b); }
+  `) as unknown as {
+    Point: { of(x: number, y: number): PointT; new (ref: unknown): PointT };
+    origin(): PointT;
+    lenSq(p: PointT): number;
+    run(): number;
+  };
+  type PointT = {
+    ref: unknown; x: number; y: number;
+    distanceSq(other: PointT): number; shift(dx: number): void;
+    toObject(): { x: number; y: number };
+  };
+
+  const a = mod.Point.of(3, 4);
+  eq(a.x, 3, "a field reads back");
+  eq(a.y, 4, "both of them");
+  eq(mod.lenSq(a), 25, "and the struct goes back in as an argument");
+
+  a.x = 6;
+  eq(a.x, 6, "a field writes");
+  eq(mod.lenSq(a), 52, "and wac sees the write — the reference is the value, not a copy");
+
+  eq(a.distanceSq(mod.Point.of(6, 0)), 16, "a method call from JavaScript");
+  a.shift(4);
+  eq(a.x, 10, "including one that mutates the receiver");
+
+  const o = mod.origin();
+  eq(o.x, 0, "a struct returned from an exported function");
+  eq(JSON.stringify(a.toObject()), `{"x":10,"y":4}`, "and a plain-data snapshot when that is wanted");
+  eq(mod.run(), 25, "the README's example still computes what it always did");
+
+  // Identity: two handles on one object see each other's writes. A copying boundary could not do
+  // this, and `json`'s tree needs it.
+  const second = new mod.Point(a.ref);
+  second.y = 99;
+  eq(a.y, 99, "two wrappers over one reference are one object");
+});
+
+Deno.test("[§wac-bind-struct-5kqn2wj] a nullable struct crosses as T | null", async () => {
+  const mod = await importBindgen(`
+    export struct Node {
+      i32 val;
+      Node? next;
+      i32 sum(const this) {
+        i32 total = this.val;
+        Node? cur = this.next;
+        while (cur is not null) { total = total + cur!.val; cur = cur!.next; }
+        return total;
+      }
+    }
+    export Node? nothing() { return null; }
+    export Node chain() { return Node(1, Node(2, null)); }
+  `) as unknown as {
+    Node: { of(val: number, next: unknown): NodeT };
+    nothing(): NodeT | null;
+    chain(): NodeT;
+  };
+  type NodeT = { val: number; next: NodeT | null; sum(): number };
+
+  eq(mod.nothing(), null, "a null return is null, not a wrapper around nothing");
+  const c = mod.chain();
+  eq(c.val, 1, "the head");
+  eq(c.next?.val, 2, "a struct-typed field is wrapped in turn");
+  eq(c.next?.next, null, "and the end of the chain is null");
+  eq(c.sum(), 3, "a method that walks it");
+
+  // Built from JavaScript, including the null.
+  const single = mod.Node.of(7, null);
+  eq(single.sum(), 7, "a node built here behaves like one built there");
+  eq(single.next, null, "with its nullable field absent");
+});
 
 Deno.test("[§wac-bind-prims-k4fn8wp] Bindgen for math.wac: gcd(48,18)=6, fib(20)=6765, circle_area(5)=~78.54", async () => {
   const r = wacCompile(new Map([["math.wac", MATH_SRC]]), "math.wac");
@@ -3456,8 +3564,12 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
   const ts = wacBindgen(r.compiled);
   eq(ts.includes("function simple(): number"), true, "simple() included");
   eq(ts.includes("// skipped:"), true, "skipped comment present");
-  eq(ts.includes("getOrigin"), true, "getOrigin mentioned in skip comment");
-  eq(ts.includes("function getOrigin"), false, "getOrigin not exported as function");
+  eq(ts.includes("viaFunc"), true, "a funcref parameter is named in the skip comment");
+  eq(ts.includes("function viaFunc"), false, "and is not exported as a function");
+  eq(ts.includes("nested"), true, "so is a nested array");
+  // A struct return used to be in this list. It is a class now.
+  eq(ts.includes("function getOrigin(): Point"), true, "a struct return is bound, not skipped");
+  eq(ts.includes("export class Point"), true, "and its class is generated");
 
   // The reason was recorded only as a comment in the generated file, which nobody
   // reads while wondering why `mod.getOrigin` is undefined — and a module whose every
@@ -3470,17 +3582,31 @@ Deno.test("[§wac-bind-skip-h9pd5wn] Functions with unsupported types are omitte
 
 Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound module", async () => {
   const r = wacCompile(new Map([["main.wac", `
-    export struct Expr { i32 line; }
-    export Expr mk(i32 line) { return Expr(line); }
-    export i32 lineOf(Expr e) { return e.line; }
+    i32 twice(i32 x) { return x * 2; }
+    export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
+    export fn[i32(i32)] pick() { return twice; }
   `]]), "main.wac");
   if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
-  // Every export here is struct-typed, so the module's whole surface is skipped. Before,
-  // that produced a file with no exports whatsoever and no indication why.
+  // Every export here mentions a funcref, so the module's whole surface is skipped. That produced
+  // a file with no exports whatsoever and no indication why — the reason is a real export now.
   eq(ts.includes("__bindgenSkipped"), true, "an all-skipped module still exports the reason");
-  eq(/mk\(\) — return type 'Expr'/.test(ts), true, "and names the return-type case");
-  eq(/lineOf\(\) — parameter 'e: Expr'/.test(ts), true, "and the parameter case");
+  eq(/viaFunc\(\) — parameter 'f: fn/.test(ts), true, "and names the parameter case");
+  eq(/pick\(\) — return type 'fn/.test(ts), true, "and the return-type case");
+});
+
+Deno.test("[§wac-bind-struct-5kqn2wj] a generic instantiation is bound under a readable name", async () => {
+  // `Vec<i32>` is `Vec__m$i32` inside the compiler and neither a legal TypeScript identifier nor a
+  // name anyone typed. The display name the diagnostics already use serves here too.
+  const r = wacCompile(new Map([["m.wac", `
+    export struct Box<T> { T v; T get(const this) { return this.v; } }
+    export Box<i32> boxed() { return Box(5); }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+  eq(ts.includes("export class Box_i32"), true, "the class is named for the instantiation");
+  eq(ts.includes("function boxed(): Box_i32"), true, "and the export returns it");
+  eq(ts.includes("$"), false, "no mangled name reaches the generated file");
 });
 
 // ── §wac-diag-* — structured error diagnostics ────────────────────────────────

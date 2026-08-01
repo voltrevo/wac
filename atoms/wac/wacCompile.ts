@@ -8,7 +8,7 @@ import { wacLex } from "./wacLex.ts";
 import { wacParse, type Program } from "./wacParse.ts";
 import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
-import { wasmBuildBin } from "./wasmBuildBin.ts";
+import { wasmBuildBin, wasmBindStructs } from "./wasmBuildBin.ts";
 import type { CoveragePoint } from "./wacEmitFunc.ts";
 import type { WacType } from "./wacParse.ts";
 
@@ -26,9 +26,29 @@ export type WacCompileOptions = { coverage?: boolean };
 
 export type WacParam    = { name: string; type: string };
 export type WacExport   = { name: string; params: WacParam[]; ret: string };
+/** A struct a JS caller can reach, with its fields and methods as type *strings*. */
+export type WacStruct = {
+  /** The `__bind_s_<this>_…` component of its accessors, and a legal TS identifier. */
+  bind: string;
+  /** The name a *type* refers to it by, which is what `typeStr` produces for a field or parameter. */
+  wac: string;
+  /** What to call it — a generic instantiation reads as `Vec<i32>` rather than its mangled name. */
+  display: string;
+  fields: { name: string; type: string; isConst: boolean }[];
+  methods: { name: string; params: { name: string; type: string }[]; ret: string }[];
+};
+
 export type WacCompiled = {
   wasm: Uint8Array;
   exports: WacExport[];
+  /**
+   * The structs reachable from an exported signature.
+   *
+   * A struct is not a value JavaScript can hold, so it crosses as an opaque reference and its
+   * contents are reached through generated accessors. This is what tells `wacBindgen` which classes
+   * to write.
+   */
+  structs: WacStruct[];
   /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
@@ -139,9 +159,20 @@ export function wacCompile(
   const coverage = options.coverage ? { points: [], file: entry } : undefined;
   const wasm = wasmBuildBin(resolveResult, programs, { coverage });
   const exports = extractExports(resolveResult);
+  const structs: WacStruct[] = wasmBindStructs(resolveResult, programs).map((s) => ({
+    bind: s.bind,
+    wac: s.wac,
+    display: s.display,
+    fields: s.fields.map((f) => ({ name: f.name, type: typeStr(f.type), isConst: f.isConst })),
+    methods: s.methods.map((m) => ({
+      name: m.name,
+      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
+      ret: typeStr(m.ret),
+    })),
+  }));
   return {
     ok: true,
-    compiled: { wasm, exports, coverage: coverage?.points },
+    compiled: { wasm, exports, structs, coverage: coverage?.points },
     diagnostics,
   };
 }
