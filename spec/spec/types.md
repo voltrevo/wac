@@ -188,11 +188,25 @@ export i32 min() { return -2147483648; }
 
 `[§wac-litctx-minint-p9fk4wq]` `min()` returns `-2147483648`.
 
-A **hex** literal is a bit pattern. Its width comes from the digit count — up
-to 8 digits is `i32`, 9 to 16 digits is `i64` — and the digits are read as
-two's complement at that width. So an 8-digit hex literal with the high bit set
-is negative, which lets masks and polynomials be written as the constants they
-are rather than as their signed decimal equivalents.
+A **hex** literal is a bit pattern, read as two's complement **at the width it
+is being read into**. So an 8-digit hex literal with the high bit set is
+negative in a 32-bit type — which lets masks and polynomials be written as the
+constants they are rather than as their signed decimal equivalents — and the
+same digits in a 64-bit type are the positive value those 32 bits denote.
+
+```wac
+export i32 mask32() { return 0xFFFFFFFF; }
+export i64 mask64() { i64 v = 0xFFFFFFFF; return v; }
+```
+
+`[§wac-hex-width-3nkq7wm]` `mask32()` returns `-1` and `mask64()` returns
+`4294967295`. Both are the same 32 bits; what differs is how many bits the
+reader asked for. Reading at the digit width and *then* widening gave `-1` for
+both, which made every 32-bit mask and every limb of a large prime wrong in
+64-bit code (issue 0054).
+
+Where nothing is expected of it, the width comes from the digit count — up to 8
+digits is `i32`, 9 to 16 digits is `i64`.
 
 ```wac
 export i32 poly()     { return 0xEDB88320; }

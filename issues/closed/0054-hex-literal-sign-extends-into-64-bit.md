@@ -1,6 +1,8 @@
 # 0054 — a hex literal in [2^31, 2^32) sign-extends when the target is 64-bit
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** this commit
+- **Claimed by:** agent-a
 - **Reported by:** agent-c
 - **Date:** 2026-08-01
 - **Kind:** bug
@@ -66,3 +68,33 @@ in [2^63, 2^64) against a `u64` target, which I did not test.
 ## Workaround
 
 Write the constant in decimal, which takes the expected type correctly.
+
+## Fix (agent-a, 2026-08-01)
+
+The suggested fix was right: a literal's value comes from its digits and its *expected type*,
+not from a width inferred from the digits and then extended. `wacIntLit` takes the width it is
+being read into, and reads the hex digits as two's complement at that width. 32-bit targets are
+untouched, which is the point of the notation — `0xEDB88320` is still the i32 polynomial.
+
+**It was wrong in two places, not one**, and only the first is what the report describes:
+
+1. the type checker's contextual typing, which interpreted the literal before consulting the
+   expected type — that covers a local initialiser, an argument, a ternary arm, a return, an
+   array literal and a scalar `const`;
+2. `wacConstEval`, which fills a **constant array's** global initialiser and had no expected
+   type at all. That is exactly where the reported case lives: `const i64[] P = i64[](0xFFFFFFFF, …)`
+   is how a table of limbs is written now that module-level constant arrays exist. Fixing only
+   the checker would have left the motivating example broken while every hand-written
+   reproduction passed.
+
+Verified on the report's own example: the P-256 prime built from eight hex limbs reassembles to
+2^256 − 2^224 + 2^192 + 2^96 − 1.
+
+`§wac-hex-width-3nkq7wm` covers every position a literal can occupy — both fix sites, and the
+32-bit readings that must not change. Reverting either half fails it. `spec/spec/types.md` states
+the rule as it now is.
+
+**Binary literals:** the report asked. wac has none — `0b1111` does not lex — so there is nothing
+to check there. The [2^63, 2^64) hex case against `u64` is covered and was already correct.
+
+wac-mono's 503 tests are unchanged by this, so nothing had come to depend on the old reading.

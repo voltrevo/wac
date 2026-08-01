@@ -43,13 +43,17 @@ export function wacConstEval(
   expr: Expr,
   lookup: ConstLookup,
   depth = 0,
+  expectWidth?: 32 | 64,
 ): ConstValue | null {
   if (depth > 64) return null;
-  const rec = (e: Expr) => wacConstEval(e, lookup, depth + 1);
+  const rec = (e: Expr) => wacConstEval(e, lookup, depth + 1, expectWidth);
 
   switch (expr.kind) {
     case "int": {
-      const lit = wacIntLit(expr.value);
+      // The destination width decides how wide a hex bit pattern is read. A constant
+      // array of i64 holding `0xFFFFFFFF` is where a table of masks or prime limbs
+      // actually lives, and reading it at 32 bits made every element -1 [issue 0054].
+      const lit = wacIntLit(expr.value, expectWidth);
       return lit.ok ? { kind: "int", value: lit.value } : null;
     }
     case "float": return { kind: "float", value: wacFloatLit(expr.value) };
@@ -57,7 +61,7 @@ export function wacConstEval(
 
     case "ident": {
       const init = lookup(expr.name);
-      return init === null ? null : wacConstEval(init, lookup, depth + 1);
+      return init === null ? null : wacConstEval(init, lookup, depth + 1, expectWidth);
     }
 
     case "cast": {
