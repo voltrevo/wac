@@ -164,6 +164,19 @@ function isNumeric(t: WacType): boolean {
     (t.name === "i32" || t.name === "i64" || t.name === "u32" || t.name === "u64" ||
      t.name === "f32" || t.name === "f64");
 }
+/**
+ * An integer literal for the purpose of re-typing it from the other operand.
+ *
+ * A negated one counts: `-2147483648` is unary minus over a magnitude that needs 64 bits, so on the
+ * *left* of a comparison it inferred as i64 and mismatched an i32 on the right — while
+ * `x >= -2147483648` was fine, because there the expected type arrives before the literal is read.
+ * The `unary` case already knows how to take an expected type for a negated literal; it just was
+ * never offered one from this direction. Found by the program generator, which writes both orders.
+ */
+function isIntLiteralish(e: Expr): boolean {
+  return e.kind === "int" || (e.kind === "unary" && e.op === "-" && e.expr.kind === "int");
+}
+
 function isInteger(t: WacType): boolean {
   return t.kind === "prim" &&
     (t.name === "i32" || t.name === "i64" || t.name === "u32" || t.name === "u64");
@@ -1947,7 +1960,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // to be, which is what makes `2 * x` work as well as `x * 2`.
       let lt = inferExpr(expr.left, env, ctx, expected);
       const rt = inferExpr(expr.right, env, ctx, lt ?? expected);
-      if (expr.left.kind === "int" && rt && isInteger(rt) && lt && !typeEq(lt, rt)) {
+      if (isIntLiteralish(expr.left) && rt && isInteger(rt) && lt && !typeEq(lt, rt)) {
         lt = inferExpr(expr.left, env, ctx, rt);
       }
       if (!lt || !rt) return null;
@@ -2078,7 +2091,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // same way the operands of a binary operator do.
       let tt = inferExpr(expr.then, env, ctx, expected);
       let et = inferExpr(expr.else_, env, ctx, expected ?? tt);
-      if (expr.then.kind === "int" && et && isInteger(et) && tt && !typeEq(tt, et)) {
+      if (isIntLiteralish(expr.then) && et && isInteger(et) && tt && !typeEq(tt, et)) {
         tt = inferExpr(expr.then, env, ctx, et);
       }
       if (!tt || !et) return tt ?? et;

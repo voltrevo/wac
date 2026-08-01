@@ -4,6 +4,7 @@
 //            buffer.md, strings.md, grammar.md
 
 import { wacCompile } from "./wacCompile.ts";
+import { fuzz } from "../../tools/fuzz.ts";
 // The instantiation-count test needs the resolver directly: the count is not visible from a
 // compiled module, and "correct but duplicated" is exactly what it exists to catch.
 import { wacResolve } from "./wacResolve.ts";
@@ -8178,6 +8179,44 @@ Deno.test("[§wac-type-name-scope-8vqk3mn] an unknown type says so where it is w
   ] as [string, string][]) {
     const m = err(src);
     if (!m.includes(want)) throw new Error(`expected ${want}, got: ${m}`);
+  }
+});
+
+Deno.test("[§wac-int-context-9wkq4mz] a negated literal takes the other operand's type", async () => {
+  // Found by the generator, which writes both operand orders where a person writes one.
+  // `x >= -2147483648` was fine and `-2147483648 <= x` was "type mismatch: i64 and i32", because
+  // the literal's magnitude needs 64 bits and only the *right* operand was ever offered the
+  // other side's type. The retry that fixes it existed already and tested for `kind === "int"`,
+  // which a unary minus over a literal is not.
+  const inst = await run(`
+    export bool leftMin(i32 x)   { return -2147483648 <= x; }
+    export bool rightMin(i32 x)  { return x >= -2147483648; }
+    export bool leftNeg(i64 x)   { return -1 < x; }
+    export i64  ternaryNeg(bool c, i64 x) { return c ? -2147483648 : x; }
+    export i32  minRoundTrip()   { i32 m = -2147483648; return m; }
+  `);
+  eq(inst.call("leftMin", [-2147483648]), true, "i32's minimum on the left of a comparison");
+  eq(inst.call("leftMin", [0]), true, "and against a larger value");
+  eq(inst.call("rightMin", [-2147483648]), true, "the order that always worked");
+  eq(inst.call("leftNeg", [5n]), true, "a negated literal against an i64");
+  eq(inst.call("ternaryNeg", [1, 7n]), -2147483648n, "and in a ternary branch");
+  eq(inst.call("minRoundTrip", []), -2147483648, "the literal itself still means what it says");
+});
+
+Deno.test("generated programs compute what they were built to compute", async () => {
+  // `tools/fuzz.ts` builds a program and its expected answer together — every expression node
+  // carries an evaluator beside its source, so the oracle is the same tree that produced the
+  // program rather than a second interpreter of wac. That distinction is the point: the last
+  // hand-written sweep's oracle was wrong more often than the compiler was.
+  //
+  // A fixed span of seeds runs here so the generator is a regression net rather than a thing
+  // someone remembers to run. `deno run -A tools/fuzz.ts --count 5000 --seed <n>` is the hunt.
+  const failures = await fuzz(150, 4242);
+  if (failures.length > 0) {
+    const f = failures[0];
+    throw new Error(
+      `${failures.length} of 150 generated programs disagreed.\n` +
+      `seed ${f.seed}: want ${f.want}, got ${f.got}\n${f.src}`);
   }
 });
 
