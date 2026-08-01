@@ -30,6 +30,15 @@ export type WacCompileOptions = {
    * it costs and what depends on wrapping.
    */
   checked?: boolean;
+  /**
+   * Record an ordered trace of branches *and* memory indices, instead of counting
+   * branches. Implies `coverage`, and reuses its point table and accessors.
+   *
+   * For checking that a routine's observable behaviour does not depend on a secret:
+   * run it twice with the same public input and different secrets, and compare. The
+   * first differing event is where the secret escaped.
+   */
+  ctTrace?: boolean;
 };
 
 export type WacParam    = { name: string; type: string };
@@ -233,7 +242,9 @@ export function wacCompile(
   if (hasError()) return { ok: false, diagnostics };
 
   // Phase 5: emit wasm binary (cannot fail after successful typecheck)
-  const coverage = options.coverage ? { points: [], file: entry } : undefined;
+  const coverage = (options.coverage || options.ctTrace)
+    ? { points: [] as CoveragePoint[], file: entry, trace: options.ctTrace }
+    : undefined;
   const wasm = wasmBuildBin(resolveResult, programs, { coverage, checked: options.checked });
   const exports = extractExports(resolveResult);
   const meta = wasmBindMeta(resolveResult, programs);

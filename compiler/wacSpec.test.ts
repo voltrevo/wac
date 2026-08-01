@@ -9037,3 +9037,50 @@ Deno.test("checked arithmetic traps exactly when the value does not fit", async 
   eq(call(b, "mulI64", 0n, I64MIN), "0", "0 * MIN does not trap");
   eq(call(b, "mulI64", I64MIN, -1n), "TRAP", "but MIN * -1 does");
 });
+
+// ── §wac-ct-trace-5wkq2np ─────────────────────────────────────────────────────
+
+Deno.test("[§wac-ct-trace-5wkq2np] trace mode records branches and memory indices in order", async () => {
+  // Branch coverage counts; this records a sequence, and adds the event counting
+  // cannot produce — the index a memory access used. A secret-dependent index is a
+  // cache-timing leak with no branch anywhere near it, so a tool that only sees
+  // branches reports `SBOX[secret]` as perfectly uniform.
+  const src = `
+    const u8[] T = u8[](9, 8, 7, 6);
+    export i32 index(i32 s) { return T[s & 3]; }
+    export i32 branch(i32 s) { if ((s & 1) != 0) { return 7; } return 9; }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac", { ctTrace: true });
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const { instance } = await WebAssembly.instantiate(r.compiled.wasm as BufferSource, {});
+  const ex = instance.exports as Record<string, CallableFunction>;
+  const pts = r.compiled.coverage!;
+
+  const trace = (fn: string, arg: number): { site: number; value: number }[] => {
+    ex.__cov_init();
+    ex[fn](arg);
+    const used = ex.__cov_get(0) as number;
+    return Array.from({ length: used / 2 }, (_, k) => ({
+      site: ex.__cov_get(1 + 2 * k) as number,
+      value: ex.__cov_get(2 + 2 * k) as number,
+    }));
+  };
+
+  // An index event carries the index actually used, so two runs differ even though
+  // both took exactly the same path.
+  const i1 = trace("index", 1), i2 = trace("index", 2);
+  eq(i1.length, i2.length, "same path, same number of events");
+  const idxEvent = i1.findIndex((e) => pts[e.site].kind === "index");
+  eq(idxEvent >= 0, true, "an index event was recorded");
+  eq(i1[idxEvent].value, 1, "and it carries the index");
+  eq(i2[idxEvent].value, 2, "which differs between runs");
+
+  // A branch shows up as a different sequence, which is what counting already caught.
+  const b0 = trace("branch", 0), b1 = trace("branch", 1);
+  eq(b0.length === b1.length && b0.every((e, k) => e.site === b1[k].site), false,
+    "the two paths trace differently");
+
+  // The instrumentation must not change the answer it is instrumenting.
+  eq(ex.index(2), 7, "T[2] is still 7");
+  eq(ex.branch(1), 7, "and the branch still returns 7");
+});

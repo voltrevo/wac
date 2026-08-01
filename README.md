@@ -69,6 +69,12 @@ Integer arithmetic wraps, because half of what wac is used for requires it: SHA-
 
 `wacx --checked` compiles a module that traps on overflow in `+`, `-` and `*` instead. It is a whole-module switch and experimental — the point is to find out what your own code depends on. Measured over wac-mono: 68 of 503 tests depend on wrapping, nearly all in `crypto`, while json, gzip, url, http, fmt and std pass with it on. The cost with nothing opted out was 5% on a JSON parse and 27% on gzip.
 
+## Constant-time checking
+
+`wacCompile(files, entry, { ctTrace: true })` records an ordered trace of every branch taken and every memory *index* used, with each event mapped to a source line. Run a routine twice with the same public input and different secrets, compare the traces, and the first divergence is where the secret became observable.
+
+The index half is the part branch coverage cannot do: `SBOX[secret]` has no branch, so a counter-based tool reports it as uniform while the address bus does not. Applied to wac-mono's crypto package it confirmed two documented leaks, located them to the line, found a third that was not documented, and showed x25519's ladder uniform across 1.6 million events.
+
 ## What a wac module requires
 
 MVP plus non-trapping float→int conversions, reference types, typed function references, and

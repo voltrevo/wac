@@ -842,6 +842,15 @@ function f64Const(v: number): number[] {
  * bindgen wrapper) calls this before running instrumented code. Calling it again
  * allocates a fresh array, which is how counters are reset between runs.
  */
+/**
+ * How many i32 slots the trace log gets: slot 0 is the cursor, then two per event.
+ *
+ * 4M slots is ~2M events and 16MB, which is nothing for a test mode and enough for a
+ * whole AES key schedule or a GHASH pass. Overflow is silent by construction — the
+ * append stops — so the host compares the cursor against the capacity and says so.
+ */
+export const TRACE_SLOTS = 1 << 22;
+
 function makeCovInit(arrTypeIdx: number, numPoints: number): number[] {
   return [
     0x00,                                          // no locals
@@ -2257,7 +2266,11 @@ function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
     ctx.arrTypeIdx.get(typeKey({ kind: "prim", name: "u8", line: 0, col: 0 }))!,
     ctx.helperIdx.get("__fmod")!,
     ctx.coverage
-      ? { arrTypeIdx: covArrayTypeIdx(ctx), numPoints: ctx.coverage.points.length }
+      ? {
+        arrTypeIdx: covArrayTypeIdx(ctx),
+        // In trace mode the array is a journal rather than one counter per point.
+        numPoints: ctx.coverage.trace ? TRACE_SLOTS : ctx.coverage.points.length,
+      }
       : undefined,
   );
   for (const b of helperBodies) {
