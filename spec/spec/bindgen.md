@@ -30,15 +30,45 @@ live reference to the GC array.
 | f32[]    | Float32Array   | |
 | f64[]    | Float64Array   | |
 
+### Structs cross as classes
+
+A struct is not a value JavaScript can hold, so it crosses as an **opaque reference** wrapped in a
+generated class. Every struct reachable from an exported signature — and every struct *its* fields
+name, transitively — gets one:
+
+```ts
+export class Point {
+  constructor(readonly ref: unknown) {}      // wrap a reference you already have
+  static of(x: number, y: number): Point;    // build a fresh one
+  get x(): number;  set x(v: number);
+  distanceSq(other: Point): number;          // methods, with the receiver passed for you
+  toObject(): { x: number; y: number };      // a plain-data snapshot, when that is what you want
+}
+```
+
+`[§wac-bind-struct-5kqn2wj]` The reference **is** the value, not a copy of it. So identity survives
+the boundary — two wrappers over one reference are one object, and a write through either is
+visible to the other and to wac — and a cyclic structure crosses at all. A copying boundary would
+be easier to read in a debugger and could represent neither.
+
+`toObject()` is generated on top of the accessors for the cases where plain data is what is wanted.
+It is one level deep and leaves a struct-typed field as its wrapper, so a `Node? next` that loops
+back on itself does not hang.
+
+A `const` field gets a getter and no setter. A nullable struct crosses as `T | null`, which is what
+JavaScript already means by an absent object. A generic instantiation is named for what the author
+wrote: `Vec<i32>` binds as `Vec_i32`, never as its mangled name.
+
 ### Not yet supported in bindgen
 
-- Struct params/returns (for later: JSON<->struct glue)
-- Nullable types
+- Enums (a tagged union at the boundary is a different shape, and gets its own pass)
+- Arrays of structs
 - Function references
 - Nested arrays
 
 Functions using unsupported types in their signature are omitted from the
-generated file with a comment explaining why.
+generated file with a comment explaining why, and the reasons are exported as
+`__bindgenSkipped` so a missing export is not mistaken for a build failure.
 
 ### Example: math.wac
 
@@ -229,10 +259,8 @@ Input:
 
 ```wac
 // mixed.wac
-struct Point { f64 x; f64 y; }
-
 export i32 simple() { return 42; }
-export Point getOrigin() { return Point(0.0, 0.0); }
+export i32 viaFunc(fn[i32(i32)] f) { return f(1); }
 ```
 
 Generated `mixed.wac.ts`:
@@ -242,10 +270,10 @@ export function simple(): number {
   return (_exports.simple as CallableFunction)() as number;
 }
 
-// skipped: getOrigin() — struct return types not yet supported in bindgen
+// skipped: viaFunc() — parameter 'f: fn[i32(i32)]' not yet supported in bindgen
 
 export const __bindgenSkipped: readonly string[] = [
-  "getOrigin() — struct return types not yet supported in bindgen",
+  "viaFunc() — parameter 'f: fn[i32(i32)]' not yet supported in bindgen",
 ];
 ```
 

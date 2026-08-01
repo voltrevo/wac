@@ -18,7 +18,7 @@
 // Unsupported types (struct, nullable, funcref, nested arrays) cause the function
 // to be omitted with a comment.
 
-import type { WacCompiled, WacExport } from "./wacCompile.ts";
+import type { WacCompiled, WacExport, WacStruct } from "./wacCompile.ts";
 
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
@@ -64,14 +64,138 @@ const ARRAY_ELEM_PREFIX: Record<string, string> = {
   "f64[]": "__bind_arr_f64",
 };
 
+/**
+ * The structs of the module being generated, by the name a type refers to them by.
+ *
+ * Module-level because `tsType` is called from a dozen places and threading a table through all of
+ * them would be noise. Set once per `wacBindgen` call.
+ */
+let structsByWac: Map<string, WacStruct> = new Map();
+
+/** The TypeScript class name for a struct — `Vec<i32>` becomes `Vec_i32`. */
+function className(s: WacStruct): string {
+  return s.display.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+$/, "");
+}
+
 function tsType(wacType: string): string | null {
   if (PRIM_MAP[wacType]) return PRIM_MAP[wacType];
   if (ARRAY_MAP[wacType]) return ARRAY_MAP[wacType];
+  // A struct crosses as an opaque reference wrapped in a generated class, and a nullable one as
+  // that class or null — which is what JavaScript already means by an absent object.
+  const st = structsByWac.get(wacType);
+  if (st) return className(st);
+  if (wacType.endsWith("?")) {
+    const inner = structsByWac.get(wacType.slice(0, -1));
+    if (inner) return `${className(inner)} | null`;
+  }
   return null; // unsupported
+}
+
+/** The struct a type names, if it is one — with or without a trailing `?`. */
+function structOf(wacType: string): { s: WacStruct; nullable: boolean } | null {
+  const direct = structsByWac.get(wacType);
+  if (direct) return { s: direct, nullable: false };
+  if (wacType.endsWith("?")) {
+    const inner = structsByWac.get(wacType.slice(0, -1));
+    if (inner) return { s: inner, nullable: true };
+  }
+  return null;
 }
 
 function isSupported(wacType: string): boolean {
   return tsType(wacType) !== null;
+}
+
+// ── Struct wrappers ───────────────────────────────────────────────────────────
+
+/**
+ * A class per reachable struct: an opaque reference plus accessors.
+ *
+ * The reference is the value, not a copy of it — so identity survives the boundary, mutation flows
+ * both ways, and a cyclic structure like `json`'s tree crosses at all. `toObject()` is generated on
+ * top for when a caller wants plain data instead, which makes the copy a choice per call site
+ * rather than the language's decision.
+ */
+function genStructClass(s: WacStruct): string {
+  const cls = className(s);
+  const lines: string[] = [];
+  lines.push(`/** \`${s.display}\`, held by reference. Fields and methods call into the module. */`);
+  lines.push(`export class ${cls} {`);
+  lines.push(`  /** The wasm reference. Hand it to another wrapper freely — nothing is copied. */`);
+  lines.push(`  constructor(readonly ref: unknown) {}`);
+
+  // The factory. `of` rather than a constructor overload, so `new ${cls}(ref)` stays unambiguous.
+  const ctorParams = s.fields.map((f) => `${f.name}: ${tsType(f.type) ?? "unknown"}`).join(", ");
+  const ctorArgs = s.fields.map((f) => toWasm(f.type, f.name)).join(", ");
+  if (s.fields.every((f) => tsType(f.type) !== null)) {
+    lines.push(`  static of(${ctorParams}): ${cls} {`);
+    lines.push(`    return new ${cls}((_exports.__bind_s_${s.bind}_new as CallableFunction)(${ctorArgs}));`);
+    lines.push(`  }`);
+  }
+
+  for (const f of s.fields) {
+    const ts = tsType(f.type);
+    if (!ts) continue;                       // a field of an unsupported type is simply absent
+    lines.push(`  get ${f.name}(): ${ts} {`);
+    lines.push(`    return ${fromWasm(f.type, `(_exports.__bind_s_${s.bind}_get_${f.name} as CallableFunction)(this.ref)`)};`);
+    lines.push(`  }`);
+    if (!f.isConst) {
+      lines.push(`  set ${f.name}(v: ${ts}) {`);
+      lines.push(`    (_exports.__bind_s_${s.bind}_set_${f.name} as CallableFunction)(this.ref, ${toWasm(f.type, "v")});`);
+      lines.push(`  }`);
+    }
+  }
+
+  for (const m of s.methods) {
+    if (m.params.some((p) => tsType(p.type) === null)) continue;
+    if (m.ret !== "void" && tsType(m.ret) === null) continue;
+    const ps = m.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ");
+    const args = ["this.ref", ...m.params.map((p) => toWasm(p.type, p.name))].join(", ");
+    const call = `(_exports.__bind_m_${s.bind}_${m.name} as CallableFunction)(${args})`;
+    lines.push(`  ${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
+    lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
+    lines.push(`  }`);
+  }
+
+  // A plain-data copy, one level deep: a struct-typed field becomes its own `toObject()`, and a
+  // nullable one becomes null. Deliberately not recursive through a cycle — `Node? next` on a ring
+  // would not terminate — so a self-referential field is copied as the wrapper, not as data.
+  const plainFields = s.fields.filter((f) => tsType(f.type) !== null);
+  const objType = plainFields
+    .map((f) => `${f.name}: ${structOf(f.type) ? tsType(f.type) : tsType(f.type)}`).join("; ");
+  lines.push(`  /** A plain-object snapshot. Struct-typed fields stay wrappers, so cycles are safe. */`);
+  lines.push(`  toObject(): { ${objType} } {`);
+  lines.push(`    return { ${plainFields.map((f) => `${f.name}: this.${f.name}`).join(", ")} };`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+/** Convert a JS value to what the wasm accessor expects. */
+function toWasm(wacType: string, expr: string): string {
+  if (wacType === "string") return `_stringToWasm(${expr})`;
+  if (ARRAY_MAP[wacType]) return `_arrayToWasm_${wacType.replace("[]", "")}(${expr})`;
+  const st = structOf(wacType);
+  if (st) return st.nullable ? `(${expr} === null ? null : ${expr}.ref)` : `${expr}.ref`;
+  return expr;
+}
+
+/** Convert what a wasm accessor returned into the JS value for its type. */
+function fromWasm(wacType: string, expr: string): string {
+  if (wacType === "string") return `_stringFromWasm(${expr})`;
+  if (ARRAY_MAP[wacType]) return `_arrayFromWasm_${wacType.replace("[]", "")}(${expr})`;
+  const st = structOf(wacType);
+  if (st) {
+    const cls = className(st.s);
+    return st.nullable
+      ? `((_r) => _r === null ? null : new ${cls}(_r))(${expr})`
+      : `new ${cls}(${expr})`;
+  }
+  if (wacType === "u64") return `BigInt.asUintN(64, ${expr} as bigint)`;
+  if (wacType === "i64") return `${expr} as bigint`;
+  if (wacType === "bool") return `Boolean(${expr})`;
+  if (wacType === "u32") return `(${expr} as number) >>> 0`;
+  return `${expr} as number`;
 }
 
 // ── Array helpers ─────────────────────────────────────────────────────────────
@@ -167,18 +291,16 @@ function genWrapper(exp: WacExport): WrapperResult {
   // Build the body
   const lines: string[] = [];
 
-  // Convert array/string params to wasm form
+  // Convert array/string/struct params to wasm form. The conversions are the same ones the struct
+  // wrappers use, so a struct parameter needed no new code here — only the type to stop being
+  // rejected above.
   const wasmArgs: string[] = [];
   for (const p of exp.params) {
-    if (p.type === "string") {
-      lines.push(`  const _w_${p.name} = _stringToWasm(${p.name});`);
-      wasmArgs.push(`_w_${p.name}`);
-    } else if (ARRAY_MAP[p.type]) {
-      const elemBase = p.type.replace("[]", "");
-      lines.push(`  const _w_${p.name} = _arrayToWasm_${elemBase}(${p.name});`);
+    if (p.type === "string" || ARRAY_MAP[p.type]) {
+      lines.push(`  const _w_${p.name} = ${toWasm(p.type, p.name)};`);
       wasmArgs.push(`_w_${p.name}`);
     } else {
-      wasmArgs.push(p.name);
+      wasmArgs.push(toWasm(p.type, p.name));
     }
   }
 
@@ -193,6 +315,8 @@ function genWrapper(exp: WacExport): WrapperResult {
     const elemBase = exp.ret.replace("[]", "");
     lines.push(`  const _result = ${callExpr};`);
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
+  } else if (structOf(exp.ret)) {
+    lines.push(`  return ${fromWasm(exp.ret, callExpr)};`);
   } else if (exp.ret === "u64") {
     // wac's u64 is wasm's i64, which is right — signedness lives in the instruction, not the
     // type. But WebAssembly's JS API hands an i64 back as a *signed* BigInt, so a value with
@@ -229,18 +353,29 @@ function genWrapper(exp: WacExport): WrapperResult {
  */
 export function wacBindgen(compiled: WacCompiled): string {
   const base64 = btoa(String.fromCharCode(...compiled.wasm));
+  // The struct table is consulted by `tsType` and the conversions, which are called from
+  // everywhere below.
+  structsByWac = new Map(compiled.structs.map((s) => [s.wac, s]));
 
   // Determine which helpers are needed
   const allTypes = compiled.exports.flatMap(e => [
     ...e.params.map(p => p.type),
     e.ret,
   ]);
+  // A struct's own fields and methods can mention a string or an array even when no exported
+  // *function* does, and its accessors convert them the same way.
+  const structTypes = compiled.structs.flatMap((s) => [
+    ...s.fields.map((f) => f.type),
+    ...s.methods.flatMap((m) => [...m.params.map((p) => p.type), m.ret]),
+  ]);
+  allTypes.push(...structTypes);
   const needsString = allTypes.some(t => t === "string");
   // Copy-in helpers for array params, copy-out helpers only for array returns
   const paramArrayTypes = new Set(
-    compiled.exports.flatMap(e => e.params.map(p => p.type)).filter(t => ARRAY_MAP[t]));
+    [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes]
+      .filter(t => ARRAY_MAP[t]));
   const retArrayTypes = new Set(
-    compiled.exports.map(e => e.ret).filter(t => ARRAY_MAP[t]));
+    [...compiled.exports.map(e => e.ret), ...structTypes].filter(t => ARRAY_MAP[t]));
 
   const parts: string[] = [];
 
@@ -269,6 +404,9 @@ export function wacBindgen(compiled: WacCompiled): string {
   for (const arrType of retArrayTypes) {
     parts.push(arrayFromWasmHelper(arrType, ARRAY_MAP[arrType]));
   }
+
+  // Struct wrappers, before the functions that mention them.
+  for (const st of compiled.structs) parts.push(genStructClass(st));
 
   // Function wrappers
   const skipped: string[] = [];

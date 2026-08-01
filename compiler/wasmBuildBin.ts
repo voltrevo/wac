@@ -540,6 +540,8 @@ type WasmTypeCtxFull = WasmTypeCtx & {
   helperIdx: Map<string, number>;
   /** Bind helpers (string + array accessors) exported for use by generated TS. */
   bindHelpers: BindHelperSpec[];
+  /** The structs a JS caller can reach, so the export section can expose their methods too. */
+  bindStructs: StructEntry[];
 };
 
 function buildTypeCtxFull(
@@ -626,9 +628,10 @@ function buildTypeCtxFull(
 
   // Bind helpers come after the builtin helpers
   const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
+  const bindStructs = reachableStructs(result, partialCtx);
   const bindHelpers = buildBindHelpers(result, partialCtx);
 
-  return { ...partialCtx, bindHelpers };
+  return { ...partialCtx, bindHelpers, bindStructs };
 }
 
 // ── Builtin helper function signatures ────────────────────────────────────────
@@ -924,6 +927,59 @@ function makeToMem(arrTypeIdx: number, width: number, store: number, getOp: numb
   ];
 }
 
+/**
+ * A wasm export name component that is also a legal one in TypeScript.
+ *
+ * A materialised generic is called `Vec__m$i32`, and `$` is fine in a wasm export name but the
+ * generated wrapper has to name it too, so both sides agree on this spelling.
+ */
+export function bindName(structName: string): string {
+  return structName.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+/** The wasm value type a bind accessor uses for a field — packed fields cross as i32. */
+function bindFieldValType(t: WacType, ctx: WasmTypeCtx): number[] {
+  if (t.kind === "prim" && ["u8", "i8", "u16", "i16"].includes(t.name)) return [0x7F];
+  return wasmValType(t, ctx);
+}
+
+/**
+ * The structs a JS caller can reach: those named in an exported signature, and then whatever their
+ * own fields name, transitively.
+ *
+ * Transitive because a `Node` with a `Node? next` is one type from the outside and two from here,
+ * and because an exported function returning a `Tree` is useless if its children are unreachable.
+ */
+function reachableStructs(result: ResolveResult, ctx: WasmTypeCtx): StructEntry[] {
+  const byIndex = new Map(result.structs.map((s) => [s.typeIndex, s]));
+  const out: StructEntry[] = [];
+  const seen = new Set<number>();
+
+  const visitType = (t: WacType): void => {
+    if (t.kind === "nullable") return visitType(t.inner);
+    if (t.kind === "array") return visitType(t.elem);
+    if (t.kind === "funcref") { t.params.forEach(visitType); return visitType(t.ret); }
+    if (t.kind !== "struct") return;
+    // The index is the identity; the name is a fallback for a type no pass annotated.
+    const idx = t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name);
+    if (idx === undefined) return;
+    const entry = byIndex.get(idx);
+    // An enum's base and its variants are structs too, but a tagged union is a different shape at
+    // the boundary and gets its own stage — accessors for them alone would be misleading.
+    if (!entry || seen.has(idx) || entry.enumRole !== undefined) return;
+    seen.add(idx);
+    out.push(entry);
+    for (const f of ctx.structFields.get(`@${idx}`) ?? []) visitType(f.type);
+  };
+
+  for (const f of result.funcs) {
+    if (!f.exportName || f.filePath !== result.entryPath) continue;
+    for (const p of funcParams(f)) visitType(p.type);
+    visitType(funcReturnType(f));
+  }
+  return out;
+}
+
 function buildBindHelpers(
   result: ResolveResult,
   ctx: WasmTypeCtx & { orderedArrayElems: WacType[]; orderedSigs: { params: WacType[]; ret: WacType }[] },
@@ -961,6 +1017,58 @@ function buildBindHelpers(
     funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],
     body: makeToMem(si, 1, 0x3A, 0x0D),
   });
+
+  // ── Struct bind helpers ─────────────────────────────────────────────────────
+  //
+  // A JS caller holds a wac struct as an opaque WasmGC reference and reaches its contents through
+  // these, exactly as it already does for a string or an array. WasmGC needs the type index
+  // statically in `struct.get`, so there is one accessor per field per struct rather than a generic
+  // one — which is why the set is restricted to structs actually reachable from an exported
+  // signature. A module that exports nothing structural gains nothing here.
+  //
+  // The alternative was to copy a struct out as a plain object at the boundary. Rejected: it costs
+  // O(size) per crossing, loses identity so mutation cannot flow back, and cannot represent a cycle
+  // — which `json`'s tree and every linked structure are. The copy is generated *on top* of these
+  // accessors instead, as `toObject()`, so the caller picks per call site.
+  for (const s of reachableStructs(result, ctx)) {
+    const fields = ctx.structFields.get(`@${s.typeIndex}`) ?? [];
+    const sref = [0x64, ...sleb(s.typeIndex)];
+    const safe = bindName(s.name);
+
+    // `new`: every field in declaration order, inherited ones first.
+    const newParams: number[] = [];
+    for (const f of fields) newParams.push(...bindFieldValType(f.type, ctx));
+    const newBody = [0x00, ...fields.flatMap((_, i) => [0x20, ...uleb(i)]),
+      0xFB, 0x00, ...uleb(s.typeIndex), 0x0B];
+    helpers.push({
+      name: `__bind_s_${safe}_new`,
+      funcTypeEntry: [0x60, ...uleb(fields.length), ...newParams, 0x01, ...sref],
+      body: newBody,
+    });
+
+    for (const f of fields) {
+      const vt = bindFieldValType(f.type, ctx);
+      // A packed field reads as i32 through the signed accessor, matching an array element.
+      const getOp = f.type.kind === "prim" && (f.type.name === "u8" || f.type.name === "u16")
+        ? 0x04                                        // struct.get_u
+        : f.type.kind === "prim" && (f.type.name === "i8" || f.type.name === "i16")
+        ? 0x03                                        // struct.get_s
+        : 0x02;                                       // struct.get
+      helpers.push({
+        name: `__bind_s_${safe}_get_${f.name}`,
+        funcTypeEntry: [0x60, 0x01, ...sref, 0x01, ...vt],
+        body: [0x00, 0x20, 0x00, 0xFB, getOp, ...uleb(s.typeIndex), ...uleb(f.absIdx), 0x0B],
+      });
+      if (!f.isConst) {
+        helpers.push({
+          name: `__bind_s_${safe}_set_${f.name}`,
+          funcTypeEntry: [0x60, 0x02, ...sref, ...vt, 0x00],
+          body: [0x00, 0x20, 0x00, 0x20, 0x01, 0xFB, 0x05, ...uleb(s.typeIndex),
+            ...uleb(f.absIdx), 0x0B],
+        });
+      }
+    }
+  }
 
   // Array bind helpers — for each primitive array element type in exported signatures
   const seen = new Set<string>();
@@ -1602,6 +1710,25 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         ...uleb(ctx.helperIdx.get(name)!)]);
     }
   }
+  // A struct's methods, for the wrappers. A method is an ordinary function in the module with the
+  // receiver as its first parameter, and it has never been wasm-exported — `exportName` is null for
+  // every one of them — so the README's own example, a `Point` with a `distanceSq`, had no callable
+  // entry point from JavaScript at all. Exporting is all it takes: no new code, one export entry
+  // pointing at the function that is already there.
+  for (const s of ctx.bindStructs) {
+    const seenMethods = new Set<string>();
+    for (let e: StructEntry | null = s; e; e = e.parentEntry) {
+      for (const [mname, fe] of e.methods) {
+        // An override shadows the parent's, and the derived struct is walked first.
+        if (seenMethods.has(mname)) continue;
+        seenMethods.add(mname);
+        if (fe.origin.kind === "method" && !fe.origin.decl.hasThis) continue;  // static: stage 2
+        const nameBytes = new TextEncoder().encode(`__bind_m_${bindName(s.name)}_${mname}`);
+        entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex)]);
+      }
+    }
+  }
+
   // Also export bind helpers so generated TS wrappers can call them
   const bindBaseIdx = result.funcs.length + builtinHelpers(ctx.coverage !== undefined).length; // after the builtin helpers
   for (let i = 0; i < ctx.bindHelpers.length; i++) {
@@ -1911,6 +2038,54 @@ function buildElemSection(result: ResolveResult): number[] {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /** Assemble a complete .wasm binary from a resolved wac program. */
+/**
+ * What a JS caller needs to reach a struct: the accessors' name component, the class name to use,
+ * and the fields and methods that exist. Produced here rather than in `wacCompile` because the
+ * reachable set and the field layout are both this module's answers.
+ */
+export type BindStructInfo = {
+  /** The `__bind_s_<this>_…` component, and a legal TypeScript identifier. */
+  bind: string;
+  /** The struct's own name, which is what a type referring to it says. */
+  wac: string;
+  /** What to call it in the generated wrapper — a generic instantiation reads as `Vec<i32>`. */
+  display: string;
+  fields: { name: string; type: WacType; isConst: boolean }[];
+  methods: { name: string; params: { name: string; type: WacType }[]; ret: WacType }[];
+};
+
+/** The bind metadata for a module, alongside the binary. */
+export function wasmBindStructs(
+  result: ResolveResult,
+  programs: Map<string, unknown>,
+): BindStructInfo[] {
+  const ctx = buildTypeCtxFull(result, programs, false);
+  return ctx.bindStructs.map((s) => {
+    const methods: BindStructInfo["methods"] = [];
+    const seen = new Set<string>();
+    for (let e: StructEntry | null = s; e; e = e.parentEntry) {
+      for (const [mname, fe] of e.methods) {
+        if (seen.has(mname)) continue;
+        seen.add(mname);
+        if (fe.origin.kind !== "method" || !fe.origin.decl.hasThis) continue;
+        methods.push({
+          name: mname,
+          params: fe.origin.decl.params.map((p) => ({ name: p.name, type: p.type })),
+          ret: fe.origin.decl.returnType,
+        });
+      }
+    }
+    return {
+      bind: bindName(s.name),
+      wac: s.name,
+      display: result.genericDisplay.get(s.name) ?? s.name,
+      fields: (ctx.structFields.get(`@${s.typeIndex}`) ?? [])
+        .map((f) => ({ name: f.name, type: f.type, isConst: f.isConst })),
+      methods,
+    };
+  });
+}
+
 export function wasmBuildBin(
   result: ResolveResult,
   programs: Map<string, unknown>,
