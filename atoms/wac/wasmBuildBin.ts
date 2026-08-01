@@ -288,6 +288,53 @@ function collectCallbackSigs(result: ResolveResult, ctx: BindWalkCtx): CallbackS
   return sigs;
 }
 
+/**
+ * Funcref signatures handed *out* — returned by an exported function or a bound
+ * method.
+ *
+ * JavaScript cannot call a wasm function reference, but it can call an export that
+ * does the `call_ref` for it. So a returned funcref crosses as a closure over one
+ * helper per signature: the mirror of the trampolines that bring one in.
+ */
+function collectOutSigs(result: ResolveResult, ctx: BindWalkCtx): CallbackSig[] {
+  const seen = new Set<string>();
+  const sigs: CallbackSig[] = [];
+  const add = (t: WacType): void => {
+    if (t.kind !== "funcref") return;
+    const key = sigKey(t.params, t.ret);
+    if (seen.has(key)) return;
+    seen.add(key);
+    sigs.push({ key, params: t.params, ret: t.ret });
+  };
+  // A function *inside* a callback's signature is handed out as well: when wac calls
+  // a host function with a funcref argument, that argument reaches JavaScript and
+  // needs the same helper. Without this, whether a higher-order callback worked
+  // depended on some unrelated export happening to return the same signature.
+  const nested = (t: WacType): void => {
+    if (t.kind !== "funcref") return;
+    for (const p of t.params) { add(p); nested(p); }
+    add(t.ret);
+    nested(t.ret);
+  };
+  for (const f of result.funcs) {
+    if (!f.exportName || f.filePath !== result.entryPath) continue;
+    add(funcReturnType(f));
+    nested(funcReturnType(f));
+    for (const p of fullParamTypes(f)) nested(p);
+  }
+  const binds = reachableBinds(result, ctx);
+  for (const s of [...binds.structs, ...binds.enums.map((e) => e.base)]) {
+    for (let e: StructEntry | null = s; e; e = e.parentEntry) {
+      for (const [, fe] of e.methods) {
+        add(funcReturnType(fe));
+        nested(funcReturnType(fe));
+        for (const p of funcParams(fe)) nested(p.type);
+      }
+    }
+  }
+  return sigs;
+}
+
 /** Collect all unique funcref signatures used in the program. */
 function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacType }[] {
   const seen = new Set<string>();
@@ -449,6 +496,7 @@ function buildTypeCtx(
   // function sits funcBase above its position in result.funcs. The map holds
   // *emitted* indices; converting back is wacEmitFunc's job.
   const cbSigs = collectCallbackSigs(result, { structTypeIdx, structFields });
+  const outSigs = collectOutSigs(result, { structTypeIdx, structFields });
   const funcBase = cbSigs.length;
   const funcIdx = new Map<string, number>();
   for (const f of result.funcs) funcIdx.set(f.mangledName, f.funcIndex + funcBase);
@@ -489,7 +537,7 @@ function buildTypeCtx(
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
     structFields, funcIdx, result, constGlobalIdx, currentFile: "",
-    helperIdx: new Map<string, number>(), cbSigs, funcBase,
+    helperIdx: new Map<string, number>(), cbSigs, outSigs, funcBase,
   };
 }
 
@@ -1423,6 +1471,48 @@ function buildBindHelpers(
         body: makeToMem(ai, bulk.width, bulk.store, getOp),
       });
     }
+  }
+
+  // ── Nullable primitives ───────────────────────────────────────────────────
+  // `i32?` is a one-field struct — a boxed value, so that a nullable i32 keeps all
+  // 32 bits instead of the 31 a ref.i31 holds. The host reads and writes the box
+  // through these rather than seeing an opaque reference it can do nothing with.
+  for (const [name, idx] of ctx.structTypeIdx) {
+    if (!name.startsWith("#box$")) continue;
+    const prim = name.slice("#box$".length);
+    const fields = ctx.structFields.get(`@${idx}`) ?? ctx.structFields.get(name) ?? [];
+    if (fields.length !== 1) continue;
+    const vt = bindFieldValType(fields[0].type, ctx);
+    const bref = [0x64, ...sleb(idx)];
+    helpers.push({
+      name: `__bind_opt_${prim}_new`,
+      funcTypeEntry: [0x60, 0x01, ...vt, 0x01, ...bref],
+      body: [0x00, 0x20, 0x00, 0xFB, 0x00, ...uleb(idx), 0x0B],
+    });
+    helpers.push({
+      name: `__bind_opt_${prim}_get`,
+      funcTypeEntry: [0x60, 0x01, ...bref, 0x01, ...vt],
+      body: [0x00, 0x20, 0x00, 0xFB, 0x02, ...uleb(idx), 0x00, 0x0B],
+    });
+  }
+
+  // ── Funcrefs handed out ───────────────────────────────────────────────────
+  // The receiver comes first so the host can bind it: the generated closure holds
+  // the reference and passes the arguments after it.
+  for (let j = 0; j < ctx.outSigs.length; j++) {
+    const sig = ctx.outSigs[j];
+    const sigIdx = ctx.sigTypeIdx.get(sig.key)!;
+    const fref = [0x64, ...sleb(sigIdx)];
+    const paramBytes = sig.params.flatMap((p) => encodeValType(p, ctx));
+    const isVoid = sig.ret.kind === "prim" && sig.ret.name === "void";
+    const retBytes = isVoid ? [] : encodeValType(sig.ret, ctx);
+    const fwd = sig.params.flatMap((_, i) => [0x20, ...uleb(i + 1)]); // local.get i+1
+    helpers.push({
+      name: `__bind_callref_${j}`,
+      funcTypeEntry: [0x60, ...uleb(sig.params.length + 1), ...fref, ...paramBytes,
+        ...uleb(retBytes.length > 0 ? 1 : 0), ...retBytes],
+      body: [0x00, ...fwd, 0x20, 0x00, 0x14, ...uleb(sigIdx), 0x0B], // args, callee, call_ref
+    });
   }
 
   // ── Host callbacks ────────────────────────────────────────────────────────
@@ -2503,6 +2593,10 @@ export function wasmBindMeta(
   enums: BindEnumInfo[];
   callbacks: BindCallbackInfo[];
   arrays: BindArrayInfo[];
+  /** Primitives that have a boxed nullable form in this module, e.g. `["i32"]`. */
+  boxed: string[];
+  /** Funcref signatures handed out, each with the helper that calls one. */
+  funcrefs: BindCallbackInfo[];
 } {
   const ctx = buildTypeCtxFull(result, programs, false);
   const methodsOf = (root: StructEntry): BindStructInfo["methods"] => {
@@ -2553,13 +2647,23 @@ export function wasmBindMeta(
       methods: methodsOf(s),
     };
   });
+  const funcrefs: BindCallbackInfo[] = ctx.outSigs.map((sig, j) => ({
+    helper: `__bind_callref_${j}`,
+    field: "",
+    params: sig.params,
+    ret: sig.ret,
+    slots: 0,
+  }));
+  const boxed = [...ctx.structTypeIdx.keys()]
+    .filter((n) => n.startsWith("#box$"))
+    .map((n) => n.slice("#box$".length));
   const arrays: BindArrayInfo[] = reachableArrays(result, ctx).map((t) => ({
     type: t,
     elem: t.elem,
     suffix: arrBindSuffix(t.elem),
     fill: needsFill(t.elem, ctx),
   }));
-  return { structs, enums, callbacks, arrays };
+  return { structs, enums, callbacks, arrays, boxed, funcrefs };
 }
 
 export function wasmBuildBin(
