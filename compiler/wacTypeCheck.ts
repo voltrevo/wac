@@ -1804,7 +1804,13 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
   switch (expr.kind) {
 
     case "int": {
-      const lit = wacIntLit(expr.value);
+      // The expected type decides how wide the bit pattern is read, so it has to be
+      // in hand before the literal is interpreted rather than applied to the result.
+      const wantPrim = expected?.kind === "nullable" ? expected.inner : expected;
+      const wantWidth = wantPrim?.kind === "prim" && (wantPrim.name === "i64" || wantPrim.name === "u64")
+        ? 64 as const
+        : undefined;
+      const lit = wacIntLit(expr.value, wantWidth);
       if (!lit.ok) {
         const msg = lit.reason === "range"
           ? `integer literal out of range`
@@ -1820,7 +1826,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // Through a nullable, too: the expected type of the literal in `u8? a = 200` is `u8?`,
       // and the literal itself is a `u8` that the emitter then boxes. Without this the
       // literal typed as i32 and the assignment failed with "expected u8?, got i32".
-      const intWant = expected?.kind === "nullable" ? expected.inner : expected;
+      const intWant = wantPrim;
       if (intWant && intWant.kind === "prim" && isInteger(intWant)) {
         if (literalFits(lit, intWant.name)) {
           expr.resolved = intWant;

@@ -8,12 +8,23 @@
 //   Decimal is a magnitude. It takes the narrowest type that holds it, so
 //   `42` is i32 and `1000000000000` is i64.
 //
-//   Hex is a bit pattern. Its width comes from the digit count — up to 8
-//   digits is i32, up to 16 is i64 — and the digits are read as two's
-//   complement at that width. So `0xEDB88320` is the i32 -306674912 rather
-//   than an i64 3988292384, which is what makes masks and polynomials
-//   writable as the constants they are. Padding past the boundary selects the
-//   wider type: `0x0EDB88320` is nine digits, so it is the positive i64.
+//   Hex is a bit pattern, read as two's complement **at the width it is being
+//   read into**. With a 64-bit type expected, `0xFFFFFFFF` is 4294967295; with
+//   a 32-bit one it is -1. Both are the same 32 bits; what differs is how many
+//   bits the reader was asking for.
+//
+//   With nothing expected, the width comes from the digit count — up to 8
+//   digits is i32, up to 16 is i64. So a bare `0xEDB88320` is the i32
+//   -306674912 rather than an i64 3988292384, which is what makes masks and
+//   polynomials writable as the constants they are. Padding past the boundary
+//   selects the wider type: `0x0EDB88320` is nine digits, so it is the
+//   positive i64.
+//
+// Taking the width from the digits *and then widening* is what issue 0054 was:
+// `i64 v = 0xFFFFFFFF` read 32 bits, got -1, and sign-extended it to -1. Every
+// 32-bit mask and every limb of a large prime is written in hex, so it produced
+// a table of constants that was wrong for every input, four layers from anything
+// a reader would suspect.
 //
 // Underscores are separators and carry no meaning: `0xEDB8_8320` is `0xEDB88320`.
 //
@@ -41,7 +52,14 @@ const I32_MAX = 2147483647n;
 const I64_MAX = 9223372036854775807n;
 const U64_MAX = 18446744073709551615n;
 
-export function wacIntLit(raw: string): IntLit {
+/**
+ * @param expectWidth The width the literal is being read into, when the context
+ *   supplies one. Only hex uses it, and only to decide how many bits of two's
+ *   complement to read; a decimal literal is a magnitude and reads the same
+ *   everywhere. Callers that have an expected type must pass it, or the two
+ *   readings of one literal disagree — which is the whole reason this is shared.
+ */
+export function wacIntLit(raw: string, expectWidth?: 32 | 64): IntLit {
   const text = raw.replace(/_/g, "");
   // BigInt("") is 0 rather than an error, so text with no digits at all has to
   // be rejected up front. The lexer never emits such a token, but the rule
@@ -58,9 +76,12 @@ export function wacIntLit(raw: string): IntLit {
   if (/^0[xX]/.test(text)) {
     const digits = text.length - 2;
     const common = { ok: true as const, hex: true, magnitude: value, fitsI64: true };
-    if (digits <= 8)  return { ...common, value: BigInt.asIntN(32, value), width: 32 };
-    if (digits <= 16) return { ...common, value: BigInt.asIntN(64, value), width: 64 };
-    return { ok: false, reason: "range" };
+    if (digits > 16) return { ok: false, reason: "range" };
+    // The intrinsic width, used when nothing is expected and as the floor when
+    // something is: 0x1FFFFFFFF cannot be read into 32 bits however it is asked for.
+    const own = digits <= 8 ? 32 : 64;
+    const width = expectWidth !== undefined && expectWidth > own ? expectWidth : own;
+    return { ...common, value: BigInt.asIntN(width, value), width };
   }
 
   const common = { ok: true as const, hex: false, magnitude: value };

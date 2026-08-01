@@ -2505,8 +2505,8 @@ function constElemBytes(el: Expr, elem: WacType, ctx: WasmTypeCtxFull): number[]
     }
     return null;
   };
-  const v = wacConstEval(el, lookup);
   const name = elem.kind === "prim" ? elem.name : "i32";
+  const v = wacConstEval(el, lookup, 0, name === "i64" || name === "u64" ? 64 : 32);
   if (v === null) return [0x41, 0x00]; // unreachable: the type checker rejected it
 
   if (name === "f32") {

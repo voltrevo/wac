@@ -8895,3 +8895,65 @@ Deno.test("[§wac-bind-arr-ref-4jkq8wn] an array inside an enum payload has its 
   eq([...mod.str().Str_bytes].join(","), "65,65,65", "the payload array crosses");
   eq([...mod.nums().Nums_xs].join(","), "7,7", "and so does one in another variant");
 });
+
+// ── §wac-hex-width-3nkq7wm ────────────────────────────────────────────────────
+
+Deno.test("[§wac-hex-width-3nkq7wm] a hex literal is read at the width it is read into", async () => {
+  // Issue 0054: the width came from the digit count and the value was *then* widened,
+  // so `i64 v = 0xFFFFFFFF` read 32 bits, got -1, and sign-extended it. Every 32-bit
+  // mask and every limb of a large prime is written in hex, and the failure surfaced
+  // four layers away — a P-256 prime that was six limbs of -1, so zero did not
+  // round-trip through the encoder.
+  //
+  // Every position a literal can occupy, because the two that were wrong were wrong
+  // in different places: the checker's contextual typing, and the constant evaluator
+  // that fills a global's initialiser. A table with a hole in it looks complete when
+  // you read the rows that are there.
+  const src = `
+    const i64[] LIMBS = i64[](0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0x100000000);
+    const i64 SCALAR = 0xFFFFFFFF;
+    i64 idn(i64 v) { return v; }
+    export i64 constArr(i32 i) { return LIMBS[i]; }
+    export i64 constScalar()   { return SCALAR; }
+    export i64 localInit()     { i64 v = 0xFFFFFFFF; return v; }
+    export i64 arrayLit(i32 i) { i64[] a = i64[](0xFFFFFFFF, 0x80000000); return a[i]; }
+    export i64 argument()      { return idn(0xFFFFFFFF); }
+    export i64 ternary(bool b) { return b ? 0xFFFFFFFF : 0; }
+    export i64 returned()      { return 0xFFFFFFFF; }
+    export u64 unsigned64()    { u64 v = 0xFFFFFFFF; return v; }
+    export u64 uWide()         { u64 v = 0xFFFFFFFFFFFFFFFF; return v; }
+    export i64 wide()          { return 0x100000000; }
+    export i64 belowBoundary() { return 0x7FFFFFFF; }
+    // 32-bit targets keep the old reading, which is the point of the notation: a
+    // polynomial and a mask are the constants they look like.
+    export i32 poly32()        { return 0xEDB88320; }
+    export i32 ones32()        { return 0xFFFFFFFF; }
+    export i32 sign32()        { return 0x80000000; }
+    export u32 ones32u()       { u32 v = 0xFFFFFFFF; return v; }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const inst = await wacInstance(r.compiled);
+
+  const cases: [string, unknown[], string][] = [
+    ["constArr", [0], "4294967295"], ["constArr", [1], "2147483648"],
+    ["constArr", [2], "2147483647"], ["constArr", [3], "4294967296"],
+    ["constScalar", [], "4294967295"],
+    ["localInit", [], "4294967295"],
+    ["arrayLit", [0], "4294967295"], ["arrayLit", [1], "2147483648"],
+    ["argument", [], "4294967295"],
+    ["ternary", [true], "4294967295"],
+    ["returned", [], "4294967295"],
+    ["unsigned64", [], "4294967295"],
+    ["uWide", [], "18446744073709551615"],
+    ["wide", [], "4294967296"],
+    ["belowBoundary", [], "2147483647"],
+    ["poly32", [], "-306674912"],
+    ["ones32", [], "-1"],
+    ["sign32", [], "-2147483648"],
+    ["ones32u", [], "4294967295"],
+  ];
+  for (const [fn, args, want] of cases) {
+    eq(String(inst.call(fn, args as never[])), want, `${fn}(${args.join(",")})`);
+  }
+});

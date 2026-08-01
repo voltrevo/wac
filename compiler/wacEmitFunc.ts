@@ -1057,7 +1057,15 @@ class FuncEmitter {
       case "int": {
         // Emission only runs after a successful typecheck, which rejects any
         // literal wacIntLit can't interpret — so this always narrows to ok.
-        const lit = wacIntLit(e.value) as { ok: true; value: bigint; width: 32 | 64 };
+        // Read once the width is known, not before: a hex literal read at 32 bits and
+        // then widened is `0xFFFFFFFF` becoming -1 in an i64 [issue 0054].
+        const litWidth = ((): 32 | 64 => {
+          const res0 = e.resolved?.kind === "prim" ? e.resolved.name : undefined;
+          if (res0 !== undefined) return res0 === "i64" || res0 === "u64" ? 64 : 32;
+          if (expectType?.kind === "prim" && (expectType.name === "i64" || expectType.name === "u64")) return 64;
+          return 32;
+        })();
+        const lit = wacIntLit(e.value, litWidth) as { ok: true; value: bigint; width: 32 | 64 };
         // The literal's own width decides as well as the expected type. Relying on
         // expectType alone emitted i32.const for an i64-typed literal wherever no
         // type was being pushed down — as a binary operand, for instance — which
