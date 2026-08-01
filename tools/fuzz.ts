@@ -47,7 +47,7 @@ const asBool = (v: V): boolean => typeof v === "boolean" ? v : v !== 0n;
 
 // ── Deterministic RNG, so a failure reproduces from its seed ──────────────────
 
-class Rng {
+export class Rng {
   private s: number;
   constructor(seed: number) { this.s = seed >>> 0; }
   next(): number {
