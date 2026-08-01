@@ -59,9 +59,35 @@ A `const` field gets a getter and no setter. A nullable struct crosses as `T | n
 JavaScript already means by an absent object. A generic instantiation is named for what the author
 wrote: `Vec<i32>` binds as `Vec_i32`, never as its mangled name.
 
+### Enums cross as a class with a tag
+
+The same shape as a struct — a reference, methods, `toObject()` — with a discriminant on top:
+
+```ts
+export class Shape {
+  static Point(): Shape;
+  static Circle(r: number): Shape;
+  get tag(): "Point" | "Circle" | "Rect";
+  get Circle_r(): number;             // throws unless this is a Circle
+  area(): number;                     // the enum's own methods
+  toObject(): { tag: "Point" } | { tag: "Circle"; r: number } | { tag: "Rect"; w: number; h: number };
+}
+```
+
+`[§wac-bind-enum-3nqk7vm]` `toObject()` is the discriminated union a JS caller can `switch` on, and
+`tag` alone is enough to branch without unpacking. Reading the payload of a variant the value is
+not is a cast that fails — the same protection `match` gives, arriving as an exception rather than
+a wrong answer.
+
+A class rather than a bare tagged object, so an enum crosses on the same terms as a struct: by
+reference, with its methods, and without a copy per crossing. A generic enum binds under the name
+its author wrote — `Option<i32>` is `Option_i32`.
+
+An enum whose variant is called `tag`, `ref` or `toObject` is skipped rather than mangled: the
+generated member would collide, and a renamed variant would no longer be the name in the source.
+
 ### Not yet supported in bindgen
 
-- Enums (a tagged union at the boundary is a different shape, and gets its own pass)
 - Arrays of structs
 - Function references
 - Nested arrays

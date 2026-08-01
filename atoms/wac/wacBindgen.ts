@@ -18,7 +18,7 @@
 // Unsupported types (struct, nullable, funcref, nested arrays) cause the function
 // to be omitted with a comment.
 
-import type { WacCompiled, WacExport, WacStruct } from "./wacCompile.ts";
+import type { WacCompiled, WacExport, WacStruct, WacEnum } from "./wacCompile.ts";
 
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
@@ -71,35 +71,125 @@ const ARRAY_ELEM_PREFIX: Record<string, string> = {
  * them would be noise. Set once per `wacBindgen` call.
  */
 let structsByWac: Map<string, WacStruct> = new Map();
+/** The enums of the module being generated, by the name a type refers to them by. */
+let enumsByWac: Map<string, WacEnum> = new Map();
 
 /** The TypeScript class name for a struct — `Vec<i32>` becomes `Vec_i32`. */
-function className(s: WacStruct): string {
+function className(s: { display: string }): string {
   return s.display.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+$/, "");
 }
 
 function tsType(wacType: string): string | null {
   if (PRIM_MAP[wacType]) return PRIM_MAP[wacType];
   if (ARRAY_MAP[wacType]) return ARRAY_MAP[wacType];
-  // A struct crosses as an opaque reference wrapped in a generated class, and a nullable one as
-  // that class or null — which is what JavaScript already means by an absent object.
-  const st = structsByWac.get(wacType);
-  if (st) return className(st);
+  // A struct or an enum crosses as an opaque reference wrapped in a generated class, and a nullable
+  // one as that class or null — which is what JavaScript already means by an absent object.
+  const named = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
+  if (named) return className(named);
   if (wacType.endsWith("?")) {
-    const inner = structsByWac.get(wacType.slice(0, -1));
+    const inner = structsByWac.get(wacType.slice(0, -1)) ?? enumsByWac.get(wacType.slice(0, -1));
     if (inner) return `${className(inner)} | null`;
   }
   return null; // unsupported
 }
 
-/** The struct a type names, if it is one — with or without a trailing `?`. */
-function structOf(wacType: string): { s: WacStruct; nullable: boolean } | null {
-  const direct = structsByWac.get(wacType);
+/** The struct or enum a type names, if it is one — with or without a trailing `?`. */
+function structOf(wacType: string): { s: { display: string }; nullable: boolean } | null {
+  const direct = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
   if (direct) return { s: direct, nullable: false };
   if (wacType.endsWith("?")) {
-    const inner = structsByWac.get(wacType.slice(0, -1));
+    const inner = structsByWac.get(wacType.slice(0, -1)) ?? enumsByWac.get(wacType.slice(0, -1));
     if (inner) return { s: inner, nullable: true };
   }
   return null;
+}
+
+/**
+ * The members a generated class defines for itself, which a variant may not shadow.
+ *
+ * A variant called `tag` would collide with the discriminant getter and produce a file that does
+ * not compile. Rather than mangle the name — which would then differ from what the author wrote —
+ * such an enum is skipped and says so.
+ */
+const ENUM_RESERVED = new Set(["tag", "ref", "toObject", "constructor"]);
+
+/**
+ * A class per reachable enum: an opaque reference, a discriminant, and the payload behind it.
+ *
+ * The class rather than a bare tagged object, so an enum crosses on the same terms as a struct —
+ * by reference, with its methods — and `toObject()` produces the discriminated union that a JS
+ * caller can `switch` on. Going straight to the tagged object would have lost the methods and made
+ * every crossing a copy.
+ */
+function genEnumClass(en: WacEnum): { code: string } | { skip: string } {
+  const clash = en.variants.find((v) => ENUM_RESERVED.has(v.name));
+  if (clash) {
+    return { skip: `${en.display} — variant '${clash.name}' collides with a generated member` };
+  }
+  const cls = className(en);
+  const lines: string[] = [];
+  const tagUnion = en.variants.map((v) => JSON.stringify(v.name)).join(" | ");
+
+  lines.push(`/** \`${en.display}\`, held by reference. \`tag\` says which variant; \`toObject()\` unpacks it. */`);
+  lines.push(`export class ${cls} {`);
+  lines.push(`  constructor(readonly ref: unknown) {}`);
+
+  for (const v of en.variants) {
+    const ps = v.fields.map((f) => `${f.name}: ${tsType(f.type) ?? "unknown"}`).join(", ");
+    const args = v.fields.map((f) => toWasm(f.type, f.name)).join(", ");
+    if (v.fields.some((f) => tsType(f.type) === null)) continue;
+    lines.push(`  static ${v.name}(${ps}): ${cls} {`);
+    lines.push(`    return new ${cls}((_exports.__bind_e_${en.bind}_${v.name}_new as CallableFunction)(${args}));`);
+    lines.push(`  }`);
+  }
+
+  lines.push(`  get tag(): ${tagUnion} {`);
+  const byTag = en.variants.slice().sort((a, b) => a.tag - b.tag)
+    .map((v) => JSON.stringify(v.name)).join(", ");
+  lines.push(`    const _t = (_exports.__bind_e_${en.bind}_tag as CallableFunction)(this.ref) as number;`);
+  lines.push(`    return ([${byTag}] as const)[_t];`);
+  lines.push(`  }`);
+
+  for (const v of en.variants) {
+    for (const f of v.fields) {
+      const ts = tsType(f.type);
+      if (!ts) continue;
+      lines.push(`  /** Payload \`${f.name}\` of \`${v.name}\`. Throws unless this is a \`${v.name}\`. */`);
+      lines.push(`  get ${v.name}_${f.name}(): ${ts} {`);
+      lines.push(`    return ${fromWasm(f.type, `(_exports.__bind_e_${en.bind}_${v.name}_get_${f.name} as CallableFunction)(this.ref)`)};`);
+      lines.push(`  }`);
+    }
+  }
+
+  for (const m of en.methods) {
+    if (m.params.some((p) => tsType(p.type) === null)) continue;
+    if (m.ret !== "void" && tsType(m.ret) === null) continue;
+    const ps = m.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ");
+    const args = ["this.ref", ...m.params.map((p) => toWasm(p.type, p.name))].join(", ");
+    const call = `(_exports.__bind_m_${en.bind}_${m.name} as CallableFunction)(${args})`;
+    lines.push(`  ${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
+    lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
+    lines.push(`  }`);
+  }
+
+  // The discriminated union, which is the shape a JS caller switches on.
+  const objType = en.variants.map((v) => {
+    const fs = v.fields.filter((f) => tsType(f.type) !== null)
+      .map((f) => `; ${f.name}: ${tsType(f.type)}`).join("");
+    return `{ tag: ${JSON.stringify(v.name)}${fs} }`;
+  }).join("\n    | ");
+  lines.push(`  /** The variant and its payload, as a plain object to \`switch\` on. */`);
+  lines.push(`  toObject():\n    | ${objType} {`);
+  lines.push(`    switch (this.tag) {`);
+  for (const v of en.variants) {
+    const fs = v.fields.filter((f) => tsType(f.type) !== null)
+      .map((f) => `, ${f.name}: this.${v.name}_${f.name}`).join("");
+    lines.push(`      case ${JSON.stringify(v.name)}: return { tag: ${JSON.stringify(v.name)}${fs} };`);
+  }
+  lines.push(`    }`);
+  lines.push(`  }`);
+  lines.push(`}`);
+  return { code: lines.join("\n") };
 }
 
 function isSupported(wacType: string): boolean {
@@ -356,6 +446,7 @@ export function wacBindgen(compiled: WacCompiled): string {
   // The struct table is consulted by `tsType` and the conversions, which are called from
   // everywhere below.
   structsByWac = new Map(compiled.structs.map((s) => [s.wac, s]));
+  enumsByWac = new Map(compiled.enums.map((e) => [e.wac, e]));
 
   // Determine which helpers are needed
   const allTypes = compiled.exports.flatMap(e => [
@@ -364,10 +455,16 @@ export function wacBindgen(compiled: WacCompiled): string {
   ]);
   // A struct's own fields and methods can mention a string or an array even when no exported
   // *function* does, and its accessors convert them the same way.
-  const structTypes = compiled.structs.flatMap((s) => [
-    ...s.fields.map((f) => f.type),
-    ...s.methods.flatMap((m) => [...m.params.map((p) => p.type), m.ret]),
-  ]);
+  const structTypes = [
+    ...compiled.structs.flatMap((s) => [
+      ...s.fields.map((f) => f.type),
+      ...s.methods.flatMap((m) => [...m.params.map((p) => p.type), m.ret]),
+    ]),
+    ...compiled.enums.flatMap((e) => [
+      ...e.variants.flatMap((v) => v.fields.map((f) => f.type)),
+      ...e.methods.flatMap((m) => [...m.params.map((p) => p.type), m.ret]),
+    ]),
+  ];
   allTypes.push(...structTypes);
   const needsString = allTypes.some(t => t === "string");
   // Copy-in helpers for array params, copy-out helpers only for array returns
@@ -405,11 +502,18 @@ export function wacBindgen(compiled: WacCompiled): string {
     parts.push(arrayFromWasmHelper(arrType, ARRAY_MAP[arrType]));
   }
 
-  // Struct wrappers, before the functions that mention them.
+  // Struct and enum wrappers, before the functions that mention them.
+  const skipped: string[] = [];
   for (const st of compiled.structs) parts.push(genStructClass(st));
+  for (const en of compiled.enums) {
+    const r = genEnumClass(en);
+    if ("skip" in r) {
+      parts.push(`// skipped: ${r.skip}`);
+      skipped.push(r.skip);
+    } else parts.push(r.code);
+  }
 
   // Function wrappers
-  const skipped: string[] = [];
   for (const exp of compiled.exports) {
     const result = genWrapper(exp);
     if (result.skip) {

@@ -3595,6 +3595,91 @@ Deno.test("[§wac-bind-skip-h9pd5wn] the skip list is reachable from the bound m
   eq(/pick\(\) — return type 'fn/.test(ts), true, "and the return-type case");
 });
 
+Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to switch on", async () => {
+  // A class rather than a bare tagged object, so an enum crosses on the same terms as a struct — by
+  // reference, with its methods — and `toObject()` produces the discriminated union a JS caller
+  // switches on. Going straight to the object would have lost the methods and made every crossing
+  // a copy.
+  const mod = await importBindgen(`
+    export enum Shape {
+      Point,
+      Circle(f64 r),
+      Rect(f64 w, f64 h)
+      f64 area(const this) {
+        return match (this) {
+          case Point: 0.0,
+          case Circle(r): 3.0 * r * r,
+          case Rect(w, h): w * h
+        };
+      }
+    }
+    export Shape mkCircle(f64 r) { return Shape.Circle(r); }
+    export f64 areaOf(Shape s) { return s.area(); }
+  `) as unknown as {
+    Shape: {
+      Point(): ShapeT; Circle(r: number): ShapeT; Rect(w: number, h: number): ShapeT;
+    };
+    mkCircle(r: number): ShapeT;
+    areaOf(s: ShapeT): number;
+  };
+  type ShapeT = {
+    tag: "Point" | "Circle" | "Rect";
+    Circle_r: number; Rect_w: number; Rect_h: number;
+    area(): number;
+    toObject(): { tag: "Point" } | { tag: "Circle"; r: number } | { tag: "Rect"; w: number; h: number };
+  };
+
+  const c = mod.Shape.Circle(2);
+  eq(c.tag, "Circle", "the discriminant names the variant");
+  eq(c.Circle_r, 2, "and the payload is reachable");
+  eq(c.area(), 12, "a method on the enum");
+  eq(mod.areaOf(c), 12, "and it goes back into wac as an argument");
+
+  const p = mod.Shape.Point();
+  eq(p.tag, "Point", "a payload-less variant");
+  eq(p.area(), 0, "with its own arm");
+
+  const r = mod.Shape.Rect(3, 4);
+  eq(JSON.stringify(r.toObject()), `{"tag":"Rect","w":3,"h":4}`, "the switchable form");
+  eq(JSON.stringify(p.toObject()), `{"tag":"Point"}`, "including for a payload-less variant");
+  eq(mod.mkCircle(5).tag, "Circle", "an enum returned from an exported function");
+
+  // Reading the wrong variant's payload is a cast that fails — the protection `match` gives,
+  // arriving as an exception rather than a wrong answer.
+  let threw = false;
+  try { void p.Circle_r; } catch { threw = true; }
+  eq(threw, true, "a wrong-variant read throws rather than returning nonsense");
+});
+
+Deno.test("[§wac-bind-enum-3nqk7vm] a generic enum binds under its written name", async () => {
+  const mod = await importBindgen(`
+    export enum Option<T> {
+      Some(T v), None
+      bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+    }
+    export Option<i32> found() { return Option.Some(7); }
+    export Option<i32> missing() { return Option.None; }
+    export i32 unwrapOr(Option<i32> o, i32 d) {
+      return match (o) { case Some(v): v, case None: d };
+    }
+  `) as unknown as {
+    Option_i32: { Some(v: number): OptT; None(): OptT };
+    found(): OptT;
+    missing(): OptT;
+    unwrapOr(o: OptT, d: number): number;
+  };
+  type OptT = { tag: "Some" | "None"; Some_v: number; isSome(): boolean;
+                toObject(): { tag: "Some"; v: number } | { tag: "None" } };
+
+  eq(mod.found().tag, "Some", "the present case");
+  eq(mod.found().Some_v, 7, "and its payload");
+  eq(mod.missing().tag, "None", "the absent one");
+  eq(mod.missing().isSome(), false, "a method on the instantiation");
+  eq(mod.unwrapOr(mod.Option_i32.Some(3), 0), 3, "built here, unwrapped there");
+  eq(mod.unwrapOr(mod.Option_i32.None(), 9), 9, "and the default arm");
+  eq(JSON.stringify(mod.found().toObject()), `{"tag":"Some","v":7}`, "the switchable form");
+});
+
 Deno.test("[§wac-bind-struct-5kqn2wj] a generic instantiation is bound under a readable name", async () => {
   // `Vec<i32>` is `Vec__m$i32` inside the compiler and neither a legal TypeScript identifier nor a
   // name anyone typed. The display name the diagnostics already use serves here too.

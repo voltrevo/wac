@@ -8,7 +8,7 @@ import { wacLex } from "./wacLex.ts";
 import { wacParse, type Program } from "./wacParse.ts";
 import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
-import { wasmBuildBin, wasmBindStructs } from "./wasmBuildBin.ts";
+import { wasmBuildBin, wasmBindMeta } from "./wasmBuildBin.ts";
 import type { CoveragePoint } from "./wacEmitFunc.ts";
 import type { WacType } from "./wacParse.ts";
 
@@ -38,6 +38,15 @@ export type WacStruct = {
   methods: { name: string; params: { name: string; type: string }[]; ret: string }[];
 };
 
+/** An enum a JS caller can reach: a tag, per-variant payloads, and methods. */
+export type WacEnum = {
+  bind: string;
+  wac: string;
+  display: string;
+  variants: { name: string; tag: number; fields: { name: string; type: string }[] }[];
+  methods: WacStruct["methods"];
+};
+
 export type WacCompiled = {
   wasm: Uint8Array;
   exports: WacExport[];
@@ -49,6 +58,8 @@ export type WacCompiled = {
    * to write.
    */
   structs: WacStruct[];
+  /** The enums reachable from an exported signature, bound as a tagged union. */
+  enums: WacEnum[];
   /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
@@ -159,7 +170,23 @@ export function wacCompile(
   const coverage = options.coverage ? { points: [], file: entry } : undefined;
   const wasm = wasmBuildBin(resolveResult, programs, { coverage });
   const exports = extractExports(resolveResult);
-  const structs: WacStruct[] = wasmBindStructs(resolveResult, programs).map((s) => ({
+  const meta = wasmBindMeta(resolveResult, programs);
+  const enums: WacEnum[] = meta.enums.map((e) => ({
+    bind: e.bind,
+    wac: e.wac,
+    display: e.display,
+    variants: e.variants.map((v) => ({
+      name: v.name,
+      tag: v.tag,
+      fields: v.fields.map((f) => ({ name: f.name, type: typeStr(f.type) })),
+    })),
+    methods: e.methods.map((m) => ({
+      name: m.name,
+      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
+      ret: typeStr(m.ret),
+    })),
+  }));
+  const structs: WacStruct[] = meta.structs.map((s) => ({
     bind: s.bind,
     wac: s.wac,
     display: s.display,
@@ -172,7 +199,7 @@ export function wacCompile(
   }));
   return {
     ok: true,
-    compiled: { wasm, exports, structs, coverage: coverage?.points },
+    compiled: { wasm, exports, structs, enums, coverage: coverage?.points },
     diagnostics,
   };
 }
