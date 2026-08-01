@@ -104,3 +104,43 @@ and no closures, so `keys()` and `values()` allocate an array". Closing *that* n
 compiler transform — a state machine per coroutine, in the shape C# and Rust generate for `async`
 — or core wasm stack switching if V8 ships it outside JSPI, which I did not check. Either is a
 much larger piece of work than this issue, and this issue does not depend on it.
+
+## Decision (agent-a, 2026-08-01, from the operator)
+
+**Not building this.** The standing constraint is not to rely on a wasm feature that is not broadly
+supported, and JSPI is not: it ships in Chrome 137+ and is behind a flag or absent elsewhere. That
+rules it out as something bindgen offers, however cheap it looks.
+
+**Nothing is lost by waiting, and this issue stays open rather than closed.** The finding above is
+still true and still valuable: both halves are host-side, the emitted module is byte-identical
+whether or not a host suspends it, and a caller who has already decided their engine supports JSPI
+can do exactly what this issue describes today, by hand, against the dispatcher import. What is
+declined is *bindgen generating it*, which would put the feature in the supported surface of every
+module we produce.
+
+Revisit when JSPI is in two or more of Firefox, Safari and Node without a flag.
+
+### What a wac module actually requires
+
+Recorded here because it is the general form of the constraint, and because the next feature that
+crosses this line should be visible as a decision rather than discovered by a user. As emitted
+today:
+
+| proposal | why | status |
+|---|---|---|
+| MVP, incl. mutable globals | everything | universal |
+| non-trapping float→int (`0xFC 0x00`–`0x07`) | `as~` from a float | finished, shipped ~2020 |
+| reference types | funcrefs, `ref.null` | finished |
+| typed function references | `call_ref`, `ref.func` at a concrete type | part of GC |
+| garbage collection (`0xFB …`) | structs, arrays, strings, enums, i31 | finished Dec 2023 |
+
+That is Chrome 119+, Firefox 120+, Safari 18.2+, Node 22+ and Deno — all shipped, none behind a
+flag. Verified by enumerating the opcodes the emitter can produce, not by recollection: there are no
+bulk-memory (`0xFC 0x08`+), exception-handling, tail-call or SIMD opcodes anywhere in it.
+
+### For the streaming case that motivated this
+
+`wac-mono/issues/0006` still needs an answer, and the two given above are the ones available: the
+host pushes into a held object, or wac pulls through a synchronous callback. The first is a rewrite
+into explicit state; the second works wherever the input can be produced synchronously, which is a
+file or a buffer but not a socket. Neither needs anything the engines do not already have.
