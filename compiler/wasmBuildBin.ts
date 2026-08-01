@@ -857,6 +857,57 @@ function bindElemValType(elem: WacType): number[] {
   return [map[elem.name] ?? 0x7F];
 }
 
+/**
+ * The name an array's bind helpers are built from, derived from its element.
+ *
+ * `i32[]` gives `i32`, `string[]` gives `string`, `P[]` gives `P`, and `i32[][]`
+ * gives `i32Arr` — so the helper for the outer array of a nested one is
+ * `__bind_arr_i32Arr_get`. The host side reads this out of the metadata rather
+ * than recomputing it, so the two cannot drift.
+ */
+function arrBindSuffix(elem: WacType): string {
+  if (elem.kind === "prim") return elem.name;
+  if (elem.kind === "struct") return bindName(elem.name);
+  if (elem.kind === "array") return `${arrBindSuffix(elem.elem)}Arr`;
+  if (elem.kind === "nullable") return `${arrBindSuffix(elem.inner)}_null`;
+  return "ref";
+}
+
+/**
+ * The value type an array's bind accessors use, which is the type the array
+ * *declares* rather than the one the wac type reads as.
+ *
+ * An array of structs is declared with a nullable element so `array.new_default`
+ * can fill it, so its accessors are nullable too — declaring them non-null gives
+ * "expected (ref 2), got (ref null 2)" and no module at all. Packed elements
+ * cross as i32, as everywhere else on this boundary.
+ */
+function arrElemValType(elem: WacType, ctx: WasmTypeCtx): number[] {
+  // `string` is a prim in the type system and a reference in wasm, so it takes the
+  // declared path with the other references — reading it as a scalar declared an
+  // i32 accessor over a `(ref $str)` element.
+  if (elem.kind === "prim" && elem.name !== "string") return bindElemValType(elem);
+  const declared = encodeArrayType(elem, ctx);
+  return declared.slice(1, -1); // strip the 0x5E prefix and the mutability byte
+}
+
+/** Whether an array's elements are references rather than scalars. */
+function isRefElem(elem: WacType): boolean {
+  return elem.kind === "struct" || elem.kind === "array" || elem.kind === "nullable" ||
+    (elem.kind === "prim" && elem.name === "string");
+}
+
+/**
+ * Whether the host has to say what to fill a new array with.
+ *
+ * Only for an element type that is not defaultable — a non-null reference, which
+ * `string[]` is. An array of structs is declared nullable, so `array.new_default`
+ * fills it with null and bindgen sets every slot before wac ever sees it.
+ */
+function needsFill(elem: WacType, ctx: WasmTypeCtx): boolean {
+  return arrElemValType(elem, ctx)[0] === 0x64;
+}
+
 /** Return the array.get opcode byte for a given element type. */
 function arrGetOp(elem: WacType): number {
   const name = elem.kind === "prim" ? elem.name : "";
@@ -1025,8 +1076,53 @@ function bindableType(t: WacType): boolean {
   if (t.kind === "nullable") return bindableType(t.inner);
   if (t.kind === "prim") return t.name !== "void";
   if (t.kind === "struct") return true;
-  if (t.kind === "array") return t.elem.kind === "prim" && t.elem.name !== "string";
+  // An array whose element binds, binds — which covers `string[]`, an array of
+  // structs, and a nested array, all of which reach their elements the same way.
+  if (t.kind === "array") return bindableType(t.elem);
   return false;                                   // funcref
+}
+
+/**
+ * Every array type the boundary can reach, innermost first.
+ *
+ * The surface is wider than the exported functions: a bound struct's fields and
+ * its methods' signatures reach arrays too, and bindgen writes JS for those. A
+ * nested array yields both itself and its element, so `i32[][]` gets helpers at
+ * both levels.
+ */
+function reachableArrays(result: ResolveResult, ctx: WasmTypeCtx): (WacType & { kind: "array" })[] {
+  const found = new Map<string, WacType & { kind: "array" }>();
+  const seenStruct = new Set<number>();
+
+  const visit = (t: WacType): void => {
+    if (t.kind === "nullable") return visit(t.inner);
+    if (t.kind === "funcref") { t.params.forEach(visit); return visit(t.ret); }
+    if (t.kind === "array") {
+      visit(t.elem);                      // innermost first, so helpers exist for the element
+      if (!bindableType(t)) return;
+      const k = typeKey(t.elem);
+      if (!found.has(k) && ctx.arrTypeIdx.has(k)) found.set(k, t);
+      return;
+    }
+    if (t.kind !== "struct") return;
+    const idx = t.resolvedTypeIndex ?? ctx.structTypeIdx.get(t.name);
+    if (idx === undefined || seenStruct.has(idx)) return;
+    seenStruct.add(idx);
+    const entry = result.structs.find((s) => s.typeIndex === idx);
+    if (!entry) return;
+    for (const f of ctx.structFields.get(`@${idx}`) ?? []) visit(f.type);
+    for (const [, fe] of entry.methods) {
+      for (const p of funcParams(fe)) visit(p.type);
+      visit(funcReturnType(fe));
+    }
+  };
+
+  for (const f of result.funcs) {
+    if (!f.exportName || f.filePath !== result.entryPath) continue;
+    for (const p of funcParams(f)) visit(p.type);
+    visit(funcReturnType(f));
+  }
+  return [...found.values()];
 }
 
 function reachableBinds(
@@ -1229,49 +1325,66 @@ function buildBindHelpers(
     }
   }
 
-  // Array bind helpers — for each primitive array element type in exported signatures
-  const seen = new Set<string>();
-  for (const f of result.funcs) {
-    if (!f.exportName || f.filePath !== result.entryPath) continue;
-    const allTypes = [...funcParams(f).map(p => p.type), funcReturnType(f)];
-    for (const t of allTypes) {
-      const elem = t.kind === "array" && t.elem.kind === "prim" ? t.elem : null;
-      if (!elem) continue;
-      const key = typeKey(elem);
-      if (seen.has(key)) continue;
-      seen.add(key);
+  // Array bind helpers — for every array type the boundary can reach, which is
+  // not the same as every array in an exported *function*: a struct field and a
+  // method signature reach one too, and bindgen generates JS for those. Emitting
+  // helpers only for the function case left that JS calling exports the module
+  // did not have, so `buf.data()` failed with "__bind_arr_i32_len is not a
+  // function".
+  for (const arrT of reachableArrays(result, ctx)) {
+    const elem = arrT.elem;
+    const key = typeKey(elem);
+    const ai = ctx.arrTypeIdx.get(key)!;
+    const aref = [0x64, ...sleb(ai)];
+    const vt = arrElemValType(elem, ctx);
+    const getOp = arrGetOp(elem);
+    const suffix = arrBindSuffix(elem);
 
-      const ai = ctx.arrTypeIdx.get(key)!;
-      const aref = [0x64, ...sleb(ai)];
-      const vt = bindElemValType(elem);
-      const getOp = arrGetOp(elem);
-      const suffix = key; // e.g. "i32", "i8", "f64"
+    const arrGetBody = [0x00, 0x20, 0x00, 0x20, 0x01, 0xFB, getOp, ...uleb(ai), 0x0B];
+    const arrSetBody = [0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xFB, 0x0E, ...uleb(ai), 0x0B];
+    const arrLenBody = [0x00, 0x20, 0x00, 0xFB, 0x0F, 0x0B];
 
-      const arrNewBody = [0x00, 0x20, 0x00, 0xFB, 0x07, ...uleb(ai), 0x0B];
-      const arrGetBody = [0x00, 0x20, 0x00, 0x20, 0x01, 0xFB, getOp, ...uleb(ai), 0x0B];
-      const arrSetBody = [0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xFB, 0x0E, ...uleb(ai), 0x0B];
-      const arrLenBody = [0x00, 0x20, 0x00, 0xFB, 0x0F, 0x0B];
+    if (needsFill(elem, ctx)) {
+      // A non-null reference is not defaultable, so there is no array.new_default
+      // for one: the host says what to fill with. It has an element to give
+      // whenever the array is non-empty, and an empty one is built by
+      // array.new_fixed with no elements at all — which is the only way to make
+      // one when there is no value to fill it with.
+      helpers.push({
+        name: `__bind_arr_${suffix}_new`,
+        funcTypeEntry: [0x60, 0x02, ...i32, ...vt, 0x01, ...aref],
+        body: [0x00, 0x20, 0x01, 0x20, 0x00, 0xFB, 0x06, ...uleb(ai), 0x0B],
+      });
+      helpers.push({
+        name: `__bind_arr_${suffix}_new0`,
+        funcTypeEntry: [0x60, 0x00, 0x01, ...aref],
+        body: [0x00, 0xFB, 0x08, ...uleb(ai), 0x00, 0x0B],
+      });
+    } else {
+      helpers.push({
+        name: `__bind_arr_${suffix}_new`,
+        funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
+        body: [0x00, 0x20, 0x00, 0xFB, 0x07, ...uleb(ai), 0x0B],
+      });
+    }
+    helpers.push({ name: `__bind_arr_${suffix}_get`, funcTypeEntry: [0x60, 0x02, ...aref, ...i32, 0x01, ...vt], body: arrGetBody });
+    helpers.push({ name: `__bind_arr_${suffix}_set`, funcTypeEntry: [0x60, 0x03, ...aref, ...i32, ...vt, 0x00], body: arrSetBody });
+    helpers.push({ name: `__bind_arr_${suffix}_len`, funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],        body: arrLenBody });
 
-      helpers.push({ name: `__bind_arr_${suffix}_new`, funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],        body: arrNewBody });
-      helpers.push({ name: `__bind_arr_${suffix}_get`, funcTypeEntry: [0x60, 0x02, ...aref, ...i32, 0x01, ...vt], body: arrGetBody });
-      helpers.push({ name: `__bind_arr_${suffix}_set`, funcTypeEntry: [0x60, 0x03, ...aref, ...i32, ...vt, 0x00], body: arrSetBody });
-      helpers.push({ name: `__bind_arr_${suffix}_len`, funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],        body: arrLenBody });
-
-      // Bulk path, for element types that have a memory representation. Anything
-      // else keeps only the per-element accessors above.
-      const bulk = elem.kind === "prim" ? bulkOps(elem.name) : null;
-      if (bulk) {
-        helpers.push({
-          name: `__bind_arr_${suffix}_from_mem`,
-          funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
-          body: makeFromMem(ai, bulk.width, bulk.load),
-        });
-        helpers.push({
-          name: `__bind_arr_${suffix}_to_mem`,
-          funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],
-          body: makeToMem(ai, bulk.width, bulk.store, getOp),
-        });
-      }
+    // Bulk path, for element types that have a memory representation. Anything
+    // else keeps only the per-element accessors above.
+    const bulk = elem.kind === "prim" ? bulkOps(elem.name) : null;
+    if (bulk) {
+      helpers.push({
+        name: `__bind_arr_${suffix}_from_mem`,
+        funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
+        body: makeFromMem(ai, bulk.width, bulk.load),
+      });
+      helpers.push({
+        name: `__bind_arr_${suffix}_to_mem`,
+        funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],
+        body: makeToMem(ai, bulk.width, bulk.store, getOp),
+      });
     }
   }
 
@@ -2324,11 +2437,26 @@ export type BindCallbackInfo = {
   slots: number;
 };
 
+/** An array type the host can read and build, and the helpers that do it. */
+export type BindArrayInfo = {
+  type: WacType;
+  elem: WacType;
+  /** The `__bind_arr_<suffix>_*` family serving it. */
+  suffix: string;
+  /** Whether `_new` takes a fill value (and `_new0` exists for the empty case). */
+  fill: boolean;
+};
+
 /** The bind metadata for a module, alongside the binary. */
 export function wasmBindMeta(
   result: ResolveResult,
   programs: Map<string, unknown>,
-): { structs: BindStructInfo[]; enums: BindEnumInfo[]; callbacks: BindCallbackInfo[] } {
+): {
+  structs: BindStructInfo[];
+  enums: BindEnumInfo[];
+  callbacks: BindCallbackInfo[];
+  arrays: BindArrayInfo[];
+} {
   const ctx = buildTypeCtxFull(result, programs, false);
   const methodsOf = (root: StructEntry): BindStructInfo["methods"] => {
     const methods: BindStructInfo["methods"] = [];
@@ -2377,7 +2505,13 @@ export function wasmBindMeta(
       methods: methodsOf(s),
     };
   });
-  return { structs, enums, callbacks };
+  const arrays: BindArrayInfo[] = reachableArrays(result, ctx).map((t) => ({
+    type: t,
+    elem: t.elem,
+    suffix: arrBindSuffix(t.elem),
+    fill: needsFill(t.elem, ctx),
+  }));
+  return { structs, enums, callbacks, arrays };
 }
 
 export function wasmBuildBin(

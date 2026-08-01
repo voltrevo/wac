@@ -18,7 +18,7 @@
 // Unsupported types (struct, nullable, funcref, nested arrays) cause the function
 // to be omitted with a comment.
 
-import type { WacCompiled, WacExport, WacStruct, WacEnum, WacCallback } from "./wacCompile.ts";
+import type { WacCompiled, WacExport, WacStruct, WacEnum, WacCallback, WacArray } from "./wacCompile.ts";
 
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
@@ -81,6 +81,14 @@ let enumsByWac: Map<string, WacEnum> = new Map();
  * given one, and one it is given reaches only as far as the value goes.
  */
 let callbacksByType: Map<string, WacCallback & { index: number }> = new Map();
+/**
+ * The array types the boundary can carry, by the type as written.
+ *
+ * Primitive arrays keep their bulk path — one copy through the staging buffer.
+ * An array of references has no memory representation, so it crosses element by
+ * element through the same accessors a struct field uses.
+ */
+let arraysByWac: Map<string, WacArray> = new Map();
 
 /**
  * The TypeScript class name for a struct or enum — `Vec<i32>` becomes `Vec_i32`.
@@ -100,6 +108,11 @@ function className(s: { display: string }): string {
 function tsType(wacType: string): string | null {
   if (PRIM_MAP[wacType]) return PRIM_MAP[wacType];
   if (ARRAY_MAP[wacType]) return ARRAY_MAP[wacType];
+  const arr = arraysByWac.get(wacType);
+  if (arr) {
+    const elem = tsType(arr.elem);
+    return elem === null ? null : `${elem}[]`;
+  }
   // A struct or an enum crosses as an opaque reference wrapped in a generated class, and a nullable
   // one as that class or null — which is what JavaScript already means by an absent object.
   const named = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
@@ -343,6 +356,8 @@ function genStructClass(s: WacStruct): string {
 function toWasm(wacType: string, expr: string): string {
   if (wacType === "string") return `_stringToWasm(${expr})`;
   if (ARRAY_MAP[wacType]) return `_arrayToWasm_${wacType.replace("[]", "")}(${expr})`;
+  const arr = arraysByWac.get(wacType);
+  if (arr) return `_arrayToWasm_${arr.suffix}(${expr})`;
   const st = structOf(wacType);
   if (st) return st.nullable ? `(${expr} === null ? null : ${expr}.ref)` : `${expr}.ref`;
   return expr;
@@ -352,6 +367,8 @@ function toWasm(wacType: string, expr: string): string {
 function fromWasm(wacType: string, expr: string): string {
   if (wacType === "string") return `_stringFromWasm(${expr})`;
   if (ARRAY_MAP[wacType]) return `_arrayFromWasm_${wacType.replace("[]", "")}(${expr})`;
+  const arr = arraysByWac.get(wacType);
+  if (arr) return `_arrayFromWasm_${arr.suffix}(${expr})`;
   const st = structOf(wacType);
   if (st) {
     const cls = className(st.s);
@@ -381,6 +398,44 @@ function arrayToWasmHelper(elemType: string, jsType: string): string {
   _memEnsure(n * ${width});
   new ${jsType}(_memBuffer(), 0, n).set(js);
   return (_exports.${prefix}_from_mem as CallableFunction)(n);
+}`;
+}
+
+/**
+ * Copy a JS array into a wasm one, element by element.
+ *
+ * `_new` fills with null where the element type allows it, and every slot is
+ * written before wac sees the array. Where it does not — `string[]`, whose
+ * element is a non-null reference — the first element is the fill and an empty
+ * array comes from `_new0`, because `array.new` has no value to repeat and
+ * `array.new_default` is not available for a type with no default.
+ */
+function refArrayToWasmHelper(arr: WacArray, elemTs: string): string {
+  const p = `__bind_arr_${arr.suffix}`;
+  const mk = arr.fill
+    ? `  if (js.length === 0) return (_exports.${p}_new0 as CallableFunction)();\n` +
+      `  const wa = (_exports.${p}_new as CallableFunction)(js.length, ${toWasm(arr.elem, "js[0]")});`
+    : `  const wa = (_exports.${p}_new as CallableFunction)(js.length);`;
+  return `function _arrayToWasm_${arr.suffix}(js: ${elemTs}[]): unknown {
+${mk}
+  for (let i = 0; i < js.length; i++) {
+    (_exports.${p}_set as CallableFunction)(wa, i, ${toWasm(arr.elem, "js[i]")});
+  }
+  return wa;
+}`;
+}
+
+/** Read a wasm array of references back, element by element. */
+function refArrayFromWasmHelper(arr: WacArray, elemTs: string): string {
+  const p = `__bind_arr_${arr.suffix}`;
+  return `function _arrayFromWasm_${arr.suffix}(wa: unknown): ${elemTs}[] {
+  const n = (_exports.${p}_len as CallableFunction)(wa) as number;
+  const out: ${elemTs}[] = [];
+  for (let i = 0; i < n; i++) {
+    const _e = (_exports.${p}_get as CallableFunction)(wa, i);
+    out.push(${fromWasm(arr.elem, "_e")});
+  }
+  return out;
 }`;
 }
 
@@ -498,7 +553,7 @@ function genWrapper(exp: WacExport): WrapperResult {
     const elemBase = exp.ret.replace("[]", "");
     lines.push(`  const _result = ${callExpr};`);
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
-  } else if (structOf(exp.ret)) {
+  } else if (structOf(exp.ret) || arraysByWac.has(exp.ret)) {
     lines.push(`  return ${fromWasm(exp.ret, callExpr)};`);
   } else if (exp.ret === "u64") {
     // wac's u64 is wasm's i64, which is right — signedness lives in the instruction, not the
@@ -543,6 +598,11 @@ export function wacBindgen(compiled: WacCompiled): string {
   callbacksByType = new Map(
     (compiled.callbacks ?? []).map((c, i) => [c.type, { ...c, index: i }]),
   );
+  // Only the reference-element ones: a primitive array keeps its bulk path below,
+  // which is one copy rather than a call per element.
+  arraysByWac = new Map(
+    (compiled.arrays ?? []).filter((a) => !ARRAY_MAP[a.type]).map((a) => [a.type, a]),
+  );
 
   // Determine which helpers are needed
   const allTypes = compiled.exports.flatMap(e => [
@@ -562,13 +622,18 @@ export function wacBindgen(compiled: WacCompiled): string {
     ]),
   ];
   allTypes.push(...structTypes);
+  // An array's *element* needs its helpers too: `string[]` decodes each element with
+  // `_stringFromWasm`, and `i32[][]` builds each row with the bulk `i32[]` path.
+  // Without this the generated file called helpers it had not emitted.
+  const arrayElems = (compiled.arrays ?? []).map((a) => a.elem);
+  allTypes.push(...arrayElems);
   const needsString = allTypes.some(t => t === "string");
   // Copy-in helpers for array params, copy-out helpers only for array returns
   const paramArrayTypes = new Set(
-    [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes]
+    [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes, ...arrayElems]
       .filter(t => ARRAY_MAP[t]));
   const retArrayTypes = new Set(
-    [...compiled.exports.map(e => e.ret), ...structTypes].filter(t => ARRAY_MAP[t]));
+    [...compiled.exports.map(e => e.ret), ...structTypes, ...arrayElems].filter(t => ARRAY_MAP[t]));
 
   const parts: string[] = [];
 
@@ -610,6 +675,16 @@ export function wacBindgen(compiled: WacCompiled): string {
   if (needsString) {
     parts.push(STRING_TO_WASM);
     parts.push(STRING_FROM_WASM);
+  }
+
+  // Arrays of references, both directions. They are few, and generating a pair
+  // unconditionally avoids a second reachability walk that could disagree with
+  // the emitter's.
+  for (const arr of arraysByWac.values()) {
+    const elemTs = tsType(arr.elem);
+    if (elemTs === null) continue;   // an element the boundary cannot carry
+    parts.push(refArrayToWasmHelper(arr, elemTs));
+    parts.push(refArrayFromWasmHelper(arr, elemTs));
   }
 
   // Array helpers

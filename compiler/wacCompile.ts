@@ -67,6 +67,23 @@ export type WacCallback = {
   slots: number;
 };
 
+/**
+ * An array type the boundary can carry, and the helper family that carries it.
+ *
+ * The suffix comes from the emitter rather than being recomputed here, because a
+ * name that has to match on both sides is a name that will eventually not.
+ */
+export type WacArray = {
+  /** The array type as written, e.g. `i32[]`, `string[]`, `P[]`, `i32[][]`. */
+  type: string;
+  /** Its element type as written. */
+  elem: string;
+  /** The `__bind_arr_<suffix>_*` family serving it. */
+  suffix: string;
+  /** Whether `_new` takes a fill value, with `_new0` for the empty case. */
+  fill: boolean;
+};
+
 export type WacCompiled = {
   wasm: Uint8Array;
   exports: WacExport[];
@@ -82,6 +99,8 @@ export type WacCompiled = {
   enums: WacEnum[];
   /** Funcref signatures an exported function takes, one host dispatcher each. */
   callbacks: WacCallback[];
+  /** Array types the boundary can carry, including arrays of references. */
+  arrays: WacArray[];
   /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
@@ -227,9 +246,15 @@ export function wacCompile(
     ret: typeStr(c.ret),
     slots: c.slots,
   }));
+  const arrays: WacArray[] = meta.arrays.map((a) => ({
+    type: typeStr(a.type),
+    elem: typeStr(a.elem),
+    suffix: a.suffix,
+    fill: a.fill,
+  }));
   return {
     ok: true,
-    compiled: { wasm, exports, structs, enums, callbacks, coverage: coverage?.points },
+    compiled: { wasm, exports, structs, enums, callbacks, arrays, coverage: coverage?.points },
     diagnostics,
   };
 }

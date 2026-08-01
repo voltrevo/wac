@@ -135,12 +135,30 @@ took its place.
 The parameters and return of a callback marshal exactly as an export's do: primitives, strings,
 arrays, structs and enums all cross, and a callback returning a struct hands back the reference.
 
+### Arrays of references
+
+`string[]`, an array of structs, and a nested array are one mechanism: per-element accessors, since
+none of them has a memory representation to copy in bulk. `[§wac-bind-arr-ref-4jkq8wn]` A primitive
+array keeps its bulk path — one copy through the staging buffer rather than a call per element.
+
+```ts
+sumOf([one(1), one(2), one(39)]);   // 42 — structs go in
+mk(3).map((p) => p.x);              // [7, 7, 7] — and come back as classes
+deep([new Int32Array([1, 2])]);     // nested arrays nest
+```
+
+Building one wasm-side needs a value to fill it with, because a non-null reference has no default.
+Where the element type allows null the array is filled with it and every slot is written before wac
+sees it; where it does not — `string[]` — the first element is the fill, and an empty array comes
+from `array.new_fixed` with no elements, which is the only way to make one when there is no value to
+repeat.
+
 ### Not yet supported in bindgen
 
-- Arrays of structs — reach them through the container's methods
 - Function references *returned* from an export — JavaScript cannot call a wasm function reference,
   so there is nothing to hand back. Passing one *in* is supported, above.
-- Nested arrays
+- Nullable primitives (`i32?`)
+- Static methods — an instance method binds, a static one does not yet
 
 Functions using unsupported types in their signature are omitted from the
 generated file with a comment explaining why, and the reasons are exported as
