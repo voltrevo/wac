@@ -86,9 +86,20 @@ its author wrote — `Option<i32>` is `Option_i32`.
 An enum whose variant is called `tag`, `ref` or `toObject` is skipped rather than mangled: the
 generated member would collide, and a renamed variant would no longer be the name in the source.
 
+### What is followed, and what is not
+
+Every struct and enum named in an exported signature is bound, and so is every type *their* fields
+name — but only through a field the boundary can carry. `[§wac-bind-struct-5kqn2wj]` A field whose
+type is an array of structs is not a route to anything, because nothing binds one yet: following it
+would put a package's private types into its public surface as classes nobody could use.
+
+This costs less than it sounds, and running it over `json` is what showed why. A container reaches
+its contents through **methods**, and methods bind: `JsonArray` arrives with `push`, `len` and
+`get(i)`, so a JSON tree is walkable from JavaScript without an array of structs ever crossing.
+
 ### Not yet supported in bindgen
 
-- Arrays of structs
+- Arrays of structs — reach them through the container's methods
 - Function references
 - Nested arrays
 
