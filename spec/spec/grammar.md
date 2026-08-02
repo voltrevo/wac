@@ -129,7 +129,7 @@ default_clause = "default" , ":" , { statement } ;
 return_stmt    = "return" , [ expr ] , ";" ;
 break_stmt     = "break" , ";" ;
 continue_stmt  = "continue" , ";" ;
-trap_stmt      = "trap" , ";" ;
+trap_stmt      = "trap" , [ expr ] , ";" ;   (* the expr is a string message *)
 
 expr_stmt      = expr , ";" ;
 ```

@@ -335,6 +335,29 @@ function collectOutSigs(result: ResolveResult, ctx: BindWalkCtx): CallbackSig[] 
   return sigs;
 }
 
+/** Whether any statement is `trap <expr>`, which is what needs the message global. */
+function usesTrapMessage(result: ResolveResult): boolean {
+  let found = false;
+  const walk = (stmts: Stmt[]): void => {
+    for (const s of stmts) {
+      if (found) return;
+      if (s.kind === "trap" && s.value) { found = true; return; }
+      if (s.kind === "if") {
+        walk(s.then.stmts);
+        if (s.els?.kind === "else-if") walk([s.els.stmt]);
+        else if (s.els?.kind === "else-block") walk(s.els.block.stmts);
+      }
+      else if (s.kind === "while" || s.kind === "dowhile") walk(s.body.stmts);
+      else if (s.kind === "for") walk(s.body.stmts);
+      else if (s.kind === "block") walk(s.block.stmts);
+      else if (s.kind === "switch") for (const c of s.cases) walk(c.body);
+      else if (s.kind === "match") for (const a of s.arms) walk(a.body);
+    }
+  };
+  for (const f of result.funcs) walk(f.origin.decl.body.stmts);
+  return found;
+}
+
 /** Collect all unique funcref signatures used in the program. */
 function collectFuncSigs(result: ResolveResult): { params: WacType[]; ret: WacType }[] {
   const seen = new Set<string>();
@@ -527,7 +550,11 @@ function buildTypeCtx(
   // mention. A string constant is still substituted; it is immutable, so only its
   // identity differs and nothing can observe that.
   const constGlobalIdx = new Map<ConstDecl, number>();
-  let nextGlobal = coverage ? 1 : 0;
+  // A `trap "message"` needs somewhere to leave the message that survives the trap.
+  // One mutable nullable-string global, allocated only when the program has one, so a
+  // module without any is byte-identical to before.
+  const trapGlobalIdx = usesTrapMessage(result) ? (coverage ? 1 : 0) : -1;
+  let nextGlobal = (coverage ? 1 : 0) + (trapGlobalIdx >= 0 ? 1 : 0);
   for (const decl of moduleConsts(result)) {
     if (decl.type.kind === "array" || decl.type.kind === "struct") {
       constGlobalIdx.set(decl, nextGlobal++);
@@ -537,7 +564,7 @@ function buildTypeCtx(
   return {
     structTypeIdx, arrTypeIdx, sigTypeIdx, stringTypeIdx,
     structFields, funcIdx, result, constGlobalIdx, currentFile: "",
-    helperIdx: new Map<string, number>(), cbSigs, outSigs, funcBase,
+    helperIdx: new Map<string, number>(), cbSigs, outSigs, funcBase, trapGlobalIdx,
   };
 }
 
@@ -1500,6 +1527,20 @@ function buildBindHelpers(
     }
   }
 
+  // ── Trap messages ─────────────────────────────────────────────────────────
+  // `__trap_message()` reads the global a `trap "…"` left behind. Null when the
+  // module has not trapped with a message — an engine trap (a bounds check, a null
+  // dereference) sets nothing, and reporting the previous message for one of those
+  // would be worse than reporting nothing.
+  if (ctx.trapGlobalIdx >= 0) {
+    const si = ctx.stringTypeIdx;
+    helpers.push({
+      name: "__trap_message",
+      funcTypeEntry: [0x60, 0x00, 0x01, 0x63, ...sleb(si)],
+      body: [0x00, 0x23, ...uleb(ctx.trapGlobalIdx), 0x0B],
+    });
+  }
+
   // ── Nullable primitives ───────────────────────────────────────────────────
   // `i32?` is a one-field struct — a boxed value, so that a nullable i32 keeps all
   // 32 bits instead of the 31 a ref.i31 holds. The host reads and writes the box
@@ -2311,6 +2352,13 @@ function buildGlobalSection(ctx: WasmTypeCtxFull): number[] {
     ]);
   }
 
+  // The last `trap` message, readable after the trap has unwound. Null when the
+  // module trapped for a reason of the engine's rather than one of its own.
+  if (ctx.trapGlobalIdx >= 0) {
+    const si = ctx.stringTypeIdx;
+    globals.push([0x63, ...sleb(si), 0x01, 0xD0, ...sleb(si), 0x0B]);
+  }
+
   // One immutable global per constant array, built by array.new_fixed in its
   // own initialiser. That is a constant expression, so the array exists once
   // the module is instantiated and costs nothing per use — which is the entire
@@ -2628,6 +2676,8 @@ export function wasmBindMeta(
   boxed: string[];
   /** Funcref signatures handed out, each with the helper that calls one. */
   funcrefs: BindCallbackInfo[];
+  /** Whether the module can leave a `trap` message for the host to read. */
+  trapMessages: boolean;
 } {
   const ctx = buildTypeCtxFull(result, programs, false);
   const methodsOf = (root: StructEntry): BindStructInfo["methods"] => {
@@ -2694,7 +2744,7 @@ export function wasmBindMeta(
     suffix: arrBindSuffix(t.elem),
     fill: needsFill(t.elem, ctx),
   }));
-  return { structs, enums, callbacks, arrays, boxed, funcrefs };
+  return { structs, enums, callbacks, arrays, boxed, funcrefs, trapMessages: ctx.trapGlobalIdx >= 0 };
 }
 
 export function wasmBuildBin(

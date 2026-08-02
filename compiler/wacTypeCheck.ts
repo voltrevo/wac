@@ -1158,6 +1158,13 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
     }
 
     case "trap": {
+      if (stmt.value) {
+        const t = inferExpr(stmt.value, env, ctx, T_STR);
+        if (t && !typeEq(t, T_STR)) {
+          errAt(ctx, `'trap' takes a string message, got ${typeName(t)}`,
+            stmt.value.line, stmt.value.col);
+        }
+      }
       return true;
     }
 

@@ -109,7 +109,7 @@ export type Stmt =
   | ({ kind: "return";   value: Expr | null } & Pos)
   | ({ kind: "break" } & Pos)
   | ({ kind: "continue" } & Pos)
-  | ({ kind: "trap" } & Pos)
+  | ({ kind: "trap"; value?: Expr } & Pos)
   | ({ kind: "block";    block: Block } & Pos)
   | ({ kind: "expr";     expr: Expr } & Pos);
 
@@ -963,7 +963,15 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     }
     if (at("break"))    { advance(); expect(";"); return { kind: "break", ...p }; }
     if (at("continue")) { advance(); expect(";"); return { kind: "continue", ...p }; }
-    if (at("trap"))     { advance(); expect(";"); return { kind: "trap", ...p }; }
+    if (at("trap")) {
+      // `trap;` or `trap <expr>;`, shaped like `return` — the message is what the host
+      // is told, instead of the bare "unreachable" a trap otherwise reports.
+      advance();
+      if (at(";")) { expect(";"); return { kind: "trap", ...p }; }
+      const value = parseExpr();
+      expect(";");
+      return { kind: "trap", value, ...p };
+    }
     if (at("{"))        return { kind: "block", block: parseBlock(), ...p };
 
     // Variable declaration

@@ -106,6 +106,15 @@ let skippedMembers: string[] = [];
  */
 let boxedPrims: Set<string> = new Set();
 /**
+ * Whether the module can leave a trap message, and so whether the wrappers should
+ * look for one.
+ *
+ * Only wrappers around exported functions and methods are guarded. A `trap "…"` runs
+ * wac code, and wac code is only entered through those two — a field accessor or an
+ * array helper can trap, but never with a message.
+ */
+let hasTrapMessages = false;
+/**
  * Funcref signatures handed back, by the type as written.
  *
  * JavaScript cannot call a wasm function reference. It can call an export that does
@@ -218,6 +227,19 @@ function genCallbackRegistry(cb: WacCallback & { index: number }): string {
     `}`,
   ].join("\n");
 }
+
+/**
+ * Turns the engine's bare "unreachable" into whatever the program said.
+ *
+ * Rethrows the original when there is no message — an engine trap (a bounds check, a
+ * null dereference) leaves none, and inventing one would be worse than the truth. The
+ * original is kept as `cause` either way.
+ */
+const TRAP_GUARD = `function _wacTrap(e: unknown): never {
+  const s = (_exports.__trap_message as CallableFunction)();
+  if (s === null || s === undefined) throw e;
+  throw new Error(\`wac trap: \${_stringFromWasm(s)}\`, { cause: e });
+}`;
 
 /** The struct or enum a type names, if it is one — with or without a trailing `?`. */
 function structOf(wacType: string): { s: { display: string }; nullable: boolean } | null {
@@ -398,7 +420,12 @@ function genStructClass(s: WacStruct): string {
     const exportName = `${m.isStatic ? "__bind_sm_" : "__bind_m_"}${s.bind}_${m.name}`;
     const call = `(_exports.${exportName} as CallableFunction)(${args})`;
     lines.push(`  ${m.isStatic ? "static " : ""}${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
-    lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
+    const stmt = m.ret === "void" ? `${call};` : `return ${fromWasm(m.ret, call)};`;
+    if (hasTrapMessages) {
+      lines.push(`    try { ${stmt} } catch (e) { _wacTrap(e); }`);
+    } else {
+      lines.push(`    ${stmt}`);
+    }
     lines.push(`  }`);
   }
 
@@ -666,9 +693,12 @@ function genWrapper(exp: WacExport): WrapperResult {
   // Arrays are strictly copy-in [§wac-bind-arr-copy-j4wk7pm]: a void function
   // stays void — mutations to the wasm-side copy are discarded, never
   // mirrored back to the caller's typed array.
+  const body = hasTrapMessages
+    ? `  try {\n${lines.map((l) => "  " + l).join("\n")}\n  } catch (e) { _wacTrap(e); }`
+    : lines.join("\n");
   return {
     skip: false,
-    code: `export function ${jsName}(${tsParams}): ${tsRet} {\n${lines.join("\n")}\n}`,
+    code: `export function ${jsName}(${tsParams}): ${tsRet} {\n${body}\n}`,
   };
 }
 
@@ -689,6 +719,7 @@ export function wacBindgen(compiled: WacCompiled): string {
   // Only the reference-element ones: a primitive array keeps its bulk path below,
   // which is one copy rather than a call per element.
   boxedPrims = new Set(compiled.boxed ?? []);
+  hasTrapMessages = compiled.trapMessages === true;
   outFuncrefsByType = new Map(
     (compiled.funcrefs ?? []).map((c, i) => [c.type, { ...c, index: i }]),
   );
@@ -729,7 +760,9 @@ export function wacBindgen(compiled: WacCompiled): string {
   const cbProduced = cbTypes.map((c) => c.ret);                    // host → wasm
   const cbConsumed = cbTypes.flatMap((c) => c.params);             // wasm → host
   allTypes.push(...cbProduced, ...cbConsumed);
-  const needsString = allTypes.some(t => t === "string");
+  // A trap message is a string, so its decoder has to be present even for a module
+  // whose own signatures never mention one.
+  const needsString = allTypes.some(t => t === "string") || hasTrapMessages;
   // Copy-in helpers for array params, copy-out helpers only for array returns
   const paramArrayTypes = new Set(
     [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes, ...arrayElems,
@@ -780,6 +813,8 @@ export function wacBindgen(compiled: WacCompiled): string {
     parts.push(STRING_TO_WASM);
     parts.push(STRING_FROM_WASM);
   }
+
+  if (hasTrapMessages) parts.push(TRAP_GUARD);
 
   // Arrays of references, both directions. They are few, and generating a pair
   // unconditionally avoids a second reachability walk that could disagree with

@@ -328,6 +328,33 @@ export i32 mustBePositive(i32 n) {
 `[§wac-trap-stmt-v3kq8fn]` `mustBePositive(5)` returns `5`.
 `[§wac-trap-fires-w2jm4pd]` `mustBePositive(-1)` traps.
 
+**`trap` may carry a message**, which is what the host is told instead of the engine's
+bare "unreachable":
+
+```wac
+export i32 half(i32 n) {
+  if (n % 2 != 0) { trap "half needs an even number"; }
+  return n / 2;
+}
+```
+
+`[§wac-trap-message-4nqk8wm]` calling `half(7)` from JavaScript throws
+`wac trap: half needs an even number`; `half(8)` returns `4`.
+
+The message is any `string` expression, so it can be built at the point of failure. It is
+left in a module global that survives the trap, and the generated wrappers read it — a
+program with no `trap` message compiles to the same bytes as before the feature existed.
+
+**A trap the engine raises carries no message**, and is reported as it comes. An
+out-of-bounds index or a null dereference is not something the program chose to say
+anything about, and attributing the last message to it would be worse than saying
+nothing. The message is cleared when an exported function starts, so a stale one is never
+read as belonging to a later failure.
+
+**A trap does not poison the module.** The instance survives, its state is intact, and
+the next call works — which is what lets a long-running program catch one and carry on
+rather than exiting.
+
 ### Hex literals
 
 ```wac
