@@ -151,3 +151,28 @@ export i32 loopShadow() {
 ```
 
 `[§wac-shadow-loop-vwe8gfz]` `loopShadow()` returns `99`.
+
+### Keywords are not names
+
+```wac
+export i32 go(i32 match) { ... }   // error: 'match' is a keyword and cannot be
+                                   // used as a parameter name
+i32 match = 1;                     // ...as a variable name
+struct match { i32 x; }            // ...as a struct name
+```
+
+`[§wac-keyword-name-8wnq4kp]` A keyword in a name position is an error that
+names the keyword and points at it.
+
+The wording is part of the rule rather than a courtesy. `from` used to be
+reserved, and a parameter named `from` — in `slice(a, from, to)`, where that
+name naturally goes — reported a missing semicolon at the *next* declaration, a
+hundred lines further on, with the braces balanced and the function compiling in
+isolation. `from` was made contextual, which fixed that one word and nothing
+else; there are twenty-seven others, and `match` is the one most likely to be
+reached for next.
+
+Note the consequence for the declaration lookahead: `i32 match = 1;` is claimed
+as a declaration even though `match` is not an identifier, so that the error can
+be about the name. The guard is that an `=` must follow — without it, `x as i32;`
+would be read as a declaration of something called `as`.

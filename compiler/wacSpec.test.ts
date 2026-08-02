@@ -9311,3 +9311,57 @@ Deno.test("[§wac-contextual-from-6qkn3wp] an import still needs its `from`", ()
   );
   eq(r.ok, false, "an import without `from` is still an error");
 });
+
+// ── §wac-keyword-name-8wnq4kp ─────────────────────────────────────────────────
+
+Deno.test("[§wac-keyword-name-8wnq4kp] a keyword used as a name is reported as one", () => {
+  // The `from` episode is the reason this exists. `from` was reserved, and a parameter
+  // named `from` — in `slice(a, from, to)`, which is where such a name naturally goes —
+  // reported a missing semicolon at the *next* declaration, a hundred lines further on.
+  // Making `from` contextual fixed that word. It did nothing for the next one, and there
+  // are twenty-seven others; `match` is the one somebody will reach for first.
+  //
+  // Each position below used to say something that pointed away from the problem, so each
+  // is checked for naming the word *and* for pointing at the line it is on.
+  const cases: Array<{ what: string; src: string; line: number }> = [
+    { what: "parameter name", line: 1, src: `export i32 go(i32 match) { return 1; }` },
+    { what: "variable name", line: 2, src: `export i32 go() {\n  i32 match = 1;\n  return 1;\n}` },
+    { what: "function name", line: 1, src: `export i32 match() { return 1; }` },
+    { what: "member name", line: 1, src: `struct S { i32 match; }\nexport i32 go() { return 1; }` },
+    { what: "struct name", line: 1, src: `struct match { i32 x; }\nexport i32 go() { return 1; }` },
+    { what: "enum name", line: 1, src: `enum match { A }\nexport i32 go() { return 1; }` },
+  ];
+  for (const c of cases) {
+    const r = wacCompile(new Map([["m.wac", c.src]]), "m.wac");
+    eq(r.ok, false, `${c.what} should not compile`);
+    const d = r.diagnostics[0];
+    eq(
+      d.message,
+      `'match' is a keyword and cannot be used as a ${c.what}`,
+      `${c.what}: ${d.message}`,
+    );
+    // The line matters as much as the wording: reporting it in the right place is the
+    // entire difference between this and what `from` used to do.
+    eq(d.line, c.line, `${c.what} reported on line ${d.line}, not ${c.line}`);
+  }
+});
+
+Deno.test("[§wac-keyword-name-8wnq4kp] it does not claim ordinary expressions", () => {
+  // The declaration lookahead now accepts a keyword where a name belongs, which is how
+  // `i32 match = 1;` gets a useful message instead of "expected ';'". The guard is that an
+  // `=` must follow, and this is what that guard protects: `as` and `is` sit in exactly
+  // that position in an expression statement and must stay expressions.
+  const r = wacCompile(
+    new Map([["m.wac", `
+      export i32 go(f64 x, u8[]? maybe) {
+        i32 y = x as~ i32;
+        bool present = maybe is not null;
+        i32 z = 1;
+        z = y;
+        return present ? z : 0;
+      }
+    `]]),
+    "m.wac",
+  );
+  eq(r.ok, true, `should compile: ${r.diagnostics.map((d) => d.message).join("; ")}`);
+});
