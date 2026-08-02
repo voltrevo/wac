@@ -9209,3 +9209,38 @@ Deno.test("[§wac-trap-message-4nqk8wm] the message must be a string", () => {
   const msg = r.ok ? "" : r.diagnostics.map((d) => d.message).join("; ");
   eq(/'trap' takes a string message, got i32/.test(msg), true, `got: ${msg}`);
 });
+
+Deno.test("[§wac-bind-opt-prim-8mkq5wn] a nullable string or array crosses as T | null", async () => {
+  // Structs and enums already crossed as `Cls | null`; a string or an array did not,
+  // so anything fallible at the boundary had to invent a result struct to say "absent".
+  // That mattered once capabilities were being designed: `readFile` wants to return
+  // nothing when the file is missing.
+  const mod = await importBindgen(`
+    export string? maybeStr(bool yes) { return yes ? "hello" : null; }
+    export i32 lenOf(string? s) { return s is null ? -1 : s!.len(); }
+    export u8[]? maybeBytes(bool yes) { return yes ? u8[3](fill: 7) : null; }
+    export i32 sizeOf(u8[]? b) { return b is null ? -1 : b!.len(); }
+    export i32 viaCb(fn[string?(string)] lookup) { string? v = lookup("k"); return v is null ? -1 : v!.len(); }
+    export i32 viaCbBytes(fn[u8[]?(string)] read) { u8[]? v = read("f"); return v is null ? -1 : v!.len(); }
+  `) as unknown as {
+    maybeStr(yes: boolean): string | null;
+    lenOf(s: string | null): number;
+    maybeBytes(yes: boolean): Uint8Array | null;
+    sizeOf(b: Uint8Array | null): number;
+    viaCb(f: (k: string) => string | null): number;
+    viaCbBytes(f: (k: string) => Uint8Array | null): number;
+  };
+  eq(mod.maybeStr(true), "hello", "a present string");
+  eq(mod.maybeStr(false), null, "and an absent one");
+  eq(mod.lenOf("abcd"), 4, "in as well as out");
+  eq(mod.lenOf(null), -1, "including null");
+  eq([...(mod.maybeBytes(true) ?? [])].join(","), "7,7,7", "a present array");
+  eq(mod.maybeBytes(false), null, "and an absent one");
+  eq(mod.sizeOf(new Uint8Array([1, 2])), 2, "arrays go in too");
+  eq(mod.sizeOf(null), -1, "including null");
+  // Through a host function, which is the case this was needed for.
+  eq(mod.viaCb((k) => (k === "k" ? "found" : null)), 5, "a callback may return one");
+  eq(mod.viaCb(() => null), -1, "or nothing");
+  eq(mod.viaCbBytes(() => new Uint8Array([1, 2, 3])), 3, "and the same for bytes");
+  eq(mod.viaCbBytes(() => null), -1, "or nothing");
+});

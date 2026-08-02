@@ -199,6 +199,13 @@ The two directions compose: a host function may receive a wac function as an arg
 That holds whether or not any export happens to return that signature, because a function inside a
 callback's signature gets a helper too.
 
+### Nullable references
+
+`string?` and `T[]?` cross as `string | null` and `T[] | null`, in both directions and
+through callbacks. `[§wac-bind-opt-prim-8mkq5wn]` A struct or enum already did; these did
+not, which meant anything fallible at the boundary had to invent a result struct to say
+"absent" — a `readFile` capability being the case that made it worth fixing.
+
 ### Not yet supported in bindgen
 
 - Arrays of functions (`fn[i32(i32)][]`) and nullable functions (`fn[i32(i32)]?`) — the element and
