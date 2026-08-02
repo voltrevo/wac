@@ -9149,3 +9149,63 @@ Deno.test("[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong"
     eq(want.test(msgs), true, `for ${body} got: ${msgs}`);
   }
 });
+
+// ── §wac-trap-message-4nqk8wm ─────────────────────────────────────────────────
+
+Deno.test("[§wac-trap-message-4nqk8wm] a trap can say why", async () => {
+  const mod = await importBindgen(`
+    export struct Acct {
+      i32 balance;
+      Acct of(i32 b) { return Acct(b); }
+      i32 withdraw(this, i32 amount) {
+        if (amount > this.balance) { trap "insufficient funds"; }
+        this.balance = this.balance - amount;
+        return this.balance;
+      }
+    }
+    export i32 half(i32 n) {
+      if (n % 2 != 0) { trap "half needs an even number"; }
+      return n / 2;
+    }
+    export i32 built(i32 n) { if (n > 2) { trap "too big: " + "n"; } return n; }
+    export i32 bare(i32 n) { if (n < 0) { trap; } return n; }
+    export i32 engineTrap(i32 i) { i32[] a = i32[2](fill: 1); return a[i]; }
+  `) as unknown as {
+    Acct: { of(b: number): { withdraw(a: number): number } };
+    half(n: number): number;
+    built(n: number): number;
+    bare(n: number): number;
+    engineTrap(i: number): number;
+  };
+  const thrownBy = (f: () => unknown): string => {
+    try { f(); return "(did not throw)"; } catch (e) { return (e as Error).message; }
+  };
+
+  eq(mod.half(8), 4, "the ordinary path is untouched");
+  eq(thrownBy(() => mod.half(7)), "wac trap: half needs an even number", "a function says why");
+  eq(thrownBy(() => mod.Acct.of(100).withdraw(200)), "wac trap: insufficient funds",
+    "and so does a method");
+  eq(thrownBy(() => mod.built(9)), "wac trap: too big: n", "the message may be built");
+
+  // An engine trap chose to say nothing, so nothing is what it says. Reporting the
+  // previous call's message here would be worse than the bare error.
+  eq(thrownBy(() => mod.bare(-1)).includes("unreachable"), true, "a bare trap has no message");
+  eq(thrownBy(() => mod.engineTrap(7)).includes("out of bounds"), true,
+    "and an engine trap keeps its own");
+
+  // Specifically after a message-trap: the message is cleared on entry, so it cannot be
+  // misattributed to a later failure that had none.
+  thrownBy(() => mod.half(7));
+  eq(thrownBy(() => mod.engineTrap(7)).includes("insufficient"), false, "no stale message");
+  eq(thrownBy(() => mod.engineTrap(7)).includes("even number"), false, "none at all");
+
+  // And the module is still usable afterwards, which is what makes catching one useful.
+  eq(mod.half(8), 4, "the instance survives every one of those");
+});
+
+Deno.test("[§wac-trap-message-4nqk8wm] the message must be a string", () => {
+  const r = wacCompile(new Map([["m.wac", `export void f() { trap 42; }`]]), "m.wac");
+  eq(r.ok, false, "an i32 message is refused");
+  const msg = r.ok ? "" : r.diagnostics.map((d) => d.message).join("; ");
+  eq(/'trap' takes a string message, got i32/.test(msg), true, `got: ${msg}`);
+});

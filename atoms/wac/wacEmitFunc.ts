@@ -61,6 +61,8 @@ export type WasmTypeCtx = {
   cbSigs: { key: string; params: WacType[]; ret: WacType }[];
   /** Funcref signatures handed back to the host, in helper order. */
   outSigs: { key: string; params: WacType[]; ret: WacType }[];
+  /** Global holding the last `trap` message, or -1 when the program has none. */
+  trapGlobalIdx: number;
   /**
    * Trap on integer overflow in user-written add, sub and mul. Off by default.
    *
@@ -1000,6 +1002,20 @@ class FuncEmitter {
     const line = entry.origin.kind === "func" ? entry.origin.decl.line : entry.origin.decl.line;
     const col  = entry.origin.kind === "func" ? entry.origin.decl.col  : entry.origin.decl.col;
     this.emitCovPoint("entry", line ?? body.line, col ?? body.col);
+  }
+
+  /**
+   * Clear the trap message at the start of an exported function.
+   *
+   * Without it the global is *stale* rather than absent: a call that trapped with a
+   * message, followed by one that hit a bounds check, would report the first call's
+   * message for the second's failure. Wrong beats missing here.
+   */
+  emitTrapClear(): void {
+    const g = this.ctx.trapGlobalIdx;
+    if (g < 0) return;
+    this.emit(0xD0, ...sleb(this.ctx.stringTypeIdx)); // ref.null $str
+    this.emit(0x24, ...uleb(g));                      // global.set
   }
 
   private emitCovPoint(kind: CoveragePoint["kind"], line: number, col: number): void {
@@ -2660,7 +2676,16 @@ class FuncEmitter {
         this.emit(0x0C, ...uleb(this.brDepth(lctx.continueTarget)));
         break;
       }
-      case "trap": this.emit(0x00); break; // unreachable
+      case "trap": {
+        // The message goes into a global *before* the trap, because after it there is
+        // no code left to run — the host reads it once the trap has unwound.
+        if (s.value && this.ctx.trapGlobalIdx >= 0) {
+          this.emitExpr(s.value, env, { kind: "prim", name: "string", line: 0, col: 0 });
+          this.emit(0x24, ...uleb(this.ctx.trapGlobalIdx)); // global.set
+        }
+        this.emit(0x00); // unreachable
+        break;
+      }
       case "expr": {
         const t = typeOfExpr(s.expr, env, this.ctx);
         this.emitExpr(s.expr, env);
@@ -3391,6 +3416,9 @@ export function wacEmitFunc(entry: FuncEntry, ctx: WasmTypeCtx): number[] {
   // Emit body, preceded by an entry counter so "was this function ever called"
   // is answerable on its own.
   emitter.emitEntryPoint(entry, body);
+  // Only exported functions: an internal call clearing the message would wipe one set
+  // by an outer frame that is still unwinding.
+  if (entry.exportName) emitter.emitTrapClear();
   emitter.emitBlock(body, env);
 
   // For non-void functions, emit unreachable before the function end so the wasm

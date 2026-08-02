@@ -136,6 +136,13 @@ export type WacCompiled = {
    */
   funcrefs: WacCallback[];
   /**
+   * Whether a `trap "message"` can leave something for the host to read.
+   *
+   * When it can, the generated wrappers turn the engine's bare "unreachable" into the
+   * message the program wrote.
+   */
+  trapMessages: boolean;
+  /**
    * The instrumented branch points, index-aligned with the counter array, when
    * compiled with `coverage`. A counter index means nothing without this — it is
    * what turns counts into per-file, per-line coverage.
@@ -302,7 +309,8 @@ export function wacCompile(
     ok: true,
     compiled: {
       wasm, exports, structs, enums, callbacks, arrays,
-      boxed: meta.boxed, funcrefs, coverage: coverage?.points,
+      boxed: meta.boxed, funcrefs, trapMessages: meta.trapMessages,
+      coverage: coverage?.points,
     },
     diagnostics,
   };

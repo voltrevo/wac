@@ -103,7 +103,17 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
       return coerceArg(a, t);
     });
 
-    const result = fn(...coercedArgs);
+    let result: unknown;
+    try {
+      result = fn(...coercedArgs);
+    } catch (e) {
+      // A `trap "message"` leaves the message behind; the engine's own traps do not,
+      // and are rethrown as they came.
+      const read = rawExports.__trap_message as (() => unknown) | undefined;
+      const s = typeof read === "function" ? read() : null;
+      if (s === null || s === undefined) throw e;
+      throw new Error(`wac trap: ${decodeString(rawExports, s)}`, { cause: e });
+    }
 
     if (meta.ret === "void") return undefined;
     // A reference return needs the module's own accessors to read, so it is decoded here
