@@ -9636,3 +9636,64 @@ Deno.test("[§wac-bindgen-nullable-name-7kqn2wp] a nullable type argument gets i
   eq(names.includes("Box_u8Arr"), true, names.join(","));
   eq(names.includes("Box_u8ArrOpt"), true, names.join(","));
 });
+
+// ── §wac-bindgen-nullable-once-4nkq8wp ────────────────────────────────────────
+
+Deno.test("[§wac-bindgen-nullable-once-4nkq8wp] a nullable-returning callback is called once", () => {
+  // The conversion for a nullable value was written `(expr === null ? null : f(expr))`,
+  // which evaluates `expr` twice. For a field read that is waste; for a *callback
+  // dispatcher* — whose argument is itself a call — it invoked the host's function twice on
+  // every crossing. Anything with a side effect ran double, and anything single-use failed
+  // the second time and then converted that failure's `null` as though it were the answer:
+  // `Cannot read properties of null (reading 'length')`, from code that had compiled clean.
+  //
+  // Found when `packages/platform`'s `readDir` began answering through a ticket, whose
+  // resolver collects the call and cannot be asked twice.
+  //
+  // Asserted on the generated text rather than by running it, because the property is
+  // exactly "the call appears once" and a runtime check would need the host to notice
+  // being called twice — which is the thing that was silently fine for pure callbacks.
+  const src = `
+    export struct Holder {
+      i32 x;
+      Holder of(i32 x) { return Holder(x); }
+    }
+    export struct Src {
+      fn[string[]?(i32)] names;
+      fn[i32?(i32)] boxed;
+      fn[Holder?(i32)] maybe;
+      fn[u8[]?(i32)] bytes;
+      Src of(fn[string[]?(i32)] names, fn[i32?(i32)] boxed,
+             fn[Holder?(i32)] maybe, fn[u8[]?(i32)] bytes) {
+        return Src(names, boxed, maybe, bytes);
+      }
+    }
+    export i32 run(Src s) {
+      string[]? a = s.names(1);
+      i32? b = s.boxed(2);
+      Holder? c = s.maybe(3);
+      u8[]? d = s.bytes(4);
+      i32 total = a is null ? 0 : a!.len();
+      total = total + (b is null ? 0 : b!);
+      total = total + (c is null ? 0 : c!.x);
+      return total + (d is null ? 0 : d!.len());
+    }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+  const ts = wacBindgen(r.compiled);
+
+  // Every dispatcher, and how many times it reaches for the registered function. All four
+  // nullable shapes are here because they were four copies of the same mistake.
+  const dispatchers = [...ts.matchAll(/_cbd(\d+) = \([^)]*\) =>\n?([\s\S]*?);\n/g)];
+  eq(dispatchers.length > 0, true, "no dispatchers were generated");
+  let checked = 0;
+  for (const d of dispatchers) {
+    const n = d[1];
+    const body = d[2];
+    const calls = (body.match(new RegExp(`_cbs${n}\\[_slot\\]\\(`, "g")) ?? []).length;
+    eq(calls, 1, `dispatcher _cbd${n} calls its function ${calls} times:\n${body}`);
+    checked++;
+  }
+  eq(checked >= 4, true, `only ${checked} dispatchers were checked`);
+});
