@@ -15,8 +15,10 @@ function tok(src: string): [TokenKind, string][] {
 // ── keywords ─────────────────────────────────────────────────────────────────
 
 Deno.test("wacLex: all keywords tokenized correctly", () => {
+  // No `from`: it is contextual, and lexes as an identifier. The import test below
+  // checks that specifically.
   const kwSrc =
-    "import from export struct const this override if else while for do switch case default break continue return trap true false null is not as void fn";
+    "import export struct const this override if else while for do switch case default break continue return trap true false null is not as void fn";
   const kws = kwSrc.split(" ");
   const { tokens, errors } = wacLex(kwSrc);
   if (errors.length) throw new Error("unexpected errors: " + JSON.stringify(errors));
@@ -275,7 +277,12 @@ Deno.test("wacLex: import statement tokenizes correctly", () => {
   if (errors.length) throw new Error("errors: " + JSON.stringify(errors));
   const ks = tokens.map((t) => t.kind);
   if (!ks.includes("import")) throw new Error("import keyword missing");
-  if (!ks.includes("from")) throw new Error("from keyword missing");
+  // `from` is deliberately *not* reserved — it means something only after an import
+  // clause, and reserving it cost a parameter named `from` in `slice(a, from, to)`. It
+  // lexes as an ordinary identifier, which the parser matches by text.
+  const fromTok = tokens.find((t) => t.text === "from");
+  if (fromTok === undefined) throw new Error("the `from` token is missing entirely");
+  if (fromTok.kind !== "ident") throw new Error(`from should lex as ident, got ${fromTok.kind}`);
   if (!ks.includes("as")) throw new Error("as keyword missing");
   const str = tokens.find((t) => t.kind === "string");
   if (!str || str.text !== "./geometry.wac") throw new Error("string path wrong: " + str?.text);

@@ -1243,6 +1243,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       items.push({ name, alias, ...ip });
       if (!consume(",")) break;
     } while (!at("}"));   // trailing comma
+    // `expect` matches a token by text as well as by kind, so this still reads the
+    // `from` even though it lexes as an ordinary identifier now.
     expect("}"); expect("from");
     const path = at("string") ? advance().text : (err("expected file path string"), "?");
     expect(";");

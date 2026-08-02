@@ -52,8 +52,12 @@ function importPaths(src: string): string[] {
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i].kind !== "import") continue;
     let j = i + 1;
-    while (j < tokens.length && tokens[j].kind !== "from" && tokens[j].kind !== ";") j++;
-    if (tokens[j]?.kind === "from" && tokens[j + 1]?.kind === "string") {
+    // `from` is an ordinary identifier now, so it is matched by text. Only an import
+    // clause can put one here, which is what makes that safe.
+    const isFrom = (t: { kind: string; text: string } | undefined) =>
+      t !== undefined && t.kind === "ident" && t.text === "from";
+    while (j < tokens.length && !isFrom(tokens[j]) && tokens[j].kind !== ";") j++;
+    if (isFrom(tokens[j]) && tokens[j + 1]?.kind === "string") {
       out.push(tokens[j + 1].text);
       i = j + 1;
     }
