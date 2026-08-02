@@ -9244,3 +9244,28 @@ Deno.test("[§wac-bind-opt-prim-8mkq5wn] a nullable string or array crosses as T
   eq(mod.viaCbBytes(() => new Uint8Array([1, 2, 3])), 3, "and the same for bytes");
   eq(mod.viaCbBytes(() => null), -1, "or nothing");
 });
+
+Deno.test("[§wac-bind-static-6wnq3kv] a type reached only through a funcref field binds", async () => {
+  // A capability struct holds `fn[Result(string)] read`: the field itself has no accessor
+  // — a funcref cannot be read out — but the host *supplies* that function, so it has to
+  // be able to build what the function returns. Stopping at the field left `Result`
+  // unbound and the struct's own constructor skipped, for a parameter whose type nothing
+  // had generated.
+  const mod = await importBindgen(`
+    // Deliberately not exported: reaching it through the funcref field is the only route,
+    // which is what makes this a test of the walk rather than of the export-struct root.
+    struct Result { bool ok; i32 value; Result of(bool ok, i32 value) { return Result(ok, value); } }
+    export struct Caps {
+      fn[Result(i32)] lookup;
+      Caps of(fn[Result(i32)] lookup) { return Caps(lookup); }
+    }
+    export i32 use(Caps caps, i32 k) { Result r = caps.lookup(k); return r.ok ? r.value : -1; }
+  `) as unknown as {
+    Result: { of(ok: boolean, value: number): unknown };
+    Caps: { of(f: (k: number) => unknown): unknown };
+    use(caps: unknown, k: number): number;
+  };
+  const caps = mod.Caps.of((k) => mod.Result.of(k > 0, k * 2));
+  eq(mod.use(caps, 21), 42, "the host built the callback's return value");
+  eq(mod.use(caps, -1), -1, "and the failing case");
+});
