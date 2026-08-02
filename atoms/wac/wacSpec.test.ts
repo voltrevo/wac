@@ -9423,3 +9423,37 @@ Deno.test("[§wac-param-shadows-func-5nkq2wp] and the module it produces is well
   eq(main(bind(0)), 7, "1 from pump plus 1+2+3 from the imported write");
   eq(called, true, "the funcref parameter was the thing pump called");
 });
+
+// ── §wac-bindgen-large-6wkq3np ────────────────────────────────────────────────
+
+Deno.test("[§wac-bindgen-large-6wkq3np] bindgen emits a module of any size", () => {
+  // There was a ceiling at roughly 120KB, and it did not look like one:
+  // `String.fromCharCode(...wasm)` spreads every byte as an argument, so a large module
+  // failed with `RangeError: Maximum call stack size exceeded` — which reads as infinite
+  // recursion and sent the first investigation looking for a cycle in the module graph.
+  //
+  // `packages/box` hit it the moment it imported `packages/zstd`, having been fine an hour
+  // before, and the only signal was that the build stopped working.
+  //
+  // Enough functions to clear the old limit comfortably. Each is distinct so nothing
+  // deduplicates them away.
+  const parts: string[] = [];
+  for (let i = 0; i < 5000; i++) {
+    parts.push(`i32 f${i}(i32 a) { return a * ${i} + ${i % 7} - (a / ${i + 1}); }`);
+  }
+  parts.push(`export i32 main(i32 a) { return f1(a) + f4800(a); }`);
+  const r = wacCompile(new Map([["m.wac", parts.join("\n")]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+
+  const wasm = r.compiled.wasm as Uint8Array;
+  eq(wasm.length > 130_000, true, `module is only ${wasm.length} bytes — raise the count`);
+
+  const ts = wacBindgen(r.compiled);
+  eq(ts.includes("main"), true, "the export is in the generated binding");
+  // The wasm is embedded as base64; a truncated or mangled encoding would not round-trip.
+  const b64 = ts.match(/"([A-Za-z0-9+/=]{1000,})"/)?.[1];
+  if (b64 === undefined) throw new Error("no base64 payload in the generated binding");
+  const back = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  eq(back.length, wasm.length, "the embedded module is the whole module");
+  eq(back[0] === 0x00 && back[1] === 0x61, true, "and still starts with the wasm magic");
+});
