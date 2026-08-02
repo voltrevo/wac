@@ -303,6 +303,40 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     errors.push({ message: msg, file, line: t.line, col: t.col });
   }
 
+  /**
+   * A keyword token, told apart from an identifier without importing the lexer's set.
+   *
+   * The lexer gives a keyword a `kind` equal to its own text, which no identifier has —
+   * an identifier is always kind `"ident"`. Punctuation shares that property, so the text
+   * has to look like a word as well.
+   */
+  function isKeyword(t: Token | undefined): boolean {
+    return t !== undefined && t.kind === t.text && /^[a-z]+$/.test(t.text);
+  }
+
+  /**
+   * The name in a declaration, or a diagnostic that says why there isn't one.
+   *
+   * Worth its own function because of what the message used to be. `from` was once a
+   * keyword, and a parameter named `from` — in `slice(a, from, to)`, which is where such a
+   * name naturally goes — reported a missing semicolon at the *next* declaration, a
+   * hundred lines further on. Naming the keyword at the place it appears is the whole
+   * difference between a five-second fix and a bisect.
+   */
+  function declName(what: string): string {
+    if (at("ident")) return advance().text;
+    const t = tok();
+    if (isKeyword(t)) {
+      err(`'${t.text}' is a keyword and cannot be used as a ${what}`);
+      // Consumed, so the rest of the declaration still parses and one mistake yields one
+      // error rather than a cascade of them.
+      advance();
+      return t.text;
+    }
+    err(`expected ${what}`);
+    return "?";
+  }
+
   // ── Type parsing ──────────────────────────────────────────────────────────
 
   function isPrimType(): boolean {
@@ -427,7 +461,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       else break;
     }
     // Expect an identifier (variable name) next
-    return tokens[j]?.kind === "ident";
+    if (tokens[j]?.kind === "ident") return true;
+    // ...or a keyword where the name should be, but only when an `=` follows it. Without
+    // that guard `x as i32;` would be read as a declaration named `as`; with it, only
+    // `i32 match = ...` is claimed, and `parseVarDecl` can then say which word is the
+    // problem instead of reporting a missing semicolon further down the file.
+    return isKeyword(tokens[j]) && tokens[j + 1]?.kind === "=";
   }
 
   function looksLikeVarDecl(): boolean { return looksLikeVarDeclAt(cur); }
@@ -612,7 +651,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       const p = pos();
       if (at(".")) {
         advance();
-        const name = at("ident") ? advance().text : (err("expected field name"), "?");
+        const name = declName("field name");
         if (at("(")) {
           advance();
           const args = parseArgList();
@@ -881,7 +920,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       const named: { name: string; val: Expr }[] = [];
       if (!at("}")) {
         do {
-          const fn = at("ident") ? advance().text : (err("expected field name"), "?");
+          const fn = declName("field name");
           expect(":");
           named.push({ name: fn, val: parseExpr() });
           if (!consume(",")) break;
@@ -918,7 +957,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       const pp = pos();
       if (at(".")) {
         advance();
-        const field = at("ident") ? advance().text : (err("expected field name"), "?");
+        const field = declName("field name");
         lv = { kind: "lv-field", base: lv, field, ...pp };
       } else if (at("[")) {
         advance();
@@ -1009,7 +1048,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos();
     const isConst = at("const") ? (advance(), true) : false;
     const type = parseType();
-    const name = at("ident") ? advance().text : (err("expected variable name"), "?");
+    const name = declName("variable name");
     expect("=");
     const init = parseExpr();
     if (!noSemi) expect(";");
@@ -1267,7 +1306,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos();
     const isConst = consume("const");
     const type = parseType();
-    const name = at("ident") ? advance().text : (err("expected parameter name"), "?");
+    const name = declName("parameter name");
     return { isConst, type, name, ...p };
   }
 
@@ -1316,7 +1355,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos();
     const isConst = consume("const");
     advance(); // struct
-    const name = at("ident") ? advance().text : (err("expected struct name"), "?");
+    const name = declName("struct name");
     const typeParams = parseTypeParams();
     const parent = consume(":") ? (at("ident") ? advance().text : (err("expected parent name"), "?")) : null;
     expect("{");
@@ -1332,7 +1371,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       if (fieldConst) advance(); // consume const
 
       const memberType = parseType();
-      const memberName = at("ident") ? advance().text : (err("expected member name"), "?");
+      const memberName = declName("member name");
 
       if (at(";")) {
         // Field declaration
@@ -1378,7 +1417,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
   function parseEnumDecl(exported: boolean): EnumDecl {
     const p = pos();
     expect("enum");
-    const name = at("ident") ? advance().text : (err("expected enum name"), "?");
+    const name = declName("enum name");
     // As on a struct, and for the same reason: the parameters are in scope for every variant's
     // payload types and every method below.
     const typeParams = parseTypeParams();
@@ -1473,7 +1512,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     const p = pos();
     const exported = consume("export");
     const returnType = parseType();
-    const name = at("ident") ? advance().text : (err("expected function name"), "?");
+    const name = declName("function name");
     // `T max<T>(T a, T b)` — after the name, as on a struct. The return type is parsed first and may
     // itself mention `T`, which reads oddly but matches how every other declaration in wac is
     // written: type, then name.
