@@ -9269,3 +9269,45 @@ Deno.test("[§wac-bind-static-6wnq3kv] a type reached only through a funcref fie
   eq(mod.use(caps, 21), 42, "the host built the callback's return value");
   eq(mod.use(caps, -1), -1, "and the failing case");
 });
+
+// ── §wac-contextual-from-6qkn3wp ──────────────────────────────────────────────
+
+Deno.test("[§wac-contextual-from-6qkn3wp] `from` is an ordinary name outside an import", () => {
+  // It was reserved, and reserving it cost a parameter named `from` in a `slice(a, from,
+  // to)` — the most natural name there is for that argument. Worse than the restriction
+  // was the diagnostic: a missing semicolon reported at the *next declaration*, a hundred
+  // lines further on, with the braces balanced and the function compiling in isolation.
+  const src = `
+    import { helper } from "./h.wac";
+    u8[] slice(u8[] a, i32 from, i32 to) {
+      i32 n = to - from;
+      if (n <= 0) { return u8[0](); }
+      u8[] out = u8[n](fill: 0);
+      out.copyFrom(a, from, 0, n);
+      return out;
+    }
+    export i32 main() {
+      i32 from = 2;                       // a local, too
+      u8[] xs = u8[5](fill: 7);
+      return slice(xs, from, 5).len() + from + helper();
+    }
+  `;
+  const r = wacCompile(
+    new Map([["m.wac", src], ["h.wac", `export i32 helper() { return 1; }`]]),
+    "m.wac",
+  );
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+
+  // The import still resolved, which is the half that could have broken: `from` is
+  // matched by text there rather than by token kind.
+  eq(r.compiled.exports.some((e) => e.name === "main"), true, "main is exported");
+});
+
+Deno.test("[§wac-contextual-from-6qkn3wp] an import still needs its `from`", () => {
+  const r = wacCompile(
+    new Map([["m.wac", `import { helper } "./h.wac";\nexport i32 main() { return helper(); }`],
+             ["h.wac", `export i32 helper() { return 1; }`]]),
+    "m.wac",
+  );
+  eq(r.ok, false, "an import without `from` is still an error");
+});

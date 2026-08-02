@@ -30,6 +30,7 @@ export i32 demo() {
 program        = { import | struct_decl | enum_decl | func_decl | const_decl } ;
 
 import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
+                 (* `from` here is contextual: an ordinary identifier elsewhere *)
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
@@ -246,7 +247,7 @@ digit          = "0"..."9" ;
 
 ```
 as  as!  as~  as@  break  case  const  continue  default  do  else  enum
-export  false  fn  for  from  if  import  is  match  not  null  override
+export  false  fn  for  if  import  is  match  not  null  override
 return  struct  switch  this  trap  true  void  while
 ```
 

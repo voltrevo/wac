@@ -6,7 +6,7 @@ export type TokenKind =
   | "int" | "float" | "string" | "bool"
   // identifiers and keywords
   | "ident"
-  | "import" | "from" | "export" | "struct" | "const" | "this" | "override"
+  | "import" | "export" | "struct" | "const" | "this" | "override"
   | "if" | "else" | "while" | "for" | "do" | "switch" | "case" | "default"
   | "break" | "continue" | "return" | "trap" | "true" | "false" | "null"
   | "is" | "not" | "as" | "void" | "fn" | "enum" | "match"
@@ -45,7 +45,15 @@ export type LexResult = {
 
 // Keywords that are reserved and cannot be identifiers
 const KEYWORDS = new Set<string>([
-  "import", "from", "export", "struct", "const", "this", "override",
+  // `from` is deliberately absent. It means something only directly after an import
+  // clause, and reserving it everywhere cost a parameter named `from` in `slice(a, from,
+  // to)` — which reported a missing semicolon at the *next declaration*, a hundred lines
+  // on. The import parser matches it by text instead, which `at` already does.
+  //
+  // Note for anyone editing this block: the spec test extracts every quoted string here
+  // and compares it against grammar.md, so a comment with a quoted phrase in it reads as
+  // a keyword. That is how this comment was first written, and how it was caught.
+  "import", "export", "struct", "const", "this", "override",
   "if", "else", "while", "for", "do", "switch", "case", "default",
   "break", "continue", "return", "trap", "true", "false", "null",
   "is", "not", "as", "void", "fn", "enum", "match",
