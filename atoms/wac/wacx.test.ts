@@ -176,3 +176,70 @@ Deno.test("[§wac-cli-usage-3nkq8wj] warnings are shown but do not fail a build"
   eq(r.code, 0, "a warning still exits 0");
   if (r.err === "") throw new Error("expected the warning on stderr");
 });
+
+Deno.test("wacx build: an executable program, runnable directly", async () => {
+  const src = `
+    export string greet(string who, i32 times) {
+      string out = "";
+      for (i32 i = 0; i < times; i++) { out = out + "hi " + who; }
+      return out;
+    }
+  `;
+  const r = await run(["build", "g.wac", "-o", "greet"], { "g.wac": src });
+  if (r.code !== 0) throw new Error(`build failed: ${r.err}`);
+
+  const program = r.written.get("greet") as string;
+  // A shebang and a `deno run` line are what make the file executable on its own; the
+  // wasm is inside it, so nothing is read from the toolchain at run time.
+  if (!program.startsWith("#!/usr/bin/env -S deno run")) throw new Error("no shebang");
+  if (!program.includes("atob(")) throw new Error("the wasm should be embedded");
+  if (!program.includes("export function greet(")) throw new Error("no wrapper");
+
+  // Deno reads TypeScript from a file with no extension, which is why nothing has to be
+  // bundled or type-stripped. Run it to prove the generated runner actually works.
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, program);
+  await Deno.chmod(path, 0o755);
+  try {
+    const ok = new Deno.Command(path, { args: ["world", "2"], stdout: "piped", stderr: "piped" })
+      .outputSync();
+    if (ok.code !== 0) throw new Error(new TextDecoder().decode(ok.stderr));
+    if (new TextDecoder().decode(ok.stdout).trim() !== "hi worldhi world") {
+      throw new Error(`got: ${new TextDecoder().decode(ok.stdout)}`);
+    }
+    // Too few arguments is a usage error, not a crash.
+    const bad = new Deno.Command(path, { args: [], stdout: "piped", stderr: "piped" }).outputSync();
+    if (bad.code !== 2) throw new Error(`expected usage exit 2, got ${bad.code}`);
+    if (!new TextDecoder().decode(bad.stderr).includes("<who: string> <times: i32>")) {
+      throw new Error(`usage should name the parameters: ${new TextDecoder().decode(bad.stderr)}`);
+    }
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
+Deno.test("wacx build: it asks rather than guessing which export to run", async () => {
+  const two = `export i32 a() { return 1; } export i32 b() { return 2; }`;
+  const r = await run(["build", "m.wac"], { "m.wac": two });
+  if (r.code !== 1) throw new Error("two exports and no --call should be an error");
+  if (!r.err.includes("which export should run")) throw new Error(r.err);
+  if (!r.err.includes("a, b")) throw new Error(`should list them: ${r.err}`);
+
+  // One export needs no saying, and `main` wins when there are several.
+  const one = await run(["build", "m.wac", "-o", "x"], { "m.wac": `export i32 only() { return 1; }` });
+  if (one.code !== 0) throw new Error(one.err);
+  const withMain = await run(["build", "m.wac", "-o", "x"], {
+    "m.wac": `export i32 other() { return 1; } export i32 main() { return 2; }`,
+  });
+  if (withMain.code !== 0) throw new Error(withMain.err);
+  if (!(withMain.written.get("x") as string).includes("main(")) throw new Error("main should win");
+});
+
+Deno.test("wacx build: a parameter argv cannot carry is refused at build time", async () => {
+  // Better here than as a runtime failure in a program someone has already shipped.
+  const r = await run(["build", "m.wac", "--call", "f"], {
+    "m.wac": `export i32 f(i32[] xs) { return xs.len(); }`,
+  });
+  if (r.code !== 1) throw new Error("should refuse an array parameter");
+  if (!r.err.includes("which a command line cannot supply")) throw new Error(r.err);
+});
