@@ -148,6 +148,15 @@ function tsType(wacType: string): string | null {
   }
   const boxed = boxedPrim(wacType);
   if (boxed) return `${PRIM_MAP[boxed]} | null`;
+  // A nullable reference to anything else that crosses. Structs and enums have their
+  // own branch above because their class name is the answer; a string or an array is
+  // just its own type or null. Without this, every fallible thing at the boundary had
+  // to invent a result struct.
+  const nullRef = nullableRef(wacType);
+  if (nullRef) {
+    const inner = tsType(nullRef);
+    return inner === null ? null : `${inner} | null`;
+  }
   const out = outFuncrefsByType.get(wacType);
   if (out) return cbTsType(out);
   // A struct or an enum crosses as an opaque reference wrapped in a generated class, and a nullable
@@ -159,6 +168,19 @@ function tsType(wacType: string): string | null {
     if (inner) return `${className(inner)} | null`;
   }
   return null; // unsupported
+}
+
+/**
+ * The inner type of a `T?` whose `T` is a *reference* the boundary already carries —
+ * a string or an array. Not structs or enums, which `structOf` handles by name, and
+ * not boxed primitives, which are a struct underneath.
+ */
+function nullableRef(wacType: string): string | null {
+  if (!wacType.endsWith("?")) return null;
+  const inner = wacType.slice(0, -1);
+  if (inner === "string") return inner;
+  if (ARRAY_MAP[inner] || arraysByWac.has(inner)) return inner;
+  return null;
 }
 
 /** The primitive a `P?` boxes, if this type is one the module boxes. */
@@ -453,6 +475,8 @@ function toWasm(wacType: string, expr: string): string {
   if (box) {
     return `(${expr} === null ? null : (_exports.__bind_opt_${box}_new as CallableFunction)(${expr}))`;
   }
+  const nr = nullableRef(wacType);
+  if (nr) return `(${expr} === null ? null : ${toWasm(nr, expr)})`;
   const st = structOf(wacType);
   if (st) return st.nullable ? `(${expr} === null ? null : ${expr}.ref)` : `${expr}.ref`;
   return expr;
@@ -469,6 +493,8 @@ function fromWasm(wacType: string, expr: string): string {
     return `((_b) => _b === null || _b === undefined ? null : ` +
       `${fromWasm(box, `(_exports.__bind_opt_${box}_get as CallableFunction)(_b)`)})(${expr})`;
   }
+  const nr = nullableRef(wacType);
+  if (nr) return `((_v) => _v === null || _v === undefined ? null : ${fromWasm(nr, "_v")})(${expr})`;
   const out = outFuncrefsByType.get(wacType);
   if (out) {
     const args = out.params.map((_, i) => `a${i}`).join(", ");
@@ -667,7 +693,7 @@ function genWrapper(exp: WacExport): WrapperResult {
     lines.push(`  return _arrayFromWasm_${elemBase}(_result);`);
   } else if (
     structOf(exp.ret) || arraysByWac.has(exp.ret) || boxedPrim(exp.ret) ||
-    outFuncrefsByType.has(exp.ret)
+    outFuncrefsByType.has(exp.ret) || nullableRef(exp.ret)
   ) {
     lines.push(`  return ${fromWasm(exp.ret, callExpr)};`);
   } else if (exp.ret === "u64") {
@@ -728,7 +754,7 @@ export function wacBindgen(compiled: WacCompiled): string {
   );
 
   // Determine which helpers are needed
-  const allTypes = compiled.exports.flatMap(e => [
+  let allTypes = compiled.exports.flatMap(e => [
     ...e.params.map(p => p.type),
     e.ret,
   ]);
@@ -748,7 +774,13 @@ export function wacBindgen(compiled: WacCompiled): string {
   // An array's *element* needs its helpers too: `string[]` decodes each element with
   // `_stringFromWasm`, and `i32[][]` builds each row with the bulk `i32[]` path.
   // Without this the generated file called helpers it had not emitted.
-  const arrayElems = (compiled.arrays ?? []).map((a) => a.elem);
+  // A `u8[]?` needs the same helpers a `u8[]` does. Every list that decides which
+  // helpers to emit is normalised through here, rather than each one remembering to
+  // strip the `?` — the fifth bug of the shape "bindgen wrote a call to a helper
+  // nothing emitted" came from exactly one such list forgetting.
+  const bare = (t: string): string => (t.endsWith("?") ? t.slice(0, -1) : t);
+  allTypes = allTypes.map(bare);
+  const arrayElems = (compiled.arrays ?? []).map((a) => a.elem).map(bare);
   allTypes.push(...arrayElems);
   // A callback's types cross too, and in the *opposite* direction to an export's: the
   // host produces the callback's return value and consumes its parameters. So a
@@ -757,8 +789,8 @@ export function wacBindgen(compiled: WacCompiled): string {
   // types would need. Missing them, the dispatcher called a function that was never
   // emitted and threw on first use, with nothing in the skip list [issue 0055].
   const cbTypes = [...(compiled.callbacks ?? []), ...(compiled.funcrefs ?? [])];
-  const cbProduced = cbTypes.map((c) => c.ret);                    // host → wasm
-  const cbConsumed = cbTypes.flatMap((c) => c.params);             // wasm → host
+  const cbProduced = cbTypes.map((c) => bare(c.ret));              // host → wasm
+  const cbConsumed = cbTypes.flatMap((c) => c.params.map(bare));   // wasm → host
   allTypes.push(...cbProduced, ...cbConsumed);
   // A trap message is a string, so its decoder has to be present even for a module
   // whose own signatures never mention one.
@@ -767,10 +799,10 @@ export function wacBindgen(compiled: WacCompiled): string {
   const paramArrayTypes = new Set(
     [...compiled.exports.flatMap(e => e.params.map(p => p.type)), ...structTypes, ...arrayElems,
      ...cbProduced]
-      .filter(t => ARRAY_MAP[t]));
+      .map(bare).filter(t => ARRAY_MAP[t]));
   const retArrayTypes = new Set(
     [...compiled.exports.map(e => e.ret), ...structTypes, ...arrayElems, ...cbConsumed]
-      .filter(t => ARRAY_MAP[t]));
+      .map(bare).filter(t => ARRAY_MAP[t]));
 
   const parts: string[] = [];
 
