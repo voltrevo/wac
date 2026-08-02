@@ -172,3 +172,27 @@ file's exports become wasm exports.
 
 Struct types referenced by exported functions are implicitly visible to
 importers.
+
+### A local or parameter shadows a function
+
+```wac
+i32 pump(fn[bool(u8[])] write) {
+  write(bytes);        // the parameter, never a function named `write`
+  return 1;
+}
+```
+
+`[§wac-param-shadows-func-5nkq2wp]` A bare name in call position resolves to a
+local or parameter of funcref type before any function.
+
+This is the ordinary shadowing rule, and it is stated here because the compiler
+did the opposite. Bare function names are resolved through a global, first-wins
+map, and the funcref case sat *below* it — so `write(bytes)` above reached a
+top-level `write` in a different module, one the calling file does not import
+and cannot otherwise name. Where the arities differed the module failed to
+validate; where they matched it validated and called the wrong function, never
+invoking the callback at all.
+
+Found when `box` grew an HTTP applet: that pulled `packages/http`'s
+three-parameter `write` into the module graph, and `gzipStream`'s one-parameter
+`write` parameter began emitting a call to it.

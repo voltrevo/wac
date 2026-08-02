@@ -9365,3 +9365,61 @@ Deno.test("[§wac-keyword-name-8wnq4kp] it does not claim ordinary expressions",
   );
   eq(r.ok, true, `should compile: ${r.diagnostics.map((d) => d.message).join("; ")}`);
 });
+
+// ── §wac-param-shadows-func-5nkq2wp ───────────────────────────────────────────
+
+Deno.test("[§wac-param-shadows-func-5nkq2wp] a funcref parameter shadows a function of the same name", () => {
+  // It did not, and the failure was silent. A parameter `fn[bool(u8[])] write` calling
+  // `write(bytes)` reached a *different module's* top-level `write` — one the calling file
+  // does not import and cannot otherwise name — because the emitter looked at locals only
+  // after a global, first-wins bare-name map.
+  //
+  // Where the arities differed the module failed to validate, which is how it was found:
+  // `box` grew an HTTP applet, that pulled in `packages/http`'s three-parameter `write`,
+  // and `gzipStream`'s one-parameter `write` parameter started emitting a call to it.
+  // Where they *match* it validates and calls the wrong function, which is this test.
+  const files = new Map([
+    ["m.wac", `
+      import { pump } from "./a.wac";
+      import { write } from "./b.wac";
+      export i32 main(fn[bool(u8[])] sink) { return pump(sink) + (write(u8[0]()) ? 100 : 0); }
+    `],
+    ["a.wac", `
+      export i32 pump(fn[bool(u8[])] write) { write(u8[1](fill: 65)); return 1; }
+    `],
+    // Same arity and same types as the parameter, so nothing downstream can catch it.
+    ["b.wac", `export bool write(u8[] b) { return false; }`],
+  ]);
+  const r = wacCompile(files, "m.wac");
+  if (!r.ok) { throw new Error(r.diagnostics.map((d) => d.message).join("; ")); }
+  eq(r.compiled.exports.some((x) => x.name === "main"), true, "main is exported");
+});
+
+Deno.test("[§wac-param-shadows-func-5nkq2wp] and the module it produces is well-formed", async () => {
+  // The half that validation catches: different arities. Kept because it is the cheaper
+  // signal, and because a fix that satisfied only the silent case would still be wrong.
+  const files = new Map([
+    ["m.wac", `
+      import { pump } from "./a.wac";
+      import { write } from "./b.wac";
+      export i32 main(fn[bool(u8[])] sink) { return pump(sink) + write(1, 2, 3); }
+    `],
+    ["a.wac", `export i32 pump(fn[bool(u8[])] write) { write(u8[1](fill: 65)); return 1; }`],
+    ["b.wac", `export i32 write(i32 a, i32 b, i32 c) { return a + b + c; }`],
+  ]);
+  const r = wacCompile(files, "m.wac");
+  if (!r.ok) { throw new Error(r.diagnostics.map((d) => d.message).join("; ")); }
+
+  // Instantiating is the assertion: this used to fail with "not enough arguments on the
+  // stack for call (need 3, got 1)".
+  let called = false;
+  const dispatch = () => { called = true; return 1; };
+  const imports: Record<string, () => number> = {};
+  for (let j = 0; j < 8; j++) imports[`cb${j}`] = dispatch;
+  const mod = await WebAssembly.instantiate(r.compiled.wasm as Uint8Array, { wac: imports });
+  const exports = (mod as unknown as { instance: WebAssembly.Instance }).instance.exports;
+  const main = exports.main as CallableFunction;
+  const bind = exports.__bind_fnref_0 as CallableFunction;
+  eq(main(bind(0)), 7, "1 from pump plus 1+2+3 from the imported write");
+  eq(called, true, "the funcref parameter was the thing pump called");
+});
