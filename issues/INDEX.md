@@ -6,6 +6,7 @@ has been fixed and why.
 | # | summary | kind | symptom |
 |---|---|---|---|
 | [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
+| [0060](open/0060-a-value-returned-from-a-const-this-method-stays-const.md) | a value returned from a `const this` method stays const, so the caller cannot mutate it | bug | compile error |
 | [0058](open/0058-emitted-wasm-has-no-name-section-so-every-profiler-says-wasm-function-67.md) | emitted wasm has no name section, so every profiler says `wasm-function[67]` | missing feature | not implemented |
 | [0057](open/0057-shifting-a-64-bit-value-by-a-32-bit-amount-emits-invalid-wasm.md) | shifting a 64-bit value by a 32-bit amount emits invalid wasm | bug | invalid wasm |
 | [0053](open/0053-bindgen-could-offer-suspending-callbacks-jspi.md) | bindgen could offer suspending callbacks, and the engine already does | missing feature | not implemented |
