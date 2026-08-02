@@ -9457,3 +9457,48 @@ Deno.test("[§wac-bindgen-large-6wkq3np] bindgen emits a module of any size", ()
   eq(back.length, wasm.length, "the embedded module is the whole module");
   eq(back[0] === 0x00 && back[1] === 0x61, true, "and still starts with the wasm magic");
 });
+
+// ── §wac-shift-amount-3wkq7np ─────────────────────────────────────────────────
+
+Deno.test("[§wac-shift-amount-3wkq7np] a shift amount may be any integer width", async () => {
+  // Issue 0057. The type checker accepted `i64 << i32` *and* `u64 << i32/u32`; the emitter
+  // widened only for `i64`. So the u64 case type-checked, compiled, and then emitted
+  // `i64.shl` with an `i32` on the stack — a module that failed at instantiation, which is
+  // the worst place to find out. `packages/zstd`'s XXH64 widened by hand throughout.
+  //
+  // Every combination is instantiated and *run*, because a validating module can still
+  // shift by the wrong amount if the conversion is wrong.
+  const src = `
+    export u64 uShiftI(u64 v, i32 n) { return v << n; }
+    export u64 uShiftU(u64 v, u32 n) { return v >> n; }
+    export i64 iShiftI(i64 v, i32 n) { return v << n; }
+    export i32 narrowWide(i32 v, i64 n) { return v << n; }
+    export u32 narrowWideU(u32 v, u64 n) { return v >> n; }
+    export u64 compound(u64 v, i32 n) { v <<= n; return v; }
+    export u64 rotl(u64 v, i32 n) { return (v << n) | (v >> (64 - n)); }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+  const mod = await WebAssembly.instantiate(r.compiled.wasm as Uint8Array, {});
+  const x = (mod as unknown as { instance: WebAssembly.Instance }).instance
+    .exports as Record<string, CallableFunction>;
+
+  eq(x.uShiftI(1n, 3), 8n, "u64 << i32");
+  eq(x.uShiftU(256n, 4), 16n, "u64 >> u32");
+  eq(x.iShiftI(1n, 40), 1099511627776n, "i64 << i32");
+  eq(x.narrowWide(1, 3n), 8, "i32 << i64");
+  eq(x.narrowWideU(256, 4n), 16, "u32 >> u64");
+  eq(x.compound(1n, 5), 32n, "u64 <<= i32");
+  // The shape the issue was found in: a rotate, where every line is a shift.
+  eq(x.rotl(1n, 1), 2n, "rotl by one");
+  eq(x.rotl(0x8000000000000000n, 1), 1n, "rotl wraps the top bit round");
+});
+
+Deno.test("[§wac-shift-amount-3wkq7np] but it still has to be an integer", () => {
+  const r = wacCompile(
+    new Map([["m.wac", `export i32 bad(i32 x, f64 n) { return x << n; }`]]),
+    "m.wac",
+  );
+  eq(r.ok, false, "a float shift amount should not compile");
+  eq(r.diagnostics[0].message.includes("integer shift amount"), true, r.diagnostics[0].message);
+});

@@ -1,7 +1,7 @@
 # 0057 — shifting a 64-bit value by a 32-bit amount emits invalid wasm
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
 - **Kind:** bug
@@ -50,3 +50,17 @@ shift by a constant will otherwise need a cast that reads as noise.
 
 Found writing XXH64, where every line is a shift or a rotate: the hand-widening is now more
 conspicuous than the algorithm.
+
+## Fixed
+
+The emitter converts the amount to the operand's width, and the type checker accepts any
+integer for it — `§wac-shift-amount-3wkq7np`, in `spec/spec/operators.md`.
+
+The reporter's second suggestion, rather than the first. Rejecting the mismatch would have
+been honest but would have left every shift by a constant needing a cast that could not
+mean anything else.
+
+The cause was two lists that had to agree and did not: the checker accepted `i64 << i32`
+*and* `u64 << i32/u32`, and the emitter widened only for `i64`. So the u64 case
+type-checked and emitted `i64.shl` with an `i32` on the stack. There is now one rule and
+one place that implements it.
