@@ -731,10 +731,28 @@ function genWrapper(exp: WacExport): WrapperResult {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 /**
+ * Bytes as a latin-1 string, for `btoa`.
+ *
+ * In chunks, because `String.fromCharCode(...bytes)` spreads every byte as an argument and
+ * a large module then exceeds the engine's argument limit — as `RangeError: Maximum call
+ * stack size exceeded`, which reads like infinite recursion and is not. It was a hard
+ * ceiling on module size at roughly 120KB: `packages/box` hit it the moment it imported
+ * `packages/zstd`, having been fine the hour before.
+ */
+function latin1(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let out = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return out;
+}
+
+/**
  * Generate a self-contained TypeScript file that wraps a compiled wac module.
  */
 export function wacBindgen(compiled: WacCompiled): string {
-  const base64 = btoa(String.fromCharCode(...compiled.wasm));
+  const base64 = btoa(latin1(compiled.wasm));
   // The struct table is consulted by `tsType` and the conversions, which are called from
   // everywhere below.
   structsByWac = new Map(compiled.structs.map((s) => [s.wac, s]));
