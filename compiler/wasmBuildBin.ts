@@ -2297,6 +2297,52 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
   return section(7, vec(entries));
 }
 
+// ── Name section ──────────────────────────────────────────────────────────────
+
+/**
+ * The custom `name` section: function index → the name it had in the source.
+ *
+ * Standard and universally consumed — V8 `--prof`, Chrome DevTools' wasm frames, `perf`,
+ * `wasm-objdump`, `wasm-opt` — and without it every one of them can only say
+ * `wasm-function[67]`. Issue 0058 is a real profile of `packages/zstd`'s decoder where
+ * more than half the time was in one function and the profile could not say which.
+ *
+ * It is also what the compiler's own failures look like without: when `packages/box`
+ * emitted an invalid module, V8 said `Compiling function #261 failed` and nothing more,
+ * and finding out what #261 *was* meant hand-decoding the type, import and code sections.
+ *
+ * Order matters and is not the order the names are written in below: indices are imports
+ * first, then the module's own functions, then the builtin helpers, then the bind helpers
+ * — the same layout `funcBase` and `bindBaseIdx` describe.
+ */
+function buildNameSection(result: ResolveResult, ctx: WasmTypeCtxFull): number[] {
+  const enc = new TextEncoder();
+  const entries: number[][] = [];
+  const put = (idx: number, name: string) => {
+    const b = enc.encode(name);
+    entries.push([...uleb(idx), ...uleb(b.length), ...b]);
+  };
+
+  // Imports: one dispatcher per callback signature, named for the signature it serves so
+  // a profile distinguishes them rather than showing four identical `cb` frames.
+  ctx.cbSigs.forEach((sig, j) => put(j, `wac.cb${j} ${sig.key}`));
+
+  // The module's own functions. The mangled name carries the file, which is what makes
+  // two private `helper`s in different files tellable apart in a profile.
+  result.funcs.forEach((f, i) => put(ctx.funcBase + i, f.mangledName));
+
+  const builtins = builtinHelpers(ctx.coverage !== undefined);
+  const helperBase = ctx.funcBase + result.funcs.length;
+  builtins.forEach((name, i) => put(helperBase + i, name));
+
+  const bindBase = helperBase + builtins.length;
+  ctx.bindHelpers.forEach((h, i) => put(bindBase + i, h.name));
+
+  const subsection = [0x01, ...uleb(vec(entries).length), ...vec(entries)];
+  const name = enc.encode("name");
+  return section(0, [...uleb(name.length), ...name, ...subsection]);
+}
+
 // ── Code section ──────────────────────────────────────────────────────────────
 
 function buildCodeSection(ctx: WasmTypeCtxFull): number[] {
@@ -2756,7 +2802,7 @@ export function wasmBindMeta(
 export function wasmBuildBin(
   result: ResolveResult,
   programs: Map<string, unknown>,
-  options: { coverage?: CoverageCtx; checked?: boolean } = {},
+  options: { coverage?: CoverageCtx; checked?: boolean; names?: boolean } = {},
 ): Uint8Array {
   const ctx = buildTypeCtxFull(result, programs, options.coverage !== undefined);
   ctx.coverage = options.coverage;
@@ -2777,10 +2823,14 @@ export function wasmBuildBin(
   const globalSection = buildGlobalSection(ctx);
   const exportSection = buildExportSection(result, ctx);
   const elemSection   = buildElemSection(ctx);
+  // A custom section, so it goes after everything the specification orders. Emitted
+  // unless asked not to: a profile that cannot name a function is most of a profile
+  // wasted, and the cost is bytes in a section any tool can drop.
+  const nameSection   = options.names === false ? [] : buildNameSection(result, ctx);
 
   return new Uint8Array([
     ...MAGIC, ...VERSION,
     ...typeSection, ...importSection, ...funcSection, ...memorySection, ...globalSection,
-    ...exportSection, ...elemSection, ...codeSection,
+    ...exportSection, ...elemSection, ...codeSection, ...nameSection,
   ]);
 }

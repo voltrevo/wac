@@ -501,3 +501,31 @@ a struct wrapping them, or expose multiple exported functions.)
 `[§wac-bind-arr-copy-j4wk7pm]` Array parameters are copied into wasm. The
 original typed array passed by the caller is never modified, regardless of
 what the wasm function does with its parameter.
+
+## The name section
+
+`[§wac-name-section-2mkq6wp]` Compiled modules carry a custom `name` section
+mapping each function index to its source name, unless `names: false` is passed.
+
+Without it every tool that reads a wasm module can only say
+`wasm-function[67]`: V8 `--prof`, Chrome DevTools' wasm frames, `perf`,
+`wasm-objdump`, `wasm-opt`. A V8 stack trace from a trap goes from
+
+```
+at <anonymous> (wasm://wasm/270ce1b6:wasm-function[0]:0x168)
+```
+
+to
+
+```
+at m$divide (wasm://wasm/011c4d1a:wasm-function[0]:0x168)
+```
+
+Names are the mangled form, `file$function`, so two private `helper`s in
+different files are tellable apart. Imported callback dispatchers, the builtin
+string and math helpers and the bindgen helpers are all named too — a profile
+that stops at the module's own functions attributes string concatenation to
+whichever function called it.
+
+It costs about 17% of module size on a large program, and it is a custom
+section, so `names: false` changes nothing about how the module runs.

@@ -39,6 +39,15 @@ export type WacCompileOptions = {
    * first differing event is where the secret escaped.
    */
   ctTrace?: boolean;
+  /**
+   * Emit the custom `name` section mapping function index to source name. **On by
+   * default**, because a profile that cannot name a function is most of a profile wasted
+   * and every standard tool — V8 `--prof`, DevTools, `perf`, `wasm-objdump` — reads it.
+   *
+   * `false` for a size-sensitive build. It is a custom section, so dropping it changes
+   * nothing about how the module runs.
+   */
+  names?: boolean;
 };
 
 export type WacParam    = { name: string; type: string };
@@ -252,7 +261,8 @@ export function wacCompile(
   const coverage = (options.coverage || options.ctTrace)
     ? { points: [] as CoveragePoint[], file: entry, trace: options.ctTrace }
     : undefined;
-  const wasm = wasmBuildBin(resolveResult, programs, { coverage, checked: options.checked });
+  const wasm = wasmBuildBin(resolveResult, programs,
+    { coverage, checked: options.checked, names: options.names });
   const exports = extractExports(resolveResult);
   const meta = wasmBindMeta(resolveResult, programs);
   const enums: WacEnum[] = meta.enums.map((e) => ({

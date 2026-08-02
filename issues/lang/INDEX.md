@@ -7,7 +7,6 @@ has been fixed and why.
 |---|---|---|---|
 | [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
 | [0060](open/0060-a-value-returned-from-a-const-this-method-stays-const.md) | a value returned from a `const this` method stays const, so the caller cannot mutate it | bug | compile error |
-| [0058](open/0058-emitted-wasm-has-no-name-section-so-every-profiler-says-wasm-function-67.md) | emitted wasm has no name section, so every profiler says `wasm-function[67]` | missing feature | not implemented |
 | [0053](open/0053-bindgen-could-offer-suspending-callbacks-jspi.md) | bindgen could offer suspending callbacks, and the engine already does | missing feature | not implemented |
 | [0052](open/0052-deep-const-is-escapable-by-passing-the-reference.md) | deep const is escapable by passing the reference to a mutating function | bug | wrong answer |
 | [0031](open/0031-br-table-dispatch-for-match.md) | `match` dispatches through a comparison chain, not `br_table` | performance | not implemented |
@@ -16,7 +15,7 @@ has been fixed and why.
 
 ## Closed
 
-60 issues, 52 closed.
+60 issues, 53 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
