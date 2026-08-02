@@ -9,6 +9,7 @@ const cap: WacxCap = {
   readFile: (path) => Deno.readTextFile(path),
   writeFile: (path, data) =>
     typeof data === "string" ? Deno.writeTextFile(path, data) : Deno.writeFile(path, data),
+  chmod: (path, mode) => Deno.chmod(path, mode),
   out: (text) => console.log(text),
   err: (text) => console.error(text),
 };

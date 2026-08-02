@@ -63,6 +63,19 @@ m.set(1, 99);
 m.get(1).toObject();     // { tag: "Some", v: 99 }
 ```
 
+## Building a program
+
+`wacx build prog.wac` writes an executable file with a shebang: the wasm base64 inside it, the bindgen wrappers, and a runner that turns argv into the export's parameters.
+
+```sh
+wacx build fizz.wac -o fizz
+./fizz 15          # 1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz
+```
+
+5K, no toolchain at run time, nothing bundled — Deno reads TypeScript from a file with no extension, so the generated module *is* the program. `--call` picks the export when there is more than one and no `main`; a parameter a command line cannot carry, such as an array, is refused at build rather than at run time.
+
+That is the whole of it for a program that only computes. Anything wanting a clock, a filesystem or a socket needs capabilities passed in, which is [wac-mono's `platform` package](https://github.com/) rather than the compiler's business.
+
 ## Integer overflow
 
 Integer arithmetic wraps, because half of what wac is used for requires it: SHA-256's `h0 += a` is addition mod 2³² by specification, and so are CRC-32, ChaCha20 and FNV-1a.
