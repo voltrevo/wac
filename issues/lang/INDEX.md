@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0058](open/0058-emitted-wasm-has-no-name-section-so-every-profiler-says-wasm-function-67.md) | emitted wasm has no name section, so every profiler says `wasm-function[67]` | missing feature | not implemented |
 | [0057](open/0057-shifting-a-64-bit-value-by-a-32-bit-amount-emits-invalid-wasm.md) | shifting a 64-bit value by a 32-bit amount emits invalid wasm | bug | invalid wasm |
 | [0053](open/0053-bindgen-could-offer-suspending-callbacks-jspi.md) | bindgen could offer suspending callbacks, and the engine already does | missing feature | not implemented |
 | [0052](open/0052-deep-const-is-escapable-by-passing-the-reference.md) | deep const is escapable by passing the reference to a mutating function | bug | wrong answer |
@@ -14,7 +15,7 @@ has been fixed and why.
 
 ## Closed
 
-57 issues, 51 closed.
+58 issues, 51 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
