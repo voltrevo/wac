@@ -268,3 +268,23 @@ Null (!):                          T? -> T (traps on null)
 | 12    | `||`                   | left          |
 | 13    | `is` `is not`          | left          |
 | 14    | `?:` (ternary)         | right         |
+
+### A shift amount may be any integer width
+
+```wac
+u64 rotl(u64 v, i32 n) { return (v << n) | (v >> (64 - n)); }
+```
+
+`[§wac-shift-amount-3wkq7np]` The left operand's type decides the result; the
+shift amount may be any integer type and is converted to that width.
+
+A count is not like the other operands. Everywhere else, mixing widths is a real
+question about what a value means, and requiring `as!` is right. A count is never
+the thing being widened and has no lossy case — wasm masks it to the operand's
+width regardless — so a cast there could not mean anything else.
+
+This was previously a short list of accepted pairs in the type checker, with a
+*shorter* list in the emitter: `u64 << i32` type-checked and then emitted
+`i64.shl` with an `i32` on the stack, so the module failed to validate at
+instantiation. `packages/zstd`'s XXH64 was widening every shift amount by hand to
+avoid it, which made the hand-widening more conspicuous than the algorithm.

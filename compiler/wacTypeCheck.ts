@@ -2840,7 +2840,7 @@ function checkBinaryOp(
     return lt;
   }
 
-  // Shift: i32×i32, i64×i64, or i64×i32
+  // Shift. The amount may be any integer type, whatever the operand's width.
   if (op === "<<" || op === ">>" || op === ">>>") {
     if (!isInteger(lt)) {
       errAt(ctx, `'${op}' requires an integer type, got ${typeName(lt)}`, line, col);
@@ -2855,14 +2855,18 @@ function checkBinaryOp(
         `'>>' on an unsigned type is already a logical shift`, `use \`>>\``);
       return null;
     }
-    if (!typeEq(lt, rt)) {
-      // Special: a 64-bit value may take a 32-bit shift amount.
-      if (typeEq(lt, T_I64) && typeEq(rt, T_I32)) return T_I64;
-      if (isUnsigned(lt) && lt.kind === "prim" && lt.name === "u64" &&
-          rt.kind === "prim" && (rt.name === "i32" || rt.name === "u32")) return lt;
-      errAt(ctx, `type mismatch in '${op}': ${typeName(lt)} and ${typeName(rt)}`, line, col);
+    // A count is not an operand. It is never the thing being widened and has no lossy
+    // case — wasm masks it to the operand width regardless — so requiring a cast here
+    // would be asking for one that could not mean anything else. The emitter converts it.
+    //
+    // This used to be a short list of accepted pairs, and the emitter's list was shorter:
+    // `u64 << i32` type-checked and then emitted `i64.shl` with an i32 on the stack, so
+    // the module failed to validate. Two lists that had to agree, and did not.
+    if (!isInteger(rt)) {
+      errAt(ctx, `'${op}' requires an integer shift amount, got ${typeName(rt)}`, line, col);
       return null;
     }
+    return lt;
     return lt;
   }
 

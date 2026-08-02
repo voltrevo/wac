@@ -606,8 +606,20 @@ Deno.test("wacTypeCheck: shift i64 << i32 mixed is ok", () => {
   ok("export i64 ok(i64 x, i32 n) { return x << n; }");
 });
 
-Deno.test("wacTypeCheck: shift type mismatch", () => {
-  fail("export i32 bad(i32 x, i64 n) { return x << n; }", "type mismatch");
+Deno.test("wacTypeCheck: a shift amount may be any integer width", () => {
+  // A count is not an operand: it is never the thing being widened and has no lossy case,
+  // because wasm masks it to the operand's width regardless. This was a short list of
+  // accepted pairs and the emitter's list was shorter, so `u64 << i32` type-checked and
+  // then emitted `i64.shl` with an i32 on the stack — see §wac-shift-amount-3wkq7np.
+  ok("export i64 a(i64 x, i32 n) { return x << n; }");
+  ok("export u64 b(u64 x, i32 n) { return x << n; }");
+  ok("export u64 c(u64 x, u32 n) { return x >> n; }");
+  ok("export i32 d(i32 x, i64 n) { return x << n; }");
+  ok("export u32 e(u32 x, u64 n) { return x >> n; }");
+});
+
+Deno.test("wacTypeCheck: a shift amount still has to be an integer", () => {
+  fail("export i32 bad(i32 x, f64 n) { return x << n; }", "integer shift amount");
 });
 
 Deno.test("wacTypeCheck: unary minus on numeric", () => {
@@ -1034,8 +1046,8 @@ Deno.test("wacTypeCheck: lval undefined ident is error", () => {
 
 // ── shift mismatch that's not i64<<i32 ───────────────────────────────────────
 
-Deno.test("wacTypeCheck: shift i32 << i64 mismatch is error", () => {
-  fail("export void bad(i32 x, i64 n) { i32 y = x << n; }", "type mismatch");
+Deno.test("wacTypeCheck: a narrower operand takes a wider shift amount", () => {
+  ok("export void fine(i32 x, i64 n) { i32 y = x << n; }");
 });
 
 // ── inferCall via call node with ident callee (rare) ─────────────────────────

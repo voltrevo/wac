@@ -1358,14 +1358,12 @@ class FuncEmitter {
     } else {
       this.emitExpr(e.left, env);
       this.emitExpr(e.right, env);
-      // i64 << i32 / i64 >> i32: widen the rhs to i64 for the wasm instruction
-      if ((op === "<<" || op === ">>" || op === ">>>")) {
-        const lt2 = typeOfExpr(e.left, env, this.ctx);
-        const rt2 = typeOfExpr(e.right, env, this.ctx);
-        if (lt2.kind === "prim" && lt2.name === "i64" &&
-            rt2.kind === "prim" && rt2.name === "i32") {
-          this.emit(0xAC); // i64.extend_i32_s
-        }
+      // A shift amount of any integer width, converted to the operand's.
+      if (op === "<<" || op === ">>" || op === ">>>") {
+        this.coerceShiftAmount(
+          typeOfExpr(e.left, env, this.ctx),
+          typeOfExpr(e.right, env, this.ctx),
+        );
       }
     }
 
@@ -2825,18 +2823,37 @@ class FuncEmitter {
     this.emit(0xFB, 0x0E, ...uleb(aIdx)); // array.set
   }
 
-  /** Emit the rhs of a compound assignment, widening an i32 shift amount when
-   *  the target is i64 — `i64 <<= i32` is legal, same as the binary form
-   *  [see operators.md]. Mirrors the widening in emitBinary. */
+  /** Emit the rhs of a compound assignment, converting a shift amount as the binary
+   *  form does — `u64 <<= i32` is legal, same as `u64 << i32` [see operators.md]. */
   private emitCompoundRhs(rhs: Expr, env: TypeEnv, target: WacType, op: string): void {
     this.emitExpr(rhs, env);
     if (op !== "<<" && op !== ">>" && op !== ">>>") return;
-    if (!(target.kind === "prim" && target.name === "i64")) return;
-    const rt = typeOfExpr(rhs, env, this.ctx);
-    if (rt.kind === "prim" && rt.name === "i32") {
-      this.emit(0xAC); // i64.extend_i32_s
-    }
+    this.coerceShiftAmount(target, typeOfExpr(rhs, env, this.ctx));
   }
+
+  /**
+   * Convert an already-emitted shift amount to the width the operand needs.
+   *
+   * A shift amount is not like the other operands. Everywhere else, mixing widths is a
+   * real question about what a value means; a count is never the thing being widened and
+   * has no lossy case, because wasm masks it to the operand width regardless. So any
+   * integer count is accepted and adjusted here rather than demanding a cast that could
+   * not mean anything else.
+   *
+   * `i64.extend_i32_s` rather than `_u` only because it is what this emitted before: for
+   * a count the two are indistinguishable, since 2^32 and 2^64 are both multiples of 64
+   * and the mask therefore sees the same value either way.
+   */
+  private coerceShiftAmount(operand: WacType, amount: WacType): void {
+    const wide = (t: WacType) =>
+      t.kind === "prim" && (t.name === "i64" || t.name === "u64");
+    const narrow = (t: WacType) =>
+      t.kind === "prim" && (t.name === "i32" || t.name === "u32" ||
+        t.name === "u8" || t.name === "u16");
+    if (wide(operand) && narrow(amount)) this.emit(0xAC);        // i64.extend_i32_s
+    else if (narrow(operand) && wide(amount)) this.emit(0xA7);   // i32.wrap_i64
+  }
+
 
   /** Emit the operation opcode for compound assignment (op without '='). */
   private emitBinOpCode(op: string, t: WacType): void {
