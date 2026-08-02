@@ -1,6 +1,7 @@
 # 0057 — shifting a 64-bit value by a 32-bit amount emits invalid wasm
 
 - **Status:** closed
+- **Fixed in:** 804e2e0
 - **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
