@@ -625,6 +625,11 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
       // For struct types, return the struct type; for function-named constructs, return the func return type.
       if (e.ctype.kind === "struct" && structIdxInFile((e.ctype as { name: string }).name, ctx) === undefined) {
         const ctypeName = (e.ctype as { name: string }).name;
+        // A local or parameter wins, and has to be looked at first — see the note in
+        // emitConstruct, which had the same ordering and produced code that called an
+        // unrelated function of the same name.
+        const localT = env.get(ctypeName);
+        if (localT?.kind === "funcref") return localT.ret;
         // The calling file's scope decides, for the same reason as in
         // emitConstruct: a bare name is not globally unique.
         const scopedFn = ctx.result.fileScopes.get(ctx.currentFile)?.get(ctypeName);
@@ -633,9 +638,6 @@ export function typeOfExpr(e: Expr, env: TypeEnv, ctx: WasmTypeCtx): WacType {
           f.mangledName === ctypeName ||
           (f.origin.kind === "func" && f.origin.decl.name === ctypeName));
         if (fi) return funcReturnType(fi);
-        // Local funcref variable call
-        const localT = env.get(ctypeName);
-        if (localT?.kind === "funcref") return localT.ret;
       }
       return e.ctype;
     }
@@ -2414,7 +2416,24 @@ class FuncEmitter {
         // to a plain function arrives here — this is where *every* direct call is
         // emitted, not a fallback. `emitCall` handles only the shapes the parser does
         // produce as calls: a method call, an indirect funcref call, and variant
-        // construction. Resolve it through the calling
+        // construction.
+        //
+        // **A local or parameter is looked at before any function**, which is the
+        // ordinary shadowing rule and was not what this did. The funcref case sat below
+        // the global lookup, so `pump(fn[bool(u8[])] write)` calling `write(bytes)`
+        // reached a *different module's* top-level `write` — one this file does not
+        // import and cannot name. Where the arities differed the module failed to
+        // validate, which is how it was found; where they matched it validated and
+        // silently called the wrong function, never invoking the callback at all.
+        const localT = env.get(sName);
+        if (localT?.kind === "funcref") {
+          this.emitArgs(e.args, localT.params, env);
+          this.emit(0x20, ...uleb(this.localMap.get(sName)!.idx)); // local.get
+          const sIdx = this.ctx.sigTypeIdx.get(sigKey(localT.params, localT.ret))!;
+          this.emit(0x14, ...uleb(sIdx)); // call_ref $type
+          return;
+        }
+        // Otherwise a function, resolved through the calling
         // file's scope: ctx.funcIdx maps bare names globally and first-wins, so
         // two files each declaring a private `helper` would both reach
         // whichever was registered first, with the wrong signature.
@@ -2430,14 +2449,7 @@ class FuncEmitter {
           this.emit(0x10, ...uleb(fIdx));
           return;
         }
-        // Local funcref variable: f(args) where f is a local with funcref type
-        const localT = env.get(sName);
-        if (localT?.kind === "funcref") {
-          this.emitArgs(e.args, localT.params, env);
-          this.emit(0x20, ...uleb(this.localMap.get(sName)!.idx)); // local.get
-          const sIdx = this.ctx.sigTypeIdx.get(sigKey(localT.params, localT.ret))!;
-          this.emit(0x14, ...uleb(sIdx)); // call_ref $type
-        }
+        // A funcref local is handled above, before the function lookup.
         return;
       };
       const fields = this.ctx.structFields.get(`@${tIdx}`)
