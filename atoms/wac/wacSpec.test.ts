@@ -9502,3 +9502,101 @@ Deno.test("[§wac-shift-amount-3wkq7np] but it still has to be an integer", () =
   eq(r.ok, false, "a float shift amount should not compile");
   eq(r.diagnostics[0].message.includes("integer shift amount"), true, r.diagnostics[0].message);
 });
+
+// ── §wac-name-section-2mkq6wp ─────────────────────────────────────────────────
+
+Deno.test("[§wac-name-section-2mkq6wp] every function is named in the emitted module", async () => {
+  // Issue 0058. Without this, V8, DevTools, `perf` and `wasm-objdump` can only say
+  // `wasm-function[67]` — the issue is a real profile of `packages/zstd`'s decoder where
+  // more than half the time was in one function and the profile could not say which.
+  //
+  // The compiler's own failures look the same: when `packages/box` emitted an invalid
+  // module, V8 said `Compiling function #261 failed` and finding out what #261 was meant
+  // hand-decoding three sections.
+  const src = `
+    i32 helper(i32 x) { return x + 1; }
+    i32 divide(i32 a, i32 b) { return a / b; }
+    export i32 twice(i32 x) { return helper(x) + helper(x); }
+    export i32 boom(i32 a) { return divide(a, 0); }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+  const names = functionNames(r.compiled.wasm as Uint8Array);
+
+  // The mangled name carries the file, which is what tells two private `helper`s in
+  // different files apart in a profile.
+  eq(names.includes("m$helper"), true, `no m$helper in ${names.slice(0, 4)}`);
+  eq(names.includes("m$twice"), true, "the exported function is named");
+  // Helpers too: a profile that stops at the module's own functions attributes string
+  // concatenation to whatever called it.
+  eq(names.includes("__str_concat"), true, "builtin helpers are named");
+
+  // What a consumer actually does with it. This is the assertion that matters — the
+  // section could be well-formed and still unread if the layout were wrong.
+  const mod = await WebAssembly.instantiate(r.compiled.wasm as Uint8Array, {});
+  const inst = (mod as unknown as { instance: WebAssembly.Instance }).instance;
+  let stack = "";
+  try {
+    (inst.exports.boom as CallableFunction)(1);
+  } catch (e) {
+    stack = (e as Error).stack ?? "";
+  }
+  eq(stack.includes("m$divide"), true, `the trap's frame is unnamed:\n${stack}`);
+  eq(stack.includes("m$boom"), true, "and so is its caller");
+});
+
+Deno.test("[§wac-name-section-2mkq6wp] and it can be left out", () => {
+  // A custom section, so dropping it changes nothing about how the module runs — it is
+  // for a build that would rather have the bytes. On `packages/box` it is 17%.
+  const src = `export i32 twice(i32 x) { return x + x; }`;
+  const withNames = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  const without = wacCompile(new Map([["m.wac", src]]), "m.wac", { names: false });
+  if (!withNames.ok || !without.ok) throw new Error("both should compile");
+  eq(functionNames(without.compiled.wasm as Uint8Array).length, 0, "no names");
+  eq(
+    (without.compiled.wasm as Uint8Array).length <
+      (withNames.compiled.wasm as Uint8Array).length,
+    true,
+    "and it is smaller",
+  );
+});
+
+/** The function names in a module's custom `name` section, or none. */
+function functionNames(w: Uint8Array): string[] {
+  const out: string[] = [];
+  const dec = new TextDecoder();
+  let at = 8;
+  const ul = () => {
+    let x = 0, s = 0, b = 0;
+    do { b = w[at++]; x |= (b & 0x7f) << s; s += 7; } while (b & 0x80);
+    return x;
+  };
+  while (at < w.length) {
+    const id = w[at++];
+    const size = ul();
+    const end = at + size;
+    if (id === 0) {
+      const nl = ul();
+      const section = dec.decode(w.subarray(at, at + nl));
+      at += nl;
+      if (section === "name") {
+        while (at < end) {
+          const sub = w[at++];
+          const subEnd = at + ul();
+          if (sub === 1) {
+            const n = ul();
+            for (let i = 0; i < n; i++) {
+              ul();
+              const l = ul();
+              out.push(dec.decode(w.subarray(at, at + l)));
+              at += l;
+            }
+          }
+          at = subEnd;
+        }
+      }
+    }
+    at = end;
+  }
+  return out;
+}

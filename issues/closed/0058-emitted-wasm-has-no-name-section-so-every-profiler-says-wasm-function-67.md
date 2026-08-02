@@ -1,7 +1,7 @@
 # 0058 — emitted wasm has no name section, so every profiler says `wasm-function[67]`
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
 - **Kind:** missing feature
@@ -69,3 +69,27 @@ change that actually mattered in that decoder was reducing thirteen bounds-check
 per sequence to six. Loads are not branch points, so the counting profiler is blind to it by
 construction: the count of the loop containing them never changed. Only a tick profile pointed
 at that function, and only after I had guessed which function it was.
+
+## Fixed
+
+`§wac-name-section-2mkq6wp`, in `spec/spec/bindgen.md`. Subsection 1 only — function
+names — which the issue is right that this is most of the value of.
+
+Gated as suggested, but **on by default** rather than off: a profile that cannot name a
+function is most of a profile wasted, and someone reaching for `--prof` is not going to
+recompile first. `names: false` for a size-sensitive build. On `packages/box` the section
+is 25KB of 168KB, or 17%.
+
+Named: the module's own functions under their mangled `file$function` name, the imported
+callback dispatchers, the builtin string and math helpers, and the bindgen helpers. The
+last two matter more than they look — a profile that stops at the module's own functions
+attributes string concatenation to whichever function called it.
+
+The test asserts what a consumer sees rather than that the bytes are well-formed: it traps
+on purpose and checks the frames in V8's stack trace are named. The section could be
+perfectly encoded and still unread if the indices were laid out wrong.
+
+Worth adding to the record: this also pays for itself inside the compiler. While it was
+still unfixed, `packages/box` emitted an invalid module and V8 said `Compiling function
+#261 failed` — finding out what #261 was meant hand-decoding the type, import and code
+sections. That is the same tax, paid by whoever is debugging the emitter.
