@@ -1,6 +1,7 @@
 # 0058 — emitted wasm has no name section, so every profiler says `wasm-function[67]`
 
 - **Status:** closed
+- **Fixed in:** 9e7f7fd
 - **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
