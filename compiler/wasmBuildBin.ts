@@ -1280,7 +1280,13 @@ function reachableBinds(
     // nullable structs, which nothing binds yet — following it anyway pulled `MapEntry`, a type
     // `std` never exported, into the generated file as a class nobody could use.
     for (const f of ctx.structFields.get(`@${idx}`) ?? []) {
-      if (bindableType(f.type)) visitType(f.type);
+      // A funcref field carries no accessor, but the types *inside* its signature still
+      // have to bind: the host supplies the function, so it must be able to build what
+      // the function receives and read what it returns. A capability struct holding
+      // `fn[FileResult(string)] readFile` reaches `FileResult` only this way, and
+      // without it the struct's own constructor was skipped for a parameter whose type
+      // nothing had generated.
+      if (bindableType(f.type) || f.type.kind === "funcref") visitType(f.type);
     }
     // A method's signature reaches types too, and a method that returns one nothing
     // bound is a method bindgen silently drops: `Map.get` returns `Option<V>`, so
