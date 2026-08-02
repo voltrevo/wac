@@ -469,6 +469,24 @@ function genStructClass(s: WacStruct): string {
   return lines.join("\n");
 }
 
+/**
+ * Bind `expr` once, then use it.
+ *
+ * Every nullable conversion has to test the value and then convert it, and writing that
+ * as `(expr === null ? null : f(expr))` evaluates `expr` **twice**. For a field read that
+ * is merely wasteful; for a *call* it is wrong, and the calls are the interesting case —
+ * a callback dispatcher's argument is `_cbs28[_slot](a0)`, so a nullable-returning
+ * callback was invoked twice per call. Anything with a side effect ran double, and
+ * anything single-use failed on the second go and then converted the failure's `null` as
+ * if it were a value: `Cannot read properties of null (reading 'length')`.
+ *
+ * Found when `packages/platform`'s `readDir` started answering through a ticket, whose
+ * resolver collects the call and cannot be asked twice. `fromWasm` already did this.
+ */
+function once(expr: string, body: (v: string) => string): string {
+  return `((_v) => ${body("_v")})(${expr})`;
+}
+
 /** Convert a JS value to what the wasm accessor expects. */
 function toWasm(wacType: string, expr: string): string {
   if (wacType === "string") return `_stringToWasm(${expr})`;
@@ -477,12 +495,13 @@ function toWasm(wacType: string, expr: string): string {
   if (arr) return `_arrayToWasm_${arr.suffix}(${expr})`;
   const box = boxedPrim(wacType);
   if (box) {
-    return `(${expr} === null ? null : (_exports.__bind_opt_${box}_new as CallableFunction)(${expr}))`;
+    return once(expr, (v) =>
+      `${v} === null ? null : (_exports.__bind_opt_${box}_new as CallableFunction)(${v})`);
   }
   const nr = nullableRef(wacType);
-  if (nr) return `(${expr} === null ? null : ${toWasm(nr, expr)})`;
+  if (nr) return once(expr, (v) => `${v} === null ? null : ${toWasm(nr, v)}`);
   const st = structOf(wacType);
-  if (st) return st.nullable ? `(${expr} === null ? null : ${expr}.ref)` : `${expr}.ref`;
+  if (st) return st.nullable ? once(expr, (v) => `${v} === null ? null : ${v}.ref`) : `${expr}.ref`;
   return expr;
 }
 
