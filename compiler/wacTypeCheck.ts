@@ -2345,6 +2345,61 @@ function inferCall(
       return T_I32;
     }
 
+    // Bulk array operations. `array.copy` and `array.fill` are single instructions the
+    // emitter already writes for its own helpers; without a spelling, every program
+    // writes the element loop by hand, which measured at 790 MB/s for a megabyte
+    // [issue 0056].
+    const arrBase = baseType.kind === "array" ? baseType
+                  : baseType.kind === "nullable" && baseType.inner.kind === "array" ? baseType.inner
+                  : null;
+    if (arrBase && (methodName === "copyFrom" || methodName === "fill")) {
+      const checkI32 = (arg: Expr, what: string): void => {
+        const at2 = inferExpr(arg, env, ctx, T_I32);
+        if (at2 && !typeEq(at2, T_I32)) {
+          errAt(ctx, `'${methodName}()' ${what} must be i32, got ${typeName(at2)}`, arg.line, arg.col);
+        }
+      };
+      if (methodName === "copyFrom") {
+        if (args.length !== 4) {
+          errAt(ctx, `'copyFrom()' takes 4 arguments (src, srcStart, dstStart, count)`,
+            expr.line, expr.col);
+          return T_VOID;
+        }
+        const srcT = inferExpr(args[0], env, ctx, baseType);
+        const srcArr = srcT?.kind === "array" ? srcT
+                     : srcT?.kind === "nullable" && srcT.inner.kind === "array" ? srcT.inner
+                     : null;
+        if (srcT && !srcArr) {
+          errAt(ctx, `'copyFrom()' source must be an array, got ${typeName(srcT)}`,
+            args[0].line, args[0].col);
+        } else if (srcArr && !typeEq(srcArr.elem, arrBase.elem)) {
+          // wasm requires it, and a copy that reinterprets elements is not a copy.
+          errAt(ctx, `'copyFrom()' needs matching element types: ` +
+            `${typeName(arrBase.elem)}[] and ${typeName(srcArr.elem)}[]`, args[0].line, args[0].col);
+        }
+        checkI32(args[1], "srcStart");
+        checkI32(args[2], "dstStart");
+        checkI32(args[3], "count");
+        return T_VOID;
+      }
+      if (args.length !== 3) {
+        errAt(ctx, `'fill()' takes 3 arguments (value, start, count)`, expr.line, expr.col);
+        return T_VOID;
+      }
+      // A packed element is written as an i32 and truncated at the store, exactly as
+      // `a[i] = 3` is — packed types have no value form of their own, so requiring one
+      // here would make `fill` the only place in the language that asks for one.
+      const want = isPackedElem(arrBase.elem) ? T_I32 : arrBase.elem;
+      const vT = inferExpr(args[0], env, ctx, want);
+      if (vT && !isAssignable(vT, want, ctx)) {
+        errAt(ctx, `'fill()' value must be ${typeName(want)}, got ${typeName(vT)}`,
+          args[0].line, args[0].col);
+      }
+      checkI32(args[1], "start");
+      checkI32(args[2], "count");
+      return T_VOID;
+    }
+
     // String methods
     if (typeEq(baseType, T_STR)) {
       if (methodName === "slice") {

@@ -9084,3 +9084,68 @@ Deno.test("[§wac-ct-trace-5wkq2np] trace mode records branches and memory indic
   eq(ex.index(2), 7, "T[2] is still 7");
   eq(ex.branch(1), 7, "and the branch still returns 7");
 });
+
+// ── §wac-arr-bulk-7kmq4wn ─────────────────────────────────────────────────────
+
+Deno.test("[§wac-arr-bulk-7kmq4wn] arrays copy and fill in bulk", async () => {
+  // Issue 0056: `array.copy` and `array.fill` are single instructions the emitter
+  // already wrote for its own helpers, so every wac program was writing the element
+  // loop by hand — measured as the largest avoidable cost in gzip's streaming path.
+  const r = wacCompile(new Map([["m.wac", `
+    export i32 bulk() {
+      i32[] src = i32[](1, 2, 3, 4, 5);
+      i32[] dst = i32[8](fill: 0);
+      dst.copyFrom(src, 1, 3, 3);
+      dst.fill(9, 0, 2);
+      return dst[0] + dst[3] + dst[5];
+    }
+    export i32 digits() {
+      i32[] a = i32[6](fill: 0);
+      for (i32 i = 0; i < 6; i++) { a[i] = i + 1; }
+      a.copyFrom(a, 0, 2, 4);
+      i32 t = 0;
+      for (i32 i = 0; i < 6; i++) { t = t * 10 + a[i]; }
+      return t;
+    }
+    export i32 packed() {
+      u8[] s = u8[4](fill: 9);
+      u8[] d = u8[4](fill: 0);
+      d.copyFrom(s, 0, 0, 4);
+      d.fill(2, 3, 1);
+      return d[0] * 10 + d[3];
+    }
+    export i32 empty() { i32[] a = i32[2](fill: 1); a.copyFrom(a, 0, 0, 0); return a[0]; }
+    export i32 oob() { i32[] a = i32[2](fill: 1); a.copyFrom(a, 0, 0, 5); return 1; }
+  `]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
+  const inst = await wacInstance(r.compiled);
+
+  eq(inst.call("bulk", []), 15, "copy a range, then fill one");
+  // memmove, not a forward loop: 1,2,3,4,5,6 with a[0..4) copied to a[2..6).
+  // A naive forward loop gives 121212 by overwriting its own source.
+  eq(inst.call("digits", []), 121234, "overlapping copies do not eat their source");
+  eq(inst.call("packed", []), 92, "packed elements copy, and fill takes an i32");
+  eq(inst.call("empty", []), 1, "a count of zero does nothing");
+
+  let trapped = false;
+  try { inst.call("oob", []); } catch { trapped = true; }
+  eq(trapped, true, "a range past the end traps, as an index would");
+});
+
+Deno.test("[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong", () => {
+  const cases: [string, RegExp][] = [
+    [`i64[] b = i64[2](fill: 0); a.copyFrom(b, 0, 0, 2);`, /matching element types: i32\[\] and i64\[\]/],
+    [`a.copyFrom(a, 0, 0);`, /takes 4 arguments \(src, srcStart, dstStart, count\)/],
+    [`a.copyFrom(5, 0, 0, 1);`, /source must be an array, got i32/],
+    [`a.copyFrom(a, 0.5, 0, 1);`, /srcStart must be i32, got f64/],
+    [`a.fill("x", 0, 2);`, /value must be i32, got string/],
+    [`a.fill(1, 2);`, /takes 3 arguments \(value, start, count\)/],
+  ];
+  for (const [body, want] of cases) {
+    const src = `export void f() { i32[] a = i32[2](fill: 0); ${body} }`;
+    const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+    eq(r.ok, false, `should not compile: ${body}`);
+    const msgs = r.ok ? "" : r.diagnostics.map((d) => d.message).join("; ");
+    eq(want.test(msgs), true, `for ${body} got: ${msgs}`);
+  }
+});
