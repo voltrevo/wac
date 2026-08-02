@@ -9600,3 +9600,39 @@ function functionNames(w: Uint8Array): string[] {
   }
   return out;
 }
+
+// ── §wac-bindgen-nullable-name-7kqn2wp ────────────────────────────────────────
+
+Deno.test("[§wac-bindgen-nullable-name-7kqn2wp] a nullable type argument gets its own class name", () => {
+  // `className` collapsed every character outside `[A-Za-z0-9_]` to an underscore and then
+  // stripped the run, so a `?` vanished: `Pending<string?>` and `Pending<string>` both came
+  // out as `Pending_string`. The generated module declared the class twice and would not
+  // bundle — "Multiple exports with the same name" from a program that compiled cleanly.
+  //
+  // Found building `packages/platform`'s ticket API, where `openInput` answers
+  // `Pending<string>` and `env` answers `Pending<string?>`.
+  const src = `
+    export struct Box<T> {
+      T value;
+      Box<T> of(T value) { return Box<T>(value); }
+    }
+    export Box<string> plain(string s) { return Box<string>(s); }
+    export Box<string?> maybe(string? s) { return Box<string?>(s); }
+    export Box<u8[]> bytes(u8[] b) { return Box<u8[]>(b); }
+    export Box<u8[]?> maybeBytes(u8[]? b) { return Box<u8[]?>(b); }
+  `;
+  const r = wacCompile(new Map([["m.wac", src]]), "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+
+  const ts = wacBindgen(r.compiled);
+  const names = [...ts.matchAll(/^export class (\w+)/gm)].map((m) => m[1]);
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  eq(dup.join(","), "", `duplicate class names: ${dup.join(",")}`);
+
+  // The names are also the ones a caller has to type, so they are asserted rather than
+  // just checked for uniqueness — a mangling that is unique but unreadable is its own bug.
+  eq(names.includes("Box_string"), true, names.join(","));
+  eq(names.includes("Box_stringOpt"), true, names.join(","));
+  eq(names.includes("Box_u8Arr"), true, names.join(","));
+  eq(names.includes("Box_u8ArrOpt"), true, names.join(","));
+});

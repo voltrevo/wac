@@ -128,11 +128,15 @@ let outFuncrefsByType: Map<string, WacCallback & { index: number }> = new Map();
  *
  * An array argument reads as `Arr` rather than as the punctuation it is made of, because
  * `Map<u8[], i32>` sanitised character by character gives `Map_u8____i32`, which is not a name
- * anyone would ship.
+ * anyone would ship. A nullable argument reads as `Opt` for the same reason, and because
+ * without it the name is not unique: collapsing `?` to nothing made `Pending<string?>` and
+ * `Pending<string>` both `Pending_string`, and the generated module then declared the same
+ * class twice and would not bundle.
  */
 function className(s: { display: string }): string {
   return s.display
     .replace(/\[\]/g, "Arr")
+    .replace(/\?/g, "Opt")
     .replace(/[^A-Za-z0-9_]/g, "_")
     .replace(/_+/g, "_")
     .replace(/_+$/, "");
