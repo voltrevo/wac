@@ -2250,6 +2250,42 @@ class FuncEmitter {
         // Fall through to method dispatch if base is a struct with a len() method
       }
 
+      // Bulk array operations — one instruction each, where the language previously
+      // offered only the element loop [issue 0056].
+      if (fe.name === "copyFrom" || fe.name === "fill") {
+        const dstElem = baseT.kind === "array" ? baseT.elem
+                      : baseT.kind === "nullable" && baseT.inner.kind === "array" ? baseT.inner.elem
+                      : null;
+        const dstIdx = dstElem ? (this.ctx.arrTypeIdx.get(typeKey(dstElem)) ?? -1) : -1;
+        if (dstElem && dstIdx >= 0) {
+          if (fe.name === "copyFrom") {
+            // array.copy takes (dst, dstOffset, src, srcOffset, len) with the destination
+            // type index first. The wac argument order is the issue's: the receiver is the
+            // destination, so `src` and its start come before the destination's start.
+            const srcT = typeOfExpr(e.args[0], env, this.ctx);
+            const srcElem = srcT.kind === "array" ? srcT.elem
+                          : srcT.kind === "nullable" && srcT.inner.kind === "array" ? srcT.inner.elem
+                          : dstElem;
+            const srcIdx = this.ctx.arrTypeIdx.get(typeKey(srcElem)) ?? dstIdx;
+            this.emitExpr(fe.expr, env);      // dst
+            this.emitExpr(e.args[2], env);    // dstStart
+            this.emitExpr(e.args[0], env);    // src
+            this.emitExpr(e.args[1], env);    // srcStart
+            this.emitExpr(e.args[3], env);    // count
+            this.emit(0xFB, 0x11, ...uleb(dstIdx), ...uleb(srcIdx)); // array.copy
+            return;
+          }
+          // array.fill takes (array, offset, value, len).
+          this.emitExpr(fe.expr, env);        // array
+          this.emitExpr(e.args[1], env);      // start
+          this.emitExpr(e.args[0], env, dstElem); // value
+          this.emitExpr(e.args[2], env);      // count
+          this.emit(0xFB, 0x10, ...uleb(dstIdx)); // array.fill
+          return;
+        }
+        // Not an array: fall through, in case a struct has a method of that name.
+      }
+
       // String method calls
       if (baseT.kind === "prim" && baseT.name === "string") {
         if (fe.name === "slice") {
