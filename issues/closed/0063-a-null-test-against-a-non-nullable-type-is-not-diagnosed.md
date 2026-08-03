@@ -1,7 +1,7 @@
 # 0063 — a null test against a non-nullable type is not diagnosed
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
 - **Kind:** diagnostic
@@ -84,3 +84,36 @@ An error rather than a warning would be my preference, on the same argument the 
 statically-decided branch is the same kind of thing.
 
 `is null` on a nullable type is of course unaffected, and so is `!` on one.
+
+## Fixed, as a warning rather than an error
+
+`§wac-nonnull-isnull-warn-2mkq7np`, in `spec/spec/types.md`.
+
+```
+warning: 'is not null' on Box, which is never null
+   = help: drop the test, or make the type Box?
+```
+
+A warning, and the reason is worth recording because I started by making it an error and the
+suite told me otherwise. `[§wac-nonnull-isnull-k8fn3wp]` already documented that a null test
+on a non-null type is *allowed*, and it turns out to be load-bearing:
+
+```wac
+struct Slot<T> { T v; bool empty(const this) { return this.v is null; } }
+```
+
+That has to instantiate for nullable *and* non-nullable `T`. Erroring makes any such generic
+uninstantiable for half its arguments — verified: `Slot<Point>` and `Slot<Point?>` both
+compile today and only the second reports empty. The spec asserted the allowance without
+saying why; it says why now.
+
+A warning is also the shape the neighbouring case already has: `'X is Y' is always false —
+the types share no ancestor` warns rather than refusing.
+
+Zero warnings across `box`, `sh`, `ssh` and `std`, so no false positives on real code and no
+tautologies left in the tree.
+
+One thing that nearly went unnoticed: the first version of the check used
+`nullableOf(lt) === null`, and `nullableOf` *makes* a type nullable rather than testing it —
+it never answers null for a reference. So the diagnostic compiled, type-checked, and did
+absolutely nothing. It needed `lt.kind !== "nullable"`.

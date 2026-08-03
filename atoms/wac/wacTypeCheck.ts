@@ -1990,9 +1990,31 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       const lt = inferExpr(expr.expr, env, ctx);
       if (!lt) return null;
       if (expr.rhs === "null") {
-        // null test: expr must be nullable or a non-null ref (always false on non-null)
+        const test = expr.not ? "is not null" : "is null";
         if (!isRefType(lt)) {
           errAt(ctx, `'is null' requires a reference type, got ${typeName(lt)}`, expr.line, expr.col);
+          return T_BOOL;
+        }
+        // A null test against a type that cannot be null is statically decided: one branch
+        // is dead and nothing runs it. It used to pass in silence, and that cost real bugs
+        // — `packages/platform` changed `env` from `string?` to `Pending<string?>`, every
+        // `cli.env(n) is not null` became a tautology, and five survived a migration the
+        // type checker otherwise caught completely [issue 0063].
+        //
+        // A **warning**, not an error, for two reasons. It is the same shape as
+        // `'X is Y' is always false` below, which warns. And it is legitimate in a generic:
+        // `struct Slot<T> { bool empty(const this) { return this.v is null; } }` has to
+        // instantiate for nullable *and* non-nullable `T`, so erroring would make any such
+        // generic uninstantiable — which is why `[§wac-nonnull-isnull-k8fn3wp]` allows it,
+        // a reason the spec asserted without stating.
+        //
+        // `lt.kind`, not `nullableOf(lt)` — that helper *makes* a type nullable and never
+        // answers null for a reference, so the first version of this test was always false
+        // and the diagnostic silently did nothing.
+        if (lt.kind !== "nullable" && !isNullT(lt)) {
+          warnAt(ctx, `'${test}' on ${typeName(lt)}, which is never null`, expr.line, expr.col, 3,
+            `${typeName(lt)} has no null value, so this is always ${expr.not}`,
+            `drop the test, or make the type ${typeName(lt)}?`);
         }
         return T_BOOL;
       }

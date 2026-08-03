@@ -494,4 +494,24 @@ export bool testNonNullIsNull() {
 }
 ```
 
-`[§wac-nonnull-isnull-k8fn3wp]` `testNonNullIsNull()` returns `false` — `is null` on a non-null type is allowed but always false.
+`[§wac-nonnull-isnull-k8fn3wp]` `testNonNullIsNull()` returns `false` — `is null` on a
+non-null type is allowed but always false.
+
+`[§wac-nonnull-isnull-warn-2mkq7np]` It also **warns**, because a statically decided null
+test means one branch is dead and nothing runs it:
+
+```
+warning: 'is not null' on Box, which is never null
+   = help: drop the test, or make the type Box?
+```
+
+Allowed rather than refused because a generic needs it. `struct Slot<T> { T v; bool
+empty(const this) { return this.v is null; } }` has to instantiate for nullable *and*
+non-nullable `T`, and refusing the test would make any such generic uninstantiable for half
+its arguments. The warning is the same shape as `'X is Y' is always false` for a type test
+that can never hold.
+
+Worth having because the silence cost real bugs. `packages/platform` changed `env` from
+returning `string?` to returning `Pending<string?>`, every `cli.env(n) is not null` became a
+tautology, and five survived in `packages/sh` — a migration the type checker otherwise
+caught completely. Issue 0063.

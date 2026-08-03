@@ -9697,3 +9697,49 @@ Deno.test("[§wac-bindgen-nullable-once-4nkq8wp] a nullable-returning callback i
   }
   eq(checked >= 4, true, `only ${checked} dispatchers were checked`);
 });
+
+// ── §wac-nonnull-isnull-warn-2mkq7np ──────────────────────────────────────────
+
+Deno.test("[§wac-nonnull-isnull-warn-2mkq7np] a null test on a non-nullable type warns", () => {
+  // Issue 0063. It compiled in silence, so a migration that changed a type turned every
+  // null test against it into a tautology with nothing said: `cli.env(n) is not null`, five
+  // times in `packages/sh`, after `env` went from `string?` to `Pending<string?>`.
+  const r = wacCompile(
+    new Map([["m.wac", `
+      struct Box { i32 v; }
+      export i32 taut(Box b) { if (b is not null) { return 1; } return 0; }
+      export i32 never(Box b) { if (b is null) { return 1; } return 0; }
+    `]]),
+    "m.wac",
+  );
+  // A warning, so it still compiles.
+  eq(r.ok, true, r.diagnostics.map((d) => d.message).join("; "));
+  const said = r.diagnostics.map((d) => d.message);
+  eq(said.length, 2, `expected two warnings, got: ${said.join(" | ")}`);
+  eq(said[0], "'is not null' on Box, which is never null", said[0]);
+  eq(said[1], "'is null' on Box, which is never null", said[1]);
+});
+
+Deno.test("[§wac-nonnull-isnull-warn-2mkq7np] and a generic that null-tests its parameter still instantiates", () => {
+  // Why it is a warning rather than an error. A generic asking "is this absent?" has to
+  // work for nullable *and* non-nullable arguments; refusing the test would make any such
+  // generic uninstantiable for half of them, which is the reason
+  // §wac-nonnull-isnull-k8fn3wp allows it — a reason the spec asserted without stating.
+  const r = wacCompile(
+    new Map([["m.wac", `
+      struct Point { i32 x; }
+      struct Slot<T> {
+        T v;
+        bool empty(const this) { return this.v is null; }
+      }
+      export i32 main() {
+        Slot<Point> concrete = Slot<Point>(Point(1));
+        Slot<Point?> maybe = Slot<Point?>(null);
+        return (concrete.empty() ? 10 : 0) + (maybe.empty() ? 1 : 0);
+      }
+    `]]),
+    "m.wac",
+  );
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+  eq(r.compiled.exports.some((x) => x.name === "main"), true, "main is exported");
+});
