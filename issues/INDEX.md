@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0063](open/0063-no-import-syntax-reads-as-false-because-wac-has-import-syntax.md) | "wac has no import syntax" reads as false, because wac has import syntax | diagnostic | wrong answer |
+| [0064](open/0064-no-import-syntax-reads-as-false-because-wac-has-import-syntax.md) | "wac has no import syntax" reads as false, because wac has import syntax | diagnostic | wrong answer |
 | [0062](open/0062-a-module-with-more-than-63-types-emits-an-invalid-heap-type.md) | a module with more than 63 types emits an invalid heap type | bug | invalid wasm |
 | [0061](open/0061-enum-variants-should-be-qualified-rather-than-file-scope-names.md) | enum variants should be qualified rather than file-scope names | missing feature | compile error |
 | [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
@@ -18,7 +18,7 @@ has been fixed and why.
 
 ## Closed
 
-63 issues, 54 closed.
+64 issues, 54 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

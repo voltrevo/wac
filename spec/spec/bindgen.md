@@ -115,7 +115,7 @@ import { fold } from "./sum.wac.ts";
 fold((a, b) => a + b, [1, 2, 3, 4, 5]);   // 15
 ```
 
-**Passing it is the only way in.** wac has no import syntax, so nothing a program can write names a
+**Passing it is the only way in.** wac's `import` reads another `.wac` file and does nothing else — there is no `extern` and no declaration form — so nothing a program can write names a
 host function; what it can call is a value it was handed, for as long as it holds it. A module that
 takes no `fn[…]` parameter has no imports at all — that is checkable on the binary, and the test
 checks it. Capability, not ambient authority: the host decides what a module can reach by deciding
