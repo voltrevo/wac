@@ -126,6 +126,11 @@ packages, 41,000 lines of wac, 897 tests, and no TypeScript in any package's `sr
 Its [MAP.md](https://github.com/voltrevo/wac-mono/blob/master/MAP.md) is generated from the
 tree and lists every package and every program.
 
+Three of them run on the [website](https://voltrevo.github.io/wac/) — the shell in a tab, a
+hash-and-compress playground, and a Mandelbrot set with the escape count under your pointer.
+Those are whole applications on a worker, so they need `SharedArrayBuffer`, which needs two
+headers GitHub Pages will not set; the site registers a service worker that supplies them.
+
 ## Development
 
 ```sh

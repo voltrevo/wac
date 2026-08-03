@@ -166,6 +166,81 @@ export default function Built() {
           <div style={s.codeLabel}>the first line of the artifact</div>
           <CodeBlock code={SHEBANG} lang="ts" />
         </div>
+        <h3 style={s.h3}>Run one in this browser</h3>
+        <p style={s.p}>
+          These are whole applications, not snippets: a wac program on a worker, talking to a
+          capability world on the page's own thread. Each file is exactly what{" "}
+          {tp("deno task app:build --target browser")} produces, copied unmodified — what you can
+          open here is the artifact you would build yourself.
+        </p>
+        <div
+          style={{
+            display: "grid",
+            gap: 1,
+            background: "#2e2e3e",
+            border: "1px solid #2e2e3e",
+            borderRadius: 6,
+            overflow: "hidden",
+            marginBottom: 12,
+          }}
+        >
+          {[
+            {
+              href: "shell.html",
+              name: "a shell",
+              what:
+                "packages/sh with a keyboard in front of it — pipelines, loops, variables, and redirection into a filesystem that survives a reload",
+              size: "336K",
+            },
+            {
+              href: "hash.html",
+              name: "hash and compress",
+              what:
+                "SHA-256 and DEFLATE keeping up with your typing, from packages/crypto and packages/gzip, neither changed for the browser",
+              size: "222K",
+            },
+            {
+              href: "pixels.html",
+              name: "pixels",
+              what:
+                "a Mandelbrot set recomputed on every zoom, the escape count under the pointer, and a dropped file handed straight back",
+              size: "204K",
+            },
+          ].map((d) => (
+            <a
+              key={d.href}
+              href={d.href}
+              style={{
+                background: "#181825",
+                padding: "12px 14px",
+                textDecoration: "none",
+                display: "block",
+              }}
+            >
+              <div style={{ fontFamily: "monospace", color: "#2dd4bf", fontSize: 14 }}>
+                {d.name} <span style={{ color: "#4a4a5a" }}>· {d.size}</span>
+              </div>
+              <div style={{ color: "#9ca3af", fontSize: 14 }}>{d.what}</div>
+            </a>
+          ))}
+        </div>
+        <p style={s.p}>
+          They need {tp("SharedArrayBuffer")}, because the program parks on {tp("Atomics.wait")}{" "}
+          while the page answers its calls — and that needs two response headers GitHub Pages
+          cannot set. So this site registers{" "}
+          <a
+            href="https://github.com/gzuidhof/coi-serviceworker"
+            target="_blank"
+            rel="noopener"
+            style={{ color: "#60a5fa" }}
+          >
+            a service worker
+          </a>{" "}
+          that re-serves itself with them. Worth knowing rather than hiding: the first visit
+          reloads once while that takes effect, and a browser with service workers disabled gets a
+          page that says what is missing instead of failing silently.
+        </p>
+
         <p style={{ ...s.p, marginBottom: 0 }}>
           A spawned child gets the grants its parent chose, intersected with what the parent
           itself has — so a program can hand out one capability and can never hand out one it
