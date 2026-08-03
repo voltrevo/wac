@@ -189,22 +189,22 @@ export default function Built() {
               href: "shell.html",
               name: "a shell",
               what:
-                "packages/sh with a keyboard in front of it — pipelines, loops, variables, and redirection into a filesystem that survives a reload",
-              size: "336K",
+                "packages/sh with a keyboard in front of it — pipelines, loops, variables, command history, and redirection into a filesystem that survives a reload",
+              size: "341K",
             },
             {
               href: "hash.html",
               name: "hash and compress",
               what:
                 "SHA-256 and DEFLATE keeping up with your typing, from packages/crypto and packages/gzip, neither changed for the browser",
-              size: "222K",
+              size: "228K",
             },
             {
               href: "pixels.html",
               name: "pixels",
               what:
-                "a Mandelbrot set recomputed on every zoom, the escape count under the pointer, and a dropped file handed straight back",
-              size: "204K",
+                "a Mandelbrot set recomputed on every click — it recentres where you point — with the escape count under the cursor and a dropped file handed straight back",
+              size: "212K",
             },
           ].map((d) => (
             <a
