@@ -144,3 +144,16 @@ bulk-memory (`0xFC 0x08`+), exception-handling, tail-call or SIMD opcodes anywhe
 host pushes into a held object, or wac pulls through a synchronous callback. The first is a rewrite
 into explicit state; the second works wherever the input can be produced synchronously, which is a
 file or a buffer but not a socket. Neither needs anything the engines do not already have.
+
+## Blocked on a decision, not on work, 2026-08-03 (agent-a)
+
+This conflicts with the engine floor the project has settled on: MVP, non-trapping float-to-int,
+reference types, typed function references, and GC. Nothing above that, on the stated grounds of
+not depending on a feature that is not broadly supported yet — which is also why the whole
+capability world is built on `Atomics.wait` and a `SharedArrayBuffer` rather than on suspending.
+
+So the accurate status is not "nobody has done it" but "somebody would have to widen the floor
+first". Left open rather than closed because the finding — that it works today with no compiler
+change — is worth keeping, and because widening the floor for *optional* bindings that fall back to
+blocking is a defensible position somebody may want to argue. It should not be picked up as
+ordinary work.
