@@ -4,7 +4,8 @@
 
 # wac
 
-A C-family language for WebAssembly GC. Structs, methods, arrays, nullable refs, subtyping.
+A C-family language for WebAssembly GC. Structs, methods, arrays, nullable refs, subtyping,
+generics and enums.
 
 **[Website](https://voltrevo.github.io/wac/)** · **[Language spec](spec/)**
 
@@ -39,9 +40,11 @@ export f64 run() {
 
 ## Language features
 
-- Primitive types: `i32` `i64` `f32` `f64` `bool` `string`
+- Primitive types: `i32` `i64` `f32` `f64` `bool` `string`, and packed `u8`/`i8`/`u16`/`i16` in arrays
 - Structs with methods, `const this`, static methods
 - Struct subtyping via `struct Rect : Shape`
+- Generics: `struct Vec<T>`, monomorphised — `Vec<i32>` and `Vec<Shape>` in one program
+- Enums with payloads, and `match` over them — `enum Option<T> { Some(T v), None }`
 - Nullable references with `?`, `!` unwrap, `is null` / `is not null`
 - GC arrays: `i32[5]()`, `i32[](1,2,3)`, `.len()`
 - Function references: `fn[i32(i32, i32)]`
@@ -99,6 +102,29 @@ supported. There are no bulk-memory, exception-handling, tail-call or SIMD opcod
 A feature that would cross this line — JSPI, for instance, which the callback design happens to
 make available to a host that wants it — is a decision to take explicitly, not a convenience to
 adopt because an engine you have to hand supports it.
+
+## What has been built with it
+
+[**wac-mono**](https://github.com/voltrevo/wac-mono) is the other half of this project: things
+written in wac. It is the evidence that the language is finished enough to be boring — 24
+packages, 41,000 lines of wac, 896 tests, and no TypeScript in any package's `src/`.
+
+- **A busybox**: 59 applets in one program, each differential-tested against the real tool.
+- **A shell**, checked against GNU bash script for script.
+- **SSH, both ends** — a client that runs commands on OpenSSH, and a server that serves
+  OpenSSH's own client, hosting that shell.
+- **TLS 1.3**, interoperating with OpenSSL and rustls, and a **Tor client** with a SOCKS proxy
+  on top of it.
+- **Crypto**: SHA-2, SHA-3, HMAC, HKDF, AES-GCM, ChaCha20-Poly1305, X25519, Ed25519, P-256,
+  P-384, RSA verification, ML-KEM-768.
+- **gzip and Zstandard**, both compressing at or under the reference tools.
+- **A capability world** — so a program can be an application, reading files and opening
+  sockets, with no TypeScript of its own — which also targets **the browser**: the shell above
+  runs in a tab, over a filesystem that survives a reload.
+- **The wac compiler, in wac**, being ported so it can eventually compile itself.
+
+Its [MAP.md](https://github.com/voltrevo/wac-mono/blob/master/MAP.md) is generated from the
+tree and lists every package and every program.
 
 ## Development
 
