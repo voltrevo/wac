@@ -184,9 +184,18 @@ export default function Landing() {
         collector owns the heap, so there is no allocator to write.
       </div>
 
-      <div style={{ ...s.buttons, justifyContent: "center" }}>
+      <div style={{ ...s.buttons, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
         <a href="#/playground" style={s.btnPrimary}>Playground</a>
+        {/* A real shell, in a tab, from packages/sh unchanged. It was two thirds of the way down
+            the page and nobody would ever have found it. */}
+        <a href="shell.html" style={s.btnDemo}>Shell in your browser →</a>
         <a href={GITHUB} target="_blank" rel="noopener" style={s.btnSecondary}>GitHub</a>
+      </div>
+      <div style={{ textAlign: "center", fontSize: 13, color: "#6b7280", marginBottom: 40 }}>
+        also running here:{" "}
+        <a href="hash.html" style={{ color: "#9ca3af" }}>hash &amp; compress</a>,{" "}
+        <a href="pixels.html" style={{ color: "#9ca3af" }}>pixels</a> — whole wac applications on a
+        worker, <a href="#demos" style={{ color: "#9ca3af" }}>how they work here</a>
       </div>
 
       {/* What exists, before the tour of how it reads. Numbers from wac-mono's generated map;
@@ -250,8 +259,41 @@ export default function Landing() {
         </p>
       </div>
 
+      {/* The page is a dozen screens tall; without this the second half is undiscoverable.
+          The showcase page it was merged from had a contents list and this did not. */}
+      <nav
+        aria-label="Sections"
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "6px 20px",
+          padding: "14px 0",
+          borderTop: "1px solid #2e2e3e",
+          borderBottom: "1px solid #2e2e3e",
+          marginBottom: 44,
+          fontSize: 13,
+        }}
+      >
+        {[
+          ["#tour", "language tour"],
+          ["#bindgen", "typescript bindgen"],
+          ["#built", "what is built"],
+          ["#capabilities", "capabilities"],
+          ["#demos", "run one here"],
+          ["#shell", "a shell"],
+          ["#tor", "tor"],
+        ].map(([href, label], i) => (
+          <a key={href} href={href} style={{ color: "#9ca3af", textDecoration: "none" }}>
+            <span style={{ color: "#2dd4bf", fontVariantNumeric: "tabular-nums" }}>
+              {String(i + 1).padStart(2, "0")}
+            </span>{" "}
+            {label}
+          </a>
+        ))}
+      </nav>
+
       {/* Language tour */}
-      <div style={s.section}>
+      <div style={s.section} id="tour">
         <h2 style={s.h2}>Language tour</h2>
 
         <h3 style={s.h3}>Hello world</h3>
@@ -333,7 +375,7 @@ export default function Landing() {
 
       {/* Bindgen */}
       <div style={s.section}>
-        <h2 style={s.h2}>TypeScript bindgen</h2>
+        <h2 style={s.h2} id="bindgen">TypeScript bindgen</h2>
         <p style={s.p}>
           {fn_("wacBindgen")} produces a self-contained {tp(".ts")} file
           with the wasm binary base64-encoded inline and typed wrapper functions.
