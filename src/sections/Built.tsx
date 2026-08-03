@@ -9,7 +9,7 @@
 // inventory of two dozen packages is wrong within the week.
 
 import { BUILT, TOTALS } from "../data/built";
-import { DEMO_SIZES } from "../data/demos";
+import { DEMO_SIZES, DEMO_SOURCE } from "../data/demos";
 import { CodeBlock, fn_, MONO, s, tp } from "../theme";
 
 /** Rounded, because this repo's Pages build cannot check them. See `src/data/built.ts`. */
@@ -196,30 +196,49 @@ export default function Built() {
               href: "hash.html",
               name: "hash and compress",
               what:
-                "SHA-256 and DEFLATE keeping up with your typing, from packages/crypto and packages/gzip, neither changed for the browser",
+                "SHA-256 and DEFLATE keeping up with your typing — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open",
             },
             {
               href: "pixels.html",
               name: "pixels",
               what:
-                "a Mandelbrot set recomputed on every click — it recentres where you point — with the escape count under the cursor and a dropped file handed straight back",
+                "a Mandelbrot set recomputed on every click — it recentres where you point — with the escape count under the cursor, and the frame you are looking at downloadable as a PPM",
             },
           ].map((d) => (
-            <a
-              key={d.href}
-              href={d.href}
-              style={{
-                background: "#181825",
-                padding: "12px 14px",
-                textDecoration: "none",
-                display: "block",
-              }}
-            >
-              <div style={{ fontFamily: "monospace", color: "#2dd4bf", fontSize: 14 }}>
-                {d.name} <span style={{ color: "#4a4a5a" }}>· {DEMO_SIZES[d.href] ?? ""}</span>
+            <div key={d.href} style={{ background: "#181825", padding: "12px 14px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                }}
+              >
+                <a
+                  href={d.href}
+                  style={{
+                    fontFamily: "monospace",
+                    color: "#2dd4bf",
+                    fontSize: 14,
+                    textDecoration: "none",
+                  }}
+                >
+                  {d.name} <span style={{ color: "#4a4a5a" }}>· {DEMO_SIZES[d.href] ?? ""}</span>
+                </a>
+                <a
+                  href={DEMO_SOURCE[d.href]}
+                  target="_blank"
+                  rel="noopener"
+                  style={{ color: "#6b7280", fontSize: 12, whiteSpace: "nowrap" }}
+                >
+                  source &amp; how to build it ↗
+                </a>
               </div>
-              <div style={{ color: "#9ca3af", fontSize: 14 }}>{d.what}</div>
-            </a>
+              <a href={d.href} style={{ color: "#9ca3af", fontSize: 14, textDecoration: "none" }}>
+                {d.what}
+              </a>
+            </div>
           ))}
         </div>
         <p style={s.p}>
