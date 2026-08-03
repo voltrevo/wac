@@ -1119,7 +1119,11 @@ class FuncEmitter {
   private unboxPrim(prim: string): void {
     const idx = this.ctx.structTypeIdx.get(boxStructName(prim));
     if (idx === undefined) return;
-    this.emit(0xFB, 0x16, ...uleb(idx));        // ref.cast (ref $#box$P) — also the null check
+    // `ref.cast`'s immediate is a *heap type*, which is a signed LEB (s33) — not the unsigned type
+    // index that `struct.get` below takes. They agree for indices under 64 and diverge at exactly
+    // 64, where `uleb` emits the single byte 0x40 and a decoder reading s33 sees -64. See the note
+    // on `sleb` and issue 0062.
+    this.emit(0xFB, 0x16, ...sleb(idx));       // ref.cast (ref $#box$P) — also the null check
     this.emit(0xFB, 0x02, ...uleb(idx), 0x00); // struct.get $#box$P 0
   }
 

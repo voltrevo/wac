@@ -571,3 +571,34 @@ Deno.test("wacBindgen: a returned array is a copy, not a live view", async () =>
   echo(new Uint8Array([9, 9, 9, 9, 9, 9]));
   eq(Array.from(first).join(","), "1,2,3", "the earlier result is unaffected");
 });
+
+Deno.test("a heap type index past 63 is written as a signed LEB", async () => {
+  // `ref.cast` takes a *heap type*, which is a signed LEB (s33), where `struct.new` and `struct.get`
+  // take an unsigned type index. Two sites wrote the cast's immediate with `uleb`: identical output
+  // for every index below 64, and at exactly 64 the single byte 0x40, which a decoder reading s33
+  // sees as -64. Nothing smaller than a sixty-odd-type module could show it, and then every module
+  // with an enum at the boundary was rejected outright — the enum's `__bind_e_*` getter contains the
+  // cast. Issue 0062, and it cost a shell package all 539 of its differential tests in one
+  // afternoon. Measured: 62 filler structs was fine, 63 was not.
+  const filler = Array.from({ length: 70 }, (_, i) => `export struct F${i} { i32 a${i}; }`).join("\n");
+  const withEnum = await inst(`${filler}
+
+export enum E { Some(i32? v), None }
+
+export i32 viaMatch(i32 x) {
+  E e = E.Some(x);
+  return match (e) { case Some(v): v!, case None: 0 };
+}
+`);
+  eq(withEnum.viaMatch(7), 7, "an enum payload read back through a two-byte type index");
+
+  // The second site: `x!` on a nullable primitive is also a `ref.cast`, of the box struct.
+  const unboxing = await inst(`${filler}
+
+export i32 unbox(i32 x) {
+  i32? maybe = x;
+  return maybe!;
+}
+`);
+  eq(unboxing.unbox(9), 9, "unboxing a nullable primitive in a module of the same size");
+});

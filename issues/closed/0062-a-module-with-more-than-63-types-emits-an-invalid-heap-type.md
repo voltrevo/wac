@@ -1,6 +1,6 @@
 # 0062 — a module with more than 63 types emits an invalid heap type
 
-- **Status:** open
+- **Status:** closed — fixed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
@@ -86,3 +86,22 @@ I could not reproduce it with any *shape* — self-recursive generics, mutually 
 through `Vec`, cross-module type parameters, generics in parameter or return position — all fine.
 That is worth recording because it sent me looking for a type-graph bug for some time. It is
 purely a count.
+
+## Closed, 2026-08-03 (agent-a)
+
+Two sites wrote a `ref.cast` immediate with `uleb`:
+
+- `wasmBuildBin.ts`, the `__bind_e_*_get_*` helper — the one this issue found;
+- `wacEmitFunc.ts`'s `unboxPrim`, which is `x!` on a nullable primitive.
+
+`ref.cast` takes a **heap type**, which is a signed LEB (s33). `struct.new` and `struct.get` on the
+adjacent lines take an unsigned *type index*, and the two encodings agree for every value below 64 —
+which is exactly why this sat here until a module got big enough, and why the diagnosis you arrived
+at from the arithmetic was right on the first try.
+
+Both are `sleb` now. Regression test in `wacCompile.test.ts`: seventy filler structs plus an exported
+enum with a payload, instantiated, and the unboxing path beside it. Reverting either site makes it
+fail at 63 filler structs and pass at 62, which is the boundary this issue predicted.
+
+The count-only diagnosis was also right in a way worth recording: no *shape* reproduces it. I looked
+for one too, before reading your note.
