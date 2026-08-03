@@ -95,10 +95,13 @@ export default function CaseStudies() {
           <CodeBlock code={SSH_SESSION} lang="ts" />
         </div>
         <p style={{ ...s.p, marginBottom: 0 }}>
-          The honest gaps: pipeline stages run one at a time, so {tp("yes | head -1")} would not
-          terminate; there is no {tp("cd")}, because nothing in the platform has a working
-          directory; and a pty is refused rather than half-implemented, exactly as a real sshd
-          does when none is available.
+          {tp("cd")}, {tp("pwd")}, {tp("ls")}, {tp("mkdir")} and {tp("rm")} work — the shell keeps
+          its own working directory and resolves every path through it, because the capability
+          world lets you <em>read</em> where you are and deliberately offers no {tp("chdir")}: a
+          mutable working directory is ambient state that changes what every relative path in a
+          program means. The honest gaps that remain: pipeline stages run one at a time, so{" "}
+          {tp("yes | head -1")} would not terminate, and a pty is refused rather than
+          half-implemented, exactly as a real sshd does when none is available.
         </p>
       </div>
 

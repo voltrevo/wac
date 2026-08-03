@@ -9,6 +9,7 @@
 // inventory of two dozen packages is wrong within the week.
 
 import { BUILT, TOTALS } from "../data/built";
+import { DEMO_SIZES } from "../data/demos";
 import { CodeBlock, fn_, MONO, s, tp } from "../theme";
 
 /** Rounded, because this repo's Pages build cannot check them. See `src/data/built.ts`. */
@@ -190,21 +191,18 @@ export default function Built() {
               name: "a shell",
               what:
                 "packages/sh with a keyboard in front of it — pipelines, loops, variables, command history, and redirection into a filesystem that survives a reload",
-              size: "341K",
             },
             {
               href: "hash.html",
               name: "hash and compress",
               what:
                 "SHA-256 and DEFLATE keeping up with your typing, from packages/crypto and packages/gzip, neither changed for the browser",
-              size: "228K",
             },
             {
               href: "pixels.html",
               name: "pixels",
               what:
                 "a Mandelbrot set recomputed on every click — it recentres where you point — with the escape count under the cursor and a dropped file handed straight back",
-              size: "212K",
             },
           ].map((d) => (
             <a
@@ -218,7 +216,7 @@ export default function Built() {
               }}
             >
               <div style={{ fontFamily: "monospace", color: "#2dd4bf", fontSize: 14 }}>
-                {d.name} <span style={{ color: "#4a4a5a" }}>· {d.size}</span>
+                {d.name} <span style={{ color: "#4a4a5a" }}>· {DEMO_SIZES[d.href] ?? ""}</span>
               </div>
               <div style={{ color: "#9ca3af", fontSize: 14 }}>{d.what}</div>
             </a>
