@@ -87,7 +87,7 @@ error: condition must be bool
 `[§wac-diag-assign-j3qm7xf]` Given `i32 n = 3.14;` at line 4:
 
 The compiler must emit `span: 4`, `annotation: "expected i32, found f64"`,
-`hint: "use \`as!\` for checked conversion or \`as~\` for truncation"`. Rendered:
+`hint: "use \`as!\` for a checked conversion or \`as~\` for the nearest value"`. Rendered:
 
 ```
 error: type mismatch in assignment
@@ -95,7 +95,7 @@ error: type mismatch in assignment
    |
  4 |   i32 n = 3.14;
    |           ^^^^ expected i32, found f64
-   = help: use `as!` for checked conversion or `as~` for truncation
+   = help: use `as!` for a checked conversion or `as~` for the nearest value
 ```
 
 `[§wac-diag-cast-p5fn2rk]` Given `i64 a = x as~ i64;` at line 2 (indented two

@@ -169,6 +169,32 @@ export async function runFunction(
   }
 }
 
+/**
+ * Whether this export can be called from the panel, and why not if it cannot.
+ *
+ * The runner marshals primitives, strings and primitive arrays. A `fn[…]` parameter is a wasm
+ * funcref, and there is nothing sensible to type into a text box for one — the playground would
+ * have to let you write a JavaScript function, which is what bindgen is for. Before this, such an
+ * export got a Run button that could only ever answer "type incompatibility when transforming
+ * from/to JS", which reads as a compiler fault rather than a missing feature here.
+ */
+export function runnable(func: { params: { type: string }[]; ret: string }): string | null {
+  const unsupported = (t: string) =>
+    t.startsWith("fn[") || (!PRIMITIVES.has(t) && t !== "string" && !isArrayType(t));
+  const bad = func.params.find((p) => unsupported(p.type));
+  if (bad !== undefined) {
+    return bad.type.startsWith("fn[")
+      ? "takes a function — pass one from JavaScript through bindgen"
+      : `takes a ${bad.type}, which this panel cannot build`;
+  }
+  if (unsupported(func.ret) && func.ret !== "void") {
+    return `returns a ${func.ret}, which this panel cannot show`;
+  }
+  return null;
+}
+
+const PRIMITIVES = new Set(["i32", "i64", "f32", "f64", "bool", "void"]);
+
 export function placeholderFor(type: string): string {
   if (type === "bool") return "true / false";
   if (type === "string") return "text";

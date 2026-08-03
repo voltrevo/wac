@@ -916,7 +916,7 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         const initSpan = (stmt.init.kind === "float" || stmt.init.kind === "int")
           ? stmt.init.value.length : 1;
         const initHint = (isNumeric(stmt.type) && isNumeric(initType) && !typeEq(stmt.type, initType))
-          ? `use \`as!\` for checked conversion or \`as~\` for truncation` : undefined;
+          ? `use \`as!\` for a checked conversion or \`as~\` for the nearest value` : undefined;
         checkAssign(stmt.type, initType, stmt.init.line, stmt.init.col, ctx,
           initSpan, undefined, initHint);
       }
@@ -1855,7 +1855,7 @@ function inferExpr(expr: Expr, env: VarEnv, ctx: Ctx, expected?: WacType | null)
       // literal takes the type expected of it when the value has a reading there.
       // Without this, no float literal could ever be an f32 — `f32 x = 1.5;` was a
       // type error, and every f32 in the language needed `as~ f32`, which is the
-      // *truncating* cast and so read as though the loss were the point. The spec's own
+      // *nearest* cast and so read as though the loss were the point. The spec's own
       // f32 example omitted the cast and did not compile.
       //
       // "Has a reading there" means within range. Decimal notation loses precision for

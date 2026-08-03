@@ -547,6 +547,238 @@ export i32 run() {
 `,
     },
   },
+  {
+    name: 'Enums and match',
+    category: 'Enums',
+    entry: p('enums.wac'),
+    files: {
+      [p('enums.wac')]: `// A variant may carry values, and \`match\` must cover every case — a missing arm is a
+// compile error rather than a fallthrough.
+
+enum Shape {
+  Circle(f64 r), Rect(f64 w, f64 h), Point
+
+  f64 area(const this) {
+    return match (this) {
+      case Circle(r): 3.141592653589793 * r * r,
+      case Rect(w, h): w * h,
+      case Point: 0.0
+    };
+  }
+
+  /** Payload-less variants are values, not calls: \`Shape.Point\`, never \`Shape.Point()\`. */
+  bool isFlat(const this) {
+    return match (this) { case Point: true, case Circle(_): false, case Rect(_, _): false };
+  }
+}
+
+export f64 circleArea(f64 r) { return Shape.Circle(r).area(); }
+export f64 rectArea(f64 w, f64 h) { return Shape.Rect(w, h).area(); }
+export bool pointIsFlat() { return Shape.Point.isFlat(); }
+`,
+    },
+  },
+  {
+    name: 'Option<T>',
+    category: 'Enums',
+    entry: p('option.wac'),
+    files: {
+      [p('option.wac')]: `// \`Option<T>\` is an ordinary generic enum — nothing built in. This is what \`std\` gives you,
+// and the reason a missing value does not have to be a null.
+
+enum Option<T> {
+  Some(T v), None
+
+  T orElse(const this, T fallback) {
+    return match (this) { case Some(v): v, case None: fallback };
+  }
+
+  bool isSome(const this) {
+    return match (this) { case Some(_): true, case None: false };
+  }
+}
+
+/** Search, without a sentinel index or a nullable return. */
+Option<i32> find(i32[] xs, i32 want) {
+  for (i32 i = 0; i < xs.len(); i++) {
+    if (xs[i] == want) { return Option.Some(i); }
+  }
+  return Option.None;
+}
+
+export i32 indexOf(i32 want) {
+  i32[] xs = i32[](4, 8, 15, 16, 23, 42);
+  Option<i32> at = find(xs, want);
+  return at.orElse(-1);
+}
+`,
+    },
+  },
+  {
+    name: 'Stack<T>',
+    category: 'Generics',
+    entry: p('generics.wac'),
+    files: {
+      [p('generics.wac')]: `// A struct may take type parameters. \`Stack<i32>\` and \`Stack<string>\` are separate types the
+// compiler stamps out — no boxing, and nothing erased, so the i32 one holds machine integers.
+
+struct Stack<T> {
+  T[] items;
+  i32 n;
+
+  /** The type argument comes from what you assign it to: \`Stack<i32> s = Stack.create(...)\`. */
+  Stack<T> create(T zero) { return Stack<T>(T[4](fill: zero), 0); }
+
+  void push(this, T v) {
+    if (this.n == this.items.len()) {
+      T[] bigger = T[this.items.len() * 2](fill: v);
+      for (i32 i = 0; i < this.n; i++) { bigger[i] = this.items[i]; }
+      this.items = bigger;
+    }
+    this.items[this.n] = v;
+    this.n = this.n + 1;
+  }
+
+  T pop(this) {
+    this.n = this.n - 1;
+    return this.items[this.n];
+  }
+
+  i32 len(const this) { return this.n; }
+}
+
+export i32 lastPushed(i32 a, i32 b, i32 c) {
+  Stack<i32> s = Stack.create(0);
+  s.push(a);
+  s.push(b);
+  s.push(c);
+  return s.pop();
+}
+
+/** The same template, holding strings. One definition, two machine representations. */
+export string joinTwo(string a, string b) {
+  Stack<string> s = Stack.create("");
+  s.push(a);
+  s.push(b);
+  string second = s.pop();
+  return s.pop() + "-" + second;
+}
+`,
+    },
+  },
+  {
+    name: 'Strings and bytes',
+    category: 'Strings',
+    entry: p('strings.wac'),
+    files: {
+      [p('strings.wac')]: `// Strings are GC objects with a length, and they convert to and from bytes — which is where
+// most of wac's real work happens, because a protocol is bytes and a message is a string.
+
+export i32 length(string s) { return s.len(); }
+
+export string shout(string name) { return "hello, " + name + "!"; }
+
+/** Byte-level access, by going through \`u8[]\`. */
+export i32 countVowels(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    // \`i32\`, not \`u8\`: a packed type is an array element, never a variable. Reading one
+    // widens it, which is why the comparisons below are ordinary integer comparisons.
+    i32 c = b[i];
+    if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') { n = n + 1; }
+  }
+  return n;
+}
+
+/** And back again: bytes to a string, in reverse. */
+export string reverse(string s) {
+  u8[] b = s.toBytes();
+  u8[] out = u8[b.len()](fill: 0);
+  for (i32 i = 0; i < b.len(); i++) { out[i] = b[b.len() - 1 - i]; }
+  return string.fromBytes(out);
+}
+`,
+    },
+  },
+  {
+    name: 'Four casts',
+    category: 'Casts',
+    entry: p('casts.wac'),
+    files: {
+      [p('casts.wac')]: `// Four casts, spelt differently on purpose. A narrowing conversion has to say which one it
+// meant, so choosing wrong is a diagnostic rather than a silent result.
+
+/** \`as\` — lossless, and refused if it could ever lose anything. */
+export i64 widen(i32 x) { return x as i64; }
+
+/** \`as!\` — checked at run time: it traps rather than wrapping when the value does not fit. */
+export i32 checked(i64 big) { return big as! i32; }
+
+/**
+ * \`as~\` — the *nearest* value, not a truncation. \`3.9\` becomes 4 and \`-3.9\` becomes -4.
+ *
+ * Worth reading twice, because "lossy" invites the assumption that it chops: it rounds, and on
+ * overflow it clamps to the range rather than wrapping. If you want the C behaviour — toward
+ * zero — that is \`as@\` for a float, and there is a separate spelling precisely so the choice is
+ * visible at the call site.
+ */
+export i32 nearest(f64 x) { return x as~ i32; }
+
+/** Out of range clamps rather than wrapping: 2^32 + 2 as an i32 is i32's maximum, not 2. */
+export i32 clamped(i64 x) { return x as~ i32; }
+
+/**
+ * \`as@\` — the bits, reinterpreted. No conversion happens at all.
+ *
+ * This is the one that matters for byte work: \`1.0\` as an f32 is \`0x3f800000\`, and reading those
+ * bits as an integer is how a float gets serialised. Writing \`as~\` here would give you 1, which
+ * compiles and is wrong — four spellings exist so that mistake cannot be silent. For a float it
+ * is also the cast that truncates toward zero, which \`as~\` does not.
+ *
+ * Note what is *not* here: there is no cast to a packed type. \`u8\` is an array element, never a
+ * variable, and storing into a \`u8[]\` truncates on store — so byte work needs no cast at all.
+ */
+export i32 bitsOfFloat(f32 f) { return f as@ i32; }
+`,
+    },
+  },
+  {
+    name: 'Callbacks',
+    category: 'Functions',
+    entry: p('callbacks.wac'),
+    files: {
+      [p('callbacks.wac')]: `// A function can be a value: \`fn[i32(i32, i32)]\` is "takes two i32s, returns an i32".
+//
+// This is the whole of how wac reaches outside itself. There is no \`extern\` and no declaration
+// form, so a module can only call what it was handed — and when the caller is JavaScript, what
+// it hands over is an ordinary closure. A module that takes no \`fn[…]\` parameter has no wasm
+// imports at all.
+
+// Not exported, on purpose: a funcref is not something the panel on the right can build a
+// value for, so fold is called by the two exports below instead. From JavaScript it *is*
+// callable — that is what bindgen is for, and the site's landing page shows this same
+// function taking an ordinary closure.
+i32 fold(fn[i32(i32, i32)] f, i32[] xs) {
+  i32 acc = 0;
+  for (i32 i = 0; i < xs.len(); i++) { acc = f(acc, xs[i]); }
+  return acc;
+}
+
+i32 add(i32 a, i32 b) { return a + b; }
+i32 larger(i32 a, i32 b) { return a > b ? a : b; }
+
+/** The same fold, two different functions, chosen at the call site. */
+export i32 sumOf(i32 a, i32 b, i32 c) {
+  return fold(add, i32[](a, b, c));
+}
+
+export i32 maxOf(i32 a, i32 b, i32 c) {
+  return fold(larger, i32[](a, b, c));
+}
+`,
+    },
+  },
 ];
 
 /** Merge all example files into a single FileMap. */
