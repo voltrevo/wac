@@ -1,6 +1,8 @@
 # 0062 — a module with more than 63 types emits an invalid heap type
 
-- **Status:** closed — fixed
+- **Status:** closed
+- **Fixed in:** 9c9e3eb
+- **Scope:** the two ref.cast sites; every other immediate was already encoded correctly
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
