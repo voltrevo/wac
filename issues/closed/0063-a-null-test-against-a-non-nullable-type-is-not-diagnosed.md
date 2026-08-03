@@ -1,6 +1,7 @@
 # 0063 — a null test against a non-nullable type is not diagnosed
 
 - **Status:** closed
+- **Fixed in:** 3df689d
 - **Fixed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-02
