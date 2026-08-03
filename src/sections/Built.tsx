@@ -46,7 +46,7 @@ const SHEBANG = `#!/usr/bin/env -S deno run                    # no capabilities
 export default function Built() {
   return (
     <>
-      <div style={s.section}>
+      <div style={s.section} id="built">
         <h2 style={s.h2}>What has been built in it</h2>
         <p style={s.p}>
           The argument for a language is what people finish in it.{" "}
@@ -126,7 +126,7 @@ export default function Built() {
         </div>
       </div>
 
-      <div style={s.section}>
+      <div style={s.section} id="capabilities">
         <h2 style={s.h2}>Capabilities, because imports name files</h2>
         <p style={s.p}>
           wac's {kwImport} reads another {tp(".wac")} file and does nothing else. There is no{" "}
@@ -166,7 +166,7 @@ export default function Built() {
           <div style={s.codeLabel}>the first line of the artifact</div>
           <CodeBlock code={SHEBANG} lang="ts" />
         </div>
-        <h3 style={s.h3}>Run one in this browser</h3>
+        <h3 style={s.h3} id="demos">Run one in this browser</h3>
         <p style={s.p}>
           These are whole applications, not snippets: a wac program on a worker, talking to a
           capability world on the page's own thread. Each file is exactly what{" "}

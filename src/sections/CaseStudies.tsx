@@ -62,7 +62,7 @@ i32 who = owner.get(w);`;
 export default function CaseStudies() {
   return (
     <>
-      <div style={s.section}>
+      <div style={s.section} id="shell">
         <h2 style={s.h2}>A shell, and an sshd that runs it</h2>
         <p style={s.p}>
           Quoting, expansion, here-documents, {tp("$(…)")}, pipelines, redirection, functions,
@@ -102,7 +102,7 @@ export default function CaseStudies() {
         </p>
       </div>
 
-      <div style={s.section}>
+      <div style={s.section} id="tor">
         <h2 style={s.h2}>A Tor client, on a TLS 1.3 stack that is also wac</h2>
 
         <div

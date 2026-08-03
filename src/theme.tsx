@@ -146,6 +146,11 @@ export const s = {
     background: "#2563eb", color: "#fff", border: "none", borderRadius: 6,
     padding: "10px 24px", fontSize: 15, fontWeight: 600, cursor: "pointer", textDecoration: "none",
   } as const,
+  /** The demo call-to-action: reads as a live thing rather than a page. */
+  btnDemo: {
+    background: "none", color: "#2dd4bf", border: "1px solid #2dd4bf", borderRadius: 6,
+    padding: "10px 24px", fontSize: 15, fontWeight: 600, cursor: "pointer", textDecoration: "none",
+  } as const,
   btnSecondary: {
     background: "none", color: "#9ca3af", border: "1px solid #2e2e3e", borderRadius: 6,
     padding: "10px 24px", fontSize: 15, cursor: "pointer", textDecoration: "none",
