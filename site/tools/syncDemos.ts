@@ -23,7 +23,11 @@ type Demo = {
   entry: string;
   grants: string[];
   what: string;
+  /** Where its source and build instructions live. Linked beside the demo, and by the page itself. */
+  source: string;
 };
+
+const GH = "https://github.com/voltrevo/wac-mono/blob/master/packages";
 
 const DEMOS: Demo[] = [
   {
@@ -31,18 +35,22 @@ const DEMOS: Demo[] = [
     entry: "packages/box/example/term.wac",
     grants: ["--allow-read", "--allow-write"],
     what: "packages/sh with a keyboard: pipelines, loops, redirection into a filesystem that survives a reload",
+    source: `${GH}/box/example/README.md#termwac`,
   },
   {
     file: "hash.html",
     entry: "packages/box/example/hash.wac",
     grants: [],
-    what: "SHA-256 and DEFLATE keeping up with your typing, from packages/crypto and packages/gzip",
+    what:
+      "SHA-256 and DEFLATE keeping up with your typing, or with a file you drop, from packages/crypto and packages/gzip",
+    source: `${GH}/box/example/README.md#hashwac`,
   },
   {
     file: "pixels.html",
     entry: "packages/platform/example/pixels.wac",
     grants: [],
     what: "a Mandelbrot set recomputed on every zoom, with the escape count under the pointer",
+    source: `${GH}/platform/example/README.md#pixelswac`,
   },
 ];
 
@@ -107,7 +115,13 @@ await Deno.writeTextFile(
       Object.fromEntries(sizes.map((d) => [d.file, d.size])),
       null,
       2,
-    )};\n`,
+    )};\n\n` +
+      `/** Where each demo's source and build instructions live. */\n` +
+      `export const DEMO_SOURCE: Record<string, string> = ${JSON.stringify(
+        Object.fromEntries(DEMOS.map((d) => [d.file, d.source])),
+        null,
+        2,
+      )};\n`,
 );
 
 console.log(
