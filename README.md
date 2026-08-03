@@ -107,7 +107,7 @@ adopt because an engine you have to hand supports it.
 
 [**wac-mono**](https://github.com/voltrevo/wac-mono) is the other half of this project: things
 written in wac. It is the evidence that the language is finished enough to be boring — 24
-packages, 41,000 lines of wac, 896 tests, and no TypeScript in any package's `src/`.
+packages, 41,000 lines of wac, 897 tests, and no TypeScript in any package's `src/`.
 
 - **A busybox**: 59 applets in one program, each differential-tested against the real tool.
 - **A shell**, checked against GNU bash script for script.
