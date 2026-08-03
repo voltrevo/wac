@@ -1,167 +1,46 @@
-import { useRef, useEffect } from "react";
-import { EditorState } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
-import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { tags } from "@lezer/highlight";
-import { wac as wacLang } from "./editor/wac-language";
 import InlineDemo from "./editor/InlineDemo";
+import { CodeBlock, fn_, GITHUB, hl, kw, MONO, op, s, SideBySide, Solo, tp } from "./theme";
+import Built from "./sections/Built";
+import { TOTALS } from "./data/built";
+import CaseStudies from "./sections/CaseStudies";
 
-const GITHUB = "https://github.com/voltrevo/wac";
 
-// Reuse the same highlight palette everywhere
-const hl = {
-  kw: "#c084fc",
-  type: "#22d3ee",
-  str: "#4ade80",
-  num: "#f0abfc",
-  fn: "#60a5fa",
-  op: "#fb923c",
-  comment: "#6b7280",
-  punct: "#9ca3af",
-  var: "#e2e8f0",
-  def: "#2dd4bf",
-  bool: "#fbbf24",
-};
+// Enums and generics: the two features the tour did not have and the tagline did not mention.
+// Both compile and run in the browser through `InlineDemo`, and both were run through `wacx`
+// before being put here — the generic one twice, because `Pair.of(x, y)` in a return position
+// has nothing to infer the type argument from and the spec's form is a typed declaration.
 
-const darkHighlight = HighlightStyle.define([
-  { tag: tags.keyword, color: hl.kw },
-  { tag: tags.typeName, color: hl.type },
-  { tag: tags.bool, color: hl.bool },
-  { tag: tags.string, color: hl.str },
-  { tag: tags.number, color: hl.num },
-  { tag: tags.comment, color: hl.comment, fontStyle: "italic" },
-  { tag: tags.operator, color: hl.op },
-  { tag: tags.punctuation, color: hl.punct },
-  { tag: tags.variableName, color: hl.var },
-  { tag: tags.definition(tags.function(tags.variableName)), color: hl.fn, fontWeight: "bold" },
-  { tag: tags.function(tags.variableName), color: hl.fn },
-  { tag: tags.definition(tags.variableName), color: hl.def },
-  { tag: tags.propertyName, color: hl.var },
-]);
+const EX_ENUM = `enum Shape {
+  Circle(f64 r), Rect(f64 w, f64 h)
 
-const cmTheme = EditorView.theme({
-  "&": { backgroundColor: "#181825", fontSize: "13px" },
-  ".cm-scroller": { overflow: "auto" },
-  ".cm-gutters": { backgroundColor: "#181825", color: "#4a4a5a", borderRight: "1px solid #2e2e3e" },
-  ".cm-content": { caretColor: "transparent", padding: "12px 0" },
-  ".cm-cursor": { display: "none" },
-  ".cm-activeLine": { backgroundColor: "transparent" },
-});
-
-function CodeBlock({ code, lang }: { code: string; lang: "wac" | "ts" }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    viewRef.current?.destroy();
-    const langExt = lang === "ts" ? javascript({ typescript: true }) : wacLang();
-    const state = EditorState.create({
-      doc: code,
-      extensions: [
-        lineNumbers(),
-        langExt,
-        syntaxHighlighting(darkHighlight),
-        EditorView.lineWrapping,
-        EditorState.readOnly.of(true),
-        EditorView.editable.of(false),
-        cmTheme,
-      ],
-    });
-    const view = new EditorView({ state, parent: ref.current });
-    viewRef.current = view;
-    return () => view.destroy();
-  }, [code, lang]);
-
-  return (
-    <div
-      ref={ref}
-      style={{
-        border: "1px solid #2e2e3e",
-        borderRadius: 6,
-        overflow: "hidden",
-      }}
-    />
-  );
+  f64 area(const this) {
+    return match (this) {
+      case Circle(r): 3.14159 * r * r,
+      case Rect(w, h): w * h
+    };
+  }
 }
 
-function SideBySide({ left, right, leftLabel, rightLabel, leftLang, rightLang }: {
-  left: string; right: string;
-  leftLabel: string; rightLabel: string;
-  leftLang: "wac" | "ts"; rightLang: "wac" | "ts";
-}) {
-  // Equalize heights by padding the shorter code block
-  const leftLines = left.split("\n").length;
-  const rightLines = right.split("\n").length;
-  const maxLines = Math.max(leftLines, rightLines);
-  const padLeft = left + "\n".repeat(maxLines - leftLines);
-  const padRight = right + "\n".repeat(maxLines - rightLines);
+export f64 circle(f64 r) { return Shape.Circle(r).area(); }
+export f64 rect(f64 w, f64 h) { return Shape.Rect(w, h).area(); }`;
 
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-      <div>
-        <div style={s.codeLabel}>{leftLabel}</div>
-        <CodeBlock code={padLeft} lang={leftLang} />
-      </div>
-      <div>
-        <div style={s.codeLabel}>{rightLabel}</div>
-        <CodeBlock code={padRight} lang={rightLang} />
-      </div>
-    </div>
-  );
+const EX_GENERIC = `struct Pair<T> {
+  T a;
+  T b;
+
+  Pair<T> of(T a, T b) { return Pair<T>(a, b); }
+  T left(const this) { return this.a; }
 }
 
-function Solo({ code, label, lang }: { code: string; label?: string; lang: "wac" | "ts" }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      {label && <div style={s.codeLabel}>{label}</div>}
-      <CodeBlock code={code} lang={lang} />
-    </div>
-  );
+export i32 leftInt(i32 x, i32 y) {
+  Pair<i32> p = Pair.of(x, y);
+  return p.left();
 }
 
-
-const s = {
-  page: {
-    fontFamily: "system-ui, -apple-system, sans-serif",
-    color: "#e2e8f0",
-    maxWidth: 820,
-    margin: "0 auto",
-    padding: "3rem 2rem 6rem",
-    lineHeight: 1.7,
-  } as const,
-  h1: { fontSize: 48, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" } as const,
-  tagline: { fontSize: 20, color: "#9ca3af", marginTop: 12, marginBottom: 32 } as const,
-  buttons: { display: "flex", gap: 12, marginBottom: 56 } as const,
-  btnPrimary: {
-    background: "#2563eb", color: "#fff", border: "none", borderRadius: 6,
-    padding: "10px 24px", fontSize: 15, fontWeight: 600, cursor: "pointer", textDecoration: "none",
-  } as const,
-  btnSecondary: {
-    background: "none", color: "#9ca3af", border: "1px solid #2e2e3e", borderRadius: 6,
-    padding: "10px 24px", fontSize: 15, cursor: "pointer", textDecoration: "none",
-  } as const,
-  section: { marginBottom: 48 } as const,
-  h2: { fontSize: 24, fontWeight: 600, marginBottom: 12, color: "#e2e8f0" } as const,
-  h3: { fontSize: 17, fontWeight: 600, marginBottom: 8, color: "#e2e8f0" } as const,
-  p: { color: "#9ca3af", fontSize: 15, marginBottom: 12 } as const,
-  codeLabel: {
-    fontSize: 11, color: "#6b7280", textTransform: "uppercase" as const,
-    letterSpacing: "0.05em", marginBottom: 6,
-  } as const,
-  inline: {
-    backgroundColor: "#181825", border: "1px solid #2e2e3e",
-    padding: "1px 5px", borderRadius: 3, fontSize: 13,
-    fontFamily: "monospace", color: hl.type,
-  } as const,
-  ul: { color: "#9ca3af", fontSize: 15, paddingLeft: 20, marginBottom: 12 } as const,
-};
-
-const kw = (c: string) => <span style={{ ...s.inline, color: hl.kw }}>{c}</span>;
-const tp = (c: string) => <span style={{ ...s.inline, color: hl.type }}>{c}</span>;
-const fn_ = (c: string) => <span style={{ ...s.inline, color: hl.fn }}>{c}</span>;
-const op = (c: string) => <span style={{ ...s.inline, color: hl.op }}>{c}</span>;
+export string leftStr(string x, string y) {
+  Pair<string> p = Pair.of(x, y);
+  return p.left();
+}`;
 
 // ── Example code ─────────────────────────────────────────────────────────────
 
@@ -300,13 +179,61 @@ export default function Landing() {
         }}>wac</h1>
       </div>
       <div style={{ ...s.tagline, textAlign: "center" as const }}>
-        A C-family language for WebAssembly GC. Structs, methods, arrays,
-        nullable refs, subtyping.
+        A C-family language for WebAssembly GC. Structs, methods, subtyping,
+        generics, enums with payloads, nullable refs — and WebAssembly's own
+        collector owns the heap, so there is no allocator to write.
       </div>
 
       <div style={{ ...s.buttons, justifyContent: "center" }}>
         <a href="#/playground" style={s.btnPrimary}>Playground</a>
         <a href={GITHUB} target="_blank" rel="noopener" style={s.btnSecondary}>GitHub</a>
+      </div>
+
+      {/* What exists, before the tour of how it reads. Numbers from wac-mono's generated map;
+          rounded, because this repo's Pages build has no wac-mono beside it to check them. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+          gap: 1,
+          background: "#2e2e3e",
+          border: "1px solid #2e2e3e",
+          borderRadius: 6,
+          overflow: "hidden",
+          marginBottom: 56,
+        }}
+      >
+        {[
+          ["packages", String(TOTALS.packages)],
+          ["lines of wac", `~${Math.round(TOTALS.lines / 1000)}k`],
+          ["tests", `~${Math.round(TOTALS.tests / 100) * 100}`],
+          ["programs", String(TOTALS.programs)],
+          ["compiler", "~6k TS"],
+          ["ts in packages", "0"],
+        ].map(([label, value]) => (
+          <div key={label} style={{ background: "#181825", padding: "12px 14px" }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#6b7280",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              {label}
+            </div>
+            <div
+              style={{
+                fontFamily: "monospace",
+                fontSize: 20,
+                color: "#e2e8f0",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {value}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Zero deps */}
@@ -363,6 +290,22 @@ export default function Landing() {
         </p>
         <Solo code={EX_NULLABLE} lang="wac" />
 
+        <h3 style={s.h3}>Enums carry payloads, and match is exhaustive</h3>
+        <p style={s.p}>
+          A variant may hold values, and {kw("match")} over one must cover every case — a missing
+          arm is a compile error, not a fallthrough. Generic enums give you {tp("Option<T>")} and{" "}
+          {tp("Result<T, E>")}, which is where wac-mono's standard library starts.
+        </p>
+        <InlineDemo initialCode={EX_ENUM} />
+
+        <h3 style={s.h3}>Generics, monomorphised</h3>
+        <p style={s.p}>
+          A struct may take type parameters. {tp("Pair<i32>")} and {tp("Pair<string>")} are
+          separate types the compiler stamps out — no boxing, and nothing erased, so a{" "}
+          {tp("Vec<i32>")} holds machine integers.
+        </p>
+        <InlineDemo initialCode={EX_GENERIC} />
+
         <h3 style={s.h3}>Arrays</h3>
         <p style={s.p}>
           GC-managed arrays with {fn_(".len()")} and bounds checking.
@@ -404,11 +347,18 @@ export default function Landing() {
         />
       </div>
 
+      <Built />
+      <CaseStudies />
+
       {/* Footer */}
       <div style={{ borderTop: "1px solid #2e2e3e", paddingTop: 24, display: "flex", gap: 24, fontSize: 13, color: "#6b7280" }}>
         <a href="#/playground" style={{ color: "#9ca3af", textDecoration: "none" }}>Playground</a>
         <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>Language Spec</a>
         <a href={GITHUB} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>GitHub</a>
+        <a href={MONO} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>wac-mono</a>
+        <span style={{ marginLeft: "auto", color: "#4a4a5a" }}>
+          Snippets are real source from those repositories, abridged only by removing lines.
+        </span>
       </div>
     </div>
   );
