@@ -190,7 +190,7 @@ export default function Built() {
               href: "shell.html",
               name: "a shell",
               what:
-                "packages/sh with a keyboard in front of it — pipelines, loops, variables, command history, and redirection into a filesystem that survives a reload",
+                "packages/sh with a keyboard in front of it, and all sixty packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload",
             },
             {
               href: "hash.html",

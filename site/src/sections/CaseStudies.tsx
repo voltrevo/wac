@@ -2,7 +2,7 @@
 //
 // Merged in from the wac-showcase page. The shell comes first even though Tor is the harder piece
 // of engineering, because it is the easier *claim to check* — a reader can point their own `ssh`
-// at it, and "499 scripts agree with GNU bash on stdout and exit status" is a sentence that
+// at it, and "539 scripts agree with GNU bash on stdout and exit status" is a sentence that
 // either holds or does not.
 //
 // Every snippet here is real source from wac-mono, abridged only by removing lines.
@@ -66,7 +66,7 @@ export default function CaseStudies() {
         <h2 style={s.h2}>A shell, and an sshd that runs it</h2>
         <p style={s.p}>
           Quoting, expansion, here-documents, {tp("$(…)")}, pipelines, redirection, functions,
-          loops, {tp("case")}, {tp("read")} — <strong style={{ color: "#e2e8f0" }}>499 scripts run
+          loops, {tp("case")}, {tp("read")} — <strong style={{ color: "#e2e8f0" }}>539 scripts run
           through GNU bash and through this one</strong>, and the two must agree on standard output{" "}
           <em>and</em> on the exit status. That is the only test worth much for a shell: nearly
           every rule has a case where the obvious implementation is subtly wrong, and bash is the
@@ -94,14 +94,39 @@ export default function CaseStudies() {
           <div style={s.codeLabel}>a real client, our server</div>
           <CodeBlock code={SSH_SESSION} lang="ts" />
         </div>
-        <p style={{ ...s.p, marginBottom: 0 }}>
+        <p style={s.p}>
           {tp("cd")}, {tp("pwd")}, {tp("ls")}, {tp("mkdir")} and {tp("rm")} work — the shell keeps
           its own working directory and resolves every path through it, because the capability
           world lets you <em>read</em> where you are and deliberately offers no {tp("chdir")}: a
           mutable working directory is ambient state that changes what every relative path in a
-          program means. The honest gaps that remain: pipeline stages run one at a time, so{" "}
-          {tp("yes | head -1")} would not terminate, and a pty is refused rather than
-          half-implemented, exactly as a real sshd does when none is available.
+          program means.
+        </p>
+        <h3 style={s.h3}>Sixty programs it did not have to contain</h3>
+        <p style={s.p}>
+          The shell used to carry its own small {tp("cat")}, {tp("wc")}, {tp("grep")} and nine
+          more, written only because nothing could be started. Meanwhile another package had those
+          twelve done properly and forty-five besides. They are wired together now —{" "}
+          <strong style={{ color: "#e2e8f0" }}>one line, {tp("sh.external = boxRun")}</strong> —
+          so {tp("sort")}, {tp("sha256sum")}, {tp("gzip")}, {tp("cut")}, {tp("diff")} and{" "}
+          {tp("shuf")} are commands you can type, in the browser demo above as much as on a
+          command line, running the same code either way.
+        </p>
+        <p style={s.p}>
+          An applet reads {tp("cli.readChunk()")} and writes {tp("cli.write(…)")} — the process's
+          own streams — and wac has no closures, so it cannot be handed a substitute world: a fake
+          capability has nowhere to put what it collected. So the host holds the child's world
+          instead, for the length of one call. Between {tp("pushChild")} and {tp("popChild")},
+          argv, standard input, both output streams and every relative path belong to the child.
+          The applet needs no change and cannot tell.
+        </p>
+        <p style={{ ...s.p, marginBottom: 0 }}>
+          What that is <em>not</em> is isolation: same wasm instance, same authority. The thing
+          with a real boundary is {tp("spawn")}, which the shell tries first and which a browser
+          cannot do yet. The other honest gaps: pipeline stages run one at a time, so{" "}
+          {tp("yes | head -1")} does not terminate the way it does in bash — it does stop, because
+          a captured buffer is capped and {tp("yes")} is written to notice a write that fails —
+          and a pty is refused rather than half-implemented, exactly as a real sshd does when none
+          is available.
         </p>
       </div>
 
