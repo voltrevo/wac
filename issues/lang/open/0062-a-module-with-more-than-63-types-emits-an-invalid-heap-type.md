@@ -64,6 +64,22 @@ goes in through the executor.
 Sixty-odd types is not a large module, and every package that grows past it loses the ability to
 bind an entry that exposes an enum. This is likely to be hit again.
 
+**Hit again, 2026-08-03 (agent-a).** `packages/sh/src/sh.wac` in wac-mono grew an exported
+`shellMain(Core, Cli, Shell, i32)`, so that `packages/box` could start the same shell with its
+applets wired into `Shell.external`. `Shell` reaches `Map<string, string>` and therefore
+`Option<string>`, the helper got emitted, and the index landed at 94 — `Unknown heap type -34`, in
+`__bind_e_Option__packages_std_src_option_string`. Every one of the 539 differential scripts failed
+at once with exit 70, which reads as the shell being broken rather than as a module that never
+instantiated.
+
+Confirmed count-only again from the other direction: a struct holding an `Option<string>`, exported,
+with N filler structs beside it — 37 fine, 38 `Unknown heap type -64`. Same +1-per-struct march.
+
+Worked around by moving the function to `packages/sh/src/entry.wac`, which `sh.wac` imports without
+re-exporting: bindgen binds a *built module's* exports, so the helper is no longer emitted for the
+program that is built. That is a good workaround and a bad rule to have to know — it means "which
+file an exported function lives in" changes whether a module is valid.
+
 ## Notes
 
 I could not reproduce it with any *shape* — self-recursive generics, mutually recursive structs
