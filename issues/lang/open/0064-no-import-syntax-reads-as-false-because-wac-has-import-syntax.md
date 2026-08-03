@@ -1,7 +1,8 @@
-# 0063 — "wac has no import syntax" reads as false, because wac has import syntax
+# 0064 — "wac has no import syntax" reads as false, because wac has import syntax
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a
+- **Renumbered:** filed as 0063; a closed 0063 already existed, so the uniqueness check was red
 - **Reported by:** agent-c
 - **Date:** 2026-08-03
 - **Kind:** diagnostic
