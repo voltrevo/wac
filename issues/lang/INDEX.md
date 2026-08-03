@@ -9,7 +9,6 @@ has been fixed and why.
 | [0066](open/0066-bindgens-wrapper-locals-collide-with-a-users-parameter-names.md) | bindgen's wrapper locals collide with a user's parameter names | bug | invalid TypeScript |
 | [0067](open/0067-an-exported-wac-function-named-like-a-bindgen-internal-breaks-the-modu.md) | an exported wac function named like a bindgen internal breaks the module | bug | invalid TypeScript |
 | [0068](open/0068-bindgens-classname-sanitisation-can-emit-two-classes-of-the-same-name.md) | bindgen's class-name sanitisation can emit two classes of the same name | bug | invalid TypeScript |
-| [0062](open/0062-a-module-with-more-than-63-types-emits-an-invalid-heap-type.md) | a module with more than 63 types emits an invalid heap type | bug | invalid wasm |
 | [0061](open/0061-enum-variants-should-be-qualified-rather-than-file-scope-names.md) | enum variants should be qualified rather than file-scope names | missing feature | compile error |
 | [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
 | [0060](open/0060-a-value-returned-from-a-const-this-method-stays-const.md) | a value returned from a `const this` method stays const, so the caller cannot mutate it | bug | compile error |
@@ -21,7 +20,7 @@ has been fixed and why.
 
 ## Closed
 
-64 issues, 55 closed.
+68 issues, 56 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

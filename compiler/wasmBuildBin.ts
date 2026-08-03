@@ -1463,7 +1463,11 @@ function buildBindHelpers(
         helpers.push({
           name: `__bind_e_${eSafe}_${vSafe}_get_${f.name}`,
           funcTypeEntry: [0x60, 0x01, ...bref, 0x01, ...bindFieldValType(f.type, ctx)],
-          body: [0x00, 0x20, 0x00, 0xFB, 0x16, ...uleb(vIdx),
+          // `ref.cast` takes a heap type — signed LEB — where `struct.get` on the next line takes an
+          // unsigned type index. Writing the cast's with `uleb` was invisible until a module had 64
+          // types, then emitted 0x40 for index 64 and every module with an enum at the boundary was
+          // rejected: "Unknown heap type -64". Issue 0062.
+          body: [0x00, 0x20, 0x00, 0xFB, 0x16, ...sleb(vIdx),
             0xFB, getOp, ...uleb(vIdx), ...uleb(f.absIdx), 0x0B],
         });
       }
