@@ -77,18 +77,56 @@ export default function Playground() {
   }, []);
 
   return (
-    <div style={{ margin: "2rem", height: "calc(100vh - 4rem)", display: "flex", gap: 12, fontFamily: "system-ui", color: "#e2e8f0" }}>
-      {treeOpen ? (
-        <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}>
-          <a href="#/" style={{
+    <div style={{ margin: "1rem 2rem 2rem", height: "calc(100vh - 3rem)", display: "flex", flexDirection: "column", gap: 10, fontFamily: "system-ui", color: "#e2e8f0" }}>
+      {/* A bar that does not go away. The only way back used to be the wordmark inside the file
+          tree, so collapsing the tree with Ctrl+B left the page with no exit at all. */}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 16,
+          flexShrink: 0,
+          fontSize: 13,
+        }}
+      >
+        <a
+          href="#/"
+          style={{
             fontFamily: "ui-monospace, monospace",
             fontSize: 18,
             fontWeight: 700,
             color: "#c084fc",
             textDecoration: "none",
-            padding: "6px 10px",
-            flexShrink: 0,
-          }}>wac</a>
+          }}
+        >
+          wac<span style={{ color: "#2dd4bf" }}>;</span>
+        </a>
+        <a href="#/" style={{ color: "#9ca3af", textDecoration: "none" }}>&larr; home</a>
+        <a href="shell.html" style={{ color: "#9ca3af", textDecoration: "none" }}>shell demo</a>
+        <a
+          href="https://github.com/voltrevo/wac/tree/master/spec"
+          target="_blank"
+          rel="noopener"
+          style={{ color: "#9ca3af", textDecoration: "none" }}
+        >
+          spec
+        </a>
+        <a
+          href="https://github.com/voltrevo/wac"
+          target="_blank"
+          rel="noopener"
+          style={{ color: "#9ca3af", textDecoration: "none" }}
+        >
+          github
+        </a>
+        <span style={{ marginLeft: "auto", color: "#4a4a5a" }}>
+          everything compiles in this tab · Ctrl+B toggles the files
+        </span>
+      </header>
+
+    <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 12 }}>
+      {treeOpen ? (
+        <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column" }}>
           <FileTree
             files={files}
             active={active}
@@ -152,6 +190,7 @@ export default function Playground() {
       <div style={{ flex: "1 1 40%", minWidth: 0 }}>
         <OutputPanel files={files} fileName={active} />
       </div>
+    </div>
     </div>
   );
 }

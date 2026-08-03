@@ -6,7 +6,7 @@ import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import type { FileMap } from "./file-store";
 import type { WacExport } from "../../atoms/wac/wacCompile.ts";
-import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, type EditorCompileResult } from "./wac-compile";
+import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, runnable, type EditorCompileResult } from "./wac-compile";
 
 interface Props {
   files: FileMap;
@@ -157,13 +157,19 @@ function FuncRunner({ func, files, fileName }: { func: WacExport; files: FileMap
   };
 
   const sig = `${func.ret} ${func.name}(${func.params.map((p) => `${p.type} ${p.name}`).join(", ")})`;
+  const cannot = runnable(func);
 
   return (
     <div style={{ padding: 12, borderBottom: "1px solid #2e2e3e" }}>
       <div style={{ fontSize: 12, color: "#60a5fa", fontFamily: "monospace", marginBottom: 8 }}>
         {sig}
       </div>
-      {func.params.map((p, i) => (
+      {cannot !== null && (
+        <div style={{ fontSize: 12, color: "#6b7280", fontStyle: "italic" }}>
+          not runnable here — {cannot}
+        </div>
+      )}
+      {cannot === null && func.params.map((p, i) => (
         <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <label style={{ fontSize: 12, color: "#9ca3af", minWidth: 60 }}>{p.name}</label>
           <input
@@ -186,7 +192,7 @@ function FuncRunner({ func, files, fileName }: { func: WacExport; files: FileMap
           />
         </div>
       ))}
-      <button
+      {cannot === null && <button
         onClick={run}
         disabled={running}
         style={{
@@ -202,7 +208,7 @@ function FuncRunner({ func, files, fileName }: { func: WacExport; files: FileMap
         }}
       >
         {running ? "Running..." : "Run"}
-      </button>
+      </button>}
       {output && (
         <div style={{
           marginTop: 8,

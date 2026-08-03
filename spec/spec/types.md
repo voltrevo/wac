@@ -162,7 +162,7 @@ magnitude overflows `f32` is refused, because that is a value it does not denote
 `[§wac-float-literal-ctx-8dqm2vw]` `f32 x = 1.0e40;` is a compile error.
 
 Until this rule existed, no float literal could be an `f32` at all and every one needed
-`as~ f32` — the *truncating* cast, which reads as though the loss were the point.
+`as~ f32` — the *nearest* cast, which reads as though the loss were the point.
 
 An exponent alone makes a float — the decimal point is optional:
 `[§wac-float-exponent-7mkq3wv]` `1e9`, `1E10` and `2e-3` are float literals, as are `1.5e10` and
