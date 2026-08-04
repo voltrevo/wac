@@ -138,7 +138,16 @@ npm install
 npm run dev      # dev server with playground
 npm run build    # production build
 deno test -A     # run compiler tests (bindgen tests write to a temp dir)
+
+deno run -A tools/syncDemos.ts ../wac-mono   # build the three demo pages into public/
+deno run -A tools/syncMap.ts ../wac-mono     # refresh the package table's numbers
 ```
+
+The demo pages are build output from `wac-mono` and are **not** committed:
+`.github/workflows/pages.yml` checks that repository out beside this one and builds them on every
+deploy, so what the site serves is built from both repositories at the moment it is deployed. A
+checkout that has not run `syncDemos` links to three pages that are not there, which is the honest
+state of it — run the command above and `npm run dev` serves them.
 
 ## License
 
