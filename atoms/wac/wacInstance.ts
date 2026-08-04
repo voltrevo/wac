@@ -109,7 +109,7 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
     } catch (e) {
       // A `trap "message"` leaves the message behind; the engine's own traps do not,
       // and are rethrown as they came.
-      const read = rawExports.__trap_message as (() => unknown) | undefined;
+      const read = rawExports.$trap$message as (() => unknown) | undefined;
       const s = typeof read === "function" ? read() : null;
       if (s === null || s === undefined) throw e;
       throw new Error(`wac trap: ${decodeString(rawExports, s)}`, { cause: e });
@@ -155,8 +155,8 @@ const ARRAY_ELEM: Record<string, { suffix: string; big: boolean }> = {
 
 /** Build a wasm string from a JS one, using the module's own accessors. */
 function encodeString(ex: Record<string, unknown>, s: string): unknown {
-  const make = ex.__bind_str_new as ((n: number) => unknown) | undefined;
-  const set = ex.__bind_str_set as ((s: unknown, i: number, b: number) => void) | undefined;
+  const make = ex.$bind$str_new as ((n: number) => unknown) | undefined;
+  const set = ex.$bind$str_set as ((s: unknown, i: number, b: number) => void) | undefined;
   if (!make || !set) {
     throw new Error(
       "wac: this module has no string accessors, so a string argument cannot be built");
@@ -168,8 +168,8 @@ function encodeString(ex: Record<string, unknown>, s: string): unknown {
 }
 
 function decodeString(ex: Record<string, unknown>, v: unknown): string {
-  const len = ex.__bind_str_len as ((s: unknown) => number) | undefined;
-  const get = ex.__bind_str_get as ((s: unknown, i: number) => number) | undefined;
+  const len = ex.$bind$str_len as ((s: unknown) => number) | undefined;
+  const get = ex.$bind$str_get as ((s: unknown, i: number) => number) | undefined;
   if (!len || !get) {
     throw new Error(
       "wac: this module has no string accessors, so a string return cannot be decoded");
@@ -185,8 +185,8 @@ function decodeString(ex: Record<string, unknown>, v: unknown): string {
 function decodeArray(
   ex: Record<string, unknown>, v: unknown, elem: { suffix: string; big: boolean },
 ): (number | bigint)[] {
-  const len = ex[`__bind_arr_${elem.suffix}_len`] as ((a: unknown) => number) | undefined;
-  const get = ex[`__bind_arr_${elem.suffix}_get`] as
+  const len = ex[`$bind$arr_${elem.suffix}_len`] as ((a: unknown) => number) | undefined;
+  const get = ex[`$bind$arr_${elem.suffix}_get`] as
     ((a: unknown, i: number) => number | bigint) | undefined;
   if (!len || !get) {
     throw new Error(

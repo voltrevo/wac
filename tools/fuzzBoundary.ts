@@ -220,8 +220,10 @@ function structDecl(s: BType & { k: "struct" }): string {
 /** Build the JS-side value: a struct is constructed through its own static. */
 function build(t: BType, v: Val, mod: Record<string, unknown>): unknown {
   if (t.k === "struct") {
-    const cls = mod[t.name] as { of(...a: unknown[]): unknown };
-    return cls.of(...t.fields.map((f, i) => build(f, (v as Val[])[i], mod)));
+    const cls = mod[t.name] as { $of(...a: unknown[]): unknown };
+    // `$of` and `$toObject`: bindgen's own members carry a `$`, which wac cannot spell, so a struct
+    // with a field or method named `of` no longer collides with the generated constructor.
+    return cls.$of(...t.fields.map((f, i) => build(f, (v as Val[])[i], mod)));
   }
   if (t.k === "arr") return (v as Val[]).map((x) => build(t.elem, x, mod));
   if (t.k === "opt") return v === null ? null : build(t.inner, v, mod);
@@ -339,7 +341,7 @@ export async function fuzzBoundary(
         // written is what is expected back.
         if (t.k === "struct") {
           const w = got as Wrapper;
-          const obj = (w.toObject as () => Record<string, unknown>)();
+          const obj = (w.$toObject as () => Record<string, unknown>)();
           for (let f = 0; f < t.fields.length; f++) {
             const badObj = same(t.fields[f], (want as Val[])[f], obj[`f${f}`]);
             if (badObj) {

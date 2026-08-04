@@ -3311,8 +3311,8 @@ async function jsArrayToWasm(
   exports: WebAssembly.Exports,
   arr: Int32Array,
 ): Promise<unknown> {
-  const newFn  = exports.__bind_arr_i32_new as (...a: unknown[]) => unknown;
-  const setFn  = exports.__bind_arr_i32_set as (...a: unknown[]) => unknown;
+  const newFn  = exports.$bind$arr_i32_new as (...a: unknown[]) => unknown;
+  const setFn  = exports.$bind$arr_i32_set as (...a: unknown[]) => unknown;
   const wasmArr = newFn(arr.length);
   for (let i = 0; i < arr.length; i++) setFn(wasmArr, i, arr[i]);
   return wasmArr;
@@ -3323,8 +3323,8 @@ async function wasmArrayToJs(
   exports: WebAssembly.Exports,
   wasmArr: unknown,
 ): Promise<Int32Array> {
-  const getLenFn = exports.__bind_arr_i32_len as (...a: unknown[]) => number;
-  const getElemFn = exports.__bind_arr_i32_get as (...a: unknown[]) => number;
+  const getLenFn = exports.$bind$arr_i32_len as (...a: unknown[]) => number;
+  const getElemFn = exports.$bind$arr_i32_get as (...a: unknown[]) => number;
   const n = getLenFn(wasmArr);
   const out = new Int32Array(n);
   for (let i = 0; i < n; i++) out[i] = getElemFn(wasmArr, i);
@@ -3333,8 +3333,8 @@ async function wasmArrayToJs(
 
 /** Create a wasm string from JS using exported bind helpers. */
 function jsStringToWasm(exports: WebAssembly.Exports, s: string): unknown {
-  const newFn  = exports.__bind_str_new as (...a: unknown[]) => unknown;
-  const setFn  = exports.__bind_str_set as (...a: unknown[]) => unknown;
+  const newFn  = exports.$bind$str_new as (...a: unknown[]) => unknown;
+  const setFn  = exports.$bind$str_set as (...a: unknown[]) => unknown;
   const bytes  = new TextEncoder().encode(s);
   const wa = newFn(bytes.length);
   for (let i = 0; i < bytes.length; i++) setFn(wa, i, bytes[i]);
@@ -3343,8 +3343,8 @@ function jsStringToWasm(exports: WebAssembly.Exports, s: string): unknown {
 
 /** Read a wasm string back to JS using exported bind helpers. */
 function wasmStringToJs(exports: WebAssembly.Exports, wa: unknown): string {
-  const lenFn = exports.__bind_str_len as (...a: unknown[]) => number;
-  const getFn = exports.__bind_str_get as (...a: unknown[]) => number;
+  const lenFn = exports.$bind$str_len as (...a: unknown[]) => number;
+  const getFn = exports.$bind$str_get as (...a: unknown[]) => number;
   const n = lenFn(wa);
   const bytes = new Uint8Array(n);
   for (let i = 0; i < n; i++) bytes[i] = getFn(wa, i);
@@ -3385,18 +3385,18 @@ Deno.test("[§wac-bind-struct-5kqn2wj] a struct crosses as a class, by reference
     export f64 lenSq(Point p) { return p.x * p.x + p.y * p.y; }
     export f64 run() { Point a = Point(0.0, 0.0); Point b = Point(3.0, 4.0); return a.distanceSq(b); }
   `) as unknown as {
-    Point: { of(x: number, y: number): PointT; new (ref: unknown): PointT };
+    Point: { $of(x: number, y: number): PointT; new (ref: unknown): PointT };
     origin(): PointT;
     lenSq(p: PointT): number;
     run(): number;
   };
   type PointT = {
-    ref: unknown; x: number; y: number;
+    $ref: unknown; x: number; y: number;
     distanceSq(other: PointT): number; shift(dx: number): void;
-    toObject(): { x: number; y: number };
+    $toObject(): { x: number; y: number };
   };
 
-  const a = mod.Point.of(3, 4);
+  const a = mod.Point.$of(3, 4);
   eq(a.x, 3, "a field reads back");
   eq(a.y, 4, "both of them");
   eq(mod.lenSq(a), 25, "and the struct goes back in as an argument");
@@ -3405,18 +3405,18 @@ Deno.test("[§wac-bind-struct-5kqn2wj] a struct crosses as a class, by reference
   eq(a.x, 6, "a field writes");
   eq(mod.lenSq(a), 52, "and wac sees the write — the reference is the value, not a copy");
 
-  eq(a.distanceSq(mod.Point.of(6, 0)), 16, "a method call from JavaScript");
+  eq(a.distanceSq(mod.Point.$of(6, 0)), 16, "a method call from JavaScript");
   a.shift(4);
   eq(a.x, 10, "including one that mutates the receiver");
 
   const o = mod.origin();
   eq(o.x, 0, "a struct returned from an exported function");
-  eq(JSON.stringify(a.toObject()), `{"x":10,"y":4}`, "and a plain-data snapshot when that is wanted");
+  eq(JSON.stringify(a.$toObject()), `{"x":10,"y":4}`, "and a plain-data snapshot when that is wanted");
   eq(mod.run(), 25, "the README's example still computes what it always did");
 
   // Identity: two handles on one object see each other's writes. A copying boundary could not do
   // this, and `json`'s tree needs it.
-  const second = new mod.Point(a.ref);
+  const second = new mod.Point(a.$ref);
   second.y = 99;
   eq(a.y, 99, "two wrappers over one reference are one object");
 });
@@ -3436,7 +3436,7 @@ Deno.test("[§wac-bind-struct-5kqn2wj] a nullable struct crosses as T | null", a
     export Node? nothing() { return null; }
     export Node chain() { return Node(1, Node(2, null)); }
   `) as unknown as {
-    Node: { of(val: number, next: unknown): NodeT };
+    Node: { $of(val: number, next: unknown): NodeT };
     nothing(): NodeT | null;
     chain(): NodeT;
   };
@@ -3450,7 +3450,7 @@ Deno.test("[§wac-bind-struct-5kqn2wj] a nullable struct crosses as T | null", a
   eq(c.sum(), 3, "a method that walks it");
 
   // Built from JavaScript, including the null.
-  const single = mod.Node.of(7, null);
+  const single = mod.Node.$of(7, null);
   eq(single.sum(), 7, "a node built here behaves like one built there");
   eq(single.next, null, "with its nullable field absent");
 });
@@ -3637,7 +3637,7 @@ Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to sw
     tag: "Point" | "Circle" | "Rect";
     Circle_r: number; Rect_w: number; Rect_h: number;
     area(): number;
-    toObject(): { tag: "Point" } | { tag: "Circle"; r: number } | { tag: "Rect"; w: number; h: number };
+    $toObject(): { tag: "Point" } | { tag: "Circle"; r: number } | { tag: "Rect"; w: number; h: number };
   };
 
   const c = mod.Shape.Circle(2);
@@ -3651,8 +3651,8 @@ Deno.test("[§wac-bind-enum-3nqk7vm] an enum crosses as a class with a tag to sw
   eq(p.area(), 0, "with its own arm");
 
   const r = mod.Shape.Rect(3, 4);
-  eq(JSON.stringify(r.toObject()), `{"tag":"Rect","w":3,"h":4}`, "the switchable form");
-  eq(JSON.stringify(p.toObject()), `{"tag":"Point"}`, "including for a payload-less variant");
+  eq(JSON.stringify(r.$toObject()), `{"tag":"Rect","w":3,"h":4}`, "the switchable form");
+  eq(JSON.stringify(p.$toObject()), `{"tag":"Point"}`, "including for a payload-less variant");
   eq(mod.mkCircle(5).tag, "Circle", "an enum returned from an exported function");
 
   // Reading the wrong variant's payload is a cast that fails — the protection `match` gives,
@@ -3702,36 +3702,53 @@ Deno.test("[§wac-bind-enum-3nqk7vm] a generic enum binds under its written name
       return match (o) { case Some(v): v, case None: d };
     }
   `) as unknown as {
-    Option_i32: { Some(v: number): OptT; None(): OptT };
+    Option$i32: { Some(v: number): OptT; None(): OptT };
     found(): OptT;
     missing(): OptT;
     unwrapOr(o: OptT, d: number): number;
   };
   type OptT = { tag: "Some" | "None"; Some_v: number; isSome(): boolean;
-                toObject(): { tag: "Some"; v: number } | { tag: "None" } };
+                $toObject(): { tag: "Some"; v: number } | { tag: "None" } };
 
   eq(mod.found().tag, "Some", "the present case");
   eq(mod.found().Some_v, 7, "and its payload");
   eq(mod.missing().tag, "None", "the absent one");
   eq(mod.missing().isSome(), false, "a method on the instantiation");
-  eq(mod.unwrapOr(mod.Option_i32.Some(3), 0), 3, "built here, unwrapped there");
-  eq(mod.unwrapOr(mod.Option_i32.None(), 9), 9, "and the default arm");
-  eq(JSON.stringify(mod.found().toObject()), `{"tag":"Some","v":7}`, "the switchable form");
+  eq(mod.unwrapOr(mod.Option$i32.Some(3), 0), 3, "built here, unwrapped there");
+  eq(mod.unwrapOr(mod.Option$i32.None(), 9), 9, "and the default arm");
+  eq(JSON.stringify(mod.found().$toObject()), `{"tag":"Some","v":7}`, "the switchable form");
 });
 
 Deno.test("[§wac-bind-struct-5kqn2wj] a generic instantiation is bound under a readable name", async () => {
   // `Vec<i32>` is `Vec__m$i32` inside the compiler and neither a legal TypeScript identifier nor a
-  // name anyone typed. The display name the diagnostics already use serves here too.
+  // name anyone typed. The display name the diagnostics already use serves here too — joined with
+  // `$`, which wac's lexer rejects, so the result cannot collide with anything an author can write.
   const r = wacCompile(new Map([["m.wac", `
     export struct Box<T> { T v; T get(const this) { return this.v; } }
     export Box<i32> boxed() { return Box(5); }
   `]]), "m.wac");
   if (!r.ok) throw new Error(r.diagnostics.map((e) => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
-  eq(ts.includes("export class Box_i32"), true, "the class is named for the instantiation");
-  eq(ts.includes("function boxed(): Box_i32"), true, "and the export returns it");
-  eq(ts.includes("$"), false, "no mangled name reaches the generated file");
+  eq(ts.includes("export class Box$i32"), true, "the class is named for the instantiation");
+  eq(ts.includes("function boxed(): Box$i32"), true, "and the export returns it");
+  eq(/export class \w*__m/.test(ts), false, "and no class name carries the internal mangling");
+
+  // The reason for `$` rather than `_`: `Box_i32` is a name an author may declare, and with
+  // underscores both landed in one file as `export class Box_i32` — a TypeScript module that does
+  // not compile. GitHub wac#4.
+  const both = wacCompile(new Map([["m.wac", `
+    export struct Box<T> { T v; }
+    export struct Box_i32 { i32 other; }
+    export Box<i32> boxed() { return Box(5); }
+    export Box_i32 plain() { return Box_i32(7); }
+  `]]), "m.wac");
+  if (!both.ok) throw new Error(both.diagnostics.map((e) => e.message).join("; "));
+  const two = wacBindgen(both.compiled);
+  eq(two.includes("export class Box$i32"), true, "the instantiation keeps the sigil");
+  eq(two.includes("export class Box_i32"), true, "and the hand-written struct keeps its own name");
+  eq(two.split("export class Box_i32").length - 1, 1, "declared exactly once");
 });
+
 
 // ── §wac-diag-* — structured error diagnostics ────────────────────────────────
 
@@ -7542,11 +7559,11 @@ Deno.test("[§wac-bind-unsigned-5wqk3np] u32 and u64 returns are not signed in J
   `]]), "main.wac");
   if (!r.ok) throw new Error(r.diagnostics.map(e => e.message).join("; "));
   const ts = wacBindgen(r.compiled);
-  eq(/return \(\(_exports\.u32High[^\n]*\) >>> 0;/.test(ts), true, "u32 is reinterpreted with >>> 0");
-  eq(/BigInt\.asUintN\(64, \(_exports\.u64High/.test(ts), true, "u64 with BigInt.asUintN");
+  eq(/return \(\(\$exports\.u32High[^\n]*\) >>> 0;/.test(ts), true, "u32 is reinterpreted with >>> 0");
+  eq(/BigInt\.asUintN\(64, \(\$exports\.u64High/.test(ts), true, "u64 with BigInt.asUintN");
   // The signed types must be left exactly as they were.
-  eq(/return \(_exports\.i32High as CallableFunction\)\(\) as number;/.test(ts), true, "i32 untouched");
-  eq(/return \(_exports\.i64High as CallableFunction\)\(\) as bigint;/.test(ts), true, "i64 untouched");
+  eq(/return \(\$exports\.i32High as CallableFunction\)\(\) as number;/.test(ts), true, "i32 untouched");
+  eq(/return \(\$exports\.i64High as CallableFunction\)\(\) as bigint;/.test(ts), true, "i64 untouched");
 });
 
 // §wac-samename-struct-4jhq7wn — two modules may declare a struct with one name
@@ -8755,7 +8772,7 @@ Deno.test("[§wac-bind-arr-ref-4jkq8wn] arrays of references cross both ways", a
 Deno.test("[§wac-bind-arr-ref-4jkq8wn] a method returning an array has the helpers it calls", async () => {
   // The helpers were emitted for arrays in an exported *function* signature only, while
   // bindgen wrote JS for arrays in struct fields and method signatures as well. The
-  // generated file called `__bind_arr_i32_len`, which the module did not export, and
+  // generated file called `$bind$arr_i32_len`, which the module did not export, and
   // `buf.data()` failed at the call rather than at build time.
   const mod = await importBindgen(`
     export struct Buf {
@@ -8871,18 +8888,18 @@ Deno.test("[§wac-bind-static-6wnq3kv] a type reached only through a method bind
       Found lookup(const this, i32 k) { return k == 0 ? Found.Yes(this.v) : Found.No; }
     }
   `) as unknown as {
-    Table: { of(v: number): { lookup(k: number): { tag: string; toObject(): unknown } } };
+    Table: { of(v: number): { lookup(k: number): { tag: string; $toObject(): unknown } } };
   };
   const t = mod.Table.of(42);
   eq(t.lookup(0).tag, "Yes", "the method is bound and its enum with it");
-  eq(JSON.stringify(t.lookup(0).toObject()), '{"tag":"Yes","v":42}', "payload and all");
+  eq(JSON.stringify(t.lookup(0).$toObject()), '{"tag":"Yes","v":42}', "payload and all");
   eq(t.lookup(1).tag, "No", "and the other variant");
 });
 
 Deno.test("[§wac-bind-arr-ref-4jkq8wn] an array inside an enum payload has its helpers", async () => {
   // An enum's payloads live in its *variants*, not in the base, so walking the base alone
   // never saw the `u8[]` in `Str(u8[] bytes)`. bindgen generated the accessor anyway and
-  // called `__bind_arr_u8_len`, which the module did not export — found by walking a real
+  // called `$bind$arr_u8_len`, which the module did not export — found by walking a real
   // `json` tree from TypeScript, not by a fixture.
   const mod = await importBindgen(`
     export enum Token { Empty, Str(u8[] bytes), Nums(i32[] xs) }
@@ -9419,7 +9436,7 @@ Deno.test("[§wac-param-shadows-func-5nkq2wp] and the module it produces is well
   const mod = await WebAssembly.instantiate(r.compiled.wasm as Uint8Array, { wac: imports });
   const exports = (mod as unknown as { instance: WebAssembly.Instance }).instance.exports;
   const main = exports.main as CallableFunction;
-  const bind = exports.__bind_fnref_0 as CallableFunction;
+  const bind = exports.$bind$fnref_0 as CallableFunction;
   eq(main(bind(0)), 7, "1 from pump plus 1+2+3 from the imported write");
   eq(called, true, "the funcref parameter was the thing pump called");
 });
@@ -9625,16 +9642,16 @@ Deno.test("[§wac-bindgen-nullable-name-7kqn2wp] a nullable type argument gets i
   if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
 
   const ts = wacBindgen(r.compiled);
-  const names = [...ts.matchAll(/^export class (\w+)/gm)].map((m) => m[1]);
+  const names = [...ts.matchAll(/^export class ([\w$]+)/gm)].map((m) => m[1]);
   const dup = names.filter((n, i) => names.indexOf(n) !== i);
   eq(dup.join(","), "", `duplicate class names: ${dup.join(",")}`);
 
   // The names are also the ones a caller has to type, so they are asserted rather than
   // just checked for uniqueness — a mangling that is unique but unreadable is its own bug.
-  eq(names.includes("Box_string"), true, names.join(","));
-  eq(names.includes("Box_stringOpt"), true, names.join(","));
-  eq(names.includes("Box_u8Arr"), true, names.join(","));
-  eq(names.includes("Box_u8ArrOpt"), true, names.join(","));
+  eq(names.includes("Box$string"), true, names.join(","));
+  eq(names.includes("Box$stringOpt"), true, names.join(","));
+  eq(names.includes("Box$u8Arr"), true, names.join(","));
+  eq(names.includes("Box$u8ArrOpt"), true, names.join(","));
 });
 
 // ── §wac-bindgen-nullable-once-4nkq8wp ────────────────────────────────────────
@@ -9685,14 +9702,14 @@ Deno.test("[§wac-bindgen-nullable-once-4nkq8wp] a nullable-returning callback i
 
   // Every dispatcher, and how many times it reaches for the registered function. All four
   // nullable shapes are here because they were four copies of the same mistake.
-  const dispatchers = [...ts.matchAll(/_cbd(\d+) = \([^)]*\) =>\n?([\s\S]*?);\n/g)];
+  const dispatchers = [...ts.matchAll(/\$cbd(\d+) = \([^)]*\) =>\n?([\s\S]*?);\n/g)];
   eq(dispatchers.length > 0, true, "no dispatchers were generated");
   let checked = 0;
   for (const d of dispatchers) {
     const n = d[1];
     const body = d[2];
-    const calls = (body.match(new RegExp(`_cbs${n}\\[_slot\\]\\(`, "g")) ?? []).length;
-    eq(calls, 1, `dispatcher _cbd${n} calls its function ${calls} times:\n${body}`);
+    const calls = (body.match(new RegExp(`\\$cbs${n}\\[\\$slot\\]\\(`, "g")) ?? []).length;
+    eq(calls, 1, `dispatcher $cbd${n} calls its function ${calls} times:\n${body}`);
     checked++;
   }
   eq(checked >= 4, true, `only ${checked} dispatchers were checked`);

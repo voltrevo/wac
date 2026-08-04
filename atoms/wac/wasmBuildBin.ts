@@ -662,7 +662,7 @@ function keyToElemType(key: string, ctx: WasmTypeCtx): WacType | null {
 // Instead of reconstructing from keys, let's extend WasmTypeCtx to include ordered arrays.
 
 type BindHelperSpec = {
-  /** Export name (e.g. "__bind_str_new"). */
+  /** Export name (e.g. "$bind$str_new"). */
   name: string;
   /** Wasm function type entry bytes (0x60 ...). */
   funcTypeEntry: number[];
@@ -957,7 +957,7 @@ function bindElemValType(elem: WacType): number[] {
  *
  * `i32[]` gives `i32`, `string[]` gives `string`, `P[]` gives `P`, and `i32[][]`
  * gives `i32Arr` — so the helper for the outer array of a nested one is
- * `__bind_arr_i32Arr_get`. The host side reads this out of the metadata rather
+ * `$bind$arr_i32Arr_get`. The host side reads this out of the metadata rather
  * than recomputing it, so the two cannot drift.
  */
 function arrBindSuffix(elem: WacType): string {
@@ -1032,7 +1032,7 @@ function buildMemorySection(): number[] {
 const PAGE_BITS = 16;   // 65536 bytes per wasm page
 
 /**
- * __bind_mem_ensure(bytes) -> i32
+ * $bind$mem_ensure(bytes) -> i32
  *
  * Grow the staging buffer to hold `bytes`, and return its size in bytes. The
  * caller must re-read `memory.buffer` afterwards: growing detaches the old
@@ -1088,7 +1088,7 @@ function scaleIndex(width: number): number[] {
 }
 
 /**
- * __bind_<t>_from_mem(count) -> array
+ * $bind$<t>_from_mem(count) -> array
  *
  * Allocate an array of `count` elements and fill it from the staging buffer. The
  * loop runs entirely inside wasm, which is the whole point.
@@ -1113,10 +1113,10 @@ function makeFromMem(arrTypeIdx: number, width: number, load: number): number[] 
 }
 
 /**
- * __bind_<t>_to_mem(array) -> i32
+ * $bind$<t>_to_mem(array) -> i32
  *
  * Copy an array into the staging buffer and return its length. Assumes the caller
- * has already called __bind_mem_ensure — writing past the end traps, which is the
+ * has already called $bind$mem_ensure — writing past the end traps, which is the
  * correct outcome for a caller that skipped it.
  */
 function makeToMem(arrTypeIdx: number, width: number, store: number, getOp: number): number[] {
@@ -1144,7 +1144,13 @@ function makeToMem(arrTypeIdx: number, width: number, store: number, getOp: numb
  * generated wrapper has to name it too, so both sides agree on this spelling.
  */
 export function bindName(structName: string): string {
-  return structName.replace(/[^A-Za-z0-9_]/g, "_");
+  // `$` and not `_`, because a monomorphisation has to be distinguishable from a struct somebody
+  // wrote. `Box<i32>` sanitised with underscores is `Box_i32`, which is a name a wac author may also
+  // declare — and then two `export class Box_i32` land in one generated file. wac's lexer rejects
+  // `$` outright ("unexpected character '$'"), so a name containing one cannot come from source.
+  // Runs are collapsed and the edges trimmed so `Map<u8[], i32>` is `Map$u8$i32` rather than
+  // `Map$u8$$$$i32`.
+  return structName.replace(/[^A-Za-z0-9_]+/g, "$").replace(/^\$+|\$+$/g, "");
 }
 
 /** The wasm value type a bind accessor uses for a field — packed fields cross as i32. */
@@ -1341,25 +1347,25 @@ function buildBindHelpers(
   const strSetBody   = [0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0xFB, 0x0E, ...uleb(si), 0x0B];
   const strLenBody   = [0x00, 0x20, 0x00, 0xFB, 0x0F, 0x0B];
 
-  helpers.push({ name: "__bind_str_new", funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...str],             body: strNewBody });
-  helpers.push({ name: "__bind_str_get", funcTypeEntry: [0x60, 0x02, ...str, ...i32, 0x01, ...i32],     body: strGetBody });
-  helpers.push({ name: "__bind_str_set", funcTypeEntry: [0x60, 0x03, ...str, ...i32, ...i32, 0x00],     body: strSetBody });
-  helpers.push({ name: "__bind_str_len", funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],             body: strLenBody });
+  helpers.push({ name: "$bind$str_new", funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...str],             body: strNewBody });
+  helpers.push({ name: "$bind$str_get", funcTypeEntry: [0x60, 0x02, ...str, ...i32, 0x01, ...i32],     body: strGetBody });
+  helpers.push({ name: "$bind$str_set", funcTypeEntry: [0x60, 0x03, ...str, ...i32, ...i32, 0x00],     body: strSetBody });
+  helpers.push({ name: "$bind$str_len", funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],             body: strLenBody });
 
   // Bulk transfer through the staging buffer. Strings are i8 arrays, so they use
   // the same shape as a byte array.
   helpers.push({
-    name: "__bind_mem_ensure",
+    name: "$bind$mem_ensure",
     funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...i32],
     body: makeMemEnsure(),
   });
   helpers.push({
-    name: "__bind_str_from_mem",
+    name: "$bind$str_from_mem",
     funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...str],
     body: makeFromMem(si, 1, 0x2D),
   });
   helpers.push({
-    name: "__bind_str_to_mem",
+    name: "$bind$str_to_mem",
     funcTypeEntry: [0x60, 0x01, ...str, 0x01, ...i32],
     body: makeToMem(si, 1, 0x3A, 0x0D),
   });
@@ -1387,7 +1393,7 @@ function buildBindHelpers(
     const newBody = [0x00, ...fields.flatMap((_, i) => [0x20, ...uleb(i)]),
       0xFB, 0x00, ...uleb(s.typeIndex), 0x0B];
     helpers.push({
-      name: `__bind_s_${safe}_new`,
+      name: `$bind$s_${safe}_new`,
       funcTypeEntry: [0x60, ...uleb(fields.length), ...newParams, 0x01, ...sref],
       body: newBody,
     });
@@ -1401,13 +1407,13 @@ function buildBindHelpers(
         ? 0x03                                        // struct.get_s
         : 0x02;                                       // struct.get
       helpers.push({
-        name: `__bind_s_${safe}_get_${f.name}`,
+        name: `$bind$s_${safe}_get_${f.name}`,
         funcTypeEntry: [0x60, 0x01, ...sref, 0x01, ...vt],
         body: [0x00, 0x20, 0x00, 0xFB, getOp, ...uleb(s.typeIndex), ...uleb(f.absIdx), 0x0B],
       });
       if (!f.isConst) {
         helpers.push({
-          name: `__bind_s_${safe}_set_${f.name}`,
+          name: `$bind$s_${safe}_set_${f.name}`,
           funcTypeEntry: [0x60, 0x02, ...sref, ...vt, 0x00],
           body: [0x00, 0x20, 0x00, 0x20, 0x01, 0xFB, 0x05, ...uleb(s.typeIndex),
             ...uleb(f.absIdx), 0x0B],
@@ -1431,7 +1437,7 @@ function buildBindHelpers(
     if (!tagField) continue;
 
     helpers.push({
-      name: `__bind_e_${eSafe}_tag`,
+      name: `$bind$e_${eSafe}_tag`,
       funcTypeEntry: [0x60, 0x01, ...bref, 0x01, 0x7F],
       body: [0x00, 0x20, 0x00, 0xFB, 0x02, ...uleb(baseIdx), ...uleb(tagField.absIdx), 0x0B],
     });
@@ -1447,7 +1453,7 @@ function buildBindHelpers(
       const params: number[] = [];
       for (const f of vFields) params.push(...bindFieldValType(f.type, ctx));
       helpers.push({
-        name: `__bind_e_${eSafe}_${vSafe}_new`,
+        name: `$bind$e_${eSafe}_${vSafe}_new`,
         funcTypeEntry: [0x60, ...uleb(vFields.length), ...params, 0x01, ...bref],
         body: [0x00, 0x41, ...sleb(v.tag),
           ...vFields.flatMap((_, i) => [0x20, ...uleb(i)]),
@@ -1461,7 +1467,7 @@ function buildBindHelpers(
           ? 0x03
           : 0x02;
         helpers.push({
-          name: `__bind_e_${eSafe}_${vSafe}_get_${f.name}`,
+          name: `$bind$e_${eSafe}_${vSafe}_get_${f.name}`,
           funcTypeEntry: [0x60, 0x01, ...bref, 0x01, ...bindFieldValType(f.type, ctx)],
           // `ref.cast` takes a heap type — signed LEB — where `struct.get` on the next line takes an
           // unsigned type index. Writing the cast's with `uleb` was invisible until a module had 64
@@ -1478,7 +1484,7 @@ function buildBindHelpers(
   // not the same as every array in an exported *function*: a struct field and a
   // method signature reach one too, and bindgen generates JS for those. Emitting
   // helpers only for the function case left that JS calling exports the module
-  // did not have, so `buf.data()` failed with "__bind_arr_i32_len is not a
+  // did not have, so `buf.data()` failed with "$bind$arr_i32_len is not a
   // function".
   for (const arrT of reachableArrays(result, ctx)) {
     const elem = arrT.elem;
@@ -1500,37 +1506,37 @@ function buildBindHelpers(
       // array.new_fixed with no elements at all — which is the only way to make
       // one when there is no value to fill it with.
       helpers.push({
-        name: `__bind_arr_${suffix}_new`,
+        name: `$bind$arr_${suffix}_new`,
         funcTypeEntry: [0x60, 0x02, ...i32, ...vt, 0x01, ...aref],
         body: [0x00, 0x20, 0x01, 0x20, 0x00, 0xFB, 0x06, ...uleb(ai), 0x0B],
       });
       helpers.push({
-        name: `__bind_arr_${suffix}_new0`,
+        name: `$bind$arr_${suffix}_new0`,
         funcTypeEntry: [0x60, 0x00, 0x01, ...aref],
         body: [0x00, 0xFB, 0x08, ...uleb(ai), 0x00, 0x0B],
       });
     } else {
       helpers.push({
-        name: `__bind_arr_${suffix}_new`,
+        name: `$bind$arr_${suffix}_new`,
         funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
         body: [0x00, 0x20, 0x00, 0xFB, 0x07, ...uleb(ai), 0x0B],
       });
     }
-    helpers.push({ name: `__bind_arr_${suffix}_get`, funcTypeEntry: [0x60, 0x02, ...aref, ...i32, 0x01, ...vt], body: arrGetBody });
-    helpers.push({ name: `__bind_arr_${suffix}_set`, funcTypeEntry: [0x60, 0x03, ...aref, ...i32, ...vt, 0x00], body: arrSetBody });
-    helpers.push({ name: `__bind_arr_${suffix}_len`, funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],        body: arrLenBody });
+    helpers.push({ name: `$bind$arr_${suffix}_get`, funcTypeEntry: [0x60, 0x02, ...aref, ...i32, 0x01, ...vt], body: arrGetBody });
+    helpers.push({ name: `$bind$arr_${suffix}_set`, funcTypeEntry: [0x60, 0x03, ...aref, ...i32, ...vt, 0x00], body: arrSetBody });
+    helpers.push({ name: `$bind$arr_${suffix}_len`, funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],        body: arrLenBody });
 
     // Bulk path, for element types that have a memory representation. Anything
     // else keeps only the per-element accessors above.
     const bulk = elem.kind === "prim" ? bulkOps(elem.name) : null;
     if (bulk) {
       helpers.push({
-        name: `__bind_arr_${suffix}_from_mem`,
+        name: `$bind$arr_${suffix}_from_mem`,
         funcTypeEntry: [0x60, 0x01, ...i32, 0x01, ...aref],
         body: makeFromMem(ai, bulk.width, bulk.load),
       });
       helpers.push({
-        name: `__bind_arr_${suffix}_to_mem`,
+        name: `$bind$arr_${suffix}_to_mem`,
         funcTypeEntry: [0x60, 0x01, ...aref, 0x01, ...i32],
         body: makeToMem(ai, bulk.width, bulk.store, getOp),
       });
@@ -1538,14 +1544,14 @@ function buildBindHelpers(
   }
 
   // ── Trap messages ─────────────────────────────────────────────────────────
-  // `__trap_message()` reads the global a `trap "…"` left behind. Null when the
+  // `$trap$message()` reads the global a `trap "…"` left behind. Null when the
   // module has not trapped with a message — an engine trap (a bounds check, a null
   // dereference) sets nothing, and reporting the previous message for one of those
   // would be worse than reporting nothing.
   if (ctx.trapGlobalIdx >= 0) {
     const si = ctx.stringTypeIdx;
     helpers.push({
-      name: "__trap_message",
+      name: "$trap$message",
       funcTypeEntry: [0x60, 0x00, 0x01, 0x63, ...sleb(si)],
       body: [0x00, 0x23, ...uleb(ctx.trapGlobalIdx), 0x0B],
     });
@@ -1563,12 +1569,12 @@ function buildBindHelpers(
     const vt = bindFieldValType(fields[0].type, ctx);
     const bref = [0x64, ...sleb(idx)];
     helpers.push({
-      name: `__bind_opt_${prim}_new`,
+      name: `$bind$opt_${prim}_new`,
       funcTypeEntry: [0x60, 0x01, ...vt, 0x01, ...bref],
       body: [0x00, 0x20, 0x00, 0xFB, 0x00, ...uleb(idx), 0x0B],
     });
     helpers.push({
-      name: `__bind_opt_${prim}_get`,
+      name: `$bind$opt_${prim}_get`,
       funcTypeEntry: [0x60, 0x01, ...bref, 0x01, ...vt],
       body: [0x00, 0x20, 0x00, 0xFB, 0x02, ...uleb(idx), 0x00, 0x0B],
     });
@@ -1586,7 +1592,7 @@ function buildBindHelpers(
     const retBytes = isVoid ? [] : encodeValType(sig.ret, ctx);
     const fwd = sig.params.flatMap((_, i) => [0x20, ...uleb(i + 1)]); // local.get i+1
     helpers.push({
-      name: `__bind_callref_${j}`,
+      name: `$bind$callref_${j}`,
       funcTypeEntry: [0x60, ...uleb(sig.params.length + 1), ...fref, ...paramBytes,
         ...uleb(retBytes.length > 0 ? 1 : 0), ...retBytes],
       body: [0x00, ...fwd, 0x20, 0x00, 0x14, ...uleb(sigIdx), 0x0B], // args, callee, call_ref
@@ -1607,7 +1613,7 @@ function buildBindHelpers(
       const fwd = sig.params.flatMap((_, i) => [0x20, ...uleb(i)]); // local.get i
       trampIdx.push(ctx.bindBaseIdx + helpers.length);
       helpers.push({
-        name: `__bind_tramp_${j}_${k}`,
+        name: `$bind$tramp_${j}_${k}`,
         funcTypeEntry: sigEntry,
         typeIdx: sigIdx,
         internal: true,
@@ -1628,7 +1634,7 @@ function buildBindHelpers(
     }
     sel.push(0x00, 0x0B); // unreachable (slot out of range); end
     helpers.push({
-      name: `__bind_fnref_${j}`,
+      name: `$bind$fnref_${j}`,
       funcTypeEntry: [0x60, 0x01, 0x7F, 0x01, 0x64, ...sleb(sigIdx)],
       body: sel,
     });
@@ -2256,7 +2262,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
   });
   // Export the staging buffer so the host can write into and read out of it.
   {
-    const nameBytes = new TextEncoder().encode("__bind_mem");
+    const nameBytes = new TextEncoder().encode("$bind$mem");
     entries.push([...uleb(nameBytes.length), ...nameBytes, 0x02, 0x00]);  // kind 2 = memory
   }
   // Export the coverage helpers so a host can reset and read the counters.
@@ -2283,7 +2289,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         // is exported under its own prefix — a struct may have an instance `get` and a
         // static `get` and they are different functions.
         const isStatic = fe.origin.kind === "method" && !fe.origin.decl.hasThis;
-        const prefix = isStatic ? "__bind_sm_" : "__bind_m_";
+        const prefix = isStatic ? "$bind$sm_" : "$bind$m_";
         const nameBytes = new TextEncoder().encode(`${prefix}${bindName(s.name)}_${mname}`);
         entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex + ctx.funcBase)]);
       }
@@ -2669,7 +2675,7 @@ function buildElemSection(ctx: WasmTypeCtxFull): number[] {
  * reachable set and the field layout are both this module's answers.
  */
 export type BindStructInfo = {
-  /** The `__bind_s_<this>_…` component, and a legal TypeScript identifier. */
+  /** The `$bind$s_<this>_…` component, and a legal TypeScript identifier. */
   bind: string;
   /** The struct's own name, which is what a type referring to it says. */
   wac: string;
@@ -2713,7 +2719,7 @@ export type BindCallbackInfo = {
 export type BindArrayInfo = {
   type: WacType;
   elem: WacType;
-  /** The `__bind_arr_<suffix>_*` family serving it. */
+  /** The `$bind$arr_<suffix>_*` family serving it. */
   suffix: string;
   /** Whether `_new` takes a fill value (and `_new0` exists for the empty case). */
   fill: boolean;
@@ -2768,7 +2774,7 @@ export function wasmBindMeta(
     methods: methodsOf(en.base),
   }));
   const callbacks: BindCallbackInfo[] = ctx.cbSigs.map((sig, j) => ({
-    helper: `__bind_fnref_${j}`,
+    helper: `$bind$fnref_${j}`,
     field: `cb${j}`,
     params: sig.params,
     ret: sig.ret,
@@ -2785,7 +2791,7 @@ export function wasmBindMeta(
     };
   });
   const funcrefs: BindCallbackInfo[] = ctx.outSigs.map((sig, j) => ({
-    helper: `__bind_callref_${j}`,
+    helper: `$bind$callref_${j}`,
     field: "",
     params: sig.params,
     ret: sig.ret,
