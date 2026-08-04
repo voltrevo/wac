@@ -1,5 +1,21 @@
 name: Deploy to GitHub Pages
 
+# The demos are built here, from source, on every deploy.
+#
+# They are whole wac applications — `public/*.html`, each a self-contained page with the wasm inside
+# it — and they live in the *other* repository, `voltrevo/wac-mono`. They used to be committed to this
+# one, because Pages builds this repo alone: a megabyte of generated HTML in git, refreshed whenever
+# somebody remembered, which is to say usually stale.
+#
+# So both repositories are checked out side by side and `tools/syncDemos.ts` builds them. The layout
+# matters: wac-mono's import map points `wac/` at `../wac/atoms/wac/`, so the two must be siblings
+# under the workspace, and every step for this repo therefore names `wac` as its directory.
+#
+# **A demo that will not build fails the deploy.** A site that advertises three demos and serves
+# three 404s is worse than a site that did not deploy. The likeliest cause is the two mirrors being
+# out of step: wac-mono pins the oldest compiler it works with and names the commit when a checkout
+# is older, so read the message before assuming the demo itself is broken.
+
 on:
   push:
     branches: [main, master]
@@ -19,16 +35,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: wac
+          # Full history: wac-mono checks that this checkout *contains* the compiler commit it pins,
+          # with `git merge-base --is-ancestor`, which a shallow clone cannot answer.
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: voltrevo/wac-mono
+          path: wac-mono
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Build the demos from wac-mono
+        working-directory: wac
+        run: deno run -A tools/syncDemos.ts ../wac-mono
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npx tsc -b
-      - run: BASE_URL="/${{ github.event.repository.name }}/" npx vite build
+          cache-dependency-path: wac/package-lock.json
+      - working-directory: wac
+        run: npm ci
+      - working-directory: wac
+        run: npx tsc -b
+      - working-directory: wac
+        run: BASE_URL="/${{ github.event.repository.name }}/" npx vite build
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: wac/dist
 
   deploy:
     needs: build
