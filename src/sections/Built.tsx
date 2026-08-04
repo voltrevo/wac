@@ -8,9 +8,33 @@
 // MAP.md — see `tools/syncMap.ts`. Nothing here is typed in by hand, because a hand-typed
 // inventory of two dozen packages is wrong within the week.
 
+import { useEffect, useState } from "react";
 import { BUILT, TOTALS } from "../data/built";
-import { DEMO_SIZES, DEMO_SOURCE } from "../data/demos";
 import { CodeBlock, fn_, MONO, s, tp } from "../theme";
+
+/** Where a demo's source and build instructions live, for the links beside each one. */
+const MONO_SRC = "https://github.com/voltrevo/wac-mono/blob/master/packages";
+
+/**
+ * How big each demo turned out, fetched rather than compiled in.
+ *
+ * The demos are build output from another repository — `tools/syncDemos.ts` builds them into
+ * `public/`, and CI runs it — so their sizes are not knowable when this file is compiled. Written
+ * beside them as `demos.json` and read at runtime, which means the numbers are always the numbers of
+ * the pages actually being served, and a checkout without them simply shows no number.
+ */
+function useDemoSizes(): Record<string, string> {
+  const [sizes, setSizes] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let live = true;
+    fetch("demos.json")
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((v) => { if (live) setSizes(v as Record<string, string>); })
+      .catch(() => {});   // no demos built here; the links are still right
+    return () => { live = false; };
+  }, []);
+  return sizes;
+}
 
 /** Rounded, because this repo's Pages build cannot check them. See `src/data/built.ts`. */
 function about(n: number): string {
@@ -45,6 +69,7 @@ const SHEBANG = `#!/usr/bin/env -S deno run                    # no capabilities
 #!/usr/bin/env -S deno run --allow-read       # built with --allow-read`;
 
 export default function Built() {
+  const sizes = useDemoSizes();
   return (
     <>
       <div style={s.section} id="built">
@@ -189,18 +214,21 @@ export default function Built() {
             {
               href: "shell.html",
               name: "a shell",
+              source: `${MONO_SRC}/box/example/README.md#termwac`,
               what:
                 "packages/sh with a keyboard in front of it, and all sixty packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload",
             },
             {
               href: "hash.html",
               name: "hash and compress",
+              source: `${MONO_SRC}/box/example/README.md#hashwac`,
               what:
                 "SHA-256 and DEFLATE keeping up with your typing — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open",
             },
             {
               href: "pixels.html",
               name: "pixels",
+              source: `${MONO_SRC}/platform/example/README.md#pixelswac`,
               what:
                 "a Mandelbrot set recomputed on every click — it recentres where you point — with the escape count under the cursor, and the frame you are looking at downloadable as a PPM",
             },
@@ -224,10 +252,13 @@ export default function Built() {
                     textDecoration: "none",
                   }}
                 >
-                  {d.name} <span style={{ color: "#4a4a5a" }}>· {DEMO_SIZES[d.href] ?? ""}</span>
+                  {d.name}
+                  {sizes[d.href] === undefined
+                    ? null
+                    : <span style={{ color: "#4a4a5a" }}>{" · " + sizes[d.href]}</span>}
                 </a>
                 <a
-                  href={DEMO_SOURCE[d.href]}
+                  href={d.source}
                   target="_blank"
                   rel="noopener"
                   style={{ color: "#6b7280", fontSize: 12, whiteSpace: "nowrap" }}
