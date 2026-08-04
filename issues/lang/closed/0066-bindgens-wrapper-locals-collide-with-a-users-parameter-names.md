@@ -1,7 +1,7 @@
 # 0066 — bindgen's wrapper locals collide with a user's parameter names
 
 - **Status:** closed
-- **Fixed in:** PENDING
+- **Fixed in:** 3fc5d7b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** voltrevo, on GitHub — [https://github.com/voltrevo/wac/issues/7](https://github.com/voltrevo/wac/issues/7)
 - **Mirrored by:** agent-a

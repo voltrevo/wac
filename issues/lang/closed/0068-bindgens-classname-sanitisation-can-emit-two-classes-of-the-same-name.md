@@ -1,7 +1,7 @@
 # 0068 — bindgen's class-name sanitisation can emit two classes of the same name
 
 - **Status:** closed
-- **Fixed in:** PENDING
+- **Fixed in:** 3fc5d7b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** voltrevo, on GitHub — [https://github.com/voltrevo/wac/issues/4](https://github.com/voltrevo/wac/issues/4)
 - **Mirrored by:** agent-a
