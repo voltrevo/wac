@@ -146,6 +146,25 @@ function className(s: { display: string }): string {
     .replace(/\$+$/, "");
 }
 
+/**
+ * The struct or enum a type name refers to, by the name as written *or* as canonicalised.
+ *
+ * The resolver qualifies a cross-file reference as `Name__<file with punctuation flattened>`, so a
+ * signature that mentions a type from another file carries that form while the metadata carries the
+ * declaration's own `Read`. Looking up only the latter meant *any* cross-file enum or struct used as
+ * a type argument was "not yet supported in bindgen" — `Pending<Read>` with `Read` one file over was
+ * simply unbindable, and the message pointed at bindgen rather than at the mismatch.
+ *
+ * The bare name is tried first, so a type genuinely named `A__b` still wins over stripping.
+ */
+function namedType(wacType: string): WacStruct | WacEnum | undefined {
+  const direct = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
+  if (direct) return direct;
+  const canonical = wacType.match(/^(.+?)__[A-Za-z0-9_]+$/);
+  if (canonical === null) return undefined;
+  return structsByWac.get(canonical[1]) ?? enumsByWac.get(canonical[1]);
+}
+
 function tsType(wacType: string): string | null {
   if (PRIM_MAP[wacType]) return PRIM_MAP[wacType];
   if (ARRAY_MAP[wacType]) return ARRAY_MAP[wacType];
@@ -169,10 +188,10 @@ function tsType(wacType: string): string | null {
   if (out) return cbTsType(out);
   // A struct or an enum crosses as an opaque reference wrapped in a generated class, and a nullable
   // one as that class or null — which is what JavaScript already means by an absent object.
-  const named = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
+  const named = namedType(wacType);
   if (named) return className(named);
   if (wacType.endsWith("?")) {
-    const inner = structsByWac.get(wacType.slice(0, -1)) ?? enumsByWac.get(wacType.slice(0, -1));
+    const inner = namedType(wacType.slice(0, -1));
     if (inner) return `${className(inner)} | null`;
   }
   return null; // unsupported
@@ -273,10 +292,10 @@ const TRAP_GUARD = `function _wacTrap(e: unknown): never {
 
 /** The struct or enum a type names, if it is one — with or without a trailing `?`. */
 function structOf(wacType: string): { s: { display: string }; nullable: boolean } | null {
-  const direct = structsByWac.get(wacType) ?? enumsByWac.get(wacType);
+  const direct = namedType(wacType);
   if (direct) return { s: direct, nullable: false };
   if (wacType.endsWith("?")) {
-    const inner = structsByWac.get(wacType.slice(0, -1)) ?? enumsByWac.get(wacType.slice(0, -1));
+    const inner = namedType(wacType.slice(0, -1));
     if (inner) return { s: inner, nullable: true };
   }
   return null;
