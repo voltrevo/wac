@@ -5,6 +5,9 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0071](open/0071-no-addressable-scratch-a-stack-storage-class.md) | no addressable scratch: a `stack` storage class | missing feature | not implemented |
+| [0070](open/0070-no-simd-a-v128-primitive-and-its-intrinsics.md) | no SIMD: a `v128` primitive and its intrinsics | missing feature | not implemented |
+| [0069](open/0069-ten-mvp-integer-instructions-are-unreachable-from-wac.md) | ten MVP integer instructions are unreachable: clz, ctz, popcnt, rotl, rotr | missing feature | not implemented |
 | [0061](open/0061-enum-variants-should-be-qualified-rather-than-file-scope-names.md) | enum variants should be qualified rather than file-scope names | missing feature | compile error |
 | [0059](open/0059-cttrace-buffer-is-a-fixed-2-22-events-so-an-expensive-routine-cannot-be-traced.md) | ctTrace's buffer is a fixed 2^22 events, so an expensive routine cannot be traced at all | missing feature | not implemented |
 | [0060](open/0060-a-value-returned-from-a-const-this-method-stays-const.md) | a value returned from a `const this` method stays const, so the caller cannot mutate it | bug | compile error |
