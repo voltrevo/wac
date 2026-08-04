@@ -50,23 +50,71 @@ Engines do inline small wasm functions, so the runtime cost is smaller than the 
 suggests — but one instruction against four remains, and there is nothing the source can say to
 ask for it.
 
-## Suggested shape
-
-`clz`/`ctz`/`popcnt` have no natural operator, so they want builtins — and they must be
-**compiler-recognised** rather than `std` functions, because there is no inliner and a call would
-defeat the point:
+## Suggested shape — methods on the numeric types
 
 ```wac
-i32 n = clz(x);        // i32.clz
-i32 t = ctz(x);        // i32.ctz
-i32 p = popcnt(x);     // i32.popcnt
+i32 n = x.leadingZeros();     // i32.clz  — 32 when x is 0
+i32 t = x.trailingZeros();    // i32.ctz
+i32 p = x.onesCount();        // i32.popcnt
+u32 r = k.rotateLeft(7);      // i32.rotl
+u32 s = k.rotateRight(7);     // i32.rotr
 ```
 
-Rotation could be either an operator pair (`<<<` / `>>>`, though `>>>` is taken for logical shift)
-or builtins in the same family (`rotl(x, n)`, `rotr(x, n)`). Builtins are probably better: they
-avoid arguing about precedence, and they keep all five in one place.
+Three reasons, in order of weight.
 
-Width follows the operand type, as the shift operators already do.
+**It is the closest existing precedent.** Issue 0056 took two single wasm instructions —
+`array.copy` and `array.fill` — and exposed them as methods on the receiver. These are the same
+kind of thing: one instruction, one value.
+
+**A free function named `rotl` would collide with existing code.** `packages/crypto` defines
+`u32 rotl(u32 x, u32 n)` in five files. A builtin free function would be shadowed by those, or
+break them. A method cannot collide with a free function, so those helpers keep working and become
+one-instruction wrappers — migration is then optional and incremental rather than a flag day.
+
+**Width falls out of the receiver.** `x.leadingZeros()` picks `i32.clz` or `i64.clz` from `x`'s
+type with no overload resolution and no inference. A static `i32.clz(x)` would state the width
+twice and could disagree with its argument; a free function would need overloading, which wac does
+not have.
+
+Numeric primitives have no methods today, but the dispatcher already reaches them and reports
+`type 'i32' has no method 'len'`, so this is a branch rather than a restructure. `5.len()` parses,
+so a literal receiver is not a lexing hazard.
+
+### Semantics to pin down
+
+- `leadingZeros()` and `trailingZeros()` of zero are the **full width**, 32 or 64. wasm defines
+  this; C's `__builtin_clz(0)` is undefined, so a C reader will assume UB and needs telling.
+- Rotate counts are taken mod the width, as the shift operators already are: `x.rotateLeft(32)`
+  is `x` for `i32`.
+- Signedness is irrelevant to all five, so `i32`/`u32`/`i64`/`u64` all get them and the opcode is
+  chosen by width alone.
+- All five should const-fold — `wacConstEval.ts` exists and crypto builds tables from constant
+  expressions.
+
+### Rejected alternatives
+
+**Operators.** `>>>` is already logical shift, so rotation would need `<<<` and `>>>>`, and
+`clz`/`ctz`/`popcnt` have no natural operator at all. Operators could cover two of the five and
+would split the family across two mechanisms.
+
+**A `std/bits.wac` module.** With no inliner those are real calls, which defeats the purpose.
+Having the compiler special-case imported names by module and name is fragile and leaves code in
+`std` that never runs.
+
+**The mnemonic names `clz`/`ctz`/`popcnt`.** Those are x86 and ARM mnemonics. The house style is
+spelled out — `copyFrom`, `fromBytes`, `fromCodepoint`, `withCapacity`, `swapRemove` — and
+`leadingZeros` is Rust's and Go's choice for the same reason. The cost is that
+`s[d] = s[d].rotateLeft(16)` is longer than `rotl(s[d], 16)`, which seems worth paying since hot
+code is read more often than written.
+
+An earlier version of this issue suggested free-function builtins. That was before checking the
+`copyFrom` precedent and the five existing `rotl` definitions, both of which argue the other way.
+
+## Sequencing
+
+This and 0070 both need methods on a primitive type, which does not exist yet. Whichever lands
+first pays for the dispatcher branch and the other gets it free — an argument for doing this one
+first, since it is much the cheaper of the two and needs no floor decision.
 
 ## Notes
 
