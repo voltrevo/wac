@@ -54,7 +54,7 @@ export type WacParam    = { name: string; type: string };
 export type WacExport   = { name: string; params: WacParam[]; ret: string };
 /** A struct a JS caller can reach, with its fields and methods as type *strings*. */
 export type WacStruct = {
-  /** The `__bind_s_<this>_…` component of its accessors, and a legal TS identifier. */
+  /** The `$bind$s_<this>_…` component of its accessors, and a legal TS identifier. */
   bind: string;
   /** The name a *type* refers to it by, which is what `typeStr` produces for a field or parameter. */
   wac: string;
@@ -110,7 +110,7 @@ export type WacArray = {
   type: string;
   /** Its element type as written. */
   elem: string;
-  /** The `__bind_arr_<suffix>_*` family serving it. */
+  /** The `$bind$arr_<suffix>_*` family serving it. */
   suffix: string;
   /** Whether `_new` takes a fill value, with `_new0` for the empty case. */
   fill: boolean;

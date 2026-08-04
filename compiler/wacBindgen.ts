@@ -52,16 +52,16 @@ const ARRAY_ELEM_WIDTH: Record<string, number> = {
 };
 
 const ARRAY_ELEM_PREFIX: Record<string, string> = {
-  "u8[]":  "__bind_arr_u8",
-  "i8[]":  "__bind_arr_i8",
-  "u16[]": "__bind_arr_u16",
-  "i16[]": "__bind_arr_i16",
-  "i32[]": "__bind_arr_i32",
-  "u32[]": "__bind_arr_u32",
-  "i64[]": "__bind_arr_i64",
-  "u64[]": "__bind_arr_u64",
-  "f32[]": "__bind_arr_f32",
-  "f64[]": "__bind_arr_f64",
+  "u8[]":  "$bind$arr_u8",
+  "i8[]":  "$bind$arr_i8",
+  "u16[]": "$bind$arr_u16",
+  "i16[]": "$bind$arr_i16",
+  "i32[]": "$bind$arr_i32",
+  "u32[]": "$bind$arr_u32",
+  "i64[]": "$bind$arr_i64",
+  "u64[]": "$bind$arr_u64",
+  "f32[]": "$bind$arr_f32",
+  "f64[]": "$bind$arr_f64",
 };
 
 /**
@@ -134,12 +134,16 @@ let outFuncrefsByType: Map<string, WacCallback & { index: number }> = new Map();
  * class twice and would not bundle.
  */
 function className(s: { display: string }): string {
+  // `$` joins the parts, not `_`, because the result has to be distinguishable from a name somebody
+  // typed: `Box<i32>` reduced to `Box_i32` is a struct an author may also declare, and then the
+  // generated module has two `export class Box_i32` and does not compile. wac's lexer rejects `$`
+  // outright, so nothing with one in it can come from source. GitHub wac#4.
   return s.display
     .replace(/\[\]/g, "Arr")
     .replace(/\?/g, "Opt")
-    .replace(/[^A-Za-z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/_+$/, "");
+    .replace(/[^A-Za-z0-9_]+/g, "$")
+    .replace(/\$+/g, "$")
+    .replace(/\$+$/, "");
 }
 
 function tsType(wacType: string): string | null {
@@ -230,26 +234,26 @@ function genCallbackRegistry(cb: WacCallback & { index: number }): string {
   const j = cb.index;
   const fnTs = cbTsType(cb)!;
   const args = cb.params.map((t, i) => fromWasm(t, `a${i}`)).join(", ");
-  const call = `_cbs${j}[_slot](${args})`;
+  const call = `$cbs${j}[$slot](${args})`;
   const body = cb.ret === "void" ? `{ ${call}; }` : `${toWasm(cb.ret, `(${call})`)}`;
   const wasmParams = cb.params.map((_, i) => `a${i}: unknown`).join(", ");
   return [
-    `const _cbs${j}: (${fnTs})[] = [];`,
-    `const _cbd${j} = (_slot: number${wasmParams ? ", " + wasmParams : ""}) =>`,
+    `const $cbs${j}: (${fnTs})[] = [];`,
+    `const $cbd${j} = ($slot: number${wasmParams ? ", " + wasmParams : ""}) =>`,
     `  ${body};`,
     `/** Register \`f\` and hand back the \`${cb.type}\` to pass into the module. */`,
     `function _fnref${j}(f: ${fnTs}): unknown {`,
-    `  let _slot = _cbs${j}.indexOf(f);`,
-    `  if (_slot < 0) {`,
-    `    _slot = _cbs${j}.length;`,
-    `    if (_slot >= ${cb.slots}) {`,
+    `  let $slot = $cbs${j}.indexOf(f);`,
+    `  if ($slot < 0) {`,
+    `    $slot = $cbs${j}.length;`,
+    `    if ($slot >= ${cb.slots}) {`,
     `      throw new RangeError(`,
     `        "at most ${cb.slots} distinct ${cb.type} functions can be passed to this module",`,
     `      );`,
     `    }`,
-    `    _cbs${j}.push(f);`,
+    `    $cbs${j}.push(f);`,
     `  }`,
-    `  return (_exports.${cb.helper} as CallableFunction)(_slot);`,
+    `  return ($exports.${cb.helper} as CallableFunction)($slot);`,
     `}`,
   ].join("\n");
 }
@@ -262,7 +266,7 @@ function genCallbackRegistry(cb: WacCallback & { index: number }): string {
  * original is kept as `cause` either way.
  */
 const TRAP_GUARD = `function _wacTrap(e: unknown): never {
-  const s = (_exports.__trap_message as CallableFunction)();
+  const s = ($exports.$trap$message as CallableFunction)();
   if (s === null || s === undefined) throw e;
   throw new Error(\`wac trap: \${_stringFromWasm(s)}\`, { cause: e });
 }`;
@@ -291,7 +295,7 @@ const ENUM_RESERVED = new Set(["tag", "ref", "toObject", "constructor"]);
  * A class per reachable enum: an opaque reference, a discriminant, and the payload behind it.
  *
  * The class rather than a bare tagged object, so an enum crosses on the same terms as a struct —
- * by reference, with its methods — and `toObject()` produces the discriminated union that a JS
+ * by reference, with its methods — and `$toObject()` produces the discriminated union that a JS
  * caller can `switch` on. Going straight to the tagged object would have lost the methods and made
  * every crossing a copy.
  */
@@ -304,23 +308,23 @@ function genEnumClass(en: WacEnum): { code: string } | { skip: string } {
   const lines: string[] = [];
   const tagUnion = en.variants.map((v) => JSON.stringify(v.name)).join(" | ");
 
-  lines.push(`/** \`${en.display}\`, held by reference. \`tag\` says which variant; \`toObject()\` unpacks it. */`);
+  lines.push(`/** \`${en.display}\`, held by reference. \`tag\` says which variant; \`$toObject()\` unpacks it. */`);
   lines.push(`export class ${cls} {`);
-  lines.push(`  constructor(readonly ref: unknown) {}`);
+  lines.push(`  constructor(readonly $ref: unknown) {}`);
 
   for (const v of en.variants) {
     const ps = v.fields.map((f) => `${f.name}: ${tsType(f.type) ?? "unknown"}`).join(", ");
     const args = v.fields.map((f) => toWasm(f.type, f.name)).join(", ");
     if (v.fields.some((f) => tsType(f.type) === null)) continue;
     lines.push(`  static ${v.name}(${ps}): ${cls} {`);
-    lines.push(`    return new ${cls}((_exports.__bind_e_${en.bind}_${v.name}_new as CallableFunction)(${args}));`);
+    lines.push(`    return new ${cls}(($exports.$bind$e_${en.bind}_${v.name}_new as CallableFunction)(${args}));`);
     lines.push(`  }`);
   }
 
   lines.push(`  get tag(): ${tagUnion} {`);
   const byTag = en.variants.slice().sort((a, b) => a.tag - b.tag)
     .map((v) => JSON.stringify(v.name)).join(", ");
-  lines.push(`    const _t = (_exports.__bind_e_${en.bind}_tag as CallableFunction)(this.ref) as number;`);
+  lines.push(`    const _t = ($exports.$bind$e_${en.bind}_tag as CallableFunction)(this.$ref) as number;`);
   lines.push(`    return ([${byTag}] as const)[_t];`);
   lines.push(`  }`);
 
@@ -330,7 +334,7 @@ function genEnumClass(en: WacEnum): { code: string } | { skip: string } {
       if (!ts) continue;
       lines.push(`  /** Payload \`${f.name}\` of \`${v.name}\`. Throws unless this is a \`${v.name}\`. */`);
       lines.push(`  get ${v.name}_${f.name}(): ${ts} {`);
-      lines.push(`    return ${fromWasm(f.type, `(_exports.__bind_e_${en.bind}_${v.name}_get_${f.name} as CallableFunction)(this.ref)`)};`);
+      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${en.bind}_${v.name}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
       lines.push(`  }`);
     }
   }
@@ -339,8 +343,8 @@ function genEnumClass(en: WacEnum): { code: string } | { skip: string } {
     if (m.params.some((p) => tsType(p.type) === null)) continue;
     if (m.ret !== "void" && tsType(m.ret) === null) continue;
     const ps = m.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ");
-    const args = ["this.ref", ...m.params.map((p) => toWasm(p.type, p.name))].join(", ");
-    const call = `(_exports.__bind_m_${en.bind}_${m.name} as CallableFunction)(${args})`;
+    const args = ["this.$ref", ...m.params.map((p) => toWasm(p.type, p.name))].join(", ");
+    const call = `($exports.$bind$m_${en.bind}_${m.name} as CallableFunction)(${args})`;
     lines.push(`  ${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
     lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
     lines.push(`  }`);
@@ -353,7 +357,7 @@ function genEnumClass(en: WacEnum): { code: string } | { skip: string } {
     return `{ tag: ${JSON.stringify(v.name)}${fs} }`;
   }).join("\n    | ");
   lines.push(`  /** The variant and its payload, as a plain object to \`switch\` on. */`);
-  lines.push(`  toObject():\n    | ${objType} {`);
+  lines.push(`  $toObject():\n    | ${objType} {`);
   lines.push(`    switch (this.tag) {`);
   for (const v of en.variants) {
     const fs = v.fields.filter((f) => tsType(f.type) !== null)
@@ -376,7 +380,7 @@ function isSupported(wacType: string): boolean {
  * A class per reachable struct: an opaque reference plus accessors.
  *
  * The reference is the value, not a copy of it — so identity survives the boundary, mutation flows
- * both ways, and a cyclic structure like `json`'s tree crosses at all. `toObject()` is generated on
+ * both ways, and a cyclic structure like `json`'s tree crosses at all. `$toObject()` is generated on
  * top for when a caller wants plain data instead, which makes the copy a choice per call site
  * rather than the language's decision.
  */
@@ -386,14 +390,14 @@ function genStructClass(s: WacStruct): string {
   lines.push(`/** \`${s.display}\`, held by reference. Fields and methods call into the module. */`);
   lines.push(`export class ${cls} {`);
   lines.push(`  /** The wasm reference. Hand it to another wrapper freely — nothing is copied. */`);
-  lines.push(`  constructor(readonly ref: unknown) {}`);
+  lines.push(`  constructor(readonly $ref: unknown) {}`);
 
   // The factory. `of` rather than a constructor overload, so `new ${cls}(ref)` stays unambiguous.
   const ctorParams = s.fields.map((f) => `${f.name}: ${tsType(f.type) ?? "unknown"}`).join(", ");
   const ctorArgs = s.fields.map((f) => toWasm(f.type, f.name)).join(", ");
   if (s.fields.every((f) => tsType(f.type) !== null)) {
-    lines.push(`  static of(${ctorParams}): ${cls} {`);
-    lines.push(`    return new ${cls}((_exports.__bind_s_${s.bind}_new as CallableFunction)(${ctorArgs}));`);
+    lines.push(`  static $of(${ctorParams}): ${cls} {`);
+    lines.push(`    return new ${cls}(($exports.$bind$s_${s.bind}_new as CallableFunction)(${ctorArgs}));`);
     lines.push(`  }`);
   }
 
@@ -401,11 +405,11 @@ function genStructClass(s: WacStruct): string {
     const ts = tsType(f.type);
     if (!ts) continue;                       // a field of an unsupported type is simply absent
     lines.push(`  get ${f.name}(): ${ts} {`);
-    lines.push(`    return ${fromWasm(f.type, `(_exports.__bind_s_${s.bind}_get_${f.name} as CallableFunction)(this.ref)`)};`);
+    lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${s.bind}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
     lines.push(`  }`);
     if (!f.isConst) {
       lines.push(`  set ${f.name}(v: ${ts}) {`);
-      lines.push(`    (_exports.__bind_s_${s.bind}_set_${f.name} as CallableFunction)(this.ref, ${toWasm(f.type, "v")});`);
+      lines.push(`    ($exports.$bind$s_${s.bind}_set_${f.name} as CallableFunction)(this.$ref, ${toWasm(f.type, "v")});`);
       lines.push(`  }`);
     }
   }
@@ -440,11 +444,11 @@ function genStructClass(s: WacStruct): string {
       const cb = callbacksByType.get(p.type);
       return cb ? `_fnref${cb.index}(${p.name})` : toWasm(p.type, p.name);
     };
-    // A static method has no receiver, so it takes no `this.ref` and becomes a static
+    // A static method has no receiver, so it takes no `this.$ref` and becomes a static
     // class member — which is how a struct gets constructed from JavaScript at all.
-    const args = (m.isStatic ? [] : ["this.ref"]).concat(m.params.map(wasmArg)).join(", ");
-    const exportName = `${m.isStatic ? "__bind_sm_" : "__bind_m_"}${s.bind}_${m.name}`;
-    const call = `(_exports.${exportName} as CallableFunction)(${args})`;
+    const args = (m.isStatic ? [] : ["this.$ref"]).concat(m.params.map(wasmArg)).join(", ");
+    const exportName = `${m.isStatic ? "$bind$sm_" : "$bind$m_"}${s.bind}_${m.name}`;
+    const call = `($exports.${exportName} as CallableFunction)(${args})`;
     lines.push(`  ${m.isStatic ? "static " : ""}${m.name}(${ps}): ${m.ret === "void" ? "void" : tsType(m.ret)} {`);
     const stmt = m.ret === "void" ? `${call};` : `return ${fromWasm(m.ret, call)};`;
     if (hasTrapMessages) {
@@ -455,14 +459,14 @@ function genStructClass(s: WacStruct): string {
     lines.push(`  }`);
   }
 
-  // A plain-data copy, one level deep: a struct-typed field becomes its own `toObject()`, and a
+  // A plain-data copy, one level deep: a struct-typed field becomes its own `$toObject()`, and a
   // nullable one becomes null. Deliberately not recursive through a cycle — `Node? next` on a ring
   // would not terminate — so a self-referential field is copied as the wrapper, not as data.
   const plainFields = s.fields.filter((f) => tsType(f.type) !== null);
   const objType = plainFields
     .map((f) => `${f.name}: ${structOf(f.type) ? tsType(f.type) : tsType(f.type)}`).join("; ");
   lines.push(`  /** A plain-object snapshot. Struct-typed fields stay wrappers, so cycles are safe. */`);
-  lines.push(`  toObject(): { ${objType} } {`);
+  lines.push(`  $toObject(): { ${objType} } {`);
   lines.push(`    return { ${plainFields.map((f) => `${f.name}: this.${f.name}`).join(", ")} };`);
   lines.push(`  }`);
   lines.push(`}`);
@@ -475,7 +479,7 @@ function genStructClass(s: WacStruct): string {
  * Every nullable conversion has to test the value and then convert it, and writing that
  * as `(expr === null ? null : f(expr))` evaluates `expr` **twice**. For a field read that
  * is merely wasteful; for a *call* it is wrong, and the calls are the interesting case —
- * a callback dispatcher's argument is `_cbs28[_slot](a0)`, so a nullable-returning
+ * a callback dispatcher's argument is `$cbs28[$slot](a0)`, so a nullable-returning
  * callback was invoked twice per call. Anything with a side effect ran double, and
  * anything single-use failed on the second go and then converted the failure's `null` as
  * if it were a value: `Cannot read properties of null (reading 'length')`.
@@ -496,12 +500,12 @@ function toWasm(wacType: string, expr: string): string {
   const box = boxedPrim(wacType);
   if (box) {
     return once(expr, (v) =>
-      `${v} === null ? null : (_exports.__bind_opt_${box}_new as CallableFunction)(${v})`);
+      `${v} === null ? null : ($exports.$bind$opt_${box}_new as CallableFunction)(${v})`);
   }
   const nr = nullableRef(wacType);
   if (nr) return once(expr, (v) => `${v} === null ? null : ${toWasm(nr, v)}`);
   const st = structOf(wacType);
-  if (st) return st.nullable ? once(expr, (v) => `${v} === null ? null : ${v}.ref`) : `${expr}.ref`;
+  if (st) return st.nullable ? once(expr, (v) => `${v} === null ? null : ${v}.$ref`) : `${expr}.$ref`;
   return expr;
 }
 
@@ -514,14 +518,14 @@ function fromWasm(wacType: string, expr: string): string {
   const box = boxedPrim(wacType);
   if (box) {
     return `((_b) => _b === null || _b === undefined ? null : ` +
-      `${fromWasm(box, `(_exports.__bind_opt_${box}_get as CallableFunction)(_b)`)})(${expr})`;
+      `${fromWasm(box, `($exports.$bind$opt_${box}_get as CallableFunction)(_b)`)})(${expr})`;
   }
   const nr = nullableRef(wacType);
   if (nr) return `((_v) => _v === null || _v === undefined ? null : ${fromWasm(nr, "_v")})(${expr})`;
   const out = outFuncrefsByType.get(wacType);
   if (out) {
     const args = out.params.map((_, i) => `a${i}`).join(", ");
-    const call = `(_exports.${out.helper} as CallableFunction)(_f${args ? ", " + args : ""})`;
+    const call = `($exports.${out.helper} as CallableFunction)(_f${args ? ", " + args : ""})`;
     const body = out.ret === "void" ? `{ ${call}; }` : fromWasm(out.ret, call);
     return `((_f) => (${args}) => ${body})(${expr})`;
   }
@@ -553,7 +557,7 @@ function arrayToWasmHelper(elemType: string, jsType: string): string {
   // array wasm-side. The old per-element loop cost n calls across the boundary.
   _memEnsure(n * ${width});
   new ${jsType}(_memBuffer(), 0, n).set(js);
-  return (_exports.${prefix}_from_mem as CallableFunction)(n);
+  return ($exports.${prefix}_from_mem as CallableFunction)(n);
 }`;
 }
 
@@ -567,15 +571,15 @@ function arrayToWasmHelper(elemType: string, jsType: string): string {
  * `array.new_default` is not available for a type with no default.
  */
 function refArrayToWasmHelper(arr: WacArray, elemTs: string): string {
-  const p = `__bind_arr_${arr.suffix}`;
+  const p = `$bind$arr_${arr.suffix}`;
   const mk = arr.fill
-    ? `  if (js.length === 0) return (_exports.${p}_new0 as CallableFunction)();\n` +
-      `  const wa = (_exports.${p}_new as CallableFunction)(js.length, ${toWasm(arr.elem, "js[0]")});`
-    : `  const wa = (_exports.${p}_new as CallableFunction)(js.length);`;
+    ? `  if (js.length === 0) return ($exports.${p}_new0 as CallableFunction)();\n` +
+      `  const wa = ($exports.${p}_new as CallableFunction)(js.length, ${toWasm(arr.elem, "js[0]")});`
+    : `  const wa = ($exports.${p}_new as CallableFunction)(js.length);`;
   return `function _arrayToWasm_${arr.suffix}(js: ${elemTs}[]): unknown {
 ${mk}
   for (let i = 0; i < js.length; i++) {
-    (_exports.${p}_set as CallableFunction)(wa, i, ${toWasm(arr.elem, "js[i]")});
+    ($exports.${p}_set as CallableFunction)(wa, i, ${toWasm(arr.elem, "js[i]")});
   }
   return wa;
 }`;
@@ -583,12 +587,12 @@ ${mk}
 
 /** Read a wasm array of references back, element by element. */
 function refArrayFromWasmHelper(arr: WacArray, elemTs: string): string {
-  const p = `__bind_arr_${arr.suffix}`;
+  const p = `$bind$arr_${arr.suffix}`;
   return `function _arrayFromWasm_${arr.suffix}(wa: unknown): ${elemTs}[] {
-  const n = (_exports.${p}_len as CallableFunction)(wa) as number;
+  const n = ($exports.${p}_len as CallableFunction)(wa) as number;
   const out: ${elemTs}[] = [];
   for (let i = 0; i < n; i++) {
-    const _e = (_exports.${p}_get as CallableFunction)(wa, i);
+    const _e = ($exports.${p}_get as CallableFunction)(wa, i);
     out.push(${fromWasm(arr.elem, "_e")});
   }
   return out;
@@ -603,9 +607,9 @@ function arrayFromWasmHelper(elemType: string, jsType: string): string {
   void elemCast;
   const width = ARRAY_ELEM_WIDTH[elemType];
   return `function _arrayFromWasm_${elemBase}(wa: unknown): ${jsType} {
-  const n = (_exports.${prefix}_len as CallableFunction)(wa) as number;
+  const n = ($exports.${prefix}_len as CallableFunction)(wa) as number;
   _memEnsure(n * ${width});
-  (_exports.${prefix}_to_mem as CallableFunction)(wa);
+  ($exports.${prefix}_to_mem as CallableFunction)(wa);
   // slice() rather than a view: the caller keeps this, and the next transfer
   // overwrites the buffer.
   return new ${jsType}(_memBuffer(), 0, n).slice();
@@ -616,10 +620,10 @@ function arrayFromWasmHelper(elemType: string, jsType: string): string {
 
 // Staging-buffer access. Growing the memory detaches the old ArrayBuffer, so
 // `_memBuffer()` is re-read after every `_memEnsure` rather than cached.
-const MEM_ACCESS = `const _mem = _exports.__bind_mem as WebAssembly.Memory;
+const MEM_ACCESS = `const _mem = $exports.$bind$mem as WebAssembly.Memory;
 
 function _memEnsure(bytes: number): void {
-  const have = (_exports.__bind_mem_ensure as CallableFunction)(bytes) as number;
+  const have = ($exports.$bind$mem_ensure as CallableFunction)(bytes) as number;
   if (have < bytes) {
     throw new Error(\`wac: could not grow the transfer buffer to \${bytes} bytes\`);
   }
@@ -633,13 +637,13 @@ const STRING_TO_WASM = `function _stringToWasm(s: string): unknown {
   const bytes = new TextEncoder().encode(s);
   _memEnsure(bytes.length);
   new Uint8Array(_memBuffer(), 0, bytes.length).set(bytes);
-  return (_exports.__bind_str_from_mem as CallableFunction)(bytes.length);
+  return ($exports.$bind$str_from_mem as CallableFunction)(bytes.length);
 }`;
 
 const STRING_FROM_WASM = `function _stringFromWasm(wa: unknown): string {
-  const n = (_exports.__bind_str_len as CallableFunction)(wa) as number;
+  const n = ($exports.$bind$str_len as CallableFunction)(wa) as number;
   _memEnsure(n);
-  (_exports.__bind_str_to_mem as CallableFunction)(wa);
+  ($exports.$bind$str_to_mem as CallableFunction)(wa);
   return new TextDecoder().decode(new Uint8Array(_memBuffer(), 0, n));
 }`;
 
@@ -696,14 +700,14 @@ function genWrapper(exp: WacExport): WrapperResult {
       continue;
     }
     if (p.type === "string" || ARRAY_MAP[p.type]) {
-      lines.push(`  const _w_${p.name} = ${toWasm(p.type, p.name)};`);
-      wasmArgs.push(`_w_${p.name}`);
+      lines.push(`  const $w$${p.name} = ${toWasm(p.type, p.name)};`);
+      wasmArgs.push(`$w$${p.name}`);
     } else {
       wasmArgs.push(toWasm(p.type, p.name));
     }
   }
 
-  const callExpr = `(_exports.${exp.name} as CallableFunction)(${wasmArgs.join(", ")})`;
+  const callExpr = `($exports.${exp.name} as CallableFunction)(${wasmArgs.join(", ")})`;
 
   if (exp.ret === "void") {
     lines.push(`  ${callExpr};`);
@@ -849,7 +853,7 @@ export function wacBindgen(compiled: WacCompiled): string {
 
   // Header: wasm binary
   parts.push(
-    `const _wasm = Uint8Array.from(\n  atob("${base64}"),\n  (c) => c.charCodeAt(0),\n);`,
+    `const $wasm = Uint8Array.from(\n  atob("${base64}"),\n  (c) => c.charCodeAt(0),\n);`,
   );
   // The host functions the module can be given. A module that takes none has no
   // imports at all, and instantiates exactly as it did before.
@@ -868,13 +872,13 @@ export function wacBindgen(compiled: WacCompiled): string {
         continue;
       }
       parts.push(genCallbackRegistry(cb));
-      fields.push(`    ${cb.field}: _cbd${cb.index},`);
+      fields.push(`    ${cb.field}: $cbd${cb.index},`);
     }
     parts.push(`const _imports = {\n  wac: {\n${fields.join("\n")}\n  },\n};`);
   }
-  const importArg = allCbs.length > 0 ? "_wasm, _imports" : "_wasm";
+  const importArg = allCbs.length > 0 ? "$wasm, _imports" : "$wasm";
   parts.push(
-    `const _instance = await WebAssembly.instantiate(${importArg});\nconst _exports = _instance.instance.exports;`,
+    `const $instance = await WebAssembly.instantiate(${importArg});\nconst $exports = $instance.instance.exports;`,
   );
 
   // Staging-buffer access, needed by every bulk path below.
@@ -963,7 +967,7 @@ ${list}
 ` +
       `export function __cov_init(): void {
 ` +
-      `  (_exports.__cov_init as CallableFunction)();
+      `  ($exports.__cov_init as CallableFunction)();
 }`,
     );
     parts.push(
@@ -971,7 +975,7 @@ ${list}
 ` +
       `export function __cov_len(): number {
 ` +
-      `  return (_exports.__cov_len as CallableFunction)() as number;
+      `  return ($exports.__cov_len as CallableFunction)() as number;
 }`,
     );
     parts.push(
@@ -979,7 +983,7 @@ ${list}
 ` +
       `export function __cov_get(i: number): number {
 ` +
-      `  return (_exports.__cov_get as CallableFunction)(i) as number;
+      `  return ($exports.__cov_get as CallableFunction)(i) as number;
 }`,
     );
   }

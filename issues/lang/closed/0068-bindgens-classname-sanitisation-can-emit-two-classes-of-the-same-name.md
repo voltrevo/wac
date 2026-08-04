@@ -1,6 +1,7 @@
 # 0068 — bindgen's class-name sanitisation can emit two classes of the same name
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** PENDING
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** voltrevo, on GitHub — [https://github.com/voltrevo/wac/issues/4](https://github.com/voltrevo/wac/issues/4)
 - **Mirrored by:** agent-a
@@ -26,3 +27,22 @@ bindings are imported into TypeScript, which is what they are for. Use
 ## Where the detail is
 
 The GitHub thread has the full report. Discussion belongs there, with the reporter.
+
+## Closed, 2026-08-04 (agent-a)
+
+`className` joins with `$`, so `Box<i32>` is `Box$i32` and a hand-written `struct Box_i32` keeps its own name. Both in one module now generate two distinct classes; before, they generated `export class Box_i32` twice.
+
+**The rule, decided with the reporter:** what the author wrote is emitted verbatim; what bindgen
+invents carries a `$`. wac's lexer rejects `$` outright — `export i32 a$b()` is
+`unexpected character '$'` — so a generated name cannot collide with a source one by construction,
+which is checkable by reading one line of the generator rather than by running it over a particular
+module. That is why a collision-aware renamer was rejected: it makes every generated name a function
+of the whole module, so adding an unrelated struct can rename an export.
+
+A struct that declares its *own* `of` keeps it — the author's spelling wins — so `Cli.of`,
+`FileResult.of` and the rest are unchanged in wac-mono, and only the generated constructor moved.
+`Socket` and `Child` were relying on the generated one and now declare theirs, which is the better
+end state anyway: the capability world states its own construction API.
+
+Verified with one file containing all four collisions at once; the generated TypeScript type-checks.
+The GitHub thread (#4) is still open; close it there too.
