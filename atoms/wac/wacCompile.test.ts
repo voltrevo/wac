@@ -602,3 +602,27 @@ export i32 unbox(i32 x) {
 `);
   eq(unboxing.unbox(9), 9, "unboxing a nullable primitive in a module of the same size");
 });
+
+Deno.test("a type from another file binds when it is a type argument", async () => {
+  // The resolver qualifies a cross-file reference as `Name__<file>`, and bindgen looked the type up
+  // only by the declaration's own name — so `Pending<Read>` with `Read` one file over came out as
+  // "not yet supported in bindgen", and the two methods that mention it were silently skipped. The
+  // message blamed bindgen's capabilities for what was a lookup missing a spelling.
+  const files = new Map([
+    ["r.wac", "export enum Read { Data(u8[] bytes), End }"],
+    [
+      "m.wac",
+      `import { Read } from "./r.wac";
+       export struct Holder<T> { T v; Holder<T> of(T v) { return Holder<T>(v); } }
+       export Holder<Read> held() { return Holder<Read>(Read.End); }`,
+    ],
+  ]);
+  const r = wacCompile(files, "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => d.message).join("; "));
+  const { wacBindgen } = await import("./wacBindgen.ts");
+  const ts = wacBindgen(r.compiled);
+
+  eq(ts.includes("export class Holder$Read"), true, "the instantiation is bound");
+  // The proof is the absence of a skip for the members that mention the cross-file type.
+  eq(/not yet supported in bindgen/.test(ts), false, ts.split("\n").filter((l) => l.includes("not yet")).join("\n"));
+});
