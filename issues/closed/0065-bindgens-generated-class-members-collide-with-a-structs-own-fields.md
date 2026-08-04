@@ -1,7 +1,7 @@
 # 0065 — bindgen's generated class members collide with a struct's own fields
 
 - **Status:** closed
-- **Fixed in:** PENDING
+- **Fixed in:** 3fc5d7b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** voltrevo, on GitHub — [https://github.com/voltrevo/wac/issues/5](https://github.com/voltrevo/wac/issues/5)
 - **Mirrored by:** agent-a

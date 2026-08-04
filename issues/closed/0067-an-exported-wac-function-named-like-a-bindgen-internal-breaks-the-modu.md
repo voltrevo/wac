@@ -1,7 +1,7 @@
 # 0067 — an exported wac function named like a bindgen internal breaks the module
 
 - **Status:** closed
-- **Fixed in:** PENDING
+- **Fixed in:** 3fc5d7b
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** voltrevo, on GitHub — [https://github.com/voltrevo/wac/issues/6](https://github.com/voltrevo/wac/issues/6)
 - **Mirrored by:** agent-a
