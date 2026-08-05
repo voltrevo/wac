@@ -1,8 +1,8 @@
 // wapy printer tests.
 //
-// `spec/tour.wac` is the whole language in one file that compiles and self-tests, so printing
-// it is a coverage test for free: a construct the printer does not know shows up as an
-// `unhandled` tally rather than as plausible-looking output.
+// `spec/tour.wac` is a broad sample rather than full coverage — it has no enums and one
+// generic — so printing it catches a construct the printer does not know, but the real
+// coverage evidence is `wapyRoundTrip.test.ts`, which runs over all of wac-mono.
 //
 // The rest are the renderings worth pinning, chosen because they are the ones where the
 // mapping made a decision rather than a transliteration.
@@ -62,9 +62,10 @@ Deno.test("a step other than ++ becomes range's third argument", () => {
   assertStringIncludes(out, "for i in range(0, n, 2):");
 });
 
-Deno.test("a loop that is not counted falls back, and says so", () => {
-  // Decrementing, so not a range. The fallback hoists the variable and cannot round-trip,
-  // which is exactly why it is marked in the output rather than left to be discovered.
+Deno.test("a loop that is not counted keeps its three clauses", () => {
+  // Decrementing, so not a range. The first version hoisted the loop variable into an
+  // enclosing `while`, which changes its scope and cannot round-trip — two such loops in one
+  // function would declare the same name twice, which wac rejects even though Python does not.
   const out = wapy(`
     export i32 f(i32 n) {
       i32 t = 0;
@@ -72,8 +73,7 @@ Deno.test("a loop that is not counted falls back, and says so", () => {
       return t;
     }
   `);
-  assertStringIncludes(out, "# for: not a counted loop");
-  assertStringIncludes(out, "while i > 0:");
+  assertStringIncludes(out, "for i: i32 = n; i > 0; i--:");
 });
 
 Deno.test("receiver forms map onto self", () => {
@@ -138,7 +138,7 @@ Deno.test("operators that have Python spellings take them", () => {
   assertStringIncludes(out, "if a and b:");
   assertStringIncludes(out, "return not a");
   assertStringIncludes(out, "if a or b:");
-  assertStringIncludes(out, "y: i32 = 1 if a else 2");
+  assertStringIncludes(out, "y: i32 = (1 if a else 2)");   // always parenthesised
   assertStringIncludes(out, "return x as~ bool");   // casts keep their spelling
 });
 

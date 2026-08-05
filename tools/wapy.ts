@@ -15,14 +15,21 @@
 // **Not Python, and not trying to be.** Running Python code through wac is an explicit
 // anti-goal. wapy will not accept a Python file, and a wapy file is not guaranteed to be
 // parseable by Python's own parser — `match` stays an expression, `!` stays a postfix unwrap,
-// `i32[]` stays an array type, and identifiers that happen to be Python keywords (`from`,
-// `and`, `or`, `in`, `None` — 1,248 sites in wac-mono) are left exactly as written.
+// `i32[]` stays an array type, `switch` keeps its keyword, and identifiers that happen to be
+// Python keywords (`from`, `in`, `pass`, `range`) are left exactly as written.
 //
 // That was a deliberate choice. Constraining wapy to Python's grammar would buy Python's
 // editors and formatters, and would cost a bijective identifier-mangling scheme plus folding
 // wac's `match` *expression* into Python's `match` *statement* on the way back. Both are
 // gymnastics in service of a resemblance nobody asked to be exact, and both would make the
 // round-trip non-mechanical. Python-flavoured keeps the mapping one-to-one.
+//
+// One earlier figure here was wrong and is worth correcting: an initial count of "1,248 wac
+// identifiers that are Python keywords" was counting comments and string literals. Stripped of
+// those, wac-mono has **no** bare use of `and`, `or`, `True`, `False` or `self`; every `not` is
+// part of `is not null`, which is wac syntax; and `None` appears only as a variant name. The
+// real collisions are `pass` and `range` as ordinary variables, and both are distinguishable by
+// position. Which is why the reverse direction below is possible at all.
 //
 // ## Why print-only, for now
 //
@@ -56,18 +63,81 @@ function unknown(what: string, detail: string): string {
 // `list[i32]` and, more to the point, maps back without a decision. `T?` becomes `T | None`
 // because that one genuinely is clearer and is still one-to-one.
 
-function ty(t: WacType): string {
+/**
+ * `inExpr` switches the generic-argument brackets.
+ *
+ * In an annotation, `Vec[i32]` is the PEP 695 look and is unambiguous. In expression position
+ * it is not: `Vec[i32](0)` is indistinguishable from indexing a funcref array and calling it,
+ * `arr[i](5)`, which is legal wac. So a constructor keeps `Vec<i32>(0)`. Slightly inconsistent,
+ * and the alternative is a heuristic that guesses — which the round-trip test would catch
+ * eventually and painfully.
+ */
+function ty(t: WacType, inExpr = false): string {
   switch (t.kind) {
     case "prim":     return t.name;
-    case "struct":   return t.typeArgs?.length ? `${t.name}[${t.typeArgs.map(ty).join(", ")}]` : t.name;
-    case "array":    return `${ty(t.elem)}[]`;
-    case "nullable": return `${ty(t.inner)} | None`;
-    case "funcref":  return `fn[${ty(t.ret)}(${t.params.map(ty).join(", ")})]`;
+    case "struct": {
+      if (!t.typeArgs?.length) return t.name;
+      const args = t.typeArgs.map((a) => ty(a, inExpr)).join(", ");
+      return inExpr ? `${t.name}<${args}>` : `${t.name}[${args}]`;
+    }
+    case "array":    return `${ty(t.elem, inExpr)}[]`;
+    // `?` when nested, because `Point | None[]` reparses as `Point | (None[])`. Only an
+    // *outermost* annotation gets the `| None` spelling — see `tyTop`.
+    case "nullable": return `${ty(t.inner, inExpr)}?`;
+    case "funcref":  return `fn[${ty(t.ret, inExpr)}(${t.params.map((p) => ty(p, inExpr)).join(", ")})]`;
     default:         return unknown("type", (t as { kind: string }).kind);
   }
 }
 
+/**
+ * A type in annotation position, where an outermost nullable can safely read as `| None`.
+ *
+ * Only outermost: nested, it is ambiguous. `Point?[]` as `Point | None[]` parses as
+ * `Point | (None[])`, which is how the round-trip test found this.
+ */
+function tyTop(t: WacType): string {
+  return t.kind === "nullable" ? `${ty(t.inner)} | None` : ty(t);
+}
+
 // ── Expressions ──────────────────────────────────────────────────────────────
+//
+// Precedence-aware, because the first version was not and printed `(a + b) * c` as
+// `a + b * c` — which reparses as `a + (b * c)`. The round-trip test found it immediately,
+// which is the argument for having built the round-trip test.
+//
+// Levels mirror `wacParse`'s ladder exactly: ternary loosest, then `is`, then `||` down
+// through `*`, then casts, then unary. Every binary operator there is left-associative.
+
+const PREC: Record<string, number> = {
+  "||": 2, "&&": 3, "|": 4, "^": 5, "&": 6,
+  "==": 7, "!=": 7,
+  "<": 8, "<=": 8, ">": 8, ">=": 8,
+  "<<": 9, ">>": 9, ">>>": 9,
+  "+": 10, "-": 10,
+  "*": 11, "/": 11, "%": 11,
+};
+const P_TERNARY = 1, P_IS = 1.5, P_CAST = 12, P_UNARY = 13, P_PRIMARY = 99;
+
+function prec(e: Expr): number {
+  switch (e.kind) {
+    case "binary":    return PREC[e.op] ?? P_PRIMARY;
+    // Self-delimiting: the ternary always prints its own parentheses and a match expression
+    // its own braces, so treating them as primaries avoids `((a if c else b))`.
+    case "ternary":   return P_PRIMARY;
+    case "matchExpr": return P_PRIMARY;
+    case "is":        return P_IS;
+    case "cast":      return P_CAST;
+    case "unary":     return P_UNARY;
+    default:          return P_PRIMARY;
+  }
+}
+
+/** Print `e` as an operand of something at `outer`, parenthesising only when needed. */
+function operand(e: Expr, outer: number, rightOfLeftAssoc = false): string {
+  const inner = prec(e);
+  const need = rightOfLeftAssoc ? inner <= outer : inner < outer;
+  return need ? `(${expr(e)})` : expr(e);
+}
 
 function expr(e: Expr): string {
   switch (e.kind) {
@@ -80,41 +150,48 @@ function expr(e: Expr): string {
     // `self` in the signature, so every use of it has to agree.
     case "ident":  return e.name === "this" ? "self" : e.name;
 
-    case "unary":
+    case "unary": {
       // `!x` is Python's `not x`; the arithmetic and bitwise unaries keep their spelling.
-      return e.op === "!" ? `not ${expr(e.expr)}` : `${e.op}${expr(e.expr)}`;
+      const inner = operand(e.expr, P_UNARY);
+      return e.op === "!" ? `not ${inner}` : `${e.op}${inner}`;
+    }
 
     case "binary": {
       const op = e.op === "&&" ? "and" : e.op === "||" ? "or" : e.op;
-      return `${expr(e.left)} ${op} ${expr(e.right)}`;
+      const lvl = PREC[e.op] ?? P_PRIMARY;
+      return `${operand(e.left, lvl)} ${op} ${operand(e.right, lvl, true)}`;
     }
 
     // The four cast modes keep their spelling. `as` is already a Python keyword in `import
     // x as y`, and the other three have no Python analogue at all, so inventing names for
     // them would be worse than leaving them recognisable.
-    case "cast":   return `${expr(e.expr)} ${e.op} ${ty(e.type)}`;
+    case "cast":   return `${operand(e.expr, P_CAST)} ${e.op} ${ty(e.type, true)}`;
 
     case "is": {
-      const rhs = e.rhs === "null" ? "None" : "kind" in e.rhs && "line" in e.rhs
-        ? (isType(e.rhs) ? ty(e.rhs as WacType) : expr(e.rhs as Expr)) : expr(e.rhs as Expr);
-      return `${expr(e.expr)} is ${e.not ? "not " : ""}${rhs}`;
+      const rhs = e.rhs === "null" ? "None"
+        : isType(e.rhs) ? ty(e.rhs as WacType) : expr(e.rhs as Expr);
+      return `${operand(e.expr, P_IS)} is ${e.not ? "not " : ""}${rhs}`;
     }
 
     // Python's own conditional expression, and the one construct that reads better here.
-    case "ternary": return `${expr(e.then)} if ${expr(e.cond)} else ${expr(e.else_)}`;
+    // Always parenthesised. Python's conditional expression binds differently from wac's
+    // `? :` in ways that are easy to get wrong, and the parens make the reverse direction a
+    // lookup rather than a guess.
+    case "ternary":
+      return `(${expr(e.then)} if ${expr(e.cond)} else ${expr(e.else_)})`;
 
-    case "call":   return `${expr(e.callee)}(${e.args.map(expr).join(", ")})`;
-    case "index":  return `${expr(e.expr)}[${expr(e.idx)}]`;
-    case "field":  return `${expr(e.expr)}.${e.name}`;
-    case "unwrap": return `${expr(e.expr)}!`;
+    case "call":   return `${operand(e.callee, P_PRIMARY)}(${e.args.map(expr).join(", ")})`;
+    case "index":  return `${operand(e.expr, P_PRIMARY)}[${expr(e.idx)}]`;
+    case "field":  return `${operand(e.expr, P_PRIMARY)}.${e.name}`;
+    case "unwrap": return `${operand(e.expr, P_PRIMARY)}!`;
 
     case "construct": {
       const named = (e.named ?? []).map((n) => `${n.name}=${expr(n.val)}`);
-      return `${ty(e.ctype)}(${[...e.args.map(expr), ...named].join(", ")})`;
+      return `${ty(e.ctype, true)}(${[...e.args.map(expr), ...named].join(", ")})`;
     }
 
     case "arrNew": {
-      const el = ty(e.elem);
+      const el = ty(e.elem, true);
       if (e.size !== null) {
         const fill = e.fill ? `fill=${expr(e.fill)}` : "";
         return `${el}[${expr(e.size)}](${fill})`;
@@ -172,7 +249,7 @@ function block(b: Block, d: number): string[] {
  * a `--` — is not a range and falls back, because a recogniser that guesses is worse than
  * one that declines.
  */
-function countedRange(s: Stmt & { kind: "for" }): { name: string; range: string } | null {
+function countedRange(s: Stmt & { kind: "for" }): { name: string; ann: string; range: string } | null {
   const init = s.init, cond = s.cond, upd = s.update;
   if (!init || !cond || !upd) return null;
   if (init.kind !== "var" || init.type.kind !== "prim") return null;
@@ -187,7 +264,10 @@ function countedRange(s: Stmt & { kind: "for" }): { name: string; range: string 
     step = `, ${expr(upd.rhs)}`;
   } else return null;
 
-  return { name: init.name, range: `range(${expr(init.init)}, ${expr(cond.right)}${step})` };
+  // `i32` is the default and covers every counted loop in wac-mono; anything else is
+  // annotated, because the type is not recoverable from `range()` alone.
+  const ann = init.type.name === "i32" ? "" : `: ${init.type.name}`;
+  return { name: init.name, ann, range: `range(${expr(init.init)}, ${expr(cond.right)}${step})` };
 }
 
 function stmt(s: Stmt, d: number): string[] {
@@ -196,12 +276,13 @@ function stmt(s: Stmt, d: number): string[] {
     // `name: T = value`, Python's annotated assignment. `const` has no Python spelling and
     // is load-bearing in wac, so it is kept as a prefix.
     case "var":
-      return [`${pad}${s.isConst ? "const " : ""}${s.name}: ${ty(s.type)} = ${expr(s.init)}`];
+      return [`${pad}${s.isConst ? "const " : ""}${s.name}: ${tyTop(s.type)} = ${expr(s.init)}`];
 
     case "assign": return [`${pad}${lval(s.lval)} ${s.op} ${expr(s.rhs)}`];
 
-    // Python has no ++/--, and `x += 1` is the honest rendering.
-    case "incr":   return [`${pad}${lval(s.lval)} ${s.op === "++" ? "+=" : "-="} 1`];
+    // Kept as `++`/`--` rather than `x += 1`. Python has neither, but they are distinct AST
+    // nodes from an assignment, so rendering them as `+= 1` would not survive a round trip.
+    case "incr":   return [`${pad}${lval(s.lval)}${s.op}`];
 
     case "if": {
       const out = [`${pad}if ${expr(s.cond)}:`, ...block(s.then, d + 1)];
@@ -231,24 +312,30 @@ function stmt(s: Stmt, d: number): string[] {
     // reject the second declaration. So the fallback does not round-trip, and is marked.
     case "for": {
       const r = countedRange(s);
-      if (r) return [`${pad}for ${r.name} in ${r.range}:`, ...block(s.body, d + 1)];
-      const out: string[] = [`${pad}# for: not a counted loop; the loop variable is hoisted`];
-      if (s.init) out.push(...stmt(s.init, d));
-      out.push(`${pad}while ${s.cond ? expr(s.cond) : "True"}:`);
-      out.push(...block(s.body, d + 1), ...(s.update ? stmt(s.update, d + 1) : []));
-      return out;
+      if (r) return [`${pad}for ${r.name}${r.ann} in ${r.range}:`, ...block(s.body, d + 1)];
+      // Not a range, so the three clauses are kept on one line. Ugly, and the honest
+      // rendering: hoisting the loop variable into an enclosing `while` changes its scope,
+      // and two such loops in one function would declare the same name twice — which wac
+      // rejects even though Python would not.
+      const parts = [
+        s.init ? stmt(s.init, 0)[0].trim() : "",
+        s.cond ? expr(s.cond) : "",
+        s.update ? stmt(s.update, 0)[0].trim() : "",
+      ];
+      return [`${pad}for ${parts.join("; ")}:`, ...block(s.body, d + 1)];
     }
 
+    // `do:` then a tail `while cond` with no colon. Rendering it as `while True` plus a
+    // trailing `if not c: break` reads better and is a different AST node, which the
+    // round-trip test rejects.
     case "dowhile":
-      return [
-        `${pad}while True:`,
-        ...block(s.body, d + 1),
-        `${IND.repeat(d + 1)}if not (${expr(s.cond)}):`,
-        `${IND.repeat(d + 2)}break`,
-      ];
+      return [`${pad}do:`, ...block(s.body, d + 1), `${pad}while ${expr(s.cond)}`];
 
+    // `switch` keeps its own keyword. Printing it as `match` would be prettier and would
+    // erase the difference between a switch on an integer and a match on an enum — two
+    // different AST nodes that would then read back as whichever the reader guessed.
     case "switch": {
-      const out = [`${pad}match ${expr(s.expr)}:`];
+      const out = [`${pad}switch ${expr(s.expr)}:`];
       for (const c of s.cases) {
         out.push(`${IND.repeat(d + 1)}case ${c.value === "default" ? "_" : expr(c.value)}:`);
         out.push(...(c.body.length ? c.body.flatMap((b) => stmt(b, d + 2)) : [IND.repeat(d + 2) + "pass"]));
@@ -270,11 +357,10 @@ function stmt(s: Stmt, d: number): string[] {
     case "continue": return [`${pad}continue`];
     case "trap":     return [`${pad}trap(${s.value ? expr(s.value) : ""})`];
 
-    // A bare block has no Python equivalent — indentation is the only nesting there is. The
-    // statements are flattened, which is semantically right for wac (a block only scopes)
-    // and is the one place the round-trip loses information: it cannot know the block was
-    // there. Marked so the reader, when it exists, does not have to guess.
-    case "block":    return [`${pad}# scope`, ...block(s.block, d)];
+    // A bare block has no Python equivalent, so it gets a keyword of its own. Flattening the
+    // statements would read better and would lose the block, which is a real AST node — the
+    // round-trip test rejects that, which is what the round-trip test is for.
+    case "block":    return [`${pad}scope:`, ...block(s.block, d + 1)];
 
     case "expr":     return [`${pad}${expr(s.expr)}`];
     default:         return [`${pad}${unknown("stmt", (s as { kind: string }).kind)}`];
@@ -284,12 +370,12 @@ function stmt(s: Stmt, d: number): string[] {
 // ── Declarations ─────────────────────────────────────────────────────────────
 
 function params(ps: Param[]): string[] {
-  return ps.map((p) => `${p.isConst ? "const " : ""}${p.name}: ${ty(p.type)}`);
+  return ps.map((p) => `${p.isConst ? "const " : ""}${p.name}: ${tyTop(p.type)}`);
 }
 
 function method(m: MethodDecl, d: number): string[] {
   const recv = m.hasThis ? [m.thisConst ? "const self" : "self"] : [];
-  const sig = `def ${m.name}(${[...recv, ...params(m.params)].join(", ")}) -> ${ty(m.returnType)}:`;
+  const sig = `def ${m.name}(${[...recv, ...params(m.params)].join(", ")}) -> ${tyTop(m.returnType)}:`;
   return [
     ...(m.isOverride ? [`${IND.repeat(d)}@override`] : []),
     `${IND.repeat(d)}${sig}`,
@@ -305,7 +391,7 @@ function struct(s: StructDecl): string[] {
   if (s.isConst) out.push("@const");
   out.push(`class ${s.name}${gen}${base}:`);
   for (const f of s.fields) {
-    out.push(`${IND}${f.isConst ? "const " : ""}${f.name}: ${ty(f.type)}`);
+    out.push(`${IND}${f.isConst ? "const " : ""}${f.name}: ${tyTop(f.type)}`);
   }
   if (s.fields.length && s.methods.length) out.push("");
   s.methods.forEach((m, i) => {
@@ -336,7 +422,7 @@ function func(f: FuncDecl): string[] {
   const gen = f.typeParams.length ? `[${f.typeParams.join(", ")}]` : "";
   return [
     ...(f.exported ? ["@export"] : []),
-    `def ${f.name}${gen}(${params(f.params).join(", ")}) -> ${ty(f.returnType)}:`,
+    `def ${f.name}${gen}(${params(f.params).join(", ")}) -> ${tyTop(f.returnType)}:`,
     ...block(f.body, 1),
   ];
 }
@@ -344,7 +430,7 @@ function func(f: FuncDecl): string[] {
 function constDecl(c: ConstDecl): string[] {
   return [
     ...(c.exported ? ["@export"] : []),
-    `const ${c.name}: ${ty(c.type)} = ${expr(c.init)}`,
+    `const ${c.name}: ${tyTop(c.type)} = ${expr(c.init)}`,
   ];
 }
 
