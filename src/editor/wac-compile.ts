@@ -80,10 +80,11 @@ export async function runFunction(
  * | Node 22 `worker_threads` | killed — resolves in 2ms, no CPU after, process exits |
  * | Deno 2.9.1 | **not killed** — a full core keeps burning and the process never exits |
  *
- * Deno is the outlier, on the same V8 as Node, so this is its implementation rather than a limit
- * of the platform. It matters here in one place: `tools/site.test.ts` checks the deadline in a
- * subprocess it can SIGKILL, because otherwise `deno test` would never exit from the very test
- * that proves the deadline works.
+ * Deno is the outlier, on the same V8 as Node, and it is a **known regression with a fix in
+ * flight** — denoland/deno#35657 — rather than a design difference. So the one place it matters
+ * here is temporary: `tools/site.test.ts` checks the deadline in a subprocess it can SIGKILL,
+ * because otherwise `deno test` would never exit from the very test that proves the deadline
+ * works. When that PR lands, the subprocess can go and the test can call `runIsolated` directly.
  *
  * The page runs in a browser, where the kill is real. What holds in all three is the part the
  * panel depends on: the promise resolves on time and the thread you are reading this on stays
