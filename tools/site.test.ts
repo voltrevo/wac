@@ -126,7 +126,7 @@ Deno.test("site: the mixed-import snippets are a real program", async () => {
 // string or taking an array failed at run time with "not a function", including the landing
 // page's hello world. Nothing noticed, because nothing here had ever called one.
 
-import { runFunction, runnable } from "../src/editor/wac-compile.ts";
+import { createRunner, runFunction, runnable } from "../src/editor/wac-compile.ts";
 
 /** The panel's own path: text in, text out. */
 async function run(src: string, file: string, fn: string, args: string[]): Promise<string> {
@@ -165,24 +165,115 @@ Deno.test("site: the panel runs the landing page's wapy demo", async () => {
   }
 });
 
+Deno.test("site: a program that never terminates is stopped at its deadline", async () => {
+  // In a subprocess, because a worker spinning inside a wasm loop keeps Deno's process alive
+  // after `terminate()` — V8 cannot interrupt wasm, and only a host that kills the thread can.
+  // Browsers do; Deno does not. What is under test is the deadline and the message, which are
+  // the same everywhere, and the parent kills whatever the child leaves behind.
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", new URL("./siteDeadline.ts", import.meta.url).pathname, "700"],
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+
+  // Read the *first line* rather than to EOF: the child prints its answer and then cannot exit,
+  // because the worker it killed is still spinning. Waiting for EOF would wait for the SIGKILL.
+  const line = await firstLine(child.stdout, 20_000);
+  try { child.kill("SIGKILL"); } catch { /* the answer is what mattered */ }
+  await child.status;
+
+  if (line === null) throw new Error("the child printed nothing — it never reached its deadline");
+  const r = JSON.parse(line) as
+    { elapsed: number; success: boolean; output: string; after: string };
+  if (r.success) throw new Error("a program that cannot terminate reported success");
+  if (!r.output.includes("Stopped after 0.7s")) throw new Error(r.output);
+  // And the runner recovers: the killed worker is still spinning, so the next run has to get a
+  // new one rather than a queue behind a thread that will never answer.
+  if (r.after !== "recovered") throw new Error(`the next run after a kill gave: ${r.after}`);
+  // Generous: the point is that it is bounded at all, not that it is punctual.
+  if (r.elapsed > 5000) throw new Error(`took ${r.elapsed}ms to give up on a 700ms deadline`);
+});
+
+/** The first newline-terminated line on `stream`, or null if `ms` passes without one. */
+async function firstLine(stream: ReadableStream<Uint8Array>, ms: number): Promise<string | null> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const deadline = new Promise<null>((r) => setTimeout(() => r(null), ms));
+  try {
+    while (true) {
+      const next = await Promise.race([reader.read(), deadline]);
+      if (next === null) return null;
+      if (next.done) return buf.trim() === "" ? null : buf;
+      buf += decoder.decode(next.value, { stream: true });
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) return buf.slice(0, nl);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 Deno.test("site: every runnable playground export actually runs", async () => {
   // Not the answer — only that calling it neither throws nor reports a marshalling failure.
   // Zero and empty are what the boxes hold before anything is typed, so that is what is passed.
   //
-  // Which also means every example has to *terminate* on empty input, and one did not: the
-  // Collatz example looped forever on 0, so clicking Run without typing hung the tab. It has a
-  // guard now. If this test ever hangs rather than failing, that is what happened again.
+  // Every example therefore has to terminate on empty input, and one did not: the Collatz
+  // example looped forever on 0, so clicking Run without typing hung the tab. It has a guard now,
+  // and each call here goes through the same worker and the same deadline the page uses — so a
+  // future example that loops fails this test rather than hanging it.
+  // One worker for the whole sweep. A worker each costs a fresh type-check of the worker module
+  // under Deno, which took this from milliseconds to a minute.
+  const runner = createRunner();
   const broken: string[] = [];
-  for (const ex of EXAMPLES) {
-    const r = compile(ex.files, ex.entry);
-    if (!r.ok) continue;                              // reported by the compile test above
-    for (const f of r.compiled.exports) {
-      if (runnable(f) !== null) continue;             // the panel would not offer a Run button
-      const out = await runFunction(ex.files, ex.entry, f.name, f.params.map(() => ""));
-      if (!out.success && !out.output.startsWith("Runtime error: wac trap")) {
-        broken.push(`${ex.name} · ${f.name} — ${out.output}`);
+  try {
+    for (const ex of EXAMPLES) {
+      const r = compile(ex.files, ex.entry);
+      if (!r.ok) continue;                            // reported by the compile test above
+      for (const f of r.compiled.exports) {
+        if (runnable(f) !== null) continue;           // the panel would not offer a Run button
+        const out = await runner.run(
+          { compiled: r.compiled, funcName: f.name, argStrings: f.params.map(() => "") },
+          3000,
+        );
+        if (!out.success && !out.output.startsWith("Runtime error: wac trap")) {
+          broken.push(`${ex.name} · ${f.name} — ${out.output}`);
+        }
       }
     }
+  } finally {
+    runner.dispose();
   }
   if (broken.length) throw new Error(`${broken.length}:\n  ${broken.join("\n  ")}`);
+});
+
+Deno.test("site: the built worker chunk runs, not only the source", async () => {
+  // Everything above imports TypeScript. This talks to what Vite actually emits, because the
+  // worker is the one part of the page whose *bundling* can be wrong on its own: it is a separate
+  // chunk, loaded by URL, with its own module graph. Skipped without a build, since `deno test`
+  // has to pass on a fresh checkout.
+  const dir = new URL("../dist/assets/", import.meta.url);
+  let chunk: string | undefined;
+  try {
+    for (const e of Deno.readDirSync(dir)) if (e.name.startsWith("run.worker")) chunk = e.name;
+  } catch {
+    console.error("  (no dist/ — run `npx vite build` to check the bundle too)");
+    return;
+  }
+  if (!chunk) throw new Error("dist/assets exists but has no run.worker chunk");
+
+  const r = compile({ "m.wac": `export string hello() { return "from the bundle"; }` }, "m.wac");
+  if (!r.ok) throw new Error(r.diagnostics[0].message);
+
+  const worker = new Worker(new URL(chunk, dir).href, { type: "module" });
+  try {
+    const reply = await new Promise<{ success?: boolean; output?: string }>((resolve) => {
+      worker.onmessage = (e) => resolve(e.data);
+      setTimeout(() => resolve({}), 10_000);
+      worker.postMessage({ compiled: r.compiled, funcName: "hello", argStrings: [] });
+    });
+    if (reply.output !== "from the bundle") throw new Error(JSON.stringify(reply));
+  } finally {
+    worker.terminate();
+  }
 });

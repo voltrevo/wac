@@ -1,5 +1,5 @@
 import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../atoms/wac/wacCompile.ts";
-import { wacInstance, type WacArg, type WacVal } from "../../atoms/wac/wacInstance.ts";
+import { isArrayType, runHere, type RunReply, type RunRequest } from "./run.worker.ts";
 import { wacBindgen } from "../../atoms/wac/wacBindgen.ts";
 import { wacDiag } from "../../atoms/wac/wacDiag.ts";
 import type { FileMap } from "./file-store";
@@ -34,79 +34,129 @@ export function generateBindgen(compiled: WacCompiled): string {
 
 // ── Calling an export ────────────────────────────────────────────────────────
 //
-// The marshalling is `wacInstance`'s, not this file's. It used to be duplicated here — a second
-// copy of the accessor names, `__bind_str_len` against the emitter's `$bind$str_len` — and the
-// copy was wrong, so *every* export returning a string or taking an array failed at run time
-// with "not a function". The landing page's own hello-world demo was among them. There is one
-// table now, in the atom that owns those exports.
+// Off the main thread, with a deadline. wasm cannot be interrupted once it is running — there is
+// no timeout and no signal a host can raise from inside the same thread — so a program that does
+// not terminate can only be dealt with by running it somewhere that can be thrown away. The
+// worker is that somewhere; this holds the timer and terminates it.
 //
-// What is left here is the part that is genuinely the panel's: turning text typed into a box
-// into a value of the parameter's type, and turning the answer back into text.
+// The marshalling itself is `wacInstance`'s, in the worker. It used to be duplicated here — a
+// second copy of the accessor names, `__bind_str_len` against the emitter's `$bind$str_len` — and
+// the copy was wrong, so *every* export returning a string or taking an array failed at run time
+// with "not a function". The landing page's own hello-world demo was among them.
 
-/** Array element types the panel can build from a comma-separated box. */
-const ARRAY_ELEM: Record<string, "int" | "big" | "float"> = {
-  "u8[]": "int", "i8[]": "int", "u16[]": "int", "i16[]": "int",
-  "i32[]": "int", "u32[]": "int", "i64[]": "big", "u64[]": "big",
-  "f32[]": "float", "f64[]": "float",
-};
-
-function isArrayType(t: string): boolean {
-  return t in ARRAY_ELEM;
-}
-
-/** One text box, as the value its parameter wants. */
-function parseArg(text: string, type: string): WacArg {
-  const a = text.trim();
-  if (type === "string") return a;
-  if (isArrayType(type)) {
-    const kind = ARRAY_ELEM[type];
-    // A leading `[` is what people type; accept it rather than making them not.
-    const inner = a.replace(/^\[/, "").replace(/\]$/, "");
-    return inner.split(",").map((x) => x.trim()).filter(Boolean).map((x) =>
-      kind === "big" ? BigInt(x) : kind === "float" ? parseFloat(x) : parseInt(x, 10)
-    );
-  }
-  if (type === "bool") return a === "true";
-  if (type === "i64" || type === "u64") return BigInt(a || "0");
-  if (type === "f32" || type === "f64") return parseFloat(a || "0");
-  return parseInt(a || "0", 10);
-}
-
-/** The answer, as the panel shows it. */
-function show(v: WacVal, type: string): string {
-  if (type === "void" || v === undefined) return "(void)";
-  if (Array.isArray(v)) return `[${v.join(", ")}]`;
-  if (v === null) return "null";
-  return String(v);
-}
+/** How long a Run may take before the worker running it is killed. */
+export const RUN_TIMEOUT_MS = 5000;
 
 export async function runFunction(
   files: FileMap,
   fileName: string,
   funcName: string,
   argStrings: string[],
+  timeoutMs: number = RUN_TIMEOUT_MS,
 ): Promise<{ success: boolean; output: string }> {
   const result = wacCompile(new Map(Object.entries(files)), fileName);
   if (!result.ok) {
     return { success: false, output: result.diagnostics.map((e) => e.message).join("\n") };
   }
+  const req: RunRequest = { compiled: result.compiled, funcName, argStrings };
+  return await runIsolated(req, timeoutMs);
+}
 
-  const meta = result.compiled.exports.find((e) => e.name === funcName);
-  if (!meta) return { success: false, output: `No export named '${funcName}'` };
-
-  let inst;
+/**
+ * Run `req` in a worker, killing it if it outstays `timeoutMs`.
+ *
+ * A worker per run, terminated either way. Reusing one would save the module load, and would
+ * mean holding a live worker for the lifetime of the page and reasoning about what a timed-out
+ * run left behind in it. The load is a cached chunk after the first Run — measured at 25ms cold
+ * and 8ms warm.
+ *
+ * **What `terminate()` guarantees, and where.** V8 cannot interrupt a wasm loop, so terminating a
+ * worker stuck in one relies on the host killing the thread. Browsers do; Deno returns from
+ * `terminate()` but keeps the process alive until the thread finishes, which is why
+ * `tools/site.test.ts` checks the deadline in a subprocess it can kill. What holds everywhere is
+ * the part that matters here: the promise resolves on time and the page stays responsive.
+ *
+ * If a worker cannot be started at all, the call is run in place. That is the honest fallback:
+ * the answer is still right, and the only thing lost is the ability to stop it — better than a
+ * Run button that reports a plumbing failure for a program that works.
+ */
+async function runIsolated(req: RunRequest, timeoutMs: number): Promise<RunReply> {
+  const runner = createRunner();
   try {
-    inst = await wacInstance(result.compiled);
-  } catch (e) {
-    return { success: false, output: `Instantiation error: ${(e as Error).message}` };
+    return await runner.run(req, timeoutMs);
+  } finally {
+    runner.dispose();
   }
+}
 
-  try {
-    const args = meta.params.map((p, i) => parseArg(argStrings[i] ?? "", p.type));
-    return { success: true, output: show(inst.call(funcName, args), meta.ret) };
-  } catch (e) {
-    return { success: false, output: `Runtime error: ${(e as Error).message}` };
-  }
+/**
+ * A worker held across several runs, for a caller making many of them.
+ *
+ * The page does not need this — one Run per click, and a fresh worker each time is 25ms nobody
+ * notices. A test sweeping every export in every example does: each `new Worker` costs a fresh
+ * type-check of the worker module under Deno, which took a bulk sweep from milliseconds to a
+ * minute.
+ *
+ * A run that overstays its deadline takes the worker with it: it is still spinning, so it cannot
+ * be handed the next request, and `run` builds a new one.
+ */
+export function createRunner(): {
+  run(req: RunRequest, timeoutMs?: number): Promise<RunReply>;
+  dispose(): void;
+} {
+  let worker: Worker | null = null;
+
+  return {
+    async run(req, timeoutMs = RUN_TIMEOUT_MS) {
+      if (worker === null) {
+        try {
+          worker = new Worker(new URL("./run.worker.ts", import.meta.url), { type: "module" });
+        } catch {
+          return await runHere(req);            // no workers here; the answer is still right
+        }
+      }
+      const w = worker;
+      const reply = await exchange(w, req, timeoutMs);
+      if (reply.timedOut) {
+        w.terminate();
+        worker = null;
+      }
+      return reply.value;
+    },
+    dispose() {
+      worker?.terminate();
+      worker = null;
+    },
+  };
+}
+
+/** One request/response over `worker`, or the deadline, whichever comes first. */
+function exchange(
+  worker: Worker, req: RunRequest, timeoutMs: number,
+): Promise<{ value: RunReply; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: RunReply, timedOut = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.onmessage = null;
+      worker.onerror = null;
+      resolve({ value, timedOut });
+    };
+    const timer = setTimeout(() => finish({
+      success: false,
+      output: `Stopped after ${timeoutMs / 1000}s. It was still running, so it was killed — ` +
+        `check for a loop that never reaches its condition.`,
+    }, true), timeoutMs);
+
+    worker.onmessage = (e: MessageEvent<RunReply>) => finish(e.data);
+    worker.onerror = (e: ErrorEvent) => finish({
+      success: false,
+      output: `Worker error: ${e.message || "the worker failed to start"}`,
+    }, true);
+    worker.postMessage(req);
+  });
 }
 
 /**

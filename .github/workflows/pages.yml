@@ -69,6 +69,13 @@ jobs:
         run: npx tsc -b
       - working-directory: wac
         run: BASE_URL="/${{ github.event.repository.name }}/" npx vite build
+      # After the build, because one of these talks to the *emitted* worker chunk rather than to
+      # the TypeScript. The rest compile and run every snippet the page shows, which is the same
+      # reasoning as building the demos here: a page that advertises working code and serves
+      # broken code is worse than a page that did not deploy.
+      - name: Check the site's own code
+        working-directory: wac
+        run: deno test -A tools/site.test.ts
       - uses: actions/upload-pages-artifact@v3
         with:
           path: wac/dist
