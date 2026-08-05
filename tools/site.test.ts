@@ -166,10 +166,10 @@ Deno.test("site: the panel runs the landing page's wapy demo", async () => {
 });
 
 Deno.test("site: a program that never terminates is stopped at its deadline", async () => {
-  // In a subprocess, because a worker spinning inside a wasm loop keeps Deno's process alive
-  // after `terminate()` — V8 cannot interrupt wasm, and only a host that kills the thread can.
-  // Browsers do; Deno does not. What is under test is the deadline and the message, which are
-  // the same everywhere, and the parent kills whatever the child leaves behind.
+  // In a subprocess, because Deno's `terminate()` does not stop a worker spinning inside a wasm
+  // loop: measured, the core keeps burning and the process never exits. Chromium and Node both
+  // kill it; Deno is the outlier. What is under test is the deadline and the recovery, which
+  // hold everywhere, and the parent SIGKILLs whatever the child leaves behind.
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", new URL("./siteDeadline.ts", import.meta.url).pathname, "700"],
     stdout: "piped",

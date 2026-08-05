@@ -4,7 +4,9 @@
 // not come back: the Collatz example loops forever on 0, and 0 is what an empty box means, so
 // clicking Run without typing froze the tab. There is no way to interrupt a running wasm
 // function — no timeout, no signal, nothing the host can do from inside the same thread — so the
-// only real fix is to run it somewhere terminable.
+// only real fix is to run it somewhere terminable. `runIsolated` in `wac-compile.ts` records what
+// "terminable" is worth in each runtime; in a browser, which is where this runs, the kill is
+// real.
 //
 // This worker instantiates and calls; the main thread holds a timer and terminates it. The
 // caller is `runFunction` in `wac-compile.ts`.
