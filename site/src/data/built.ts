@@ -4,10 +4,11 @@
 //
 //   deno run --allow-read --allow-write tools/syncMap.ts ../wac-mono
 //
-// The numbers are a snapshot rather than a live figure, and the page rounds the headline ones
-// for that reason: this repo's Pages build has no wac-mono beside it, so nothing here can be
-// checked at deploy time. A number that cannot be checked should not pretend to four
-// significant figures.
+// The committed copy is a fallback, for a checkout with no wac-mono beside it. The Pages build
+// does have one and runs this script before building, so what the site serves is current as of
+// that deploy. The page still rounds the headline figures: they are a snapshot of another
+// repository at one moment, and a number like that should not pretend to four significant
+// figures even when it happens to have them.
 
 export type BuiltPackage = {
   name: string;
@@ -18,37 +19,39 @@ export type BuiltPackage = {
 
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
-  packages: 24,
-  lines: 40968,
-  tests: 899,
-  programs: 20,
+  packages: 26,
+  lines: 49632,
+  tests: 998,
+  programs: 26,
   pages: 4,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
 export const BUILT: BuiltPackage[] = [
-  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 231, tests: 24 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell…", lines: 1737, tests: 44 },
-  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics.", lines: 924, tests: 15 },
-  { name: "std", what: "Containers and the two sum types every program ends up wanting.", lines: 570, tests: 36 },
+  { name: "bytes", what: "Buf — a growable byte buffer.", lines: 283, tests: 25 },
+  { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics.", lines: 971, tests: 16 },
+  { name: "std", what: "Containers and the two sum types every program ends up wanting.", lines: 586, tests: 37 },
   { name: "unicode", what: "UTF-8 as code points, and simple case mapping.", lines: 216, tests: 11 },
-  { name: "bignum", what: "Arbitrary-precision integers.", lines: 615, tests: 41 },
+  { name: "bignum", what: "Arbitrary-precision integers.", lines: 629, tests: 42 },
   { name: "codec", what: "Base16, base32 and base64, from RFC 4648.", lines: 349, tests: 10 },
-  { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 236, tests: 13 },
+  { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 14 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1132, tests: 25 },
-  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 1990, tests: 83 },
-  { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 885, tests: 26 },
-  { name: "sh", what: "A shell, in wac.", lines: 4015, tests: 12 },
-  { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 76, tests: 14 },
+  { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 2014, tests: 83 },
+  { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 914, tests: 27 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell…", lines: 2487, tests: 59 },
+  { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1229, tests: 27 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 3467, tests: 11 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 2690, tests: 42 },
   { name: "crypto", what: "SHA-256, SHA-512/384, SHA-3, SHAKE, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and P-384, RSA…", lines: 4942, tests: 133 },
-  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 903, tests: 50 },
+  { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 967, tests: 51 },
+  { name: "sh", what: "A shell, in wac.", lines: 5646, tests: 21 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 237, tests: 16 },
+  { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4076, tests: 43 },
   { name: "server", what: "An HTTP server written in wac.", lines: 333, tests: 20 },
-  { name: "ssh", what: "An SSH-2 client and server, in wac, **and ssh and sshd programs built from them.", lines: 3565, tests: 45 },
+  { name: "ssh", what: "An SSH-2 client and server, in wac, **and ssh and sshd programs built from them.", lines: 3567, tests: 45 },
+  { name: "ssz", what: "**Everything an Altair light client needs is done and checked against Ethereum's vectors.", lines: 709, tests: 15 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 3263, tests: 70 },
-  { name: "box", what: "60 applets in one program, chosen by the first argument.", lines: 3091, tests: 22 },
-  { name: "tor", what: "A Tor client, in wac, on top of this repo's TLS 1.3 stack.", lines: 4272, tests: 109 },
+  { name: "box", what: "60 applets in one program, chosen by the first argument.", lines: 4255, tests: 32 },
+  { name: "tor", what: "A Tor client, in wac, on top of this repo's TLS 1.3 stack.", lines: 4301, tests: 109 },
 ];

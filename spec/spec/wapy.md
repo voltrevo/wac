@@ -51,10 +51,16 @@ same file from either surface.
 
 ### What wapy does not have
 
-`[§wac-wapy-nolines-4gt7wxb]` **No line continuation.** A statement is one
-physical line. There is no backslash and no implicit continuation inside
-brackets, so a long expression cannot be wrapped. An unclosed bracket is
-therefore always reported at the end of the line it opened on.
+`[§wac-wapy-nolines-4gt7wxb]` **No backslash continuation.** A statement is one
+line, except that an open bracket continues it — Python's implicit continuation,
+and for the same reason: without it a multi-line match expression or a long
+argument list is unwritable. Indentation inside a continuation is not
+significant. An expression that wants to wrap and is not already inside brackets
+can be parenthesised; there is no other form.
+
+Every token keeps the line and column it was written at, so a diagnostic inside
+a continuation names the physical line rather than the one that opened the
+bracket. A bracket still open at the end of the file is an error there.
 
 **No tabs.** Indentation is measured in columns, and a tab makes the depth
 depend on how the file is displayed. A tab in the leading whitespace is a

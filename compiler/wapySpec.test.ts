@@ -125,12 +125,47 @@ Deno.test("[§wac-wapy-words-p2vm9kx] a structural word is an ordinary name", ()
   if (e.length) throw new Error(`${e[0].line}:${e[0].col} ${e[0].message}`);
 });
 
-// ── §wac-wapy-nolines-4gt7wxb — one statement, one line ─────────────────────
+// ── §wac-wapy-nolines-4gt7wxb — brackets continue a line, nothing else does ──
 
-Deno.test("[§wac-wapy-nolines-4gt7wxb] an expression does not continue onto the next line", () => {
-  const e = wapyParse("def f() -> i32:\n    return (1 +\n        2)\n", "t.wapy").errors;
-  if (!e.length) throw new Error("a wrapped expression was accepted");
-  if (e[0].line !== 2) throw new Error(`reported on line ${e[0].line}, not the line that opened the bracket`);
+Deno.test("[§wac-wapy-nolines-4gt7wxb] an open bracket continues the statement", () => {
+  const src = [
+    "@export",
+    "def f(a: i32, b: i32) -> i32:",
+    "    return (a +",
+    "            b)",
+  ].join("\n");
+  const e = wapyParse(src, "t.wapy").errors;
+  if (e.length) throw new Error(`${e[0].line}:${e[0].col} ${e[0].message}`);
+});
+
+Deno.test("[§wac-wapy-nolines-4gt7wxb] a multi-line match expression is writable", () => {
+  const src = [
+    "class Shape(enum):",
+    "    Circle(r: f64)",
+    "    Rect(w: f64, h: f64)",
+    "",
+    "    def area(const self) -> f64:",
+    "        return match self {",
+    "          case Circle(r): 3.14159 * r * r,",
+    "          case Rect(w, h): w * h",
+    "        }",
+  ].join("\n");
+  const e = wapyParse(src, "t.wapy").errors;
+  if (e.length) throw new Error(`${e[0].line}:${e[0].col} ${e[0].message}`);
+});
+
+Deno.test("[§wac-wapy-nolines-4gt7wxb] a diagnostic inside a continuation names its own line", () => {
+  const src = "def f() -> i32:\n    return (1 +\n            true)\n";
+  const e = wapyParse(src, "t.wapy").errors;
+  if (!e.length) throw new Error("`true` was accepted");
+  if (e[0].line !== 3) throw new Error(`reported on line ${e[0].line}, not the line it was written on`);
+});
+
+Deno.test("[§wac-wapy-nolines-4gt7wxb] a bracket left open at the end of the file is an error", () => {
+  const e = wapyParse("def f() -> i32:\n    return (1 + 2\n", "t.wapy").errors;
+  if (!e.some((x) => x.message.includes("still open"))) {
+    throw new Error(`no unclosed-bracket error: ${JSON.stringify(e)}`);
+  }
 });
 
 // ── §wac-wapy-import-8kd3mqp — the extension travels with the path ──────────
@@ -143,6 +178,40 @@ Deno.test("[§wac-wapy-import-8kd3mqp] either surface imports either extension",
   };
   const r = wacCompile(new Map(Object.entries(graph)), "c.wapy");
   if (!r.ok) throw new Error(r.diagnostics.map((d) => `${d.file}:${d.line} ${d.message}`).join("\n"));
+});
+
+Deno.test("[§wac-wapy-h3nq7fv] the same program in either surface emits identical wasm", () => {
+  // The strongest form of "same language": not merely the same tree, the same bytes. Anything
+  // the surface could smuggle through — a different declaration order, an operator recorded by
+  // its spelling, a `for` that lost its step — would show up here as a diff.
+  const wac = [
+    "export struct Histogram {",
+    "  i32[] bins;",
+    "  Histogram of(i32 n) { return Histogram(i32[n]()); }",
+    "  void add(this, i32 v) {",
+    "    i32 i = v < 0 ? 0 : v;",
+    "    this.bins[i % this.bins.len()]++;",
+    "  }",
+    "  i32 peak(const this) {",
+    "    i32 best = 0;",
+    "    for (i32 i = 0; i < this.bins.len(); i++) {",
+    "      if (this.bins[i] > best) { best = this.bins[i]; }",
+    "    }",
+    "    return best;",
+    "  }",
+    "}",
+  ].join("\n");
+
+  const a = wacCompile(new Map([["h.wac", wac]]), "h.wac");
+  const b = wacCompile(new Map([["h.wapy", wapy(wac)]]), "h.wapy");
+  if (!a.ok) throw new Error(a.diagnostics[0].message);
+  if (!b.ok) throw new Error(`as wapy: ${b.diagnostics[0].file}:${b.diagnostics[0].line} ${b.diagnostics[0].message}`);
+
+  const x = a.compiled.wasm, y = b.compiled.wasm;
+  if (x.length !== y.length) throw new Error(`${x.length} bytes from wac, ${y.length} from wapy`);
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] !== y[i]) throw new Error(`byte ${i} differs: ${x[i]} vs ${y[i]}`);
+  }
 });
 
 // ── §wac-wapy-matchexpr-3jx8rvc — the expression form keeps its braces ──────

@@ -12,7 +12,7 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { tags } from "@lezer/highlight";
-import { wac as wacLang } from "./editor/wac-language";
+import { wac as wacLang, wapy as wapyLang } from "./editor/wac-language";
 
 export const GITHUB = "https://github.com/voltrevo/wac";
 export const MONO = "https://github.com/voltrevo/wac-mono";
@@ -57,14 +57,19 @@ const cmTheme = EditorView.theme({
   ".cm-activeLine": { backgroundColor: "transparent" },
 });
 
-export function CodeBlock({ code, lang }: { code: string; lang: "wac" | "ts" }) {
+/** The three things a code block on this page can be written in. */
+export type Lang = "wac" | "wapy" | "ts";
+
+export function CodeBlock({ code, lang }: { code: string; lang: Lang }) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
     viewRef.current?.destroy();
-    const langExt = lang === "ts" ? javascript({ typescript: true }) : wacLang();
+    const langExt = lang === "ts"
+      ? javascript({ typescript: true })
+      : lang === "wapy" ? wapyLang() : wacLang();
     const state = EditorState.create({
       doc: code,
       extensions: [
@@ -97,7 +102,7 @@ export function CodeBlock({ code, lang }: { code: string; lang: "wac" | "ts" }) 
 export function SideBySide({ left, right, leftLabel, rightLabel, leftLang, rightLang }: {
   left: string; right: string;
   leftLabel: string; rightLabel: string;
-  leftLang: "wac" | "ts"; rightLang: "wac" | "ts";
+  leftLang: Lang; rightLang: Lang;
 }) {
   // Equalize heights by padding the shorter code block
   const leftLines = left.split("\n").length;
@@ -120,7 +125,7 @@ export function SideBySide({ left, right, leftLabel, rightLabel, leftLang, right
   );
 }
 
-export function Solo({ code, label, lang }: { code: string; label?: string; lang: "wac" | "ts" }) {
+export function Solo({ code, label, lang }: { code: string; label?: string; lang: Lang }) {
   return (
     <div style={{ marginBottom: 16 }}>
       {label && <div style={s.codeLabel}>{label}</div>}

@@ -51,6 +51,12 @@ jobs:
       - name: Build the demos from wac-mono
         working-directory: wac
         run: deno run -A tools/syncDemos.ts ../wac-mono
+      # `src/data/built.ts` is committed so a checkout without wac-mono still builds, but the
+      # numbers in it go stale the same way the demos used to. wac-mono is right there, so
+      # refresh them — the committed copy is the fallback, not the source.
+      - name: Refresh the package table from wac-mono's MAP.md
+        working-directory: wac
+        run: deno run -A tools/syncMap.ts ../wac-mono
 
       - uses: actions/setup-node@v4
         with:

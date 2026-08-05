@@ -1,23 +1,40 @@
+// CodeMirror highlighting for both of wac's surfaces.
+//
+// The vocabulary is imported from the compiler rather than copied. A copy had already drifted:
+// this file's keyword list was written before `enum` and `match` existed and never gained them,
+// so the landing page's own enum example rendered them as ordinary identifiers. `KEYWORDS` and
+// `SPELLINGS` are the sets the lexers actually use, so that cannot happen again.
+//
+// Both surfaces share one tokeniser. They differ in three things — comment marker, block
+// structure, and how a declaration opens — and everything else about them is the same language,
+// which is the point being made on the page.
+
 import {
   StreamLanguage,
   type StreamParser,
   LanguageSupport,
 } from "@codemirror/language";
 import { Tag } from "@lezer/highlight";
+import { KEYWORDS } from "../../atoms/wac/wacLex.ts";
+import { SPELLINGS } from "../../atoms/wac/wapyLex.ts";
 
 export const trapTag = Tag.define();
 
-const KEYWORDS = new Set(
-  "import from export struct const override if else while for do switch case default break continue return trap true false null is not as void fn this".split(" ")
-);
 const TYPES = new Set(
-  "i32 i64 f32 f64 bool i31ref anyref string".split(" ")
+  "i32 i64 f32 f64 bool i31ref anyref string void".split(" ")
 );
+
+/** wapy's structural words. Not reserved by the language — see `spec/spec/wapy.md`. */
+const WAPY_WORDS = new Set("def class elif pass from in range scope".split(" "));
+
+/** The literals, whichever surface spells them. `True` and `None` are wapy's. */
+const LITERALS = new Set(["true", "false", "null", "True", "False", "None"]);
 
 type Context =
   | "normal"
   | "afterType"      // just saw a type, next identifier might be a definition
-  | "afterStruct"    // just saw `struct`, next identifier is a type name
+  | "afterStruct"    // just saw `struct`/`class`, next identifier is a type name
+  | "afterDef"       // just saw wapy's `def`, next identifier is a function name
   | "afterImport"    // inside `import { ... }`
   | "params";        // inside `(` in function params
 
@@ -27,174 +44,191 @@ interface WacState {
   parenDepth: number;
 }
 
-const wacStreamParser: StreamParser<WacState> = {
-  tokenTable: {
-    trap: trapTag,
-  },
+function parserFor(surface: "wac" | "wapy"): StreamParser<WacState> {
+  const comment = surface === "wac" ? "//" : "#";
 
-  startState(): WacState {
-    return { inString: false, context: "normal", parenDepth: 0 };
-  },
+  return {
+    tokenTable: { trap: trapTag },
 
-  token(stream, state): string | null {
-    // Resume string
-    if (state.inString) {
-      while (!stream.eol()) {
-        if (stream.next() === '"') {
-          state.inString = false;
-          return "string";
+    startState(): WacState {
+      return { inString: false, context: "normal", parenDepth: 0 };
+    },
+
+    token(stream, state): string | null {
+      // Resume string
+      if (state.inString) {
+        while (!stream.eol()) {
+          if (stream.next() === '"') {
+            state.inString = false;
+            return "string";
+          }
         }
+        return "string";
       }
-      return "string";
-    }
 
-    if (stream.eatSpace()) return null;
+      if (stream.eatSpace()) return null;
 
-    // Line comments
-    if (stream.match("//")) {
-      stream.skipToEnd();
-      return "comment";
-    }
+      if (stream.match(comment)) {
+        stream.skipToEnd();
+        return "comment";
+      }
 
-    // Strings
-    if (stream.peek() === '"') {
-      stream.next();
-      while (!stream.eol()) {
-        const ch = stream.next();
-        if (ch === "\\") {
-          stream.next();
-        } else if (ch === '"') {
-          return "string";
+      // Strings
+      if (stream.peek() === '"') {
+        stream.next();
+        while (!stream.eol()) {
+          const ch = stream.next();
+          if (ch === "\\") {
+            stream.next();
+          } else if (ch === '"') {
+            return "string";
+          }
         }
-      }
-      state.inString = true;
-      return "string";
-    }
-
-    // Hex integers
-    if (stream.match(/^0x[0-9a-fA-F]+/)) return "number";
-
-    // Float literals
-    if (stream.match(/^[0-9]+\.[0-9]*/)) return "number";
-
-    // Decimal integers
-    if (stream.match(/^[0-9]+/)) return "number";
-
-    // Identifiers and keywords
-    if (stream.match(/^[a-zA-Z_]\w*/)) {
-      const w = stream.current();
-
-      // as!/as~/as@ operators
-      if (w === "as") {
-        if (stream.eat("!") || stream.eat("~") || stream.eat("@")) return "operator";
-        return "keyword";
+        state.inString = true;
+        return "string";
       }
 
-      if (w === "trap") return "trap";
-      if (TYPES.has(w)) {
-        state.context = "afterType";
-        return "typeName";
-      }
-      if (w === "true" || w === "false") return "bool";
+      // Hex before decimal: `0xEDB88320` is one token, not `0` and an identifier.
+      if (stream.match(/^0x[0-9a-fA-F_]+/)) return "number";
+      if (stream.match(/^[0-9][0-9_]*\.[0-9_]*/)) return "number";
+      if (stream.match(/^[0-9][0-9_]*/)) return "number";
 
-      // Context-sensitive classification
-      if (state.context === "afterStruct") {
-        state.context = "normal";
-        return "typeName";
-      }
-      if (state.context === "afterType") {
-        state.context = "normal";
-        // Could be a variable decl or function decl — check for `(`
-        if (stream.match(/^\s*\(/, false)) {
-          return "definition(function)";
+      // `@export` and friends: wapy's decorators, one token so the sigil is not punctuation.
+      if (surface === "wapy" && stream.match(/^@[a-zA-Z_]\w*/)) return "keyword";
+
+      // Identifiers and keywords
+      if (stream.match(/^[a-zA-Z_]\w*/)) {
+        const w = stream.current();
+
+        // as!/as~/as@ operators
+        if (w === "as") {
+          if (stream.eat("!") || stream.eat("~") || stream.eat("@")) return "operator";
+          return "keyword";
         }
-        return "definition(variable)";
-      }
-      if (state.context === "afterImport") {
-        return "definition(variable)";
-      }
 
-      if (KEYWORDS.has(w)) {
-        if (w === "struct") state.context = "afterStruct";
-        if (w === "import") state.context = "afterImport";
-        return "keyword";
-      }
-
-      // Struct name used as type (capitalized)
-      if (w[0] >= "A" && w[0] <= "Z") {
-        // If followed by identifier or `(` or `[`, likely a type
-        if (stream.match(/^\s*[a-zA-Z_(?\[]/, false)) {
-          state.context = "afterType";
+        if (w === "trap") return "trap";
+        if (LITERALS.has(w)) return "bool";
+        if (TYPES.has(w)) {
+          // In wapy a type follows a `:` or `->` and never introduces a declaration.
+          if (surface === "wac") state.context = "afterType";
           return "typeName";
         }
-        // If followed by `.`, likely a static call
-        if (stream.match(/^\s*\./, false)) {
-          return "typeName";
+
+        // Context-sensitive classification
+        if (state.context === "afterStruct" || state.context === "afterDef") {
+          const wasDef = state.context === "afterDef";
+          state.context = "normal";
+          return wasDef ? "definition(function)" : "typeName";
         }
-      }
-
-      // Look ahead for `(` — function call
-      if (stream.match(/^\s*\(/, false)) {
-        return "function(variable)";
-      }
-
-      return "variableName";
-    }
-
-    const ch = stream.peek();
-
-    // Multi-char operators
-    if (stream.match("<<=") || stream.match(">>=")) return "operator";
-    if (
-      stream.match("==") || stream.match("!=") ||
-      stream.match("<=") || stream.match(">=") ||
-      stream.match("&&") || stream.match("||") ||
-      stream.match("<<") || stream.match(">>") ||
-      stream.match("+=") || stream.match("-=") ||
-      stream.match("*=") || stream.match("/=") ||
-      stream.match("%=") || stream.match("&=") ||
-      stream.match("|=") || stream.match("^=") ||
-      stream.match("++") || stream.match("--")
-    ) {
-      return "operator";
-    }
-
-    // Single-char operators
-    if (ch && "+-*/%=<>!~&|^?".includes(ch)) {
-      stream.next();
-      return "operator";
-    }
-
-    // Punctuation with context tracking
-    if (ch && "(){}[];,:.@".includes(ch)) {
-      stream.next();
-      if (ch === "{") {
-        if (state.context !== "afterImport") state.context = "normal";
-      } else if (ch === "}") {
-        if (state.context === "afterImport") state.context = "normal";
-      } else if (ch === "(") {
         if (state.context === "afterType") {
-          state.context = "params";
-          state.parenDepth = 1;
-        } else if (state.context === "params") {
-          state.parenDepth++;
+          state.context = "normal";
+          // Could be a variable decl or function decl — check for `(`
+          if (stream.match(/^\s*\(/, false)) {
+            return "definition(function)";
+          }
+          return "definition(variable)";
         }
-      } else if (ch === ")") {
-        if (state.context === "params") {
-          state.parenDepth--;
-          if (state.parenDepth <= 0) state.context = "normal";
+        if (state.context === "afterImport") {
+          return "definition(variable)";
         }
+
+        // wapy respells five operators and literals as words; `and` is a `&&`.
+        if (surface === "wapy" && SPELLINGS.has(w)) return "operator";
+
+        if (surface === "wapy" && WAPY_WORDS.has(w)) {
+          if (w === "class") state.context = "afterStruct";
+          if (w === "def") state.context = "afterDef";
+          return "keyword";
+        }
+
+        if (KEYWORDS.has(w) || w === "from") {
+          if (w === "struct" || w === "enum") state.context = "afterStruct";
+          if (w === "import") state.context = "afterImport";
+          return "keyword";
+        }
+
+        // Struct name used as type (capitalized)
+        if (w[0] >= "A" && w[0] <= "Z") {
+          // If followed by identifier or `(` or `[`, likely a type
+          if (stream.match(/^\s*[a-zA-Z_(?\[]/, false)) {
+            if (surface === "wac") state.context = "afterType";
+            return "typeName";
+          }
+          // If followed by `.`, likely a static call
+          if (stream.match(/^\s*\./, false)) {
+            return "typeName";
+          }
+        }
+
+        // Look ahead for `(` — function call
+        if (stream.match(/^\s*\(/, false)) {
+          return "function(variable)";
+        }
+
+        return "variableName";
       }
-      return "punctuation";
-    }
 
-    stream.next();
-    return null;
-  },
-};
+      const ch = stream.peek();
 
-const wacLanguage = StreamLanguage.define(wacStreamParser);
+      // Multi-char operators
+      if (stream.match("<<=") || stream.match(">>=")) return "operator";
+      if (
+        stream.match("==") || stream.match("!=") ||
+        stream.match("<=") || stream.match(">=") ||
+        stream.match("&&") || stream.match("||") ||
+        stream.match("<<") || stream.match(">>") ||
+        stream.match("+=") || stream.match("-=") ||
+        stream.match("*=") || stream.match("/=") ||
+        stream.match("%=") || stream.match("&=") ||
+        stream.match("|=") || stream.match("^=") ||
+        stream.match("++") || stream.match("--") ||
+        stream.match("->")
+      ) {
+        return "operator";
+      }
+
+      // Single-char operators
+      if (ch && "+-*/%=<>!~&|^?".includes(ch)) {
+        stream.next();
+        return "operator";
+      }
+
+      // Punctuation with context tracking
+      if (ch && "(){}[];,:.@".includes(ch)) {
+        stream.next();
+        if (ch === "{") {
+          if (state.context !== "afterImport") state.context = "normal";
+        } else if (ch === "}") {
+          if (state.context === "afterImport") state.context = "normal";
+        } else if (ch === "(") {
+          if (state.context === "afterType") {
+            state.context = "params";
+            state.parenDepth = 1;
+          } else if (state.context === "params") {
+            state.parenDepth++;
+          }
+        } else if (ch === ")") {
+          if (state.context === "params") {
+            state.parenDepth--;
+            if (state.parenDepth <= 0) state.context = "normal";
+          }
+        }
+        return "punctuation";
+      }
+
+      stream.next();
+      return null;
+    },
+  };
+}
+
+const wacLanguage = StreamLanguage.define(parserFor("wac"));
+const wapyLanguage = StreamLanguage.define(parserFor("wapy"));
 
 export function wac(): LanguageSupport {
   return new LanguageSupport(wacLanguage);
+}
+
+export function wapy(): LanguageSupport {
+  return new LanguageSupport(wapyLanguage);
 }

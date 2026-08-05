@@ -1,12 +1,12 @@
 import { useRef, useEffect } from "react";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { linter, lintGutter } from "@codemirror/lint";
-import { wac, trapTag } from "./wac-language";
+import { wac, wapy, trapTag } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
 import type { FileMap } from "./file-store";
 
@@ -26,6 +26,15 @@ const wacHighlight = HighlightStyle.define([
   { tag: trapTag, color: "#f87171", fontWeight: "bold" },
 ]);
 
+/**
+ * The highlighter for a file, chosen by extension — the same way the compiler chooses its
+ * frontend. Held in a compartment because the editor is created once and the document is
+ * swapped underneath it, so switching files has to reconfigure rather than rebuild.
+ */
+function langFor(fileName: string) {
+  return fileName.endsWith(".wapy") ? wapy() : wac();
+}
+
 interface Props {
   value: string;
   onChange: (value: string) => void;
@@ -42,6 +51,7 @@ export default function WacEditor({ value, onChange, files, fileName }: Props) {
   filesRef.current = files;
   const fileNameRef = useRef(fileName);
   fileNameRef.current = fileName;
+  const langComp = useRef(new Compartment());
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -63,7 +73,7 @@ export default function WacEditor({ value, onChange, files, fileName }: Props) {
         highlightSelectionMatches(),
         syntaxHighlighting(wacHighlight),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        wac(),
+        langComp.current.of(langFor(fileName)),
         lintGutter(),
         linter(wacLintSource(
           () => filesRef.current,
@@ -92,6 +102,12 @@ export default function WacEditor({ value, onChange, files, fileName }: Props) {
     viewRef.current = view;
     return () => view.destroy();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: langComp.current.reconfigure(langFor(fileName)) });
+  }, [fileName]);
 
   useEffect(() => {
     const view = viewRef.current;
