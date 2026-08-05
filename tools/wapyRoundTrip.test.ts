@@ -9,13 +9,15 @@
 // range); tree comparison fails only when meaning changed, which is the property that matters.
 //
 // Positions are stripped before comparing, because a reflowed file legitimately has different
-// line numbers. Everything else must match exactly, including the fields the type checker
-// would later fill in — those are absent in both trees, since neither is checked.
+// line numbers — and they are *correct* wapy positions, not wac ones, which is the point of
+// `wapyRead` producing tokens rather than text. Everything else must match exactly, including
+// the fields the type checker would later fill in; those are absent in both, since neither is
+// checked.
 
 import { wacLex } from "../atoms/wac/wacLex.ts";
 import { wacParse } from "../atoms/wac/wacParse.ts";
 import { wapyOf } from "./wapy.ts";
-import { wacOf } from "./wapyRead.ts";
+import { parseWapy } from "./wapyRead.ts";
 
 /** Drop `line`/`col` recursively, and normalise absent-vs-undefined. */
 function strip(v: unknown): unknown {
@@ -44,12 +46,14 @@ function ast(src: string, path: string) {
 export function roundTrip(src: string, path: string): { ok: true } | { ok: false; why: string } {
   const before = ast(src, path);
   const wapy = wapyOf(src, path).text;
-  let after: unknown;
-  try {
-    after = ast(wacOf(wapy), `${path} (round-tripped)`);
-  } catch (e) {
-    return { ok: false, why: `${(e as Error).message}\n--- wapy ---\n${wapy}` };
+  // wapy is parsed straight into the AST — there is no intermediate wac text, and no line map,
+  // because the tokens carry the positions they were written at.
+  const parsed = parseWapy(wapy, path);
+  if (parsed.errors.length) {
+    const e = parsed.errors[0];
+    return { ok: false, why: `${path} (as wapy) did not parse: ${e.message} at ${e.line}:${e.col}\n--- wapy ---\n${wapy}` };
   }
+  const after = strip(parsed.program);
   const a = JSON.stringify(before), b = JSON.stringify(after);
   if (a === b) return { ok: true };
   return { ok: false, why: firstDiff(a, b) + `\n--- wapy ---\n${wapy}` };
