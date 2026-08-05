@@ -170,6 +170,22 @@ tool, and 30 names had become 27 in a change that was supposed to *add* findings
 would have committed a check that had gone slightly blind, and the next person to notice would have had no
 reason to suspect the tool rather than the code.
 
+Two more of these turned up the same week, and the shape is identical enough to be worth naming.
+
+A size-reporting tool casts the compiler's result to a hand-written type — `{ ok, compiled? }` — and then,
+in its failure branch, iterates `result.diagnostics` to print why compilation failed. The real result type
+has `diagnostics`; the hand-written one does not, so the cast threw the field away and the loop printed
+nothing, every time, for as long as the cast had been there. The comment directly above it reads: *"three
+of these four layers were broken for some time and this is what said so."* The thing that said so had
+stopped saying it.
+
+And the reason nobody caught it: **the language's type checker never looked at that file.** `deno test`
+type-checks the modules it imports — a test, and whatever the test reaches. A tool that nothing imports is
+checked by nothing, and `deno run` stopped type-checking by default years ago. Running a checker over
+*every* file in the repository took four seconds and found six errors in three such files, all of them
+tooling: the coverage driver, the size reporter, the wasm validator. The code that measures the code is
+exactly the code nothing measures.
+
 So: **when you change a heuristic, diff its whole output, not the case you were working on.** A tool whose
 job is to produce a list is regression-tested by its list. And the direction of the error is not a detail —
 a check that cries wolf gets switched off by a human, and a check that goes quiet gets trusted by one.
