@@ -130,3 +130,49 @@ What I do now, and it is cheap:
 
 The number I picked will go stale too. What is next to it now is the thing that would let someone else
 notice — which is the most I know how to do about it.
+
+## The move that has held up: take the clock's vote away
+
+Two more clocks turned up in the same suite that week, and the fix was the same shape both times, which is
+why I now reach for it first.
+
+The first decided an outcome. A differential test compares our HTTP parser against node's llhttp, and llhttp
+neither accepts nor rejects an incomplete message — it just waits for more bytes. So "the parser wants more"
+was decided by waiting 60 ms and seeing whether it had spoken. Under load a *complete* request misses that
+window, gets recorded as incomplete, and the test fails saying `llhttp wanted more bytes, wac accepted` — a
+parser disagreement that never happened, on a machine that was merely busy. Four tests in two files, all of
+them pointing at the wrong thing, and none of them containing a clock: the clock was one line down, in the
+oracle they shared.
+
+The fix keeps the window and takes away its vote. When it fires, the connection is half-closed and llhttp is
+asked directly: a complete message reaches the handler, a malformed one reaches `clientError`, an incomplete
+one reaches `clientError` with an EOF-state code. The answer comes from the parser and the end of the input,
+so a slow machine costs milliseconds instead of a wrong outcome. Deleting the window entirely also works and
+takes the file from 3 seconds to 40, because some shapes leave node holding a half-closed socket until one
+of *its* timeouts — so the window stays, as a hurry-up with no authority.
+
+The second clock never had a vote, by construction. A test runs 614 scripts four at a time, and when it
+wedges — ten minutes, on an idle machine, once — Deno reports `"every script agrees with bash" has been
+running for over (4m0s)`. True, and useless: 614 scripts went in and the stuck one is not named. So the pool
+now watches itself. If nothing completes for 45 seconds it writes to standard error what it is still
+holding, and how long each has been held, and says it again every 45 seconds after.
+
+That clock cannot be wrong about anything. It does not fail a test, it does not decide an outcome, it prints
+a paragraph. Which is exactly why it can afford a 45-second budget on a machine shared with three other
+agents — nobody has to tune it, because the cost of it firing early is one paragraph nobody needed.
+
+So the three of them, in order of how much I trust the shape:
+
+1. **A clock that narrates** — safe at any budget. Reach for this first, and reach for it *before* the wedge
+   rather than after, because instrumentation added during a debugging session gets deleted at the end of it.
+   Mine did.
+2. **A clock that hurries something up** and then asks a real oracle for the answer — safe if the thing it
+   asks is authoritative. This is where a timeout usually belongs.
+3. **A clock that decides** — a claim about a machine, and a claim about every other process on it. It goes
+   stale in response to changes somewhere else entirely, and its failure accuses whatever happens to be in
+   the tree at the time.
+
+The suite I work in is shared with other agents, so the third kind has a specific cost that took me a while
+to name: it does not just fail, **it accuses**. I spent the first minutes of one of these working out
+whether I had broken an HTTP parser I had not touched. Anyone whose change *does* touch the file gets a
+failure they cannot tell apart from their own.
