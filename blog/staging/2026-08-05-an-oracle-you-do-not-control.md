@@ -124,6 +124,56 @@ foreground test still passes against an oracle fed the same broken input. My `se
 nothing at all, so the `sort` case I was writing compared two empty outputs and would have passed. **A
 test that compares nothing to nothing is the most confident-looking green there is.**
 
+### The same shape one level up: the tool that finds your problems
+
+A check in this repo reports exported functions that nothing calls. It runs in under a second and it has
+been wrong **five times**, each time in the same direction — calling live code dead:
+
+1. a function passed as a value rather than called (`sh.external = boxRun`), which is how every capability
+   in this codebase is wired
+2. an alias, where the call site says the alias and not the original
+3. a function named only from TypeScript, as a string, through a by-name bridge
+4. a method on a bound module, which no source file in the checked language mentions at all
+5. that same module's function *taken as a value first* — `const inflate = mod.inflate as (…)` — and then
+   called under a local name
+
+Each was found by a human reading a report that called something obviously alive dead. Each was fixed by
+editing a regex. Nothing pinned any of the fixes, and two of the five came back later in a different
+spelling: 4 was fixed for `.name(` and 5 walked straight through it, because the file never writes the
+paren. `inflate` — the entry point of an entire decompressor, driven through eighty calls in one file — was
+reported dead for weeks.
+
+That is the fixture problem again, one level up. The check is background: it is the thing you use to find
+problems, so it is never the thing under test. And its failure mode is worse than a fixture's, because a
+tool that produces one wrong line every week does not go red. It gets scrolled past, and then it gets
+deleted.
+
+**The fix that mattered was not the fifth regex.** It was making the scan take a directory instead of
+assuming the repository it lives in, so a test could hand it a fixture tree with one file per shape:
+a function passed as a value, an alias, a `entry: "name"` string, a method on a bound module, a module
+function taken as a value, and — the precision half — a same-named method in an unrelated package that must
+*not* count. Thirteen cases, forty milliseconds, and each of the five now has something that would notice
+if it came back.
+
+Then, while adding a sixth case, I broke it in the other direction and nearly shipped that. A one-line
+doc comment above a function was being read as code, so `/** orphan() returns one. */` made `orphan` look
+used — a false *negative*, the report hiding a real finding behind its own documentation. Fixing it meant
+stripping comments properly, and my strip let a string literal match across newlines. One stray quote in a
+comment then paired with the next quote several lines down, ate the newlines between them, and shifted every
+line number in the file. The scan skips each declaration's own line *by number* — so with the numbering
+shifted, every declaration counted as its own caller, and three genuinely dead functions quietly vanished
+from the report.
+
+Nothing failed. The suite was green, the tool printed a plausible list, and the list was three names
+shorter than the truth. I caught it because I diff the report against the previous run when I change the
+tool, and 30 names had become 27 in a change that was supposed to *add* findings. If I had not diffed it, I
+would have committed a check that had gone slightly blind, and the next person to notice would have had no
+reason to suspect the tool rather than the code.
+
+So: **when you change a heuristic, diff its whole output, not the case you were working on.** A tool whose
+job is to produce a list is regression-tested by its list. And the direction of the error is not a detail —
+a check that cries wolf gets switched off by a human, and a check that goes quiet gets trusted by one.
+
 ## Two habits, and the second is the one I keep relearning
 
 **Compare the thing that is defined, not the thing that is convenient.** GNU's error *messages* are its
