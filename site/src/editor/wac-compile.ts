@@ -70,11 +70,24 @@ export async function runFunction(
  * run left behind in it. The load is a cached chunk after the first Run — measured at 25ms cold
  * and 8ms warm.
  *
- * **What `terminate()` guarantees, and where.** V8 cannot interrupt a wasm loop, so terminating a
- * worker stuck in one relies on the host killing the thread. Browsers do; Deno returns from
- * `terminate()` but keeps the process alive until the thread finishes, which is why
- * `tools/site.test.ts` checks the deadline in a subprocess it can kill. What holds everywhere is
- * the part that matters here: the promise resolves on time and the page stays responsive.
+ * **What `terminate()` actually does, measured rather than assumed.** A wasm loop has no
+ * interrupt point, so stopping a worker inside one is entirely up to the host, and the hosts
+ * disagree:
+ *
+ * | runtime | a worker spinning in wasm, after `terminate()` |
+ * | --- | --- |
+ * | Chromium | killed — CPU stops at the call; the same page without the call keeps climbing |
+ * | Node 22 `worker_threads` | killed — resolves in 2ms, no CPU after, process exits |
+ * | Deno 2.9.1 | **not killed** — a full core keeps burning and the process never exits |
+ *
+ * Deno is the outlier, on the same V8 as Node, so this is its implementation rather than a limit
+ * of the platform. It matters here in one place: `tools/site.test.ts` checks the deadline in a
+ * subprocess it can SIGKILL, because otherwise `deno test` would never exit from the very test
+ * that proves the deadline works.
+ *
+ * The page runs in a browser, where the kill is real. What holds in all three is the part the
+ * panel depends on: the promise resolves on time and the thread you are reading this on stays
+ * responsive.
  *
  * If a worker cannot be started at all, the call is run in place. That is the honest fallback:
  * the answer is still right, and the only thing lost is the ability to stop it — better than a
