@@ -120,7 +120,14 @@ export default function Built() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {p.name}
+                    <a
+                      href={`${MONO}/tree/master/packages/${p.name}`}
+                      target="_blank"
+                      rel="noopener"
+                      style={{ color: "inherit", textDecoration: "none", borderBottom: "1px dotted #2dd4bf66" }}
+                    >
+                      {p.name}
+                    </a>
                   </td>
                   <td style={{ padding: "7px 12px", color: "#9ca3af", borderBottom: "1px solid #1e1e2e" }}>
                     {p.what}
