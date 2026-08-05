@@ -73,6 +73,10 @@ export f64 lerp(f64 a, f64 b, f64 t) {
     entry: p("while-loop.wac"),
     files: {
       [p("while-loop.wac")]: `export i32 collatz(i32 n) {
+  // The sequence is only defined for positive n: 0 and negatives never reach 1,
+  // so without this the loop does not terminate — and an empty box means 0.
+  if (n < 1) { return -1; }
+
   i32 steps = 0;
   while (n != 1) {
     if (n % 2 == 0) { n = n / 2; }
