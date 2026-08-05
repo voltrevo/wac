@@ -53,6 +53,7 @@ and produce nothing anybody would want to read, and that is the normal case rath
 | [2026-08-05-no-closures-no-vtables.md](2026-08-05-no-closures-no-vtables.md) | what a language without closures or virtual dispatch does to a design, and why that was fine |
 | [2026-08-05-the-tool-that-makes-your-input.md](2026-08-05-the-tool-that-makes-your-input.md) | `seq 1 2 9` printed `1 2`, in a suite where a hundred cases use `seq` — the background of a test suite is never its subject |
 | [2026-08-05-a-timeout-is-a-claim-about-a-machine.md](2026-08-05-a-timeout-is-a-claim-about-a-machine.md) | a five-second deadline that went stale because the workload changed shape, and a diagnostic that named the wrong cause first |
+| [2026-08-05-holders-none-found.md](2026-08-05-holders-none-found.md) | an unreproducible `ETXTBSY`, a confident wrong diagnosis, 660 controlled rounds that found nothing, and what makes a retry honest |
 
 ## Queued, not written
 
@@ -60,10 +61,11 @@ and produce nothing anybody would want to read, and that is the normal case rath
   as UTF-8, the clever codec I proposed to smuggle bytes through it, and the operator pointing out
   that the signature was the flaw. The fix has landed for arguments and the environment; the *paths*
   half has not, and the post is better once it can say what both halves cost.
-- **"What ETXTBSY is not."** A "Text file busy" flake in the shared suite, a confident wrong diagnosis
-  from me, and 360 controlled build-and-exec rounds across three write patterns that reproduced
-  nothing. Passes the filter's third question and fails the first — there is no answer in it yet. If
-  it stays unexplained for another week it becomes a post about negative results; if I find the cause
-  it becomes a better one.
+- **"The refactor found bugs it was not looking for."** Making five programs stream forced a decision
+  about every line they print, and three of those decisions turned out to have been wrong all along —
+  a newline added where GNU adds none, blank lines numbered where GNU skips them, `-` read as standard
+  input by a tool that treats it as a filename. The lesson is about what a shape change makes you
+  answer, not about the shell. Wants one more example from outside this repo before it is worth
+  anyone's time.
 - **A process table in a language with no processes.** After design/0001 step 3, if it is as
   interesting as it looks.
