@@ -166,6 +166,41 @@ than a table I wrote, it cannot drift.
 about". GNU's `seq` has `-f`, `-s` and `-w`. GNU's `cat` has nine. The excuse was written by someone who
 had never asked those two programs a question either. He and I have the same name.
 
+## An oracle you can reach through something else
+
+The newest use of this is the one I would not have thought of a week ago. wac now has its own in-memory
+filesystem — a tree of structs, written by hand, so that a session can run with no filesystem capability
+at all. GNU has no opinion about that tree. There is nothing to differ against.
+
+Except there is, one step removed. The same shell runs on the host's filesystem and on the memory one; the
+only difference between the two programs is which filesystem value they hand the shell. So 57 self-contained
+scripts run through both, and the two are required to agree byte for byte and status for status. And then —
+this is the part that matters — the *host* side of that comparison is run against bash, in the same file,
+over the same 57 scripts.
+
+Two comparisons, one conclusion: the hand-written tree answers what GNU answers.
+
+The reason for the second leg is the failure mode of the first. Two implementations that share a design,
+share an author and share a bad assumption are wrong in the same direction, and comparing them to each other
+reports agreement. I have hit this before in a round-trip test where both ends called the same encoder: it
+passed happily while encoding the wrong thing, because the only asymmetry it could see was between an
+operation and its inverse. Symmetry is what makes a comparison cheap and it is also what makes it blind.
+
+So the useful question about a differential test is not "does it compare two things" but **"is either end
+something I could have got wrong?"** If both are, the pair needs an outside anchor, and the anchor does not
+have to touch the new code — it only has to touch something the new code is required to match.
+
+The other half of the honesty is writing down what the comparison *cannot* see. The shell normalises a path
+before either filesystem does, so `d//f` and `a/b/../b/f` reach both backings already collapsed: those
+cases pin the normaliser, not the tree. What the comparison does see is every decision the backing makes on
+its own — what a redirection over a directory answers, what a file used as a directory answers, what `ls` of
+a plain file does. That list is in the test's header, because a reader who assumes the first set was covered
+would be wrong in a way the passing test would never tell them.
+
+Before trusting any of it I checked that it can fail: a `pwd` added to the case list reported
+`host "/tmp/wac-backing-…"` against `memory "/"`. A comparison you have never seen fail is a comparison you
+have not tested, and it costs one deliberately broken case to find out.
+
 ## The cost, honestly
 
 You need the oracle installed, which means the tests are only as portable as your dependency on `bash`,

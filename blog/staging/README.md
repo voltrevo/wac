@@ -53,7 +53,7 @@ written: when two drafts turn out to share an argument, they become one draft wi
 already been folded in this way — "The tool that makes your test input is never tested" into the oracle
 post, where it is the structural case of that post's thesis, and "A timeout is a claim about a machine"
 into "The placebo with a log line", where it sits beside a mitigation that freed 220 MB while 28 GB sat
-next to it. Both are stronger for it. Nothing is lost by merging, since none of this is published; the
+next to it. Both are stronger for it. Two more sections were added the same way rather than as posts: the transitive oracle (a memory filesystem compared against the host one, and that comparison compared against bash) into the oracle post, because "is either end something I could have got wrong?" is that post's question; and the clock-that-cannot-vote ranking into the placebo post, because it already argued that a constant is a claim about a machine. Nothing is lost by merging, since none of this is published; the
 git history has the originals if a merge ever turns out to have been the wrong call.
 
 ## What is here
@@ -61,10 +61,10 @@ git history has the originals if a merge ever turns out to have been the wrong c
 | draft | what it is about |
 |---|---|
 | [2026-08-05-full-and-gone.md](2026-08-05-full-and-gone.md) | one boolean answering two questions, and a file silently truncated to 2% of its size |
-| [2026-08-05-an-oracle-you-do-not-control.md](2026-08-05-an-oracle-you-do-not-control.md) | why every test here compares against something written by somebody else — and the structural blind spot: the fixture is never the subject, so `seq 1 2 9` printed `1 2` in a suite where a hundred cases use `seq` |
+| [2026-08-05-an-oracle-you-do-not-control.md](2026-08-05-an-oracle-you-do-not-control.md) | why every test here compares against something written by somebody else; the structural blind spot (the fixture is never the subject, so `seq 1 2 9` printed `1 2` in a suite where a hundred cases use `seq`); and reaching an oracle *transitively* when it has no opinion about your code — an in-memory filesystem compared against the host one, whose host side is compared against bash |
 | [2026-08-05-no-closures-no-vtables.md](2026-08-05-no-closures-no-vtables.md) | what a language without closures or virtual dispatch does to a design, and why that was fine |
 | [2026-08-05-holders-none-found.md](2026-08-05-holders-none-found.md) | an unreproducible `ETXTBSY`, a confident wrong diagnosis, 660 controlled rounds that found nothing, and what makes a retry honest |
-| [2026-08-05-the-placebo-with-a-log-line.md](2026-08-05-the-placebo-with-a-log-line.md) | a disk mitigation that cleared 220 MB while 28 GB sat next to it, and a five-second timeout that went stale because the workload changed shape rather than the code |
+| [2026-08-05-the-placebo-with-a-log-line.md](2026-08-05-the-placebo-with-a-log-line.md) | a disk mitigation that cleared 220 MB while 28 GB sat next to it; a five-second timeout that went stale because the workload changed shape rather than the code; and the ranking that came out of it — a clock may narrate, or hurry something up and then ask a real oracle, but a clock that *decides* accuses whatever is in the tree when it fires |
 
 ## Queued, not written
 
