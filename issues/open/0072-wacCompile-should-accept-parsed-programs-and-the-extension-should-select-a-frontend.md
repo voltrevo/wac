@@ -58,6 +58,64 @@ wacCompileProgram(programs: Map<string, Program>, entry, options)
 where a frontend selector belongs — `wacx` would default it to "`.wapy` uses the wapy frontend,
 anything else must be `.wac`", and item 1 falls out of the same change.
 
+## The change, concretely
+
+Small enough to be worth spelling out, since the two halves land together.
+
+**`wacCompile`** gains one option, defaulting to today's behaviour:
+
+```ts
+export type WacCompileOptions = {
+  // …existing…
+  /** Turn a file into a program. Defaults to wac's own lexer and parser. */
+  parse?: (path: string, src: string) => { program: Program; errors: ParseError[] };
+};
+```
+
+and phases 1 and 2 route through it:
+
+```ts
+const parse = options.parse ?? ((path, src) => {
+  const { tokens, errors: lexErrs } = wacLex(src);
+  const p = wacParse(tokens, path);
+  return { program: p.program, errors: [...lexErrs.map(e => ({ ...e, file: path })), ...p.errors] };
+});
+
+for (const [path, src] of files) {
+  const { program, errors } = parse(path, src);
+  for (const e of errors) diagnostics.push({ span: 1, ...e, phase: "parse", severity: "error" });
+  programs.set(path, program);
+}
+```
+
+Nothing else in the file changes. Note the default keeps lex errors reported as `phase: "parse"`
+rather than `"lex"`, which is a small regression in diagnostic labelling — worth either
+accepting or giving the hook a two-stage shape instead.
+
+**`wacx`** picks the frontend by extension and refuses anything else:
+
+```ts
+const FRONTENDS: Record<string, (p: string, s: string) => ParseOut> = {
+  ".wac":  wacFrontend,
+  ".wapy": parseWapy,
+};
+
+function frontendFor(path: string) {
+  const ext = path.slice(path.lastIndexOf("."));
+  const f = FRONTENDS[ext];
+  if (!f) throw new UsageError(
+    `${path}: unknown extension ${ext} — expected one of ${Object.keys(FRONTENDS).join(", ")}`);
+  return f;
+}
+```
+
+`readGraph` keeps returning sources; `wacCompile` gets `{ parse: (p, s) => frontendFor(p)(p, s) }`.
+Import discovery already lexes, so it needs the frontend too — or, more simply, it can read the
+imports off the parsed program, which is what `tools/wapyLoad.ts` does and is one line shorter.
+
+That is the whole thing. After it, `wacx run foo.wapy` works, `deno task app` works, wac-mono's
+harness works, and `tools/wapyLoad.ts` loses its fifteen lines of phase orchestration.
+
 ## Why positions are not part of this
 
 Worth saying, because the obvious version of this feature is a source map and that would be the
