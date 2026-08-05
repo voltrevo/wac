@@ -2,11 +2,24 @@
 
 Bug reports and feature requests for the wac compiler.
 
-wac has one developer. If you are working on something *else* — a program written
-in wac, a library, a port — and you hit a compiler bug or need a language feature,
-**file it here rather than changing `atoms/wac/`**. That keeps the compiler's history
-coherent and keeps you out of a codebase whose invariants you would have to learn
-first.
+**Filing is not a substitute for fixing.** wac used to have one owner, and everyone else
+was sent here instead of into `atoms/wac/`. That rule is gone: if you are working on
+something *else* — a program written in wac, a library, a port — and you hit a compiler bug
+or need a language feature, fix it. Read [CONTRIBUTING.md](../CONTRIBUTING.md) first, and
+expect the invariants to take some learning.
+
+What still belongs here is anything where the blocker is a **decision** rather than the
+work:
+
+- two reasonable answers exist and choosing wrong is expensive to undo — a syntax, a
+  default, an error's wording that other code will come to depend on;
+- the fix would make the shared test suite red for everyone until something else lands;
+- you found it, reproduced it, and are not going to fix it. A reproduction someone else
+  can run is worth much more than a description, and it becomes a test either way.
+
+An issue is also the record of *why* — several of the files in `closed/` are the reason a
+particular spec paragraph exists. That is worth writing even when the fix took ten minutes,
+which is what the `Resolution` section at the bottom of a closed issue is for.
 
 ## Filing one
 
@@ -68,7 +81,7 @@ Closing one means, at minimum:
 - the test verified to fail without the fix. Reverting the fix and watching the test
   fail is the only way to know the test tests it.
 
-`spec/CONTRIBUTING.md`'s rules apply to the fix itself.
+[CONTRIBUTING.md](../CONTRIBUTING.md)'s rules apply to the fix itself.
 
 ## Breaking changes
 
