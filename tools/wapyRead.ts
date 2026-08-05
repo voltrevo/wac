@@ -100,16 +100,16 @@ function readTree(src: string): Node[] {
     if (raw.trim() === "") continue;
     const indent = raw.length - raw.trimStart().length;
     const { toks, comment } = lex(raw);
-    if (toks.length === 0) continue;          // comment-only line
     flat.push({ indent, toks, comment, kids: [], raw });
   }
-  // Nest by indentation.
+  // Nest by indentation. A comment-only line does not open a block, so it never becomes a
+  // parent — it attaches as a sibling and is emitted verbatim.
   const roots: Node[] = [];
   const stack: Node[] = [];
   for (const n of flat) {
     while (stack.length && stack[stack.length - 1].indent >= n.indent) stack.pop();
     (stack.length ? stack[stack.length - 1].kids : roots).push(n);
-    stack.push(n);
+    if (n.toks.length) stack.push(n);
   }
   return roots;
 }
@@ -347,8 +347,19 @@ function splitTop(toks: Tok[]): Tok[][] {
   return parts;
 }
 
+/** `#` was a line comment and `##` a doc comment; restore wac's spelling. */
+function commentLine(c: string, pad: string): string[] {
+  if (c.startsWith("##")) return [`${pad}/** ${c.slice(2).trim()} */`];
+  return [`${pad}// ${c.slice(1).trim()}`.trimEnd()];
+}
+
 function emit(n: Node, out: string[], ind: string, mods: string): void {
   const T = n.toks;
+  // A comment-only line.
+  if (T.length === 0) {
+    if (n.comment) out.push(...commentLine(n.comment, ind));
+    return;
+  }
   const head = T[0].t;
   const pad = ind;
 
@@ -381,8 +392,8 @@ function emit(n: Node, out: string[], ind: string, mods: string): void {
       out.push(`${pad}${mods}${isEnum ? "enum" : "struct"} ${name}${gen}${base} {`);
       if (isEnum) {
         // Variants are the leading children that are not `def`; wac wants them comma-joined.
-        const vs = n.kids.filter((k) => k.toks[0].t !== "def" && !modifierOf(k));
-        const ms = n.kids.filter((k) => k.toks[0].t === "def" || modifierOf(k));
+        const vs = n.kids.filter((k) => k.toks.length && k.toks[0].t !== "def" && !modifierOf(k));
+        const ms = n.kids.filter((k) => !k.toks.length || k.toks[0].t === "def" || modifierOf(k));
         if (vs.length) {
           out.push(`${pad}  ${vs.map((v) => variant(v)).join(", ")}`);
         }
@@ -596,11 +607,30 @@ function foldMods(nodes: Node[]): { node: Node; mods: string }[] {
  */
 function emitAll(nodes: Node[], out: string[], ind: string): void {
   const items = foldMods(nodes);
+  let skipTo = -1;
   items.forEach(({ node, mods }, i) => {
+    if (i < skipTo) return;
+    // A run of `##` lines was one `/** … */` block. Rebuild it as one, or a five-line doc
+    // comment comes back as five one-line ones.
+    if (!node.toks.length && node.comment.startsWith("##")) {
+      let j = i;
+      while (j < items.length && !items[j].node.toks.length &&
+             items[j].node.comment.startsWith("##")) j++;
+      const body = items.slice(i, j).map((x) => x.node.comment.slice(2).trim());
+      if (body.length === 1) out.push(`${ind}/** ${body[0]} */`);
+      else out.push(`${ind}/**`, ...body.map((b) => `${ind} *${b ? " " + b : ""}`), `${ind} */`);
+      skipTo = j;
+      return;
+    }
+    const at = out.length;
     emit(node, out, ind, mods);
-    const h = node.toks[0].t;
+    // A comment that shared a line with code goes back on the end of the line it produced.
+    if (node.comment && node.toks.length && out.length > at) {
+      out[at] += `  // ${node.comment.replace(/^#+/, "").trim()}`;
+    }
+    const h = node.toks[0]?.t;
     if (h === "if" || h === "elif" || h === "else") {
-      const nh = items[i + 1]?.node.toks[0].t;
+      const nh = items[i + 1]?.node.toks[0]?.t;
       if (nh !== "elif" && nh !== "else") out.push(`${ind}}`);
     }
   });

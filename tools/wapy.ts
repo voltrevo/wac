@@ -50,6 +50,150 @@ import type {
 
 const IND = "    ";
 
+// ── Comments ─────────────────────────────────────────────────────────────────
+//
+// `wacParse`'s AST has no comments and `wacLex` drops them, so they are recovered from the
+// **gaps between adjacent tokens**. The lexer skipped exactly whitespace and comments, so
+// anything non-blank in a gap is a comment — which means the hard part, deciding whether a
+// `//` is inside a string literal, is already done by the real lexer and cannot be got wrong
+// here.
+//
+// Attachment is by line: a comment on its own line is emitted before the next node at that
+// node's indentation, and a comment sharing a line with code trails it. A comment *inside* an
+// expression — between two arguments, say — has no line of its own and is hoisted to the
+// statement above. That is the one placement this loses, and it is rare.
+
+type Comment = { line: number; text: string; doc: boolean; own: boolean };
+
+let comments: Comment[] = [];
+let commentAt = 0;
+let blanks = new Set<number>();
+
+function scanComments(src: string, tokens: { line: number; col: number; text: string }[]): void {
+  const lines = src.split("\n");
+  const offsetOf = (line: number, col: number) => {
+    let o = 0;
+    for (let i = 0; i < line - 1; i++) o += lines[i].length + 1;
+    return o + col - 1;
+  };
+  const found: Comment[] = [];
+  let prevEnd = 0;
+  const gaps: [number, number][] = [];
+  for (const t of tokens) {
+    if (t.text === "") continue;
+    const start = offsetOf(t.line, t.col);
+    if (start > prevEnd) gaps.push([prevEnd, start]);
+    prevEnd = start + t.text.length;
+  }
+  gaps.push([prevEnd, src.length]);
+
+  for (const [a, b] of gaps) {
+    const chunk = src.slice(a, b);
+    let i = 0;
+    while (i < chunk.length) {
+      if (chunk.startsWith("//", i)) {
+        const nl = chunk.indexOf("\n", i);
+        const end = nl < 0 ? chunk.length : nl;
+        push(a + i, chunk.slice(i, end), false);
+        i = end;
+      } else if (chunk.startsWith("/*", i)) {
+        const close = chunk.indexOf("*/", i + 2);
+        const end = close < 0 ? chunk.length : close + 2;
+        push(a + i, chunk.slice(i, end), true);
+        i = end;
+      } else i++;
+    }
+  }
+
+  function push(off: number, text: string, block: boolean): void {
+    let line = 1, seen = 0;
+    for (const l of lines) {
+      if (seen + l.length >= off) break;
+      seen += l.length + 1;
+      line++;
+    }
+    const own = src.slice(seen, off).trim() === "";
+    found.push({ line, text, doc: block && text.startsWith("/**"), own });
+  }
+
+  comments = found;
+  commentAt = 0;
+  // A blank line between two things is grouping, and grouping is information too.
+  blanks = new Set();
+  for (let i = 1; i < lines.length; i++) if (lines[i].trim() === "") blanks.add(i + 1);
+}
+
+/**
+ * One wac comment as one or more wapy lines.
+ *
+ * `#` is a line comment and `##` a doc comment, so the two survive the trip back — wac spells
+ * them `//` and `/** … *\/`, and collapsing both to `#` would turn every doc comment into an
+ * ordinary one.
+ */
+function asWapy(c: Comment, pad: string): string[] {
+  if (!c.doc) {
+    const body = c.text.startsWith("//") ? c.text.slice(2) : c.text.slice(2, -2);
+    return [`${pad}# ${body.trim()}`.trimEnd()];
+  }
+  // Lines after the first carry a leading `*`; the first does not, so it is trimmed instead.
+  // Indentation *after* the star is kept, because doc comments contain code samples.
+  const lines = c.text.slice(3, -2).split("\n")
+    .map((l, i) => (i === 0 ? l.trimStart() : l.replace(/^\s*\* ?/, "")).trimEnd());
+  while (lines.length && lines[0].trim() === "") lines.shift();
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  return lines.map((l) => `${pad}## ${l}`.trimEnd());
+}
+
+/** Own-line comments that belong above a node starting at `line`. */
+function before(line: number, d: number): string[] {
+  const pad = IND.repeat(d);
+  const out: string[] = [];
+  let lastLine = -1;
+  while (commentAt < comments.length && comments[commentAt].line < line) {
+    const c = comments[commentAt++];
+    if (!c.own) continue;                       // a trailing comment; handled with its node
+    if (lastLine >= 0 && c.line > lastLine + 1) out.push("");
+    out.push(...asWapy(c, pad));
+    lastLine = c.line + (c.doc ? c.text.split("\n").length - 1 : 0);
+  }
+  if (out.length && blanks.has(line - 1)) out.push("");
+  return out;
+}
+
+/** A comment sharing `line` with code, appended to the line already emitted. */
+function trailing(line: number): string {
+  for (let i = commentAt; i < comments.length && comments[i].line <= line; i++) {
+    const c = comments[i];
+    if (c.line === line && !c.own) {
+      comments.splice(i, 1);
+      return `  # ${c.text.replace(/^\/\/|^\/\*|\*\/$/g, "").trim()}`;
+    }
+  }
+  return "";
+}
+
+/** Everything left over, once the last node has been printed. */
+function remaining(): string[] {
+  const out: string[] = [];
+  while (commentAt < comments.length) out.push(...asWapy(comments[commentAt++], ""));
+  return out;
+}
+
+/**
+ * Wrap a node's lines with the comments that belong to it.
+ *
+ * The body is a thunk, not a value, and that is load-bearing: JavaScript evaluates arguments
+ * before the call, so passing the printed lines directly would print the body — draining every
+ * comment inside it — before `before()` ever ran, and a function's doc comment would surface
+ * inside its own body.
+ */
+function withComments<T extends { line: number }>(n: T, d: number, body: () => string[]): string[] {
+  const head = before(n.line, d);
+  const lines = body();
+  if (lines.length === 0) return head;
+  return [...head, lines[0] + trailing(n.line), ...lines.slice(1)];
+}
+
 /** Anything the printer meets and does not know. Counted, never silently dropped. */
 const unhandled: string[] = [];
 function unknown(what: string, detail: string): string {
@@ -238,7 +382,7 @@ function pattern(a: MatchArm): string {
 
 function block(b: Block, d: number): string[] {
   if (b.stmts.length === 0) return [IND.repeat(d) + "pass"];
-  return b.stmts.flatMap((s) => stmt(s, d));
+  return b.stmts.flatMap((s) => withComments(s, d, () => stmt(s, d)));
 }
 
 /**
@@ -391,12 +535,12 @@ function struct(s: StructDecl): string[] {
   if (s.isConst) out.push("@const");
   out.push(`class ${s.name}${gen}${base}:`);
   for (const f of s.fields) {
-    out.push(`${IND}${f.isConst ? "const " : ""}${f.name}: ${tyTop(f.type)}`);
+    out.push(...withComments(f, 1, () => [`${IND}${f.isConst ? "const " : ""}${f.name}: ${tyTop(f.type)}`]));
   }
   if (s.fields.length && s.methods.length) out.push("");
   s.methods.forEach((m, i) => {
     if (i) out.push("");
-    out.push(...method(m, 1));
+    out.push(...withComments(m, 1, () => method(m, 1)));
   });
   if (!s.fields.length && !s.methods.length) out.push(`${IND}pass`);
   return out;
@@ -413,7 +557,7 @@ function enumDecl(e: EnumDecl): string[] {
   if (e.methods.length) out.push("");
   e.methods.forEach((m, i) => {
     if (i) out.push("");
-    out.push(...method(m, 1));
+    out.push(...withComments(m, 1, () => method(m, 1)));
   });
   return out;
 }
@@ -454,14 +598,17 @@ export function printWapy(program: Program): string {
   const out: string[] = [];
   program.items.forEach((item, i) => {
     if (i) out.push("");
-    out.push(...topLevel(item));
+    out.push(...withComments(item, 0, () => topLevel(item)));
   });
+  const tail = remaining();
+  if (tail.length) out.push("", ...tail);
   return out.join("\n") + "\n";
 }
 
 export function wapyOf(source: string, path: string): { text: string; unhandled: string[] } {
   unhandled.length = 0;
   const lex = wacLex(source);
+  scanComments(source, lex.tokens);
   const parsed = wacParse(lex.tokens, path);
   if (parsed.errors.length) {
     throw new Error(

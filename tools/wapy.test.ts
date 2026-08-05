@@ -152,3 +152,44 @@ Deno.test("a file that does not parse throws rather than printing rubbish", () =
   try { wapy(`export i32 f( {`); } catch { threw = true; }
   assertEquals(threw, true);
 });
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+//
+// Recovered from the gaps between adjacent tokens rather than by re-scanning the source, so
+// a `//` inside a string literal cannot be mistaken for a comment — the real lexer already
+// decided that.
+
+Deno.test("comments survive, in their places", () => {
+  const out = wapy(`
+    // a file comment
+    /** A doc comment.
+     * Second line. */
+    export i32 f(i32 x) {
+      // above the statement
+      i32 y = x + 1;   // trailing
+      return y;
+    }
+  `);
+  assertStringIncludes(out, "# a file comment");
+  assertStringIncludes(out, "## A doc comment.");
+  assertStringIncludes(out, "## Second line.");
+  assertStringIncludes(out, "    # above the statement");
+  assertStringIncludes(out, "y: i32 = x + 1  # trailing");
+  // The doc comment belongs above its function, not inside it.
+  const lines = out.split("\n");
+  const doc = lines.findIndex((l) => l.includes("## A doc comment"));
+  const def = lines.findIndex((l) => l.startsWith("def f"));
+  assertEquals(doc < def && doc >= 0, true, "doc comment should precede its def");
+});
+
+Deno.test("a doc comment and a line comment stay distinguishable", () => {
+  const out = wapy(`
+    /** doc */
+    // line
+    export void f() { }
+  `);
+  assertStringIncludes(out, "## doc");
+  assertStringIncludes(out, "# line");
+  // `#` and `##` are what let the trip back tell `//` from `/** */`.
+  assertEquals(out.includes("## line"), false);
+});
