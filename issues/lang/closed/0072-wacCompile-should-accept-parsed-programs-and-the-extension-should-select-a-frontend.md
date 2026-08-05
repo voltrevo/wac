@@ -1,6 +1,7 @@
 # 0072 — `wacCompile` should accept parsed programs, and the extension should select a frontend
 
-- **Status:** open
+- **Status:** closed
+- **Fixed in:** (this commit)
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-c
 - **Date:** 2026-08-05
@@ -133,3 +134,33 @@ The frontend and the round trip are in `tools/`, and nothing in `atoms/wac/` was
 `deno test -A tools/wapyRoundTrip.test.ts` checks that wac → wapy → AST is identical to
 wac → AST across all 155 files of wac-mono; `tools/wapyLoad.test.ts` covers mixed graphs in
 both directions.
+
+## Resolution
+
+Closed by `atoms/wac/wacFrontend.ts` — the table itself, one entry per extension — and its use
+in `wacCompile` phases 1–2 and in `wacx`'s graph walk.
+
+It landed differently from the sketch above in two ways, both simplifications:
+
+**No `parse` hook.** A hook would have made a frontend something a *caller* supplies, which
+puts the choice in the wrong place: the file's extension already says what it is, and every
+caller would have had to agree on the same answer. `wacCompile` looks it up itself, and takes
+the same `Map<path, source>` it always did.
+
+**No `importPaths`.** Import discovery read the text with `wacLex`, which could only ever
+understand one of the two surfaces. It now reads them off the parsed program, which is shorter,
+works for both, and cannot be fooled by an `import` inside a comment — the bug the lexing
+version existed to avoid in the first place.
+
+The frontend also moved into `atoms/wac/`, since the earlier note that "nothing in `atoms/wac/`
+was touched" described a constraint that no longer applies. `tools/wapyRead.ts`,
+`tools/wapyLoad.ts` and their tests are gone; the frontend is `wapyLex.ts` + `wapyParse.ts`, the
+printer is `wapyPrint.ts`, and the surface is specified in `spec/spec/wapy.md`.
+
+One thing the sketch got wrong: it described `wapyRead` as a frontend. It was a transliterator —
+it rewrote wapy tokens into wac's shape without validating wapy's own grammar, so `class P` with
+no colon was accepted silently and `def f(x: i32) ->` reported a missing function name at the
+column of a function name. The round trip could not catch that, because it only ever fed the
+reader output from the printer. `wapyParse.ts` is a real recursive-descent parser for wapy's
+structure that delegates expressions and types to `wacParse`'s shared grammar, and
+`wapyParse.test.ts` feeds it malformed input on purpose.

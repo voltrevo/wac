@@ -14,18 +14,26 @@
 // the fields the type checker would later fill in; those are absent in both, since neither is
 // checked.
 
-import { wacLex } from "../atoms/wac/wacLex.ts";
-import { wacParse } from "../atoms/wac/wacParse.ts";
-import { wapyOf } from "./wapy.ts";
-import { parseWapy } from "./wapyRead.ts";
+import { wacLex } from "./wacLex.ts";
+import { wacParse } from "./wacParse.ts";
+import { wapyOf } from "./wapyPrint.ts";
+import { wapyParse as parseWapy } from "./wapyParse.ts";
 
-/** Drop `line`/`col` recursively, and normalise absent-vs-undefined. */
+/**
+ * Drop `line`/`col` recursively, normalise absent-vs-undefined, and sort keys.
+ *
+ * Keys are sorted because the trees are compared as JSON, and JSON preserves insertion order —
+ * so without this the test would be asserting that the two frontends build their object
+ * literals in the same order, which is not a property of the language. Every other difference
+ * still fails.
+ */
 function strip(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(strip);
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
       if (k === "line" || k === "col" || k === "span") continue;
+      const val = (v as Record<string, unknown>)[k];
       if (val === undefined) continue;
       out[k] = strip(val);
     }
@@ -239,7 +247,7 @@ check("empty bodies", `
 // ── And the corpus, which is where anything I did not think of lives ─────────
 
 Deno.test("round trip: spec/tour.wac", async () => {
-  const src = await Deno.readTextFile(new URL("../spec/tour.wac", import.meta.url));
+  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
   const r = roundTrip(src, "spec/tour.wac");
   if (!r.ok) throw new Error(r.why);
 });
@@ -253,10 +261,10 @@ Deno.test("round trip: spec/tour.wac", async () => {
  * variable name, `None` as a variant inside a match expression, nested generic brackets. None of
  * them is exotic; all of them are things I would not have thought to write a case for.
  *
- *   deno test -A tools/wapyRoundTrip.test.ts
+ *   deno test -A atoms/wac/wapyRoundTrip.test.ts
  */
 Deno.test("round trip: all of wac-mono", async () => {
-  const root = new URL("../../wac-mono/packages/", import.meta.url);
+  const root = new URL("../../../wac-mono/packages/", import.meta.url);
   let pkgs: string[];
   try {
     pkgs = [];
@@ -274,7 +282,9 @@ Deno.test("round trip: all of wac-mono", async () => {
       }
     } catch { /* a package with no src/ */ }
   }
-  if (files.length === 0) return;
+  // A silent pass over nothing is worse than a skip: this test moved directories once and
+  // kept reporting green against zero files.
+  if (files.length === 0) throw new Error(`no .wac files under ${root.pathname}`);
 
   const bad: string[] = [];
   for (const f of files) {

@@ -31,6 +31,7 @@ binary -> instantiate and call.
 - [spec/naming.md](spec/naming.md) — naming collisions, shadowing rules
 - [spec/funcrefs.md](spec/funcrefs.md) — function references, higher-order functions
 - [spec/grammar.md](spec/grammar.md) — formal EBNF grammar
+- [spec/wapy.md](spec/wapy.md) — wapy: the indentation surface, and how it corresponds
 - [spec/strings.md](spec/strings.md) — string type, literals, indexing, concatenation
 - [spec/bindgen.md](spec/bindgen.md) — TypeScript bindgen: type mapping, output examples
 - [spec/errors.md](spec/errors.md) — structured error reporting format

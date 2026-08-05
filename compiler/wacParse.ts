@@ -249,7 +249,21 @@ const COMPOUND_OPS = new Set([
   "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", ">>>=",
 ]);
 
-export function wacParse(tokens: Token[], file: string): ParseResult {
+/**
+ * The parser, as an object with several entry points.
+ *
+ * wac is no longer the only surface syntax — `wapyParse` reads an indentation-based one — and
+ * the two differ in their *structure*, not in their expressions. So the expression and type
+ * grammar is shared rather than reimplemented, and this is where the sharing happens: a second
+ * frontend parses its own declarations and statements, and calls `expression` and `type` for
+ * everything below that.
+ *
+ * The alternative was for the other frontend to rewrite its tokens into wac's shape and let
+ * this parse the result. That works and it was the first attempt; it is also why malformed
+ * input in the other surface produced messages about tokens nobody had written, and in two
+ * cases produced none at all. A frontend that does not parse cannot diagnose.
+ */
+export function makeParser(tokens: Token[], file: string) {
   let cur = 0;
   const errors: ParseError[] = [];
 
@@ -537,68 +551,68 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
 
   function parseOr(): Expr {
     let e = parseAnd();
-    while (at("||")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseAnd(), ...p }; }
+    while (at("||")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseAnd(), ...p }; }
     return e;
   }
 
   function parseAnd(): Expr {
     let e = parseBitor();
-    while (at("&&")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseBitor(), ...p }; }
+    while (at("&&")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseBitor(), ...p }; }
     return e;
   }
 
   function parseBitor(): Expr {
     let e = parseXor();
-    while (at("|")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseXor(), ...p }; }
+    while (at("|")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseXor(), ...p }; }
     return e;
   }
 
   function parseXor(): Expr {
     let e = parseBitand();
-    while (at("^")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseBitand(), ...p }; }
+    while (at("^")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseBitand(), ...p }; }
     return e;
   }
 
   function parseBitand(): Expr {
     let e = parseEq();
-    while (at("&")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseEq(), ...p }; }
+    while (at("&")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseEq(), ...p }; }
     return e;
   }
 
   function parseEq(): Expr {
     let e = parseRel();
-    while (at("==") || at("!=")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseRel(), ...p }; }
+    while (at("==") || at("!=")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseRel(), ...p }; }
     return e;
   }
 
   function parseRel(): Expr {
     let e = parseShift();
-    while (at("<") || at("<=") || at(">") || at(">=")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseShift(), ...p }; }
+    while (at("<") || at("<=") || at(">") || at(">=")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseShift(), ...p }; }
     return e;
   }
 
   function parseShift(): Expr {
     let e = parseAdd();
-    while (at("<<") || at(">>") || at(">>>")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseAdd(), ...p }; }
+    while (at("<<") || at(">>") || at(">>>")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseAdd(), ...p }; }
     return e;
   }
 
   function parseAdd(): Expr {
     let e = parseMul();
-    while (at("+") || at("-")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseMul(), ...p }; }
+    while (at("+") || at("-")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseMul(), ...p }; }
     return e;
   }
 
   function parseMul(): Expr {
     let e = parseCast();
-    while (at("*") || at("/") || at("%")) { const p = pos(); const op = advance().text; e = { kind: "binary", op, left: e, right: parseCast(), ...p }; }
+    while (at("*") || at("/") || at("%")) { const p = pos(); const op = advance().kind; e = { kind: "binary", op, left: e, right: parseCast(), ...p }; }
     return e;
   }
 
   function parseCast(): Expr {
     let e = parseUnary();
     while (at("as") || at("as!") || at("as~") || at("as@")) {
-      const p = pos(); const op = advance().text; const type = parseType();
+      const p = pos(); const op = advance().kind; const type = parseType();
       e = { kind: "cast", op, expr: e, type, ...p };
     }
     return e;
@@ -626,14 +640,17 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
     }
   }
 
+  // Operators are recorded by *kind*, not by the text the author wrote. For wac the two are the
+  // same string; for wapy they are not — `and` is a `&&` — and the AST records which operator
+  // this is, not how it was spelled.
   function parseUnary(): Expr {
     const p = pos();
     if (at("-") || at("!") || at("~")) {
-      const op = advance().text;
+      const op = advance().kind;
       return { kind: "unary", op, expr: parseUnary(), ...p };
     }
     if (at("++") || at("--")) {
-      const op = advance().text as "++" | "--";
+      const op = advance().kind as "++" | "--";
       const operand = parseUnary();
       const lval = exprToLvalue(operand);
       if (!lval) {
@@ -676,7 +693,7 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         expect(")");
         e = { kind: "call", callee: e, args, ...p };
       } else if (at("++") || at("--")) {
-        const op = advance().text as "++" | "--";
+        const op = advance().kind as "++" | "--";
         const lval = exprToLvalue(e);
         if (!lval) {
           err(`'${op}' requires a variable, field, or array element`);
@@ -1026,12 +1043,12 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         advance(); const rhs = parseExpr(); expect(";");
         return { kind: "assign", op: "=", lval: lv, rhs, ...p };
       }
-      if (COMPOUND_OPS.has(tok().text)) {
-        const op = advance().text; const rhs = parseExpr(); expect(";");
+      if (COMPOUND_OPS.has(tok().kind)) {
+        const op = advance().kind; const rhs = parseExpr(); expect(";");
         return { kind: "assign", op, lval: lv, rhs, ...p };
       }
       if ((at("++") || at("--")) && at(";", 1)) {
-        const op = advance().text as "++" | "--"; expect(";");
+        const op = advance().kind as "++" | "--"; expect(";");
         return { kind: "incr", op, lval: lv, ...p };
       }
       // Not an assignment — restore and parse as expression
@@ -1090,8 +1107,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
         if (at("ident")) {
           const lv = parseLvalue();
           if (at("=")) { advance(); init = { kind: "assign", op: "=", lval: lv, rhs: parseExpr(), ...ip }; }
-          else if (COMPOUND_OPS.has(tok().text)) { const op = advance().text; init = { kind: "assign", op, lval: lv, rhs: parseExpr(), ...ip }; }
-          else if (at("++") || at("--")) { const op = advance().text as "++" | "--"; init = { kind: "incr", op, lval: lv, ...ip }; }
+          else if (COMPOUND_OPS.has(tok().kind)) { const op = advance().kind; init = { kind: "assign", op, lval: lv, rhs: parseExpr(), ...ip }; }
+          else if (at("++") || at("--")) { const op = advance().kind as "++" | "--"; init = { kind: "incr", op, lval: lv, ...ip }; }
           else err("expected assignment in for init");
         }
       }
@@ -1106,8 +1123,8 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
       if (at("ident")) {
         const lv = parseLvalue();
         if (at("=")) { advance(); update = { kind: "assign", op: "=", lval: lv, rhs: parseExpr(), ...up }; }
-        else if (COMPOUND_OPS.has(tok().text)) { const op = advance().text; update = { kind: "assign", op, lval: lv, rhs: parseExpr(), ...up }; }
-        else if (at("++") || at("--")) { const op = advance().text as "++" | "--"; update = { kind: "incr", op, lval: lv, ...up }; }
+        else if (COMPOUND_OPS.has(tok().kind)) { const op = advance().kind; update = { kind: "assign", op, lval: lv, rhs: parseExpr(), ...up }; }
+        else if (at("++") || at("--")) { const op = advance().kind as "++" | "--"; update = { kind: "incr", op, lval: lv, ...up }; }
         else err("expected assignment in for update");
       }
     }
@@ -1538,36 +1555,80 @@ export function wacParse(tokens: Token[], file: string): ParseResult {
   }
 
   // ── Main parse loop ───────────────────────────────────────────────────────
+  //
+  // Inside `program()`, not at construction. `makeParser` is a set of entry points into one
+  // grammar, and which one the caller wants is not known until they ask: wapy's frontend takes
+  // `expression` and `type` and never `program`, and a parser that had already consumed the
+  // token stream would hand it an empty one.
 
-  const items: TopLevel[] = [];
-  while (!at("eof")) {
-    if (at("import")) {
-      items.push(parseImport());
-    } else if (at("struct") || (at("const") && at("struct", 1))) {
-      items.push(parseStructDecl(false));
-    } else if (at("export") && (at("struct", 1) || (at("const", 1) && at("struct", 2)))) {
-      // `export const struct` as well as `export struct` — parseStructDecl reads
-      // the `const` itself, so only the `export` is consumed here.
-      advance(); // skip 'export'
-      items.push(parseStructDecl(true));
-    } else if (at("const")) {
-      // `const struct` was matched above, so any other `const` is a constant.
-      items.push(parseConstDecl(false));
-    } else if (at("export") && at("const", 1)) {
-      advance(); // skip 'export'
-      items.push(parseConstDecl(true));
-    } else if (at("enum")) {
-      items.push(parseEnumDecl(false));
-    } else if (at("export") && at("enum", 1)) {
-      advance(); // skip 'export'
-      items.push(parseEnumDecl(true));
-    } else if (at("export") || at("fn") || at("void") || (at("ident"))) {
-      items.push(parseFuncDecl());
-    } else {
-      err(`unexpected token '${tok().text}' at top level`);
-      advance();
+  function parseProgram(): TopLevel[] {
+    const items: TopLevel[] = [];
+    while (!at("eof")) {
+      if (at("import")) {
+        items.push(parseImport());
+      } else if (at("struct") || (at("const") && at("struct", 1))) {
+        items.push(parseStructDecl(false));
+      } else if (at("export") && (at("struct", 1) || (at("const", 1) && at("struct", 2)))) {
+        // `export const struct` as well as `export struct` — parseStructDecl reads
+        // the `const` itself, so only the `export` is consumed here.
+        advance(); // skip 'export'
+        items.push(parseStructDecl(true));
+      } else if (at("const")) {
+        // `const struct` was matched above, so any other `const` is a constant.
+        items.push(parseConstDecl(false));
+      } else if (at("export") && at("const", 1)) {
+        advance(); // skip 'export'
+        items.push(parseConstDecl(true));
+      } else if (at("enum")) {
+        items.push(parseEnumDecl(false));
+      } else if (at("export") && at("enum", 1)) {
+        advance(); // skip 'export'
+        items.push(parseEnumDecl(true));
+      } else if (at("export") || at("fn") || at("void") || (at("ident"))) {
+        items.push(parseFuncDecl());
+      } else {
+        err(`unexpected token '${tok().text}' at top level`);
+        advance();
+      }
     }
+    return items;
   }
 
-  return { program: { items }, errors };
+  return {
+    /** The whole file. */
+    program(): ParseResult {
+      return { program: { items: parseProgram() }, errors };
+    },
+    /** One expression, for a frontend that has isolated the tokens of one. */
+    expression(): { expr: Expr; errors: ParseError[]; consumed: number } {
+      const expr = parseExpr();
+      return { expr, errors, consumed: cur };
+    },
+    /** One type, likewise. */
+    type(): { type: WacType; errors: ParseError[]; consumed: number } {
+      const type = parseType();
+      return { type, errors, consumed: cur };
+    },
+    /** One statement, for a frontend that delimits statements itself. */
+    statement(): { stmt: Stmt; errors: ParseError[]; consumed: number } {
+      const stmt = parseStatement();
+      return { stmt, errors, consumed: cur };
+    },
+  };
+}
+
+export function wacParse(tokens: Token[], file: string): ParseResult {
+  return makeParser(tokens, file).program();
+}
+
+/** Parse exactly one expression from `tokens`, for another frontend's use. */
+export function parseExpression(tokens: Token[], file: string): { expr: Expr; errors: ParseError[] } {
+  const { expr, errors } = makeParser(tokens, file).expression();
+  return { expr, errors };
+}
+
+/** Parse exactly one type from `tokens`, likewise. */
+export function parseTypeOnly(tokens: Token[], file: string): { type: WacType; errors: ParseError[] } {
+  const { type, errors } = makeParser(tokens, file).type();
+  return { type, errors };
 }
