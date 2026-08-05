@@ -38,7 +38,7 @@ const instance = await WebAssembly.instantiate(module, {
   }) },
 });
 const pump = WebAssembly.promising(instance.exports.pump);
-await pump(instance.exports.__bind_fnref_0(0));    // → 12, suspended three times on the way
+await pump(instance.exports.$bind$fnref_0(0));     // → 12, suspended three times on the way
 ```
 
 The wac side is an ordinary loop. It does not know it was suspended, and nothing about it changed.

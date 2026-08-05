@@ -243,3 +243,56 @@ Deno.test("wacx build: a parameter argv cannot carry is refused at build time", 
   if (r.code !== 1) throw new Error("should refuse an array parameter");
   if (!r.err.includes("which a command line cannot supply")) throw new Error(r.err);
 });
+
+// ── Array arguments ─────────────────────────────────────────────────────────
+//
+// `wacx run prog.wac sum '1,2,3'` used to report "'1,2,3' is not a number, but the parameter is
+// i32[]", which names the argument as the problem when the coercion was the problem: an array is
+// a reference, so only the module's own accessors can build one, and nothing was calling them.
+// The same gap broke the playground's Run button for every array parameter.
+
+const ARRAYS = `export i32 total(i32[] xs) {
+  i32 t = 0;
+  for (i32 i = 0; i < xs.len(); i++) { t += xs[i]; }
+  return t;
+}
+export i64 totalBig(i64[] xs) {
+  i64 t = 0;
+  for (i32 i = 0; i < xs.len(); i++) { t += xs[i]; }
+  return t;
+}
+export f64 mean(f64[] xs) {
+  if (xs.len() == 0) { return 0.0; }
+  f64 t = 0.0;
+  for (i32 i = 0; i < xs.len(); i++) { t += xs[i]; }
+  return t / (xs.len() as f64);
+}`;
+
+Deno.test("wacx run: an array argument, comma-separated", async () => {
+  const r = await run(["run", "a.wac", "total", "1,2,3,4"], { "a.wac": ARRAYS });
+  eq(r.err, "", "no error");
+  eq(r.out, "10", "sum");
+});
+
+Deno.test("wacx run: brackets around the list are accepted, because people type them", async () => {
+  const r = await run(["run", "a.wac", "total", "[1, 2, 3, 4]"], { "a.wac": ARRAYS });
+  eq(r.out, "10", "sum");
+});
+
+Deno.test("wacx run: an empty array argument", async () => {
+  const r = await run(["run", "a.wac", "total", ""], { "a.wac": ARRAYS });
+  eq(r.out, "0", "sum of nothing");
+});
+
+Deno.test("wacx run: i64 and f64 elements keep their width", async () => {
+  const big = await run(["run", "a.wac", "totalBig", "9007199254740993,1"], { "a.wac": ARRAYS });
+  eq(big.out, "9007199254740994", "past 2^53, so it cannot have gone through a double");
+  const avg = await run(["run", "a.wac", "mean", "1.5,2.5"], { "a.wac": ARRAYS });
+  eq(avg.out, "2", "mean");
+});
+
+Deno.test("wacx run: a non-numeric element names the element, not the list", async () => {
+  const r = await run(["run", "a.wac", "total", "1,two,3"], { "a.wac": ARRAYS });
+  eq(r.code, 1, "exit code");
+  if (!r.err.includes("'two' is not a number")) throw new Error(r.err);
+});

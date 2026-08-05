@@ -118,3 +118,71 @@ Deno.test("site: the mixed-import snippets are a real program", async () => {
     throw new Error(`${d.file}:${d.line}:${d.col} ${d.message}`);
   }
 });
+
+// ── Running, not just compiling ─────────────────────────────────────────────
+//
+// Compiling was not enough. The panel's runner held its own copy of the marshalling accessor
+// names — `__bind_str_len` where the emitter emits `$bind$str_len` — so every export returning a
+// string or taking an array failed at run time with "not a function", including the landing
+// page's hello world. Nothing noticed, because nothing here had ever called one.
+
+import { runFunction, runnable } from "../src/editor/wac-compile.ts";
+
+/** The panel's own path: text in, text out. */
+async function run(src: string, file: string, fn: string, args: string[]): Promise<string> {
+  const r = await runFunction({ [file]: src }, file, fn, args);
+  if (!r.success) throw new Error(`${fn}: ${r.output}`);
+  return r.output;
+}
+
+Deno.test("site: the panel runs an export that returns a string", async () => {
+  const got = await run(`export string hello() { return "Hello, world!"; }`, "m.wac", "hello", []);
+  if (got !== "Hello, world!") throw new Error(got);
+});
+
+Deno.test("site: the panel runs an export that takes a string", async () => {
+  const src = `export string shout(string s) { return s + "!"; }`;
+  const got = await run(src, "m.wac", "shout", ["hi"]);
+  if (got !== "hi!") throw new Error(got);
+});
+
+Deno.test("site: the panel runs an export that takes and returns an array", async () => {
+  const src = `export i32[] doubled(i32[] xs) {
+    i32[] out = i32[xs.len()]();
+    for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i] * 2; }
+    return out;
+  }`;
+  for (const typed of ["1, 2, 3", "[1, 2, 3]"]) {
+    const got = await run(src, "m.wac", "doubled", [typed]);
+    if (got !== "[2, 4, 6]") throw new Error(`${typed} → ${got}`);
+  }
+});
+
+Deno.test("site: the panel runs the landing page's wapy demo", async () => {
+  const got = await run(await snippet("EX_WAPY_LIVE"), "m.wapy", "fizzbuzz", ["15"]);
+  if (!got.startsWith("1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz")) {
+    throw new Error(got);
+  }
+});
+
+Deno.test("site: every runnable playground export actually runs", async () => {
+  // Not the answer — only that calling it neither throws nor reports a marshalling failure.
+  // Zero and empty are what the boxes hold before anything is typed, so that is what is passed.
+  //
+  // Which also means every example has to *terminate* on empty input, and one did not: the
+  // Collatz example looped forever on 0, so clicking Run without typing hung the tab. It has a
+  // guard now. If this test ever hangs rather than failing, that is what happened again.
+  const broken: string[] = [];
+  for (const ex of EXAMPLES) {
+    const r = compile(ex.files, ex.entry);
+    if (!r.ok) continue;                              // reported by the compile test above
+    for (const f of r.compiled.exports) {
+      if (runnable(f) !== null) continue;             // the panel would not offer a Run button
+      const out = await runFunction(ex.files, ex.entry, f.name, f.params.map(() => ""));
+      if (!out.success && !out.output.startsWith("Runtime error: wac trap")) {
+        broken.push(`${ex.name} · ${f.name} — ${out.output}`);
+      }
+    }
+  }
+  if (broken.length) throw new Error(`${broken.length}:\n  ${broken.join("\n  ")}`);
+});

@@ -29,6 +29,8 @@ export type WacInst = {
  */
 export type WacArg =
   | number | bigint | boolean | null | object | string
+  // An array of primitives, marshalled into a wac array of the parameter's element type.
+  | (number | bigint)[]
   // A function argument is a host function the module may call. It is reachable
   // only through the parameter it arrives on: the module has no way to name one
   // it was not given.
@@ -99,6 +101,13 @@ export async function wacInstance(compiled: WacCompiled): Promise<WacInst> {
       // engine rejected it with "type incompatibility when transforming from/to JS". It made
       // `wacx run prog.wac greet world` fail on the most ordinary thing a command line can pass.
       if (t === "string" && typeof a === "string") return encodeString(rawExports, a);
+      // An array argument is built the same way a string one is, and for the same reason: it is
+      // a reference, so only the module's own accessors can make one. Without this, passing a
+      // JS array fell through `coerceArg` untouched and the engine rejected it with "type
+      // incompatibility when transforming from/to JS" — which reads as a compiler fault.
+      if (Array.isArray(a) && ARRAY_ELEM[t] !== undefined) {
+        return encodeArray(rawExports, a as (number | bigint)[], ARRAY_ELEM[t]);
+      }
       if (typeof a === "function") return toFuncref(a, t);
       return coerceArg(a, t);
     });
@@ -164,6 +173,24 @@ function encodeString(ex: Record<string, unknown>, s: string): unknown {
   const bytes = new TextEncoder().encode(s);
   const out = make(bytes.length);
   for (let i = 0; i < bytes.length; i++) set(out, i, bytes[i]);
+  return out;
+}
+
+/** Build a wasm array from a JS one, using the module's own accessors. */
+function encodeArray(
+  ex: Record<string, unknown>, xs: (number | bigint)[], elem: { suffix: string; big: boolean },
+): unknown {
+  const make = ex[`$bind$arr_${elem.suffix}_new`] as ((n: number) => unknown) | undefined;
+  const set = ex[`$bind$arr_${elem.suffix}_set`] as
+    ((a: unknown, i: number, v: number | bigint) => void) | undefined;
+  if (!make || !set) {
+    throw new Error(
+      `wac: this module has no ${elem.suffix}[] accessors, so that array cannot be built`);
+  }
+  const out = make(xs.length);
+  for (let i = 0; i < xs.length; i++) {
+    set(out, i, elem.big ? BigInt(xs[i]) : Number(xs[i]));
+  }
   return out;
 }
 

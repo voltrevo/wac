@@ -78,7 +78,9 @@ function stem(path: string): string {
  * `wacx run` gets strings; the export's declared parameter types say what they mean. An i64 needs a
  * BigInt and a bool needs 0/1, so guessing from the text would be wrong for both.
  */
-function coerceArg(text: string, type: string): number | bigint | boolean | string {
+function coerceArg(
+  text: string, type: string,
+): number | bigint | boolean | string | (number | bigint)[] {
   // A string parameter takes the argument as written — no coercion at all, which is the whole
   // point of a command line. `wacInstance` builds the wasm string. This used to fall through to
   // `Number(text)` and report "'world' is not a number, but the parameter is string".
@@ -92,12 +94,33 @@ function coerceArg(text: string, type: string): number | bigint | boolean | stri
       `so run this export through 'wacx bindgen' output instead`,
     );
   }
+  // An array parameter takes a comma-separated list, with optional brackets because that is what
+  // people type. `wacInstance` builds the wasm array. This used to fall through to `Number(text)`
+  // and report "'1,2,3' is not a number, but the parameter is i32[]" — which named the argument
+  // as the problem when the coercion was the problem.
+  const elem = ARRAY_ELEM[type];
+  if (elem !== undefined) {
+    const inner = text.trim().replace(/^\[/, "").replace(/\]$/, "");
+    return inner.split(",").map((x) => x.trim()).filter(Boolean).map((x) => {
+      if (elem === "big") return BigInt(x);
+      const v = Number(x);
+      if (Number.isNaN(v)) throw new Error(`'${x}' is not a number, but the parameter is ${type}`);
+      return v;
+    });
+  }
   if (type === "i64" || type === "u64") return BigInt(text);
   if (type === "bool") return text === "true" || text === "1";
   const n = Number(text);
   if (Number.isNaN(n)) throw new Error(`'${text}' is not a number, but the parameter is ${type}`);
   return n;
 }
+
+/** Array parameter types the command line can build, and whether the elements are bigints. */
+const ARRAY_ELEM: Record<string, "num" | "big"> = {
+  "u8[]": "num", "i8[]": "num", "u16[]": "num", "i16[]": "num",
+  "i32[]": "num", "u32[]": "num", "i64[]": "big", "u64[]": "big",
+  "f32[]": "num", "f64[]": "num",
+};
 
 /**
  * The export to run when `--call` is not given.
@@ -302,7 +325,7 @@ export async function wacx(argv: string[], cap: WacxCap): Promise<WacxResult> {
     return { code: 1 };
   }
 
-  let coerced: (number | bigint | boolean | string)[];
+  let coerced: (number | bigint | boolean | string | (number | bigint)[])[];
   try {
     coerced = args.map((a, i) => coerceArg(a, exp.params[i].type));
   } catch (e) {
