@@ -1,14 +1,16 @@
 #!/usr/bin/env -S deno run --allow-read
 // wapy — print a wac file in Python-flavoured syntax.
 //
-//   deno run --allow-read tools/wapy.ts packages/std/src/option.wac
-//   deno run --allow-read tools/wapy.ts --stats src/*.wac
+//   deno run --allow-read atoms/wac/wapyPrint.ts packages/std/src/option.wac
+//   deno run --allow-read atoms/wac/wapyPrint.ts --stats src/*.wac
 //
 // ## What this is
 //
-// A **cosmetic surface**. Same language, same semantics, same everything after parsing — this
-// reads the AST `wacParse` already produces and prints it with indentation instead of braces
-// and `def` instead of a leading return type. It compiles nothing and checks nothing.
+// One half of a **cosmetic surface**: the printer. It reads the AST either frontend produces
+// and writes it out with indentation instead of braces and `def` instead of a leading return
+// type. It compiles nothing and checks nothing. The other half is `wapyLex.ts` + `wapyParse.ts`,
+// which read wapy back; `spec/spec/wapy.md` specifies the correspondence, and
+// `wapyRoundTrip.test.ts` holds the two halves to it.
 //
 // ## What this is not
 //
@@ -29,24 +31,26 @@
 // those, wac-mono has **no** bare use of `and`, `or`, `True`, `False` or `self`; every `not` is
 // part of `is not null`, which is wac syntax; and `None` appears only as a variant name. The
 // real collisions are `pass` and `range` as ordinary variables, and both are distinguishable by
-// position. Which is why the reverse direction below is possible at all.
+// position. Which is why the reverse direction is possible at all — see the `word()` rule in
+// `wapyParse.ts`, which is where that distinction is actually made.
 //
-// ## Why print-only, for now
+// ## Why this direction is the one with a test
 //
-// This direction alone answers "what would it look like" over the whole corpus rather than
-// over hand-picked examples, and it is write-only, so it cannot break anything. The reader
-// (wapy → wac) is the part that needs a round-trip test to be trustworthy, and it is much
-// easier to decide whether to build it once you can see 41,000 lines of output.
+// Printing is checked by parsing the result and comparing syntax trees, over `spec/tour.wac`
+// and all of wac-mono, so both halves are exercised on 41,000 lines rather than on hand-picked
+// examples. It cannot check the other thing that matters, though — what the frontend says
+// about wapy that is *wrong* — because everything it feeds the parser is valid by
+// construction. That is `wapyParse.test.ts`, and it is a separate file for that reason.
 //
 // Printing the same AST back as *wac* would be the same machinery, which is where canonical
 // formatting comes from if that turns out to be wanted.
 
-import { wacLex } from "../atoms/wac/wacLex.ts";
-import { wacParse } from "../atoms/wac/wacParse.ts";
+import { wacLex } from "./wacLex.ts";
+import { wacParse } from "./wacParse.ts";
 import type {
   Block, ConstDecl, EnumDecl, Expr, FuncDecl, Import, Lvalue, MatchArm, MethodDecl,
   Param, Program, Stmt, StructDecl, TopLevel, WacType,
-} from "../atoms/wac/wacParse.ts";
+} from "./wacParse.ts";
 
 const IND = "    ";
 
@@ -113,7 +117,8 @@ function scanComments(src: string, tokens: { line: number; col: number; text: st
       line++;
     }
     const own = src.slice(seen, off).trim() === "";
-    found.push({ line, text, doc: block && text.startsWith("/**"), own });
+    // wac writes a doc comment either way — `/// one line` or `/** a block */`.
+    found.push({ line, text, doc: block ? text.startsWith("/**") : text.startsWith("///"), own });
   }
 
   comments = found;
@@ -135,6 +140,7 @@ function asWapy(c: Comment, pad: string): string[] {
     const body = c.text.startsWith("//") ? c.text.slice(2) : c.text.slice(2, -2);
     return [`${pad}# ${body.trim()}`.trimEnd()];
   }
+  if (c.text.startsWith("///")) return [`${pad}## ${c.text.slice(3).trim()}`.trimEnd()];
   // Lines after the first carry a leading `*`; the first does not, so it is trimmed instead.
   // Indentation *after* the star is kept, because doc comments contain code samples.
   const lines = c.text.slice(3, -2).split("\n")
@@ -265,9 +271,10 @@ const P_TERNARY = 1, P_IS = 1.5, P_CAST = 12, P_UNARY = 13, P_PRIMARY = 99;
 function prec(e: Expr): number {
   switch (e.kind) {
     case "binary":    return PREC[e.op] ?? P_PRIMARY;
-    // Self-delimiting: the ternary always prints its own parentheses and a match expression
-    // its own braces, so treating them as primaries avoids `((a if c else b))`.
-    case "ternary":   return P_PRIMARY;
+    // Python's conditional binds looser than everything, so as an operand of anything at all
+    // it needs parentheses — which is what a precedence of 1 says. A match expression carries
+    // its own braces and is self-delimiting.
+    case "ternary":   return P_TERNARY;
     case "matchExpr": return P_PRIMARY;
     case "is":        return P_IS;
     case "cast":      return P_CAST;
@@ -276,10 +283,16 @@ function prec(e: Expr): number {
   }
 }
 
-/** Print `e` as an operand of something at `outer`, parenthesising only when needed. */
-function operand(e: Expr, outer: number, rightOfLeftAssoc = false): string {
+/**
+ * Print `e` as an operand of something at `outer`, parenthesising only when needed.
+ *
+ * `strict` is for the side of an operator that must bind *tighter* rather than merely as
+ * tight: the right of a left-associative operator, and the left of a right-associative one.
+ * Equal precedence there regroups the expression, so it needs the parentheses.
+ */
+function operand(e: Expr, outer: number, strict = false): string {
   const inner = prec(e);
-  const need = rightOfLeftAssoc ? inner <= outer : inner < outer;
+  const need = strict ? inner <= outer : inner < outer;
   return need ? `(${expr(e)})` : expr(e);
 }
 
@@ -318,11 +331,11 @@ function expr(e: Expr): string {
     }
 
     // Python's own conditional expression, and the one construct that reads better here.
-    // Always parenthesised. Python's conditional expression binds differently from wac's
-    // `? :` in ways that are easy to get wrong, and the parens make the reverse direction a
-    // lookup rather than a guess.
+    // Right-associative, so a chained `else` arm needs no parentheses of its own; every other
+    // operand does, which `prec` handles.
     case "ternary":
-      return `(${expr(e.then)} if ${expr(e.cond)} else ${expr(e.else_)})`;
+      return `${operand(e.then, P_TERNARY, true)} if ${operand(e.cond, P_TERNARY, true)} else ` +
+        `${operand(e.else_, P_TERNARY)}`;
 
     case "call":   return `${operand(e.callee, P_PRIMARY)}(${e.args.map(expr).join(", ")})`;
     case "index":  return `${operand(e.expr, P_PRIMARY)}[${expr(e.idx)}]`;

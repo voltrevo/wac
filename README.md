@@ -51,6 +51,41 @@ export f64 run() {
 - File-based imports with `import { x } from "./file.wac"`
 - Full control flow: if/else, while, for, do-while, switch, ternary
 - Four cast modes: `as` (lossless), `as!` (checked), `as~` (lossy), `as@` (raw)
+- Two surfaces: `.wac` above, or `.wapy` below — the same language either way
+
+## Two surfaces
+
+The same language, the same compiler, and two ways to lay a file out. `.wapy` is
+Python-flavoured — `def`, `class`, indentation, `and`/`or`/`not`, `None`, `self` — and is not
+Python: it does not accept Python, and copying Python into it is an explicit anti-goal.
+
+```wapy
+@export
+class Point:
+    x: f64
+    y: f64
+
+    def create(x: f64, y: f64) -> Point:
+        return Point(x, y)
+
+    def distanceSq(const self, other: Point) -> f64:
+        dx: f64 = self.x - other.x
+        dy: f64 = self.y - other.y
+        return dx * dx + dy * dy
+
+@export
+def run() -> f64:
+    a: Point = Point.create(0.0, 0.0)
+    b: Point = Point.create(3.0, 4.0)
+    return a.distanceSq(b)  # 25.0
+```
+
+Neither is special. A `.wac` file may import a `.wapy` file and the reverse, in any mixture in
+one program, and nothing after parsing can tell which produced a given declaration. Converting
+wac to wapy and parsing the result gives the same syntax tree as parsing the original — checked
+against every file in this repo and in wac-mono, which is what keeps the two from drifting.
+
+See [spec/spec/wapy.md](spec/spec/wapy.md) for the correspondence in full.
 
 ## TypeScript bindgen
 

@@ -7,7 +7,7 @@
 // The rest are the renderings worth pinning, chosen because they are the ones where the
 // mapping made a decision rather than a transliteration.
 
-import { wapyOf } from "./wapy.ts";
+import { wapyOf } from "./wapyPrint.ts";
 
 // Local helpers rather than a JSR import, matching the house pattern in
 // `atoms/wac/*.test.ts` — this repo has no third-party dependencies and should not gain one
@@ -28,7 +28,7 @@ function wapy(src: string): string {
 }
 
 Deno.test("the language tour prints with no unhandled construct", async () => {
-  const src = await Deno.readTextFile(new URL("../spec/tour.wac", import.meta.url));
+  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
   const { text, unhandled } = wapyOf(src, "spec/tour.wac");
   assertEquals(unhandled, [], `unhandled: ${unhandled.join(", ")}`);
   // A printer that emitted nothing would also have no unhandled constructs.
@@ -138,7 +138,7 @@ Deno.test("operators that have Python spellings take them", () => {
   assertStringIncludes(out, "if a and b:");
   assertStringIncludes(out, "return not a");
   assertStringIncludes(out, "if a or b:");
-  assertStringIncludes(out, "y: i32 = (1 if a else 2)");   // always parenthesised
+  assertStringIncludes(out, "y: i32 = 1 if a else 2");   // always parenthesised
   assertStringIncludes(out, "return x as~ bool");   // casts keep their spelling
 });
 

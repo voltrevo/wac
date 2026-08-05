@@ -43,8 +43,11 @@ export type LexResult = {
   errors: LexError[];
 };
 
-// Keywords that are reserved and cannot be identifiers
-const KEYWORDS = new Set<string>([
+// Keywords that are reserved and cannot be identifiers.
+//
+// Exported because wapy reserves the same words: the two surfaces differ in structure, not in
+// vocabulary, and a word that cannot be a name in one cannot be a name in the other.
+export const KEYWORDS = new Set<string>([
   // `from` is deliberately absent. It means something only directly after an import
   // clause, and reserving it everywhere cost a parameter named `from` in `slice(a, from,
   // to)` — which reported a missing semicolon at the *next declaration*, a hundred lines

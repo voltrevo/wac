@@ -12,7 +12,7 @@ import type { WacCompiled, WacExport } from "./wacCompile.ts";
 import { wacInstance } from "./wacInstance.ts";
 import { wacBindgen } from "./wacBindgen.ts";
 import { wacDiag } from "./wacDiag.ts";
-import { wacLex } from "./wacLex.ts";
+import { EXTENSIONS, frontendFor, importsOf } from "./wacFrontend.ts";
 
 /** Everything wacx does to the outside world. */
 export type WacxCap = {
@@ -27,9 +27,13 @@ export type WacxCap = {
 /**
  * Read the entry file and everything it imports.
  *
- * The import graph is walked by lexing rather than by pattern-matching the text, for the reason
- * wac-mono's harness learned the hard way: a doc comment containing an import specifier otherwise
- * sends the walk off to read a file that does not exist.
+ * Each file is parsed by the frontend its extension selects, and the imports are read off the
+ * resulting program. Walking by text instead sent the read off to files that did not exist —
+ * a doc comment containing an import specifier was enough — and could only ever understand one
+ * of the two surfaces.
+ *
+ * Parse errors are left for `wacCompile` to report; the walk only needs the specifiers, and an
+ * unreadable file stops it here in any case.
  */
 async function readGraph(entry: string, cap: WacxCap): Promise<Map<string, string>> {
   const files = new Map<string, string>();
@@ -37,32 +41,15 @@ async function readGraph(entry: string, cap: WacxCap): Promise<Map<string, strin
   while (queue.length > 0) {
     const path = queue.shift()!;
     if (files.has(path)) continue;
-    files.set(path, await cap.readFile(path));
-    for (const spec of importPaths(files.get(path)!)) {
+    const src = await cap.readFile(path);
+    files.set(path, src);
+    const frontend = frontendFor(path);
+    if (!frontend) continue;                       // `wacCompile` says so, with a diagnostic
+    for (const spec of importsOf(frontend(src, path).program)) {
       queue.push(resolveFrom(path, spec));
     }
   }
   return files;
-}
-
-/** Import specifiers in a source file, found by lexing so comments and strings cannot contribute. */
-function importPaths(src: string): string[] {
-  const { tokens } = wacLex(src);
-  const out: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].kind !== "import") continue;
-    let j = i + 1;
-    // `from` is an ordinary identifier now, so it is matched by text. Only an import
-    // clause can put one here, which is what makes that safe.
-    const isFrom = (t: { kind: string; text: string } | undefined) =>
-      t !== undefined && t.kind === "ident" && t.text === "from";
-    while (j < tokens.length && !isFrom(tokens[j]) && tokens[j].kind !== ";") j++;
-    if (isFrom(tokens[j]) && tokens[j + 1]?.kind === "string") {
-      out.push(tokens[j + 1].text);
-      i = j + 1;
-    }
-  }
-  return out;
 }
 
 /** Resolve `spec` against the directory of `from`, collapsing `.` and `..`. */
@@ -79,9 +66,10 @@ function resolveFrom(from: string, spec: string): string {
   return (absolute ? "/" : "") + parts.join("/");
 }
 
-/** Strip `.wac` so `main.wac` becomes `main`, for deriving output paths. */
+/** Strip the source extension so `main.wac` and `main.wapy` both become `main`. */
 function stem(path: string): string {
-  return path.endsWith(".wac") ? path.slice(0, -4) : path;
+  const ext = EXTENSIONS.find((e) => path.endsWith(e));
+  return ext ? path.slice(0, -ext.length) : path;
 }
 
 /**
@@ -338,11 +326,14 @@ export async function wacx(argv: string[], cap: WacxCap): Promise<WacxResult> {
 
 const USAGE = `wacx — the wac compiler CLI
 
-  wacx check   <file.wac>              type-check the file and its imports
-  wacx run     <file.wac> <fn> [args]  compile, instantiate, and call fn
-  wacx compile <file.wac>              write <file>.wasm
-  wacx bindgen <file.wac>              write <file>.wac.ts
-  wacx build   <file.wac> [--call fn]  write an executable program, runnable directly
+  wacx check   <file>              type-check the file and its imports
+  wacx run     <file> <fn> [args]  compile, instantiate, and call fn
+  wacx compile <file>              write <file>.wasm
+  wacx bindgen <file>              write <file>.wac.ts
+  wacx build   <file> [--call fn]  write an executable program, runnable directly
+
+  A file is .wac or .wapy — the same language in two surfaces, freely mixed in
+  one import graph. The extension selects the frontend, so it is required.
 
   --checked   trap on integer overflow in +, - and * (experimental; default is
               to wrap, which is what SHA-256 and CRC-32 are specified to do)

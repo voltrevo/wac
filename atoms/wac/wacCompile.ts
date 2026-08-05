@@ -4,8 +4,8 @@
 // Returns either a WacCompiled result (wasm bytes + export metadata) or errors.
 // Each phase runs in order; later phases are skipped on earlier errors.
 
-import { wacLex } from "./wacLex.ts";
-import { wacParse, type Program } from "./wacParse.ts";
+import { EXTENSIONS, frontendFor } from "./wacFrontend.ts";
+import type { Program } from "./wacParse.ts";
 import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
 import { wasmBuildBin, wasmBindMeta } from "./wasmBuildBin.ts";
@@ -225,16 +225,20 @@ export function wacCompile(
   const programs = new Map<string, Program>();
   const hasError = () => diagnostics.some(d => d.severity === "error");
 
-  // Phase 1 & 2: lex + parse every file (these phases only produce errors)
+  // Phase 1 & 2: lex + parse every file, with the extension choosing the frontend. These
+  // phases only produce errors.
   for (const [path, src] of files) {
-    const { tokens, errors: lexErrs } = wacLex(src);
-    for (const e of lexErrs) {
-      diagnostics.push({ span: 1, ...e, file: path, phase: "lex", severity: "error" });
+    const frontend = frontendFor(path);
+    if (!frontend) {
+      diagnostics.push({
+        span: 1, file: path, line: 1, col: 1, phase: "parse", severity: "error",
+        message: `unknown extension — a wac program is written in ${EXTENSIONS.join(" or ")}`,
+      });
+      continue;
     }
-    // Parse even if there were lex errors (best-effort recovery)
-    const { program, errors: parseErrs } = wacParse(tokens, path);
-    for (const e of parseErrs) {
-      diagnostics.push({ span: 1, ...e, phase: "parse", severity: "error" });
+    const { program, errors } = frontend(src, path);
+    for (const e of errors) {
+      diagnostics.push({ span: 1, ...e, file: path, severity: "error" });
     }
     programs.set(path, program);
   }
