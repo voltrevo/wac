@@ -168,8 +168,10 @@ Deno.test("site: the panel runs the landing page's wapy demo", async () => {
 Deno.test("site: a program that never terminates is stopped at its deadline", async () => {
   // In a subprocess, because Deno's `terminate()` does not stop a worker spinning inside a wasm
   // loop: measured, the core keeps burning and the process never exits. Chromium and Node both
-  // kill it; Deno is the outlier. What is under test is the deadline and the recovery, which
-  // hold everywhere, and the parent SIGKILLs whatever the child leaves behind.
+  // kill it. That is a known Deno regression with a fix in flight (denoland/deno#35657), so this
+  // subprocess is a workaround with an expiry date — once it lands, call `runIsolated` directly
+  // and delete `siteDeadline.ts`. What is under test either way is the deadline and the recovery,
+  // which hold everywhere; the parent SIGKILLs whatever the child leaves behind.
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "-A", new URL("./siteDeadline.ts", import.meta.url).pathname, "700"],
     stdout: "piped",
