@@ -5,7 +5,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxHighlighting, bracketMatching, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { linter } from "@codemirror/lint";
-import { wac as wacLang } from "./wac-language";
+import { wac as wacLang, wapy as wapyLang } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
 import { compile, runFunction, placeholderFor, type EditorCompileResult } from "./wac-compile";
 import type { WacExport } from "../../atoms/wac/wacCompile.ts";
@@ -25,9 +25,16 @@ const highlight = HighlightStyle.define([
   { tag: tags.definition(tags.variableName), color: "#2dd4bf" },
 ]);
 
-const FILE = "/demo/main.wac";
+/**
+ * The demo file's name, which is not cosmetic: the extension selects the frontend, so a `.wapy`
+ * demo compiles through `wapyParse` and a `.wac` one through `wacParse`. Same `wacCompile` call
+ * either way — the runner below does not know which surface it just ran.
+ */
+const FILE_FOR = { wac: "/demo/main.wac", wapy: "/demo/main.wapy" } as const;
 
-function CompactRunner({ func, code }: { func: WacExport; code: string }) {
+export type Surface = keyof typeof FILE_FOR;
+
+function CompactRunner({ func, code, file }: { func: WacExport; code: string; file: string }) {
   const [args, setArgs] = useState<string[]>(() => func.params.map(() => ""));
   const [output, setOutput] = useState<{ success: boolean; output: string } | null>(null);
   const [running, setRunning] = useState(false);
@@ -35,8 +42,8 @@ function CompactRunner({ func, code }: { func: WacExport; code: string }) {
   const run = async () => {
     setRunning(true);
     try {
-      const files = { [FILE]: code };
-      const r = await runFunction(files, FILE, func.name, args);
+      const files = { [file]: code };
+      const r = await runFunction(files, file, func.name, args);
       setOutput(r);
     } catch (e) {
       setOutput({ success: false, output: (e as Error).message });
@@ -101,9 +108,12 @@ function CompactRunner({ func, code }: { func: WacExport; code: string }) {
 
 interface Props {
   initialCode: string;
+  /** Which surface the code is written in. Defaults to wac. */
+  surface?: Surface;
 }
 
-export default function InlineDemo({ initialCode }: Props) {
+export default function InlineDemo({ initialCode, surface = "wac" }: Props) {
+  const FILE = FILE_FOR[surface];
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [code, setCode] = useState(initialCode);
@@ -128,7 +138,7 @@ export default function InlineDemo({ initialCode }: Props) {
         history(),
         bracketMatching(),
         syntaxHighlighting(highlight),
-        wacLang(),
+        surface === "wapy" ? wapyLang() : wacLang(),
         linter(wacLintSource(filesRef.current, fileNameRef.current), { delay: 300 }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((update) => {
@@ -161,7 +171,7 @@ export default function InlineDemo({ initialCode }: Props) {
       {exports.length > 0 && (
         <div style={{ borderTop: "1px solid #2e2e3e", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 6, backgroundColor: "#1e1e2e" }}>
           {exports.map((f) => (
-            <CompactRunner key={f.name} func={f} code={code} />
+            <CompactRunner key={f.name} func={f} code={code} file={FILE} />
           ))}
         </div>
       )}

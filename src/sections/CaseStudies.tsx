@@ -1,4 +1,5 @@
-// The two things that are hardest to argue with: a shell that agrees with bash, and a Tor client.
+// The three things that are hardest to argue with: a shell that agrees with bash, a Tor client,
+// and a pairing that agrees with Ethereum's own fixtures.
 //
 // Merged in from the wac-showcase page. The shell comes first even though Tor is the harder piece
 // of engineering, because it is the easier *claim to check* — a reader can point their own `ssh`
@@ -58,6 +59,34 @@ for (i32 i = 0; i < clients.len(); i++) {
 i32 w = core.waitAny(ids.toArray(), -1);
 if (w < 0) { break; }
 i32 who = owner.get(w);`;
+
+const LIMBS = `// packages/bls/src/fp.wac
+// 381 bits, held in twelve 32-bit limbs least-significant first.
+//
+// Twelve passes of twelve 32x32 products, so 144 of them per
+// multiply, accumulated in 64 bits because \`i64\` is the widest
+// multiply wasm has -- the same reason \`bignum\` uses 32-bit
+// limbs. There is no 64x64->128 on this machine, so 64-bit
+// limbs would need four products each and buy nothing.`;
+
+const DESCRIPTOR = `// packages/ssz/src/container.wac
+//
+// A type is four \`i32\`s in a flat table, stride 4, so the whole
+// thing crosses the JS boundary as an \`i32[]\` and needs no
+// struct marshalling:
+//
+//     kind   one of the KIND_* below
+//     param  basic: bytes. bitvector/bitlist: N.
+//            vector/list: length or limit
+//     child  element type index, or index into \`fields\`
+//     count  container: how many fields
+
+export const i32 KIND_BASIC     = 0;
+export const i32 KIND_BITVECTOR = 1;
+export const i32 KIND_BITLIST   = 2;
+export const i32 KIND_VECTOR    = 3;
+export const i32 KIND_LIST      = 4;
+export const i32 KIND_CONTAINER = 5;`;
 
 export default function CaseStudies() {
   return (
@@ -202,6 +231,66 @@ export default function CaseStudies() {
           client side did not, so every client-side caller was invited to write the loop itself.
           Two did. One was correct for a year and one was silently wrong for a year, which is the
           expected score for an unwritten convention.
+        </p>
+      </div>
+
+      <div style={s.section} id="ethereum">
+        <h2 style={s.h2}>BLS12-381 and SSZ, against Ethereum's own vectors</h2>
+        <p style={s.p}>
+          A pairing-based signature scheme is the least forgiving thing to write in a new language:
+          the answer is one bit, every intermediate is a 381-bit field element, and nothing short
+          of the whole tower being right produces anything but noise.{" "}
+          <strong style={{ color: "#e2e8f0" }}>It agrees with all 29 of{" "}
+          <code style={{ fontFamily: "monospace" }}>ethereum/bls12-381-tests</code>&rsquo; verify
+          fixtures</strong>, all 28 deserialization fixtures, and all 21 aggregate and batch ones,
+          at about 8ms per signature.
+        </p>
+        <p style={s.p}>
+          It is <em>verification only</em>, deliberately: no signing, no key generation, no secret
+          material anywhere in the package. That scope decision has a useful consequence — every
+          input is public, so none of it needs to be constant-time, and the class of timing bug
+          that makes elliptic-curve code hard to write does not arise.
+        </p>
+        <p style={s.p}>
+          Each stage was gated on an external oracle rather than on internal consistency —{" "}
+          {tp("Fp")} against Python, the Miller loop against {tp("@noble/curves")}, {tp("hash_to_G2")}{" "}
+          against the CFRG vectors — because a field implementation in the wrong Montgomery
+          representation passes every self-check it has and disagrees with every real vector.
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <div style={s.codeLabel}>bls/src/fp.wac · why the limbs are 32 bits</div>
+          <CodeBlock code={LIMBS} lang="wac" />
+        </div>
+        <p style={s.p}>
+          That comment is also entry five of{" "}
+          <a href="#wasm-gaps" style={{ color: "#2dd4bf" }}>what WebAssembly is missing</a>: wasm
+          has no widening multiply, so the whole field is built in half-width limbs to stay inside
+          an {tp("i64")} accumulator.
+        </p>
+
+        <h3 style={s.h3}>A hash_tree_root that is described, not written</h3>
+        <p style={s.p}>
+          Beside it, SSZ — Ethereum&rsquo;s serialization and the Merkle proofs over it.{" "}
+          <strong style={{ color: "#e2e8f0" }}>1,093 of Ethereum&rsquo;s own vectors pass</strong>:
+          1,048 {tp("ssz_generic")} and all 45 {tp("ssz_static")}, which is everything an Altair
+          light client needs. In 709 lines.
+        </p>
+        <p style={s.p}>
+          The reason it is 709 and not several thousand is that a type is <em>data</em>:
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <div style={s.codeLabel}>ssz/src/container.wac · the descriptor</div>
+          <CodeBlock code={DESCRIPTOR} lang="wac" />
+        </div>
+        <p style={{ ...s.p, marginBottom: 0 }}>
+          So the nine light-client containers are nine descriptors rather than nine functions, and
+          the whole schema crosses the JavaScript boundary as an {tp("i32[]")} with no marshalling
+          at all. Four things that table makes it hard to get wrong, because they are where SSZ
+          implementations go wrong: the pad target is the type&rsquo;s limit and not the
+          data&rsquo;s length; a bitlist&rsquo;s trailing delimiter bit is measured rather than
+          merkleized; a variable field&rsquo;s extent comes from the <em>next</em> offset; and the
+          first offset must equal the fixed part&rsquo;s size, so a serialization claiming
+          otherwise is malformed rather than merely unusual.
         </p>
       </div>
     </>

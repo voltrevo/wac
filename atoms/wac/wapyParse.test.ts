@@ -88,10 +88,10 @@ reports("an initialiser with nothing after the `=`", "def f() -> i32:\n    x: i3
 reports("a wac spelling", "def f() -> bool:\n    return true", "2:12 wapy spells this `True`");
 reports("a wac receiver spelling", "class P:\n    x: f64\n    def get(this: P) -> f64:\n        return this.x",
         "3:13 wapy spells this `self`");
-// Delegated, so the wording is the shared grammar's — but the position is wapy's, which is
-// the property that matters. wapy has no line continuation, so an expression is one line and
-// an unclosed bracket is always reported at the end of it.
-reports("an unclosed bracket", "def f() -> i32:\n    return (1 + 2", "2:18 expected ')', found ''");
+// An open bracket continues the statement, so an unclosed one is not a syntax error on that
+// line — it swallows the rest of the file and is reported at the end. The position is the last
+// token written, which is as close to the mistake as this can get.
+reports("an unclosed bracket", "def f() -> i32:\n    return (1 + 2", "2:17 a bracket is still open at the end of the file");
 
 // ── Accepted, so the cases above are failing for the reason claimed ─────────
 

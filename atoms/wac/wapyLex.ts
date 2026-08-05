@@ -101,7 +101,59 @@ export function wapyLex(src: string, file: string): { lines: Line[]; errors: Wap
     lines.push({ indent: lead, tokens, comment, line: lineNo });
   });
 
-  return { lines, errors };
+  return { lines: joined(lines, errors, file), errors };
+}
+
+const OPEN = new Set<string>(["(", "[", "{"]);
+const SHUT = new Set<string>([")", "]", "}"]);
+
+/**
+ * Join a line to the next while a bracket is still open.
+ *
+ * Python's implicit continuation, and for the same reason: the alternative is that a statement
+ * is a physical line, which makes a multi-line match expression or a long argument list
+ * unwritable. There is no backslash form — if the expression is not inside brackets there is
+ * nothing to continue, and a statement that wants to wrap can always be parenthesised.
+ *
+ * Every token keeps the line and column it was written at, so a diagnostic inside a
+ * continuation points at the physical line rather than at the one that opened the bracket.
+ * Only the *statement* takes the first line's indent and number, which is what block grouping
+ * needs.
+ */
+function joined(lines: Line[], errors: WapyError[], file: string): Line[] {
+  const out: Line[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let cur = lines[i];
+    let depth = bracketDepth(cur.tokens);
+    while (depth > 0 && i + 1 < lines.length) {
+      const next = lines[++i];
+      cur = {
+        ...cur,
+        tokens: [...cur.tokens, ...next.tokens],
+        // The last comment written wins, because it is the one nearest the statement's end.
+        comment: next.comment || cur.comment,
+      };
+      depth += bracketDepth(next.tokens);
+    }
+    if (depth > 0) {
+      const last = cur.tokens[cur.tokens.length - 1];
+      errors.push({
+        message: "a bracket is still open at the end of the file",
+        file, line: last?.line ?? cur.line, col: last?.col ?? 1,
+      });
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+function bracketDepth(tokens: Token[]): number {
+  let d = 0;
+  for (const t of tokens) {
+    if (OPEN.has(t.kind)) d++;
+    else if (SHUT.has(t.kind)) d--;
+  }
+  return d;
 }
 
 function lexLine(

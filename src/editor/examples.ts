@@ -779,6 +779,119 @@ export i32 maxOf(i32 a, i32 b, i32 c) {
 `,
     },
   },
+  // === Two surfaces ===
+  //
+  // The same language written with indentation. Each of these was run through `wacx` before
+  // being put here: `longest`, `circle`, `rect`, `totalArea` and `name` all answer, and the
+  // mixed pair compiles as one program across both extensions.
+  {
+    name: "wapy: classes and loops",
+    category: "Two surfaces",
+    entry: p("vec2.wapy"),
+    files: {
+      [p("vec2.wapy")]: `# The same language, laid out with indentation instead of braces.
+#
+# This is not Python: it does not accept Python, and it is not trying to.
+# It borrows the shapes — def, class, and/or/not, None, self — and stops there.
+# The file's extension is the only thing that selects this surface.
+
+@export
+class Vec2:
+    x: f64
+    y: f64
+
+    ## Length, without the square root.
+    def lenSq(const self) -> f64:
+        return self.x * self.x + self.y * self.y
+
+    def scale(self, k: f64) -> void:
+        self.x = self.x * k
+        self.y = self.y * k
+
+@export
+def longest(pts: f64[]) -> f64:
+    best: f64 = 0.0
+    for i in range(0, pts.len() / 2):
+        v: Vec2 = Vec2(pts[i * 2], pts[i * 2 + 1])
+        d: f64 = v.lenSq()
+        if d > best:
+            best = d
+    return best
+`,
+    },
+  },
+  {
+    name: "wapy: enums and match",
+    category: "Two surfaces",
+    entry: p("shape.wapy"),
+    files: {
+      [p("shape.wapy")]: `# \`match\` destructures an enum and must cover every variant — a missing
+# arm is a compile error. An open bracket continues the line, which is how
+# the match expression below spans four of them.
+
+@export
+class Shape(enum):
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+
+    def area(const self) -> f64:
+        return match self {
+          case Circle(r): 3.14159 * r * r,
+          case Rect(w, h): w * h
+        }
+
+@export
+def circle(r: f64) -> f64:
+    return Shape.Circle(r).area()
+
+@export
+def rect(w: f64, h: f64) -> f64:
+    return Shape.Rect(w, h).area()
+`,
+    },
+  },
+  {
+    name: "wapy + wac in one program",
+    category: "Two surfaces",
+    entry: p("mixed.wapy"),
+    files: {
+      [p("mixed.wapy")]: `# A .wapy file importing a .wac file. Neither surface is privileged: the
+# extension picks the parser, and nothing after that knows which one ran.
+# The two files below compile to one module.
+
+from "./shapes.wac" import Shape, describe
+
+@export
+def totalArea(n: i32) -> f64:
+    total: f64 = 0.0
+    for i in range(1, n + 1):
+        total = total + Shape.Circle(i as f64).area()
+    return total
+
+@export
+def name(w: f64, h: f64) -> string:
+    return describe(Shape.Rect(w, h))
+`,
+      [p("shapes.wac")]: `export enum Shape {
+  Circle(f64 r), Rect(f64 w, f64 h)
+
+  f64 area(const this) {
+    return match (this) {
+      case Circle(r): 3.14159 * r * r,
+      case Rect(w, h): w * h
+    };
+  }
+}
+
+export string describe(Shape s) {
+  return match (s) {
+    case Circle(r): "circle",
+    case Rect(w, h): "rectangle"
+  };
+}
+`,
+    },
+  },
 ];
 
 /** Merge all example files into a single FileMap. */
