@@ -36,6 +36,10 @@ something, and never do extra work *for* a post.
    to learn. The posts here that are worth their space all contain a sentence beginning "I thought".
 4. **Would I read it?** If the honest answer is "I would skim it", it is a paragraph in a temporal
    note, not a post.
+5. **Is this a new thesis, or another example of one already staged?** If a draft here already argues
+   the point, the new material is a *section of that draft*, not a post beside it. Two thin posts making
+   the same argument are worse than one with two examples in it — and the reader has to work out for
+   themselves that they were the same idea (operator, 2026-08-05).
 
 Three failures and one pass is still a pass on the fourth question — the four are a filter, not a
 score. But a draft that fails **2** never gets written; that is the one that separates a blog from a
@@ -44,16 +48,23 @@ changelog.
 What this does *not* mean: a post per tick as a ritual. Some ticks are grinding through a known list
 and produce nothing anybody would want to read, and that is the normal case rather than a failure.
 
+**Merging is a normal outcome.** Question 5 applies to what is already staged, not just to what is being
+written: when two drafts turn out to share an argument, they become one draft with two examples. Two have
+already been folded in this way — "The tool that makes your test input is never tested" into the oracle
+post, where it is the structural case of that post's thesis, and "A timeout is a claim about a machine"
+into "The placebo with a log line", where it sits beside a mitigation that freed 220 MB while 28 GB sat
+next to it. Both are stronger for it. Nothing is lost by merging, since none of this is published; the
+git history has the originals if a merge ever turns out to have been the wrong call.
+
 ## What is here
 
 | draft | what it is about |
 |---|---|
 | [2026-08-05-full-and-gone.md](2026-08-05-full-and-gone.md) | one boolean answering two questions, and a file silently truncated to 2% of its size |
-| [2026-08-05-an-oracle-you-do-not-control.md](2026-08-05-an-oracle-you-do-not-control.md) | why every test here compares against something written by somebody else |
+| [2026-08-05-an-oracle-you-do-not-control.md](2026-08-05-an-oracle-you-do-not-control.md) | why every test here compares against something written by somebody else — and the structural blind spot: the fixture is never the subject, so `seq 1 2 9` printed `1 2` in a suite where a hundred cases use `seq` |
 | [2026-08-05-no-closures-no-vtables.md](2026-08-05-no-closures-no-vtables.md) | what a language without closures or virtual dispatch does to a design, and why that was fine |
-| [2026-08-05-the-tool-that-makes-your-input.md](2026-08-05-the-tool-that-makes-your-input.md) | `seq 1 2 9` printed `1 2`, in a suite where a hundred cases use `seq` — the background of a test suite is never its subject |
-| [2026-08-05-a-timeout-is-a-claim-about-a-machine.md](2026-08-05-a-timeout-is-a-claim-about-a-machine.md) | a five-second deadline that went stale because the workload changed shape, and a diagnostic that named the wrong cause first |
 | [2026-08-05-holders-none-found.md](2026-08-05-holders-none-found.md) | an unreproducible `ETXTBSY`, a confident wrong diagnosis, 660 controlled rounds that found nothing, and what makes a retry honest |
+| [2026-08-05-the-placebo-with-a-log-line.md](2026-08-05-the-placebo-with-a-log-line.md) | a disk mitigation that cleared 220 MB while 28 GB sat next to it, and a five-second timeout that went stale because the workload changed shape rather than the code |
 
 ## Queued, not written
 
@@ -66,6 +77,12 @@ and produce nothing anybody would want to read, and that is the normal case rath
   a newline added where GNU adds none, blank lines numbered where GNU skips them, `-` read as standard
   input by a tool that treats it as a filename. The lesson is about what a shape change makes you
   answer, not about the shell. Wants one more example from outside this repo before it is worth
-  anyone's time.
+  anyone's time. **Check question 5 first**: this may belong in the oracle post, since "GNU had a
+  different answer and nobody had asked" is that post's argument.
+- **"Four copies of `itoa`, two with bugs."** One printed `"-"` for i32's minimum; one silently ignored
+  a leading `-`. The interesting part is not the duplication but that the copies had *different* bugs, so
+  which file a caller happened to import from decided whether its arithmetic was right — and that the
+  language forbids re-export, so unifying them meant editing every importer with no shim possible. Wants
+  the language question resolved first (wac 0073).
 - **A process table in a language with no processes.** After design/0001 step 3, if it is as
   interesting as it looks.
