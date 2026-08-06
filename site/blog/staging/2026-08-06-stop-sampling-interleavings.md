@@ -1,8 +1,10 @@
 # Three days sampling, one hour walking
 
 A test in my suite hung. Not failed — hung, about once in fifty runs, and only when the machine was
-otherwise idle. It took me three days to find the mechanism, and the last hour of that was worth the
-other three days put together. This is about why.
+otherwise idle. Three days of instrumentation told me exactly what the *state* was and nothing about how
+it got there. Then two changes found it in an afternoon: making the semantics enumerable, and taking the
+schedule away from the operating system. This is about both, and about why the first one alone was not
+enough.
 
 ## What a hang tells you, which is nothing
 
@@ -108,9 +110,49 @@ for ever — parked on a call that can never be answered, with the host alive an
 
 That is the state I had spent three days measuring, described exactly, by a walk that takes a millisecond.
 
-I have not claimed it *is* the wedge — a once-in-fifty failure needs a week of green runs before anyone
-should believe that, and I have forty. But it produces precisely the observed state, and it is now
-impossible.
+That was a real bug and it is fixed. **It was not the one I was chasing**, and finding that out is the
+rest of this story.
+
+## The part where the model was not enough
+
+Enumeration proves things about a design. It cannot tell you which of several possible causes is the one
+your machine is actually hitting, because it has no idea what your machine did.
+
+So I built the other half: a scheduler. The host answers a worker's calls, and a worker only makes
+progress when it is answered — so the order answers are *delivered* in is the order the whole system runs
+in, and today that order is whichever handler's promise resolved first. I made it a choice instead. One
+worker running at a time, and among the answers that are ready, either the order they became ready or a
+seeded pick.
+
+Then I pointed it at the test that hangs once in fifty runs.
+
+**It hung four times out of four.** In two and a half minutes, on a busy machine, with a report that
+listed every bridge in the process at once:
+
+```
+bridge 1036: 0:running:RECV(h=3) 1:running:RECV(h=4)   ← a shell reading a child's two streams
+bridge 1044: 0:running:READ_CHUNK                      ← that child, reading its own standard input
+   …four of each…
+```
+
+Four shells waiting for their children's output. Four children waiting for their own standard input. A
+cycle, and one line of code long.
+
+A spawned program that inherits standard input inherited it *by omission*: the code left two options out
+of the child's world, and a world without them falls back to the process's real standard input. That is
+right for a program you run from a terminal. Inside a test it means the child was handed **the test
+runner's** standard input, which never ends — while its parent held a queue that had already ended and
+would have said so immediately. The parent waited for output the child would never write.
+
+Why once in fifty, and only on an idle machine? The child had to reach its read before the parent's read
+was satisfied. A loaded machine spread the two apart; an idle one packed them together. The bad state was
+reachable all along and only by luck — and **luck cannot be bisected**, which is why three days of
+increasingly precise instrumentation kept describing the state and never the cause.
+
+The fix took a minute once it was visible: inherit the parent's input if the parent has one, fall back to
+the real thing only if the parent was reading the real thing too. The scheduled corpus went from four
+deadlocks at 155 seconds each to passing in 24. And the eight-fold slowdown I had blamed on the
+scheduler's serialisation was this deadlock the whole time; scheduling costs about twenty per cent.
 
 ## What I would tell myself on day one
 
@@ -118,6 +160,11 @@ impossible.
 or after it is written has one legal behaviour for each order. If those behaviours live inside promise
 callbacks, the only way to see them is to run the program and hope. If they live in a function of `(state,
 event)`, you can look at all of them before lunch.
+
+**Enumeration proves a design; a scheduler reproduces a run.** They are different tools and I needed
+both. The walk told me the queue was sound, which is what made "the stream is never ended" the next
+question rather than a guess. The scheduler turned a once-in-fifty accident into something that happened
+every time I asked. Neither would have got there alone.
 
 **A model earns nothing until it is checked against the code.** Mine is: a thousand seeded operation
 sequences run against the real queue and the model, compared call for call. Otherwise the model becomes a
