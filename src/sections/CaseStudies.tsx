@@ -186,7 +186,7 @@ export default function CaseStudies() {
       </div>
 
       <div style={s.section} id="tor">
-        <h2 style={s.h2}>A Tor client, on a TLS 1.3 stack that is also wac</h2>
+        <h2 style={s.h2}>Tor, both ends, on a TLS 1.3 stack that is also wac</h2>
 
         <div
           style={{
@@ -271,14 +271,22 @@ export default function CaseStudies() {
           values; <strong style={{ color: "#e2e8f0" }}>the last two needed a live service</strong>.
         </p>
         <p style={s.p}>
-          Hosting one is the mirror of every row above, and it is partly there: the descriptor
+          Hosting one is the mirror of every row above, and most of it is there. The descriptor
           decodes under tor&rsquo;s own {tp("hs_desc_decode_descriptor")}, key blinding matches in
           both directions, and <strong style={{ color: "#e2e8f0" }}>publication works end to
           end</strong> — our directory and our relay both accept a {tp("POST /tor/hs/3/publish")},
           check it the way tor does, file it under the blinded key from its certificate, and serve
-          it back, replacing what they hold only for a strictly newer revision. What is left is the
-          service program itself: the loop that establishes introduction points and answers an
-          introduction.
+          it back, replacing what they hold only for a strictly newer revision. From a consensus
+          alone the plan is computed — two time periods, the shared random value for each, and the
+          directories — <strong style={{ color: "#e2e8f0" }}>reaching exactly the ones a real
+          service uploaded to</strong>. An introduction seen twice is dropped, and introduction
+          points rotate on tor&rsquo;s two drawn limits.
+        </p>
+        <p style={s.p}>
+          What is left is the loop that ties those together: establishing the circuits, and driving
+          a rendezvous from an INTRODUCE2. Every piece under it is pinned against cells a real tor
+          wrote, which is the only reason a list this long can be believed without a running
+          service to point at.
         </p>
 
         <h3 style={s.h3}>And it runs the other side</h3>
