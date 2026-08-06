@@ -180,6 +180,40 @@ Deno.test("[§wac-wapy-import-8kd3mqp] either surface imports either extension",
   if (!r.ok) throw new Error(r.diagnostics.map((d) => `${d.file}:${d.line} ${d.message}`).join("\n"));
 });
 
+// ── §wac-wapy-core-5wq8jhn — `core` is unquoted on both surfaces ────────────
+
+Deno.test("[§wac-wapy-core-5wq8jhn] `from core import Read`, and the Read is the same one", () => {
+  const graph = {
+    "reader.wapy": [
+      "from core import Read",
+      "",
+      "@export",
+      "def size(r: Read) -> i32:",
+      "    match r:",
+      "        case Data(bytes):",
+      "            return bytes.len()",
+      "        case End:",
+      "            return 0",
+      "        case Failed(why):",
+      "            return -1",
+      "",
+    ].join("\n"),
+    // The wac side declares nothing and imports the same core, so a value crossing between them
+    // proves one type rather than two that happen to agree.
+    "main.wac": `import { Read } from core;\nimport { size } from "./reader.wapy";\n` +
+      `export i32 run() { return size(Read.Data(u8[](1, 2))); }\n`,
+  };
+  const r = wacCompile(new Map(Object.entries(graph)), "main.wac");
+  if (!r.ok) throw new Error(r.diagnostics.map((d) => `${d.file}:${d.line} ${d.message}`).join("\n"));
+});
+
+Deno.test("[§wac-wapy-core-5wq8jhn] a bare word that is not `core` is refused", () => {
+  const e = wapyParse("from cor import Read\n", "t.wapy").errors;
+  if (!e.some((x) => x.message.includes("unknown module 'cor'"))) {
+    throw new Error(`no unknown-module error: ${JSON.stringify(e)}`);
+  }
+});
+
 Deno.test("[§wac-wapy-h3nq7fv] the same program in either surface emits identical wasm", () => {
   // The strongest form of "same language": not merely the same tree, the same bytes. Anything
   // the surface could smuggle through — a different declaration order, an operator recorded by

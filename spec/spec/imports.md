@@ -14,17 +14,81 @@ resolve naming collisions.
 ### Rules
 
 - Only `export`-marked functions and types can be imported
-- Import paths are relative, using `./` or `../` prefixes
+- Import paths are relative, using `./` or `../` prefixes — except `core`, which is not a path
+  (below)
 - Circular imports are allowed — wac files contain only declarations (no
   module-level init), so there is no ordering problem
 - All name collisions at the same scope are compile errors (see
   [naming.md](naming.md))
 
+### `core`
+
+```wac
+import { Read } from core;
+```
+
+`core` is the one import that is not a file. It ships inside the compiler, so it is written without
+quotes: a quoted specifier says *a file lives at this path*, and there is no path here to be right
+or wrong about. `[§wac-core-unquoted-3nqk7vd]` `import { Read } from "core";` is an error —
+`` `core` is not a file — import it unquoted, as `from core` `` — and so is any other bare word,
+which reports `unknown module 'x'`.
+
+It holds one type today, and the bar for a second is high: a type earns a place in `core` only if it
+has to cross a *repository* boundary through a funcref signature. wac has nominal types and no
+closures, so two declarations of the same shape are two types and nothing can convert between them
+— which is fine within a tree, where both sides can import one file, and impossible across repos.
+Anything else is a library and belongs in a package. See `design/0001`.
+
+```wac
+// producer.wac
+import { Read } from core;
+export Read three() { return Read.Data(u8[](7, 7, 7)); }
+```
+
+```wac
+// consumer.wac
+import { Read } from core;
+export i32 total(fn[Read()] source) {
+  match (source()) {
+    case Data(bytes): return bytes.len();
+    case End:         return 0;
+    case Failed(why): return -1;
+  }
+}
+```
+
+```wac
+// main.wac
+import { three } from "./producer.wac";
+import { total } from "./consumer.wac";
+export i32 run() { return total(three); }
+```
+
+`[§wac-core-one-type-8fjm2wq]` `run()` returns `3`. Two files that never mention each other name the
+same `Read`, and a funcref carries it between them — which a copy of the declaration in each cannot
+do, because those would be two types (`§wac-samename-struct-4jhq7wn`).
+
+What `core` contains:
+
+```wac
+export enum Read {
+  Data(u8[] bytes),   // never zero bytes — an empty answer is End
+  End,
+  Failed(string why)
+}
+```
+
+`[§wac-core-read-6kv4pnx]` A `u8[]` cannot say why it stopped: empty means both "finished" and
+"failed", and callers that conflated the two produced truncated output that looked successful.
+`match` is exhaustive, so a caller that ignores `Failed` does not compile.
+
 ### Import resolution
 
 The compiler resolves the import graph depth-first, visiting each file at most
 once (cycle-safe). It builds a flat symbol table assigning a stable wasm
-function index to every function.
+function index to every function. `core` is not fetched from anywhere: the
+compiler adds it to the graph when something imports it, which is why it works
+with no filesystem — in the playground, and in `wacCompile` from a map.
 
 ### Name mangling
 

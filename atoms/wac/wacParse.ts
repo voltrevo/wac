@@ -2,6 +2,7 @@
 // Returns a Program node and any parse errors (partial AST on error).
 
 import { type Token, type TokenKind } from "./wacLex.ts";
+import { CORE } from "./wacCore.ts";
 
 // ── AST node types ────────────────────────────────────────────────────────────
 
@@ -162,7 +163,14 @@ export type SwitchCase = { value: Expr | "default"; body: Stmt[] } & Pos;
  * it.
  */
 export type ImportItem = { name: string; alias: string; injected?: boolean } & Pos;
-export type Import     = { tag: "import"; path: string; items: ImportItem[] } & Pos;
+/**
+ * `prefix` names a provider rather than a directory: the sources it offers need not be files, and
+ * `path` is then the module *inside* that provider (empty for a provider of one module, as `core`
+ * is today). With no `prefix`, `path` is an ordinary relative file path and means what it always
+ * did. Either way `importKey` in wacResolve is what turns the pair into the key a program is filed
+ * under — nothing else should be joining paths.
+ */
+export type Import     = { tag: "import"; path: string; prefix?: string; items: ImportItem[] } & Pos;
 
 /**
  * `isConst` records a leading `const` on the parameter, which forbids reassigning it and
@@ -1302,7 +1310,18 @@ export function makeParser(tokens: Token[], file: string) {
     // `expect` matches a token by text as well as by kind, so this still reads the
     // `from` even though it lexes as an ordinary identifier now.
     expect("}"); expect("from");
-    const path = at("string") ? advance().text : (err("expected file path string"), "?");
+    // A quoted specifier means *a file lives at this path*. `core` is not a file — it ships inside
+    // the compiler and cannot be pointed anywhere else — so it is spelled without quotes, which
+    // makes the difference visible instead of something a reader has to know.
+    if (!at("string")) {
+      const name = at("ident") ? advance().text : (err("expected a quoted file path, or `core`"), "?");
+      if (name !== "?" && name !== CORE.key) {
+        err(`unknown module '${name}' — an unquoted import reads only from \`${CORE.key}\``);
+      }
+      expect(";");
+      return { tag: "import", path: "", prefix: CORE.key, items, ...p };
+    }
+    const path = advance().text;
     expect(";");
     return { tag: "import", path, items, ...p };
   }

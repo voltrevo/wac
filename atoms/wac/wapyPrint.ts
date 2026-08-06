@@ -593,7 +593,9 @@ function constDecl(c: ConstDecl): string[] {
 
 function importDecl(i: Import): string[] {
   const items = i.items.map((it) => (it.alias === it.name ? it.name : `${it.name} as ${it.alias}`));
-  return [`from ${JSON.stringify(i.path)} import ${items.join(", ")}`];
+  // A provider prefix is written bare — quoting it would print something that reads back as a path.
+  const source = i.prefix ?? JSON.stringify(i.path);
+  return [`from ${source} import ${items.join(", ")}`];
 }
 
 function topLevel(t: TopLevel): string[] {

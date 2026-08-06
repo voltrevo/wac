@@ -32,6 +32,7 @@ import {
   type Stmt, type StructDecl, type TopLevel, type VariantDecl, type WacType,
   makeParser,
 } from "./wacParse.ts";
+import { CORE } from "./wacCore.ts";
 
 type Pos = { line: number; col: number };
 
@@ -160,8 +161,13 @@ class P {
     const t = b.head.tokens;
     if (mods.size) this.err(t[0], `an import takes no @${[...mods][0]}`);
     if (b.body.length) this.err(t[0], "an import takes no indented body");
-    if (t[1]?.kind !== "string") {
-      this.err(t[1] ?? t[0], "expected a quoted path after `from`");
+    // `from core import Read` — unquoted, because core is not a file. Same reasoning as the wac
+    // surface, and the same spelling, since it is one language with two ways to write it down.
+    const fromCore = t[1]?.kind === "ident" && t[1].text === CORE.key;
+    if (t[1]?.kind !== "string" && !fromCore) {
+      this.err(t[1] ?? t[0], t[1]?.kind === "ident"
+        ? `unknown module '${t[1].text}' — an unquoted import reads only from \`${CORE.key}\``
+        : "expected a quoted path, or `core`, after `from`");
       return null;
     }
     const impAt = t.findIndex((x, i) => i > 1 && word(x) === "import");
@@ -181,7 +187,9 @@ class P {
       }
     }
     if (!items.length) this.err(t[impAt], "expected at least one name to import");
-    return { tag: "import", path: t[1].text, items, line: t[0].line, col: t[0].col };
+    return fromCore
+      ? { tag: "import", path: "", prefix: CORE.key, items, line: t[0].line, col: t[0].col }
+      : { tag: "import", path: t[1].text, items, line: t[0].line, col: t[0].col };
   }
 
   private constDecl(b: Block, mods: Set<string>): ConstDecl | null {

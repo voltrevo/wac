@@ -4,8 +4,9 @@
 // Returns either a WacCompiled result (wasm bytes + export metadata) or errors.
 // Each phase runs in order; later phases are skipped on earlier errors.
 
-import { EXTENSIONS, frontendFor } from "./wacFrontend.ts";
-import type { Program } from "./wacParse.ts";
+import { EXTENSIONS, FRONTENDS, frontendFor } from "./wacFrontend.ts";
+import { CORE } from "./wacCore.ts";
+import type { Import, Program } from "./wacParse.ts";
 import { wacResolve, funcParams, funcReturnType, type ResolveResult } from "./wacResolve.ts";
 import { wacTypeCheck } from "./wacTypeCheck.ts";
 import { wasmBuildBin, wasmBindMeta } from "./wasmBuildBin.ts";
@@ -241,6 +242,24 @@ export function wacCompile(
       diagnostics.push({ span: 1, ...e, file: path, severity: "error" });
     }
     programs.set(path, program);
+  }
+
+  // `core` ships inside the compiler, so it arrives here rather than through the caller's file map:
+  // the CLI has no path to read it from and the playground has no filesystem at all. Only when
+  // something imports it — an unused enum would otherwise be emitted into every module.
+  const wantsCore = [...programs.values()].some((p) =>
+    p.items.some((i) => i.tag === "import" && (i as Import).prefix === CORE.key)
+  );
+  if (wantsCore && !programs.has(CORE.key)) {
+    const frontend = FRONTENDS.get(CORE.extension)!;
+    const { program, errors } = frontend(CORE.source, CORE.key);
+    // core is compiled from the same source on every run, so an error here is the compiler being
+    // broken rather than the caller's program being wrong. Reported rather than thrown, because
+    // wacCompile's contract is diagnostics.
+    for (const e of errors) {
+      diagnostics.push({ span: 1, ...e, file: CORE.key, severity: "error" });
+    }
+    programs.set(CORE.key, program);
   }
 
   if (hasError()) return { ok: false, diagnostics };
