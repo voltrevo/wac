@@ -21,9 +21,18 @@ export type BuiltPackage = {
 export const TOTALS = {
   packages: 32,
   lines: 64340,
+  /** wac-mono's *packages* — the number that belongs beside the package table. */
   tests: 1289,
   programs: 38,
   pages: 4,
+  /**
+   * Both suites: wac-mono's packages (1289), its harness and tools (88),
+   * and this repo's compiler (1213).
+   *
+   * An undercount, because a test generated in a helper or a loop is one declaration and several
+   * runs — the suites themselves report more than this.
+   */
+  testsAll: 2590,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
