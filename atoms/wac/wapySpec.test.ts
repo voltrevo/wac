@@ -10,6 +10,7 @@ import { wacParse } from "./wacParse.ts";
 import { wapyOf } from "./wapyPrint.ts";
 import { SPELLINGS } from "./wapyLex.ts";
 import { wapyParse } from "./wapyParse.ts";
+import { wacInstance } from "./wacInstance.ts";
 
 function wapy(wac: string): string {
   const r = wapyOf(wac, "t.wac");
@@ -212,6 +213,56 @@ Deno.test("[§wac-wapy-core-5wq8jhn] a bare word that is not `core` is refused",
   if (!e.some((x) => x.message.includes("unknown module 'cor'"))) {
     throw new Error(`no unknown-module error: ${JSON.stringify(e)}`);
   }
+});
+
+// ── §wac-wapy-range-6mn4dtq — `for i in range(…)` is the counted loop ───────
+
+Deno.test("[§wac-wapy-range-6mn4dtq] range(a, b) and range(a, b, s) are wac's counted loop", async () => {
+  // The claim is "exactly", so the check is byte identity rather than agreement on a result:
+  // a `range` that lost its step, or compared with `<=`, would still produce plausible answers.
+  const wac = [
+    "export i32 sum(i32 a, i32 b) {",
+    "  i32 t = 0;",
+    "  for (i32 i = a; i < b; i++) { t += i; }",
+    "  return t;",
+    "}",
+    "export i32 stepped(i32 a, i32 b, i32 s) {",
+    "  i32 t = 0;",
+    "  for (i32 i = a; i < b; i += s) { t += i; }",
+    "  return t;",
+    "}",
+  ].join("\n");
+  const wapySrc = [
+    "@export",
+    "def sum(a: i32, b: i32) -> i32:",
+    "    t: i32 = 0",
+    "    for i in range(a, b):",
+    "        t += i",
+    "    return t",
+    "",
+    "@export",
+    "def stepped(a: i32, b: i32, s: i32) -> i32:",
+    "    t: i32 = 0",
+    "    for i in range(a, b, s):",
+    "        t += i",
+    "    return t",
+    "",
+  ].join("\n");
+
+  const a = wacCompile(new Map([["r.wac", wac]]), "r.wac");
+  const b = wacCompile(new Map([["r.wapy", wapySrc]]), "r.wapy");
+  if (!a.ok) throw new Error(a.diagnostics[0].message);
+  if (!b.ok) throw new Error(`as wapy: ${b.diagnostics[0].line} ${b.diagnostics[0].message}`);
+  const x = a.compiled.wasm, y = b.compiled.wasm;
+  if (x.length !== y.length) throw new Error(`${x.length} bytes from wac, ${y.length} from wapy`);
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] !== y[i]) throw new Error(`byte ${i} differs: ${x[i]} vs ${y[i]}`);
+  }
+
+  // And it runs, so the loop bounds are the ones claimed: 2+3+4 = 9, and 2+4 = 6 stepping by two.
+  const inst = await wacInstance(b.compiled);
+  if (inst.call("sum", [2, 5]) !== 9) throw new Error(`sum(2,5) = ${inst.call("sum", [2, 5])}`);
+  if (inst.call("stepped", [2, 5, 2]) !== 6) throw new Error(`stepped(2,5,2) = ${inst.call("stepped", [2, 5, 2])}`);
 });
 
 Deno.test("[§wac-wapy-h3nq7fv] the same program in either surface emits identical wasm", () => {

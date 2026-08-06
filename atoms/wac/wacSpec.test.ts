@@ -2891,6 +2891,39 @@ Deno.test("[§wac-buf-pop-empty-c7jw3kf] testPopEmpty() traps", async () => {
   traps(() => inst.call("testPopEmpty", []), "pop empty");
 });
 
+// ── Every tag in spec/ is named by a test ───────────────────────────────────
+
+Deno.test("every §wac-* tag in spec/ is named by some test", async () => {
+  // A tag is a promise that the claim beside it is checked. Nothing enforced that, and one had
+  // slipped through — §wac-wapy-range-6mn4dtq, which was true and untested for as long as it had
+  // existed. A claim nobody checks is the same as a claim nobody wrote, except that it reads as
+  // evidence. This is cheap and says exactly which tag to go and cover.
+  const TAG = /\[§(wac-[a-z0-9-]+)\]/g;
+  const read = async (dir: string, suffix: string, into: Map<string, string>) => {
+    for await (const e of Deno.readDir(dir)) {
+      const path = `${dir}/${e.name}`;
+      if (e.isDirectory) await read(path, suffix, into);
+      else if (e.name.endsWith(suffix)) {
+        const text = await Deno.readTextFile(path);
+        for (const m of text.matchAll(TAG)) if (!into.has(m[1])) into.set(m[1], path);
+      }
+    }
+  };
+  const specDir = new URL("../../spec", import.meta.url).pathname;
+  const atomsDir = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+  const claimed = new Map<string, string>();
+  const tested = new Map<string, string>();
+  await read(specDir, ".md", claimed);
+  await read(atomsDir, ".test.ts", tested);
+
+  const missing = [...claimed].filter(([tag]) => !tested.has(tag));
+  if (missing.length) {
+    throw new Error(`${missing.length} tag(s) in spec/ with no test naming them:\n  ` +
+      missing.map(([tag, where]) => `${tag} — ${where.slice(where.indexOf("/spec/"))}`).join("\n  "));
+  }
+  if (claimed.size < 300) throw new Error(`only ${claimed.size} tags found — did the walk resolve?`);
+});
+
 // ── §wac-grammar-k7fn4xq — EBNF grammar coverage ────────────────────────────
 
 Deno.test("[§wac-grammar-k7fn4xq] grammar covers all major constructs", async () => {
