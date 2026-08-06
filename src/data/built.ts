@@ -20,19 +20,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 32,
-  lines: 64340,
+  lines: 64587,
   /** wac-mono's *packages* — the number that belongs beside the package table. */
-  tests: 1289,
+  tests: 1307,
   programs: 38,
   pages: 4,
   /**
-   * Both suites: wac-mono's packages (1289), its harness and tools (88),
+   * Both suites: wac-mono's packages (1307), its harness and tools (88),
    * and this repo's compiler (1213).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 2590,
+  testsAll: 2608,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -52,15 +52,15 @@ export const BUILT: BuiltPackage[] = [
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 3807, tests: 14 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 2686, tests: 42 },
-  { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 485, tests: 4 },
+  { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 6 },
   { name: "crypto", what: "SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and…", lines: 5565, tests: 146 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 594, tests: 12 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 51 },
-  { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 303, tests: 6 },
+  { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 8 },
   { name: "wactest", what: "Assertions for tests written in wac.", lines: 222, tests: 16 },
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4049, tests: 45 },
-  { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 251, tests: 5 },
-  { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 423, tests: 13 },
+  { name: "ens", what: "The name a person types, turned into the node a contract is asked about.", lines: 251, tests: 8 },
+  { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 22 },
   { name: "server", what: "An HTTP server written in wac.", lines: 333, tests: 20 },
   { name: "sh", what: "A shell, in wac.", lines: 6564, tests: 31 },
   { name: "ssz", what: "Everything an Altair light client needs is done and checked against Ethereum's vectors.", lines: 808, tests: 26 },
@@ -68,5 +68,5 @@ export const BUILT: BuiltPackage[] = [
   { name: "box", what: "60 applets in one program, chosen by the first argument.", lines: 4008, tests: 33 },
   { name: "lightclient", what: "The Altair sync protocol works.", lines: 642, tests: 12 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 3551, tests: 46 },
-  { name: "tor", what: "A Tor client, in wac, on top of this repo's TLS 1.3 stack.", lines: 13408, tests: 244 },
+  { name: "tor", what: "Tor in wac — a client, a relay, a directory authority and an onion-service client, on top of this repo's TLS 1.3 stack.", lines: 13500, tests: 246 },
 ];

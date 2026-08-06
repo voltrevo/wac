@@ -1,5 +1,10 @@
 // The three things that are hardest to argue with: a shell that agrees with bash, a Tor client,
-// and a pairing that agrees with Ethereum's own fixtures.
+// and a pairing that agrees with the fixtures ethereum/bls12-381-tests' maintainers publish.
+//
+// On the wording: a network does not publish or approve anything, so the vectors are credited to
+// the repositories they come from — `consensus-spec-tests`, `ethereum/tests` — rather than to
+// "Ethereum's own", which quietly claims a body blessed them. wac-mono's design/0003 argues it
+// at length; this page follows it because the same sentence is more checkable that way.
 //
 // Merged in from the wac-showcase page. The shell comes first even though Tor is the harder piece
 // of engineering, because it is the easier *claim to check* — a reader can point their own `ssh`
@@ -330,7 +335,7 @@ export default function CaseStudies() {
       </div>
 
       <div style={s.section} id="ethereum">
-        <h2 style={s.h2}>Ethereum, against Ethereum's own vectors</h2>
+        <h2 style={s.h2}>Ethereum, against the published vectors</h2>
         <p style={s.p}>
           A pairing-based signature scheme is the least forgiving thing to write in a new language:
           the answer is one bit, every intermediate is a 381-bit field element, and nothing short
@@ -365,8 +370,9 @@ export default function CaseStudies() {
 
         <h3 style={s.h3}>A hash_tree_root that is described, not written</h3>
         <p style={s.p}>
-          Beside it, SSZ — Ethereum&rsquo;s serialization and the Merkle proofs over it.{" "}
-          <strong style={{ color: "#e2e8f0" }}>2,233 of Ethereum&rsquo;s own vectors pass</strong>:
+          Beside it, SSZ — the consensus layer&rsquo;s serialization and the Merkle proofs over it.{" "}
+          <strong style={{ color: "#e2e8f0" }}>2,233 vectors from{" "}
+          <code style={{ fontFamily: "monospace" }}>consensus-spec-tests</code> pass</strong>:
           1,057 valid {tp("ssz_generic")}, all 45 {tp("ssz_static")}, and{" "}
           <strong style={{ color: "#e2e8f0" }}>all 1,131 <em>invalid</em> {tp("ssz_generic")}</strong>{" "}
           — the ones that check what it refuses, which is the half a decoder can pass by being too
@@ -393,8 +399,9 @@ export default function CaseStudies() {
         <h3 style={s.h3}>A light client that follows the chain</h3>
         <p style={s.p}>
           On top of those two, the Altair sync protocol.{" "}
-          <strong style={{ color: "#e2e8f0" }}>All four of Ethereum&rsquo;s{" "}
-          <code style={{ fontFamily: "monospace" }}>light_client/sync</code> cases run step by
+          <strong style={{ color: "#e2e8f0" }}>All four{" "}
+          <code style={{ fontFamily: "monospace" }}>light_client/sync</code> cases from{" "}
+          <code style={{ fontFamily: "monospace" }}>consensus-spec-tests</code> run step by
           step</strong> — nineteen steps, sixteen real sync-committee signatures, every Merkle branch
           — with the store&rsquo;s finalized and optimistic headers matching the vectors&rsquo; checks
           after each one. In 642 lines, because the containers were already descriptors.
@@ -432,12 +439,13 @@ export default function CaseStudies() {
         <p style={s.p}>
           {tp("keccak256")} — which is not SHA3-256, and differs from it by one domain byte, so the
           test asserts it <em>disagrees</em> with SHA3 and with truncated SHAKE rather than only
-          agreeing with its own vectors. {tp("packages/rlp")}, against Ethereum&rsquo;s own{" "}
-          {tp("RLPTests")}: 28 valid driven in both directions and 26 invalid all refused.{" "}
+          agreeing with its own vectors. {tp("packages/rlp")}, against {tp("RLPTests")} from{" "}
+          {tp("ethereum/tests")}: 28 valid driven in both directions and 26 invalid all refused.{" "}
           {tp("packages/abi")}, schema-driven like SSZ&rsquo;s containers — thirty cases from{" "}
           {tp("npm:ethers")} decoded <em>and</em> re-encoded byte for byte, plus the malformed-offset
           refusals. And {tp("packages/mpt")}, anchored to all seven published roots of{" "}
-          {tp("trieanyorder.json")}: inclusion, absence, and every perturbation.
+          {tp("trieanyorder.json")} <em>and</em> to an {tp("eth_getProof")} taken from a real client:
+          inclusion, absence, and every perturbation.
         </p>
         <p style={s.p}>
           Two things that table hides. <strong style={{ color: "#e2e8f0" }}>Absence is an
