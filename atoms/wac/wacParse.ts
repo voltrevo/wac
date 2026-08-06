@@ -792,8 +792,6 @@ export function makeParser(tokens: Token[], file: string) {
       // shape as `Node?[3]()` and was accepted only for the named case.
       return at("(", 1) || at("[", 1) || (at("?", 1) && at("[", 2));
     }
-    // i31ref / anyref as construction (anyref used for i31ref casts etc.)
-    if (t.text === "anyref" || t.text === "i31ref") return false;
     // Struct name: followed by (, {, or . (static call/ref)
     const next = tok(1);
     if (next.kind === ".") return true;
