@@ -132,16 +132,40 @@ export default function Roadmap() {
           this host a child instance gets exactly the imports the parent hands it, so {tp("spawn")}{" "}
           becomes a confinement primitive rather than only a composition one.
         </p>
+        <p style={s.p}>
+          There is a third reason, and it may be the one that matters most.{" "}
+          <strong style={{ color: "#e2e8f0" }}>A run should be reproducible, and time should be a
+          scheduling decision rather than a measurement.</strong> Everything hard about testing this
+          system comes from interleaving — a zero-length write that ended a stream only when a reader
+          happened to be parked; a corpus that hangs once in fifty runs and only on an idle machine.
+          Owning the schedule buys replay. <em>Advancing</em> the clock when nothing is runnable buys
+          something else: the transitions that take hours become milliseconds.
+        </p>
+        <p style={s.p}>
+          That is not a mocked {tp("now()")}. A mocked clock lets a test <em>state</em> a time; a
+          scheduler-owned one lets a test <em>pass through</em> one — which is how tor&rsquo;s own
+          simulator works, and it exists for this exact problem. Almost everything the Tor stack has
+          pinned is a steady state, because every transition needs hours of wall clock: a time period
+          rolling while a client looks for a service, an introduction point expiring with a message in
+          flight, a consensus refresh firing. And it is already costing accuracy rather than only
+          coverage — the rotation vectors use an eight-minute period because a test network shrinks
+          the interval to make rotation observable at all, so the production branch has never met a
+          live network.
+        </p>
         <State
           rows={[
             ["toolchain, and the two mechanisms proven on a probe", "done"],
             ["the runtime itself", "not started"],
+            ["a deterministic mode, and virtual time on top of it", "designed, not started"],
           ]}
         />
         <p style={{ ...s.p, marginBottom: 0 }}>
           The acceptance test is one a runtime cannot pass by accident: two capability requests that
           complete <em>out of order</em>, waited on together, each resolving its own value — a host
-          that answered everything immediately would pass the types and fail that.{" "}
+          that answered everything immediately would pass the types and fail that. The seam for the
+          clock is known and small today: a wait&rsquo;s deadline currently lives inside the
+          worker&rsquo;s own memory, where a scheduler cannot see it, so it can neither say who is
+          runnable nor decide which time to advance to.{" "}
           <a href={`${MONO}/blob/master/issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md`} target="_blank" rel="noopener" style={{ color: "#60a5fa" }}>
             issue 0087
           </a>
