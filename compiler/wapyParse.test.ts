@@ -74,7 +74,12 @@ reports("a const with a body", "const N: i32 = 10\n    x: i32 = 1",
         "1:1 a constant takes no indented body");
 reports("a receiver annotated with another type", "class P:\n    x: f64\n    def get(self: Q) -> f64:\n        return self.x",
         "3:19 `self` in P is a P, not 'Q'");
-reports("an import with no path", "from lib import f", "1:6 expected a quoted path after `from`");
+// A bare word after `from` used to be "expected a quoted path", which was right when every import
+// was a path. `core` is not, so the message names what the word failed to be.
+reports("an import from a module that is not core", "from lib import f",
+        "1:6 unknown module 'lib' — an unquoted import reads only from `core`");
+reports("an import with no path at all", "from import f",
+        "1:6 expected a quoted path, or `core`, after `from`");
 reports("an import with no names", `from "./lib.wac" import`,
         "1:18 expected at least one name to import");
 reports("pass mixed with real members", "class P:\n    pass\n    x: f64",

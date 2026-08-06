@@ -1,9 +1,10 @@
 // Resolver for wac — walks the import graph, builds a flat symbol table,
 // and assigns stable wasm function/type indices to every declaration.
 //
-// Input: entry file path + a map of pre-parsed programs (path → Program).
-// The programs map must include all files reachable from the entry file.
-// Import paths are resolved relative to the importing file's directory.
+// Input: entry file path + a map of pre-parsed programs (key → Program).
+// The programs map must include everything reachable from the entry file, `core` included when it
+// is imported — wacCompile puts it there. A key is a file path for a relative import and a
+// provider's module name for a prefixed one; `importKey` is the only thing that decides which.
 
 import {
   type Program, type FuncDecl, type StructDecl, type MethodDecl, type EnumDecl, type ConstDecl,
@@ -11,6 +12,7 @@ import {
   type MatchArm,
 } from "./wacParse.ts";
 import { wacIntLit } from "./wacIntLit.ts";
+import { CORE } from "./wacCore.ts";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -159,6 +161,19 @@ export type ResolveResult = {
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────
+
+/**
+ * The key an import names — the single place a specifier becomes the string a program is filed
+ * under, so that "which module is this" has one answer rather than four.
+ *
+ * A prefixed import does not join against the importing file's directory, and that is D3 of
+ * `design/0001` falling out rather than being enforced: an embedded module has no directory to be
+ * relative to, and a source inside a provider cannot climb out of one it never entered.
+ */
+function importKey(baseFile: string, imp: { path: string; prefix?: string }): string {
+  if (imp.prefix === undefined) return resolvePath(baseFile, imp.path);
+  return imp.path === "" ? imp.prefix : `${imp.prefix}.${imp.path}`;
+}
 
 /** Resolve a relative import path against an absolute base path. */
 function resolvePath(baseFile: string, rel: string): string {
@@ -453,7 +468,7 @@ function buildOrigins(programs: Map<string, Program>): Map<string, Map<string, N
     const here = byFile.get(filePath)!;
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const from = resolvePath(filePath, item.path);
+      const from = importKey(filePath, item);
       for (const it of item.items) {
         if (here.has(it.alias)) continue;
         here.set(it.alias, { file: from, name: it.name });
@@ -1377,7 +1392,7 @@ export function monomorphise(
       for (const it of item.items) {
         // The item names the template as the *importing* file writes it, so resolve through the
         // declaring file to find the template regardless of alias.
-        const tpl = templates.get(`${it.name}__${fileTag(resolvePath(filePath, item.path))}`);
+        const tpl = templates.get(`${it.name}__${fileTag(importKey(filePath, item))}`);
         if (tpl === undefined) { rewritten.push(it); continue; }
         for (const mangled of usedIn.get(filePath) ?? []) {
           // Only the instantiations of *this* template, and only if it came from this import.
@@ -1405,7 +1420,12 @@ export function monomorphise(
         it.tag === "import" && it.items.some((x) => x.alias === alias));
       if (already) continue;
       prog.items.unshift({
-        tag: "import", path: relativeImportPath(inFile, from),
+        // An injected import has to read back through `importKey` as the file it points at, and a
+        // provider's module has no relative path to write — so it is injected as the prefix it is.
+        ...(from === CORE.key
+          ? { path: "", prefix: CORE.key }
+          : { path: relativeImportPath(inFile, from) }),
+        tag: "import",
         items: [{ name, alias, line: 0, col: 0, injected: true }],
         line: 0, col: 0,
       });
@@ -1883,7 +1903,7 @@ export function monomorphise(
       const injected = new Set<string>();
       for (const item of prog.items) {
         if (item.tag !== "import") continue;
-        const from = resolvePath(filePath, item.path);
+        const from = importKey(filePath, item);
         const extra: typeof item.items = [];
         for (const mangled of funcUsedIn.get(filePath) ?? []) {
           if (funcMadeIn.get(mangled) !== from) continue;
@@ -2266,7 +2286,15 @@ export function wacResolve(
     // ── Phase 4: process imports (DFS — after locals so circular deps find us) ─
     for (const item of prog.items) {
       if (item.tag !== "import") continue;
-      const importedPath = resolvePath(filePath, item.path);
+      const importedPath = importKey(filePath, item);
+      // A quoted `"core"` joins to the same key core is filed under, and would otherwise reach the
+      // embedded module through something that looks like — and reads as — a path. There is one
+      // spelling, and it is the unquoted one.
+      if (importedPath === CORE.key && item.prefix === undefined) {
+        err(`\`${CORE.key}\` is not a file — import it unquoted, as \`from ${CORE.key}\``,
+          filePath, item.line, item.col);
+        continue;
+      }
       visitFile(importedPath); // recursive DFS
 
       const importedScope = fileScopes.get(importedPath);

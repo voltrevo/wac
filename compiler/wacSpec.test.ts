@@ -2393,6 +2393,72 @@ Deno.test("[§wac-diamond-79emza1] combined() returns 230", async () => {
   eq(inst.call("combined", []), 230, "combined()");
 });
 
+// ── §wac-core-* — the compiler's own module ──────────────────────────────────
+
+Deno.test("[§wac-core-one-type-8fjm2wq] run() returns 3 — two files, one Read", async () => {
+  const files = new Map([
+    ["producer.wac", `
+      import { Read } from core;
+      export Read three() { return Read.Data(u8[](7, 7, 7)); }
+    `],
+    ["consumer.wac", `
+      import { Read } from core;
+      export i32 total(fn[Read()] source) {
+        match (source()) {
+          case Data(bytes): return bytes.len();
+          case End:         return 0;
+          case Failed(why): return -1;
+        }
+      }
+    `],
+    ["main.wac", `
+      import { three } from "./producer.wac";
+      import { total } from "./consumer.wac";
+      export i32 run() { return total(three); }
+    `],
+  ]);
+  const inst = await runMulti(files);
+  eq(inst.call("run", []), 3, "run()");
+});
+
+Deno.test("[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a different type", () => {
+  // The negative control. Without it the test above would pass even if types were being matched
+  // by shape or by name, and it would be proving nothing about `core` at all.
+  const msg = errMulti(new Map([
+    ["copy.wac", `export enum Read { Data(u8[] bytes), End, Failed(string why) }`],
+    ["main.wac", `
+      import { Read } from core;
+      import { Read as Copy } from "./copy.wac";
+      export i32 run(Copy c) { Read r = c; return 0; }
+    `],
+  ]));
+  eq(msg, "type mismatch: expected Read, got Copy", "copy vs core");
+});
+
+Deno.test("[§wac-core-unquoted-3nqk7vd] `core` quoted is an error, and so is any other bare word", () => {
+  eq(errMulti(new Map([["main.wac", `import { Read } from "core";  export i32 run() { return 0; }`]])),
+    "`core` is not a file — import it unquoted, as `from core`", "quoted core");
+  eq(err(`import { Read } from cor;  export i32 run() { return 0; }`),
+    "unknown module 'cor' — an unquoted import reads only from `core`", "bare word");
+});
+
+Deno.test("[§wac-core-read-6kv4pnx] Read distinguishes an empty read from a failed one", async () => {
+  const inst = await run(`
+    import { Read } from core;
+    i32 size(Read r) {
+      match (r) {
+        case Data(bytes): return bytes.len();
+        case End:         return 0;
+        case Failed(why): return -1;
+      }
+    }
+    export i32 run() { return size(Read.Data(u8[](1, 2))) * 100 + size(Read.End) * 10 - size(Read.Failed("io")); }
+  `);
+  eq(inst.call("run", []), 201, "run()");
+  eq(errMulti(new Map([["main.wac", `import { Buf } from core;  export i32 run() { return 0; }`]])),
+    "'Buf' is not exported from 'core'", "core holds Read and nothing else yet");
+});
+
 // ── §wac-circular-m7jx3p4 — circular imports ─────────────────────────────────
 
 Deno.test("[§wac-circular-m7jx3p4] ping(5) returns 5", async () => {

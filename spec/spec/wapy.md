@@ -43,11 +43,17 @@ wapy from wac and the round-trip test runs in that direction.
 | `{ … }` as a statement | `scope:` |
 | an empty body | `pass` |
 | `import { a, b as c } from "./m.wac";` | `from "./m.wac" import a, b as c` |
+| `import { Read } from core;` | `from core import Read` |
 | `// comment`, `/// doc` | `# comment`, `## doc` |
 
 `[§wac-wapy-import-8kd3mqp]` The import path keeps its extension, so
 `from "./m.wapy" import f` and `import { f } from "./m.wapy";` both name the
 same file from either surface.
+
+`[§wac-wapy-core-5wq8jhn]` `core` is unquoted on both surfaces, and means the same thing on both —
+it is one language written two ways, not two module systems. It reads as Python here by accident
+rather than by design; the reason it has no quotes is that it is not a path (see
+[imports.md](imports.md)).
 
 ### What wapy does not have
 

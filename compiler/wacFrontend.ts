@@ -16,7 +16,7 @@
 // while there was one frontend and is not harmless now.
 
 import { wacLex } from "./wacLex.ts";
-import { type ParseError, type Program, wacParse } from "./wacParse.ts";
+import { type Import, type ParseError, type Program, wacParse } from "./wacParse.ts";
 import { wapyParse } from "./wapyParse.ts";
 
 /** A parse error, tagged with the phase that raised it. */
@@ -59,12 +59,18 @@ export function frontendFor(path: string): Frontend | undefined {
 }
 
 /**
- * Where a file's imports point.
+ * Which **files** a program imports — the list a loader has to go and read.
  *
  * Read off the parsed program, so neither frontend needs a second way to find them and no
  * amount of `import` inside a comment or a string can send the walk off to a file that is not
  * there. That was a real bug in the text-matching version.
+ *
+ * A prefixed import (`from core`) is not here, because there is no file to fetch: the provider
+ * supplies it and `wacCompile` puts it in the program map. A loader that included it would go
+ * looking for `core` on disk and fail.
  */
 export function importsOf(p: Program): string[] {
-  return p.items.filter((i) => i.tag === "import").map((i) => (i as { path: string }).path);
+  return p.items
+    .filter((i) => i.tag === "import" && (i as Import).prefix === undefined)
+    .map((i) => (i as Import).path);
 }

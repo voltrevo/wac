@@ -205,6 +205,42 @@ export i32 pow(i32 base, i32 exp) {
     },
   },
 
+  {
+    name: "The core Module",
+    category: "Functions",
+    entry: p("core.wac"),
+    files: {
+      // Nothing here is on disk, and nothing is fetched: `core` ships inside the compiler, which
+      // is why this runs in a browser tab at all. It exists so that two libraries in two different
+      // repositories can name one `Read` — wac has no closures, so a copy in each could never be
+      // converted into the other.
+      [p("core.wac")]: `import { Read } from core;
+import { describe } from "./util/report.wac";
+
+// This file produces Reads; report.wac consumes them. Neither imports the other's
+// type — both name core's. Two identical copies would be two types, and with no
+// closures in the language there is nothing you could write to convert between them.
+export string demo() {
+  return describe(Read.Data(u8[](1, 2, 3)))
+    + " | " + describe(Read.End)
+    + " | " + describe(Read.Failed("disk went away"));
+}
+`,
+      [p("util/report.wac")]: `import { Read } from core;
+
+// The reason Read exists rather than a bare u8[]: an empty array means both "finished"
+// and "failed". match is exhaustive, so this cannot forget the difference.
+export string describe(Read r) {
+  match (r) {
+    case Data(bytes): return bytes.len() == 1 ? "read 1 byte" : "read some bytes";
+    case End:         return "finished";
+    case Failed(why): return "failed: " + why;
+  }
+}
+`,
+    },
+  },
+
   // === Structs ===
   {
     name: "Point Struct",

@@ -147,10 +147,19 @@ it should be its own document when somebody is ready to build it — carrying D7
 
 | step | state |
 | --- | --- |
-| 1. provider table, `core` embedded | not started |
-| 2. `Read` into `core` | not started |
-| 3. directory provider | not started |
-| 4. specified in `spec/` | not started |
+| 1. provider table, `core` embedded | **done** — `atoms/wac/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
+| 2. `Read` into `core` | wac side done — `core` declares it. wac-mono's cut-over is the other half |
+| 3. directory provider | not started — `importKey` is where it goes |
+| 4. specified in `spec/` | **done for `core`** — `§wac-core-one-type-8fjm2wq`, `§wac-core-unquoted-3nqk7vd`, `§wac-core-read-6kv4pnx`, `§wac-wapy-core-5wq8jhn`. Step 3 will add to it |
+
+Two things the implementation settled that the design had not:
+
+- **`from "core"` is an error, not a synonym.** A quoted specifier joins against the importing file's
+  directory and lands on the same key, so without a check it would reach the embedded module through
+  something that reads as a path. There is one spelling.
+- **The diamond test needs its negative control.** "Two files agree on `Read`" passes just as well if
+  types are matched by name or by shape, so a hand-written copy that must *still* be rejected is
+  what makes the other test mean anything.
 
 ## Open questions
 
