@@ -104,6 +104,21 @@ Deno.test("site: the two surface snippets emit byte-identical wasm, as the page 
   }
 });
 
+Deno.test("site: the core snippets are a real program, and share one Read", async () => {
+  // The page's claim is that neither file declares `Read` and they still meet through it. A
+  // compile is what checks that: if `core` stopped resolving, or the two sides got separate
+  // copies, this is a type error rather than a sentence that quietly became false.
+  const files = {
+    "main.wac": await snippet("EX_CORE_MAIN"),
+    "report.wac": await snippet("EX_CORE_LIB"),
+  };
+  const r = compile(files, "main.wac");
+  if (!r.ok) {
+    const d = r.diagnostics[0];
+    throw new Error(`${d.file}:${d.line}:${d.col} ${d.message}`);
+  }
+});
+
 Deno.test("site: the mixed-import snippets are a real program", async () => {
   // Printed side by side as `stats.wac` and `report.wapy`, with a `hist.wapy` the wac file
   // imports. The page names those files, so they have to resolve to each other.

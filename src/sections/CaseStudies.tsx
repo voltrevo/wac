@@ -3,12 +3,12 @@
 //
 // Merged in from the wac-showcase page. The shell comes first even though Tor is the harder piece
 // of engineering, because it is the easier *claim to check* — a reader can point their own `ssh`
-// at it, and "539 scripts agree with GNU bash on stdout and exit status" is a sentence that
+// at it, and "652 scripts agree with GNU bash on stdout and exit status" is a sentence that
 // either holds or does not.
 //
 // Every snippet here is real source from wac-mono, abridged only by removing lines.
 
-import { CodeBlock, s, tp } from "../theme";
+import { CodeBlock, kw, s, tp } from "../theme";
 
 const SEAM = `export struct Output {
   u8[] out;
@@ -40,6 +40,18 @@ for (i32 i = 0; i < 32; i++) { diff = diff | (expected[i] ^ auth[i]); }
 if (diff != 0) { return u8[0](); }
 
 return hkdfExpandRfc5869(keySeed, mExpand(), keyLen);`;
+
+const ONION = `rendezvous established at test000a
+introduction acknowledged
+joined: the service is hop 4
+HTTP/1.0 200 OK
+hello from behind an onion`;
+
+const NETWORK = `network: all 4 nodes are up
+consensus verified: 1 of 1 authorities signed
+path: wacrelay2 -> wacrelay -> wacrelay3
+circuit built, 3 hops
+network: ok`;
 
 const WAIT = `// The wait list, and beside it what each entry belongs to: -2 the guard, -1 the
 // listener, otherwise a client's index. Built rather than computed, because the offsets
@@ -95,7 +107,7 @@ export default function CaseStudies() {
         <h2 style={s.h2}>A shell, and an sshd that runs it</h2>
         <p style={s.p}>
           Quoting, expansion, here-documents, {tp("$(…)")}, pipelines, redirection, functions,
-          loops, {tp("case")}, {tp("read")} — <strong style={{ color: "#e2e8f0" }}>539 scripts run
+          loops, {tp("case")}, {tp("read")} — <strong style={{ color: "#e2e8f0" }}>652 scripts run
           through GNU bash and through this one</strong>, and the two must agree on standard output{" "}
           <em>and</em> on the exit status. That is the only test worth much for a shell: nearly
           every rule has a case where the obvious implementation is subtly wrong, and bash is the
@@ -180,8 +192,13 @@ export default function CaseStudies() {
         </div>
 
         <p style={s.p}>
-          It verifies a consensus against the directory authorities, picks a bandwidth-weighted
-          three-hop path, builds the circuit and carries streams over it. Tor needs Curve25519,
+          It bootstraps <em>over Tor</em>: a one-hop circuit to a starting relay fetches the
+          consensus, the certificates and the microdescriptors, verifies them against the directory
+          authorities, and every circuit after that is chosen from what it learnt — bandwidth-weighted
+          per position, distinct /16s, mutual families excluded, an exit whose policy carries the
+          port, through a pinned guard set. Flow control works, authenticated SENDMEs included:{" "}
+          <strong style={{ color: "#e2e8f0" }}>1.2MB over 209 streams on one circuit</strong>, two
+          and a half times the circuit window. Tor needs Curve25519,
           SHA-256, HMAC, HKDF, AES-128-CTR and Ed25519, all of which the TLS work had already
           built; the only primitive that had to be added was <strong style={{ color: "#e2e8f0" }}>
           SHA-1</strong>, because Tor still specifies it for the running digest that authenticates
@@ -213,6 +230,57 @@ export default function CaseStudies() {
           Against a local testnet it has carried 3.2MB across eight concurrent streams,
           byte-identical. Built, the whole thing is <strong style={{ color: "#e2e8f0" }}>386.7
           KiB</strong> as a self-contained executable — 234.2 KiB of wasm, 71.8 KiB gzipped.
+        </p>
+
+        <h3 style={s.h3}>It reaches onion services</h3>
+        <p style={s.p}>
+          A v3 onion address <em>is</em> an ed25519 public key, so there is no lookup and no
+          registry: a client that reaches the right address cannot be talking to the wrong service.
+          Getting from the address to a stream takes six pieces — the address and its checksum, key
+          blinding and time periods, the HSDir hash ring, both encryption layers of the descriptor,
+          the introduction cells, and the hs-ntor handshake — and each is checked against tor&rsquo;s
+          own values rather than against itself.
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <div style={s.codeLabel}>fetching a page from a real service, over our own circuits</div>
+          <CodeBlock code={ONION} lang="text" />
+        </div>
+        <p style={s.p}>
+          Four things the specification does not say plainly, each of which produces a well-formed
+          and useless value with no local symptom. A time period is not a day on a testing network —{" "}
+          {tp("get_time_period_length()")} ignores the consensus parameter entirely and returns eight
+          minutes, so computing 1440 asks for a period nobody is in. The MAC&rsquo;s arguments are the
+          other way round from how §3.3.2 reads. The INTRODUCE1 MAC covers the whole cell including
+          twenty zero bytes, which are zeros, so nothing local tells the two spans apart — the first
+          version of that test asserted the wrong one and passed. And a BEGIN cell on a rendezvous
+          circuit has an empty address. The first two fell to differentials against tor&rsquo;s own
+          values; <strong style={{ color: "#e2e8f0" }}>the last two needed a live service</strong>.
+        </p>
+
+        <h3 style={s.h3}>And it runs the other side</h3>
+        <p style={s.p}>
+          There is a relay now, and a directory authority, and a launcher that stands a whole network
+          up from a description — waiting for each node to announce itself rather than sleeping, and
+          failing by name if one never does.
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <div style={s.codeLabel}>a Tor network with no C in it, in about a second</div>
+          <CodeBlock code={NETWORK} lang="text" />
+        </div>
+        <p style={s.p}>
+          Being the responder is not the client with the arrows reversed. The key material goes the
+          other way round — a relay&rsquo;s forward is the client&rsquo;s backward, because the two
+          ends disagree about which way the exit is — and getting it wrong makes every cell
+          unrecognised in both directions rather than raising a key error. A relay also talks to
+          strangers, so every length in a CREATE2 is somebody else&rsquo;s claim and a trap is a
+          denial of service.
+        </p>
+        <p style={s.p}>
+          What that buys is a test nothing else can give: three of our relays carrying a real C
+          tor&rsquo;s upload. Without SENDMEs a 200KB upload works and a 300KB one fails; 500 cells
+          of 498 bytes is 249,000, which is exactly where it stopped. With them, 1MB goes through.{" "}
+          <strong style={{ color: "#e2e8f0" }}>A flow-control bug is invisible until something fills
+          the window</strong>, and the thing that filled it was the other implementation.
         </p>
 
         <h3 style={s.h3}>What building it actually found</h3>
@@ -271,9 +339,11 @@ export default function CaseStudies() {
         <h3 style={s.h3}>A hash_tree_root that is described, not written</h3>
         <p style={s.p}>
           Beside it, SSZ — Ethereum&rsquo;s serialization and the Merkle proofs over it.{" "}
-          <strong style={{ color: "#e2e8f0" }}>1,093 of Ethereum&rsquo;s own vectors pass</strong>:
-          1,048 {tp("ssz_generic")} and all 45 {tp("ssz_static")}, which is everything an Altair
-          light client needs. In 709 lines.
+          <strong style={{ color: "#e2e8f0" }}>2,233 of Ethereum&rsquo;s own vectors pass</strong>:
+          1,057 valid {tp("ssz_generic")}, all 45 {tp("ssz_static")}, and{" "}
+          <strong style={{ color: "#e2e8f0" }}>all 1,131 <em>invalid</em> {tp("ssz_generic")}</strong>{" "}
+          — the ones that check what it refuses, which is the half a decoder can pass by being too
+          permissive. In 808 lines.
         </p>
         <p style={s.p}>
           The reason it is 709 and not several thousand is that a type is <em>data</em>:
@@ -291,6 +361,34 @@ export default function CaseStudies() {
           merkleized; a variable field&rsquo;s extent comes from the <em>next</em> offset; and the
           first offset must equal the fixed part&rsquo;s size, so a serialization claiming
           otherwise is malformed rather than merely unusual.
+        </p>
+
+        <h3 style={s.h3}>A light client that follows the chain</h3>
+        <p style={s.p}>
+          On top of those two, the Altair sync protocol.{" "}
+          <strong style={{ color: "#e2e8f0" }}>All four of Ethereum&rsquo;s{" "}
+          <code style={{ fontFamily: "monospace" }}>light_client/sync</code> cases run step by
+          step</strong> — nineteen steps, sixteen real sync-committee signatures, every Merkle branch
+          — with the store&rsquo;s finalized and optimistic headers matching the vectors&rsquo; checks
+          after each one. In 642 lines, because the containers were already descriptors.
+        </p>
+        <p style={s.p}>
+          The interesting part is what those vectors <em>cannot</em> check. Every update in them is a
+          valid one: the suite is a liveness test, so a {tp("validateUpdate")} that returns{" "}
+          {kw("true")} unconditionally passes all nineteen steps — the headers being checked come out
+          of the update rather than out of the check. So the negatives are built by corrupting real
+          data one field at a time, and <strong style={{ color: "#e2e8f0" }}>each was confirmed to
+          fail against a deliberately broken client before being kept</strong>: a bit in the
+          signature, a node of the finality branch (which the signature does not cover), a bootstrap
+          committee key, all 32 participation bits cleared.
+        </p>
+        <p style={{ ...s.p, marginBottom: 0 }}>
+          Two checks resisted that and are pinned directly instead. Every vector update is signed by
+          almost the whole committee, so {tp(">= 2/3")} and {tp(">= 1/3")} accept exactly the same
+          set, and a safety threshold of half the maximum behaves identically to one of zero.
+          Weakening either is invisible to the vectors and they are the security boundary of the
+          protocol — so the supermajority rule is a named function with its own test at 21 and 22 of
+          32. <em>A passing suite is evidence about the cases it contains and about nothing else.</em>
         </p>
       </div>
     </>
