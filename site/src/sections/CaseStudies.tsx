@@ -53,6 +53,15 @@ path: wacrelay2 -> wacrelay -> wacrelay3
 circuit built, 3 hops
 network: ok`;
 
+const PROOF = `// packages/mpt/src/account.wac — what an eth_getProof answer actually is.
+AccountProof a = accountAt(stateRoot, address, accountNodes);
+if (a.ok && a.present) {
+  // The storage root comes *out of the account proof*. A caller that supplies it
+  // from anywhere else can be handed a perfectly valid proof of a different
+  // account's storage.
+  StorageProof s = storageAt(a.account.storageRoot, slot, storageNodes);
+}`;
+
 const WAIT = `// The wait list, and beside it what each entry belongs to: -2 the guard, -1 the
 // listener, otherwise a client's index. Built rather than computed, because the offsets
 // shift as clients come and go and an arithmetic slip here routes a stranger's bytes.
@@ -256,6 +265,16 @@ export default function CaseStudies() {
           circuit has an empty address. The first two fell to differentials against tor&rsquo;s own
           values; <strong style={{ color: "#e2e8f0" }}>the last two needed a live service</strong>.
         </p>
+        <p style={s.p}>
+          Hosting one is the mirror of every row above, and it is partly there: the descriptor
+          decodes under tor&rsquo;s own {tp("hs_desc_decode_descriptor")}, key blinding matches in
+          both directions, and <strong style={{ color: "#e2e8f0" }}>publication works end to
+          end</strong> — our directory and our relay both accept a {tp("POST /tor/hs/3/publish")},
+          check it the way tor does, file it under the blinded key from its certificate, and serve
+          it back, replacing what they hold only for a strictly newer revision. What is left is the
+          service program itself: the loop that establishes introduction points and answers an
+          introduction.
+        </p>
 
         <h3 style={s.h3}>And it runs the other side</h3>
         <p style={s.p}>
@@ -276,11 +295,19 @@ export default function CaseStudies() {
           denial of service.
         </p>
         <p style={s.p}>
-          What that buys is a test nothing else can give: three of our relays carrying a real C
-          tor&rsquo;s upload. Without SENDMEs a 200KB upload works and a 300KB one fails; 500 cells
-          of 498 bytes is 249,000, which is exactly where it stopped. With them, 1MB goes through.{" "}
-          <strong style={{ color: "#e2e8f0" }}>A flow-control bug is invisible until something fills
-          the window</strong>, and the thing that filled it was the other implementation.
+          What that buys is the test nothing else can give — interop in the direction that counts,
+          with the other implementation as the client:{" "}
+          <strong style={{ color: "#e2e8f0" }}>a real C tor bootstraps from our directory authority,
+          builds a three-hop circuit through our relays, and carries a stream over it</strong>. It
+          reaches <em>Bootstrapped 100% (done)</em> with microdescriptors at their default, having
+          accepted our descriptor, our key certificate, our vote and both flavours of our consensus
+          through its own parsers, with the signature verified inside the parse.
+        </p>
+        <p style={s.p}>
+          It also fills a window, which is the only way a flow-control bug shows itself. Without
+          SENDMEs a 200KB upload works and a 300KB one fails: 500 cells of 498 bytes is 249,000,
+          exactly where it stopped. With them, 1MB goes through, and 8MB the other way past a slow
+          reader.
         </p>
 
         <h3 style={s.h3}>What building it actually found</h3>
@@ -303,7 +330,7 @@ export default function CaseStudies() {
       </div>
 
       <div style={s.section} id="ethereum">
-        <h2 style={s.h2}>BLS12-381 and SSZ, against Ethereum's own vectors</h2>
+        <h2 style={s.h2}>Ethereum, against Ethereum's own vectors</h2>
         <p style={s.p}>
           A pairing-based signature scheme is the least forgiving thing to write in a new language:
           the answer is one bit, every intermediate is a 381-bit field element, and nothing short
@@ -389,6 +416,44 @@ export default function CaseStudies() {
           Weakening either is invisible to the vectors and they are the security boundary of the
           protocol — so the supermajority rule is a named function with its own test at 21 and 22 of
           32. <em>A passing suite is evidence about the cases it contains and about nothing else.</em>
+        </p>
+
+        <h3 style={s.h3}>From a verified header to a contract&rsquo;s answer</h3>
+        <p style={s.p}>
+          A light client gives you a header, and a header says nothing about what is <em>in</em> the
+          state it commits to. Four packages close that gap, and together they mean a contract read
+          is <strong style={{ color: "#e2e8f0" }}>checked rather than trusted</strong> — the provider
+          serving the answer cannot change it without the state root you already verified saying so.
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <div style={s.codeLabel}>mpt/src/proof.wac · what a proof is worth</div>
+          <CodeBlock code={PROOF} lang="wac" />
+        </div>
+        <p style={s.p}>
+          {tp("keccak256")} — which is not SHA3-256, and differs from it by one domain byte, so the
+          test asserts it <em>disagrees</em> with SHA3 and with truncated SHAKE rather than only
+          agreeing with its own vectors. {tp("packages/rlp")}, against Ethereum&rsquo;s own{" "}
+          {tp("RLPTests")}: 28 valid driven in both directions and 26 invalid all refused.{" "}
+          {tp("packages/abi")}, schema-driven like SSZ&rsquo;s containers — thirty cases from{" "}
+          {tp("npm:ethers")} decoded <em>and</em> re-encoded byte for byte, plus the malformed-offset
+          refusals. And {tp("packages/mpt")}, anchored to all seven published roots of{" "}
+          {tp("trieanyorder.json")}: inclusion, absence, and every perturbation.
+        </p>
+        <p style={s.p}>
+          Two things that table hides. <strong style={{ color: "#e2e8f0" }}>Absence is an
+          answer</strong> — a sound proof that nothing is stored at a slot is a result, not a
+          failure, and a verifier that cannot say it forces its caller to guess. And the walk is{" "}
+          <em>two</em> steps: the account proof yields a storage root, and the storage proof must be
+          checked under <em>that</em> root rather than under the state root, or a caller can be
+          handed a perfectly valid proof of a different account&rsquo;s storage.
+        </p>
+        <p style={{ ...s.p, marginBottom: 0 }}>
+          {tp("packages/ens")} turns the name a person types into the node a contract is asked
+          about — EIP-137&rsquo;s namehash, the DNS wire encoding, and both calls&rsquo; calldata,
+          all against {tp("npm:ethers")}. What is missing is the honest half: ENSIP-15 normalisation
+          is not implemented and says so, and making the call needs an endpoint. Every piece here is
+          the part that can be checked offline against somebody else&rsquo;s bytes — which is
+          deliberate, because that is the part where being wrong is silent.
         </p>
       </div>
     </>

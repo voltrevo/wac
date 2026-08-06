@@ -413,7 +413,7 @@ export default function Landing() {
           ["#demos", "run one here"],
           ["#shell", "a shell"],
           ["#tor", "tor"],
-          ["#ethereum", "bls12-381 & ssz"],
+          ["#ethereum", "ethereum"],
           ["#wasm-gaps", "what wasm is missing"],
         ].map(([href, label], i) => (
           <a key={href} href={href} style={{ color: "#9ca3af", textDecoration: "none" }}>
