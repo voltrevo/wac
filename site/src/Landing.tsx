@@ -345,7 +345,10 @@ export default function Landing() {
         {[
           ["packages", String(TOTALS.packages)],
           ["lines of wac", `~${Math.round(TOTALS.lines / 1000)}k`],
-          ["tests", `~${Math.round(TOTALS.tests / 100) * 100}`],
+          // Both suites — the compiler's and wac-mono's. The package table below shows the
+          // packages' own figure, which is the smaller half and the right one beside a table of
+          // packages.
+          ["tests", `~${Math.round(TOTALS.testsAll / 100) * 100}`],
           ["programs", String(TOTALS.programs)],
           ["compiler", "~6k TS"],
           ["ts in packages", "0"],

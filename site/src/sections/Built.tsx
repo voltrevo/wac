@@ -78,9 +78,11 @@ export default function Built() {
           The argument for a language is what people finish in it.{" "}
           <a href={MONO} target="_blank" rel="noopener" style={{ color: "#60a5fa" }}>wac-mono</a>{" "}
           is {TOTALS.packages} packages in dependency order — nothing imports anything above it —
-          totalling {about(TOTALS.lines)} lines of wac and {about(TOTALS.tests)} tests, with{" "}
-          <strong style={{ color: "#e2e8f0" }}>no TypeScript in any package's {tp("src/")}</strong>.
-          Each was written because the layer under it needed something.
+          totalling {about(TOTALS.lines)} lines of wac and {about(TOTALS.tests)} tests of their own,
+          with <strong style={{ color: "#e2e8f0" }}>no TypeScript in any package's {tp("src/")}</strong>.
+          Each was written because the layer under it needed something. The{" "}
+          {about(TOTALS.testsAll)} in the figure at the top of this page are these plus the
+          compiler&rsquo;s, which are in this repository and test a different thing.
         </p>
 
         <div style={{ border: "1px solid #2e2e3e", borderRadius: 6, overflowX: "auto" }}>
