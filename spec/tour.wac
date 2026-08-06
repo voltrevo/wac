@@ -679,6 +679,15 @@ export i32 methodRefs() {
 //   brings its constructors, fields and methods with it.
 // - Paths are relative (`./`, `../`). Circular imports are fine: wac files hold
 //   only declarations, so there is no initialisation order to get wrong.
+// - One import is not a path:
+//
+//       import { Read } from core;      // no quotes, no extension
+//
+//   `core` is the module the compiler ships, so there is no file to point at —
+//   quoting it is an error rather than a synonym. It holds `Read` and nothing
+//   else, because a type belongs there only if it must have ONE identity across
+//   a repo boundary: no closures means two copies of an enum can never be
+//   converted into each other. Containers and sum types go in a package.
 // - Names are mangled internally to `<filestem>$<name>` — `geometry$Point`,
 //   `geometry$Point$distanceSq`. Two files may each declare `Point` or `max`;
 //   they stay distinct types with distinct layouts.

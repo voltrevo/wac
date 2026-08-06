@@ -6,9 +6,9 @@
 
 ## What we are aiming at
 
-Every import in wac today is a relative file path — `spec/spec/imports.md` says so: *"Import paths are
-relative, using `./` or `../` prefixes."* That is the whole of the module system, and it has held up
-well for a single tree.
+Every import in wac was a relative file path — `spec/spec/imports.md` said, before step 1 of this
+landed: *"Import paths are relative, using `./` or `../` prefixes."* That was the whole of the module
+system, and it held up well for a single tree.
 
 It stops holding the moment there is more than one tree. The immediate case is wac-mono's issue 0092,
 which moves the capability layer out into a repo of its own and is blocked on exactly this; the
@@ -129,10 +129,10 @@ the ecosystem would stop composing with every other.
    resolution, expressed through one mechanism. Done when a program importing `from core` compiles in
    `wacx`, in `wacCompile` from an in-memory map, and in the browser playground — the last of which
    proves the embedding, since it has no filesystem.
-2. **`Read` moves into `core`.** Done when wac-mono's `bytes/src/read.wac` is a re-export of it and
-   nothing has changed shape for its importers, then when the re-export is removed and they name `core`
-   directly. Two steps rather than one, because 23 files across seven packages — `box`, `gzip`,
-   `platform`, `sh`, `ssh`, `stream`, `tor` — import it by path today.
+2. **`Read` moves into `core`.** Done when nothing declares it but `core`. Planned as two steps — a
+   re-export first, so nothing changed shape, then the re-export removed — and done as one, because
+   two spellings that both compile invite new code against the old one. 25 files across seven
+   packages (`box`, `gzip`, `platform`, `sh`, `ssh`, `stream`, `tor`) changed in a single commit.
 3. **A directory provider.** A prefix pointing at a checkout, which is what wac-mono's issue 0092 —
    moving the capability layer to its own repo — is waiting on. Done when wac-mono can name the
    capability layer without a relative path into a sibling directory.
@@ -147,7 +147,7 @@ it should be its own document when somebody is ready to build it — carrying D7
 | step | state |
 | --- | --- |
 | 1. provider table, `core` embedded | **done** — `atoms/wac/wacCore.ts`, one prefix and one module. Compiles and runs through `wacx`, through `wacCompile` from a map, and in the playground (`The core Module`, which is the embedding's proof: no filesystem there) |
-| 2. `Read` into `core` | wac side done — `core` declares it. wac-mono's cut-over is the other half |
+| 2. `Read` into `core` | **done** — `core` declares it, and wac-mono's 25 importers name it there. `packages/bytes/src/read.wac` is deleted, with no re-export |
 | 3. directory provider | not started — `importKey` is where it goes |
 | 4. specified in `spec/` | **done for `core`** — `§wac-core-one-type-8fjm2wq`, `§wac-core-unquoted-3nqk7vd`, `§wac-core-read-6kv4pnx`, `§wac-wapy-core-5wq8jhn`. Step 3 will add to it |
 

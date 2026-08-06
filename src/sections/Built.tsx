@@ -1,16 +1,16 @@
 // What has been built in wac, and the idea that made applications possible.
 //
 // Merged in from the wac-showcase page. Its argument is the one this site was missing: a language
-// is persuasive because of what people finish in it, and there are two dozen packages and no
+// is persuasive because of what people finish in it, and there are thirty-odd packages and no
 // TypeScript in any of their `src/`.
 //
 // The table's numbers come from `src/data/built.ts`, generated from wac-mono's own generated
 // MAP.md — see `tools/syncMap.ts`. Nothing here is typed in by hand, because a hand-typed
-// inventory of two dozen packages is wrong within the week.
+// inventory that size is wrong within the week.
 
 import { useEffect, useState } from "react";
 import { BUILT, TOTALS } from "../data/built";
-import { CodeBlock, fn_, MONO, s, tp } from "../theme";
+import { CodeBlock, fn_, kw, MONO, s, tp } from "../theme";
 
 /** Where a demo's source and build instructions live, for the links beside each one. */
 const MONO_SRC = "https://github.com/voltrevo/wac-mono/blob/master/packages";
@@ -164,10 +164,10 @@ export default function Built() {
       <div style={s.section} id="capabilities">
         <h2 style={s.h2}>Capabilities, because imports name files</h2>
         <p style={s.p}>
-          wac's {kwImport} reads another {tp(".wac")} file and does nothing else. There is no{" "}
-          {tp("extern")}, no declaration form, no way to write down the name of a function that
-          lives outside the program — so the only host code a module can call is a value someone
-          handed it.
+          wac's {kwImport} reads other wac source and does nothing else — a file beside it, or{" "}
+          {kw("core")}, which the compiler ships. There is no {tp("extern")}, no declaration form,
+          no way to write down the name of a function that lives outside the program — so the only
+          host code a module can call is a value someone handed it.
         </p>
         <p style={s.p}>
           A module that takes no {tp("fn[…]")} parameter therefore has{" "}

@@ -48,7 +48,8 @@ export f64 run() {
 - Nullable references with `?`, `!` unwrap, `is null` / `is not null`
 - GC arrays: `i32[5]()`, `i32[](1,2,3)`, `.len()`
 - Function references: `fn[i32(i32, i32)]`
-- File-based imports with `import { x } from "./file.wac"`
+- File-based imports with `import { x } from "./file.wac"`, plus `core` — the one module the
+  compiler ships, written unquoted because it is not a file
 - Full control flow: if/else, while, for, do-while, switch, ternary
 - Four cast modes: `as` (lossless), `as!` (checked), `as~` (lossy), `as@` (raw)
 - Two surfaces: `.wac` above, or `.wapy` below — the same language either way
@@ -91,7 +92,7 @@ See [spec/spec/wapy.md](spec/spec/wapy.md) for the correspondence in full.
 
 `wacBindgen` produces a self-contained `.ts` file with the wasm binary base64-encoded inline and typed wrapper functions. Zero runtime dependencies. Primitive arrays (`i32[]`, `f64[]`, etc.) automatically marshal between JS typed arrays and WasmGC arrays, and structs and enums cross as generated classes.
 
-An export may take a JavaScript function — `export i32 fold(fn[i32(i32,i32)] f, i32[] xs)` is called as `fold((a, b) => a + b, [1, 2, 3])`. Passing it is the only way a host function becomes reachable. wac's `import` reads another `.wac` file and does nothing else — there is no `extern`, no declaration form, no way to write down the name of a function that lives outside the program — so a module that takes no `fn[…]` parameter has no wasm imports at all and cannot call out. Note which way round that is: there is no ambient authority to opt out of. Most sandboxes are a list of things taken away; here the import section is empty unless a parameter put something in it.
+An export may take a JavaScript function — `export i32 fold(fn[i32(i32,i32)] f, i32[] xs)` is called as `fold((a, b) => a + b, [1, 2, 3])`. Passing it is the only way a host function becomes reachable. wac's `import` reads other wac source and does nothing else — a file beside it, or `core`, which is inside the compiler. There is no `extern`, no declaration form, no way to write down the name of a function that lives outside the program — so a module that takes no `fn[…]` parameter has no wasm imports at all and cannot call out. Note which way round that is: there is no ambient authority to opt out of. Most sandboxes are a list of things taken away; here the import section is empty unless a parameter put something in it.
 
 Arrays of references (`string[]`, arrays of structs, nested arrays), nullable primitives (`number | null`), static methods, and functions returned from wac all cross too — enough that `std`'s generic `Map` can be built and driven entirely from JavaScript:
 

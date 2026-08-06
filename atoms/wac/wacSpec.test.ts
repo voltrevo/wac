@@ -2898,7 +2898,14 @@ Deno.test("[§wac-grammar-k7fn4xq] grammar covers all major constructs", async (
   // imports, structs (with inheritance, methods, const this), functions,
   // expressions (binary, unary, ternary, casts, calls), statements
   // (if/else, while, for, do-while, switch, break, continue, return, trap)
-  const inst = await run(`
+  //
+  // The import was in that list and not in the program — a single-file test cannot have one — so
+  // this is two files now. The grammar's other `source` form, the bare `core`, is covered by
+  // §wac-core-unquoted-3nqk7vd rather than here.
+  const inst = await runMulti(new Map([
+    ["helper.wac", `export i32 six() { return 6; }`],
+    ["main.wac", `
+    import { six } from "./helper.wac";
     struct Base { i32 x; i32 getX(const this) { return this.x; } }
     struct Sub : Base { i32 y; }
     export i32 grammar() {
@@ -2921,11 +2928,12 @@ Deno.test("[§wac-grammar-k7fn4xq] grammar covers all major constructs", async (
       while (c < 5) { c++; }
       i32 x = 0xFF;
       i64 y = 42 as i64;
-      return r + c + d + x + y as~ i32;
+      return r + c + d + x + six() + y as~ i32;
     }
-  `);
-  // r=20 (10+switch+10), c=5, d=2, x=255, y=42 → 20+5+2+255+42=324
-  eq(inst.call("grammar", []), 324, "grammar covers major constructs");
+  `],
+  ]));
+  // r=20 (10+switch+10), c=5, d=2, x=255, six()=6, y=42 → 20+5+2+255+6+42=330
+  eq(inst.call("grammar", []), 330, "grammar covers major constructs");
 });
 
 // ── §wac-sound-k3fn9wp — type system soundness ───────────────────────────────

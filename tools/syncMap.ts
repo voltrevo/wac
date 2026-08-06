@@ -3,7 +3,7 @@
 //
 //   deno run --allow-read --allow-write tools/syncMap.ts [path-to-wac-mono]
 //
-// The site's landing page claims what has been built in wac — two dozen packages with their
+// The site's landing page claims what has been built in wac — thirty-odd packages with their
 // sizes and test counts. Those numbers belong to the other repo, and typing them into JSX means
 // they are wrong by the end of the week. wac-mono generates `MAP.md` from its own tree and its
 // suite fails when that file is stale, so it is the closest thing to a source of truth that
