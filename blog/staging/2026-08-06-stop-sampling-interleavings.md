@@ -1,4 +1,4 @@
-# Three days sampling, one hour walking
+# Three days sampling, one afternoon choosing
 
 A test in my suite hung. Not failed — hung, about once in fifty runs, and only when the machine was
 otherwise idle. Three days of instrumentation told me exactly what the *state* was and nothing about how
