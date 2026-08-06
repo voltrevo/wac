@@ -29,8 +29,12 @@ export i32 demo() {
 ```ebnf
 program        = { import | struct_decl | enum_decl | func_decl | const_decl } ;
 
-import         = "import" , "{" , import_list , "}" , "from" , STRING , ";" ;
+import         = "import" , "{" , import_list , "}" , "from" , source , ";" ;
                  (* `from` here is contextual: an ordinary identifier elsewhere *)
+source         = STRING | "core" ;
+                 (* A quoted specifier is a relative file path. `core` is the module the
+                    compiler ships and is written bare, because it is not a file — quoting
+                    it is an error rather than a synonym [see imports.md] *)
 import_list    = import_item , { "," , import_item } , [ "," ] ;
 import_item    = IDENT , [ "as" , IDENT ] ;
 
