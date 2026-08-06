@@ -188,6 +188,26 @@ export default function Built() {
           everything that reaches it.
         </p>
 
+        <h3 style={s.h3}>A filesystem is a value, not the machine</h3>
+        <p style={s.p}>
+          The newest package takes that one step further. Every filesystem capability a program had
+          was the <em>host&rsquo;s</em>, so an SSH session got the real disk of whatever ran the
+          daemon and a browser terminal got the tab&rsquo;s storage. {tp("packages/fs")} is a
+          filesystem that belongs to the program instead — {tp("Fs.inMemory(now)")} holds nothing but
+          what you put in it, {tp("Fs.onHost(cli, now)")} reaches the real one <em>by asking</em>,
+          and a mount table resolves by longest prefix so the two compose.
+        </p>
+        <p style={s.p}>
+          It is one concrete type with the branch written by hand, not an interface with two
+          implementations, and the reason is a language constraint worth knowing: dispatch is static,
+          so a base-typed {tp("Fs")} would always run the base&rsquo;s bodies — and a funcref cannot
+          capture a filesystem, because there are no closures. The test is the interesting part
+          though: <strong style={{ color: "#e2e8f0" }}>the same script of operations runs against
+          memory and against Deno, and the transcripts must match</strong>. Whatever the real thing
+          does to a sequence of writes, listings, renames and removals is what a filesystem <em>is</em>;
+          a memory version that disagrees is wrong even when its own tests pass.
+        </p>
+
         <h3 style={s.h3}>Granted at build, not at run</h3>
         <p style={s.p}>
           The built program takes no permission flags of its own and every argument goes to the

@@ -58,7 +58,8 @@ const cmTheme = EditorView.theme({
 });
 
 /** The three things a code block on this page can be written in. */
-export type Lang = "wac" | "wapy" | "ts";
+/** `text` is program output rather than source — no grammar, so nothing is coloured. */
+export type Lang = "wac" | "wapy" | "ts" | "text";
 
 export function CodeBlock({ code, lang }: { code: string; lang: Lang }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -69,11 +70,12 @@ export function CodeBlock({ code, lang }: { code: string; lang: Lang }) {
     viewRef.current?.destroy();
     const langExt = lang === "ts"
       ? javascript({ typescript: true })
-      : lang === "wapy" ? wapyLang() : wacLang();
+      : lang === "wapy" ? wapyLang() : lang === "text" ? [] : wacLang();
     const state = EditorState.create({
       doc: code,
       extensions: [
-        lineNumbers(),
+        // Program output has no lines worth numbering, and a gutter makes it read as source.
+        ...(lang === "text" ? [] : [lineNumbers()]),
         langExt,
         syntaxHighlighting(darkHighlight),
         EditorView.lineWrapping,

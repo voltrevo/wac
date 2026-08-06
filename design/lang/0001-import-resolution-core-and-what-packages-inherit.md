@@ -10,11 +10,10 @@ Every import in wac today is a relative file path — `spec/spec/imports.md` say
 relative, using `./` or `../` prefixes."* That is the whole of the module system, and it has held up
 well for a single tree.
 
-It stops holding the moment there is more than one tree. The immediate case is
-[wac-mono's `design/0001`](https://github.com/voltrevo/wac-mono), which splits the capability layer out
-of `wac-mono` into a repo of its own; the eventual case is a package service, for which the operator
-has the name **whackage**. Both need the same thing: **a prefix that resolves to a set of wac sources
-which need not be a directory on disk.**
+It stops holding the moment there is more than one tree. The immediate case is wac-mono's issue 0092,
+which moves the capability layer out into a repo of its own and is blocked on exactly this; the
+eventual case is a package service, for which the operator has the name **whackage**. Both need the
+same thing: **a prefix that resolves to a set of wac sources which need not be a directory on disk.**
 
 Arriving looks like this:
 
@@ -134,9 +133,9 @@ the ecosystem would stop composing with every other.
    nothing has changed shape for its importers, then when the re-export is removed and they name `core`
    directly. Two steps rather than one, because 23 files across seven packages — `box`, `gzip`,
    `platform`, `sh`, `ssh`, `stream`, `tor` — import it by path today.
-3. **A directory provider.** A prefix pointing at a checkout, which is what the wac-mono split needs
-   before it can happen. Done when wac-mono can name the capability layer without a relative path into
-   a sibling directory.
+3. **A directory provider.** A prefix pointing at a checkout, which is what wac-mono's issue 0092 —
+   moving the capability layer to its own repo — is waiting on. Done when wac-mono can name the
+   capability layer without a relative path into a sibling directory.
 4. **`spec/spec/imports.md` gains the resolution rules**, with tags and tests, at which point steps 1
    to 3 stop being design and become behaviour.
 

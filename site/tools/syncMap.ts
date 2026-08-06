@@ -31,7 +31,11 @@ const rows: Row[] = [];
 for (const m of map.matchAll(/^\| \[`([a-z0-9-]+)`\][^|]*\| ([^|]+) \| ([\d,]+) \| (\d+) \|/gm)) {
   rows.push({
     name: m[1],
-    what: m[2].trim().replace(/`/g, ""),
+    // Backticks and bold markers go: the page renders this as text, not as markdown. A summary is
+    // a package README's first sentence, and three of them start mid-emphasis — `lightclient`'s
+    // reads "**The Altair sync protocol works." — so an unpaired `**` arrives as two asterisks on
+    // screen rather than as nothing.
+    what: m[2].trim().replace(/[`*]/g, ""),
     lines: Number(m[3].replace(/,/g, "")),
     tests: Number(m[4]),
   });
