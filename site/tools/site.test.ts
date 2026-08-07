@@ -190,7 +190,8 @@ Deno.test("site: every heading has an id, so the contents can list it", async ()
   // simply absent from the navigation — no error, no blank space, nothing to notice. That is the
   // failure this catches, and it is the price of not hand-writing the list.
   const files = ["Language", "Roadmap", "sections/Built", "sections/CaseStudies",
-                 "next/Home", "next/Language", "next/Stack", "next/Roadmap"];
+                 "next/Home", "next/Language", "next/Stack", "next/Roadmap",
+                 "next/Run", "next/Checked"];
   const missing: string[] = [];
   let total = 0;
   for (const name of files) {

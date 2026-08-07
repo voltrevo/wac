@@ -40,6 +40,36 @@ const EX_SEAM = `export struct Output {
   bool found;
 }`;
 
+const EX_SSH = `$ ssh -p 2222 user@host 'seq 1 100 | grep 7 | wc -l'
+19
+$ ssh -p 2222 user@host 'x="a b c"; echo "$x" | tr " " "-"'
+a-b-c`;
+
+const EX_WAIT = `// The wait list, and beside it what each entry belongs to: -2 the guard, -1 the
+// listener, otherwise a client's index. Built rather than computed, because the offsets
+// shift as clients come and go and an arithmetic slip here routes a stranger's bytes.
+Vec<i32> ids = Vec.create();
+Vec<i32> owner = Vec.create();
+ids.push(linkRead.id);
+owner.push(-2);
+if (accepting) { ids.push(acc.id); owner.push(-1); }
+for (i32 i = 0; i < clients.len(); i++) {
+  if (clients.get(i).reading) {
+    ids.push(clients.get(i).read.id);
+    owner.push(i);
+  }
+}
+
+i32 w = core.waitAny(ids.toArray(), -1);
+if (w < 0) { break; }
+i32 who = owner.get(w);`;
+
+const EX_ONION = `rendezvous established at test000a
+introduction acknowledged
+joined: the service is hop 4
+HTTP/1.0 200 OK
+hello from behind an onion`;
+
 const EX_NTOR = `// packages/tor/src/ntor.wac — tor-spec §5.1.4
 u8[] xy = x25519(ephemeralPriv, serverEph);
 u8[] xb = x25519(ephemeralPriv, onionKey);
@@ -139,8 +169,36 @@ export default function Stack() {
         </P>
         <P>
           An SSH server hands a channel&rsquo;s command string to that shell and sends the buffer
-          back down the channel. <Lead>OpenSSH&rsquo;s own client cannot tell the difference.</Lead>
+          back down the channel. <Lead>OpenSSH&rsquo;s own client cannot tell the difference</Lead>,
+          and you can point yours at it:
         </P>
+        <Code label="a real client, our server" code={EX_SSH} lang="ts" />
+        <Sub id="applets" title="Sixty programs it did not have to contain">
+          <P>
+            The shell used to carry its own small {m({ children: "cat" })}, {m({ children: "wc" })}
+            and {m({ children: "grep" })}, written only because nothing could be started. Another
+            package had those done properly and forty-five besides. They are wired together with one
+            line — {m({ children: "sh.external = boxRun" })} — so {m({ children: "sort" })},{" "}
+            {m({ children: "sha256sum" })}, {m({ children: "gzip" })} and {m({ children: "diff" })}{" "}
+            are commands you can type, <A href="#/run">in a browser tab</A> as much as on a command
+            line, running the same code either way.
+          </P>
+          <P>
+            An applet reads {m({ children: "cli.readChunk()" })} and writes{" "}
+            {m({ children: "cli.write(…)" })} — the process&rsquo;s own streams — and wac has no
+            closures, so it cannot be handed a substitute world: a fake capability has nowhere to
+            put what it collected. So the host holds the child&rsquo;s world instead, for the length
+            of one call. Between {m({ children: "pushChild" })} and {m({ children: "popChild" })},
+            argv, standard input, both output streams and every relative path belong to the child.
+            The applet needs no change and cannot tell.
+          </P>
+          <P>
+            What that is <em>not</em> is isolation: same wasm instance, same authority. The thing
+            with a real boundary is {m({ children: "spawn" })}, which the shell tries first and
+            which a browser cannot do yet — <A href="#/roadmap/native-host">the fourth host</A> is
+            partly about fixing that.
+          </P>
+        </Sub>
       </Section>
 
       <Section id="tor" kicker="hard to fake, #2" title="Tor, both ends">
@@ -169,6 +227,38 @@ export default function Stack() {
           key — so a round-trip test cannot tell the difference, and the tests remove each
           contribution in turn.
         </P>
+        <Sub id="waitany" title="One worker, every socket, one wait">
+          <P>
+            A SOCKS5 proxy on top of it, so anything that speaks SOCKS goes over Tor. It holds one
+            outstanding read per socket plus an accept, hands the list to{" "}
+            {m({ children: "waitAny" })}, and re-issues whichever answered.
+          </P>
+          <Code label="tor/src/socks.wac · the whole loop, less the branches" code={EX_WAIT} />
+          <P>
+            Against a local testnet it has carried 3.2MB across eight concurrent streams,
+            byte-identical. Built, the whole thing is <Lead>386.7 KiB</Lead> as a self-contained
+            executable — 234.2 KiB of wasm, 71.8 KiB gzipped.
+          </P>
+        </Sub>
+        <Sub id="onion" title="It reaches onion services">
+          <P>
+            A v3 onion address <em>is</em> an ed25519 public key, so there is no lookup and no
+            registry: a client that reaches the right address cannot be talking to the wrong
+            service. Six pieces get from the address to a stream, and each is checked against
+            tor&rsquo;s own values rather than against itself.
+          </P>
+          <Code label="fetching a page from a real service, over our own circuits" code={EX_ONION} lang="text" />
+          <P>
+            Four things the specification does not say plainly, each producing a well-formed and
+            useless value with no local symptom. A time period is not a day on a testing network.
+            The MAC&rsquo;s arguments are the other way round from how §3.3.2 reads. The INTRODUCE1
+            MAC covers the whole cell including twenty zero bytes — which are zeros, so nothing
+            local tells the two spans apart, and the first version of that test asserted the wrong
+            one and passed. And a BEGIN cell on a rendezvous circuit has an empty address.{" "}
+            <Lead>The first two fell to differentials against tor&rsquo;s own values; the last two
+            needed a live service.</Lead>
+          </P>
+        </Sub>
         <Sub id="tor-both" title="And it runs the other side">
           <P>
             There is a relay, a directory authority, and a launcher that stands a whole network up
@@ -188,6 +278,24 @@ export default function Stack() {
             SENDMEs a 200KB upload works and a 300KB one fails: 500 cells of 498 bytes is 249,000,
             exactly where it stopped. With them, 1MB goes through, and 8MB the other way past a slow
             reader.
+          </P>
+        </Sub>
+        <Sub id="found" title="What building it actually found">
+          <P>
+            The first real transfer through the proxy aborted the client, and the bug was older than
+            the proxy: the link layer had been handing the TLS client whatever the socket returned
+            since the day it was written. It survived a year of directory fetches because a
+            consensus arrives as a few small records that a segment does not usually split. The
+            first 400KB download arrived as 44KB in one chunk — eighty records with the last one cut
+            in half — and it aborted. <Lead>A fast-connection bug, not a slow-connection one</Lead>,
+            which is the opposite of where anyone looks for a framing fault.
+          </P>
+          <P>
+            The root cause was an asymmetric API: the server side had a framing helper and the
+            client side did not, so every client-side caller was invited to write the loop itself.
+            Two did. One was correct for a year and one was silently wrong for a year, which is the
+            expected score for an unwritten convention. <A href="#/checked/oracles">Why that is on
+            the method page →</A>
           </P>
         </Sub>
       </Section>

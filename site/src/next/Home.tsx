@@ -154,39 +154,30 @@ export default function Home() {
         </Section>
       </div>
 
-      {/* ── The method ───────────────────────────────────────────────────── */}
+      {/* ── The method, in one paragraph and a link ──────────────────────── */}
       <Section id="checked" kicker="how this is checked" title="We do not grade our own homework">
         <P>
           A test suite written by the same people as the code is a check on internal consistency and
-          almost nothing else. A round-trip test where both ends are ours tests only that we are
-          consistently wrong. So the rule here, applied everywhere it is possible:{" "}
-          <Lead>the oracle is somebody else&rsquo;s implementation</Lead>, and where there is no
-          implementation to ask, it is a published vector nobody here produced.
-        </P>
-        <Table
-          head={["the oracle", "what it settles"]}
-          rows={[
-            [<span style={{ fontFamily: font.mono }}>OpenSSL, rustls</span>, "our TLS 1.3 client and server, both directions, with a suite each side accepts and nothing else"],
-            [<span style={{ fontFamily: font.mono }}>C tor</span>, "our relay carries its circuits, our authority bootstraps it to 100%, and it parses every cell and certificate we produce"],
-            [<span style={{ fontFamily: font.mono }}>OpenSSH</span>, "its client against our server, its server against our client"],
-            [<span style={{ fontFamily: font.mono }}>GNU bash</span>, <span>652 scripts, compared on standard output <em>and</em> exit status</span>],
-            [<span style={{ fontFamily: font.mono }}>zlib, GNU gzip, zstd</span>, "our compressed output, decompressed by theirs, and the reverse"],
-            [<span style={{ fontFamily: font.mono }}>consensus-spec-tests, ethereum/tests</span>, <span>2,233 SSZ vectors including all 1,131 <em>invalid</em> ones, and RLP in both directions</span>],
-            [<span style={{ fontFamily: font.mono }}>npm:ethers, anvil</span>, "contract ABI encoding and decoding, and a state proof taken from a real client"],
-          ]}
-        />
-        <P>
-          What that buys is specific rather than rhetorical. A framing bug in the Tor link layer
-          survived a year of directory fetches because a consensus arrives in small records; the
-          first 400KB download through the proxy found it in seconds.{" "}
-          <Lead>An implementation that has to talk to somebody exercises paths a suite never
-          reaches</Lead>, and it does not share our misconceptions.
+          almost nothing else. So the rule, everywhere it is possible:{" "}
+          <Lead>the oracle is somebody else&rsquo;s implementation</Lead> — OpenSSL and rustls,
+          a real C tor, OpenSSH, GNU bash, zlib — and where there is no implementation to ask, a
+          published vector nobody here produced.
         </P>
         <P>
-          The same discipline is why this site tries not to overclaim. Where something is measured,
-          the measurement is on the page, including when it is unflattering — the crypto package
-          traces every routine for secret-dependent branches and memory indices, and{" "}
-          <A href="#/stack/crypto">says which two leak</A>.
+          There are five more kinds of evidence under that one, including a state-space walk over
+          every interleaving rather than a thousand random runs, and a trace that tells you which
+          two routines leak a secret and at which lines.{" "}
+          <A href="#/checked">All six, ordered by how much they are worth →</A>
+        </P>
+      </Section>
+
+      {/* ── The live proof ───────────────────────────────────────────────── */}
+      <Section id="run" kicker="or stop reading" title="Run it, in this tab">
+        <P>
+          A shell — {m({ children: "packages/sh" })} itself, with the sixty applets as commands —
+          compiled to wasm, on a worker, talking to a capability world on the page&rsquo;s thread.
+          It is the artifact {m({ children: "app:build --target browser" })} produces, copied
+          unmodified. <A href="#/run">That, a hasher and a Mandelbrot set →</A>
         </P>
       </Section>
 
