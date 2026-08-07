@@ -20,15 +20,8 @@ import {
   encodeVersions, encodeNetinfo, cellCommand, cellPayload, cellSize, cmdVersions, cmdCerts,
   cmdAuthChallenge, cmdNetinfo,
 } from "../../src/cell.wac";
-import { slice } from "../../../bytes/src/slice.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
   for (i32 i = 0; i < n; i++) { o[i] = (i * 31 + seed * 7 + 5) & 0xFF; }
@@ -54,7 +47,7 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
   t.eqI32(cellCommand(reply, at), cmdVersions(), "first a VERSIONS cell");
   at = at + cellSize(reply, at);
   t.eqI32(cellCommand(reply, at), cmdCerts(), "then CERTS");
-  t.isTrue(same(cellPayload(reply, at), certs), "carrying exactly the body it was given");
+  t.isTrue(equal(cellPayload(reply, at), certs), "carrying exactly the body it was given");
   at = at + cellSize(reply, at);
   t.eqI32(cellCommand(reply, at), cmdAuthChallenge(), "then AUTH_CHALLENGE");
   u8[] auth = cellPayload(reply, at);
@@ -72,7 +65,7 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
   t.eqI32(at, reply.len(), "and nothing after it");
 
   // The challenge must be the one supplied, not a copy of anything else in the reply.
-  t.isTrue(same(slice(auth, 0, 32), challenge), "the challenge is passed through verbatim");
+  t.isTrue(equal(slice(auth, 0, 32), challenge), "the challenge is passed through verbatim");
   t.eqI32((auth[32] * 256) + auth[33], 1, "one authentication method is offered");
   t.eqI32((auth[34] * 256) + auth[35], AUTH_METHOD_ED25519_SHA256_RFC5705, "and it is ed25519");
   return t.report();
@@ -110,11 +103,11 @@ export string test_a_relays_netinfo_states_what_a_clients_does_not() {
   t.eqI64(stamp, 1785900000, "the timestamp is big-endian seconds");
   t.eqI32(payload[4], 4, "OTHERADDR is IPv4");
   t.eqI32(payload[5], 4, "four bytes long");
-  t.isTrue(same(slice(payload, 6, 10), theirs), "and is the initiator's address");
+  t.isTrue(equal(slice(payload, 6, 10), theirs), "and is the initiator's address");
   t.eqI32(payload[10], 1, "one address of our own");
   t.eqI32(payload[11], 4, "IPv4");
   t.eqI32(payload[12], 4, "four bytes");
-  t.isTrue(same(slice(payload, 13, 17), mine), "and it is ours");
+  t.isTrue(equal(slice(payload, 13, 17), mine), "and it is ours");
 
   // Without one — a relay that does not yet know its own address.
   u8[] without = relayNetinfo(theirs, u8[0]());
@@ -158,7 +151,7 @@ export string test_the_initiators_netinfo_tells_us_our_own_address() {
   // stranger. Reading it is this function's job; deciding whether to trust it is not.
   T t = T.create();
   u8[] cell = encodeNetinfo(u8[](203, 0, 113, 5));
-  t.isTrue(same(netinfoOtherAddress(cell), u8[](203, 0, 113, 5)),
+  t.isTrue(equal(netinfoOtherAddress(cell), u8[](203, 0, 113, 5)),
            "the address the initiator says we have");
 
   // Malformed cells give nothing rather than a wrong four bytes.

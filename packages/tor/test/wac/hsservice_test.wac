@@ -8,6 +8,7 @@ import { hsMac } from "../../src/hsntor.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../../crypto/src/ed25519.wac";
 import { EstablishedIntro, parseEstablishIntro } from "../../src/hsservice.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 E_AUTH_SEED = 0;
 const i32 E_AUTH_PUBLIC = 1;
@@ -80,7 +81,7 @@ export string test_the_mac_is_keyed_with_the_circuit(fn[u8[](i32, u8[], u8[])] r
   // replayed onto another circuit. Without this the test would pass for a MAC that ignored the key.
   u8[] otherKh = u8[20]();
   for (i32 i = 0; i < 20; i++) { otherKh[i] = 1; }
-  t.isTrue(!sameBytes(hsMac(otherKh, macSpanOf(cell)), want),
+  t.isTrue(!equal(hsMac(otherKh, macSpanOf(cell)), want),
            "another circuit's KH gives another MAC");
   return t.report();
 }
@@ -144,11 +145,6 @@ export string test_bad_inputs_make_no_cell(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 /**
  * The relay's side: accept the cell tor built, refuse every cell tor refused.

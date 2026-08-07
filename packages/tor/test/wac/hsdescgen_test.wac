@@ -14,6 +14,7 @@ import { CERT_TYPE_SIGNING_HS_DESC, ed25519CertExpandedWithKey } from "../../src
 import { ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded }
   from "../../../crypto/src/ed25519.wac";
 import { ed25519Verify } from "../../../crypto/src/ed25519.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 H_DESCRIPTOR = 0;
 const i32 H_CERT = 1;
@@ -122,12 +123,12 @@ export string test_a_layer_round_trips_and_is_shaped_right(fn[u8[](i32, u8[], u8
             "and the reader gets the plaintext back");
 
   // The ciphertext is not the plaintext, which a cipher that silently did nothing would fail.
-  t.isTrue(!sameBytes(sub(blob, SALT_LEN, SALT_LEN + plain.len()), plain),
+  t.isTrue(!equal(sub(blob, SALT_LEN, SALT_LEN + plain.len()), plain),
            "the middle is enciphered rather than copied");
 
   // Every input changes the output, and a corrupted blob is refused rather than returned.
   u8[] other = encryptLayer(plain, secret, subcred, 43, salt, superencryptedConstant());
-  t.isTrue(!sameBytes(blob, other), "the revision counter changes the layer");
+  t.isTrue(!equal(blob, other), "the revision counter changes the layer");
   u8[] tampered = flipAt(blob, SALT_LEN + 1);
   t.eqI32(decryptLayer(tampered, secret, subcred, 42, superencryptedConstant()).len(), 0,
           "a flipped ciphertext byte fails the MAC");
@@ -341,12 +342,12 @@ export string test_the_chain_from_identity_to_subcredential(fn[u8[](i32, u8[], u
   // the hash ring rather than linger under a stale name.
   u8[] otherFactor = blindingFactor(ref(H_IDENTITY_PUBLIC, none(), none()), periodNum + 1,
                                     periodLength);
-  t.isTrue(!sameBytes(otherFactor, factor), "the next period has its own factor");
+  t.isTrue(!equal(otherFactor, factor), "the next period has its own factor");
   u8[] otherBlind = ed25519PublicKeyExpanded(
     blindedSecretKey(ed25519ExpandedSecret(seed), otherFactor));
-  t.isTrue(!sameBytes(otherBlind, ref(H_BLIND_PUBLIC, none(), none())),
+  t.isTrue(!equal(otherBlind, ref(H_BLIND_PUBLIC, none(), none())),
            "and its own blinded key");
-  t.isTrue(!sameBytes(subcredential(ref(H_IDENTITY_PUBLIC, none(), none()), otherBlind),
+  t.isTrue(!equal(subcredential(ref(H_IDENTITY_PUBLIC, none(), none()), otherBlind),
                       ref(H_SUBCRED, none(), none())),
            "and its own subcredential, so last period's descriptor will not decrypt");
   return t.report();
@@ -428,11 +429,6 @@ u8[] flipAt(u8[] b, i32 i) {
   return out;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 bool startsWith(u8[] s, string prefix) {
   u8[] p = prefix.toBytes();

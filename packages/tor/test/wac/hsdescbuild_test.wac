@@ -21,6 +21,7 @@ import { ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded }
 import { blindedSecretKey } from "../../src/hsblind.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
 import { PUB_OK, checkForPublication } from "../../src/hsstore.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 B_VARIANT_COUNT = 0;
 const i32 B_VARIANT_INTROS = 1;      // a[0] = index: how many were built
@@ -83,8 +84,8 @@ export string test_the_name_follows_the_period(fn[u8[](i32, u8[], u8[])] ref) {
   Built next = build(1, PERIOD + 1);
   t.eqI32(next.error, BUILD_OK, "the next period builds too");
 
-  t.isTrue(!same(now.blindedKey, next.blindedKey), "the next period is a different name");
-  t.isTrue(!same(now.subcredential, next.subcredential), "and a different subcredential");
+  t.isTrue(!equal(now.blindedKey, next.blindedKey), "the next period is a different name");
+  t.isTrue(!equal(now.subcredential, next.subcredential), "and a different subcredential");
   t.eqBytes(now.signingPublic, next.signingPublic, "but the signing key is unchanged by a period");
 
   // Derived rather than asserted: the name is exactly what a client computes from the identity key
@@ -226,8 +227,3 @@ i32 readI32(u8[] b, i32 at) {
   return (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

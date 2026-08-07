@@ -18,6 +18,7 @@ import {
   deriveSecret, earlySecret, emptyHash, expandLabel, finishedVerify, handshakeSecret,
   masterSecret, nextTrafficSecret, trafficKeyIv,
 } from "../../src/keyschedule.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 /** Hex, so vectors read as they do in the RFC. */
 u8[] unhex(string s) {
@@ -153,22 +154,22 @@ export string test_every_derivation_depends_on_everything_it_should() {
   u8[] ctxA = fill(32, 9, 4);
   u8[] ctxB = fill(32, 9, 5);
 
-  t.isFalse(same(earlySecret(a), earlySecret(b)), "early secret follows its PSK");
+  t.isFalse(equal(earlySecret(a), earlySecret(b)), "early secret follows its PSK");
   u8[] e = earlySecret(a);
-  t.isFalse(same(handshakeSecret(e, a), handshakeSecret(e, b)),
+  t.isFalse(equal(handshakeSecret(e, a), handshakeSecret(e, b)),
             "handshake secret follows the shared secret");
-  t.isFalse(same(handshakeSecret(earlySecret(a), a), handshakeSecret(earlySecret(b), a)),
+  t.isFalse(equal(handshakeSecret(earlySecret(a), a), handshakeSecret(earlySecret(b), a)),
             "handshake secret follows the early secret");
   u8[] hs = handshakeSecret(e, a);
-  t.isFalse(same(deriveSecret(hs, "c hs traffic".toBytes(), ctxA),
+  t.isFalse(equal(deriveSecret(hs, "c hs traffic".toBytes(), ctxA),
                  deriveSecret(hs, "c hs traffic".toBytes(), ctxB)),
             "derived secrets follow the transcript");
-  t.isFalse(same(deriveSecret(hs, "c hs traffic".toBytes(), ctxA),
+  t.isFalse(equal(deriveSecret(hs, "c hs traffic".toBytes(), ctxA),
                  deriveSecret(hs, "s hs traffic".toBytes(), ctxA)),
             "client and server secrets differ");
-  t.isFalse(same(trafficKeyIv(a, 16), trafficKeyIv(b, 16)), "traffic keys follow the secret");
-  t.isFalse(same(nextTrafficSecret(a), a), "a key update moves the secret");
-  t.isFalse(same(masterSecret(hs), hs), "the master secret is not the handshake secret");
+  t.isFalse(equal(trafficKeyIv(a, 16), trafficKeyIv(b, 16)), "traffic keys follow the secret");
+  t.isFalse(equal(nextTrafficSecret(a), a), "a key update moves the secret");
+  t.isFalse(equal(masterSecret(hs), hs), "the master secret is not the handshake secret");
   return t.report();
 }
 
@@ -178,9 +179,9 @@ export string test_finished_binds_to_the_transcript_and_the_sender() {
   u8[] ss = fill(32, 3, 9);
   u8[] thA = fill(32, 11, 2);
   u8[] thB = fill(32, 11, 3);
-  t.isFalse(same(finishedVerify(cs, thA), finishedVerify(cs, thB)),
+  t.isFalse(equal(finishedVerify(cs, thA), finishedVerify(cs, thB)),
             "Finished follows the transcript");
-  t.isFalse(same(finishedVerify(cs, thA), finishedVerify(ss, thA)),
+  t.isFalse(equal(finishedVerify(cs, thA), finishedVerify(ss, thA)),
             "Finished follows the sender's secret");
   return t.report();
 }
@@ -195,8 +196,3 @@ export string test_the_empty_context_hash_is_sha256_of_nothing(fn[u8[](u8[], u8[
   return t.report();
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

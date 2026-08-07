@@ -24,6 +24,7 @@
 // usually just before EOF and CLOSE. It is not a response to anything, and nothing prompts it.
 
 import { Reader, Writer } from "./wire.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 export i32 msgChannelOpen() { return 90; }
 export i32 msgChannelOpenConfirmation() { return 91; }
@@ -219,7 +220,7 @@ export Incoming parse(u8[] payload) {
     bool wantReply = r.bool();
     if (!r.ok) { return none(); }
     i32 status = 0;
-    if (sameBytes(name, EXIT_STATUS)) {
+    if (equal(name, EXIT_STATUS)) {
       status = r.u32();
       if (!r.ok) { return none(); }
     }
@@ -230,10 +231,3 @@ export Incoming parse(u8[] payload) {
   return Incoming(kind, channel, 0, 0, 0, u8[0](), true);
 }
 
-bool sameBytes(u8[] a, const u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

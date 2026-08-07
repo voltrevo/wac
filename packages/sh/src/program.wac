@@ -37,6 +37,7 @@ import { Program, BUDGET, NO_MATCH } from "../../regex/src/program.wac";
 // below and `printf` is a builtin, so the dependency has to run this way round.
 import { isNumber } from "./printf.wac";
 import { Fs } from "../../fs/src/fs.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 export struct Output {
   u8[] out;
@@ -1221,7 +1222,7 @@ bool uniqFeed(Feed fed, Sink sink) {
   while (true) {
     Line l = nextLine(lines, fed);
     if (!l.ok) { break; }
-    if (!first && sameBytes(l.bytes, previous)) { continue; }
+    if (!first && equal(l.bytes, previous)) { continue; }
     first = false;
     previous = l.bytes;
     // Terminated whether or not the line was: GNU's `uniq` adds the newline a last line arrived
@@ -2043,13 +2044,6 @@ bool contains(u8[] haystack, u8[] needle) {
   return false;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 
 u8[] sliceOf(u8[] s, i32 from, i32 to) {
   if (to <= from) { return u8[0](); }

@@ -21,6 +21,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { decode, encode, fromI64, Decoded, Item } from "../../src/rlp.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
@@ -58,11 +59,6 @@ i32 nib(i32 c) {
   trap;
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 /**
  * Every valid fixture: `cases(i)` gives `<hex bytes>|<expected rendering>|<name>`, and `count()` how many.
@@ -83,7 +79,7 @@ export string test_the_published_vectors_decode_and_re_encode(
     t.isTrue(got.ok, parts[2] + ": decode refused a valid encoding — " + got.error);
     if (!got.ok) { continue; }
     t.eqStr(render(got.item), parts[1], parts[2] + ": decoded to the wrong tree");
-    t.isTrue(same(encode(got.item), bytes), parts[2] + ": re-encoding did not reproduce the bytes");
+    t.isTrue(equal(encode(got.item), bytes), parts[2] + ": re-encoding did not reproduce the bytes");
   }
   return t.report();
 }

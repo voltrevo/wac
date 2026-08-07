@@ -16,6 +16,7 @@
 // carrying any option is *refused* here rather than honoured half way. See `Match.Restricted`.
 
 import { decode } from "../../codec/src/base64.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 export enum Match {
   /** No line names this key. */
@@ -86,7 +87,7 @@ Match checkLine(u8[] file, i32 at, i32 end, u8[] keyType, u8[] keyBlob) {
   b64.copyFrom(file, blobStart, 0, blobEnd - blobStart);
   u8[]? blob = decode(b64);
   if (blob is null) { return Match.Unknown; }                          // an unreadable line
-  if (!sameBytes(blob!, keyBlob)) { return Match.Unknown; }
+  if (!equal(blob!, keyBlob)) { return Match.Unknown; }
 
   return restricted ? Match.Restricted : Match.Ok;
 }
@@ -134,10 +135,3 @@ bool region(u8[] src, i32 at, i32 end, u8[] want) {
   return true;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

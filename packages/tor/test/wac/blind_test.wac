@@ -5,6 +5,7 @@ import { BLIND_PREFIX_STRING, blindedSecretKey } from "../../src/hsblind.wac";
 import {
   ed25519ExpandedSecret, ed25519PublicKeyExpanded, ed25519SignExpanded, ed25519Verify,
 } from "../../../crypto/src/ed25519.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 B_COUNT = 0;
 const i32 B_SEED = 1;
@@ -112,11 +113,11 @@ export string test_blinding_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] ref
   u8[] factor = ref(B_FACTOR, at(0), none());
   u8[] good = blindedSecretKey(secret, factor);
 
-  t.isTrue(!same(good, blindedSecretKey(secret, flipScalar(factor))),
+  t.isTrue(!equal(good, blindedSecretKey(secret, flipScalar(factor))),
            "a different factor gives a different key");
-  t.isTrue(!same(good, blindedSecretKey(flipPrefix(secret), factor)),
+  t.isTrue(!equal(good, blindedSecretKey(flipPrefix(secret), factor)),
            "a different prefix half gives a different key, because the prefix is rehashed");
-  t.isTrue(!same(good, blindedSecretKey(ref(B_IDENTITY_SECRET, at(1), none()), factor)),
+  t.isTrue(!equal(good, blindedSecretKey(ref(B_IDENTITY_SECRET, at(1), none()), factor)),
            "another identity gives another key");
 
   t.eqI32(blindedSecretKey(u8[32](), factor).len(), 0, "a 32-byte secret is not an expanded one");
@@ -143,8 +144,3 @@ u8[] flipPrefix(u8[] b) {
   return out;
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

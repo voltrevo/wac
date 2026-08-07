@@ -20,6 +20,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { p256Verify, p256Sign, p256PublicKey, p256Ecdh, p256Order } from "../../src/p256.wac";
 import { p384Verify, p384Order } from "../../src/p384.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 SIGN = 0;
 const i32 VERIFY = 1;
@@ -33,11 +34,6 @@ u8[] fill(i32 n, i32 seed) {
   // Keep it well inside the group order: the top byte cleared is enough for both curves.
   out[0] = out[0] & 0x7F;
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 u8[] cat(u8[] a, u8[] b) {
   u8[] o = u8[a.len() + b.len()]();
@@ -150,7 +146,7 @@ export string test_ecdh_agrees_from_both_ends() {
     u8[] shared = p256Ecdh(a, p256PublicKey(b));
     t.eqBytes(shared, p256Ecdh(b, p256PublicKey(a)), "both ends agree " + itoa64(i as i64));
     t.eqI32(shared.len(), 32, "the secret is the x-coordinate alone");
-    t.isFalse(same(shared, p256Ecdh(a, p256PublicKey(fill(32, i + 61)))),
+    t.isFalse(equal(shared, p256Ecdh(a, p256PublicKey(fill(32, i + 61)))),
               "and a different peer gives a different secret");
   }
   return t.report();

@@ -23,7 +23,7 @@ import {
   serviceStorePeriods, consensusTimePeriod, Publication, servicePlan,
 } from "../../src/hsdir.wac";
 import { Relay, parseConsensus, attachMicrodescriptors, base64NoPad } from "../../src/directory.wac";
-import { slice } from "../../../bytes/src/slice.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_CASE_COUNT = 0;
 const i32 V_CASE_META = 1;      // blindedKey(32) srv(32) tp(8) plen(8)
@@ -34,13 +34,6 @@ const i32 V_CONSENSUS = 5;
 const i32 V_MICRODESCS = 6;
 const i32 V_CASE_SRV_NAME = 7;  // 1 if tor used shared-rand-current-value for this upload
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 i64 be64(u8[] b, i32 at) {
   i64 v = 0;
   for (i32 i = 0; i < 8; i++) { v = (v << 8) | (b[at + i] as i64); }
@@ -75,7 +68,7 @@ export string test_every_relay_index_is_the_one_tor_computed(fn[u8[](i32, u8[], 
     for (i32 i = 0; i < n; i++) {
       u8[] ed = slice(dirs, 1 + i * 64, 1 + i * 64 + 32);
       u8[] want = slice(dirs, 1 + i * 64 + 32, 1 + i * 64 + 64);
-      t.isTrue(same(hsRelayIndex(ed, srv, tp, plen), want),
+      t.isTrue(equal(hsRelayIndex(ed, srv, tp, plen), want),
                "case " + itoa64(c as i64) + " relay " + itoa64(i as i64) +
                ": hs_relay_index agrees with tor's");
       checked = checked + 1;
@@ -123,7 +116,7 @@ export string test_we_choose_the_directories_tor_chose(fn[u8[](i32, u8[], u8[])]
       u8[] theirs = slice(dirs, 1 + i * 64, 1 + i * 64 + 32);
       bool found = false;
       for (i32 j = 0; j < chosen.len(); j++) {
-        if (same(slice(relays, 1 + chosen[j] * 32, 1 + chosen[j] * 32 + 32), theirs)) { found = true; }
+        if (equal(slice(relays, 1 + chosen[j] * 32, 1 + chosen[j] * 32 + 32), theirs)) { found = true; }
       }
       if (!found) { missing = missing + 1; }
     }
@@ -159,16 +152,16 @@ export string test_the_trailing_field_order_differs_between_the_two_indices(
   t.isFalse(tp == plen, "the two values differ, or this test proves nothing");
 
   u8[] service = hsServiceIndex(blinded, 1, plen, tp);
-  t.isFalse(same(service, hsServiceIndex(blinded, 1, tp, plen)),
+  t.isFalse(equal(service, hsServiceIndex(blinded, 1, tp, plen)),
             "swapping length and number changes the service index");
   u8[] ed = slice(ref(V_RELAYS, u8[0](), u8[0]()), 1, 33);
   u8[] relay = hsRelayIndex(ed, srv, tp, plen);
-  t.isFalse(same(relay, hsRelayIndex(ed, srv, plen, tp)),
+  t.isFalse(equal(relay, hsRelayIndex(ed, srv, plen, tp)),
             "swapping number and length changes the relay index");
 
   // Every other input must move the index too.
-  t.isFalse(same(service, hsServiceIndex(blinded, 2, plen, tp)), "the replica number matters");
-  t.isFalse(same(relay, hsRelayIndex(ed, disasterSrv(plen, tp), tp, plen)), "the SRV matters");
+  t.isFalse(equal(service, hsServiceIndex(blinded, 2, plen, tp)), "the replica number matters");
+  t.isFalse(equal(relay, hsRelayIndex(ed, disasterSrv(plen, tp), tp, plen)), "the SRV matters");
   t.eqI32(hsServiceIndex(u8[31](), 1, plen, tp).len(), 0, "a short blinded key is refused");
   t.eqI32(hsRelayIndex(u8[31](), srv, tp, plen).len(), 0, "a short identity is refused");
   return t.report();
@@ -285,9 +278,9 @@ export string test_the_disaster_srv_is_deterministic(fn[u8[](i32, u8[], u8[])] r
   T t = T.create();
   u8[] a = disasterSrv(1440, 16903);
   t.eqI32(a.len(), 32, "the disaster SRV is 32 bytes");
-  t.isTrue(same(a, disasterSrv(1440, 16903)), "and is the same every time");
-  t.isFalse(same(a, disasterSrv(1440, 16904)), "the period number changes it");
-  t.isFalse(same(a, disasterSrv(8, 16903)), "the period length changes it");
+  t.isTrue(equal(a, disasterSrv(1440, 16903)), "and is the same every time");
+  t.isFalse(equal(a, disasterSrv(1440, 16904)), "the period number changes it");
+  t.isFalse(equal(a, disasterSrv(8, 16903)), "the period length changes it");
   return t.report();
 }
 
@@ -340,7 +333,7 @@ export string test_the_directories_are_chosen_from_a_parsed_consensus(
       u8[] theirs = slice(dirs, 1 + i * 64, 1 + i * 64 + 32);
       bool found = false;
       for (i32 j = 0; j < chosen.len(); j++) {
-        if (same(relays[chosen[j]].ed25519Identity, theirs)) { found = true; }
+        if (equal(relays[chosen[j]].ed25519Identity, theirs)) { found = true; }
       }
       if (!found) { missing = missing + 1; }
     }
@@ -359,7 +352,7 @@ export string test_the_descriptor_path_is_the_one_an_hsdir_answers(
   string path = descriptorPath(blinded);
   // `/tor/hs/3/<z>`, z being the blinded key in unpadded base64: 32 bytes is 43 characters.
   t.eqI32(path.len(), 10 + 43, "the path is the prefix plus an unpadded base64 key");
-  t.isTrue(same(path.toBytes(), ("/tor/hs/3/" + base64NoPad(blinded)).toBytes()),
+  t.isTrue(equal(path.toBytes(), ("/tor/hs/3/" + base64NoPad(blinded)).toBytes()),
            "and it is exactly /tor/hs/3/<z>");
   i32 pad = 0;
   u8[] pb = path.toBytes();
@@ -535,7 +528,7 @@ export string test_the_plan_reaches_the_directories_tor_used(fn[u8[](i32, u8[], 
       u8[] theirs = slice(dirs, 1 + k * 64, 1 + k * 64 + 32);
       bool found = false;
       for (i32 j = 0; j < plan[i].hsdirs.len(); j++) {
-        if (same(relays[plan[i].hsdirs[j]].ed25519Identity, theirs)) { found = true; }
+        if (equal(relays[plan[i].hsdirs[j]].ed25519Identity, theirs)) { found = true; }
       }
       if (!found) { missing = missing + 1; }
     }
@@ -579,12 +572,12 @@ export string test_a_consensus_with_no_srv_falls_back(fn[u8[](i32, u8[], u8[])] 
               "the disaster value for that period is used");
     t.isTrue(plan[i].hsdirs.len() > 0, "and it still names directories");
   }
-  t.isTrue(!same(plan[0].srv, plan[1].srv),
+  t.isTrue(!equal(plan[0].srv, plan[1].srv),
            "the fallback differs per period, so the two uploads still diverge");
 
   // And it is a fallback, not the default: with a real consensus the real value wins.
   Publication[] real = servicePlan(consensus, relays, blinded, true, 0);
-  t.isTrue(!same(real[0].srv, plan[0].srv), "a consensus that carries a value is not overridden");
+  t.isTrue(!equal(real[0].srv, plan[0].srv), "a consensus that carries a value is not overridden");
 
   t.eqI32(servicePlan("network-status-version 3\n".toBytes(), relays, blinded, true, 0).len(), 0,
           "but a consensus with no timings yields no plan at all");

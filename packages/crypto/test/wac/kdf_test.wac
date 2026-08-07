@@ -21,6 +21,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { hmacSha1, hmacSha256 } from "../../src/hmac.wac";
 import { hkdf, hkdfExtract } from "../../src/hkdf.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 u8[] unhex(string h) {
   u8[] src = h.toBytes();
@@ -170,9 +171,9 @@ export string test_every_input_changes_the_output() {
   u8[] ikm = fill(32, 5, 2);
   u8[] info = fill(8, 7, 3);
   u8[] base = hkdf(salt, ikm, info, 32);
-  t.isFalse(same(base, hkdf(fill(16, 3, 2), ikm, info, 32)), "the salt matters");
-  t.isFalse(same(base, hkdf(salt, fill(32, 5, 3), info, 32)), "the input keying material matters");
-  t.isFalse(same(base, hkdf(salt, ikm, fill(8, 7, 4), 32)), "the info matters");
+  t.isFalse(equal(base, hkdf(fill(16, 3, 2), ikm, info, 32)), "the salt matters");
+  t.isFalse(equal(base, hkdf(salt, fill(32, 5, 3), info, 32)), "the input keying material matters");
+  t.isFalse(equal(base, hkdf(salt, ikm, fill(8, 7, 4), 32)), "the info matters");
   // A longer output must extend the shorter one, since the chain is a stream.
   u8[] long = hkdf(salt, ikm, info, 96);
   bool prefix = true;
@@ -181,8 +182,3 @@ export string test_every_input_changes_the_output() {
   return t.report();
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

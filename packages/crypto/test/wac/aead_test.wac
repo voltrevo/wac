@@ -18,6 +18,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadEncrypt, aeadTag } from "../../src/aead.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 u8[] unhex(string h) {
   u8[] src = h.toBytes();
@@ -73,7 +74,7 @@ export string test_poly1305_forced_carries() {
   u8[] tagA = poly1305(ones, msgA);
   u8[] tagB = poly1305(ones, msgB);
   t.eqI32(tagA.len(), 16, "an all-ones key still produces a tag");
-  t.isFalse(same(tagA, tagB), "and one bit of the message changes it");
+  t.isFalse(equal(tagA, tagB), "and one bit of the message changes it");
 
   // r is clamped, so a key differing only in the clamped-away bits must give the same
   // tag. That is a property of the spec rather than of our arithmetic, and it is the
@@ -132,7 +133,7 @@ export string test_the_length_fields_stop_a_block_moving(fn[u8[](u8[], u8[], u8[
 
   u8[] split = aeadTag(key, nonce, a, c);          // aad = 16, ct = 16
   u8[] joined = aeadTag(key, nonce, u8[0](), cat(a, c));   // aad = 0, ct = 32
-  t.isFalse(same(split, joined),
+  t.isFalse(equal(split, joined),
             "a 16-byte block moved from the aad into the ciphertext changes the tag");
 
   // The host agrees about which of the two is which, so this is not just our own opinion.
@@ -168,8 +169,3 @@ export string test_the_tag_covers_everything(fn[u8[](u8[], u8[], u8[], u8[])] re
   return t.report();
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

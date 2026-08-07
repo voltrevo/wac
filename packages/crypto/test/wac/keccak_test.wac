@@ -23,6 +23,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 SHA3_256 = 0;
 const i32 SHA3_512 = 1;
@@ -44,11 +45,6 @@ u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 
 export string test_the_permutation_of_an_all_zero_state() {
@@ -150,7 +146,7 @@ export string test_the_domain_separation_actually_separates() {
   i32[] lens = i32[](0, 1, 135, 136, 200);
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 9);
-    t.isFalse(same(sha3_256(m), shake256(m, 32)),
+    t.isFalse(equal(sha3_256(m), shake256(m, 32)),
               "sha3-256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
   }
   return t.report();
@@ -196,10 +192,10 @@ export string test_keccak256_is_not_sha3_256() {
     u8[] m = fill(lens[i], 5);
     u8[] k = keccak256(m);
     t.eqI32(k.len(), 32, "keccak256 is 32 bytes at " + itoa64(lens[i] as i64));
-    t.isFalse(same(k, sha3_256(m)),
+    t.isFalse(equal(k, sha3_256(m)),
               "keccak256 and sha3-256 differ at " + itoa64(lens[i] as i64) + " bytes");
     // And not a truncated SHAKE either, which shares the rate and differs only in the same byte.
-    t.isFalse(same(k, shake256(m, 32)),
+    t.isFalse(equal(k, shake256(m, 32)),
               "keccak256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
   }
   return t.report();

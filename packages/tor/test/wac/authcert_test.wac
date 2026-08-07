@@ -9,6 +9,7 @@ import {
 } from "../../src/authcert.wac";
 import { rsaFingerprint } from "../../src/routerdesc.wac";
 import { decode as b64decode } from "../../../codec/src/base64.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 A_KEY = 0;
 const i32 A_NUM = 1;
@@ -122,13 +123,8 @@ export string test_each_signature_was_made_by_the_key_that_should_have_made_it(
   // And the two payloads differ, so the assertions above are not both true of the same 20 bytes — the
   // failure the source file warns about is exchanging the signatures, and that is only detectable
   // because these are different values signed by different keys.
-  t.isFalse(sameBytes(fingerprint, certificationDigest(cert)),
+  t.isFalse(equal(fingerprint, certificationDigest(cert)),
             "the fingerprint and the document digest are not the same 20 bytes");
   return t.report();
 }
 
-bool sameBytes(u8[] x, u8[] y) {
-  if (x.len() != y.len()) { return false; }
-  for (i32 i = 0; i < x.len(); i++) { if (x[i] != y[i]) { return false; } }
-  return true;
-}

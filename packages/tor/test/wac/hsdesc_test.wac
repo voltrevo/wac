@@ -20,7 +20,7 @@ import {
 } from "../../src/hsintro.wac";
 import { hsMac } from "../../src/hsntor.wac";
 import { aesCtr } from "../../../crypto/src/aesctr.wac";
-import { slice } from "../../../bytes/src/slice.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_DESCRIPTOR = 0;
 const i32 V_KEYS = 1;         // identity(32) blinded(32) signing(32) subcred(32) revision(8)
@@ -28,13 +28,6 @@ const i32 V_LAYER = 2;        // a[0]=layer: salt(16) key(32) iv(16) mackey(32) 
 const i32 V_INTRO_COUNT = 3;
 const i32 V_INTRO = 4;      // a[0]=i: lsLen(2) linkSpecifiers onion(32) enc(32) auth(32)
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 i64 be64(u8[] b, i32 at) {
   i64 v = 0;
   for (i32 i = 0; i < 8; i++) { v = (v << 8) | (b[at + i] as i64); }
@@ -53,7 +46,7 @@ export string test_the_outer_descriptor_parses(fn[u8[](i32, u8[], u8[])] ref) {
   u8[] keys = ref(V_KEYS, none(), none());
   t.isTrue(doc.len() > 10000, "the descriptor is a real one, not a stub");
 
-  t.isTrue(same(keywordValue(doc, "hs-descriptor".toBytes()), "3".toBytes()),
+  t.isTrue(equal(keywordValue(doc, "hs-descriptor".toBytes()), "3".toBytes()),
            "hs-descriptor 3");
   t.eqI64(keywordInt(doc, "revision-counter".toBytes()), be64(keys, 128),
           "the revision counter is the one the vector records");
@@ -66,11 +59,11 @@ export string test_the_outer_descriptor_parses(fn[u8[](i32, u8[], u8[])] ref) {
   u8[] cert = pemBlock(doc, "descriptor-signing-key-cert".toBytes(), "ED25519 CERT".toBytes());
   t.isTrue(cert.len() > 100, "the signing key certificate decodes");
   t.eqI32(certType(cert), 8, "it is a type-8 descriptor signing certificate");
-  t.isTrue(same(certSignedWithKey(cert), slice(keys, 32, 64)),
+  t.isTrue(equal(certSignedWithKey(cert), slice(keys, 32, 64)),
            "extension 4 carries the blinded public key");
-  t.isTrue(same(certCertifiedKey(cert), slice(keys, 64, 96)),
+  t.isTrue(equal(certCertifiedKey(cert), slice(keys, 64, 96)),
            "and the certified key is the descriptor signing key");
-  t.isFalse(same(certSignedWithKey(cert), certCertifiedKey(cert)),
+  t.isFalse(equal(certSignedWithKey(cert), certCertifiedKey(cert)),
             "the two keys are different, so confusing them would be caught");
 
   u8[] blob = pemBlock(doc, "superencrypted".toBytes(), "MESSAGE".toBytes());
@@ -134,25 +127,25 @@ u8[] checkLayer(
   i64 wantLen = be64(v, 128);
 
   u8[] salt = slice(blob, 0, SALT_LEN);
-  t.isTrue(same(salt, wantSalt), name + ": the salt is the one in the blob tor produced");
+  t.isTrue(equal(salt, wantSalt), name + ": the salt is the one in the blob tor produced");
 
   // The three derived keys, separately. A wrong key and a failed MAC both present as "it did not
   // decrypt", and only asserting them apart says which.
   u8[] derived = layerKeys(secretData, subcred, revision, salt, constant);
   t.eqI32(derived.len(), S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN, name + ": 80 bytes of key material");
-  t.isTrue(same(slice(derived, 0, S_KEY_LEN), wantKey), name + ": SECRET_KEY agrees with tor's");
-  t.isTrue(same(slice(derived, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), wantIv),
+  t.isTrue(equal(slice(derived, 0, S_KEY_LEN), wantKey), name + ": SECRET_KEY agrees with tor's");
+  t.isTrue(equal(slice(derived, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), wantIv),
            name + ": SECRET_IV agrees");
-  t.isTrue(same(slice(derived, S_KEY_LEN + S_IV_LEN, derived.len()), wantMacKey),
+  t.isTrue(equal(slice(derived, S_KEY_LEN + S_IV_LEN, derived.len()), wantMacKey),
            name + ": MAC_KEY agrees");
 
   u8[] ciphertext = slice(blob, SALT_LEN, blob.len() - MAC_LEN);
-  t.isTrue(same(layerMac(wantMacKey, salt, ciphertext), slice(blob, blob.len() - MAC_LEN, blob.len())),
+  t.isTrue(equal(layerMac(wantMacKey, salt, ciphertext), slice(blob, blob.len() - MAC_LEN, blob.len())),
            name + ": the MAC we compute is the MAC on the wire");
 
   u8[] plain = decryptLayer(blob, secretData, subcred, revision, constant);
   t.eqI64(plain.len() as i64, wantLen, name + ": the plaintext is the expected length");
-  t.isTrue(same(sha3_256(plain), wantSha3),
+  t.isTrue(equal(sha3_256(plain), wantSha3),
            name + ": the plaintext hashes to what an independent decryption produced");
   return plain;
 }
@@ -219,13 +212,13 @@ export string test_the_document_reader_does_not_match_mid_line(fn[u8[](i32, u8[]
   // 14 KB descriptor is mostly base64, so almost every short keyword appears inside it by chance.
   T t = T.create();
   u8[] doc = "hs-descriptor 3\nrevision-counter 42\nnot-a-keyword hs-descriptor 9\n".toBytes();
-  t.isTrue(same(keywordValue(doc, "hs-descriptor".toBytes()), "3".toBytes()),
+  t.isTrue(equal(keywordValue(doc, "hs-descriptor".toBytes()), "3".toBytes()),
            "the keyword at the start of a line is found");
   t.eqI64(keywordInt(doc, "revision-counter".toBytes()), 42, "and an integer value reads");
 
   // The same text appearing mid-line must not be found as a keyword.
   u8[] mid = "some-line contains hs-descriptor 9\nhs-descriptor 3\n".toBytes();
-  t.isTrue(same(keywordValue(mid, "hs-descriptor".toBytes()), "3".toBytes()),
+  t.isTrue(equal(keywordValue(mid, "hs-descriptor".toBytes()), "3".toBytes()),
            "a mid-line occurrence is skipped in favour of the real line");
 
   // Absent, and present but empty.
@@ -238,7 +231,7 @@ export string test_the_document_reader_does_not_match_mid_line(fn[u8[](i32, u8[]
   t.eqI32(pemBlock(unterminated, "thing".toBytes(), "MESSAGE".toBytes()).len(), 0,
           "an unterminated block is refused rather than run to the end");
   u8[] good = "thing\n-----BEGIN MESSAGE-----\nQUJD\n-----END MESSAGE-----\n".toBytes();
-  t.isTrue(same(pemBlock(good, "thing".toBytes(), "MESSAGE".toBytes()), "ABC".toBytes()),
+  t.isTrue(equal(pemBlock(good, "thing".toBytes(), "MESSAGE".toBytes()), "ABC".toBytes()),
            "a well-formed block decodes");
   return t.report();
 }
@@ -273,20 +266,20 @@ export string test_the_introduction_points_are_the_ones_tor_published(
     u8[] expect = ref(V_INTRO, arg1(i), none());   // ls_len(2) ls onion(32) enc(32) auth(32)
     i32 lsLen = (expect[0] * 256) + expect[1];
     string which = "intro " + itoa64(i as i64);
-    t.isTrue(same(points[i].linkSpecifiers, slice(expect, 2, 2 + lsLen)),
+    t.isTrue(equal(points[i].linkSpecifiers, slice(expect, 2, 2 + lsLen)),
              which + ": the link specifiers are forwarded verbatim");
-    t.isTrue(same(points[i].onionKey, slice(expect, 2 + lsLen, 2 + lsLen + 32)),
+    t.isTrue(equal(points[i].onionKey, slice(expect, 2 + lsLen, 2 + lsLen + 32)),
              which + ": onion-key ntor — the introduction relay's, for extending to it");
-    t.isTrue(same(points[i].encKey, slice(expect, 2 + lsLen + 32, 2 + lsLen + 64)),
+    t.isTrue(equal(points[i].encKey, slice(expect, 2 + lsLen + 32, 2 + lsLen + 64)),
              which + ": enc-key ntor — the service's, for the hs-ntor handshake");
-    t.isTrue(same(points[i].authKey, slice(expect, 2 + lsLen + 64, 2 + lsLen + 96)),
+    t.isTrue(equal(points[i].authKey, slice(expect, 2 + lsLen + 64, 2 + lsLen + 96)),
              which + ": auth-key, from inside its type-9 certificate");
     // The three keys are all 32 bytes and all distinct, so a transposition would be caught above —
     // assert the distinctness too, since a descriptor where two happened to match would make those
     // comparisons vacuous.
-    t.isFalse(same(points[i].onionKey, points[i].encKey), which + ": onion-key is not enc-key");
-    t.isFalse(same(points[i].onionKey, points[i].authKey), which + ": onion-key is not auth-key");
-    t.isFalse(same(points[i].encKey, points[i].authKey), which + ": enc-key is not auth-key");
+    t.isFalse(equal(points[i].onionKey, points[i].encKey), which + ": onion-key is not enc-key");
+    t.isFalse(equal(points[i].onionKey, points[i].authKey), which + ": onion-key is not auth-key");
+    t.isFalse(equal(points[i].encKey, points[i].authKey), which + ": enc-key is not auth-key");
   }
   return t.report();
 }
@@ -344,13 +337,13 @@ export string test_the_cells_have_the_layout_the_spec_fixes(fn[u8[](i32, u8[], u
 
   u8[] plain = introduce1Plaintext(cookie, onion, ls);
   t.eqI32(plain.len(), 20 + 1 + 1 + 2 + 32 + lsLen, "the plaintext is exactly its fields");
-  t.isTrue(same(slice(plain, 0, 20), cookie), "the rendezvous cookie comes first");
+  t.isTrue(equal(slice(plain, 0, 20), cookie), "the rendezvous cookie comes first");
   t.eqI32(plain[20], 0, "no extensions");
   t.eqI32(plain[21], 1, "ONION_KEY_TYPE is 1, ntor");
   t.eqI32(plain[22], 0, "ONION_KEY_LEN is big-endian 32");
   t.eqI32(plain[23], 32, "…and its low byte is 32");
-  t.isTrue(same(slice(plain, 24, 56), onion), "then the rendezvous point's onion key");
-  t.isTrue(same(slice(plain, 56, 56 + lsLen), ls), "then its link specifiers, verbatim");
+  t.isTrue(equal(slice(plain, 24, 56), onion), "then the rendezvous point's onion key");
+  t.isTrue(equal(slice(plain, 56, 56 + lsLen), ls), "then its link specifiers, verbatim");
 
   u8[] encrypted = u8[100]();
   for (i32 i = 0; i < 100; i++) { encrypted[i] = (i * 3) & 0xFF; }
@@ -364,9 +357,9 @@ export string test_the_cells_have_the_layout_the_spec_fixes(fn[u8[](i32, u8[], u
   t.eqI32(cell[20], 2, "AUTH_KEY_TYPE is 2, ed25519");
   t.eqI32(cell[21], 0, "AUTH_KEY_LEN is big-endian 32");
   t.eqI32(cell[22], 32, "…and its low byte is 32");
-  t.isTrue(same(slice(cell, 23, 55), auth), "then the auth key");
+  t.isTrue(equal(slice(cell, 23, 55), auth), "then the auth key");
   t.eqI32(cell[55], 0, "then no extensions");
-  t.isTrue(same(slice(cell, 56, cell.len()), encrypted), "then the encrypted portion");
+  t.isTrue(equal(slice(cell, 56, cell.len()), encrypted), "then the encrypted portion");
 
   // The MAC covers the whole cell — see `test_an_introduce1_cell_macs_the_right_span`, where the
   // twenty leading zero bytes turned out to be included despite what the specification's wording
@@ -376,7 +369,7 @@ export string test_the_cells_have_the_layout_the_spec_fixes(fn[u8[](i32, u8[], u
   t.eqI32(macInput[0], 0, "beginning at LEGACY_KEY_ID's first zero byte");
 
   // ESTABLISH_RENDEZVOUS is the cookie and nothing else.
-  t.isTrue(same(establishRendezvousCell(cookie), cookie), "ESTABLISH_RENDEZVOUS is just the cookie");
+  t.isTrue(equal(establishRendezvousCell(cookie), cookie), "ESTABLISH_RENDEZVOUS is just the cookie");
   t.eqI32(establishRendezvousCell(u8[19]()).len(), 0, "a 19-byte cookie is refused");
   t.eqI32(introduce1Plaintext(u8[19](), onion, ls).len(), 0, "and in the plaintext too");
   t.eqI32(introduce1Plaintext(cookie, slice(onion, 0, 31), ls).len(), 0, "a short onion key too");
@@ -413,12 +406,12 @@ export string test_an_introduce1_cell_macs_the_right_span(fn[u8[](i32, u8[], u8[
 
   u8[] cell = buildIntroduce1(auth, encKey, macKey, clientPub, plaintext);
   t.eqI32(cell.len(), 56 + 32 + plaintext.len() + 32, "the cell is header, key, ciphertext and MAC");
-  t.isTrue(same(slice(cell, 56, 88), clientPub), "the ephemeral public key follows the header");
+  t.isTrue(equal(slice(cell, 56, 88), clientPub), "the ephemeral public key follows the header");
 
   // The ciphertext is the plaintext under AES-256-CTR with a zero IV, and is not the plaintext.
   u8[] ct = slice(cell, 88, 88 + plaintext.len());
-  t.isFalse(same(ct, plaintext), "the payload is encrypted");
-  t.isTrue(same(aesCtr(encKey, u8[16](), ct), plaintext), "and decrypts back under the same key");
+  t.isFalse(equal(ct, plaintext), "the payload is encrypted");
+  t.isTrue(equal(aesCtr(encKey, u8[16](), ct), plaintext), "and decrypts back under the same key");
 
   // **The MAC covers the whole cell up to the MAC — LEGACY_KEY_ID included.** rend-spec-v3 says
   // "from the AUTH_KEY through the end of ENCRYPTED_DATA", which reads as starting twenty bytes in;
@@ -427,19 +420,19 @@ export string test_an_introduce1_cell_macs_the_right_span(fn[u8[](i32, u8[], u8[
   // INTRO2 keys" and nothing else. The earlier version of this test asserted the *wrong* span and
   // passed.
   u8[] wantMac = slice(cell, cell.len() - 32, cell.len());
-  t.isTrue(same(hsMac(macKey, slice(cell, 0, cell.len() - 32)), wantMac),
+  t.isTrue(equal(hsMac(macKey, slice(cell, 0, cell.len() - 32)), wantMac),
            "the MAC covers the whole cell up to the MAC");
-  t.isFalse(same(hsMac(macKey, slice(cell, 20, cell.len() - 32)), wantMac),
+  t.isFalse(equal(hsMac(macKey, slice(cell, 20, cell.len() - 32)), wantMac),
             "not the span the specification's wording suggests");
-  t.isFalse(same(hsMac(macKey, slice(cell, 23, cell.len() - 32)), wantMac),
+  t.isFalse(equal(hsMac(macKey, slice(cell, 23, cell.len() - 32)), wantMac),
             "and not the span starting at the auth key itself");
-  t.isFalse(same(hsMac(macKey, cell), wantMac), "and not the whole cell including the MAC");
+  t.isFalse(equal(hsMac(macKey, cell), wantMac), "and not the whole cell including the MAC");
 
   // Every key changes the cell.
   u8[] other = u8[32]();
   for (i32 i = 0; i < 32; i++) { other[i] = macKey[i]; }
   other[0] = (other[0] ^ 1);
-  t.isFalse(same(buildIntroduce1(auth, encKey, other, clientPub, plaintext), cell),
+  t.isFalse(equal(buildIntroduce1(auth, encKey, other, clientPub, plaintext), cell),
             "a different MAC key gives a different cell");
   t.eqI32(buildIntroduce1(auth, encKey, macKey, clientPub, u8[0]()).len(), 0,
           "an empty plaintext is refused");

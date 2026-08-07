@@ -24,6 +24,7 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { aesEncrypt, aesDecrypt } from "../../src/aes.wac";
 import { aesCtr, CtrStream } from "../../src/aesctr.wac";
 import { gcmEncrypt, gcmTag, gcmInc32 } from "../../src/aesgcm.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 ECB = 0;
 const i32 CTR = 1;
@@ -50,11 +51,6 @@ u8[] cat(u8[] a, u8[] b) {
   for (i32 i = 0; i < a.len(); i++) { o[i] = a[i]; }
   for (i32 i = 0; i < b.len(); i++) { o[a.len() + i] = b[i]; }
   return o;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 
 export string test_fips_197_worked_examples() {

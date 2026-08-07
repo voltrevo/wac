@@ -24,6 +24,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { x25519, x25519Base } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../src/ed25519.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 ED_PUB = 0;
 const i32 ED_SIGN = 1;
@@ -46,11 +47,6 @@ u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 u8[] cat3(u8[] a, u8[] b) {
   u8[] o = u8[a.len() + b.len()]();
@@ -115,7 +111,7 @@ export string test_x25519_clamps_its_scalar() {
   u8[] different = u8[32]();
   for (i32 i = 0; i < 32; i++) { different[i] = base[i]; }
   different[10] = different[10] ^ 0xFF;
-  t.isFalse(same(x25519Base(base), x25519Base(different)), "other bits do matter");
+  t.isFalse(equal(x25519Base(base), x25519Base(different)), "other bits do matter");
   return t.report();
 }
 

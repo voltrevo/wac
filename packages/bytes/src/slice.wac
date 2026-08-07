@@ -56,3 +56,27 @@ export u8[] clamped(u8[] s, i32 from, i32 to) {
   out.copyFrom(s, lo, 0, hi - lo);
   return out;
 }
+
+/**
+ * Whether two byte arrays hold the same bytes.
+ *
+ * Thirty-eight files had written this out — `same` in twenty-four of them and `sameBytes` in sixteen —
+ * and two had drifted (wac-mono 0093 is the same story about `slice`):
+ *
+ *   - `tor/consensusgen`'s dropped the length check, so it read past the end of the shorter array or
+ *     answered *true* for a prefix, depending on which was shorter. Its one caller compares the lengths
+ *     first, so nothing was wrong yet; the next caller would have inherited the trap.
+ *   - `tor/dirstep`'s answered **false for two empty arrays**, which is not equality. Every key it
+ *     compares is 32 bytes and `filed` refuses any other length, so that clause was dead — but it is the
+ *     kind of dead clause that is copied into somewhere it is not.
+ *
+ * Empty equals empty here. A caller that means "present and equal" should say `a.len() > 0 && equal(...)`
+ * at the call site, where the reader can see it.
+ */
+export bool equal(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}
