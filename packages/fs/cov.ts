@@ -60,9 +60,181 @@ for (const t of transcripts) {
  *
  * Every entry is checked against the source, so moving the code without moving the entry fails loudly.
  */
-const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolean; why: string }[] = [];
+const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolean; why: string }[] = [
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 142,
+    proven: false,
+    snippet: "Fs onHost(Cli cli, i64 now) {",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 201,
+    proven: false,
+    snippet: "case Host(cli): { return cli.readFile(path).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 252,
+    proven: false,
+    snippet: "case Host(cli): { return cli.stat(path).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 279,
+    proven: false,
+    snippet: "case Host(cli): { own = cli.readDir(path).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 306,
+    proven: false,
+    snippet: "case Host(cli): {}",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 312,
+    proven: false,
+    snippet: "case Host(cli): { return cli.writeFile(path, data).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 358,
+    proven: false,
+    snippet: "case Host(cli): {}",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 371,
+    proven: false,
+    snippet: "case Host(cli): { return cli.mkdir(path, parents).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 416,
+    proven: false,
+    snippet: "case Host(cli): { return cli.remove(path, recursive).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 451,
+    proven: false,
+    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chmod on a host mount is not implemented\"); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 467,
+    proven: false,
+    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"chown on a host mount is not implemented\"); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 485,
+    proven: false,
+    snippet: "case Host(cli): {",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 489,
+    proven: false,
+    snippet: "case Host(cli2): { return cli.rename(from, to).wait(); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 490,
+    proven: false,
+    snippet: "else: { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 496,
+    proven: false,
+    snippet: "case Host(cli): { return Change.of(FAULT_DENIED(), \"rename across mounts is not implemented\"); }",
+    why:
+      "A host mount, which takes a `Cli` that only a built program has. Every one of these is driven by `test/host.test.ts` and `packages/sh/test/backings.test.ts` against the real filesystem, which is a better oracle than this probe could be — so this is where the measurement stops, not where the testing does.",
+  },
+  {
+    file: "packages/fs/src/image.wac",
+    line: 116,
+    proven: false,
+    snippet: "else: { skipped.push(mountName(fs.mounts.get(i).at)); }",
+    why:
+      "The writer's host-mount path: naming a mount it did not save. Same reason as the fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a built program.",
+  },
+  {
+    file: "packages/fs/src/image.wac",
+    line: 133,
+    proven: false,
+    snippet: "for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }",
+    why:
+      "The writer's host-mount path: naming a mount it did not save. Same reason as the fs.wac entries above — it needs a `Cli`. `test/image.test.ts` drives it through a built program.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 537,
+    proven: true,
+    snippet: "if (path.len() < m.at.len()) { return -1; }",
+    why:
+      "A path shorter than the mount that owns it. `mountOf` picks by `underMount`, which requires the mount point to be a whole-component prefix, so a path it returns is never shorter than the mount's own `at`. The one caller that reached it was `writeFile`'s parent lookup for a mount point itself, and that now answers before it gets here. Kept because `find` is called with `parentOf(path)` from several places and a future one could pass something shorter.",
+  },
+  {
+    file: "packages/fs/src/fs.wac",
+    line: 753,
+    proven: true,
+    snippet: "if (cut < 0) { return path; }",
+    why:
+      "`baseOf` on a path with no slash in it. Every path reaching this package is absolute — the shell resolves before it calls — so there is always at least the leading one. Kept because it is a general helper and returning the whole string is the right answer if that ever stops being true.",
+  },
+  {
+    file: "packages/fs/src/image.wac",
+    line: 369,
+    proven: false,
+    snippet: "if (r.bad) { return -1; }",
+    why:
+      "One of the two `r.bad` checks inside the directory-entry loop. A truncated entry trips the other one first, and which of the pair a given malformed image reaches depends on where it was cut. Reachable, and not constructed — a gap rather than an exemption.",
+  },
+  {
+    file: "packages/fs/src/image.wac",
+    line: 374,
+    proven: false,
+    snippet: "if (r.bad) { return -1; }",
+    why:
+      "One of the two `r.bad` checks inside the directory-entry loop. A truncated entry trips the other one first, and which of the pair a given malformed image reaches depends on where it was cut. Reachable, and not constructed — a gap rather than an exemption.",
+  },
+];
 
-report([probe], "packages/fs/", { verbose });
+// `src/` and not `packages/fs/`: the probe's own branches are a test's branches, and counting them
+// would put the driver's coverage into the package's number — and, worse, into the ratchet below, where
+// an unexercised line of the *probe* would read as an unaccounted line of the package.
+const { total, covered } = report([probe], "packages/fs/src/", { verbose });
 
 let stale = false;
 const sources = new Map<string, string[]>();
@@ -78,5 +250,17 @@ for (const u of NOT_COVERED) {
     const label = u.proven ? "unreachable" : "reachable, NOT COVERED";
     console.log(`\n${label}: ${u.file}:${u.line}  ${u.snippet}\n  ${u.why}`);
   }
+}
+// **The ratchet.** Every uncovered point is either driven, or written down above with a reason. A run
+// that merely printed a number would let the next uncovered branch arrive unnoticed, which is how the
+// three defects at the top of this file survived as long as they did.
+const accounted = NOT_COVERED.length;
+const missing = total - covered - accounted;
+if (missing > 0) {
+  console.log(
+    `\n${missing} uncovered branch point(s) are not accounted for. Drive them, or add them to ` +
+      `NOT_COVERED with the reason — and keep "proven" honest about which of the two claims it is.`,
+  );
+  stale = true;
 }
 if (stale) Deno.exit(1);

@@ -322,13 +322,11 @@ export struct Fs {
     i32 parent = this.find(m, parentOf(path));
     if (parent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_OTHER(), "not a directory"); }
+    // Both of this path's "is a directory" refusals are gone: the check at the top of this function
+    // answers that question for *every* directory, including the mount points those two could not see.
+    // Two guards for one fact is how the two come to disagree.
     string name = baseOf(path);
-    if (name == "") { return Change.of(FAULT_OTHER(), "is a directory"); }
     i32 existing = this.child(parent, name);
-    if (existing >= 0 && this.nodes.get(existing).isDir) {
-      // As above: the hosts say "other" for this, and matching them is what the differential asks for.
-      return Change.of(FAULT_OTHER(), "is a directory");
-    }
     if (existing >= 0) {
       this.nodes.get(existing).replace(data, this.now);
       return Change.of(FAULT_NONE(), "");
@@ -379,7 +377,6 @@ export struct Fs {
     if (parent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
     string name = baseOf(path);
-    if (name == "") { return Change.of(FAULT_EXISTS(), "file exists"); }
     if (this.child(parent, name) >= 0) { return Change.of(FAULT_EXISTS(), "file exists"); }
     this.nodes.push(dirNode(this.owner, this.now));
     this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);

@@ -145,7 +145,15 @@ had asked for:
   over the wrong body, which nothing had ever done: every malformed image a test had shown the reader was
   refused by the checksum, so the reader's own guards had never run.
 
-`synthEndless` was deleted in the same pass, being a function nothing called.
+`synthEndless` was deleted in the same pass, being a function nothing called — and so were three guards
+in `writeFile` and `mkdir` that the new "is this a directory" check had made unreachable. Two guards for
+one fact is how the two come to disagree.
+
+The number is 92.7% and it is a **ratchet, not a report**: every uncovered point is either driven or
+written down in `cov.ts` with its reason, and the task fails if a new one appears. A run that only printed
+a percentage is how the three defects above survived as long as they did. Seventeen of the twenty-one
+recorded points are host mounts, which need a `Cli` that only a built program has; they are measured
+nowhere and *tested* against the real filesystem, which is a better oracle than a probe.
 
 Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
 as gaps either: `test/host.test.ts` and `packages/sh/test/backings.test.ts` run every one of them against

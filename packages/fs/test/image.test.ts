@@ -349,6 +349,8 @@ Deno.test("an image whose checksum is right and whose body is wrong", async () =
     ["length past the end", "ends inside a node"],
     ["negative length", "above two gigabytes"],
     ["entry cut short", "ends inside a node"],
+    ["mount name length", "above two gigabytes"],
+    ["entry name cut short", "ends inside a node"],
     ["trailing", "trailing bytes"],
   ];
   if (lines.length !== expected.length) throw new Error(lines.join(" | "));

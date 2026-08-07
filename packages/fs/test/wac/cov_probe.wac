@@ -248,6 +248,23 @@ export string imageBadOps() {
   badEntry.pushU32(1 as@ u32);                    // one entry, and then nothing
   say(out, "entry cut short " + read(sealed(badEntry), 0).error);
 
+  // A length that is not a length, at the *mount name* — so the specific reason comes back from the
+  // first failure rather than the second, which is a different line from the one above.
+  Buf badName = Buf.create();
+  badName.pushAll("wacimg\0".toBytes());
+  badName.push(1);
+  badName.pushU32(1 as@ u32);
+  badName.pushU32(0x80000000 as@ u32);
+  say(out, "mount name length " + read(sealed(badName), 0).error);
+
+  // An entry whose *name* runs out, as against one whose node does.
+  Buf badEntryName = oneMount();
+  putStr(badEntryName, "/home");
+  node(badEntryName, 1);
+  badEntryName.pushU32(1 as@ u32);
+  badEntryName.pushU32(50 as@ u32);            // a name fifty bytes long, and nothing after it
+  say(out, "entry name cut short " + read(sealed(badEntryName), 0).error);
+
   Buf trailing = Buf.create();
   Fs fs = Fs.inMemory(1754500000000);
   fs.writeFile("/f", "x".toBytes());
@@ -368,6 +385,20 @@ export string edgeOps() {
   fs.writeFile("/one", "1".toBytes());
   Written w = write(fs);
   say(out, "dump singular " + (contains(dump(w.bytes), "1 byte)") ? "yes" : "no"));
+
+  // A directory under a *file*, without `-p`: the parent is found and is not a directory.
+  fs.writeFile("/plain", "x".toBytes());
+  say(out, "mkdir under a file " + faultOf(fs.mkdir("/plain/x", false)));
+  // A rename whose source parent does not exist at all, which is a different miss from a missing source.
+  say(out, "rename from nowhere " + faultOf(fs.rename("/nope/x", "/y")));
+
+  // A mount point written with a trailing slash is the same mount point.
+  Fs slashed = Fs.inMemory(1754500000000);
+  slashed.mountMemory("/x/");
+  say(out, "trailing slash mount " + joined(slashed.readDir("/")));
+  // The same path mounted twice: the listing must still name it once.
+  slashed.mountMemory("/x");
+  say(out, "mounted twice " + joined(slashed.readDir("/")));
   return string.fromBytes(out.take());
 }
 
