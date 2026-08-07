@@ -108,11 +108,8 @@ i32 dispatchProgram(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink
   if (name == "cat") { return cat(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "wc") { return wc(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "head") { return head(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "tail") { return tail(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "sort") { return sort(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "uniq") { return uniq(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "grep") { return grep(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "tr") { return tr(argv, fed, sink, errs); }
   if (name == "seq") { return seq(argv, sink, errs); }
   return 127;
 }
@@ -135,8 +132,8 @@ export Vec<string> names() {
   Vec<string> out = Vec.create();
   // `nl` and `rev` are gone: `packages/box` has them as applets, its suite holds them to the same
   // corpus, and two implementations of one tool is what wac-mono 0103 is about. The rest follow.
-  out.push("cat"); out.push("wc"); out.push("head"); out.push("tail");
-  out.push("sort"); out.push("uniq"); out.push("grep"); out.push("tr"); out.push("seq");
+  out.push("cat"); out.push("wc"); out.push("head");
+  out.push("sort"); out.push("grep"); out.push("seq");
   return out;
 }
 
@@ -228,11 +225,8 @@ bool gnuHas(string name, i32 letter) {
   string letters = "";
   if (name == "wc") { letters = "cmlLw"; }
   else if (name == "head") { letters = "cnqvz"; }
-  else if (name == "tail") { letters = "cfFnqsvz"; }
   else if (name == "sort") { letters = "bdfgiMhnRrVcCkmosStTuz"; }
-  else if (name == "uniq") { letters = "cdDfisuzw"; }
   else if (name == "grep") { letters = "EFGPefiwxzsvVmbnHhoqaIdDrRLlcTZBACU"; }
-  else if (name == "tr") { letters = "cdst"; }
   else if (name == "seq") { letters = "fsw"; }
   else if (name == "cat") { letters = "AbeEnstTuv"; }
   // `ls` is a *builtin* here rather than one of the programs above, because a shell needs it before it
@@ -767,9 +761,6 @@ i32 head(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
   return headOrTail(fs, cli, cwd, argv, fed, sink, errs, true);
 }
 
-i32 tail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  return headOrTail(fs, cli, cwd, argv, fed, sink, errs, false);
-}
 
 i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs, bool front) {
   string who = front ? "head" : "tail";
@@ -1156,34 +1147,6 @@ void mergeSort(u8[][] a, bool reverse) {
   }
 }
 
-/**
- * `uniq [file]` — adjacent duplicates, once each.
- *
- * One operand only. GNU's *second* one is an output file, which it writes: guessing that from an
- * argument this program never read before would be a write nobody asked for, so it is refused.
- */
-i32 uniq(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("uniq", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  if (o.operands.len() > 1) {
-    // GNU's second operand is an output *file*, which it writes. Not implemented rather than refused on
-    // principle: the distinction matters to whoever reads this next, and "not supported" reads as a
-    // decision somebody made.
-    { errs.bytes("uniq: writing to a second operand is not implemented\n".toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // Adjacent duplicates need one line of memory, not all of them: the comparison is with the line
-  // before, which is the whole of the state. 0071.
-  if (o.operands.len() == 0 || o.operands.get(0) == "-") { uniqFeed(fed, sink); return 0; }
-  string path = o.operands.get(0);
-  FileResult f = fs.readFile(resolvePath(cwd, path));
-  if (!f.ok) {
-    { errs.bytes(("uniq: " + path + ": " + whyUnread(f) + "\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  uniqFeed(Feed.of(cli, f.bytes), sink);
-  { sink.flush(); errs.flush(); return 0; }
-}
 
 /** Adjacent duplicates once each, holding one line. */
 bool uniqFeed(Feed fed, Sink sink) {
@@ -1360,110 +1323,6 @@ u8[] lowered(u8[] b) {
   return out;
 }
 
-i32 tr(Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  bool del = false;
-  bool squeeze = false;
-  bool comp = false;
-  bool trunc = false;
-
-  // `--` ends the options, which is the only way to pass a set that begins with a `-`. A bare `-` is
-  // a set, not an option, which is why the length is checked before the dash.
-  i32 first = 1;
-  while (first < argv.len()) {
-    string a = argv.get(first);
-    if (a == "--") { first++; break; }
-    u8[] b = a.toBytes();
-    if (b.len() < 2 || b[0] != '-') { break; }
-    if (b[1] == '-') {
-      { errs.bytes(optionRefusal("tr", a).toBytes()); errs.flush(); sink.flush(); return 1; }
-    }
-    for (i32 i = 1; i < b.len(); i++) {
-      if (b[i] == 'd') { del = true; }
-      else if (b[i] == 's') { squeeze = true; }
-      else if (b[i] == 'c' || b[i] == 'C') { comp = true; }
-      else if (b[i] == 't') { trunc = true; }
-      else {
-        u8[] one = u8[1](fill: b[i]);
-        { errs.bytes(optionRefusal("tr", string.fromBytes(one)).toBytes()); errs.flush(); sink.flush(); return 1; }
-      }
-    }
-    first++;
-  }
-
-  i32 sets = argv.len() - first;
-  if (sets == 0) { { errs.bytes("tr: missing operand\n".toBytes()); errs.flush(); sink.flush(); return 1; } }
-  if (sets > 2) {
-    { errs.bytes(("tr: extra operand '" + argv.get(first + 2) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // Two sets to translate, one to delete or squeeze on its own, and two to do both.
-  if (!del && !squeeze && sets != 2) {
-    { errs.bytes(("tr: missing operand after '" + argv.get(first) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  if (del && !squeeze && sets != 1) {
-    { errs.bytes(("tr: extra operand '" + argv.get(first + 1) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-
-  Set s1 = parseSet(argv.get(first), -1);
-  if (!s1.ok) { { errs.bytes(s1.message.toBytes()); errs.flush(); sink.flush(); return 1; } }
-  // Set2 is parsed knowing set1's length, which is what `[x*]` pads out to.
-  Set s2 = sets == 2 ? parseSet(argv.get(first + 1), s1.bytes.len()) : Set(true, u8[0](), "");
-  if (!s2.ok) { { errs.bytes(s2.message.toBytes()); errs.flush(); sink.flush(); return 1; } }
-
-  u8[] from = comp ? complementOf(s1.bytes) : s1.bytes;
-  u8[] to = s2.bytes;
-  if (!del && s1.bytes.len() > 0 && sets == 2 && to.len() == 0) {
-    { errs.bytes("tr: when not truncating set1, string2 must be non-empty\n".toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // `-t`: the pairs stop where set2 does, instead of set2's last character standing in for the rest.
-  if (trunc && to.len() < from.len()) {
-    u8[] cut = u8[to.len()](fill: 0);
-    cut.copyFrom(from, 0, 0, to.len());
-    from = cut;
-  }
-
-  // 256-entry tables, so the loop over the input is lookups rather than a scan of the set for each
-  // byte. With ranges and classes expanded the sets are big enough for that to be the difference.
-  u8[] map = u8[256](fill: 0);
-  for (i32 i = 0; i < 256; i++) { map[i] = i; }
-  u8[] drop = u8[256](fill: 0);
-  u8[] runs = u8[256](fill: 0);
-
-  if (del) {
-    for (i32 i = 0; i < from.len(); i++) { drop[from[i]] = 1; }
-  } else if (sets == 2) {
-    for (i32 i = 0; i < from.len(); i++) {
-      // A short second set repeats its last character, as tr does.
-      if (to.len() > 0) { map[from[i]] = i < to.len() ? to[i] : to[to.len() - 1]; }
-    }
-  }
-  if (squeeze) {
-    // The *last* set given is the one squeezed: `tr -s ab` collapses runs of a and b, and
-    // `tr -s ab x` collapses runs of x — after the translation, which is what produced them.
-    u8[] runsOf = sets == 2 ? to : from;
-    for (i32 i = 0; i < runsOf.len(); i++) { runs[runsOf[i]] = 1; }
-  }
-
-  // A chunk at a time, holding a chunk. The tables above are the whole of the state that depends on
-  // the *arguments*; the only thing that depends on the input is `previous`, the last byte written,
-  // which is what `-s` needs and which has to carry across a chunk boundary — a run of `aaa` split
-  // between two reads is still one run. 0071.
-  i32 previous = -1;
-  while (true) {
-    u8[] chunk = fed.next();
-    if (chunk.len() == 0) { break; }
-    Buf out = Buf.create();
-    for (i32 i = 0; i < chunk.len(); i++) {
-      i32 c = chunk[i];
-      if (drop[c] != 0) { continue; }
-      i32 v = map[c];
-      if (runs[v] != 0 && v == previous) { continue; }
-      out.push(v);
-      previous = v;
-    }
-    if (!sink.bytes(out.take())) { return 0; }
-  }
-  { sink.flush(); return 0; }
-}
 
 /** A parsed set: the bytes it names, or why it could not be read. */
 struct Set {

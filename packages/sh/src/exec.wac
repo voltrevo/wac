@@ -299,6 +299,14 @@ export struct Shell {
     }
     out.params = this.params;
     out.status = this.status;
+    // **The external commands come too.** They did not, so a command substitution ran in a shell with
+    // nothing wired in: `x=$(echo abc | tr a-c x)` said "tr: command not found" in `packages/box`'s
+    // shell while the same pipeline outside `$( )` worked. Nothing noticed for as long as
+    // `packages/sh` carried its own copies of those programs, because the fallback answered — which is
+    // the drift wac-mono 0103 is about, hiding a bug rather than merely duplicating one.
+    out.external = this.external;
+    out.externalNames = this.externalNames;
+    out.externalSpawnable = this.externalSpawnable;
     out.capture = true;
     return out;
   }
@@ -2769,6 +2777,16 @@ string expandPart(Shell sh, Part p) {
       // trailing newlines removed — the removal is why `x=$(pwd)` does not end in a newline.
       Shell inner = Shell.capturing(sh.core, sh.cli);
       inner.vars = sh.vars;
+      // …and the commands. A substitution that could not run the shell's own external programs said
+      // "tr: command not found" for a pipeline that works outside `$( )`, and nothing noticed while
+      // `packages/sh` still carried copies for the fallback to find (wac-mono 0103). `fork` had the
+      // same hole; both are fixed, and `capturing` deliberately does not carry them, because the two
+      // callers that use it directly — `sshd` and the tests — start from nothing on purpose.
+      inner.external = sh.external;
+      inner.externalNames = sh.externalNames;
+      inner.externalSpawnable = sh.externalSpawnable;
+      inner.fs = sh.fs;
+      inner.cwd = sh.cwd;
       // The *returned* status, not `inner.status`: `$(exit 3)` leaves the inner shell exiting
       // with a code rather than with a status, and only `runScript` reconciles the two. The exit
       // itself stops there — it ends the substitution, not the shell that asked for it.

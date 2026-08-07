@@ -73,9 +73,12 @@ Deno.test("a long option is one word, not a bundle of short ones", async () => {
     // Read as a bundle, the first letter these could not implement was the *second dash*, so the
     // refusal named a character the caller never typed: `wc: invalid option -- '-'`.
     assertEquals(err("wc --lines"), "wc: long options are not implemented: --lines");
-    // Each of the four scanners: `options`, `head`/`tail`'s counter, `tr`'s loop, and `ls` in exec.
+    // Each of the scanners this shell still has: `options`, `head`'s counter, and `ls` in `exec.wac`.
+    // `tr`'s loop went with `tr`.
     assertEquals(err("head --lines=2"), "head: long options are not implemented: --lines=2");
-    assertEquals(err("echo x | tr --delete x"), "tr: long options are not implemented: --delete");
+    // Was `tr --delete`; `tr` has gone to `packages/box` (wac-mono 0103) and `sort` reaches the same
+    // scanner — `options`, the one `wc`, `sort`, `uniq` and `rev` all share.
+    assertEquals(err("echo x | sort --reverse"), "sort: long options are not implemented: --reverse");
     assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
     // `seq` said GNU's "unrecognized option", which tells a caller they invented `--separator`.
     assertEquals(err("seq --separator=, 3"), "seq: long options are not implemented: --separator=,");
@@ -102,7 +105,7 @@ Deno.test({
       // belongs in the same sweep.
       // No `nl` or `rev`: this shell has given them up to `packages/box`, whose `test/flags.test.ts`
       // asks the same question of the applets. The list shrinks as the rest follow (wac-mono 0103).
-      const tools = ["wc", "head", "tail", "sort", "uniq", "grep", "tr", "ls"];
+      const tools = ["wc", "head", "sort", "grep", "ls"];
       const cases: { tool: string; letter: string; script: string }[] = [];
       for (const tool of tools) {
         for (const letter of await gnuOptions(tool)) {

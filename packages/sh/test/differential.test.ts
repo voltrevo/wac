@@ -97,7 +97,7 @@ for (const script of [
   `cd ${globDir}; cd nosuchdir; pwd`,
   `cd ${globDir}; OLDPWD=; cd sub; cd - >/dev/null; pwd`,
 ]) {
-  CASES.push(script);
+  if (!usesDeleted(script)) { CASES.push(script); }
 }
 
 /**
@@ -690,13 +690,11 @@ Deno.test({
         "cat missing",
         "wc -l missing",
         "head -1 missing",
-        "tail -1 missing",
         "sort missing",
-        "uniq missing",
         "grep x missing",
-        // Not `rev missing` or `nl missing`: those programs are gone from this shell, and the same two
-        // cases run against `packages/box`'s in `packages/box/test/programs.test.ts`. The rest of this
-        // list follows them as each is deleted.
+        // Not `rev`, `nl`, `tail` or `uniq`: those are gone from this shell, and their cases run against
+        // `packages/box`'s applets in `packages/box/test/programs.test.ts`. The rest follow as each is
+        // deleted.
         // `ls`'s own wording, which was invented rather than GNU's until 0067's work went past it: it said
         // `ls: x: no such file or directory` where GNU says `ls: cannot access 'x': No such file or
         // directory`. Nothing compared it, because every `ls` case in the corpus lists something that

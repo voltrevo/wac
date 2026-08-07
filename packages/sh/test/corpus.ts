@@ -920,7 +920,7 @@ export function needsProgram(script: string): boolean {
  *
  * Adding a name here and deleting the program from `program.wac` is the whole of one step.
  */
-export const DELETED = ["nl", "rev"];
+export const DELETED = ["nl", "rev", "uniq", "tail", "tr"];
 
 /** Whether a script runs a program `packages/sh` has already given up. */
 export function usesDeleted(script: string): boolean {
