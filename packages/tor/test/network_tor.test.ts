@@ -29,6 +29,22 @@
 import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 
+/**
+ * The machine's load, for a failure message.
+ *
+ * Issue 0106's third suggestion, and it belongs here rather than in the wac: a protocol library
+ * reaching into `/proc` to describe its own environment would be the wrong layer, and this is the
+ * layer that already knows it is a test. The one fact that decides whether a red gate means "re-run"
+ * or "investigate", put where somebody reading the failure will see it.
+ */
+function load(): string {
+  try {
+    return `load ${Deno.readTextFileSync("/proc/loadavg").split(" ").slice(0, 3).join(" ")}`;
+  } catch {
+    return "load unknown";
+  }
+}
+
 function assertContains(haystack: string, needle: string, msg?: string): void {
   if (!haystack.includes(needle)) {
     throw new Error(
@@ -90,7 +106,7 @@ Deno.test("a Tor network with no C in it, stood up and fetched from", async () =
     const out = dec.decode(r.stdout);
     const err = dec.decode(r.stderr);
 
-    if (r.code !== 0) throw new Error(`the network did not come up or the fetch failed:\n${err}`);
+    if (r.code !== 0) throw new Error(`the network did not come up or the fetch failed (${load()}):\n${err}`);
 
     // Each stage was seen, by name. The launcher's whole claim is that none of these was assumed.
     assertContains(err, "all 3 nodes are up");
@@ -173,7 +189,7 @@ Deno.test("an onion service published on that network, and a page fetched from i
     const out = dec.decode(r.stdout);
     const err = dec.decode(r.stderr);
 
-    if (r.code !== 0) throw new Error(`the onion service run failed:\n${err}`);
+    if (r.code !== 0) throw new Error(`the onion service run failed (${load()}):\n${err}`);
 
     assertContains(err, 'service had already said "introduction point established"',
                    "the service claimed an introduction point");

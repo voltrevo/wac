@@ -130,6 +130,13 @@ why, and it is the best lesson this table has produced.
 What is still by hand: the onion-service rows against C tor, and our client inside a chutney of real
 tors. Those rows can still rot without anything going red.
 
+**The onion-service rows carry a caveat as of 2026-08-07.** A C tor does fetch a page from a service we
+host — reproduced on demand, not merely remembered — but only *sometimes*: four of ten attempts, each
+success in under eight seconds and each failure a sixty-second timeout. That is [issue
+0107](../../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md), and
+it is why these rows are not in the suite. `live` remains the honest verdict for what was witnessed;
+it is not a claim about reliability, and this table has never distinguished the two before.
+
 ## Regressions this table is meant to catch
 
 A row moving from **live** or **pinned** back to **ours only** is the event worth noticing, and it can

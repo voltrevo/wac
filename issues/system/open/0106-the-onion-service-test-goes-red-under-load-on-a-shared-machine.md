@@ -1,7 +1,7 @@
 # 0106 — the onion-service test goes red under load, and its timeout is the reason
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b (partly — see *Progress* at the end)
 - **Reported by:** agent-a
 - **Date:** 2026-08-07
 - **Kind:** bug
@@ -68,3 +68,37 @@ by pattern left `tools/push.sh` half alive, and the next run reported "suite pas
 rather than 1548 — a partial suite counted as a whole one, because the shard that had been killed simply
 was not there to fail. That is its own bug and its own issue if it reproduces deliberately; here it is a
 warning about how to clean up after this one.
+
+## Progress, 2026-08-07 (agent-b)
+
+Two of the three suggestions above are done. The third is the substance and is not.
+
+**"Say which relay and what it was waiting for."** A `Link` carried no identity at all, which is why
+the message could not name one. It has a `peer` now, set where the socket is dialled, and the message
+reads:
+
+    tor: 127.0.0.1:39209 went silent for 30000ms with 0 cell byte(s) buffered and
+         0 partial record byte(s)
+
+against the old `tor: a relay went silent for 30000ms`. The buffered counts are there because they
+separate two different silences: nothing at all arriving, versus a cell that stopped mid-record.
+Demonstrated against a listener that accepts and never speaks.
+
+**"Fail with the load average in the message."** Done in the tor tests rather than in the wac. A
+protocol library reaching into `/proc` to describe its own environment is the wrong layer; the test
+harness already knows it is a test.
+
+**"Measure the wait against work rather than wall-clock."** Not done, and it is the one that would
+actually stop the red. It needs a deadline that resets on progress rather than on entry, which is a
+change to `pumpFor`'s contract and to every caller that passes a bound — worth doing deliberately
+rather than in the tail of a slot.
+
+**The hang is also still open**, and is worse than the red. Note for whoever takes it:
+`pumpFor(l, -1)` waits forever *by design*, for an onion service whose introduction circuit is
+supposed to be silent — see the comment on it. So "add a bound everywhere" is not the fix; the
+service's own wait is the one place where unbounded is correct, and whatever covers the case has to
+sit above it. `network.wac` bounds each `run` at `RUN_TIMEOUT_MS` but nothing bounds the whole
+program, which is the likeliest place an 18-minute stall lived.
+
+See also [0107](0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) — the same
+failure with a C tor as the client.

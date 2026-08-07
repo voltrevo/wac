@@ -2307,3 +2307,37 @@ and the something is more likely ours than tor's.
 The test is not committed, for the second time, on the same principle as the first: a test whose
 behaviour I cannot explain is worse than none. The difference from last time is that the row is no
 longer in doubt — only its automation is.
+
+### It was not the harness, and it was not the pipe either
+
+The previous entry said the stack works and the harness does not, on the strength of one probe that
+succeeded and one test that did not. Wrong, and wrong twice over.
+
+Bisecting the two differences — tor's log level, and whether its stdio is piped or sent to
+`/dev/null` — produced a clean-looking table: 2 of 3 runs with stdio to `null` succeeded, 0 of 4 with
+it piped. A tidy answer, and false. **A runaway `deno` from an earlier failed run of my own had been
+at 94% of a core for 56 minutes**, across every one of those seven runs. Killing it and repeating the
+piped configuration gave fail, succeed, succeed.
+
+Ten runs now: four succeed in 3.4–8.0s, six time out at 60. It either works quickly or not at all,
+and no configuration predicts which. Filed as [issue
+0107](../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md).
+
+**Three lessons, and the third is the one that cost most.**
+
+*One green run and one red run of nearly-identical setups is evidence of flakiness before it is
+evidence of a difference.* Two slots went into hunting a difference that was never there. The cheap
+move — running the working configuration a second time — was available from the first minute.
+
+*A tidy result from a contaminated machine is still contaminated.* 0 of 4 versus 2 of 3 looked like
+a finding. It was a load artifact, and the thing that revealed it was the shared suite going red for
+an unrelated reason, which forced a look at `ps`.
+
+*Clean up spawned processes on the failure path, not only the success path.* The stray existed because
+a test that threw skipped its own teardown. It then degraded every measurement taken afterwards,
+including the ones being used to diagnose it — and it made the shared suite red for whoever else was
+running one.
+
+`INTEROP.md`'s onion rows stay `live`: a C tor really does fetch a page from a service we host, and
+that has now been reproduced on demand several times. What is new is that the table says it is not
+reliable, which is a distinction it has never drawn before and should have.

@@ -17,14 +17,60 @@ them depends on the next being designed yet.
 
 | rung | reference | oracle | TS lines |
 |---|---|---|---:|
-| 1. lexer | `wacLex.ts` | token streams match | 279 |
-| 2. parser | `wacParse.ts` | ASTs match under a canonical serialization | 1003 |
-| 3. type checker | `wacTypeCheck.ts` | diagnostics match, including positions | 1884 |
-| 4. emitter | `wacEmitFunc.ts` + `wasmBuildBin.ts` | **wasm bytes identical** | 3599 |
-| 5. bootstrap | itself | fixpoint: self-compiled output identical | — |
+| 1. lexer | `wacLex.ts` | token streams match | 366 |
+| 2. parser | `wacParse.ts` | ASTs match under a canonical serialization | 1651 |
+| 3. type checker | `wacTypeCheck.ts` | diagnostics match, including positions | 3189 |
+| 4. emitter | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
+| 5. bootstrap | itself | fixpoint: wacc's own output, compiled both ways, byte for byte | — |
 
 Corpus for every rung: every `.wac` file in wac-mono and `wac/spec/tour.wac`, plus
 generated edge cases.
+
+### Rung 4 is not "the same wasm bytes"
+
+It was, and the change is worth the paragraphs because the reasoning generalises: the
+sharpest oracle available is not always the right one.
+
+Byte identity asserts far more than *the same module*. It pins the type section's
+ordering and its dedup order, function and local index assignment, section order, the
+name section's contents, constant pooling — and LEB128 widths, since a non-canonical
+encoding is legal wasm and the same instruction can be written more than one way. None
+of that is the language. Held to it, wacc would be reproducing not wac but *this
+implementation of wac*, and every cosmetic refactor in the reference would arrive as a
+wacc bug report.
+
+Which is not hypothetical. The reference emitter took **85 commits in the thirty days
+before this was written, 24 of them in the last seven**, and several changed emitted
+bytes outright — the name section being added at all, a `ref.cast` heap type index past
+63, bulk array operations, hex literals read at the width they are read into. Rung 4 is
+also the longest rung here, 6,307 reference lines against the parser's 1,651. Byte
+identity would mean chasing a target that moves about three times a day, for the longest
+stretch of the ladder, where most of the reds are not wacc's.
+
+The failure signal is the other half of it. Rung 2 answers with `(binary@14:7 …)` — a
+node, at a position, in a named file. Byte identity answers "offset 12,345 differs",
+which is actionable only after somebody writes a disassembler this ladder does not
+budget for.
+
+So rung 4 compares **a canonical module form** — types resolved to their structure
+rather than to indices, functions by name, locals renumbered canonically, LEBs
+normalised — which is the trick rung 2 already uses one level down, and for the same
+reason: the two sides build unrelated structures, so project both onto one form. A
+mismatch reads as "function `foo`, instruction 12: `i32.add`, reference has `i32.sub`".
+
+Beside it, the oracle already sitting in this repository for nothing: **compile the
+corpus with wacc and run it.** 326 files, 78 of them tests written in wac. Behavioural
+agreement over a suite this size is the semantic claim byte identity was standing in
+for, and it needs no new tests written.
+
+Byte identity stays as a *measurement* — how many functions match, reported, not gated —
+because knowing how close the two are is worth something and being held hostage to it is
+not.
+
+**Rung 5 is where byte identity is the actual claim** rather than a proxy for one. A
+fixpoint compares wacc's output against *itself*, compiled both ways: no foreign
+implementation's incidental choices, no moving target, and nothing in it that is not the
+property being asserted.
 
 ## Two things the language forces, found before writing any code
 
@@ -100,14 +146,14 @@ free function's parameter, so the read-only intent of the lookahead helpers here
 ## Status
 
 **Rung 2 (parser) passes.** The AST it builds agrees with the reference node for node, positions
-included, on all 217 `.wac` files in the repo plus the language tour — nothing is skipped any more —
+included, on all 326 `.wac` files in the repo plus the language tour — nothing is skipped any more —
 and on 74 hand-written cases a working corpus cannot contain (every precedence level, every cast,
 `else if` chains, bare-statement `switch` bodies, trailing commas everywhere, char and string escapes,
 malformed types, a nested `>>>` close, a funcref inside a type argument, and the comparisons that must
 *not* be read as type arguments).
 
 **Rung 1 (lexer) passes.** Token for token, position for position, against the reference on the same
-217 files plus 32 adversarial cases the corpus cannot cover (unterminated everything, every escape,
+326 files plus 32 adversarial cases the corpus cannot cover (unterminated everything, every escape,
 greedy operator runs, non-ASCII columns).
 
 Next: rung 3, the type checker.
