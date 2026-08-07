@@ -11,7 +11,7 @@ import { c, font, COLUMN, space } from "./tokens";
 export const GITHUB = "https://github.com/voltrevo/wac";
 export const MONO_REPO = "https://github.com/voltrevo/wac-mono";
 
-export type Route = "home" | "language" | "stack" | "roadmap";
+export type Route = "home" | "language" | "stack" | "roadmap" | "playground";
 
 export const PAGES: { route: Route; href: string; label: string; blurb: string }[] = [
   { route: "language", href: "#/language", label: "the language", blurb: "How it reads, both surfaces, the boundary with JavaScript, and where WebAssembly itself runs out." },
@@ -200,7 +200,7 @@ function Nav({ current }: { current: Route }) {
             {label}
           </a>
         ))}
-        <a href="../#/playground" style={{ marginLeft: "auto", color: c.accent, textDecoration: "none" }}>playground →</a>
+        <a href="#/playground" style={{ marginLeft: "auto", color: c.accent, textDecoration: "none" }}>playground →</a>
       </div>
     </nav>
   );
@@ -240,7 +240,7 @@ function Contents({ route }: { route: Route }) {
 function Footer() {
   return (
     <footer style={{ borderTop: `1px solid ${c.line}`, marginTop: space.section, padding: "26px 0 60px", display: "flex", gap: 22, flexWrap: "wrap", fontSize: 13, color: c.faint, fontFamily: font.mono }}>
-      <a href="../#/playground" style={{ color: c.dim, textDecoration: "none" }}>playground</a>
+      <a href="#/playground" style={{ color: c.dim, textDecoration: "none" }}>playground</a>
       <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>spec</a>
       <a href={GITHUB} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>wac</a>
       <a href={MONO_REPO} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>wac-mono</a>

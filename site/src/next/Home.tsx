@@ -76,7 +76,7 @@ export default function Home() {
           browser tab, which is how the editor below compiles.
         </P>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 34 }}>
-          <a href="../#/playground" style={{ background: c.accent, color: "#06231f", padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
+          <a href="#/playground" style={{ background: c.accent, color: "#06231f", padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
             Playground
           </a>
           <a href="../shell.html" style={{ border: `1px solid ${c.lineBright}`, color: c.text, padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, textDecoration: "none" }}>
