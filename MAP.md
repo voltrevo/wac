@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-33 packages, 69,659 lines of wac, 1418 tests,
+33 packages, 70,457 lines of wac, 1426 tests,
 46 command-line programs and 4 browser pages.
 
 ## Packages
@@ -28,8 +28,8 @@ In dependency order: nothing here imports anything below it.
 | [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 3,808 | 14 | `bytes` |
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,032 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 6 | `fmt` |
-| [`crypto`](packages/crypto/) | SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and… | 5,724 | 149 | `bignum` |
-| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 1,085 | 20 | `bytes` `fmt` `gzip` `platform` `std` |
+| [`crypto`](packages/crypto/) | SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and… | 5,790 | 150 | `bignum` |
+| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 1,309 | 26 | `bytes` `fmt` `gzip` `platform` `std` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,023 | 29 | `bytes` `fmt` `platform` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |
@@ -37,10 +37,10 @@ In dependency order: nothing here imports anything below it.
 | [`bls`](packages/bls/) | BLS signature verification on BLS12-381 — the Ethereum parameters and encodings. | 4,049 | 45 | `crypto` |
 | [`mpt`](packages/mpt/) | Merkle-Patricia proofs, verified — the piece that turns "a provider told me" into "the state root I already verified commits to this". | 489 | 27 | `codec` `crypto` `fmt` `rlp` `std` |
 | [`server`](packages/server/) | An HTTP server written in wac. | 333 | 20 | `bytes` `codec` `datetime` `http` `json` `regex` `url` |
-| [`sh`](packages/sh/) | A shell, in wac. | 6,652 | 36 | `bytes` `fmt` `fs` `platform` `std` |
+| [`sh`](packages/sh/) | A shell, in wac. | 7,008 | 37 | `bytes` `fmt` `fs` `platform` `std` |
 | [`ssz`](packages/ssz/) | **Everything an Altair light client needs is done and checked against Ethereum's vectors. | 808 | 26 | `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 3,708 | 95 | `crypto` |
-| [`box`](packages/box/) | 61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. | 4,461 | 35 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
+| [`box`](packages/box/) | 61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. | 4,613 | 35 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 393 | 13 | `crypto` `mpt` |
 | [`lightclient`](packages/lightclient/) | **The Altair sync protocol works. | 642 | 12 | `bls` `ssz` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 3,551 | 46 | `bytes` `codec` `crypto` `fmt` `platform` `sh` |

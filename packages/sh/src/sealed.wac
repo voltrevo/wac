@@ -28,7 +28,8 @@
 // grants rather than about the shell, which is why it is stated as one.
 
 import { Core, Cli } from "../../platform/src/platform.wac";
-import { Fs } from "../../fs/src/fs.wac";
+import { Fs, mountSystem } from "../../fs/src/fs.wac";
+import { Vec } from "../../std/src/vec.wac";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";
 import { programNames } from "./program.wac";
@@ -37,6 +38,13 @@ export i32 main(Core core, Cli cli) {
   // A memory filesystem with one directory at the root, and a working directory inside it. The host's
   // notion of "where am I" is deliberately not consulted: a sealed session's cwd is its own.
   Fs fs = Fs.inMemory(0);
+  // `/dev` and `/proc`, which cost nothing until something reads them — step 6 of design/0001. They
+  // are mounted here rather than inside `Fs.inMemory` because which of them a session gets is the
+  // caller's decision, the same way the backing is.
+  Vec<string> argv = Vec.create();
+  for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
+  mountSystem(fs, core.randomBytes, argv);
+
   Shell sh = Shell.onFs(core, cli, fs);
   sh.cwd = "/";
 

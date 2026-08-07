@@ -95,8 +95,38 @@ lost it), and **a fixture image committed to the repo**, written on 2026-08-07 a
 build is running now. That last is the design's own criterion, and neither of the others can see a format
 that changed shape overnight, because both write and read with the same build.
 
+## `/dev` and `/proc`, which cost nothing until read
+
+`Backing.Synth`, step 6 of design/0001. Nothing is stored: `readDir` lists a fixed set of names and a
+read runs a generator, so `/dev/zero` costs what you ask of it rather than what it could give.
+
+    ls /dev                        ->  null random urandom zero
+    cat /proc/self/cmdline         ->  the argv it was built with, NUL-separated as Linux's is
+    head -c 16 /dev/urandom        ->  sixteen bytes, from the host's CSPRNG
+    echo anything > /dev/null      ->  accepted, and kept nowhere
+
+The mount carries **`randomBytes` and nothing else** — a mount handed a whole `Cli` could reach the
+disk. `Core.randomBytes` is a host function rather than a grant, which is why `sealed` can mount `/dev`
+and go on being a session with no filesystem permissions at all.
+
+**Two of them have no end, and that is the one thing this model cannot express.** GNU's `cat /dev/zero`
+runs until something stops it; one `u8[]` cannot. So `readFile` refuses `/dev/zero` and `/dev/urandom`
+and names the read that does work — `readSome(path, n)`, which is what `head -c` goes through anyway.
+Inventing a length would have been the plausible wrong answer and hanging would have been worse.
+
+Everything but `/dev/null` is read-only and says so; a write to `/dev/null` succeeds and keeps nothing,
+which is the whole of what it is for. An image does **not** list a synthesised mount as skipped: there
+is nothing there to save, and a `skipped` list that is never empty is one nobody reads.
+
+**A mount is visible from the directory it is mounted in.** `readDir` adds any mount point sitting
+directly in the path being listed, so `ls /` shows `dev` and `proc`. Before, only the mount table knew
+they existed, and a listing that omits a directory you can `cd` into is worse than a wrong one — nothing
+about it looks wrong.
+
 ## Not here yet
 
+- **`/proc/<pid>` is only `/proc/self`.** There are no other pids to answer for — the process table is
+  step 3 of design/0001 — so what exists is the one entry that can be true today.
 - **No permissions.** `mode` and `owner` are recorded on every node and enforced nowhere. Users arrive in
   step 4; recording them now is what makes an image written today readable then — `chmod` and `chown` set
   them, and refuse on a host mount in those words, because there is no such capability in

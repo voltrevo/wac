@@ -32,7 +32,7 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
-  FAULT_OTHER, FileResult, Stat } from "../../platform/src/platform.wac";
+  FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
 
 /** Where a mount's bytes actually live. */
 export enum Backing {
@@ -46,6 +46,18 @@ export enum Backing {
    * to `packages/sh` a change of shape rather than of behaviour.
    */
   Host(Cli cli),
+  /**
+   * Files that do not exist until they are read — `/dev` and `/proc`.
+   *
+   * Step 6 of design/0001. Nothing is stored: `readDir` lists a fixed set of names and a read runs a
+   * generator, so `/dev/zero` costs what you ask of it rather than what it could give.
+   *
+   * It carries `randomBytes` and nothing else, because that is the only capability the set below needs
+   * and a mount that asked for a whole `Cli` could reach the disk. `Core.randomBytes` is a host function
+   * rather than a grant, so a session built with no filesystem permissions at all still has one — which
+   * is what lets `sealed` mount `/dev` without stopping being sealed.
+   */
+  Synth(fn[Pending<u8[]>(i32)] randomBytes),
 }
 
 /** One mounted filesystem, at a path. */
@@ -104,6 +116,13 @@ export struct Fs {
   string owner;
   /** Milliseconds, from whoever built this: wac has no clock of its own. */
   i64 now;
+  /**
+   * What `/proc/self/cmdline` answers, NUL-separated as Linux's is.
+   *
+   * Empty until somebody sets it. A filesystem cannot know its own program's arguments — argv belongs to
+   * whoever built it — so this is handed in rather than discovered, the same way `now` is.
+   */
+  string cmdline;
 
   /** An empty filesystem with one memory mount at the root. */
   Fs inMemory(i64 now) {
@@ -111,7 +130,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now);
+    return Fs(mounts, nodes, "root", now, "");
   }
 
   /**
@@ -124,8 +143,21 @@ export struct Fs {
     Vec<Mount> mounts = Vec.create();
     Vec<Inode> nodes = Vec.create();
     mounts.push(Mount("", Backing.Host(cli), -1));
-    return Fs(mounts, nodes, "root", now);
+    return Fs(mounts, nodes, "root", now, "");
   }
+
+  /**
+   * Mount the synthesised files at `at` — `/dev` or `/proc`.
+   *
+   * Two mounts rather than one because mounts are longest-prefix and the two trees are unrelated; what
+   * each holds is decided by `synthNames` from the mount point.
+   */
+  void mountSynth(this, string at, fn[Pending<u8[]>(i32)] randomBytes) {
+    this.mounts.push(Mount(trimSlash(at), Backing.Synth(randomBytes), -1));
+  }
+
+  /** What `/proc/self/cmdline` will answer. NUL-separated, as Linux's is. */
+  void setCmdline(this, string cmdline) { this.cmdline = cmdline; }
 
   /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
   void mountMemory(this, string at) {
@@ -167,6 +199,10 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.readFile(path).wait(); }
+      // An endless device has no "whole" to read. GNU's `cat /dev/zero` runs until something stops it,
+      // which a `readFile` returning one array cannot do — so it refuses and says which read to use
+      // instead, rather than inventing a length or hanging.
+      case Synth(rand): { return synthRead(this, m, path, rand, -1); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -183,6 +219,29 @@ export struct Fs {
     return FileResult.of(true, this.nodes.get(node).bytes(), "", FAULT_NONE());
   }
 
+  /**
+   * At most `n` bytes from the start of a file.
+   *
+   * `head -c 16 /dev/urandom` is the reason: an endless device cannot answer `readFile`, and a `head`
+   * that read the whole file and then took the front could not either. Every other backing answers it by
+   * reading and truncating, which costs nothing extra for the sizes a `-c` is written with.
+   */
+  FileResult readSome(this, string path, i32 n) {
+    if (n < 0) { return FileResult.of(false, u8[0](), "a negative length", FAULT_OTHER()); }
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Synth(rand): { return synthRead(this, m, path, rand, n); }
+      else: {}
+    }
+    FileResult whole = this.readFile(path);
+    if (!whole.ok || whole.bytes.len() <= n) { return whole; }
+    u8[] cut = u8[n]();
+    cut.copyFrom(whole.bytes, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
+
   /** What a path is, if it is anything. */
   Stat stat(this, string path) {
     i32 mi = this.mountOf(path);
@@ -191,6 +250,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.stat(path).wait(); }
+      case Synth(rand): { return synthStat(this, m, path); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -214,17 +274,20 @@ export struct Fs {
     i32 mi = this.mountOf(path);
     if (mi < 0) { return null; }
     Mount m = this.mounts.get(mi);
+    string[]? own = null;
     match (m.backing) {
-      case Host(cli): { return cli.readDir(path).wait(); }
-      else: {}
+      case Host(cli): { own = cli.readDir(path).wait(); }
+      case Synth(rand): { own = synthDir(this, m, path); }
+      else: {
+        i32 node = this.find(m, path);
+        // Null rather than empty for "not a directory" or "not there", which is what the capability
+        // answers and what lets `ls` tell an empty directory from a missing one.
+        if (node < 0 || !this.nodes.get(node).isDir) { own = null; }
+        else { own = this.nodes.get(node).entries.keys(); }
+      }
     }
-    i32 node = this.find(m, path);
-    // Null rather than empty for "not a directory" or "not there", which is what the capability answers
-    // and what lets `ls` tell an empty directory from a missing one.
-    if (node < 0 || !this.nodes.get(node).isDir) { return null; }
-    string[] names = this.nodes.get(node).entries.keys();
-    sortNames(names);
-    return names;
+    if (own is null) { return null; }
+    return withMountsUnder(this, path, own!);
   }
 
   // ── Writing ─────────────────────────────────────────────────────────────────
@@ -236,6 +299,13 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.writeFile(path, data).wait(); }
+      case Synth(rand): {
+        // `/dev/null` accepts anything and keeps none of it, which is the whole of what it is for.
+        // Every other synthesised file is read-only, and says so rather than appearing to have taken
+        // the bytes — a write that vanishes silently is the failure `> /dev/zero` would otherwise be.
+        if (synthKind(m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
+        return Change.of(FAULT_DENIED(), "read-only file system");
+      }
       else: {}
     }
     i32 parent = this.find(m, parentOf(path));
@@ -270,6 +340,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.mkdir(path, parents).wait(); }
+      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
     if (parents) { return this.mkdirAll(m, path); }
@@ -315,6 +386,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.remove(path, recursive).wait(); }
+      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
     i32 parent = this.find(m, parentOf(path));
@@ -349,6 +421,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return Change.of(FAULT_DENIED(), "chmod on a host mount is not implemented"); }
+      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -364,6 +437,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return Change.of(FAULT_DENIED(), "chown on a host mount is not implemented"); }
+      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -431,6 +505,150 @@ export struct Fs {
     if (name == "") { return dir; }
     return this.nodes.get(dir).entries.get(name).orElse(-1);
   }
+}
+
+/**
+ * A directory's own names, plus any mount point sitting directly in it.
+ *
+ * Without this a mount is invisible from above: `ls /` on a session with `/dev` and `/proc` listed
+ * neither, because the root's own tree has no entry for them — the mount table is the only thing that
+ * knows. A listing that omits a directory you can `cd` into is worse than a wrong one, because nothing
+ * about it looks wrong.
+ *
+ * A mount point that *also* exists as a real entry is listed once. Linux shows the mounted filesystem
+ * in that case and hides what is underneath, which is what `mountOf`'s longest-prefix rule already does
+ * for every other operation.
+ */
+string[] withMountsUnder(Fs fs, string path, string[] own) {
+  string at = trimSlash(path);
+  Vec<string> extra = Vec.create();
+  for (i32 i = 0; i < fs.mounts.len(); i++) {
+    string mp = fs.mounts.get(i).at;
+    if (mp == "" || mp == at) { continue; }
+    if (!underMount(at, mp)) { continue; }
+    string rest = mp.slice(at.len() + 1, mp.len());
+    // Directly in this directory, not further down: `/a/b` shows under `/a` and not under `/`.
+    if (lastSlash(rest) >= 0) { continue; }
+    bool already = false;
+    for (i32 k = 0; k < own.len(); k++) { if (own[k] == rest) { already = true; } }
+    for (i32 k = 0; k < extra.len(); k++) { if (extra.get(k) == rest) { already = true; } }
+    if (!already) { extra.push(rest); }
+  }
+  if (extra.len() == 0) {
+    sortNames(own);
+    return own;
+  }
+  string[] all = string[own.len() + extra.len()](fill: "");
+  for (i32 i = 0; i < own.len(); i++) { all[i] = own[i]; }
+  for (i32 i = 0; i < extra.len(); i++) { all[own.len() + i] = extra.get(i); }
+  sortNames(all);
+  return all;
+}
+
+/**
+ * Mount `/dev` and `/proc`, and record the command line, in one call.
+ *
+ * Three programs want exactly this and a fourth will; spelling it out in each is how the three drift.
+ * `argv` is joined with NULs because that is what `/proc/self/cmdline` is — a caller that joins with
+ * spaces has produced something that reads the same and parses differently.
+ */
+export void mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv) {
+  fs.mountSynth("/dev", randomBytes);
+  fs.mountSynth("/proc", randomBytes);
+  Buf line = Buf.create();
+  for (i32 i = 0; i < argv.len(); i++) {
+    line.pushAll(argv.get(i).toBytes());
+    line.push(0);
+  }
+  fs.setCmdline(string.fromBytes(line.take()));
+}
+
+// ── Synthesised files ─────────────────────────────────────────────────────────
+//
+// Step 6 of design/0001. Cheap, because the VFS already answers every question these need to answer, and
+// disproportionately convincing: `/dev/null` is the difference between a shell that looks like one and a
+// shell you can actually type into.
+//
+// Nothing is stored. A read runs a generator, so `/dev/zero` costs what is asked of it. Two of the five
+// are **endless**, which is the one thing this model cannot express through `readFile`: GNU's
+// `cat /dev/zero` runs until something stops it, and one `u8[]` cannot. Rather than invent a length or
+// hang, `readFile` refuses those two by name and points at `readSome`, which is what a bounded read —
+// `head -c 16 /dev/urandom` — goes through anyway.
+
+i32 SYNTH_NONE() { return 0; }
+i32 SYNTH_NULL() { return 1; }
+i32 SYNTH_ZERO() { return 2; }
+i32 SYNTH_RANDOM() { return 3; }
+i32 SYNTH_CMDLINE() { return 4; }
+/** A directory in a synthesised tree: the mount point itself, and `/proc/self`. */
+i32 SYNTH_DIR() { return 5; }
+
+/** Which synthesised file a path names, or `SYNTH_NONE`. */
+i32 synthKind(Mount m, string path) {
+  string rest = path.slice(m.at.len(), path.len());
+  if (rest == "" || rest == "/") { return SYNTH_DIR(); }
+  if (m.at == "/dev") {
+    if (rest == "/null") { return SYNTH_NULL(); }
+    if (rest == "/zero") { return SYNTH_ZERO(); }
+    if (rest == "/urandom" || rest == "/random") { return SYNTH_RANDOM(); }
+    return SYNTH_NONE();
+  }
+  if (m.at == "/proc") {
+    if (rest == "/self") { return SYNTH_DIR(); }
+    if (rest == "/self/cmdline") { return SYNTH_CMDLINE(); }
+    return SYNTH_NONE();
+  }
+  return SYNTH_NONE();
+}
+
+/** Whether this one has no end — the two that `readFile` cannot answer. */
+bool synthEndless(i32 kind) { return kind == SYNTH_ZERO() || kind == SYNTH_RANDOM(); }
+
+/**
+ * Read a synthesised file. `n` is -1 for "the whole of it", which the endless two refuse.
+ *
+ * The refusal names the file and the way to read it, because "is a directory"-style categories cannot
+ * carry it: a caller that gets `FAULT_OTHER` with no sentence learns nothing it can act on.
+ */
+FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomBytes, i32 n) {
+  i32 kind = synthKind(m, path);
+  if (kind == SYNTH_NONE()) {
+    return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+  }
+  if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER()); }
+  if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[0](), "", FAULT_NONE()); }
+  if (kind == SYNTH_CMDLINE()) {
+    u8[] all = fs.cmdline.toBytes();
+    if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(all, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
+  if (n < 0) {
+    return FileResult.of(false, u8[0](),
+      "this file has no end: read a fixed number of bytes from it instead", FAULT_OTHER());
+  }
+  if (kind == SYNTH_ZERO()) { return FileResult.of(true, u8[n](fill: 0), "", FAULT_NONE()); }
+  return FileResult.of(true, randomBytes(n).wait(), "", FAULT_NONE());
+}
+
+Stat synthStat(Fs fs, Mount m, string path) {
+  i32 kind = synthKind(m, path);
+  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, FAULT_NONE()); }
+  // Size zero for the endless two, which is what Linux reports for them as well: a character device has
+  // no length, and zero is how that is spelled. `/proc/self/cmdline` has a real one.
+  i64 size = kind == SYNTH_CMDLINE() ? fs.cmdline.toBytes().len() as i64 : 0 as i64;
+  return Stat.of(true, true, false, size, fs.now, false, FAULT_NONE());
+}
+
+string[]? synthDir(Fs fs, Mount m, string path) {
+  i32 kind = synthKind(m, path);
+  if (kind != SYNTH_DIR()) { return null; }
+  string rest = path.slice(m.at.len(), path.len());
+  if (m.at == "/dev") { return string[]("null", "random", "urandom", "zero"); }
+  if (rest == "/self") { return string[]("cmdline"); }
+  return string[]("self");
 }
 
 /**

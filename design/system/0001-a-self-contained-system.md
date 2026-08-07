@@ -416,7 +416,7 @@ Each step is an issue when it becomes actionable, and each references this docum
 | 3. process table | not started |
 | 4. users and login | not started |
 | 5. line discipline | not started |
-| 6. synthesised files | not started |
+| 6. synthesised files | **done.** `Backing.Synth` — `/dev/null`, `/dev/zero`, `/dev/urandom`, `/proc/self/cmdline`, generated on read and carrying `randomBytes` and nothing else, so a *sealed* session has a real CSPRNG without a grant. The endless two refuse a whole read by name and point at the bounded one, which is what `head -c` uses. `/proc/<pid>` waits on step 3 |
 | 7. init | not started |
 | 8. desktop | not started |
 

@@ -105,6 +105,12 @@ export Written write(Fs fs) {
   for (i32 i = 0; i < fs.mounts.len(); i++) {
     match (fs.mounts.get(i).backing) {
       case Memory: { memory.push(i); }
+      // **A synthesised mount is not skipped, it is empty.** `/dev` and `/proc` hold nothing to save:
+      // they are regenerated the moment they are mounted again, so naming them here every single save
+      // would be noise, and a `skipped` list that is never empty is one nobody reads. A *host* mount is
+      // the opposite — real bytes exist and are deliberately not being copied — which is the whole
+      // reason the field exists.
+      case Synth(rand): {}
       // The empty string is the root mount, which is what a person calls "/" — so say "/" rather than
       // handing back an empty string that reads as a bug.
       else: { skipped.push(mountName(fs.mounts.get(i).at)); }

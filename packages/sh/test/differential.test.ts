@@ -47,6 +47,17 @@ const CASES: string[] = [
   "seq 1 5 | tail -n +0",
   "seq 1 5 | tail -n +1",
   "seq 1 5 | head -n -0",
+  // Bytes rather than lines, with the same three signed forms — `head -c 16 /dev/urandom` is what
+  // design/0001 step 6 is measured by, and it cannot work without `-c`.
+  "printf 'abcdefghij' | head -c 3",
+  "printf 'abcdefghij' | head -c3",
+  "printf 'abcdefghij' | head -c -3",
+  "printf 'abcdefghij' | head -c +3",
+  "printf 'abcdefghij' | tail -c 3",
+  "printf 'abcdefghij' | tail -c +3",
+  "printf 'abcdefghij' | tail -c -3",
+  "printf 'abcdefghij' | head -c 0",
+  "printf 'abcdefghij' | head -c 99",
   // ── Words and quoting ───────────────────────────────────────────────────────
   `echo hello`,
   `echo hello world`,

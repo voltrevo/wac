@@ -377,6 +377,25 @@ Reading readOne(Fs fs, string cwd, string name, u8[] stdin) {
 }
 
 /**
+ * The same, but at most `n` bytes.
+ *
+ * `head -c 16 /dev/urandom` is why it exists: a synthesised device has no end, so `readFile` refuses it
+ * and a `head` that read the whole file and then took the front could never have worked. Every other
+ * backing answers this by reading and truncating.
+ */
+Reading readSomeOne(Fs fs, string cwd, string name, u8[] stdin, i32 n) {
+  if (name == "" || name == "-") {
+    if (stdin.len() <= n) { return Reading(true, name, stdin, ""); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(stdin, 0, 0, n);
+    return Reading(true, name, cut, "");
+  }
+  FileResult f = fs.readSome(resolvePath(cwd, name), n);
+  if (!f.ok) { return Reading(false, name, u8[0](), whyUnread(f)); }
+  return Reading(true, name, f.bytes, "");
+}
+
+/**
  * Why a file could not be read, in GNU's words where the category is one GNU has a phrase for.
  *
  * The host's own sentence carried an errno and an absolute path — "No such file or directory (os error
@@ -500,6 +519,14 @@ i32 indexOfLetter(string s, string letter) {
 struct Counted {
   i32 n;
   Vec<string> operands;
+  /**
+   * Whether the count is in **bytes** rather than lines — `-c`.
+   *
+   * The same three signed forms apply, so `head -c -2` is all but the last two bytes and `tail -c +2`
+   * is from the second. The unit is the only difference, which is why it is a field here rather than a
+   * second parser.
+   */
+  bool bytes;
   /** The option letter this program does not take, if there was one. */
   string bad;
   /**
@@ -532,6 +559,7 @@ struct Counted {
  */
 Counted countOf(Vec<string> argv, i32 fallback) {
   i32 n = fallback;
+  bool bytes = false;
   string sign = "";
   Vec<string> operands = Vec.create();
   bool more = true;
@@ -539,9 +567,12 @@ Counted countOf(Vec<string> argv, i32 fallback) {
     string a = argv.get(i);
     if (more && a == "--") { more = false; continue; }
     if (!more) { operands.push(a); continue; }
-    if (a == "-n" && i + 1 < argv.len()) {
+    // `-n` counts lines and `-c` counts bytes; everything else about them is the same, which is why
+    // one parser reads both and records which unit it saw.
+    if ((a == "-n" || a == "-c") && i + 1 < argv.len()) {
       string v = argv.get(i + 1);
-      if (!isNumber(v)) { return Counted(n, operands, "", sign, v); }
+      if (!isNumber(v)) { return Counted(n, operands, a == "-c", "", sign, v); }
+      bytes = a == "-c";
       sign = signOf(v);
       n = magnitude(v);
       i++;
@@ -553,9 +584,10 @@ Counted countOf(Vec<string> argv, i32 fallback) {
     // README — "a value attaches or not: head -n2 / -2" — and this refused it with "head: -n is not
     // implemented", which was false twice over: `-n` is implemented, and the refusal blamed the caller
     // for a form both of the tools it is measured against accept.
-    if (b.len() > 2 && b[1] == 'n') {
+    if (b.len() > 2 && (b[1] == 'n' || b[1] == 'c')) {
       string v = a.slice(2, a.len());
-      if (!isNumber(v)) { return Counted(n, operands, "", sign, v); }
+      if (!isNumber(v)) { return Counted(n, operands, b[1] == 'c', "", sign, v); }
+      bytes = b[1] == 'c';
       sign = signOf(v);
       n = magnitude(v);
       continue;
@@ -564,9 +596,9 @@ Counted countOf(Vec<string> argv, i32 fallback) {
     // `head -2` is the first two lines and `head -n -2` is all but the last two.
     if (isNumber(a)) { n = -atoi(a); sign = ""; continue; }
     u8[] one = u8[1](fill: b[1]);
-    return Counted(n, operands, string.fromBytes(one), sign, "");
+    return Counted(n, operands, bytes, string.fromBytes(one), sign, "");
   }
-  return Counted(n, operands, "", sign, "");
+  return Counted(n, operands, bytes, "", sign, "");
 }
 
 /** Which of GNU's three forms a count was written in. */
@@ -961,6 +993,13 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
   // `tail` holds `n` lines rather than the whole input. With an operand the file is read whole, which
   // is bounded by the file and is not what 0061 was reported against.
   if (c.operands.len() == 0) {
+    if (c.bytes) {
+      if (allButLast) { return sinkAll(sink, allButLastBytes(fed.rest(), c.n)); }
+      if (fromLine) { return sinkAll(sink, bytesFrom(fed.rest(), c.n)); }
+      // `head -c` stops as soon as it has its bytes, for the reason `head -n` does.
+      if (front) { return headBytesStream(fed, sink, c.n); }
+      return sinkAll(sink, lastBytes(fed.rest(), c.n));
+    }
     if (allButLast) { return headAllButLastStream(fed, sink, c.n); }
     if (fromLine) { return tailFromLineStream(fed, sink, c.n); }
     return front ? headStream(fed, sink, c.n) : tailStream(fed, sink, c.n);
@@ -973,7 +1012,13 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
   i32 status = 0;
   bool printed = false;
   for (i32 f = 0; f < names.len(); f++) {
-    Reading r = readOne(fs, cwd, names.get(f), stdin);
+    // **`head -c N file` reads N bytes and no more**, which is the only way a file with no end can be
+    // read at all — `/dev/urandom` refuses `readFile` by design (design/0001 step 6). Every other
+    // combination needs the whole file, because it is counted from the far end.
+    bool bounded = c.bytes && front && !allButLast;
+    Reading r = bounded
+      ? readSomeOne(fs, cwd, names.get(f), stdin, c.n)
+      : readOne(fs, cwd, names.get(f), stdin);
     if (!r.ok) {
       err.pushAll((who + ": cannot open '" + r.name + "' for reading: " + r.error + "\n").toBytes());
       status = 1;
@@ -983,7 +1028,13 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
       if (printed) { out.push(10); }
       out.pushAll(("==> " + r.name + " <==\n").toBytes());
     }
-    if (allButLast) { out.pushAll(allButLastLines(r.bytes, c.n)); }
+    if (c.bytes) {
+      if (allButLast) { out.pushAll(allButLastBytes(r.bytes, c.n)); }
+      else if (fromLine) { out.pushAll(bytesFrom(r.bytes, c.n)); }
+      else if (front) { out.pushAll(r.bytes); }          // already cut to `n` by the bounded read
+      else { out.pushAll(lastBytes(r.bytes, c.n)); }
+    }
+    else if (allButLast) { out.pushAll(allButLastLines(r.bytes, c.n)); }
     else if (fromLine) { out.pushAll(linesFrom(r.bytes, c.n)); }
     else { out.pushAll(front ? firstLines(r.bytes, c.n) : lastLines(r.bytes, c.n)); }
     printed = true;
@@ -1093,6 +1144,63 @@ i32 tailFromLineStream(Feed fed, Sink sink, i32 n) {
   }
   sink.flush();
   return 0;
+}
+
+/** Send a whole array and be done: the byte forms that must see everything share this ending. */
+i32 sinkAll(Sink sink, u8[] data) {
+  emitTo(sink, data, false);
+  sink.flush();
+  return 0;
+}
+
+/**
+ * The first `n` bytes, and then *stop*.
+ *
+ * The same argument as `headStream`: a producer learns nobody is reading when its own write is refused,
+ * so the sooner this stops pulling the sooner that happens. It is not the same code because a chunk is
+ * not a line — this one may have to cut a chunk in half.
+ */
+i32 headBytesStream(Feed fed, Sink sink, i32 n) {
+  i32 sent = 0;
+  while (sent < n) {
+    u8[] chunk = fed.next();
+    if (chunk.len() == 0) { break; }
+    i32 take = chunk.len();
+    if (sent + take > n) { take = n - sent; }
+    u8[] piece = u8[take]();
+    piece.copyFrom(chunk, 0, 0, take);
+    if (!emitTo(sink, piece, false)) { return 0; }
+    sent = sent + take;
+  }
+  sink.flush();
+  return 0;
+}
+
+/** The last `n` bytes. */
+u8[] lastBytes(u8[] data, i32 n) {
+  i32 from = data.len() - n;
+  if (from < 0) { from = 0; }
+  u8[] out = u8[data.len() - from]();
+  out.copyFrom(data, from, 0, data.len() - from);
+  return out;
+}
+
+/** Every byte but the last `n`. */
+u8[] allButLastBytes(u8[] data, i32 n) {
+  i32 upTo = data.len() - n;
+  if (upTo < 0) { upTo = 0; }
+  u8[] out = u8[upTo]();
+  out.copyFrom(data, 0, 0, upTo);
+  return out;
+}
+
+/** From byte `n` onwards, counting from one — `tail -c +2`. */
+u8[] bytesFrom(u8[] data, i32 n) {
+  i32 from = n > 0 ? n - 1 : 0;
+  if (from > data.len()) { from = data.len(); }
+  u8[] out = u8[data.len() - from]();
+  out.copyFrom(data, from, 0, data.len() - from);
+  return out;
 }
 
 /** Every line but the last `n`, from bytes already in hand. */
