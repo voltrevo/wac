@@ -72,14 +72,38 @@ table's longest-prefix rule, and that a name is **bytes** — a file called `x\x
 which is a property no host can offer today
 ([0065](../../issues/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md)).
 
+## An image, which is what makes a filesystem outlive its session
+
+`src/image.wac`, step 2 of design/0001. `write` gives you the bytes, `read` gives you the filesystem
+back, and `box fsdump` prints one so a person can look at it without running a program that understands
+it — which the design asks for by name, because a format of our own is a format nothing else can read.
+
+What an image holds is **every memory mount, walked from its root**. A host mount is not written: its
+bytes are somebody's disk under somebody's permissions, and copying them in would be copying a filesystem
+rather than saving one. `write` returns the mount points it skipped rather than quietly producing a
+smaller image than you asked for.
+
+Walking from the roots also compacts, which is the answer to the note above about `remove` not freeing
+nodes: a node nobody points at is a node the writer does not reach, so reloading an image is how a
+long-lived session gets that space back.
+
+There is no oracle for this — the format is ours, so nothing outside the repo can read an image and
+disagree with us about it. `test/image.test.ts` replaces one with three things, and the third is the one
+the other two cannot do: a round trip, a check that rewriting what was read gives identical bytes (so
+`read` cannot normalise away something `write` recorded, with both sides agreeing because both sides
+lost it), and **a fixture image committed to the repo**, written on 2026-08-07 and loaded by whatever
+build is running now. That last is the design's own criterion, and neither of the others can see a format
+that changed shape overnight, because both write and read with the same build.
+
 ## Not here yet
 
-- **Nothing calls it.** `packages/sh` still reaches its `Cli` directly for file operations; threading `Fs`
-  through the shell is the rest of 0067, and it is what makes a session's filesystem a choice.
-- **No persistence.** `Fs.inMemory` and `Fs.onHost` exist; an image is step 2 of design/0001, and
-  `packages/box` already has `tar` and `zstd` to write one with.
 - **No permissions.** `mode` and `owner` are recorded on every node and enforced nowhere. Users arrive in
-  step 4; recording them now is what makes an image written today readable then.
+  step 4; recording them now is what makes an image written today readable then — `chmod` and `chown` set
+  them, and refuse on a host mount in those words, because there is no such capability in
+  `packages/platform` and a mode silently not applied is worse than an error.
+- **Incremental saves are not implemented.** `image.write` walks every reachable node and emits every
+  byte. Cheaper incremental saves were half the argument for a format of our own; the layout leaves room
+  for one and nothing does it yet.
 - **Removal does not free nodes.** A node nobody points at is unreachable, and an image writer walks from
   the roots, so nothing is lost — but a program that deletes a great deal keeps paying for it. There is
   no such program yet.

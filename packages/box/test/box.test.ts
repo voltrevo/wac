@@ -793,6 +793,26 @@ Deno.test("the applets that read several files read all of them", async () => {
     const missing = await runner.run(["nl", a1, `${dir}/nope.txt`]);
     assertEquals(missing.code, 1, `a missing operand should fail, got ${missing.code}`);
     assertEquals(missing.err.includes("nope.txt"), true, missing.err);
+
+    // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
+    // either, and the oracle is again the shape. `packages/fs/test/image.test.ts` is where the format is
+    // checked; what matters at this end is that the applet is wired up, names its operands, and *fails*
+    // on something that is not an image rather than printing an empty tree.
+    const img = "packages/fs/test/fixtures/image-v1.wacimg";
+    const dumped = await runner.run(["fsdump", img]);
+    assertEquals(dumped.code, 0, dumped.err);
+    assertEquals(dumped.out.includes("mount /mnt"), true, dumped.out);
+    assertEquals(dumped.out.includes("0600 claude"), true, dumped.out);
+
+    const piped = await runner.run(["fsdump"], { stdin: await Deno.readFile(img) });
+    assertEquals(piped.out, dumped.out, "an image on standard input reads the same as one named");
+
+    const twice = await runner.run(["fsdump", img, img]);
+    assertEquals(twice.out, `${img}:\n${dumped.out}${img}:\n${dumped.out}`, "two images are labelled");
+
+    const notAnImage = await runner.run(["fsdump", a1]);
+    assertEquals(notAnImage.code, 1, "a file that is not an image should fail");
+    assertEquals(notAnImage.out.includes("cannot read this image"), true, notAnImage.out);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -2072,11 +2092,16 @@ Deno.test("the README states the applet count the dispatcher actually has", asyn
     dispatched.join(" "),
     "the usage message and the dispatcher disagree about which applets exist",
   );
-  // And the aside in the `bin/` section, which drifted independently of the first line.
+  // And the aside in the `bin/` section, which drifted independently of the first line. This used to
+  // check for one spelling — "with sixty entry points" — which meant the check itself had to be edited
+  // every time the count changed, and an edit that forgot it left the assertion passing against a word
+  // nobody had written since. The README says why a digit is the right shape here; enforce that instead,
+  // and the check stops needing maintenance at all.
+  const spelled = readme.match(/\b(forty|fifty|sixty|seventy|eighty|ninety)(-[a-z]+)?\s+entry points/);
   assertEquals(
-    readme.includes("with sixty entry points"),
-    actual === 60,
-    "the `bin/` section names the count too, in words",
+    spelled,
+    null,
+    `the count is spelled out in "${spelled?.[0]}" — write it as a digit, for the reason the README gives`,
   );
 });
 

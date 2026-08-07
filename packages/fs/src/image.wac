@@ -1,0 +1,363 @@
+// An image: a filesystem written down, and read back.
+//
+// Step 2 of design/0001. Step 1 gave a session a filesystem it holds as a value; this is what makes that
+// value outlive the session. Done, per the design, when a session's writes survive a restart and an image
+// written by one build loads in the next — so the format is pinned by a committed fixture as well as by a
+// round trip, because a round trip alone would pass for a format that changed shape overnight.
+//
+// ## A format of our own, and what that costs
+//
+// The operator's decision (2026-08-05) was a format of ours rather than tar: exact metadata, and room for
+// cheaper incremental saves later. The price is that nothing outside this repo can read one, and the two
+// things that follow from that price are part of the step rather than extras — `dump`, so a person can
+// look at an image without a program that understands it, and a round-trip property test, because there
+// is no GNU tool here to be the oracle.
+//
+// **Incremental saves are not implemented.** `write` walks every reachable node and emits every byte. The
+// layout below would let a later writer reuse unchanged content — the tree and the file bytes are not
+// interleaved by accident — but nothing does that today, and a format that merely *could* be incremental
+// is not one, so this says so rather than implying otherwise.
+//
+// ## What an image contains, and what it cannot
+//
+// Every **memory** mount, walked from its root. A host mount is the host's, not ours: its bytes live on
+// somebody's disk under somebody's permissions, and writing them into an image would be copying a
+// filesystem rather than saving one. So `write` skips host mounts and **names the ones it skipped** in
+// what it returns — a caller that saves a session with `/` on the host and `/home` in memory gets an
+// image of `/home` and is told about `/`, rather than getting a smaller image than it asked for and no
+// hint why.
+//
+// Walking from the roots also compacts: `remove` leaves nodes nobody points at, which the writer simply
+// does not reach. Reloading an image is how a long-lived session gets its space back today, and that is a
+// real answer to the note in `fs.wac` rather than a coincidence.
+//
+// ## The layout
+//
+// Little-endian, because `Buf.pushU32` is — one convention, stated once, rather than a per-field choice.
+// Lengths are `u32` and counts are `u32`; a string is its length in bytes then its bytes, exactly, since
+// design/0001 D-byte-exact-paths says a name is bytes and not text.
+//
+//     "wacimg\0" 1        magic, then a version byte
+//     u32                 mount count
+//     per mount:  str at, then one node
+//     per node:   u8 kind (0 file, 1 dir), u32 mode, str owner, i64 mtime
+//                 file: u32 length, then the bytes
+//                 dir:  u32 entry count, then (str name, node) each, in the order `readDir` gives
+//     u32                 CRC-32 of everything above
+//
+// The tree is preorder and self-delimiting, so no node index is written and none has to be fixed up on
+// load — which also means an image says nothing about the pool layout of the filesystem that wrote it,
+// and two filesystems that differ only in node numbering produce the same bytes.
+//
+// The checksum is there because the format is self-delimiting only against *truncation*: a byte flipped
+// in the middle of a file's contents reads back as a valid image of the wrong thing, which is the failure
+// worth catching. It is CRC-32 from `packages/gzip` rather than a copy — that module is the only one in
+// the repo, and importing it is better than a second implementation, even if the eventual home for a
+// checksum nobody compresses with is arguably not the gzip package.
+
+import { Map } from "../../std/src/map.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { hashString, stringEq } from "../../std/src/hash.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { crc32 } from "../../gzip/src/crc32.wac";
+import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { Backing, Fs, Inode, Mount, sortNames } from "./fs.wac";
+
+/** The version this build writes. A reader refuses anything else, by number, rather than guessing. */
+i32 VERSION() { return 1; }
+
+i32 KIND_FILE() { return 0; }
+i32 KIND_DIR() { return 1; }
+
+/** What `write` produced, and what it could not. */
+export struct Written {
+  u8[] bytes;
+  /**
+   * The mount points that were not written, because they are the host's.
+   *
+   * Empty for a filesystem that is entirely ours. A caller that ignores this gets a correct image of a
+   * smaller filesystem than it has, which is the quiet kind of wrong this field exists to prevent.
+   */
+  string[] skipped;
+}
+
+/** An image read back, or why it could not be. */
+export struct Loaded {
+  bool ok;
+  /** The filesystem. Empty and meaningless when `ok` is false. */
+  Fs fs;
+  /** What was wrong with the bytes. Empty when `ok`. */
+  string error;
+
+  Loaded of(bool ok, Fs fs, string error) { return Loaded(ok, fs, error); }
+}
+
+/**
+ * Write every memory mount of `fs`.
+ *
+ * The order of mounts is the order they were added, and the order of a directory's entries is the sorted
+ * order `readDir` gives — so the same filesystem written twice gives the same bytes, which is what lets a
+ * test compare images rather than only compare what they load into.
+ */
+export Written write(Fs fs) {
+  Vec<i32> memory = Vec.create();
+  Vec<string> skipped = Vec.create();
+  for (i32 i = 0; i < fs.mounts.len(); i++) {
+    match (fs.mounts.get(i).backing) {
+      case Memory: { memory.push(i); }
+      // The empty string is the root mount, which is what a person calls "/" — so say "/" rather than
+      // handing back an empty string that reads as a bug.
+      else: { skipped.push(mountName(fs.mounts.get(i).at)); }
+    }
+  }
+
+  Buf out = Buf.create();
+  u8[] magic = "wacimg\0".toBytes();
+  out.pushAll(magic);
+  out.push(VERSION());
+  out.pushU32(memory.len() as@ u32);
+  for (i32 i = 0; i < memory.len(); i++) {
+    Mount m = fs.mounts.get(memory.get(i));
+    putString(out, m.at);
+    putNode(out, fs, m.root);
+  }
+  out.pushU32(crc32(out.bytes()));
+
+  string[] names = string[skipped.len()](fill: "");
+  for (i32 i = 0; i < skipped.len(); i++) { names[i] = skipped.get(i); }
+  return Written(out.take(), names);
+}
+
+/**
+ * Read an image back into a filesystem.
+ *
+ * `now` is the clock for anything created *after* loading — every node in the image keeps the mtime it
+ * was written with, which is the whole point of recording metadata rather than deriving it.
+ */
+export Loaded read(u8[] data, i64 now) {
+  Reader r = Reader(data, 0, false);
+
+  if (data.len() < 13) { return failed("too short to be an image"); }
+  u8[] magic = "wacimg\0".toBytes();
+  for (i32 i = 0; i < magic.len(); i++) {
+    if (data[i] != magic[i]) { return failed("not an image: the magic does not match"); }
+  }
+  r.at = magic.len();
+  i32 version = r.byte();
+  if (version != VERSION()) {
+    return failed("this build reads image version " + itoa(VERSION()) + ", not " + itoa(version));
+  }
+
+  // Before anything is believed: the checksum covers everything but its own four bytes.
+  i32 end = data.len() - 4;
+  u8[] body = u8[end]();
+  body.copyFrom(data, 0, 0, end);
+  u32 want = (data[end] | (data[end + 1] << 8) | (data[end + 2] << 16) | (data[end + 3] << 24)) as@ u32;
+  if (crc32(body) != want) { return failed("the checksum does not match: the image is damaged"); }
+
+  Fs fs = Fs.inMemory(now);
+  // `inMemory` comes with a root mount and a root node. An image carries its own, so start from nothing
+  // rather than from that — otherwise an image whose first mount is not the root leaves a stray root
+  // behind, and one whose first mount *is* the root leaves an orphan node in the pool.
+  Vec<Mount> mounts = Vec.create();
+  Vec<Inode> nodes = Vec.create();
+  fs.mounts = mounts;
+  fs.nodes = nodes;
+
+  i32 mounts = r.u32();
+  for (i32 i = 0; i < mounts; i++) {
+    string at = r.string();
+    if (r.bad) { return failed("the image ends inside a mount point"); }
+    i32 root = getNode(r, fs, now);
+    if (r.bad) { return failed("the image ends inside a node"); }
+    fs.mounts.push(Mount(at, Backing.Memory, root));
+  }
+  if (r.at != end) { return failed("trailing bytes after the last mount"); }
+  return Loaded.of(true, fs, "");
+}
+
+/**
+ * An image's tree, as text a person can read.
+ *
+ * The design asks for this by name, and the reason is the price of a format of our own: with tar, `tar
+ * tvf` is somebody else's problem. A line per node, indented by depth, with the metadata that a listing
+ * would otherwise hide — because the whole argument for not using tar was exact metadata, and a dump that
+ * does not show it does not check the thing that was paid for.
+ *
+ * Damaged images get their reason back rather than a partial tree: half a listing looks like a small
+ * filesystem.
+ */
+export string dump(u8[] data) {
+  Loaded got = read(data, 0);
+  if (!got.ok) { return "cannot read this image: " + got.error + "\n"; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < got.fs.mounts.len(); i++) {
+    Mount m = got.fs.mounts.get(i);
+    out.pushAll(("mount " + mountName(m.at) + "\n").toBytes());
+    dumpNode(out, got.fs, m.root, "  ", "/");
+  }
+  return string.fromBytes(out.take());
+}
+
+void dumpNode(Buf out, Fs fs, i32 node, string indent, string name) {
+  Inode n = fs.nodes.get(node);
+  string kind = n.isDir ? "d" : "-";
+  string size = n.isDir
+    ? itoa(n.entries.len()) + (n.entries.len() == 1 ? " entry" : " entries")
+    : itoa(n.data.len) + (n.data.len == 1 ? " byte" : " bytes");
+  out.pushAll((indent + kind + " " + octal(n.mode) + " " + n.owner + " " + itoa64(n.mtime) + " "
+    + name + "  (" + size + ")\n").toBytes());
+  if (!n.isDir) { return; }
+  string[] names = sortedNames(n);
+  for (i32 i = 0; i < names.len(); i++) {
+    dumpNode(out, fs, n.entries.get(names[i]).orElse(-1), indent + "  ", names[i]);
+  }
+}
+
+// ── Writing ───────────────────────────────────────────────────────────────────
+
+void putNode(Buf out, Fs fs, i32 node) {
+  Inode n = fs.nodes.get(node);
+  out.push(n.isDir ? KIND_DIR() : KIND_FILE());
+  out.pushU32(n.mode as@ u32);
+  putString(out, n.owner);
+  putI64(out, n.mtime);
+  if (!n.isDir) {
+    out.pushU32(n.data.len as@ u32);
+    out.pushBytes(n.data.data, 0, n.data.len);
+    return;
+  }
+  string[] names = sortedNames(n);
+  out.pushU32(names.len() as@ u32);
+  for (i32 i = 0; i < names.len(); i++) {
+    putString(out, names[i]);
+    putNode(out, fs, n.entries.get(names[i]).orElse(-1));
+  }
+}
+
+void putString(Buf out, string s) {
+  u8[] b = s.toBytes();
+  out.pushU32(b.len() as@ u32);
+  out.pushAll(b);
+}
+
+void putI64(Buf out, i64 v) {
+  for (i32 i = 0; i < 8; i++) { out.push(((v >> (i * 8)) & 255 as i64) as! i32); }
+}
+
+// ── Reading ───────────────────────────────────────────────────────────────────
+
+/**
+ * A position in the bytes, and whether it has already run off the end.
+ *
+ * `bad` rather than a trap: an image is a file somebody hands you, and a program that reads one should be
+ * able to say what was wrong with it. Every read checks `bad` first, so one overrun does not become a
+ * cascade of nonsense reads before anybody notices.
+ */
+struct Reader {
+  u8[] data;
+  i32 at;
+  bool bad;
+
+  i32 byte(this) {
+    if (this.bad || this.at >= this.data.len()) { this.bad = true; return 0; }
+    i32 v = this.data[this.at];
+    this.at++;
+    return v;
+  }
+
+  i32 u32(this) {
+    i32 a = this.byte();
+    i32 b = this.byte();
+    i32 c = this.byte();
+    i32 d = this.byte();
+    // A length is read as a signed i32 and then refused if it is negative: a u32 above 2^31 cannot be a
+    // real length here, and letting it wrap would turn "an enormous count" into "a negative one" and then
+    // into a loop that never runs. Refusing is the point.
+    i32 v = a | (b << 8) | (c << 16) | (d << 24);
+    if (v < 0) { this.bad = true; return 0; }
+    return v;
+  }
+
+  i64 i64(this) {
+    i64 v = 0 as i64;
+    for (i32 i = 0; i < 8; i++) { v = v | ((this.byte() as i64) << (i * 8)); }
+    return v;
+  }
+
+  string string(this) {
+    i32 n = this.u32();
+    if (this.bad || this.at + n > this.data.len()) { this.bad = true; return ""; }
+    u8[] b = u8[n]();
+    b.copyFrom(this.data, this.at, 0, n);
+    this.at = this.at + n;
+    return string.fromBytes(b);
+  }
+
+  u8[] bytes(this, i32 n) {
+    if (this.bad || n < 0 || this.at + n > this.data.len()) { this.bad = true; return u8[0](); }
+    u8[] b = u8[n]();
+    b.copyFrom(this.data, this.at, 0, n);
+    this.at = this.at + n;
+    return b;
+  }
+}
+
+/** One node and everything under it, pushed into `fs.nodes`; returns its index. */
+i32 getNode(Reader r, Fs fs, i64 now) {
+  i32 kind = r.byte();
+  i32 mode = r.u32();
+  string owner = r.string();
+  i64 mtime = r.i64();
+  if (r.bad) { return -1; }
+  if (kind != KIND_FILE() && kind != KIND_DIR()) { r.bad = true; return -1; }
+
+  if (kind == KIND_FILE()) {
+    i32 len = r.u32();
+    u8[] data = r.bytes(len);
+    if (r.bad) { return -1; }
+    Buf held = Buf.create();
+    held.pushAll(data);
+    Map<string, i32> none = Map.create(hashString, stringEq);
+    fs.nodes.push(Inode(false, none, held, mode, owner, mtime));
+    return fs.nodes.len() - 1;
+  }
+
+  // The directory's own node is pushed *before* its children, so an image reads back with parents ahead
+  // of children in the pool — the order a fresh `mkdir -p` produces, and therefore the order that makes
+  // a reloaded filesystem indistinguishable from one built by hand.
+  Map<string, i32> entries = Map.create(hashString, stringEq);
+  fs.nodes.push(Inode(true, entries, Buf.create(), mode, owner, mtime));
+  i32 self = fs.nodes.len() - 1;
+  i32 count = r.u32();
+  if (r.bad) { return -1; }
+  for (i32 i = 0; i < count; i++) {
+    string name = r.string();
+    if (r.bad) { return -1; }
+    i32 child = getNode(r, fs, now);
+    if (r.bad) { return -1; }
+    fs.nodes.get(self).entries.set(name, child);
+  }
+  return self;
+}
+
+Loaded failed(string why) { return Loaded.of(false, Fs.inMemory(0 as i64), why); }
+
+// ── Small things ──────────────────────────────────────────────────────────────
+
+/** A mount's path as a person writes it: the root mount is stored as "" and shown as "/". */
+string mountName(string at) { return at == "" ? "/" : at; }
+
+/** A directory's names, in the order `readDir` answers in — the same sort, not a second copy of it. */
+string[] sortedNames(Inode n) {
+  string[] names = n.entries.keys();
+  sortNames(names);
+  return names;
+}
+
+/** A mode as four octal digits, which is how a person reads one and how `chmod` writes one. */
+string octal(i32 mode) {
+  string out = "";
+  for (i32 i = 3; i >= 0; i--) { out = out + itoa((mode >> (i * 3)) & 7); }
+  return out;
+}

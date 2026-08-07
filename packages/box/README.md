@@ -1,6 +1,6 @@
 # box — a busybox, written in wac
 
-60 applets in one program, chosen by the first argument — 59 tools and `help`, which prints the list. No TypeScript: `src/` is
+61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
 That number is a digit rather than a word because it kept going stale: it said fifty-nine when
@@ -22,7 +22,7 @@ cat README.md | ./box sort -u | ./box wc -l
 
 ```
 base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
-fold get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
+fold fsdump get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
 nc rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
 strings tac tail
 tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
@@ -63,7 +63,7 @@ half-written destination.
 **It also shows what a multicall binary costs.** `box`'s grants are the *union* of what
 its applets need, so `box echo` carries the filesystem access `box cat` wants. Built as
 separate executables, each would state its own: `wc` needs nothing at all and its shebang
-would say `deno run` with no flags. One binary with sixty entry points is the shape
+would say `deno run` with no flags. One binary with 61 entry points is the shape
 BusyBox has to take; it is not the shape this model is best at.
 
 ## In a browser
@@ -244,6 +244,7 @@ because "cannot stream" turned out to be wrong twice:
 |---|---|---|
 | **Streams** | cat wc hex crc32 sha256sum sha512sum tr strings gzip gunzip head tail nl rev uniq grep cut fold cp split sponge | bounded by a chunk, a line, or a flag |
 | **Cannot** | sort tac | need every line before emitting the first |
+| **Cannot** | fsdump | an image's checksum covers the whole file, so a prefix says nothing |
 | **Cannot** | tee | two sinks at once, and the world has one current output |
 | **Could, given an API** | base64 base32 | `codec` encodes a whole array, including the padding, so a chunk cannot be encoded on its own |
 | **Could, given an API** | zstd unzstd | `packages/zstd` has no streaming form — a package limit, not the world's, and the only row left |

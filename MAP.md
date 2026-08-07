@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-33 packages, 68,966 lines of wac, 1400 tests,
-44 command-line programs and 4 browser pages.
+33 packages, 69,571 lines of wac, 1413 tests,
+45 command-line programs and 4 browser pages.
 
 ## Packages
 
@@ -26,10 +26,10 @@ In dependency order: nothing here imports anything below it.
 | [`stream`](packages/stream/) | Run a wac transform as a `ReadableStream`/`WritableStream` pair, so it consumes input as it arrives instead of taking the whole thing at once. | 97 | 14 | `bytes` `unicode` |
 | [`url`](packages/url/) | A WHATWG URL parser: parse, serialize, and resolve a reference against a base. | 1,219 | 27 | `bytes` `std` |
 | [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 3,808 | 14 | `bytes` |
-| [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,032 | 46 | `bytes` |
+| [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,032 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 6 | `fmt` |
 | [`crypto`](packages/crypto/) | SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and… | 5,724 | 149 | `bignum` |
-| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 594 | 12 | `bytes` `platform` `std` |
+| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 1,085 | 20 | `bytes` `fmt` `gzip` `platform` `std` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,023 | 29 | `bytes` `fmt` `platform` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |
@@ -40,11 +40,11 @@ In dependency order: nothing here imports anything below it.
 | [`sh`](packages/sh/) | A shell, in wac. | 6,564 | 31 | `bytes` `fmt` `fs` `platform` `std` |
 | [`ssz`](packages/ssz/) | **Everything an Altair light client needs is done and checked against Ethereum's vectors. | 808 | 26 | `crypto` |
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 3,708 | 95 | `crypto` |
-| [`box`](packages/box/) | 60 applets in one program, chosen by the first argument — 59 tools and `help`, which prints the list. | 4,403 | 35 | `bytes` `codec` `crypto` `datetime` `fmt` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
+| [`box`](packages/box/) | 61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. | 4,461 | 35 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 393 | 13 | `crypto` `mpt` |
 | [`lightclient`](packages/lightclient/) | **The Altair sync protocol works. | 642 | 12 | `bls` `ssz` |
 | [`ssh`](packages/ssh/) | An SSH-2 client and server, in wac, **and `ssh` and `sshd` programs built from them. | 3,551 | 46 | `bytes` `codec` `crypto` `fmt` `platform` `sh` |
-| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 15,942 | 290 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
+| [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 15,998 | 293 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 721 | 3 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
 
 ## Programs
@@ -78,6 +78,7 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/whichever.wac` | Wait on two sockets and report whichever speaks first. |
 | `packages/platform/example/writeread.wac` | Can a socket be written to while a read on it is still outstanding? |
 | `packages/fs/example/ops.wac` | The same filesystem operations against memory or against the host, so the two can be compared. |
+| `packages/fs/example/saveimage.wac` | Save a filesystem that is partly the host's, and say what could not be saved. |
 | `packages/sh/src/sealed.wac` | A shell whose filesystem is its own: nothing it writes touches the host. |
 | `packages/sh/src/sh.wac` | `sh` — the shell as a program, entire, in wac. |
 | `packages/box/example/boxsh.wac` | `box` and the shell in one command-line program — the twin of `term.wac`, without a browser. |

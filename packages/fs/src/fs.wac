@@ -77,6 +77,12 @@ export struct Inode {
   /** A copy of the bytes: a reader must not be able to write the file by holding its array. */
   u8[] bytes(const this) { return this.data.bytes(); }
 
+  /** Record a new mode. A method because an assignment target in wac is a name, not a call's result. */
+  void setMode(this, i32 mode) { this.mode = mode; }
+
+  /** The same for the owner. */
+  void setOwner(this, string owner) { this.owner = owner; }
+
   /** Replace the contents, as a truncating write does. */
   void replace(this, u8[] data, i64 now) {
     this.data = Buf.create();
@@ -132,9 +138,14 @@ export struct Fs {
    *
    * Longest-prefix rather than first-match so that mounting `/home` under a host `/` does what a person
    * expects, and so the order mounts were added in does not decide the answer.
+   *
+   * **-1 when no mount holds it**, which used to be impossible: `inMemory` and `onHost` both start with a
+   * mount at the root, and every path is under the root. An image can be loaded into a filesystem that
+   * has no root mount — `/home` saved on its own — and this returned mount 0 for `/elsewhere` in that
+   * case, which happened to fail in `find` for the wrong reason. Every caller checks it now.
    */
   i32 mountOf(const this, string path) {
-    i32 best = 0;
+    i32 best = -1;
     i32 bestLen = -1;
     for (i32 i = 0; i < this.mounts.len(); i++) {
       string at = this.mounts.get(i).at;
@@ -151,7 +162,9 @@ export struct Fs {
 
   /** The whole file, or why not. */
   FileResult readFile(this, string path) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.readFile(path).wait(); }
       else: {}
@@ -172,7 +185,10 @@ export struct Fs {
 
   /** What a path is, if it is anything. */
   Stat stat(this, string path) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    // Absence rather than a fault, as below: a path under no mount is nothing, and that is an answer.
+    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.stat(path).wait(); }
       else: {}
@@ -195,7 +211,9 @@ export struct Fs {
    * `ls` can tell that from an empty one.
    */
   string[]? readDir(this, string path) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return null; }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.readDir(path).wait(); }
       else: {}
@@ -205,17 +223,7 @@ export struct Fs {
     // and what lets `ls` tell an empty directory from a missing one.
     if (node < 0 || !this.nodes.get(node).isDir) { return null; }
     string[] names = this.nodes.get(node).entries.keys();
-    // Insertion sort: a directory listing is small, and a reader can check it. By *bytes*, because that
-    // is what `LC_ALL=C` means and what every tool this is compared against does with it.
-    for (i32 i = 1; i < names.len(); i++) {
-      string v = names[i];
-      i32 j = i - 1;
-      while (j >= 0 && afterName(names[j], v)) {
-        names[j + 1] = names[j];
-        j--;
-      }
-      names[j + 1] = v;
-    }
+    sortNames(names);
     return names;
   }
 
@@ -223,7 +231,9 @@ export struct Fs {
 
   /** Create or replace a file, making no parents: the same contract `writeFile` has. */
   Change writeFile(this, string path, u8[] data) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.writeFile(path, data).wait(); }
       else: {}
@@ -255,7 +265,9 @@ export struct Fs {
    * flag exists to avoid.
    */
   Change mkdir(this, string path, bool parents) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.mkdir(path, parents).wait(); }
       else: {}
@@ -298,7 +310,9 @@ export struct Fs {
    * something in it — which is what makes `rm -f` able to ignore only the second.
    */
   Change remove(this, string path, bool recursive) {
-    Mount m = this.mounts.get(this.mountOf(path));
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.remove(path, recursive).wait(); }
       else: {}
@@ -318,10 +332,53 @@ export struct Fs {
     return Change.of(FAULT_NONE(), "");
   }
 
+  /**
+   * Set a node's mode.
+   *
+   * `mode` and `owner` are recorded on every node and enforced nowhere — step 4 of design/0001 is where a
+   * session gets a user. They are recorded now so that an image written today is readable then, which is
+   * only true if something can actually *set* them: a field nothing writes is a field nothing tests, and
+   * "exact metadata" was the whole argument for a format of our own rather than tar.
+   *
+   * **Not implemented for a host mount.** There is no `chmod` capability — see `packages/platform` — so
+   * this refuses rather than pretending, because a mode silently not applied is worse than an error.
+   */
+  Change chmod(this, string path, i32 mode) {
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return Change.of(FAULT_DENIED(), "chmod on a host mount is not implemented"); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    this.nodes.get(node).setMode(mode);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** The same for the owner, and refused on a host mount for the same reason. */
+  Change chown(this, string path, string owner) {
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return Change.of(FAULT_DENIED(), "chown on a host mount is not implemented"); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    this.nodes.get(node).setOwner(owner);
+    return Change.of(FAULT_NONE(), "");
+  }
+
   /** Move a name, replacing what is there — as the hosts do, and as `mv` expects. */
   Change rename(this, string from, string to) {
-    Mount fromMount = this.mounts.get(this.mountOf(from));
-    Mount toMount = this.mounts.get(this.mountOf(to));
+    i32 fromIndex = this.mountOf(from);
+    i32 toIndex = this.mountOf(to);
+    if (fromIndex < 0 || toIndex < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount fromMount = this.mounts.get(fromIndex);
+    Mount toMount = this.mounts.get(toIndex);
     match (fromMount.backing) {
       case Host(cli): {
         // A rename across mounts is a copy and a delete, and no host does it for you. Not implemented
@@ -373,6 +430,28 @@ export struct Fs {
   i32 child(const this, i32 dir, string name) {
     if (name == "") { return dir; }
     return this.nodes.get(dir).entries.get(name).orElse(-1);
+  }
+}
+
+/**
+ * Sort names by bytes, in place.
+ *
+ * Insertion sort: a directory listing is small, and a reader can check it. By *bytes*, because that is
+ * what `LC_ALL=C` means and what every tool this is compared against does with it.
+ *
+ * Exported because `image.wac` needs the same order for the same reason — an image's entries are written
+ * in listing order so that the same filesystem written twice gives the same bytes. Two copies of this
+ * would drift, and the drift would be invisible: both images would load fine and only compare unequal.
+ */
+export void sortNames(string[] names) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && afterName(names[j], v)) {
+      names[j + 1] = names[j];
+      j--;
+    }
+    names[j + 1] = v;
   }
 }
 
