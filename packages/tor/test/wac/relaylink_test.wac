@@ -44,7 +44,8 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
   u8[] challenge = fill(32, 2);
   u8[] theirIp = u8[](10, 0, 0, 7);
 
-  u8[] reply = relayHandshakeReply(certs, challenge, theirIp);
+  i64 now = 1786096061;
+  u8[] reply = relayHandshakeReply(certs, challenge, theirIp, now);
   t.isTrue(reply.len() > 300, "the reply carries the certificates");
 
   // Walk it as an initiator would.
@@ -58,6 +59,14 @@ export string test_the_reply_is_four_cells_in_the_order_the_spec_fixes() {
   u8[] auth = cellPayload(reply, at);
   at = at + cellSize(reply, at);
   t.eqI32(cellCommand(reply, at), cmdNetinfo(), "then NETINFO");
+  // Carrying the *clock*, which is the only reason a responder's NETINFO differs from a client's.
+  // Nothing here looked at these four bytes, so for as long as this file existed the responder sent
+  // a timestamp of zero and every C tor that handshook with us read the epoch and warned that one of
+  // us was twenty thousand days out. It bootstrapped regardless — the recommendation for that check
+  // is `warn` — which is what let a wrong value look like no value at all.
+  u8[] ni = cellPayload(reply, at);
+  i64 stamp = ((ni[0] as i64) << 24) | ((ni[1] as i64) << 16) | ((ni[2] as i64) << 8) | (ni[3] as i64);
+  t.eqI32((stamp == now) ? 1 : 0, 1, "the responder states the time it was given");
   at = at + cellSize(reply, at);
   t.eqI32(at, reply.len(), "and nothing after it");
 
@@ -75,11 +84,11 @@ export string test_a_constant_challenge_is_refused() {
   T t = T.create();
   u8[] certs = fill(100, 3);
   u8[] ip = u8[](127, 0, 0, 1);
-  t.eqI32(relayHandshakeReply(certs, u8[32](), ip).len(), 0, "an all-zero challenge is refused");
-  t.isTrue(relayHandshakeReply(certs, fill(32, 4), ip).len() > 0, "a real one is not");
-  t.eqI32(relayHandshakeReply(certs, fill(31, 4), ip).len(), 0, "a 31-byte challenge is refused");
-  t.eqI32(relayHandshakeReply(u8[0](), fill(32, 4), ip).len(), 0, "an empty CERTS body is refused");
-  t.eqI32(relayHandshakeReply(certs, fill(32, 4), u8[](1, 2, 3)).len(), 0, "a 3-byte address too");
+  t.eqI32(relayHandshakeReply(certs, u8[32](), ip, 1).len(), 0, "an all-zero challenge is refused");
+  t.isTrue(relayHandshakeReply(certs, fill(32, 4), ip, 1).len() > 0, "a real one is not");
+  t.eqI32(relayHandshakeReply(certs, fill(31, 4), ip, 1).len(), 0, "a 31-byte challenge is refused");
+  t.eqI32(relayHandshakeReply(u8[0](), fill(32, 4), ip, 1).len(), 0, "an empty CERTS body is refused");
+  t.eqI32(relayHandshakeReply(certs, fill(32, 4), u8[](1, 2, 3), 1).len(), 0, "a 3-byte address too");
   t.eqI32(authChallengeBody(u8[31]()).len(), 0, "and directly, too");
   return t.report();
 }
