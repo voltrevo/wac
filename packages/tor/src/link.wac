@@ -69,6 +69,15 @@ export u8[] concat(u8[] a, u8[] b) {
 export struct Link {
   Core core;
   Cli cli;
+  /**
+   * Who is on the other end, as `host:port`, for diagnostics only.
+   *
+   * A `Link` carried no identity at all until issue 0106, which is why a relay that stopped
+   * answering was reported as *"a relay went silent for 30000ms"* — naming neither the relay nor
+   * what was expected of it. On a network of three that is one re-run to find out; the point of the
+   * message is to save the re-run.
+   */
+  string peer;
   i32 sock;
   u8[] tls;
   /** Cell bytes decrypted but not yet consumed. */
@@ -89,19 +98,19 @@ export Link connectRelay(Core core, Cli cli, string host, i32 port) {
     // The host may still be inside the connect; what this guarantees is that we stop waiting.
     dial.cancel();
     core.warn("tor: " + host + " did not answer within " + itoa(CONNECT_TIMEOUT_MS) + "ms");
-    return Link(core, cli, -1, u8[0](), u8[0](), true, u8[0]());
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0]());
   }
   Socket s = dial.wait();
   if (s.handle < 0) {
     core.warn("tor: " + host + ": " + s.error);
-    return Link(core, cli, -1, u8[0](), u8[0](), true, u8[0]());
+    return Link(core, cli, host + ":" + itoa(port), -1, u8[0](), u8[0](), true, u8[0]());
   }
   Step st = unpack(tlsClientInit(
     host.toBytes(), u8[0](), i32[0](),
     core.randomBytes(32).wait(), core.randomBytes(32).wait(),
     core.randomBytes(64).wait(), core.randomBytes(32).wait(),
     core.nowMillis().wait() / 1000));
-  Link l = Link(core, cli, s.handle, st.state, u8[0](), false, u8[0]());
+  Link l = Link(core, cli, host + ":" + itoa(port), s.handle, st.state, u8[0](), false, u8[0]());
   if (!cli.send(s.handle, st.toSend).wait()) { l.dead = true; }
   return l;
 }
@@ -141,7 +150,9 @@ export bool pumpFor(Link l, i32 millis) {
   if (l.core.waitAny(i32[](read.id), millis) < 0) {
     read.cancel();
     l.cli.closeSocket(l.sock);
-    l.core.warn("tor: a relay went silent for " + itoa(millis) + "ms");
+    l.core.warn("tor: " + (l.peer == "" ? "a relay" : l.peer) + " went silent for " +
+                itoa(millis) + "ms with " + itoa(l.buffered.len()) + " cell byte(s) buffered and " +
+                itoa(l.raw.len()) + " partial record byte(s)");
     return false;
   }
   // A relay that broke and a relay that closed are both "no more circuit", but only the first is
@@ -151,7 +162,7 @@ export bool pumpFor(Link l, i32 millis) {
   match (read.wait()) {
     case Data(bytes): { live = feedLink(l, bytes); }
     case End: { }
-    case Failed(why): { l.core.warn("tor: the relay connection failed: " + why); }
+    case Failed(why): { l.core.warn("tor: " + (l.peer == "" ? "the relay" : l.peer) + " connection failed: " + why); }
   }
   return live;
 }

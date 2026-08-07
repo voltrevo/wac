@@ -46,6 +46,22 @@ if (!haveTor) {
   );
 }
 
+/**
+ * The machine's load, for a failure message.
+ *
+ * Issue 0106's third suggestion, and it belongs here rather than in the wac: a protocol library
+ * reaching into `/proc` to describe its own environment would be the wrong layer, and this is the
+ * layer that already knows it is a test. The one fact that decides whether a red gate means "re-run"
+ * or "investigate", put where somebody reading the failure will see it.
+ */
+function load(): string {
+  try {
+    return `load ${Deno.readTextFileSync("/proc/loadavg").split(" ").slice(0, 3).join(" ")}`;
+  } catch {
+    return "load unknown";
+  }
+}
+
 /** A running child, with everything it has said so far. */
 type Running = { child: Deno.ChildProcess; said: () => string };
 
@@ -69,7 +85,7 @@ async function until(what: string, ok: () => boolean, ms: number): Promise<void>
     if (ok()) return;
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+  throw new Error(`timed out after ${ms}ms waiting for ${what} (${load()})`);
 }
 
 /**
@@ -271,7 +287,7 @@ Deno.test({
 
     tor.refresh();
     if (got.code !== 0) {
-      throw new Error(`curl through tor failed: ${err}\n--- tor.log ---\n${tor.log()}`);
+      throw new Error(`curl through tor failed (${load()}): ${err}\n--- tor.log ---\n${tor.log()}`);
     }
 
     // First: did it go through us at all? The relays are the first three entries in `running`; the

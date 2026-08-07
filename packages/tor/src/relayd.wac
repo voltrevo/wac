@@ -768,7 +768,7 @@ struct Circ {
  * something real to hold.
  */
 Circ newCirc(Core core, Cli cli, i32 circId, Hop hop, Pending<Read> idle, u8[] kh) {
-  return Circ(circId, hop, false, Link(core, cli, -1, u8[0](), u8[0](), true, u8[0]()), 0, idle,
+  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, idle,
               -1, Buf.create(), false, -1, -1, idle, 0, 0, 0, 0, false, 0, 0,
               kh, false, -1, -1);
 }
@@ -1648,7 +1648,7 @@ struct Extended {
  * is extending to, which is why `parseExtend2` hands over opaque bytes and this does not inspect them.
  */
 Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
-  Extended bad = Extended(false, Link(core, cli, -1, u8[0](), u8[0](), true, u8[0]()), 0, u8[0]());
+  Extended bad = Extended(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, u8[0]());
 
   Extend want = parseExtend2(extendBody);
   if (!want.ok) {
