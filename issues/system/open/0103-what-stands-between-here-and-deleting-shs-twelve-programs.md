@@ -89,3 +89,46 @@ and `packages/sh` runs the applets it is handed.
 is the opposite of what the flag asks. The corpus contains `seq 1 100000 | grep -q 5` precisely because
 `packages/sh`'s does stop, and measuring through box's ran until it was killed, which is why
 `corpusThrough.ts` bounds each script through `timeout(1)` and reports what never finished.
+
+## 2026-08-07, later: the blocker is cleared, and the drift got worse
+
+**The split is done.** `packages/sh/test/corpus.ts` holds the corpus and `needsProgram`;
+`packages/box/test/corpus.test.ts` runs the 256 of 673 scripts that name one of the eleven through
+`packages/box/src/bin/sh.wac` against bash, on output *and* exit status. `tools/corpusThrough.ts`
+imports the corpus instead of scraping it out of the test file with a regular expression.
+
+So the thing this issue said had to happen first has happened: the scripts that need programs are owned
+by a suite that runs them against `packages/box`'s applets, and `packages/sh`'s differential can drop to
+the language cases in the same commit that deletes its copies.
+
+**Held to the same corpus for the first time, the two halves had drifted both ways.**
+
+- `packages/box`'s grep had no `-x`, which `packages/sh`'s has always had. Four scripts. Implemented.
+- `packages/sh`'s `wc` does **not** pad its counts into a column when given several files, and GNU and
+  `packages/box`'s do:
+
+  ```
+  $ wc -l big.txt small.txt      bash: "120 big.txt / ␣␣4 small.txt / 124 total"
+                                 sh:   "120 big.txt / 4 small.txt / 124 total"
+  ```
+
+  Not fixed, deliberately: `countWidth` and `rightAlign` are already in `program.wac`, so the machinery
+  is there and something about `sizeKnown` is wrong — and fixing a copy that this issue exists to delete
+  is the work this issue exists to stop doing. It is written here as the third piece of evidence in one
+  week that two implementations with two suites drift silently.
+- Also found by hand: `sort -u` and `uniq -c` are not implemented in `packages/sh` and are in
+  `packages/box`.
+
+## What is left, exactly
+
+1. Delete the eleven from `program.wac`, keeping `optionRefusal` — `exec.wac`'s `ls` builtin uses it and
+   it is not a program. It wants its own file.
+2. `exec.wac` dispatches externals through `run`/`names`; with no programs left, that becomes
+   `Shell.external` or "command not found". `sh.wac` imports `isProgram`, `programNames` and
+   `runStreaming`, and `sealed.wac` imports `programNames`.
+3. `packages/sh/test/differential.test.ts` runs `CORPUS.filter((s) => !needsProgram(s))`.
+4. `packages/ssh/src/sshd.wac` serves a session with sh's shell and would serve one with no commands.
+   `ssh` does not depend on `box` today; it can, with no cycle, and that is the edge this adds.
+
+None of it is hard and none of it can be done half way: a shell with no commands and a suite that still
+expects them is a red tree, so it is one commit.
