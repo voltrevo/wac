@@ -12,6 +12,7 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";
 import { cmpBytes, splitLines } from "../lib/lines.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -20,6 +21,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 i32 MAX_LINES() { return 4000; }
 
 export i32 diff(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <old> <new>"); return 2; }
   Input x = readInput(core, cli, a, 0);
   if (!x.ok) { return 2; }

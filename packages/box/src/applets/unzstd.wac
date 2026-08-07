@@ -7,10 +7,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { unzstdStream } from "../../../zstd/src/stream.wac";
 
 export i32 unzstd(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   Input in = openStream(core, cli, a, 0);
   if (!in.ok) { return 1; }
   unzstdStream(cli.readChunk, cli.write);

@@ -75,6 +75,15 @@ export struct Args {
    * way to ask for that, so reading `argv` printed the applet's own name back at the caller.
    */
   string[] own;
+  /**
+   * The first `--long` option given, spelled as it was written, or `""`.
+   *
+   * A long option is not a run of short ones, and reading it as one produced the worst message in the
+   * set: `sort --key=2` lost its first two bytes to the same loop that reads `-iv`, so the refusal
+   * named the *dash* — `sort: invalid option -- '-'`. Kept whole here so `refuseFlags` can say what
+   * was actually written. Only the first, because the refusal stops at the first thing it cannot do.
+   */
+  string longOpt;
 }
 
 export bool has(Args a, i32 flag) {
@@ -121,6 +130,7 @@ export Args parseList(string[] argv, i32 first, string name) {
   bool hasNum = false;
   string numSign = "";
   string badNum = "";
+  string longOpt = "";
   i32 i = first;
   bool optionsOver = false;
   while (i < argv.len()) {
@@ -132,6 +142,12 @@ export Args parseList(string[] argv, i32 first, string name) {
     if (!optionsOver && s == "--") { optionsOver = true; i++; continue; }
     if (optionsOver || !isFlag(s)) { scratch[at] = s; at++; i++; continue; }
     u8[] b = s.toBytes();
+    // `--name` and `--name=value`: recorded, not decomposed. `--` itself was taken above.
+    if (b[1] == '-') {
+      if (longOpt == "") { longOpt = s; }
+      i++;
+      continue;
+    }
     if (b[1] >= '0' && b[1] <= '9') {
       num = atoi(string.fromBytes(slice(b, 1, b.len())));          // -5
       hasNum = true;
@@ -185,7 +201,7 @@ export Args parseList(string[] argv, i32 first, string name) {
   for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
   string[] own = string[argv.len() - first > 0 ? argv.len() - first : 0](fill: "");
   for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
-  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own);
+  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, longOpt);
 }
 
 /**

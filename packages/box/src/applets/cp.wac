@@ -4,10 +4,12 @@
 
 import { Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { streamAtomic } from "../lib/safe.wac";
 
 export i32 cp(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <src> <dst>"); return 2; }
   Input in = openStream(core, cli, a, 0);
   if (!in.ok) { return 1; }

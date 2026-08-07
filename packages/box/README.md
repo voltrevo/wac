@@ -306,6 +306,19 @@ source — which caught three letters missing from the table on the side that pr
 sentence: `tr -C`, `rm -R` and `split -C`, all of them the *second* spelling on a line GNU writes as
 `-r, -R, --recursive`.
 
+**A long option is one thing, not a run of short ones.** `sort --key=2` went through the loop that reads
+`-iv` and came out refusing the *dash* — `sort: invalid option -- '-'`, naming a character the caller did
+not type. `Args.longOpt` keeps it whole, and since no applet here implements a single long option, the
+answer needs no table:
+
+```
+$ box ls --all      ls: long options are not implemented: --all
+```
+
+That is the one statement that is true of every applet, so this half of the check runs for all of them
+rather than only the twenty-eight with a short-flag table — and GNU's own split between "unrecognized"
+and a real option we lack is one this cannot make honestly, so it claims neither.
+
 Two applets stay outside it, and both are facts about the real tools. `echo` is not a getopt program —
 `echo -x` prints `-x`, so a refusal there would invent an error GNU does not have. And a short
 `acceptedFlags` list holds letters where ignoring *is* GNU's behaviour: `cat -u`, documented as ignored,

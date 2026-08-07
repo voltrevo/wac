@@ -14,6 +14,7 @@
 
 import { Cli, Core, FileResult, Stat, Socket } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 import { concat, slice } from "../lib/bytes.wac";
 import { Parsed, Request, parseRequest } from "../../../http/src/request.wac";
@@ -21,6 +22,7 @@ import { Response, write as writeResponse } from "../../../http/src/response.wac
 import { Read } from core;
 
 export i32 httpd(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   i32 port = a.num == 0 ? 8080 : a.num;
   string root = a.rest.len() > 0 ? a.rest[0] : ".";
 

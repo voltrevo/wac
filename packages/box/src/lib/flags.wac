@@ -32,6 +32,14 @@ import { Args } from "./args.wac";
  * everything for an applet nobody listed would be a worse failure than the one this fixes.
  */
 export bool refuseFlags(Core core, Args a) {
+  // **No applet here implements a single long option**, so there is no table for them and no need of
+  // one: the statement that covers every case is that this program takes short options only. GNU
+  // separates "a long option we do not have" from "a long option nobody has" and this cannot, so it
+  // claims neither — saying "unrecognized" would blame a caller who wrote `--reverse`, which is real.
+  if (a.longOpt != "") {
+    core.warn(a.name + ": long options are not implemented: " + a.longOpt);
+    return true;
+  }
   if (!flagsChecked(a.name)) { return false; }
   string mine = implementedFlags(a.name);
   string free = acceptedFlags(a.name);

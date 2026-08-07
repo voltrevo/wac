@@ -3,8 +3,10 @@
 
 import { Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 
 export i32 mv(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <src> <dst>"); return 2; }
   Change c = cli.rename(a.rest[0], a.rest[1]).wait();
   if (c.ok()) { return 0; }

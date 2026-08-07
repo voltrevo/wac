@@ -18,7 +18,7 @@ import "../../../harness/spawnRetry.ts";
 // `implementedFlags` against what the applets actually read — `has(a, 'X')` in their source. Neither
 // table is allowed to be a memory of what was true when it was written.
 //
-// The behavioural half is deliberately small: four spawns to prove the two sentences reach a caller.
+// The behavioural half is deliberately small: a handful of spawns to prove the sentences reach a caller.
 // `packages/sh/test/gaps.test.ts` explains why a per-option sweep is not worth 350 processes, and the
 // property it would check is the one the table check above already establishes.
 
@@ -156,6 +156,18 @@ Deno.test("the two sentences reach a caller", async () => {
     assertEquals(box(["sort", "-Q"]).err, "sort: invalid option -- 'Q'\nTry 'sort --help' for more information.");
     // `echo` is not a getopt program and must not be dragged into this: `echo -x` prints `-x`.
     assertEquals(box(["echo", "-x"]).err, "");
+
+    // A long option is one thing, not a run of short ones. Read as short flags, `--key=2` refused the
+    // *dash*: "sort: invalid option -- '-'", a message naming a character the caller did not choose.
+    assertEquals(box(["sort", "--key=2"]).err, "sort: long options are not implemented: --key=2");
+    // Every applet, not only the ones with a short-flag table — the claim is about this whole program.
+    // These are dropped silently otherwise, which is the ignoring this file exists to end.
+    assertEquals(box(["ls", "--all"]).err, "ls: long options are not implemented: --all");
+    assertEquals(box(["diff", "--unified"]).err, "diff: long options are not implemented: --unified");
+    // And `echo` here too: GNU's prints `--nonsense` and says nothing.
+    assertEquals(box(["echo", "--nonsense"]).err, "");
+    // `--` still ends the options rather than being one.
+    assertEquals(box(["echo", "--", "hi"]).err, "");
   } finally {
     await Deno.remove(built);
   }

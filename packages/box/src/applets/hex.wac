@@ -3,10 +3,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Span, nextSpan } from "../lib/input.wac";
 import { encode as hexencode } from "../../../codec/src/hex.wac";
 
 export i32 hex(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   i32 at = 0;
   bool opened = false;
   while (true) {

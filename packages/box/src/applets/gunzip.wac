@@ -11,10 +11,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { gunzipStream } from "../../../gzip/src/inflate.wac";
 
 export i32 gunzip(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   Input in = openStream(core, cli, a, 0);
   if (!in.ok) { return 1; }
   return gunzipStream(cli.readChunk, cli.write);

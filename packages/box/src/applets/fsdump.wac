@@ -12,11 +12,13 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { dump } from "../../../fs/src/image.wac";
 
 export i32 fsdump(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // One image per operand, named when there is more than one — the same shape the checksums here use, and
   // for the same reason: reading the first operand and stopping is wac-mono 0096.
   i32 files = operandCount(a, 0);
