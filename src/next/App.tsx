@@ -5,11 +5,13 @@ import { useEffect, useState } from "react";
 import Home from "./Home";
 import Language from "./Language";
 import Stack from "./Stack";
+import Run from "./Run";
+import Checked from "./Checked";
 import Roadmap from "./Roadmap";
 import Playground from "../Playground";
 import type { Route } from "./ui";
 
-const ROUTES: Record<string, Route> = { "": "home", language: "language", stack: "stack", roadmap: "roadmap", playground: "playground" };
+const ROUTES: Record<string, Route> = { "": "home", language: "language", run: "run", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
 
 function parse(): { route: Route; anchor: string | null } {
   const [first, second] = window.location.hash.replace(/^#\/?/, "").split("/");
@@ -33,7 +35,9 @@ export default function App() {
 
   switch (route) {
     case "language": return <Language />;
+    case "run":      return <Run />;
     case "stack":    return <Stack />;
+    case "checked":  return <Checked />;
     case "roadmap":  return <Roadmap />;
     // The playground is a tool rather than a page, and is carried over as it is — sending a reader
     // to the other site to use it would be a stranger seam than its styling being a step behind.
