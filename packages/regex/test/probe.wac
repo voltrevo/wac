@@ -7,9 +7,56 @@
 
 import { Program, NO_MATCH, BUDGET } from "../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../src/regex.wac";
+import { compileBasic, toExtended } from "../src/basic.wac";
+import { Rewritten } from "../src/posix.wac";
+import { compileExtended } from "../src/posix.wac";
 
 /** 1 = matched, 0 = no match, -1 = pattern rejected, -2 = step budget exhausted. */
 export i32[] exec(u8[] pattern, u8[] input, i32 at) { return execFlags(pattern, input, at, false); }
+
+/**
+ * A **basic** regular expression, matched. Same status convention as `exec`.
+ *
+ * Separate from `exec` because the two dialects read the same bytes differently, and the whole point of
+ * `test/basic.test.ts` is that the one this returns is `grep`'s reading.
+ */
+export i32[] execBasic(u8[] pattern, u8[] input, i32 at) {
+  Program? prog = compileBasic(pattern).program;
+  if (prog is null) { return i32[1](fill: -1); }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, at, caps, 1000000);
+  if (found == BUDGET()) { return i32[1](fill: -2); }
+  i32[] out = i32[1](fill: found == NO_MATCH() ? 0 : 1);
+  return out;
+}
+
+/** What a basic pattern becomes, so a failing case can be read rather than guessed at. Empty if it will not translate. */
+export u8[] basicAsExtended(u8[] pattern) {
+  Rewritten r = toExtended(pattern);
+  return r.pattern is null ? u8[0]() : r.pattern!;
+}
+
+/** Why a pattern was refused, so a test can check the sentence and not only the refusal. */
+export string whyBasic(u8[] pattern) { return compileBasic(pattern).why; }
+export string whyExtended(u8[] pattern) { return compileExtended(pattern).why; }
+
+/**
+ * A POSIX **extended** regular expression — `grep -E`. Same status convention as `exec`.
+ *
+ * Not the same as `exec`, and that is the point: `exec` is the JavaScript dialect, where `[[:digit:]]`
+ * is a set of six characters and `[]a]` is empty. A `grep -E` went through `exec` and got both of those
+ * silently wrong.
+ */
+export i32[] execExtended(u8[] pattern, u8[] input, i32 at) {
+  Program? prog = compileExtended(pattern).program;
+  if (prog is null) { return i32[1](fill: -1); }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, at, caps, 1000000);
+  if (found == BUDGET()) { return i32[1](fill: -2); }
+  return i32[1](fill: found == NO_MATCH() ? 0 : 1);
+}
 
 /** As `exec`, with the `i` flag. */
 export i32[] execFlags(u8[] pattern, u8[] input, i32 at, bool ignoreCase) {

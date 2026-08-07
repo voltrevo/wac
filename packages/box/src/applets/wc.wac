@@ -20,6 +20,7 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
@@ -27,6 +28,7 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 struct Counts { i32 lines; i32 words; i32 bytes; }
 
 export i32 wc(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   i32 files = operandCount(a, 0);
   // No operands means standard input, which is one unnamed pass.
   i32 count = files == 0 ? 1 : files;
@@ -92,7 +94,14 @@ export i32 wc(Core core, Cli cli, Args a) {
   // or seven when there is no file to take a size from.
   i32 asked = (has(a, 'l') ? 1 : 0) + (has(a, 'w') ? 1 : 0) + (has(a, 'c') ? 1 : 0);
   bool single = asked == 1 && count == 1;
-  i32 width = single ? 1 : (files == 0 ? 7 : digits(total.bytes));
+  // **A `-` operand is standard input, and standard input has no size to stat** — so `wc -` pads to seven
+  // exactly as `wc` with no operand does, and prints `-` as the label. The rule was written as "no
+  // operands", which was the only way to reach stdin before a lone dash meant it.
+  bool fromStdin = files == 0;
+  for (i32 f = 0; f < files; f++) {
+    if (a.rest[f] == "-") { fromStdin = true; }
+  }
+  i32 width = single ? 1 : (fromStdin ? 7 : digits(total.bytes));
   for (i32 f = 0; f < count; f++) {
     core.log(row(a, Counts(lines[f], words[f], sizes[f]), labels[f], width));
   }

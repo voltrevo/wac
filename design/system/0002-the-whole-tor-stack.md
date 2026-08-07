@@ -2077,3 +2077,267 @@ by-hand runs kept going wrong.
 bundle, so `network.wac` cannot start a C tor, and every `live` row in `INTEROP.md` is still witnessed
 by hand. This condition was always about a network with no C in it. The other half of step 7, *each of
 our components inside a chutney network of real tors*, is a separate claim and is not this.
+
+### The C half was never blocked on the platform
+
+This document said for a week that `network.wac` cannot start a C tor, and drew from it that the C
+half of the interop matrix "stays a shell script". The first clause is true and deliberate — `Cli.spawn`
+takes a worker bundle so that what a child may do is the *parent's* choice, and `--allow-run` cannot
+express that at any granularity. The second does not follow from it, and nobody checked.
+
+A C tor never needed to live inside the capability world. It needs to be **a peer on a socket**. The
+suite is TypeScript, `tools/runTests.ts` already gives every test subprocess `--allow-run` and
+`--allow-net`, and `network_tor.test.ts` was already shelling out — to run the launcher. So
+`test/ctor_live.test.ts` starts a real tor beside the wac network and requires it to bootstrap through
+it. No platform change was needed. What needs one is `network.wac` *owning* a C tor, which is a much
+weaker claim than the one being made.
+
+**It found a bug on its first run.** Our responder's NETINFO carried a timestamp of zero:
+`relayHandshakeReply` called `relayNetinfo`, whose timestamp is hardcoded to zero, rather than
+`relayNetinfoAt`, which takes one. So every C tor that ever handshook with us read the epoch and
+warned that one of us was out by twenty thousand days — then bootstrapped regardless, because that
+check's recommendation is `warn` rather than `fail`. The unit test walked the NETINFO cell and
+asserted its command and its length and never looked at the four bytes in question.
+
+That is the whole case for this file in one bug: **a wrong value that still works is invisible to a
+suite where both ends are ours.** The same shape as D1 and the same shape as the symmetric-oracle
+problem — our code agreeing with itself proves the least interesting thing.
+
+### The certificate that says what we are
+
+The C tor test's second finding, one slot after the first, and it is a better one.
+
+tor logs `TLS error: expecting an rsa key` three times while handshaking with our relay, and
+bootstraps anyway. Chasing where it comes from: `tor_x509_cert_new` asks *every* certificate it wraps
+for an RSA key so it can digest it, `tor_tls_cert_get_key` returns NULL for anything else — its own
+comment says "Watch out! This returns NULL if the cert's key is not RSA" — and the OpenSSL error it
+left behind is reported by the next `check_no_tls_errors()`. So the message is tor being noisy about a
+key type it handles correctly. Harmless.
+
+The reason it is there is not harmless. **tor's link certificate is RSA and ours is Ed25519.** Three
+independent confirmations: tor builds its link key with `crypto_pk_generate_key`; tor complains at
+runtime that our certificate is not RSA; and `openssl s_client` against a running `relayd` reports
+`Public Key Algorithm: ED25519`.
+
+A relay of ours is therefore distinguishable from every real relay by the *first thing it sends*. Not
+by traffic analysis or timing — by a field in the certificate, visible to anyone on the path, before a
+single Tor cell is exchanged. For a package whose point is to be a Tor implementation rather than a
+Tor-shaped one, that is a real difference and it had never been written down.
+
+It survived because it works. The ed25519 chain in the CERTS cell is what binds a modern link
+handshake, and the TLS certificate under it is bound by *digest*, not by key type — so nothing in the
+protocol objects, and no test where both ends are ours could have an opinion. The same shape as the
+NETINFO zero: correct enough to pass, wrong enough to be visible from outside.
+
+**What it costs to fix.** An RSA link certificate means our TLS server signing CertificateVerify with
+RSA-PSS. We have PSS verification and raw RSA signing; EMSA-PSS encoding on the signing side is the
+missing piece, and it is pinnable against OpenSSL like the rest. That is the next piece of work rather
+than a decision anyone needs to make.
+
+`rsaSignPss` is that piece, and it is done. RFC 8017 §9.1.1, the exact inverse of the verifier that
+was already here, with the salt a parameter for the reason every salt in this repository is one — PSS
+is precisely the algorithm where a *wrong* salt still verifies, because the verifier recovers whatever
+salt the signer used, so a signer reaching for its own randomness could repeat itself forever and pass
+every check we could write.
+
+The differential is the direction that had never been checked. Every PSS case here had node signing
+and us verifying, which establishes that our *verifier* reads their encoding and says nothing at all
+about ours producing one — and the encoding is a masked block, a salt recovered from the signature,
+and a final step clearing bits the modulus has no room for. Any of those can be wrong in a way our own
+verifier accepts, because the two halves would be wrong together. So now node verifies what we sign,
+at three salt lengths, and a one-byte fault in the trailer was planted to confirm the assertion is
+load-bearing rather than decorative.
+
+Still to do: presenting the RSA certificate, which is the TLS server offering `rsa_pss_rsae_sha256`
+in CertificateVerify and `relayd` generating an RSA link certificate instead of an Ed25519 one.
+
+### The certificate now says nothing
+
+`relayd` presents an RSA link certificate. `openssl s_client` against it:
+
+    Signature Algorithm: sha256WithRSAEncryption
+    Public Key Algorithm: rsaEncryption
+        Public-Key: (1024 bit)
+
+which is what a real relay presents, where the same command said `ED25519` two slots ago. C tor still
+bootstraps through it and no longer logs `expecting an rsa key` or `Unhandled OpenSSL errors` — both
+now assertions in `ctor_live.test.ts`, on strings that were in its log before the change and are not
+in it after.
+
+The key is **separate from the identity and short-lived**, as tor's link key is. Reusing the identity
+key would have meant the long-lived private key doing a signature on every connection, which is a
+worse property than the fingerprint this closes. 1024-bit, which is tor's size and also the only size
+that works: issue 0099 records that a 2048-bit private-key operation does not finish in any time a
+peer would wait, and this key signs a CertificateVerify per connection.
+
+**Three commits for one field**, and the shape is worth keeping. `rsaSignPss` was the primitive and
+its differential was the first time anything checked our PSS *signing* rather than our verifying;
+`tlsServerInitRsa` was the scheme, proved by OpenSSL generating the key and the certificate and its
+own client reading the body; and this is the caller. None of it was hard. What was hard was noticing,
+and the only thing that noticed was a C tor in the suite.
+
+**What remains different, and it is small.** tor's link certificate is *signed by the identity key*;
+ours is self-signed. Nothing on this path checks that — the ed25519 chain in the CERTS cell binds the
+TLS certificate by digest, which is what tor verifies for a modern handshake — but it is a difference
+and it is written here rather than left to be rediscovered.
+
+### An attempt at the streams row, and what it turned up instead
+
+`INTEROP.md` marks streams **live** in both directions on a run somebody did by hand — `stream 5129
+open to …:8087`, 5004 bytes byte-identical. Automating it is the obvious next row to move into the
+suite, and the attempt did not land. What it found is worth more than the test would have been.
+
+Driving a C tor's `SocksPort` at a loopback HTTP server, with `tor -f` at `Log info`, tor says:
+
+    connection_ap_handshake_send_begin(): Sending relay cell 1 on circ … to begin stream 7400.
+    connection_edge_process_relay_cell_not_open(): 'connected' received … streamid 7400 after 0 seconds.
+    handle_relay_cell_command(): -1: end cell (closed normally) for stream 7400. Removing stream.
+    connection_free_minimal(): Freeing linked Socks connection [open] with 0 bytes on inbuf, 0 on outbuf.
+
+three times over. So the exit answers `BEGIN` with `CONNECTED` and then ends the stream **carrying no
+bytes** — the shape of a stream that opened and immediately closed rather than one that failed to
+open. Whether the exit is ours or whether these are tor's own predicted streams during bootstrap is
+not established: the diagnostic that would say so is a relay's own `stream … open to` line, and the
+run did not capture one either way.
+
+The test was written, failed, and has been removed rather than committed. It asserted that a relay of
+ours reported opening the stream, which it never did — while `curl` returned the body byte-identical,
+which is the combination that makes it untrustworthy rather than merely failing. One of those two
+observations is about something other than what the test claims to measure, and committing a test
+whose passing condition I cannot explain is worse than not having it.
+
+**What the next attempt should establish first**, before asserting anything: whether a relay of ours
+logs `open to <host>:<port>` at all during that fetch. That single line separates "our exit carried
+it" from "the bytes arrived some other way", and everything else follows from knowing which.
+
+### The streams row, and a test that measured nothing
+
+The doc said the next attempt should establish one thing first — whether a relay of ours logs
+`open to <host>:<port>` during the fetch — before asserting anything. It did, and the answer explained
+everything.
+
+**It did not.** curl returned 6900 bytes byte-identical, exit code zero, and no relay of ours had
+opened a stream. tor's own log contained no SOCKS connection at all: its last activity was internal
+directory tunnels, minutes before curl ran.
+
+`NO_PROXY` is `localhost,127.0.0.1` in this container. curl honours it, so it **ignored
+`--socks5-hostname` entirely** and connected straight to the test's own HTTP server on loopback. The
+body was identical because it was the same server; nothing else was involved. `--noproxy ""` and a
+cleared environment, and the same run says:
+
+    relayd: [2]  stream 28926 open to 127.0.0.1:18802 on handle 4
+
+That is `src/network.wac`'s founding complaint happening to me — *"four consecutive runs produced
+confident numbers about the relays while actually measuring … a proxy error page. None of them said
+so."* The proxy configuration this sandbox needs in order to reach anything is also configured to get
+out of the way for loopback, which is where every test network here lives.
+
+**The lesson is about which assertion is load-bearing.** The body being right was necessary and proved
+nothing: it is satisfied identically by the thing under test working and by the thing under test being
+bypassed. The relay's own line is satisfied by only one of those, so it goes first, and the body check
+after it. A test whose strongest-looking assertion is also its most easily satisfied one is worse than
+no test, because it reports success in exactly the case you most need told about.
+
+The previous slot removed this test rather than commit it, on the grounds that its passing condition
+was unexplained. That was right, and the explanation was one `env | grep` away.
+
+### The C-tor-to-our-onion-service row, attempt one
+
+Not landed. Recorded because the next attempt should start from what is already known rather than
+from the top.
+
+Everything up to the client works. Our service, started against the wac network and bootstrapping
+through it, says:
+
+    hsserviced: vfsow6hb…ellulmdad
+    consensus verified: 1 of 1 authorities signed
+    hsserviced: bootstrapped, 3 relays
+    hsserviced: introduction circuit wacc3 -> wacc1 -> wacc2
+    hsserviced: published to 6 directories
+    hsserviced: waiting for a client
+
+Six uploads, both time periods, three HSDirs each. Then `curl --socks5-hostname` through a C tor at
+that address times out at 90 seconds with no rendezvous ever reported by the service.
+
+**One hypothesis checked and eliminated:** that the microdesc consensus — the flavour a client uses —
+might carry different flags from the ns one, leaving tor with no relay it considers an HSDir. Both
+flavours carry `s Exit Fast Guard HSDir Running Stable V2Dir Valid`, so that is not it.
+
+**What the next attempt needs first**, and this is the same discipline the streams row eventually
+taught: `Log info` rather than `Log notice` in the torrc, and then the question is narrow — does tor
+compute the same responsible HSDirs we uploaded to, does it fetch a descriptor, and does it decrypt
+one. At `notice` the log says nothing about any of that, which is why this attempt ran out of room.
+Our own client fetches from this same service in `network_tor.test.ts`, so the descriptor is
+retrievable and decryptable by *something* that computes the ring the way we do.
+
+**A latent bug fell out of the attempt and is fixed.** `startTor` stood up its own network, which was
+fine while one test used it and wrong the moment a test wanted a network *and* a tor: it got two sets
+of three relays writing to the same descriptor paths in one directory. The network is passed in now.
+
+### The onion row: the stack works, the harness does not
+
+Attempt two. The doc said to put tor at `Log info` and ask three narrow questions. Doing that as a
+standalone probe answered a bigger one first: **the whole path works.**
+
+    >>> service at 6cffmbyb…dqpoarid.onion
+    hsserviced: published to 6 directories
+    hsserviced: waiting for a client
+    >>> curl exit=0 body="hello from behind an onion\n"
+    hsserviced: an introduction, meeting at 127.0.0.1:39667
+    hsserviced: rendezvous joined, the client is hop 4
+    hsserviced: served 92 bytes to a client
+
+A C tor client, our relays, our introduction point, our rendezvous point, our service. Step 6's
+condition, reproduced on demand rather than remembered from a date.
+
+**The test built from the same steps still fails**, and that is now the whole of the problem. In it
+the service publishes to six directories and waits, tor reaches `Bootstrapped 100%`, and curl times
+out at ninety seconds — a *timeout*, not a refusal, so tor accepted the SOCKS request and never
+finished it.
+
+What has been eliminated: a SocksPort collision (a refusal would look different), the microdesc
+consensus lacking HSDir flags (checked, both flavours carry them), and the stack itself (the probe).
+
+What differs between the probe and the test, and has not been eliminated: the probe writes
+`Log info` and spawns tor with its streams to `null`; the harness writes `Log notice` and pipes and
+pumps both. Neither should matter, which is exactly why it is worth finding out — an
+onion-service fetch that depends on the log level or on who drains a pipe is a fact about something,
+and the something is more likely ours than tor's.
+
+The test is not committed, for the second time, on the same principle as the first: a test whose
+behaviour I cannot explain is worse than none. The difference from last time is that the row is no
+longer in doubt — only its automation is.
+
+### It was not the harness, and it was not the pipe either
+
+The previous entry said the stack works and the harness does not, on the strength of one probe that
+succeeded and one test that did not. Wrong, and wrong twice over.
+
+Bisecting the two differences — tor's log level, and whether its stdio is piped or sent to
+`/dev/null` — produced a clean-looking table: 2 of 3 runs with stdio to `null` succeeded, 0 of 4 with
+it piped. A tidy answer, and false. **A runaway `deno` from an earlier failed run of my own had been
+at 94% of a core for 56 minutes**, across every one of those seven runs. Killing it and repeating the
+piped configuration gave fail, succeed, succeed.
+
+Ten runs now: four succeed in 3.4–8.0s, six time out at 60. It either works quickly or not at all,
+and no configuration predicts which. Filed as [issue
+0107](../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md).
+
+**Three lessons, and the third is the one that cost most.**
+
+*One green run and one red run of nearly-identical setups is evidence of flakiness before it is
+evidence of a difference.* Two slots went into hunting a difference that was never there. The cheap
+move — running the working configuration a second time — was available from the first minute.
+
+*A tidy result from a contaminated machine is still contaminated.* 0 of 4 versus 2 of 3 looked like
+a finding. It was a load artifact, and the thing that revealed it was the shared suite going red for
+an unrelated reason, which forced a look at `ps`.
+
+*Clean up spawned processes on the failure path, not only the success path.* The stray existed because
+a test that threw skipped its own teardown. It then degraded every measurement taken afterwards,
+including the ones being used to diagnose it — and it made the shared suite red for whoever else was
+running one.
+
+`INTEROP.md`'s onion rows stay `live`: a C tor really does fetch a page from a service we host, and
+that has now been reproduced on demand several times. What is new is that the table says it is not
+reliable, which is a distinction it has never drawn before and should have.

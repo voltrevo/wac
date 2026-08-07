@@ -1,4 +1,5 @@
 // The key schedule at the host boundary.
+import { sigEd25519 } from "../../src/handshake.wac";
 import { expandLabel, deriveSecret, earlySecret, handshakeSecret, masterSecret,
          trafficKeyIv, finishedVerify, nextTrafficSecret, emptyHash, zeroKey }
   from "../../src/keyschedule.wac";
@@ -69,7 +70,7 @@ export u8[] tlsServerHello(u8[] r, u8[] sid, i32 suite, i32 group, u8[] ks) {
 }
 export u8[] tlsEncryptedExtensions() { return encryptedExtensions(); }
 export u8[] tlsCertificate(u8[] der) { return certificate(der); }
-export u8[] tlsCertificateVerify(u8[] sig) { return certificateVerify(sig); }
+export u8[] tlsCertificateVerify(u8[] sig) { return certificateVerify(sigEd25519(), sig); }
 export u8[] tlsCertVerifyContent(u8[] th, bool server) { return certificateVerifyContent(th, server); }
 export u8[] tlsFinished(u8[] vd) { return finished(vd); }
 export u8[] tlsHandshakeMessage(i32 t, u8[] b) { return handshakeMessage(t, b); }
@@ -78,9 +79,13 @@ export u8[] tlsMessageBody(u8[] m) { return messageBody(m); }
 export i32 tlsMessageLength(u8[] b) { return messageLength(b); }
 
 // The server state machine.
-import { tlsServerInit, tlsServerFeed, tlsServerSend, tlsPhase, tlsRecordNeeded,
+import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsPhase, tlsRecordNeeded,
          tlsServerClose, tlsServerAlert } from "../../src/server.wac";
 export u8[] srvInit(u8[] cert, u8[] seed, u8[] eph, u8[] rnd) { return tlsServerInit(cert, seed, eph, rnd); }
+/** A server whose certificate carries an RSA key, signing CertificateVerify with RSA-PSS. */
+export u8[] srvInitRsa(u8[] cert, u8[] n, u8[] e, u8[] d, u8[] eph, u8[] rnd) {
+  return tlsServerInitRsa(cert, n, e, d, eph, rnd);
+}
 export u8[] srvFeed(u8[] state, u8[] input) { return tlsServerFeed(state, input); }
 export u8[] srvSend(u8[] state, u8[] data) { return tlsServerSend(state, data); }
 export i32 srvPhase(u8[] state) { return tlsPhase(state); }

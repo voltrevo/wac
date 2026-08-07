@@ -1,47 +1,84 @@
-// Selected fields of each line: `cut -d, -f2`. Tab is the delimiter by default.
+// Selected fields or bytes of each line: `cut -d, -f2,4-6`. Tab is the delimiter by default.
+//
+// The list used to be read with `atoi`, which stops at the first comma — so `cut -f2,3` printed field 2
+// and said nothing, `cut -f2-4` printed field 2, and `cut -f-3` was refused as though no list had been
+// given. `lib/ranges.wac` is the syntax; this is what the two flags do with it.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args, flagValue } from "../lib/args.wac";
+import { Args, flagValue, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
-import { slice } from "../lib/bytes.wac";
-import { atoi } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { tryHelp } from "../lib/operands.wac";
+import { Ranges, parseRanges } from "../lib/ranges.wac";
 
 export i32 cut(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   string d = flagValue(a, 'd');
   i32 delim = d == "" ? '\t' : d.toBytes()[0];
-  i32 field = atoi(flagValue(a, 'f'));
-  // Either spelling: `-f2` and `-f 2` are the same, since `takesValue` in `args.wac` knows that `-d`
-  // and `-f` have values and consumes them. The detached form used to arrive here as no value at all
-  // and got this message, which is how GNU's own documented spelling was a usage error.
-  if (field < 1) { core.warn("usage: " + a.name + " -f<n> [-d<c>] [file]"); return 2; }
+  // **`-b` and `-c` are the same selection over bytes**, which in the C locale is what a character is —
+  // and this repo compares in the C locale everywhere. They were refused as unimplemented; the list
+  // parser is the only thing they needed.
+  bool byBytes = has(a, 'b') || has(a, 'c');
+  string list = byBytes ? (has(a, 'b') ? flagValue(a, 'b') : flagValue(a, 'c')) : flagValue(a, 'f');
+  if (list == "") {
+    // GNU says which of the several things `cut` needs was missing; "usage: cut -f<n>" did not.
+    core.warn(a.name + ": you must specify a list of bytes, characters, or fields");
+    tryHelp(core, a.name);
+    return 1;
+  }
+  Ranges want = parseRanges(a.name, list);
+  if (!want.ok) {
+    core.warn(want.error);
+    tryHelp(core, a.name);
+    return 1;
+  }
 
   Reader r = Reader.create(core, cli, a, 0);
-  if (!r.ok) { return 1; }
   Sink out = Sink.create(cli);
   while (true) {
     Line l = r.next(core, cli, a);
-    if (!l.ok) { out.flush(); return r.broken ? 1 : 0; }
-    emitTo(out, fieldOf(l.bytes, delim, field), true);
+    if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
+    emitTo(out, byBytes ? bytesOf(l.bytes, want) : fieldsOf(l.bytes, delim, want), true);
   }
   return 0;
 }
 
 /**
- * The `n`th field, or the whole line when it has no delimiter — which is what `cut` does,
- * on the reasoning that a line with no fields is one field.
+ * The selected fields, in line order, separated by the delimiter.
+ *
+ * A line with no delimiter at all is printed whole, which is what `cut` does — the reasoning being that
+ * a line with no fields is one field. GNU's `-s` suppresses those and is not implemented.
  */
-u8[] fieldOf(u8[] line, i32 delim, i32 n) {
-  i32 seen = 1;
+u8[] fieldsOf(u8[] line, i32 delim, Ranges want) {
+  bool hasDelim = false;
+  for (i32 i = 0; i < line.len(); i++) { if (line[i] == delim) { hasDelim = true; } }
+  if (!hasDelim) { return line; }
+
+  Buf out = Buf.create();
+  i32 n = 1;
   i32 start = 0;
+  bool wrote = false;
   for (i32 i = 0; i <= line.len(); i++) {
     bool end = i == line.len() || line[i] == delim;
     if (!end) { continue; }
-    if (seen == n) { return slice(line, start, i); }
-    seen++;
+    if (want.has(n)) {
+      if (wrote) { out.push(delim); }
+      out.pushBytes(line, start, i - start);
+      wrote = true;
+    }
+    n++;
     start = i + 1;
   }
-  bool hasDelim = false;
-  for (i32 i = 0; i < line.len(); i++) { if (line[i] == delim) { hasDelim = true; } }
-  return hasDelim ? u8[0]() : line;
+  return out.take();
+}
+
+/** The selected bytes, in line order and without separators — `-b` and `-c`. */
+u8[] bytesOf(u8[] line, Ranges want) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < line.len(); i++) {
+    if (want.has(i + 1)) { out.push(line[i]); }
+  }
+  return out.take();
 }

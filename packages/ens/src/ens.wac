@@ -29,6 +29,7 @@
 // endpoint lives.
 
 import { keccak256 } from "../../crypto/src/keccak.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** The 32 zero bytes every name's walk starts from — the root node. */
 export u8[] rootNode() { return u8[32](); }
@@ -163,8 +164,3 @@ export bool isZeroAddress(u8[] address) {
   return true;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
-  return out;
-}

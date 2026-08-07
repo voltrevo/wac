@@ -102,13 +102,40 @@ capability for running an arbitrary binary. So the C half of every live row abov
 is not in the suite. That is deliberate and it is the reason these rows can rot without anything going
 red.
 
-What changed on 2026-08-07 is which half is watched. `test/network_tor.test.ts` now stands the whole
-wac network up on every run of the suite — three relays, an authority, an onion service, a client, a
-descriptor published and a page fetched through a rendezvous — so **our own side of these rows is
-exercised continuously**. That narrows the rot to exactly one thing, and it is worth naming precisely
-rather than being comforted by the green: a row can now only go stale in the direction of *tor no
-longer agreeing with us*, and nothing in the suite can see that. Our code staying self-consistent is
-what is checked; agreement with C tor is still a claim about a run somebody did by hand on a date.
+That was true of *every* row until 2026-08-07, and it is now true of most of them.
+
+`test/network_tor.test.ts` stands the whole wac network up on every run — three relays, an authority,
+an onion service, a client, a descriptor published and a page fetched through a rendezvous. That
+exercises our own side continuously, which narrows the rot to one direction: a row can only go stale
+by **tor no longer agreeing with us**.
+
+`test/ctor_live.test.ts` watches that direction, for the rows a bootstrapping client touches. A real C
+tor is started beside the wac network and has to reach `Bootstrapped 100%` through it — consensus,
+authority certificates, relay descriptors, a circuit. It never needed the launcher to own it: a C tor
+is a peer on a socket, the suite is TypeScript, and its subprocesses already have `--allow-run`.
+
+**It found something on its first run**, which is the argument for it. Our responder's NETINFO carried
+a timestamp of zero, so every C tor that handshook with us read the epoch and warned that one of us
+was twenty thousand days out — and then bootstrapped anyway, because the recommendation for that check
+is `warn`. A wrong value that still works is exactly what a suite with no C tor in it cannot see.
+
+**The streams row is now in the suite too.** A C tor's SocksPort, a three-hop circuit through our
+relays, our exit opening the connection, and 6900 bytes back byte-identical:
+
+    relayd: [2]  stream 28926 open to 127.0.0.1:18802 on handle 4
+
+That row's load-bearing assertion is the relay's own line rather than the body — see design 0002 for
+why, and it is the best lesson this table has produced.
+
+What is still by hand: the onion-service rows against C tor, and our client inside a chutney of real
+tors. Those rows can still rot without anything going red.
+
+**The onion-service rows carry a caveat as of 2026-08-07.** A C tor does fetch a page from a service we
+host — reproduced on demand, not merely remembered — but only *sometimes*: four of ten attempts, each
+success in under eight seconds and each failure a sixty-second timeout. That is [issue
+0107](../../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md), and
+it is why these rows are not in the suite. `live` remains the honest verdict for what was witnessed;
+it is not a claim about reliability, and this table has never distinguished the two before.
 
 ## Regressions this table is meant to catch
 

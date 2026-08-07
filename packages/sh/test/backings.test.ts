@@ -141,6 +141,10 @@ const CASES = [
   `mkdir d; cd d; cd ..; echo x > f; ls`,              // leaving and coming back
   `echo x > f; test -f ./f && echo isfile`,            // `stat` through a relative path
   `mkdir d; test -d d/ && echo isdir`,                 // `stat` with a trailing slash
+  // A mount point belongs here in principle and cannot be: the host side runs with grants that stop at
+  // the directory it was given, so `mkdir -p /dev` on that side fails with "Requires all access" rather
+  // than answering the filesystem question. `packages/fs/test/synth.test.ts` checks it against the real
+  // `mkdir` instead, measured rather than compared.
 ];
 
 Deno.test("every filesystem script answers the same on the host and in memory", async () => {
@@ -150,8 +154,15 @@ Deno.test("every filesystem script answers the same on the host and in memory", 
     // fresh filesystem per run for free, which is itself the thing being compared.
     const dir = await Deno.makeTempDir({ prefix: "wac-backing-" });
     try {
+      // **Both sides run in a working directory of their own.** The host side already did — a temp
+      // directory per case — while the sealed side ran at `/`, so anything that listed the current
+      // directory was comparing a temp dir against a whole filesystem root. That happened to agree while
+      // a sealed root held nothing but what the script put there; it stopped the moment `/dev` and
+      // `/proc` arrived (design/0001 step 6), and it was never the thing being compared. The header
+      // above already says where a session *starts* is out of scope; this makes that true of the
+      // listing as well as of `pwd`.
       const host = run(hosted, script, dir);
-      const memory = run(sealed, script, dir);
+      const memory = run(sealed, `mkdir /w; cd /w; ${script}`, dir);
       if (host.out !== memory.out || host.code !== memory.code) {
         differences.push(
           `script: ${JSON.stringify(script)}\n` +

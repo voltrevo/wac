@@ -18,17 +18,11 @@ import {
   RsaKey, generateRsaKey, millerRabin, gcd, modInverse, randomPrime,
   MILLER_RABIN_ROUNDS, PUBLIC_EXPONENT, small, suitablePrime,
 } from "../../src/rsagen.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 const i32 V_CHECK_KEY = 0;      // a = n(len2) n e(len2) e d(len2) d p(len2) p q(len2) q; [1] if valid
 const i32 V_KEY_BITS = 1;       // a = modulus; openssl's idea of its bit length
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 u8[] none() { return u8[0](); }
 u8[] be16(i32 n) {
   u8[] o = u8[2]();
@@ -66,8 +60,8 @@ export string test_openssl_agrees_the_generated_key_is_a_valid_rsa_key(
   t.eqI32(ref(V_KEY_BITS, k.modulus, none())[0], 4, "and openssl agrees: 1024, in 256-bit units");
 
   // The relations that make it a key, checked here because they are cheap and name themselves.
-  t.isTrue(same(toBytes(mul(fromBytes(k.p), fromBytes(k.q)), 128), k.modulus), "n = p*q");
-  t.isFalse(same(k.p, k.q), "and p is not q — a square modulus factors instantly");
+  t.isTrue(equal(toBytes(mul(fromBytes(k.p), fromBytes(k.q)), 128), k.modulus), "n = p*q");
+  t.isFalse(equal(k.p, k.q), "and p is not q — a square modulus factors instantly");
 
   // The one that matters and that only the host can answer: are p and q actually prime, and is d
   // actually the inverse? `openssl rsa -check` tests exactly that.
@@ -107,15 +101,15 @@ export string test_the_same_seed_gives_the_same_key(fn[u8[](i32, u8[], u8[])] re
   RsaKey a = generateRsaKey(512, seed);
   RsaKey b = generateRsaKey(512, seed);
   t.isTrue(a.ok && b.ok, "both generated");
-  t.isTrue(same(a.modulus, b.modulus), "the same seed gives the same modulus");
-  t.isTrue(same(a.privateExponent, b.privateExponent), "and the same private exponent");
+  t.isTrue(equal(a.modulus, b.modulus), "the same seed gives the same modulus");
+  t.isTrue(equal(a.privateExponent, b.privateExponent), "and the same private exponent");
 
   u8[] other = u8[32]();
   for (i32 i = 0; i < 32; i++) { other[i] = seed[i]; }
   other[31] = (other[31] ^ 1);
   RsaKey c = generateRsaKey(512, other);
   t.isTrue(c.ok, "a different seed also generates");
-  t.isFalse(same(c.modulus, a.modulus), "and gives a different key — one bit of seed is enough");
+  t.isFalse(equal(c.modulus, a.modulus), "and gives a different key — one bit of seed is enough");
 
   t.isFalse(generateRsaKey(512, u8[31]()).ok, "a 31-byte seed is refused");
   t.isFalse(generateRsaKey(511, seed).ok, "an odd bit length is refused");

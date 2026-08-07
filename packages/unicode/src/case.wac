@@ -6,6 +6,12 @@
 // that does none of it. Where the host's mapping is more than one code point, this leaves the
 // code point alone, and the tests assert exactly which ones those are.
 //
+// Folding is its own Unicode table, not a round trip through case mapping. `tables.wac` derives a
+// candidate as `lower(upper(x))` and then asks a `u`-mode `RegExp` — which canonicalizes by simple
+// case folding — whether the two are really the same letter. They are not for `ı` and `i`, which
+// share an uppercase and are separate letters everywhere but a Turkish locale; that entry was in the
+// table, and the test that should have caught it asserted the generator's rule instead.
+//
 // `foldEqual` is the operation most callers actually want: whether two strings are the same
 // ignoring case. It compares code point by code point rather than mapping both and comparing
 // bytes, so it allocates nothing and stops at the first difference.

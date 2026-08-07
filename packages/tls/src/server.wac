@@ -39,6 +39,7 @@ import {
   hybridServerAccept, groupX25519MlKem768, hybridServerShareLen, hybridSecretLen,
 } from "./hybrid.wac";
 import { ed25519Sign } from "../../crypto/src/ed25519.wac";
+import { rsaSignPss } from "../../crypto/src/rsa.wac";
 import {
   deriveSecret, earlySecret, finishedVerify, handshakeSecret, hashLen, masterSecret,
   nextTrafficSecret, trafficKeyIv,
@@ -51,6 +52,7 @@ import {
 } from "./record.wac";
 import {
   certificate, certificateVerify, certificateVerifyContent, encryptedExtensions,
+  sigRsaPssSha256,
   finished, handshakeMessage, messageBody, messageLength, messageType, parseClientHello,
   serverHello, ClientHello,
   hsClientHello, hsServerHello, hsEncryptedExtensions, hsCertificate,
@@ -83,7 +85,17 @@ struct Conn {
   u8[] serverAppSecret;
   u8[] transcript;
   u8[] certDer;
+  /** The ed25519 signing seed, or empty when this server signs with RSA. */
   u8[] seed;
+  /**
+   * RSA key material, all empty unless the certificate carries an RSA key.
+   *
+   * Which one is in use is decided by whether `rsaN` is empty rather than by a flag, because a flag
+   * can disagree with the key material and this cannot.
+   */
+  u8[] rsaN;
+  u8[] rsaE;
+  u8[] rsaD;
   u8[] ephemeralPriv;
   u8[] serverRandom;
 }
@@ -110,6 +122,9 @@ u8[] encodeConn(Conn c) {
   w.u32(c.certDer.len());
   w.bytes(c.certDer);
   w.vec8(c.seed);
+  w.vec8(c.rsaN);
+  w.vec8(c.rsaE);
+  w.vec8(c.rsaD);
   w.vec8(c.ephemeralPriv);
   w.vec8(c.serverRandom);
   return w.take();
@@ -130,11 +145,14 @@ Conn decodeConn(u8[] state) {
   u8[] transcript = r.take(r.u32());
   u8[] certDer = r.take(r.u32());
   u8[] seed = r.vec8();
+  u8[] rsaN = r.vec8();
+  u8[] rsaE = r.vec8();
+  u8[] rsaD = r.vec8();
   u8[] eph = r.vec8();
   u8[] rnd = r.vec8();
   r.expectEnd();
   return Conn(phase, suite, seqIn, seqOut, clientSecret, serverSecret, clientApp,
-              serverApp, transcript, certDer, seed, eph, rnd);
+              serverApp, transcript, certDer, seed, rsaN, rsaE, rsaD, eph, rnd);
 }
 
 /**
@@ -150,7 +168,29 @@ export u8[] tlsServerInit(u8[] certDer, u8[] seed, u8[] ephemeralPriv, u8[] serv
   if (ephemeralPriv.len() != 32) { trap; }
   if (serverRandom.len() != 32) { trap; }
   return encodeConn(Conn(0, suiteAes128Gcm(), 0, 0, u8[0](), u8[0](), u8[0](), u8[0](),
-                         u8[0](), certDer, seed, ephemeralPriv, serverRandom));
+                         u8[0](), certDer, seed, u8[0](), u8[0](), u8[0](), ephemeralPriv,
+                         serverRandom));
+}
+
+/**
+ * A new connection whose certificate carries an **RSA** key, signing with `rsa_pss_rsae_sha256`.
+ *
+ * A separate entry point rather than a widened one, so nothing that already has an ed25519 server
+ * has to say anything about RSA. Which scheme a connection uses is then decided by the key material
+ * it was given rather than by an argument that could disagree with the certificate.
+ *
+ * This exists because **a Tor relay's link certificate is RSA**. Ours was ed25519, which works — the
+ * ed25519 chain in the CERTS cell is what binds the link handshake, and the TLS certificate under it
+ * is bound by digest rather than by key type — and makes our relay distinguishable from every real
+ * one by the first thing it sends. See `packages/tor/README.md`, *What is not here*.
+ */
+export u8[] tlsServerInitRsa(u8[] certDer, u8[] n, u8[] e, u8[] d, u8[] ephemeralPriv,
+                             u8[] serverRandom) {
+  if (n.len() == 0 || e.len() == 0 || d.len() == 0) { trap; }
+  if (ephemeralPriv.len() != 32) { trap; }
+  if (serverRandom.len() != 32) { trap; }
+  return encodeConn(Conn(0, suiteAes128Gcm(), 0, 0, u8[0](), u8[0](), u8[0](), u8[0](),
+                         u8[0](), certDer, u8[0](), n, e, d, ephemeralPriv, serverRandom));
 }
 
 /** Give up before any key exists: an alert in the clear, and the connection is done. */
@@ -207,7 +247,14 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   // cipher" and "the server is broken" — and those want different fixes.
   if (!ch.offersTls13) { return failPlain(c, alertProtocolVersion()); }
   if (ch.suite != c.suite) { return failPlain(c, alertHandshakeFailure()); }
-  if (!ch.offersEd25519) { return failPlain(c, alertHandshakeFailure()); }
+  // The client must have offered the scheme *our certificate* needs. Requiring ed25519 regardless
+  // would refuse every client of an RSA server, and accepting either would mean signing under a
+  // scheme the client never offered — which it rejects, one message later and less clearly.
+  if (c.rsaN.len() > 0) {
+    if (!ch.offersRsaPss) { return failPlain(c, alertHandshakeFailure()); }
+  } else if (!ch.offersEd25519) {
+    return failPlain(c, alertHandshakeFailure());
+  }
   // No x25519 share. The correct answer is a HelloRetryRequest asking for one, which is
   // not implemented — so this says so plainly rather than pretending the client is at
   // fault. See the README.
@@ -285,7 +332,28 @@ u8[] serverFlight(Conn c, u8[] clientHelloMsg) {
   // so the signature covers the key exchange, the identity, and everything either side
   // has said. That is what binds this certificate to this connection.
   u8[] toSign = certificateVerifyContent(sha256(c.transcript), true);
-  u8[] cv = certificateVerify(ed25519Sign(c.seed, toSign));
+  u8[] cv = u8[0]();
+  if (c.rsaN.len() > 0) {
+    // The PSS salt is derived rather than passed in, and it does not need to be secret: the verifier
+    // recovers it from the signature, so it is public by construction. What it must not be is
+    // *repeated* across signatures under one key, and this cannot be — the server random is unique
+    // per connection and the transcript hash covers everything either side has said, and a server
+    // signs CertificateVerify once per connection.
+    //
+    // Deriving it also keeps the property this file is built around: the host supplies the ephemeral
+    // key and the server random, and everything else follows from them, so a handshake stays
+    // reproducible and a test can compare against a recorded trace. A salt drawn here would have
+    // ended that, and a salt added to `tlsServerInitRsa` would have made every caller carry it.
+    u8[] saltSeed = u8[c.serverRandom.len() + 32]();
+    for (i32 i = 0; i < c.serverRandom.len(); i++) { saltSeed[i] = c.serverRandom[i]; }
+    u8[] th = sha256(c.transcript);
+    for (i32 i = 0; i < 32; i++) { saltSeed[c.serverRandom.len() + i] = th[i]; }
+    u8[] sig = rsaSignPss(c.rsaN, c.rsaD, toSign, 32, sha256(saltSeed));
+    if (sig.len() == 0) { return failPlain(c, alertHandshakeFailure()); }
+    cv = certificateVerify(sigRsaPssSha256(), sig);
+  } else {
+    cv = certificateVerify(sigEd25519(), ed25519Sign(c.seed, toSign));
+  }
   addTranscript(c, cv);
   sealInto(out, c, typeHandshake(), cv);
 

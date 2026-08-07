@@ -411,13 +411,13 @@ Each step is an issue when it becomes actionable, and each references this docum
 | step | state |
 |---|---|
 | 1. VFS with two backings | **done.** `packages/fs`, threaded through `packages/sh` as a value the shell holds; `sealed.wac` is a session on `Fs.inMemory()` built with no filesystem grants at all. 57 scripts answer identically on both backings and identically to bash — 0067 |
-| 2. image format | not started |
+| 2. image format | **done.** `packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so. `packages/sh/src/imaged.wac` is the restart the criterion asks for: two processes, nothing shared but the file |
 | 2a. a second host, no JavaScript | not started — [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md) |
 | 3. process table | not started |
 | 4. users and login | not started |
 | 5. line discipline | not started |
-| 6. synthesised files | not started |
-| 7. init | not started |
+| 6. synthesised files | **done.** `Backing.Synth` — `/dev/null`, `/dev/zero`, `/dev/urandom`, `/proc/self/cmdline`, generated on read and carrying `randomBytes` and nothing else, so a *sealed* session has a real CSPRNG without a grant. The endless two refuse a whole read by name and point at the bounded one, which is what `head -c` uses. `/proc/<pid>` waits on step 3 |
+| 7. init | **the ssh half is done.** `sshd -i home.wacimg` boots an image and serves every session from it — three packages end to end, driven by OpenSSH's own client. What is left of step 7 is the *init* half: something that starts daemons and reaps. Concurrency stays open because connections are served one at a time, so one writer is true by construction |
 | 8. desktop | not started |
 
 ## Open questions

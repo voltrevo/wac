@@ -72,14 +72,110 @@ table's longest-prefix rule, and that a name is **bytes** — a file called `x\x
 which is a property no host can offer today
 ([0065](../../issues/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md)).
 
+## An image, which is what makes a filesystem outlive its session
+
+`src/image.wac`, step 2 of design/0001. `write` gives you the bytes, `read` gives you the filesystem
+back, and `box fsdump` prints one so a person can look at it without running a program that understands
+it — which the design asks for by name, because a format of our own is a format nothing else can read.
+
+What an image holds is **every memory mount, walked from its root**. A host mount is not written: its
+bytes are somebody's disk under somebody's permissions, and copying them in would be copying a filesystem
+rather than saving one. `write` returns the mount points it skipped rather than quietly producing a
+smaller image than you asked for.
+
+Walking from the roots also compacts, which is the answer to the note above about `remove` not freeing
+nodes: a node nobody points at is a node the writer does not reach, so reloading an image is how a
+long-lived session gets that space back.
+
+There is no oracle for this — the format is ours, so nothing outside the repo can read an image and
+disagree with us about it. `test/image.test.ts` replaces one with three things, and the third is the one
+the other two cannot do: a round trip, a check that rewriting what was read gives identical bytes (so
+`read` cannot normalise away something `write` recorded, with both sides agreeing because both sides
+lost it), and **a fixture image committed to the repo**, written on 2026-08-07 and loaded by whatever
+build is running now. That last is the design's own criterion, and neither of the others can see a format
+that changed shape overnight, because both write and read with the same build.
+
+## `/dev` and `/proc`, which cost nothing until read
+
+`Backing.Synth`, step 6 of design/0001. Nothing is stored: `readDir` lists a fixed set of names and a
+read runs a generator, so `/dev/zero` costs what you ask of it rather than what it could give.
+
+    ls /dev                        ->  null random urandom zero
+    cat /proc/self/cmdline         ->  the argv it was built with, NUL-separated as Linux's is
+    head -c 16 /dev/urandom        ->  sixteen bytes, from the host's CSPRNG
+    echo anything > /dev/null      ->  accepted, and kept nowhere
+
+The mount carries **`randomBytes` and nothing else** — a mount handed a whole `Cli` could reach the
+disk. `Core.randomBytes` is a host function rather than a grant, which is why `sealed` can mount `/dev`
+and go on being a session with no filesystem permissions at all.
+
+**Two of them have no end, and that is the one thing this model cannot express.** GNU's `cat /dev/zero`
+runs until something stops it; one `u8[]` cannot. So `readFile` refuses `/dev/zero` and `/dev/urandom`
+and names the read that does work — `readSome(path, n)`, which is what `head -c` goes through anyway.
+Inventing a length would have been the plausible wrong answer and hanging would have been worse.
+
+Everything but `/dev/null` is read-only and says so; a write to `/dev/null` succeeds and keeps nothing,
+which is the whole of what it is for. An image does **not** list a synthesised mount as skipped: there
+is nothing there to save, and a `skipped` list that is never empty is one nobody reads.
+
+**A mount is visible from the directory it is mounted in.** `readDir` adds any mount point sitting
+directly in the path being listed, so `ls /` shows `dev` and `proc`. Before, only the mount table knew
+they existed, and a listing that omits a directory you can `cd` into is worse than a wrong one — nothing
+about it looks wrong.
+
+## Coverage, and the three things it found on its first run
+
+`deno task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
+in size — a synthesised backing and an image format, one of them a parser for bytes somebody else wrote —
+which is two ticks of new code with no branch measured in a repo that measures eighteen other packages.
+The first run found three defects, and none of them was a missing test so much as a wrong answer nothing
+had asked for:
+
+- **`rename` onto something that is already there.** `rename(2)` has four rules and this had none of them:
+  it replaced the entry whatever it was, so `mv f d` where `d` is a directory succeeded and orphaned
+  everything `d` held. In an image that is data loss. `test/host.test.ts` had had the oracle since the
+  package was written and nothing had asked it — the case is in it now.
+- **A mount point is a directory**, and its parent lives in the mount *above*, so the lookup inside
+  `writeFile` and `mkdir` searched the mounted tree and found nothing. Each backing then invented its own
+  reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
+  system". Three wrong answers to what `/dev` is.
+- **The image reader was bounded by the whole array rather than by the body**, so a malformed image could
+  read its own checksum as payload — four bytes that happened to complete a structure would have been
+  accepted as part of it. Found because getting past the checksum at all means computing the right CRC
+  over the wrong body, which nothing had ever done: every malformed image a test had shown the reader was
+  refused by the checksum, so the reader's own guards had never run.
+
+`synthEndless` was deleted in the same pass, being a function nothing called — and so were three guards
+in `writeFile` and `mkdir` that the new "is this a directory" check had made unreachable. Two guards for
+one fact is how the two come to disagree.
+
+The number is 92.7% and it is a **ratchet, not a report**: every uncovered point is either driven or
+written down in `cov.ts` with its reason, and the task fails if a new one appears. A run that only printed
+a percentage is how the three defects above survived as long as they did. Seventeen of the twenty-one
+recorded points are host mounts, which need a `Cli` that only a built program has; they are measured
+nowhere and *tested* against the real filesystem, which is a better oracle than a probe.
+
+The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an image
+or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and the run
+went red with eight branches nobody had accounted for. They are recorded rather than driven, because
+driving them means fabricating a whole `Cli`, and `packages/sh/test/imaged.test.ts` and
+`packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
+
+Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
+as gaps either: `test/host.test.ts` and `packages/sh/test/backings.test.ts` run every one of them against
+the real filesystem, which is a better oracle than a probe could be.
+
 ## Not here yet
 
-- **Nothing calls it.** `packages/sh` still reaches its `Cli` directly for file operations; threading `Fs`
-  through the shell is the rest of 0067, and it is what makes a session's filesystem a choice.
-- **No persistence.** `Fs.inMemory` and `Fs.onHost` exist; an image is step 2 of design/0001, and
-  `packages/box` already has `tar` and `zstd` to write one with.
+- **`/proc/<pid>` is only `/proc/self`.** There are no other pids to answer for — the process table is
+  step 3 of design/0001 — so what exists is the one entry that can be true today.
 - **No permissions.** `mode` and `owner` are recorded on every node and enforced nowhere. Users arrive in
-  step 4; recording them now is what makes an image written today readable then.
+  step 4; recording them now is what makes an image written today readable then — `chmod` and `chown` set
+  them, and refuse on a host mount in those words, because there is no such capability in
+  `packages/platform` and a mode silently not applied is worse than an error.
+- **Incremental saves are not implemented.** `image.write` walks every reachable node and emits every
+  byte. Cheaper incremental saves were half the argument for a format of our own; the layout leaves room
+  for one and nothing does it yet.
 - **Removal does not free nodes.** A node nobody points at is unreachable, and an image writer walks from
   the roots, so nothing is lost — but a program that deletes a great deal keeps paying for it. There is
   no such program yet.

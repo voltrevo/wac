@@ -12,6 +12,7 @@ import {
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,
   checkForPublication,
 } from "../../src/hsstore.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 S_DESCRIPTOR = 0;
 const i32 S_BLINDED = 1;
@@ -62,7 +63,7 @@ export string test_every_descriptor_tor_refused_is_refused(fn[u8[](i32, u8[], u8
     // than the document, so the document itself must still be accepted. That is what separates "a bad
     // descriptor" from "a bad name", and it is the only control that can.
     if (body.len() == ref(S_DESCRIPTOR, none(), none()).len() &&
-        sameBytes(body, ref(S_DESCRIPTOR, none(), none()))) {
+        equal(body, ref(S_DESCRIPTOR, none(), none()))) {
       t.eqI32(checkForPublication(body, 0).reason, PUB_OK,
               "the unedited descriptor is still accepted — that control is about the name");
     } else {
@@ -188,14 +189,4 @@ i32 findFrom(u8[] hay, string needle, i32 from) {
   return -1;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

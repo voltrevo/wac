@@ -30,6 +30,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../src/mlkem.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 SEED = 64;
 const i32 EK = 1184;
@@ -38,16 +39,6 @@ const i32 CT = 1088;
 const i32 SS = 32;
 const i32 RECORD = 2368;
 
-u8[] slice(u8[] src, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = src[from + i]; }
-  return o;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 export string test_key_generation_matches_webcrypto_byte_for_byte(u8[] vectors) {
   T t = T.create();
@@ -97,7 +88,7 @@ export string test_encapsulation_is_deterministic_in_its_randomness(u8[] vectors
   for (i32 i = 0; i < 32; i++) { m2[i] = i; }
   m2[31] = m2[31] ^ 1;
   t.eqBytes(mlkemEncaps(ek, m1), mlkemEncaps(ek, m1), "encapsulation is deterministic");
-  t.isFalse(same(mlkemEncaps(ek, m1), mlkemEncaps(ek, m2)),
+  t.isFalse(equal(mlkemEncaps(ek, m1), mlkemEncaps(ek, m2)),
             "and two messages give two ciphertexts");
   return t.report();
 }
@@ -141,7 +132,7 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
     for (i32 j = 0; j < CT; j++) { bad[j] = ct[j]; }
     bad[spots[i]] = bad[spots[i]] ^ 1;
     u8[] got = mlkemDecaps(dk, bad);
-    t.isFalse(same(got, real),
+    t.isFalse(equal(got, real),
               "byte " + itoa64(spots[i] as i64) + " flipped changes the secret");
     // The rejection secret is a function of the key and the ciphertext, so it repeats.
     t.eqBytes(got, mlkemDecaps(dk, bad),
@@ -154,7 +145,7 @@ export string test_a_corrupted_ciphertext_gives_a_different_secret_not_a_failure
   for (i32 j = 0; j < CT; j++) { badA[j] = ct[j]; badB[j] = ct[j]; }
   badA[0] = badA[0] ^ 1;
   badB[1] = badB[1] ^ 1;
-  t.isFalse(same(mlkemDecaps(dk, badA), mlkemDecaps(dk, badB)),
+  t.isFalse(equal(mlkemDecaps(dk, badA), mlkemDecaps(dk, badB)),
             "the rejection secret depends on the ciphertext");
   return t.report();
 }

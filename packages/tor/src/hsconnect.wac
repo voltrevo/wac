@@ -57,8 +57,7 @@ import {
   HSDIR_N_REPLICAS_DEFAULT, HSDIR_SPREAD_FETCH_DEFAULT,
 } from "./hsdir.wac";
 import {
-  decryptLayer, pemBlock, keywordInt, certSignedWithKey, certType, slice,
-  superencryptedConstant, encryptedConstant,
+  decryptLayer, pemBlock, keywordInt, certSignedWithKey, certType, superencryptedConstant, encryptedConstant
 } from "./hsdesc.wac";
 import {
   IntroPoint, parseIntroPoints, linkSpecifier, buildIntroduce1, introduce1Plaintext,
@@ -68,6 +67,7 @@ import {
   clientIntroduceKeys, clientRendezvousKeys, clientPublicKey, rendezvousCircuitKeys,
 } from "./hsntor.wac";
 import { fetchDescriptor } from "./hsfetch.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 4) {

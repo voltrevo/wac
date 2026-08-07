@@ -16,6 +16,7 @@ import {
   hybridClientOffer, hybridServerAccept, hybridClientFinish,
   groupX25519MlKem768, hybridClientShareLen, hybridServerShareLen, hybridSecretLen,
 } from "../../src/hybrid.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 DK_LEN = 2400;
 const i32 EK_LEN = 1184;
@@ -27,17 +28,7 @@ u8[] pattern(i32 n, i32 seed) {
   return out;
 }
 
-u8[] slice(u8[] src, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = src[from + i]; }
-  return out;
-}
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 export string test_the_code_point_and_the_three_lengths() {
   // Against draft-ietf-tls-ecdhe-mlkem rather than against ourselves. A share length that
@@ -82,17 +73,17 @@ export string test_the_secret_depends_on_both_halves() {
   // because neither X25519 key changed.
   u8[] otherM = slice(hybridServerAccept(share, pattern(32, 9), pattern(32, 7)),
                       hybridServerShareLen(), hybridServerShareLen() + hybridSecretLen());
-  t.isFalse(sameBytes(slice(base, 0, 32), slice(otherM, 0, 32)),
+  t.isFalse(equal(slice(base, 0, 32), slice(otherM, 0, 32)),
             "a different ML-KEM message moves the ML-KEM half");
-  t.isTrue(sameBytes(slice(base, 32, 64), slice(otherM, 32, 64)),
+  t.isTrue(equal(slice(base, 32, 64), slice(otherM, 32, 64)),
            "and leaves the X25519 half alone");
 
   // Change only the server's X25519 key: the reverse.
   u8[] otherX = slice(hybridServerAccept(share, pattern(32, 8), pattern(32, 10)),
                       hybridServerShareLen(), hybridServerShareLen() + hybridSecretLen());
-  t.isFalse(sameBytes(slice(base, 32, 64), slice(otherX, 32, 64)),
+  t.isFalse(equal(slice(base, 32, 64), slice(otherX, 32, 64)),
             "a different X25519 key moves the X25519 half");
-  t.isTrue(sameBytes(slice(base, 0, 32), slice(otherX, 0, 32)),
+  t.isTrue(equal(slice(base, 0, 32), slice(otherX, 0, 32)),
            "and leaves the ML-KEM half alone");
   return t.report();
 }
@@ -106,7 +97,7 @@ export string test_ml_kem_comes_first_in_both_directions() {
   u8[] b = hybridClientOffer(pattern(64, 11), pattern(32, 13));
   t.eqBytes(slice(a, 0, EK_LEN), slice(b, 0, EK_LEN),
             "changing the X25519 scalar leaves the ML-KEM key untouched");
-  t.isFalse(sameBytes(slice(a, EK_LEN, hybridClientShareLen()),
+  t.isFalse(equal(slice(a, EK_LEN, hybridClientShareLen()),
                       slice(b, EK_LEN, hybridClientShareLen())),
             "and does move the X25519 key that follows it");
 
@@ -115,7 +106,7 @@ export string test_ml_kem_comes_first_in_both_directions() {
   u8[] q = hybridServerAccept(share, pattern(32, 14), pattern(32, 16));
   t.eqBytes(slice(p, 0, CT_LEN), slice(q, 0, CT_LEN),
             "changing the server's X25519 key leaves the ciphertext untouched");
-  t.isFalse(sameBytes(slice(p, CT_LEN, hybridServerShareLen()),
+  t.isFalse(equal(slice(p, CT_LEN, hybridServerShareLen()),
                       slice(q, CT_LEN, hybridServerShareLen())),
             "and does move its public key");
   return t.report();
@@ -142,7 +133,7 @@ export string test_a_tampered_share_gives_a_different_secret_not_an_error() {
     for (i32 i = 0; i < bad.len(); i++) { bad[i] = serverShare[i]; }
     bad[spots[k]] = bad[spots[k]] ^ 1;
     u8[] got = hybridClientFinish(offer, bad, pattern(32, 18));
-    t.isFalse(sameBytes(got, good),
+    t.isFalse(equal(got, good),
               "tampering at byte " + itoa64(spots[k] as i64) + " changes the secret");
   }
   return t.report();

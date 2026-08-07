@@ -36,6 +36,7 @@
 
 import { decode } from "../../codec/src/base64.wac";
 import { hmacSha1 } from "../../crypto/src/hmac.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 export enum Verdict {
   /** No entry for this host. A first connection looks exactly like this. */
@@ -120,7 +121,7 @@ Verdict checkLine(u8[] file, i32 at, i32 end, u8[] host, i32 port, u8[] keyType,
   u8[]? blob = decode(b64);
   if (blob is null) { return Verdict.Unknown; }                        // an unreadable line
 
-  if (!sameBytes(blob!, keyBlob)) { return Verdict.Mismatch; }
+  if (!equal(blob!, keyBlob)) { return Verdict.Mismatch; }
   return revoked ? Verdict.Revoked : Verdict.Match;
 }
 
@@ -208,7 +209,7 @@ bool hashedMatches(u8[] file, i32 at, i32 end, u8[] wanted) {
 
   // The salt is the HMAC *key* and the hostname the message, which is the way round that lets one
   // file hold many entries without any of them revealing a name.
-  return sameBytes(hmacSha1(salt!, wanted), want!);
+  return equal(hmacSha1(salt!, wanted), want!);
 }
 
 /** Shell-style matching: `*` any run, `?` one character. Case-sensitive, as OpenSSH is here. */
@@ -257,10 +258,3 @@ bool region(u8[] src, i32 at, i32 end, const u8[] want) {
   return true;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

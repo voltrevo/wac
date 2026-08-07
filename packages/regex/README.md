@@ -2,6 +2,14 @@
 
 A backtracking regular expression engine, with JavaScript's semantics.
 
+**And POSIX *basic* ones, through `src/basic.wac`.** That is a rewrite rather than a second engine: basic
+and extended differ only in which spelling of `| + ? { ( )` is the operator and which is the literal, so a
+basic pattern becomes the equivalent extended one by swapping the escaping and nothing about matching
+changes. It exists because `grep` without `-E` reads basic, and both of this repo's greps were compiling
+their patterns as extended — so `grep 'a|b'` matched a-or-b where GNU matches three characters, silently
+(wac-mono 0104). The engine was never wrong; the callers were speaking a different dialect to the one they
+were named after.
+
 ```wac
 import { compile, search, slotCount } from "../../regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../regex/src/program.wac";
@@ -94,13 +102,64 @@ groups and `(?:)`, alternation, `* + ? {n} {n,} {n,m}` greedy and lazy, the usua
 Refused, rather than mis-parsed — which is the dangerous alternative, since `(?=a)` read as a
 group containing `?=a` would silently match the wrong thing:
 
-- lookahead and lookbehind, backreferences, named groups, and every flag but `i`;
+- lookahead and lookbehind, backreferences, named groups, and every flag but `i`. GNU `grep` accepts
+  `\(ab\)\1` and this refuses it, which is the one place a `grep` here still exits 2 where GNU
+  exits 1 — a refusal rather than a wrong answer, and it says which side is unfinished (below);
 - a quantified assertion (`^?`, `\b+`), which is a syntax error in JavaScript too;
 - `[\D]`, `[\W]`, `[\S]` — a negated shorthand inside a positive class needs set subtraction.
 
 **Bytes, not code points.** A `.` matches one byte, so a multi-byte character is several. `\s` is
 the ASCII set where JavaScript's also has Unicode spaces. The tests keep to ASCII for exactly this
 reason, and lifting it means a UTF-8-aware machine, not a bigger table.
+
+## POSIX, which is a different dialect and now says so
+
+`grep` does not read this dialect. `basic.wac` has translated its *operators* since wac-mono 0104 —
+in basic regular expressions `| + ? { ( )` are literals and their backslashed forms are the
+operators — and `posix.wac` is the rest of the difference, which is inside the brackets and in three
+escapes:
+
+| POSIX | here, before | now |
+| --- | --- | --- |
+| `[[:digit:]]` | a set of `[ : d i g t`, then a required `]` — **matched nothing** | `[0-9]` |
+| `[]a]` | the empty class, which matches nothing | `[\]a]` |
+| `[.x.]`, `[=x=]` | literal dots and equals signs | the character, this being the C locale |
+| `.` | any byte but LF **and CR**, JavaScript having four line terminators | any byte but LF |
+| `\<`, `\>` | a literal `<` and `>` | the word edges, `OP_WORDB` with two more answers |
+| `` \` ``, `\'` | a literal back-tick and quote | `^` and `$`, a grep matching one line at a time |
+
+Every one of those was silence rather than an error: the pattern compiled, meant something else, and
+answered "no lines". `grep '[[:digit:]]'` finding nothing looks exactly like a file with no digits in
+it.
+
+`compileExtended` is the entry point for `grep -E`; `compileBasic` calls the same bracket rewriter, so
+the two dialects cannot drift apart about what a bracket means. The only thing the engine itself
+learned is `\<` and `\>`, behind a `posix` flag on `compileFlags` — JavaScript spells those with
+lookahead, which this engine does not have, so there was nothing to rewrite them into.
+
+`test/basic.test.ts` compares both dialects against `/bin/grep` over **every byte** for the twelve
+class names, because a class is a claim about all of them and `[:punct:]` cannot be checked by
+reading.
+
+### A refusal says whose problem it is
+
+`compileFlags` returns a `Compiled` — a program, or the reason there is none. It used to return only
+null, so every refusal reached a caller as `grep: bad pattern`, and `\(ab\)\1` is not a bad pattern:
+GNU runs it. Telling someone their pattern is wrong when the gap is this engine's sends them to fix
+something that was already right, which is the same failure `packages/box`'s flag refusals exist to
+avoid, one layer down.
+
+Two sentences, by the same rule as those:
+
+```
+$ grep '[z-a]'        grep: Invalid range end                  <- GNU refuses too, so GNU's words
+$ grep '[[:foo:]]'    grep: Invalid character class name
+$ grep 'a\'           grep: Trailing backslash
+$ grep '\(ab\)\1'     grep: backreferences are not implemented  <- GNU accepts it; the gap is ours
+```
+
+The first four are checked *against `/bin/grep`'s own stderr* rather than against a copy of it, and
+the test requires that any pattern GNU accepts be refused with a sentence naming this engine.
 
 ## Not here yet
 

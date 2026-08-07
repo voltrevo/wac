@@ -162,9 +162,33 @@ plausible, and `-f`, `-s` and `-w` say the same.
 
 Those twelve exist because, when they were written, nothing could be started and nothing could be
 handed over. Both of those are now false, and they have become what the seam always said they
-were: a fallback. They are still weaker than `box`'s — this `grep` matches substrings rather than
-regular expressions, this `sort` is an insertion sort — so the sensible end state is to delete them
-once something checks that `box`'s pass the same differential scripts against bash. Kept for now
+were: a fallback. They are still weaker than `box`'s — this `sort` is an insertion sort and refuses
+`-n` and `-u`, which `box`'s implements — so the sensible end state is to delete them once something
+checks that `box`'s pass the same differential scripts against bash — which `deno task corpus:through`
+now does. The answer was **563 of 632** the first time it ran, and is **588** after `cat`'s nine flags,
+`seq`'s refusals, `grep -q` and a lone `-` meaning standard input were put right in `packages/box`.
+Everything left is the deletion itself, and 0103 has the measured plan: 361 of the 649 scripts need no
+external program, 171 need `printf` — which is a **builtin** now, where bash has it and where the deletion
+cannot reach it — and about 117 name one of the other eleven. wac-mono 0103 has the breakdown; the
+paragraph had no number in it until something measured, and a plan whose precondition nobody checks is a
+plan nobody can start.
+
+`grep` was on that list until it was used by hand. It matched **substrings**, and the comment above it
+said so — "`packages/regex` is the obvious next step and is not wired" — which helped nobody: `grep '^h'`
+answered *nothing matched*, silently, and so did every other metacharacter a person types. That is the
+worst of the three answers this shell ranks in `test/gaps.test.ts`, and it was being given by the one
+program most likely to be handed a pattern. `packages/regex` is not `packages/box`, so there was never
+anything in the way of importing it. It is wired now, `-i` and `-x` fold into the compiled pattern, a
+pattern that will not compile is a usage error rather than "no lines matched", and the engine giving up
+on a line exits 2 rather than claiming either answer — which is the distinction `box`'s grep learnt
+first. Fourteen more differential scripts pin it against bash.
+
+And then the *dialect* was wrong, which reading `packages/regex` end to end turned up the tick after.
+`grep` with no `-E` reads **basic** regular expressions, in which `|`, `+`, `?`, `{` and the parentheses
+are literals and their backslashed forms are the operators; both greps here compiled extended, so
+`grep 'a|b'` matched a-or-b where GNU matches three characters. Seven spellings, all silently wrong, in
+the tool most likely to be handed a pattern. `packages/regex/src/basic.wac` is the translation and `-E`
+selects extended; seventeen more scripts pin both dialects. wac-mono 0104. Kept for now
 because 652 of those scripts currently agree with bash *through these*, and swapping the
 implementation under a passing suite without measuring it first is how a green suite starts lying.
 
@@ -282,6 +306,32 @@ ssh -p 2222 user@host 'seq 1 100 | grep 7 | wc -l'
 That works because of `Shell.capturing`: standard output collects into a buffer rather than going
 to the process's own terminal. Command substitution needs exactly the same thing, so it is one
 flag rather than two mechanisms.
+
+## Three shells, and the line between them
+
+`wacsh` is a shell on the real disk. `sealed.wac` is the same shell handed `Fs.inMemory()` and built with
+no filesystem grants at all. `imaged.wac` is the same shell again, handed a filesystem loaded from a file
+and saved back to it — so a session's writes survive a restart, which is design/0001 step 2's criterion.
+
+One line of difference between each pair, which is the argument for a filesystem being a *value* the
+shell holds rather than something it reaches for per operation (wac-mono 0067). The grants differ because
+the programs differ: `imaged` needs read and write on its image, and giving `sealed` that option would
+have spent the property that makes it sealed.
+
+    imaged home.wacimg -c 'mkdir /data; echo one > /data/notes'
+    imaged home.wacimg -c 'cat /data/notes'          ->  one
+    box fsdump home.wacimg                           ->  the tree, with modes and owners
+
+It saves after the script whether or not the script succeeded: the session whose work is most worth
+keeping is the one that ended badly. It refuses an image it cannot read rather than starting empty,
+because starting empty would then save over the thing it could not read.
+
+**A correction worth keeping.** `sealed.wac` used to say a redirection on a pipeline's last stage reached
+the host, because that path streams through `openOutput` — a capability rather than a filesystem
+operation. Building `imaged` and trying it showed otherwise: the streaming pipeline in `exec.wac` gives
+up as soon as `spawnStage` reports no spawn in this world, and the sequential path it falls back to
+writes through `Fs`. Neither shell is built with `spawn`, so neither reaches it. The risk belongs to the
+grants rather than to the shell, and `test/imaged.test.ts` fails if that ever stops being true.
 
 ## What it does not do
 
@@ -422,6 +472,19 @@ expanding to something plausible is the failure mode this package exists to avoi
 **`2>` is not implemented, and says so in those words.** Only standard output is captured through the
 seam, so there is nothing of the error stream to redirect — and the message names the gap rather than
 the command: this shell is unfinished here, and the caller who wrote `2>err` was not wrong.
+
+Saying so was the *only* thing it did right. `echo hi 2>/dev/null` printed that message and then
+**swallowed `hi` and exited 0**: `writeTo` answered true for a descriptor it cannot write, which told
+both of its callers that the output had gone to a file, so it went nowhere. A comment directly above it
+read "said, not silently skipped" while the code silently skipped it. It answers false now, the output
+goes where it would have gone, and `test/gaps.test.ts` fails if it stops doing so.
+
+**`N>&M` is parsed and not implemented**, which is a deliberate pair. It used to be a *syntax error* —
+the lexer made `2>&1` into three tokens and the redirection parser refused a target that was not a word
+— and a syntax error tells the caller they wrote something invalid, which `2>&1` is not. The parser
+recognises the form so the refusal can name the descriptors, and a refused stage fails the whole
+pipeline: `echo hi 2>&1 | cat` printed the refusal and exited 0, because the status came from `cat`
+succeeding at doing nothing.
 
 **Standard error arrives when it happened**, interleaved with standard output as bash's is, which
 is what `2>&1` has to show. It used to be collected and flushed at the end through `Core.warn` —

@@ -41,6 +41,9 @@ import { Match, lookUp } from "./authorizedkeys.wac";
 import { Incoming, msgChannelClose, msgChannelData, msgChannelEof, msgChannelOpen,
          msgChannelRequest, msgChannelWindowAdjust, parse } from "./channel.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../fs/src/image.wac";
+import { Vec } from "../../std/src/vec.wac";
 import { AuthRequest, authFailure, authSuccess, channelClose, channelData, channelEof,
          pkOk,
          channelFailure, channelStderr, channelSuccess, ecdhReply, ephemeralPublic, exchangeHash, execCommand,
@@ -48,6 +51,7 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          readOpenChannel, requestWantsReply,
          requestName, serverProposal, serviceAccept, sharedSecret, verifyAuth,
          byApplication, disconnect } from "./server.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 i32 defaultPort() { return 2222; }
 i32 windowSize() { return 2 * 1024 * 1024; }
@@ -92,6 +96,28 @@ export i32 main(Core core, Cli cli) {
     }
   }
 
+  // **The image, booted before the socket.** A server that cannot read its image is not a server, and
+  // binding first meant it announced "listening on port 2245" and *then* refused — a moment in which it
+  // looked like it was working. Every session gets this same `Fs`, so what one client leaves behind the
+  // next one finds — which is the whole difference between a demo and a system. Connections are served
+  // one at a time by the loop below, so "one writer" is true by construction rather than by a lock; the
+  // concurrency question design/0001 leaves open is not open *here*, and stops being closed the day this
+  // serves two at once.
+  Fs fs = Fs.inMemory(core.nowMillis().wait());
+  if (o.image != "") {
+    Vec<string> argv = Vec.create();
+    argv.push("sshd");
+    Booted booted = boot(core, cli, o.image, argv);
+    if (!booted.ok) {
+      // Before the socket: a server that cannot read its image is not a server, and binding first meant
+      // it announced "listening on port 2222" and *then* refused — a moment in which it looked like it
+      // was working.
+      core.warn("sshd: " + o.image + ": " + booted.error);
+      return 1;
+    }
+    fs = booted.fs;
+  }
+
   // Every interface, as a real sshd does: a daemon nobody can reach is not a daemon. Said rather than
   // assumed — `listen` took a port alone until issue 0025.
   Socket listener = cli.listen("", o.port).wait();
@@ -107,16 +133,33 @@ export i32 main(Core core, Cli cli) {
       core.warn("sshd: accept: " + c.error);
       break;
     }
-    serve(core, cli, c.handle, host, o);
+    serve(core, cli, c.handle, host, o, fs);
     cli.closeSocket(c.handle);
+    // After the connection, not during it: a session that ends badly has still done work, and a client
+    // that hangs up mid-command has still created what it created.
+    if (o.image != "") { save(core, cli, "sshd", o.image, fs); }
     if (o.once) { break; }
   }
   cli.closeSocket(listener.handle);
   return 0;
 }
 
+/**
+ * The shell one session gets: capturing either way, and on the image when there is one.
+ *
+ * One place rather than two, because the two session shapes — a command and a REPL — must not be able to
+ * disagree about which filesystem a client is talking to. That is the kind of difference nobody notices
+ * until a `ssh host 'ls'` and an interactive `ls` answer differently.
+ */
+Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
+  Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
+  sh.capture = true;
+  if (o.image != "") { sh.cwd = "/"; }
+  return sh;
+}
+
 /** One connection, to completion. Errors are logged and end the connection, never the server. */
-void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o) {
+void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
   Conn conn = Conn.create(core, cli, sock);
   u8[] sessionId = handshake(conn, host);
   if (conn.failed()) {
@@ -132,7 +175,7 @@ void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o) {
     return;
   }
 
-  session(conn, cli, core);
+  session(conn, cli, core, o, fs);
   if (conn.failed()) { core.warn("sshd: " + conn.error); }
 }
 
@@ -284,7 +327,7 @@ bool authenticate(Conn conn, Cli cli, u8[] sessionId, Options o) {
 }
 
 /** One session channel, one command. */
-void session(Conn conn, Cli cli, Core core) {
+void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   u8[] payload = conn.readPacket();
   if (conn.failed()) { return; }
   Incoming m = parse(payload);
@@ -332,8 +375,8 @@ void session(Conn conn, Cli cli, Core core) {
     if (r.kind != msgChannelRequest()) { continue; }
 
     u8[] name = requestName(p);
-    if (sameBytes(name, "shell".toBytes())) { interactive = true; break; }
-    if (sameBytes(name, "exec".toBytes())) {
+    if (equal(name, "shell".toBytes())) { interactive = true; break; }
+    if (equal(name, "exec".toBytes())) {
       command = execCommand(p);
       // An `exec` we cannot read the command out of is a refusal, and it did want an answer.
       if (command.len() == 0 && requestWantsReply(p)) {
@@ -352,8 +395,8 @@ void session(Conn conn, Cli cli, Core core) {
   if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return; }
 
   Result result = interactive
-    ? interactiveSession(conn, cli, core, clientChannel)
-    : run(cli, core, command);
+    ? interactiveSession(conn, cli, core, clientChannel, o, fs)
+    : run(cli, core, command, o, fs);
   if (conn.failed()) { return; }
   if (result.out.len() > 0) { conn.sendPacket(channelData(clientChannel, result.out)); }
   if (result.err.len() > 0) { conn.sendPacket(channelStderr(clientChannel, result.err)); }
@@ -393,8 +436,8 @@ void session(Conn conn, Cli cli, Core core) {
  * matches `ssh -T host` against a real sshd, which is also the only thing that can be compared
  * against it.
  */
-Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel) {
-  Shell sh = Shell.capturing(core, cli);
+Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs) {
+  Shell sh = sessionShell(core, cli, o, fs);
   Buf pending = Buf.create();
 
   while (true) {
@@ -473,8 +516,8 @@ struct Result {
  * what the server can read and write nothing. That is a real exposure and the operator chooses its
  * size, which is the capability world working as intended rather than a gap.
  */
-Result run(Cli cli, Core core, u8[] command) {
-  Shell sh = Shell.capturing(core, cli);
+Result run(Cli cli, Core core, u8[] command, Options o, Fs fs) {
+  Shell sh = sessionShell(core, cli, o, fs);
   i32 status = runScript(sh, string.fromBytes(command));
   return Result(sh.outBuf.take(), sh.errOut.take(), status);
 }
@@ -483,6 +526,19 @@ struct Options {
   i32 port;
   string hostKey;
   string authorizedKeys;
+  /**
+   * An image to serve sessions from, or empty for the host's filesystem.
+   *
+   * design/0001 step 7's criterion is "the ssh demo is one program that boots an image and serves
+   * sessions from it", and this is that half of it: `sshd -i home.wacimg` hands every session the same
+   * `Fs`, loaded once at startup and written back after each connection. What one client leaves behind,
+   * the next one finds.
+   *
+   * Empty keeps what this program did before — `Shell.capturing` on `Fs.onHost`, reaching whatever the
+   * server was granted. Which of the two a client gets is the operator's decision and not the client's,
+   * which is the same shape as every other capability here.
+   */
+  string image;
   bool once;
   i32 exitCode;
 }
@@ -495,6 +551,7 @@ Options parseArgs(Core core, Cli cli) {
   i32 port = defaultPort();
   string hostKey = "";
   string authorizedKeys = "";
+  string image = "";
   bool once = false;
 
   i32 i = 0;
@@ -506,7 +563,7 @@ Options parseArgs(Core core, Cli cli) {
       port = atoi(string.fromBytes(cli.arg(i).wait()));
       if (port <= 0 || port > 65535) {
         core.warn("sshd: bad port: " + string.fromBytes(cli.arg(i).wait()));
-        return Options(0, "", "", false, 2);
+        return Options(0, "", "", "", false, 2);
       }
     } else if (a == "-h" && i + 1 < n) {
       i++;
@@ -514,11 +571,14 @@ Options parseArgs(Core core, Cli cli) {
     } else if (a == "-a" && i + 1 < n) {
       i++;
       authorizedKeys = string.fromBytes(cli.arg(i).wait());
+    } else if (a == "-i" && i + 1 < n) {
+      i++;
+      image = string.fromBytes(cli.arg(i).wait());
     } else if (a == "-1") {
       once = true;
     } else {
-      core.warn("usage: sshd [-p port] [-h hostkey] [-a authorized_keys] [-1]");
-      return Options(0, "", "", false, 2);
+      core.warn("usage: sshd [-p port] [-h hostkey] [-a authorized_keys] [-i image] [-1]");
+      return Options(0, "", "", "", false, 2);
     }
     i++;
   }
@@ -526,18 +586,18 @@ Options parseArgs(Core core, Cli cli) {
   if (hostKey == "") {
     if (homeDir == "") {
       core.warn("sshd: HOME is unset, so there is no default host key — use -h");
-      return Options(0, "", "", false, 2);
+      return Options(0, "", "", "", false, 2);
     }
     hostKey = homeDir + "/.ssh/ssh_host_ed25519_key";
   }
   if (authorizedKeys == "") {
     if (homeDir == "") {
       core.warn("sshd: HOME is unset, so there is no default authorized_keys — use -a");
-      return Options(0, "", "", false, 2);
+      return Options(0, "", "", "", false, 2);
     }
     authorizedKeys = homeDir + "/.ssh/authorized_keys";
   }
-  return Options(port, hostKey, authorizedKeys, once, -1);
+  return Options(port, hostKey, authorizedKeys, image, once, -1);
 }
 
 i32 atoi(string s) {
@@ -551,10 +611,3 @@ i32 atoi(string s) {
   return s.len() == 0 ? -1 : v;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

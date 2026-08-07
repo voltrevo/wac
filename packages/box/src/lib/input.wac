@@ -32,6 +32,62 @@ export string whyUnread(FileResult f) {
 export i32 operandCount(Args a, i32 n) { return a.rest.len() <= n ? 0 : a.rest.len() - n; }
 
 /**
+ * The `n`th operand as a path, where a **lone `-` is standard input** and so is no operand at all.
+ *
+ * `-` is not a filename in any of these tools and never has been: `cat -`, `sort -` and `uniq -` all read
+ * standard input, and `cat a - b` reads the file, then stdin, then the other file. Every applet here read
+ * it as a *name* instead, so `cat -` said "cat: -: No such file or directory" and exited 1 — which is a
+ * refusal, and the wrong one, since the caller wrote something every real tool accepts.
+ *
+ * One function because it is one convention. It is the same empty string the absent case already uses,
+ * which is what `openInput("")` and `readStdin` already mean, so nothing downstream had to learn a third
+ * spelling of "standard input".
+ *
+ * **The label is not the path.** `wc -c -` prints `4 -`: the operand is still `-` in the output even
+ * though the bytes came from standard input, which is why `Input.label` keeps what was written and only
+ * the path is resolved.
+ */
+export string operandAt(Args a, i32 n) {
+  if (a.rest.len() <= n) { return ""; }
+  return a.rest[n] == "-" && dashIsStdin(a.name) ? "" : a.rest[n];
+}
+
+/**
+ * Whether a lone `-` names standard input for this tool. **Not universal**, and measured rather than
+ * assumed.
+ *
+ * Every coreutils program here takes it — `cat`, `sort`, `uniq`, `wc`, `head`, `tail`, `nl`, `tac`,
+ * `cut`, `fold`, `paste`, `shuf`, `grep`, the checksums, `base64`, `base32`. Two of these applets imitate
+ * something that is not coreutils and does not: util-linux's `rev` says "rev: cannot open -: No such file
+ * or directory", and binutils' `strings` prints its usage. Applying the convention everywhere would have
+ * traded one wrong answer for another, which is the mistake wac-mono 0096 records for the *last* time an
+ * operand rule was assumed to be universal.
+ */
+bool dashIsStdin(string name) { return name != "rev" && name != "strings"; }
+
+/**
+ * How this tool says it could not open something.
+ *
+ * Coreutils mostly says `cat: nosuchfile: No such file or directory`, but not always: `head` and `tail`
+ * say `cannot open 'nosuchfile' for reading` and `sort` says `cannot read: nosuchfile`, while
+ * util-linux's `rev` says `cannot open nosuchfile` with no quotes at all. Four tools, four sentences,
+ * each measured on the tool itself — the same lesson `dashIsStdin` records one function up, and the
+ * reason this is a table rather than a format string.
+ */
+string cannotOpen(string name, string path, string why) {
+  // Three wordings, each measured on the tool it belongs to rather than derived from the majority.
+  // `head` and `tail` quote the name and say what they were going to do with it; util-linux's `rev` says
+  // "cannot open" without quotes; coreutils' rest say the name and the reason. Getting this from the
+  // majority would have been wrong for four of the seven.
+  if (name == "rev") { return name + ": cannot open " + path + ": " + why; }
+  if (name == "head" || name == "tail") {
+    return name + ": cannot open '" + path + "' for reading: " + why;
+  }
+  if (name == "sort") { return name + ": cannot read: " + path + ": " + why; }
+  return name + ": " + path + ": " + why;
+}
+
+/**
  * The same choice, for the streaming pair.
  *
  * `readInput` answers with the whole of the input, which is fine for a filename and wrong
@@ -42,31 +98,17 @@ export i32 operandCount(Args a, i32 n) { return a.rest.len() <= n ? 0 : a.rest.l
  * that wanted them would have called `readInput`.
  */
 export Input openStream(Core core, Cli cli, Args a, i32 n) {
-  string path = a.rest.len() <= n ? "" : a.rest[n];
+  string path = operandAt(a, n);
+  string label = a.rest.len() <= n ? "" : a.rest[n];
   Change opened = cli.openInput(path).wait();
-  if (opened.ok()) { return Input(true, u8[0](), path); }
+  if (opened.ok()) { return Input(true, u8[0](), label); }
   // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
   // now says what `cat` says instead of the host's sentence about `open '/tmp/x'`.
   string words = faultWords(opened.fault);
-  core.warn(a.name + ": " + path + ": " + (words == "" ? opened.message : words));
-  return Input(false, u8[0](), path);
+  core.warn(cannotOpen(a.name, path, words == "" ? opened.message : words));
+  return Input(false, u8[0](), label);
 }
 
-/**
- * Refuse more operands than this applet takes, in the words the real one uses.
- *
- * Not every tool reads many files: `base64`, `base32`, `shuf` and `tr` answer "extra operand" in GNU, and
- * `uniq`'s second operand is an *output* file. Reading a second one for them would be an incompatibility
- * invented here — but so is **ignoring** it, which is what they all did (wac-mono 0096). Refusing is what
- * is left, and it is what the real ones do.
- *
- * Returns true when the caller should stop, having already reported why.
- */
-export bool tooManyOperands(Core core, Args a, i32 most) {
-  if (a.rest.len() <= most) { return false; }
-  core.warn(a.name + ": extra operand '" + a.rest[most] + "'");
-  return true;
-}
 
 /**
  * Every file from operand `n` on, concatenated — or standard input when there are none.
@@ -95,22 +137,24 @@ export Input readAll(Core core, Cli cli, Args a, i32 n) {
     all.copyFrom(parts[i], 0, at, parts[i].len());
     at = at + parts[i].len();
   }
-  return Input(true, all, a.rest[n]);
+  return Input(true, all, operandAt(a, n));
 }
 
 /** Positional argument `n` names a file; without one, standard input. */
 export Input readInput(Core core, Cli cli, Args a, i32 n) {
-  if (a.rest.len() <= n) { return Input(true, cli.readStdin().wait(), ""); }
-  string path = a.rest[n];
+  string path = operandAt(a, n);
+  // The label is what was written, so `-` stays `-` in the output; the path is what was resolved.
+  string label = a.rest.len() <= n ? "" : a.rest[n];
+  if (path == "") { return Input(true, cli.readStdin().wait(), label); }
   FileResult f = cli.readFile(path).wait();
   if (!f.ok) {
     // GNU's words where the category has them, and the host's sentence where it does not: "No such file
     // or directory (os error 2): readfile '/tmp/x'" is one runtime's spelling of four words, and it
     // differed by runtime. `FileResult.fault` is what makes the translation possible — wac-mono 0062.
-    core.warn(a.name + ": " + path + ": " + whyUnread(f));
-    return Input(false, u8[0](), path);
+    core.warn(cannotOpen(a.name, path, whyUnread(f)));
+    return Input(false, u8[0](), label);
   }
-  return Input(true, f.bytes, path);
+  return Input(true, f.bytes, label);
 }
 
 /**
@@ -195,21 +239,54 @@ export struct Reader {
    * returning 0. `Lines.broken` exists in `packages/platform` for the same reason and says so.
    */
   bool broken;
+  /**
+   * Whether any operand could not be opened.
+   *
+   * Separate from `broken` because the two have different answers: a file that cannot be opened is
+   * skipped and the status is 1 at the end, while a read that fails half way through one ends the
+   * sequence there. An applet that treated them the same would either stop early or claim success.
+   */
+  bool failed;
   i32 at;
   Lines s;
   Feed fed;
 
+  /**
+   * A reader over the operands from `first`, or over standard input when there are none.
+   *
+   * A first operand that will not open is the same skip as any other — `nl missing f` prints `f` — so
+   * this walks forward until one opens. **Not falling through to standard input** is the part that
+   * needs saying: `rev -` names an operand util-linux's `rev` will not open, and a reader that gave up
+   * on it and then read stdin answered with the piped input reversed, which is a wrong answer where
+   * there had been a refusal. When every operand fails the reader is empty and `failed` is set.
+   */
   Reader create(Core core, Cli cli, Args a, i32 first) {
-    Input in = openStream(core, cli, a, first);
-    return Reader(in.ok, false, first, Lines.create(), Feed.fromStdin(cli));
+    if (operandCount(a, 0) <= first) {
+      return Reader(true, false, false, first, Lines.create(), Feed.fromStdin(cli));
+    }
+    bool failed = false;
+    for (i32 at = first; at < operandCount(a, 0); at++) {
+      Input in = openStream(core, cli, a, at);
+      if (in.ok) { return Reader(true, false, failed, at, Lines.create(), Feed.fromStdin(cli)); }
+      failed = true;
+    }
+    // Every one of them was refused, and each has already said so. An empty feed rather than standard
+    // input: there is nothing left to read, and reading anything would be inventing an operand.
+    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[0]()));
   }
 
   /**
    * The next line, rolling on to the next file at the end of one.
    *
-   * A file that cannot be opened stops the sequence with the reason already reported, which is where this
-   * differs from GNU: `nl a missing b` stops after `a` rather than carrying on and exiting 1 at the end.
-   * Named in wac-mono 0096 rather than left to be discovered.
+   * **A file that cannot be opened is reported and skipped**, and the ones after it are still read. That
+   * is what GNU does — `nl a missing b` prints `a` and `b`, complains about `missing`, and exits 1 — and
+   * this used to stop at the first failure instead, which was named in wac-mono 0096 and left. It cost
+   * exactly what naming it was meant to avoid: `packages/sh`'s own `nl` and `rev` carried on, so
+   * deleting them in favour of these (wac-mono 0103) would have quietly lost the behaviour, and the
+   * comparison that found it was the one written to make that deletion safe.
+   *
+   * `broken` is a different thing and stays: a read that fails *part way through* a file it had already
+   * opened ends the sequence, because carrying on would silently drop the rest of that file.
    */
   Line next(this, Core core, Cli cli, Args a) {
     Line l = nextLine(this.s, this.fed);
@@ -219,7 +296,8 @@ export struct Reader {
     if (operandCount(a, 0) <= this.at + 1) { return l; }
     this.at = this.at + 1;
     Input in = openStream(core, cli, a, this.at);
-    if (!in.ok) { this.broken = true; return Line(false, u8[0](), false); }
+    // Reported already, by `openStream`. Remember that it happened, and read the next operand.
+    if (!in.ok) { this.failed = true; return this.next(core, cli, a); }
     this.s = Lines.create();
     this.fed = Feed.fromStdin(cli);
     return this.next(core, cli, a);

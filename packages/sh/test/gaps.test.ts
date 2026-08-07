@@ -46,9 +46,48 @@ async function gnuOptions(tool: string): Promise<string[]> {
   if (r === null || !r.success) return [];
   const help = new TextDecoder().decode(r.stdout);
   const letters = new Set<string>();
-  for (const m of help.matchAll(/^\s+-([a-zA-Z])[,\s]/gm)) letters.add(m[1]);
+  // Both spellings on a line: GNU documents `-r, -R, --recursive` and `-c, -C, --complement`, and an
+  // anchor at the start of the line sees only the first — so this swept neither `rm -R` nor `tr -C`
+  // while claiming to sweep every option GNU has. Found from the other end, in wac-mono 0105, where the
+  // same omission put three real flags in the table that decides who gets blamed.
+  for (const m of help.matchAll(/(?:^\s+|,\s*)-([a-zA-Z])(?=[,\s=[]|$)/gm)) letters.add(m[1]);
   return [...letters];
 }
+
+Deno.test("a long option is one word, not a bundle of short ones", async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const built = await Deno.makeTempFile({ prefix: "wacsh-long-" });
+  try {
+    await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
+    const err = (script: string) => {
+      const r = new Deno.Command(built, {
+        args: ["-c", script],
+        stdout: "null",
+        stderr: "piped",
+        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+        clearEnv: true,
+      }).outputSync();
+      return new TextDecoder().decode(r.stderr).trim();
+    };
+
+    // Read as a bundle, the first letter these could not implement was the *second dash*, so the
+    // refusal named a character the caller never typed: `wc: invalid option -- '-'`.
+    assertEquals(err("wc --lines"), "wc: long options are not implemented: --lines");
+    // Each of the scanners this shell still has: `options`, `head`'s counter, and `ls` in `exec.wac`.
+    // `tr`'s loop went with `tr`.
+    assertEquals(err("head --lines=2"), "head: long options are not implemented: --lines=2");
+    // Was `tr --delete`; `tr` has gone to `packages/box` (wac-mono 0103) and `sort` reaches the same
+    // scanner — `options`, the one `wc`, `sort`, `uniq` and `rev` all share.
+    assertEquals(err("echo x | sort --reverse"), "sort: long options are not implemented: --reverse");
+    assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
+    // `seq` said GNU's "unrecognized option", which tells a caller they invented `--separator`.
+    assertEquals(err("seq --separator=, 3"), "seq: long options are not implemented: --separator=,");
+    // `echo` is not a getopt program: GNU's prints `--nonsense` and says nothing.
+    assertEquals(err("echo --nonsense"), "");
+  } finally {
+    await Deno.remove(built);
+  }
+});
 
 Deno.test({
   name: "no option that GNU has is called invalid — a gap says it is a gap",
@@ -60,7 +99,13 @@ Deno.test({
 
       // The eight of this shell's twelve programs that a real tool exists for. `printf`, `seq`, `echo`
       // and `cat` take no letter this cares about.
-      const tools = ["wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr"];
+      // `ls` is a *builtin* rather than one of the twelve, and it was the one place left where an
+      // option was read as a filename: `ls -l` said "cannot access '-l': No such file or
+      // directory", blaming the caller for a real flag. It answers to the same table now, so it
+      // belongs in the same sweep.
+      // No `nl` or `rev`: this shell has given them up to `packages/box`, whose `test/flags.test.ts`
+      // asks the same question of the applets. The list shrinks as the rest follow (wac-mono 0103).
+      const tools = ["wc", "head", "sort", "grep", "ls"];
       const cases: { tool: string; letter: string; script: string }[] = [];
       for (const tool of tools) {
         for (const letter of await gnuOptions(tool)) {
@@ -119,6 +164,69 @@ Deno.test({
           : `the batch stopped before the end, so it checked fewer than ${cases.length} options.\n` +
             `  stderr: ${batch.err.trim().split("\n").slice(0, 3).join("\n  ")}`,
       );
+    } finally {
+      await Deno.remove(built);
+    }
+  },
+});
+
+/**
+ * The redirections this shell does not perform, and what it does with the command anyway.
+ *
+ * The same three answers as above, and the same ranking — except here the worst one had actually been
+ * chosen twice, in opposite directions:
+ *
+ *   - `2>&1` was a **syntax error**, which says the caller wrote something invalid. They did not: the
+ *     lexer made it three tokens and the redirection parser refused a target that was not a word.
+ *   - `echo hi 2>/dev/null` printed the refusal, **swallowed `hi`, and exited 0** — `writeTo` answered
+ *     true for a descriptor it cannot write, so both callers believed the output had gone to a file.
+ *     A command that did not run and reported success is the one outcome worse than either.
+ */
+Deno.test({
+  name: "a redirection this shell cannot perform is named, and the command still runs",
+  fn: async () => {
+    const { buildApp } = await import("../../platform/build.ts");
+    const built = await Deno.makeTempFile({ prefix: "wacsh-redir-" });
+    try {
+      await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
+      const run = async (script: string) => {
+        const r = await new Deno.Command(built, {
+          args: ["-c", script],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        const d = new TextDecoder();
+        return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
+      };
+
+      // Named, not called a syntax error — and named with the descriptors that were meant.
+      for (const [script, want] of [
+        ["echo hi 2>&1", "2>&1"],
+        ["echo hi 1>&2", "1>&2"],
+        ["echo hi >&2", "1>&2"],
+      ]) {
+        const got = await run(script);
+        assertEquals(got.err.includes("not implemented"), true, `${script}: ${got.err}`);
+        assertEquals(got.err.includes("syntax error"), false, `${script} is not a syntax error`);
+        assertEquals(got.err.includes(want), true, `${script} should name ${want}: ${got.err}`);
+        assertEquals(got.code, 2, `${script}: status`);
+      }
+      // Still a syntax error when it really is one: `2>&` has nothing to duplicate.
+      assertEquals((await run("echo hi 2>&")).err.includes("syntax error"), true, "2>& is invalid");
+
+      // A refused stage fails the whole pipeline. This exited 0 — the refusal was printed and the
+      // status came from `cat`, which had succeeded at doing nothing.
+      const piped = await run("echo hi 2>&1 | cat");
+      assertEquals(piped.err.includes("not implemented"), true, piped.err);
+      assertEquals(piped.code !== 0, true, `a refused pipeline reported success (${piped.code})`);
+
+      // And the descriptor this shell cannot capture: the redirection is refused, the command runs.
+      const kept = await run("echo hi 2>/dev/null");
+      assertEquals(kept.out, "hi\n", `the command's own output was lost: ${JSON.stringify(kept.out)}`);
+      assertEquals(kept.err.includes("not implemented"), true, kept.err);
+      const after = await run("echo one 2>/dev/null; echo two");
+      assertEquals(after.out, "one\ntwo\n", after.out);
     } finally {
       await Deno.remove(built);
     }

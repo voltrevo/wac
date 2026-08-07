@@ -1,0 +1,473 @@
+// Everything `packages/fs` can be asked to do, in a shape a coverage driver can call.
+//
+// A probe rather than direct binding, for two reasons that are both about capabilities:
+//
+//   * a **synth** mount takes `fn[Pending<u8[]>(i32)]`, and building one of those from TypeScript means
+//     building a `Pending` from TypeScript — three funcrefs and an id — where building it here is four
+//     lines and deterministic, which is what a coverage run wants;
+//   * a **host** mount takes a whole `Cli`, which only a built program has. Those branches are driven by
+//     `test/host.test.ts` and `test/backings.test.ts` against the real filesystem, and are recorded as
+//     unreached here with that as the reason.
+//
+// Each function builds its own filesystem and returns a transcript, because wac has no mutable
+// module-level state: there is nowhere to keep an `Fs` between two calls from the driver.
+
+import { Vec } from "../../../std/src/vec.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Change, FileResult, Pending, Stat } from "../../../platform/src/platform.wac";
+import { Fs, Mount, mountSystem } from "../../src/fs.wac";
+import { Loaded, Written, dump, read, write } from "../../src/image.wac";
+import { crc32 } from "../../../gzip/src/crc32.wac";
+
+// ── A deterministic stand-in for the host's CSPRNG ────────────────────────────
+//
+// The bytes are a counter, not random, and that is deliberate: a coverage run that changed its input
+// every time would make a difference in the report impossible to attribute. `test/synth.test.ts` checks
+// that the *real* one is random, through a built program, which is the only place that can.
+
+u8[] fakeRandom(i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 7 + 11) & 255; }
+  return out;
+}
+
+bool alwaysSettled(i32 id) { return true; }
+void noDrop(i32 id) {}
+
+Pending<u8[]> pendingRandom(i32 n) {
+  return Pending.of(n, fakeRandom, alwaysSettled, noDrop);
+}
+
+/** A filesystem with a memory root, `/mnt`, and the two synthesised mounts. */
+Fs system() {
+  Fs fs = Fs.inMemory(1754500000000);
+  fs.mountMemory("/mnt");
+  Vec<string> argv = Vec.create();
+  argv.push("probe");
+  argv.push("-x");
+  mountSystem(fs, pendingRandom, argv);
+  return fs;
+}
+
+// ── Transcripts ───────────────────────────────────────────────────────────────
+
+void say(Buf out, string what) {
+  out.pushAll(what.toBytes());
+  out.push(10);
+}
+
+string faultOf(Change c) { return itoa(c.fault); }
+
+/** Every ordinary operation and every refusal a memory mount can produce. */
+export string memoryOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+
+  say(out, "mkdir " + faultOf(fs.mkdir("/d", false)));
+  say(out, "mkdir again " + faultOf(fs.mkdir("/d", false)));
+  say(out, "mkdir -p " + faultOf(fs.mkdir("/a/b/c", true)));
+  say(out, "mkdir -p again " + faultOf(fs.mkdir("/a/b/c", true)));
+  say(out, "mkdir no parent " + faultOf(fs.mkdir("/nope/x", false)));
+
+  say(out, "write " + faultOf(fs.writeFile("/d/f", "hello".toBytes())));
+  say(out, "rewrite " + faultOf(fs.writeFile("/d/f", "bye".toBytes())));
+  say(out, "write no parent " + faultOf(fs.writeFile("/nope/f", "x".toBytes())));
+  say(out, "write over dir " + faultOf(fs.writeFile("/d", "x".toBytes())));
+  say(out, "write under file " + faultOf(fs.writeFile("/d/f/g", "x".toBytes())));
+  // `mkdir` where a file already is, and a file where a directory already is.
+  say(out, "mkdir over file " + faultOf(fs.mkdir("/d/f", false)));
+  say(out, "mkdir -p over file " + faultOf(fs.mkdir("/d/f/deeper", true)));
+
+  FileResult r = fs.readFile("/d/f");
+  say(out, "read " + (r.ok ? string.fromBytes(r.bytes) : "!" + r.error));
+  say(out, "read missing " + fs.readFile("/d/nope").error);
+  say(out, "read dir " + fs.readFile("/d").error);
+  FileResult some = fs.readSome("/d/f", 2);
+  say(out, "readSome " + (some.ok ? string.fromBytes(some.bytes) : "!" + some.error));
+  say(out, "readSome past end " + string.fromBytes(fs.readSome("/d/f", 99).bytes));
+  say(out, "readSome negative " + fs.readSome("/d/f", -1).error);
+
+  Stat st = fs.stat("/d/f");
+  say(out, "stat " + (st.exists ? "file=" + (st.isFile ? "y" : "n") : "absent"));
+  say(out, "stat dir " + (fs.stat("/d").isDir ? "dir" : "not"));
+  say(out, "stat missing " + (fs.stat("/nope").exists ? "there" : "absent"));
+  say(out, "linkStat " + (fs.linkStat("/d/f").exists ? "there" : "absent"));
+
+  string[]? names = fs.readDir("/d");
+  say(out, "readDir " + (names is null ? "null" : itoa(names!.len())));
+  say(out, "readDir file " + (fs.readDir("/d/f") is null ? "null" : "listed"));
+  say(out, "readDir missing " + (fs.readDir("/nope") is null ? "null" : "listed"));
+  say(out, "readDir root " + itoa(fs.readDir("/")!.len()));
+
+  say(out, "chmod " + faultOf(fs.chmod("/d/f", 384)));
+  say(out, "chmod missing " + faultOf(fs.chmod("/nope", 384)));
+  say(out, "chown " + faultOf(fs.chown("/d/f", "someone")));
+  say(out, "chown missing " + faultOf(fs.chown("/nope", "someone")));
+
+  say(out, "rename " + faultOf(fs.rename("/d/f", "/d/g")));
+  say(out, "rename missing " + faultOf(fs.rename("/d/nope", "/d/h")));
+  say(out, "rename no parent " + faultOf(fs.rename("/d/g", "/nope/h")));
+  say(out, "rename cross mount " + faultOf(fs.rename("/d/g", "/mnt/g")));
+  say(out, "rename onto dir " + faultOf(fs.rename("/d/g", "/a/b")));
+
+  say(out, "rm " + faultOf(fs.remove("/d/g", false)));
+  say(out, "rm missing " + faultOf(fs.remove("/d/g", false)));
+  say(out, "rm nonempty " + faultOf(fs.remove("/a", false)));
+  say(out, "rm -r " + faultOf(fs.remove("/a", true)));
+  say(out, "rm no parent " + faultOf(fs.remove("/nope/x", false)));
+  return string.fromBytes(out.take());
+}
+
+/** The synthesised mounts: every file, every refusal, and both read shapes. */
+export string synthOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+
+  say(out, "dev " + joined(fs.readDir("/dev")));
+  say(out, "proc " + joined(fs.readDir("/proc")));
+  say(out, "proc/self " + joined(fs.readDir("/proc/self")));
+  say(out, "dev file listing " + (fs.readDir("/dev/null") is null ? "null" : "listed"));
+  say(out, "dev missing listing " + (fs.readDir("/dev/sda") is null ? "null" : "listed"));
+
+  say(out, "null read " + itoa(fs.readFile("/dev/null").bytes.len()));
+  say(out, "cmdline " + itoa(fs.readFile("/proc/self/cmdline").bytes.len()));
+  say(out, "cmdline some " + itoa(fs.readSome("/proc/self/cmdline", 3).bytes.len()));
+  say(out, "cmdline past end " + itoa(fs.readSome("/proc/self/cmdline", 99).bytes.len()));
+  say(out, "zero some " + itoa(fs.readSome("/dev/zero", 8).bytes.len()));
+  say(out, "random some " + itoa(fs.readSome("/dev/urandom", 8).bytes.len()));
+  say(out, "random alias " + itoa(fs.readSome("/dev/random", 4).bytes.len()));
+  say(out, "zero whole " + fs.readFile("/dev/zero").error);
+  say(out, "random whole " + fs.readFile("/dev/urandom").error);
+  say(out, "missing " + fs.readFile("/dev/sda").error);
+  say(out, "dir read " + fs.readFile("/dev").error);
+  say(out, "proc dir read " + fs.readFile("/proc/self").error);
+
+  say(out, "stat null " + (fs.stat("/dev/null").isFile ? "file" : "not"));
+  say(out, "stat dev " + (fs.stat("/dev").isDir ? "dir" : "not"));
+  say(out, "stat cmdline " + itoa64(fs.stat("/proc/self/cmdline").size));
+  say(out, "stat zero " + itoa64(fs.stat("/dev/zero").size));
+  say(out, "stat missing " + (fs.stat("/dev/sda").exists ? "there" : "absent"));
+
+  say(out, "write null " + faultOf(fs.writeFile("/dev/null", "anything".toBytes())));
+  say(out, "write zero " + faultOf(fs.writeFile("/dev/zero", "x".toBytes())));
+  say(out, "mkdir dev " + faultOf(fs.mkdir("/dev/d", false)));
+  say(out, "rm dev " + faultOf(fs.remove("/dev/null", false)));
+  say(out, "chmod dev " + faultOf(fs.chmod("/dev/null", 384)));
+  say(out, "chown dev " + faultOf(fs.chown("/dev/null", "root")));
+  say(out, "rename out of dev " + faultOf(fs.rename("/dev/null", "/null")));
+  say(out, "rename into dev " + faultOf(fs.rename("/mnt", "/dev/mnt")));
+  return string.fromBytes(out.take());
+}
+
+/** Writing an image, reading it back, and every way one can be wrong. */
+export string imageOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+  fs.mkdir("/d", false);
+  fs.writeFile("/d/f", "hello".toBytes());
+  fs.writeFile("/empty", u8[0]());
+  fs.mkdir("/emptydir", false);
+  fs.chmod("/d/f", 384);
+  fs.chown("/d/f", "claude");
+  fs.remove("/empty", false);            // a node the writer will not reach
+
+  Written w = write(fs);
+  say(out, "written " + itoa(w.bytes.len()) + " skipped " + itoa(w.skipped.len()));
+
+  Loaded back = read(w.bytes, 0);
+  say(out, "read " + (back.ok ? "ok" : "!" + back.error));
+  say(out, "reloaded " + (back.ok ? string.fromBytes(back.fs.readFile("/d/f").bytes) : ""));
+  // Rewriting what was read gives the same bytes, which is the property the tests rest on.
+  say(out, "rewrite " + itoa(write(back.fs).bytes.len()));
+
+  say(out, "dump " + itoa(dump(w.bytes).len()));
+  say(out, "short " + read(u8[3](), 0).error);
+  say(out, "magic " + read("not an image at all!!".toBytes(), 0).error);
+
+  u8[] wrongVersion = copyOf(w.bytes);
+  wrongVersion[7] = 99;
+  say(out, "version " + read(wrongVersion, 0).error);
+
+  u8[] cut = u8[w.bytes.len() - 6]();
+  cut.copyFrom(w.bytes, 0, 0, cut.len());
+  say(out, "truncated " + read(cut, 0).error);
+
+  u8[] flipped = copyOf(w.bytes);
+  flipped[flipped.len() / 2] = flipped[flipped.len() / 2] ^ 255;
+  say(out, "flipped " + read(flipped, 0).error);
+  say(out, "dump of a bad one " + itoa(dump(flipped).len()));
+  return string.fromBytes(out.take());
+}
+
+/**
+ * Images whose **checksum is right and whose body is wrong**.
+ *
+ * The reader checks the CRC before it believes anything, so every malformed image a test had shown it was
+ * refused by the checksum and its own guards — a short read inside a mount name, a node kind that is
+ * neither file nor directory, a length that runs past the end — had never executed. Those are its
+ * defences against a *writer* with a bug rather than against a damaged file, and a damaged file is the
+ * only thing anything had ever handed it.
+ *
+ * Each of these is a body assembled by hand with the correct CRC appended, which is the only way past the
+ * first gate.
+ */
+export string imageBadOps() {
+  Buf out = Buf.create();
+  say(out, "no mount name " + read(sealed(oneMount()), 0).error);
+
+  Buf named = oneMount();
+  putStr(named, "/home");
+  say(out, "no node " + read(sealed(named), 0).error);
+
+  Buf kind = oneMount();
+  putStr(kind, "/home");
+  node(kind, 7);                                  // a complete header whose kind is neither
+  say(out, "bad kind " + read(sealed(kind), 0).error);
+
+  Buf shortNode = oneMount();
+  putStr(shortNode, "/home");
+  shortNode.push(0);
+  shortNode.pushU32(420 as@ u32);                 // mode, then the owner string runs out
+  say(out, "node cut short " + read(sealed(shortNode), 0).error);
+
+  Buf longFile = oneMount();
+  putStr(longFile, "/home");
+  node(longFile, 0);
+  longFile.pushU32(9999 as@ u32);                 // a length nothing follows
+  say(out, "length past the end " + read(sealed(longFile), 0).error);
+
+  Buf negative = oneMount();
+  putStr(negative, "/home");
+  node(negative, 0);
+  negative.pushU32(0x80000000 as@ u32);           // a length that is negative as an i32
+  say(out, "negative length " + read(sealed(negative), 0).error);
+
+  Buf badEntry = oneMount();
+  putStr(badEntry, "/home");
+  node(badEntry, 1);
+  badEntry.pushU32(1 as@ u32);                    // one entry, and then nothing
+  say(out, "entry cut short " + read(sealed(badEntry), 0).error);
+
+  // A length that is not a length, at the *mount name* — so the specific reason comes back from the
+  // first failure rather than the second, which is a different line from the one above.
+  Buf badName = Buf.create();
+  badName.pushAll("wacimg\0".toBytes());
+  badName.push(1);
+  badName.pushU32(1 as@ u32);
+  badName.pushU32(0x80000000 as@ u32);
+  say(out, "mount name length " + read(sealed(badName), 0).error);
+
+  // An entry whose *name* runs out, as against one whose node does.
+  Buf badEntryName = oneMount();
+  putStr(badEntryName, "/home");
+  node(badEntryName, 1);
+  badEntryName.pushU32(1 as@ u32);
+  badEntryName.pushU32(50 as@ u32);            // a name fifty bytes long, and nothing after it
+  say(out, "entry name cut short " + read(sealed(badEntryName), 0).error);
+
+  Buf trailing = Buf.create();
+  Fs fs = Fs.inMemory(1754500000000);
+  fs.writeFile("/f", "x".toBytes());
+  u8[] good = write(fs).bytes;
+  trailing.pushBytes(good, 0, good.len() - 4);
+  trailing.push(0);                               // a byte nobody asked for, before the checksum
+  say(out, "trailing " + read(sealed(trailing), 0).error);
+  return string.fromBytes(out.take());
+}
+
+/** The header of an image claiming one mount, with nothing after it yet. */
+Buf oneMount() {
+  Buf b = Buf.create();
+  b.pushAll("wacimg\0".toBytes());
+  b.push(1);
+  b.pushU32(1 as@ u32);
+  return b;
+}
+
+/** A node header: kind, mode, owner, mtime — everything before the kind-specific part. */
+void node(Buf b, i32 kind) {
+  b.push(kind);
+  b.pushU32(420 as@ u32);
+  putStr(b, "root");
+  for (i32 i = 0; i < 8; i++) { b.push(0); }
+}
+
+void putStr(Buf b, string s) {
+  u8[] bytes = s.toBytes();
+  b.pushU32(bytes.len() as@ u32);
+  b.pushAll(bytes);
+}
+
+/** Append the checksum this body deserves, so the reader gets past its first gate. */
+u8[] sealed(Buf body) {
+  u8[] bytes = body.bytes();
+  body.pushU32(crc32(bytes));
+  return body.take();
+}
+
+/** The rename matrix: every pair of kinds, onto something that is already there. */
+export string renameOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+  fs.writeFile("/f1", "a".toBytes());
+  fs.writeFile("/f2", "b".toBytes());
+  fs.mkdir("/de", false);
+  fs.mkdir("/df", false);
+  fs.writeFile("/df/x", "c".toBytes());
+  fs.mkdir("/d1", false);
+
+  say(out, "file onto file " + faultOf(fs.rename("/f1", "/f2")));
+  say(out, "file onto empty dir " + faultOf(fs.rename("/f2", "/de")));
+  say(out, "file onto full dir " + faultOf(fs.rename("/f2", "/df")));
+  say(out, "dir onto file " + faultOf(fs.rename("/d1", "/f2")));
+  say(out, "dir onto full dir " + faultOf(fs.rename("/d1", "/df")));
+  say(out, "dir onto empty dir " + faultOf(fs.rename("/d1", "/de")));
+  say(out, "onto itself " + faultOf(fs.rename("/de", "/de")));
+  say(out, "under a file " + faultOf(fs.rename("/f2", "/f2/deeper")));
+  say(out, "root as a target " + faultOf(fs.rename("/f2", "/")));
+  return string.fromBytes(out.take());
+}
+
+/**
+ * A filesystem with **no mount at the root** — an image of `/home` on its own.
+ *
+ * Nothing else can produce one, and every operation has a guard for it that had never run: `mountOf`
+ * answers -1 and each caller has to turn that into "no such file or directory" rather than reaching into
+ * whichever mount happens to be first.
+ */
+export string rootlessOps() {
+  Buf out = Buf.create();
+  Fs fs = Fs.inMemory(1754500000000);
+  fs.mountMemory("/home");
+  fs.writeFile("/home/f", "x".toBytes());
+  // Drop the root mount, which is what loading an image of `/home` alone gives.
+  Vec<Mount> only = Vec.create();
+  only.push(fs.mounts.get(1));
+  fs.mounts = only;
+
+  say(out, "read " + fs.readFile("/elsewhere").error);
+  say(out, "readSome " + fs.readSome("/elsewhere", 4).error);
+  say(out, "stat " + (fs.stat("/elsewhere").exists ? "there" : "absent"));
+  say(out, "readDir " + (fs.readDir("/elsewhere") is null ? "null" : "listed"));
+  say(out, "write " + faultOf(fs.writeFile("/elsewhere", "x".toBytes())));
+  say(out, "mkdir " + faultOf(fs.mkdir("/elsewhere", false)));
+  say(out, "rm " + faultOf(fs.remove("/elsewhere", false)));
+  say(out, "chmod " + faultOf(fs.chmod("/elsewhere", 384)));
+  say(out, "chown " + faultOf(fs.chown("/elsewhere", "x")));
+  say(out, "rename from " + faultOf(fs.rename("/elsewhere", "/home/g")));
+  say(out, "rename to " + faultOf(fs.rename("/home/f", "/elsewhere")));
+  // The one that is there still works, so this is a filesystem and not a broken one.
+  say(out, "the mount itself " + string.fromBytes(fs.readFile("/home/f").bytes));
+  return string.fromBytes(out.take());
+}
+
+/** Mount points nested, and one whose name a real directory already has. */
+export string mountOps() {
+  Buf out = Buf.create();
+  Fs fs = Fs.inMemory(1754500000000);
+  fs.mkdir("/dev", false);              // a real directory where a mount will go
+  fs.mountMemory("/dev");               // …so the listing must not show it twice
+  fs.mountMemory("/a");
+  fs.mountMemory("/a/b");               // nested: shows under /a, not under /
+  say(out, "root " + joined(fs.readDir("/")));
+  say(out, "a " + joined(fs.readDir("/a")));
+  return string.fromBytes(out.take());
+}
+
+/** Paths that name nothing because the name is empty, and the one-byte singular in `dump`. */
+export string edgeOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+  say(out, "write to root " + faultOf(fs.writeFile("/", "x".toBytes())));
+  say(out, "mkdir root " + faultOf(fs.mkdir("/", false)));
+  say(out, "write to mount point " + faultOf(fs.writeFile("/mnt", "x".toBytes())));
+  say(out, "mkdir over a mount " + faultOf(fs.mkdir("/mnt", false)));
+  fs.writeFile("/one", "1".toBytes());
+  Written w = write(fs);
+  say(out, "dump singular " + (contains(dump(w.bytes), "1 byte)") ? "yes" : "no"));
+
+  // A directory under a *file*, without `-p`: the parent is found and is not a directory.
+  fs.writeFile("/plain", "x".toBytes());
+  say(out, "mkdir under a file " + faultOf(fs.mkdir("/plain/x", false)));
+  // A rename whose source parent does not exist at all, which is a different miss from a missing source.
+  say(out, "rename from nowhere " + faultOf(fs.rename("/nope/x", "/y")));
+
+  // A mount point written with a trailing slash is the same mount point.
+  Fs slashed = Fs.inMemory(1754500000000);
+  slashed.mountMemory("/x/");
+  say(out, "trailing slash mount " + joined(slashed.readDir("/")));
+  // The same path mounted twice: the listing must still name it once.
+  slashed.mountMemory("/x");
+  say(out, "mounted twice " + joined(slashed.readDir("/")));
+  return string.fromBytes(out.take());
+}
+
+bool contains(string haystack, string needle) {
+  i32 n = needle.len();
+  for (i32 i = 0; i + n <= haystack.len(); i++) {
+    if (haystack.slice(i, i + n) == needle) { return true; }
+  }
+  return false;
+}
+
+/** Paths that are the same place written differently, and paths outside every mount. */
+export string pathOps() {
+  Buf out = Buf.create();
+  Fs fs = system();
+  fs.mkdir("/d", false);
+  fs.writeFile("/d/f", "x".toBytes());
+
+  say(out, "trailing slash " + (fs.stat("/d/").isDir ? "dir" : "not"));
+  say(out, "root " + (fs.stat("/").isDir ? "dir" : "not"));
+  say(out, "empty " + (fs.stat("").exists ? "there" : "absent"));
+  say(out, "mnt " + (fs.stat("/mnt").isDir ? "dir" : "not"));
+  say(out, "mnt trailing " + (fs.stat("/mnt/").isDir ? "dir" : "not"));
+  // `/mn` is not under `/mnt`, which is the whole-component rule `underMount` exists for.
+  say(out, "prefix not component " + (fs.stat("/mn").exists ? "there" : "absent"));
+  say(out, "deep missing " + (fs.stat("/d/f/g").exists ? "there" : "absent"));
+  return string.fromBytes(out.take());
+}
+
+// ── Small things ──────────────────────────────────────────────────────────────
+
+u8[] copyOf(u8[] src) {
+  u8[] out = u8[src.len()]();
+  out.copyFrom(src, 0, 0, src.len());
+  return out;
+}
+
+string joined(string[]? names) {
+  if (names is null) { return "null"; }
+  string out = "";
+  string[] got = names!;
+  for (i32 i = 0; i < got.len(); i++) { out = out + (i == 0 ? "" : ",") + got[i]; }
+  return out;
+}
+
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  bool neg = n < 0;
+  i32 v = neg ? -n : n;
+  string out = "";
+  while (v > 0) {
+    out = digit(v % 10) + out;
+    v = v / 10;
+  }
+  return neg ? "-" + out : out;
+}
+
+string itoa64(i64 n) {
+  if (n == 0) { return "0"; }
+  i64 v = n;
+  string out = "";
+  while (v > 0) {
+    out = digit((v % 10) as! i32) + out;
+    v = v / 10;
+  }
+  return out;
+}
+
+string digit(i32 d) {
+  string[] digits = string[]("0", "1", "2", "3", "4", "5", "6", "7", "8", "9");
+  return digits[d];
+}

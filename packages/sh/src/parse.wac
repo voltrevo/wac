@@ -33,6 +33,17 @@ export enum RedirKind {
   Append,
   /** `<<WORD` — the input is in the script, not in a file. */
   Here,
+  /**
+   * `N>&M` — make one descriptor a copy of another.
+   *
+   * Parsed but **not implemented**, which is a deliberate pair rather than an oversight. It used to be a
+   * *syntax error*: the lexer made `2>&1` into `Great(fd=2)`, `Amp`, `Word(1)` and the redirection
+   * parser refused a target that was not a word. "sh: syntax error" tells a caller they wrote something
+   * invalid, and `2>&1` is neither invalid nor unusual — the gap is ours, and `exec.wac` already said so
+   * about `2>` in a comment while the parser said otherwise. Recognising the form is what lets the
+   * refusal name it.
+   */
+  Dup,
 }
 
 export struct Redir {
@@ -674,6 +685,18 @@ i32 takeRedirInto(Vec<Token> toks, i32 at, Vec<Redir> into, RedirKind kind, i32 
   Token target = toks.get(p);
   match (target.kind) {
     case Word: {}
+    case Amp: {
+      // `N>&M`: the `&` and the descriptor after it. Consumed here so the refusal can say which two
+      // descriptors were meant — a syntax error could not, because it never got that far.
+      if (p + 1 >= toks.len()) { return -1; }
+      Token which = toks.get(p + 1);
+      match (which.kind) {
+        case Word: {}
+        else: return -1;
+      }
+      into.push(Redir(RedirKind.Dup, fd, Word.of(which.parts), "", false));
+      return p + 2;
+    }
     else: return -1;                       // `> ;` and `> |` are syntax errors, not empty targets
   }
   into.push(Redir(kind, fd, Word.of(target.parts), "", false));

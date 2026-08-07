@@ -5,12 +5,15 @@
 // favours the low end unless the values that would skew it are rejected.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
-import { Input, readInput, tooManyOperands } from "../lib/input.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
+import { extraOperand } from "../lib/operands.wac";
 
 export i32 shuf(Core core, Cli cli, Args a) {
-  if (tooManyOperands(core, a, 1)) { return 1; }
+  if (refuseFlags(core, a)) { return 1; }
+  if (extraOperand(core, a, 1)) { return 1; }
   Input in = readInput(core, cli, a, 0);
   if (!in.ok) { return 1; }
   u8[][] lines = splitLines(in.bytes);
@@ -21,6 +24,7 @@ export i32 shuf(Core core, Cli cli, Args a) {
     lines[i] = lines[j];
     lines[j] = t;
   }
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   // `hasNum`, not `num == 0`: zero means zero. `shuf -n 0` printed every line, because "absent" and
   // "the user asked for none" were the same value — the bug closed as 0034 for `head` and `tail`, in
   // the one applet where nothing could reach it until `-n 0` began parsing at all.

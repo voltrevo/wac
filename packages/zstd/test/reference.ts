@@ -23,14 +23,22 @@ const z = zlib as unknown as {
 
 export type Encoded = { frame: Uint8Array; blocks: string[] };
 
-/** Compress with the reference encoder. `level` and `checksum` are its own knobs, not ours. */
+/**
+ * Compress with the reference encoder. `level`, `checksum` and `windowLog` are its own knobs, not ours.
+ *
+ * `windowLog` is the one worth naming: it is the only way to get a frame whose window is *smaller than its
+ * own content*, and therefore the only way to make a streaming decoder actually evict. Our encoder cannot
+ * produce one — it declares a window that covers everything it wrote — so without this knob the eviction
+ * path has no input in the whole repo.
+ */
 export function refCompress(
   data: Uint8Array,
-  opts: { level?: number; checksum?: boolean } = {},
+  opts: { level?: number; checksum?: boolean; windowLog?: number } = {},
 ): Encoded {
   const params: Record<number, number> = {};
   if (opts.level !== undefined) params[z.constants.ZSTD_c_compressionLevel] = opts.level;
   if (opts.checksum) params[z.constants.ZSTD_c_checksumFlag] = 1;
+  if (opts.windowLog !== undefined) params[z.constants.ZSTD_c_windowLog] = opts.windowLog;
   const frame = z.zstdCompressSync(data, { params });
   return { frame, blocks: blockTypes(frame) };
 }

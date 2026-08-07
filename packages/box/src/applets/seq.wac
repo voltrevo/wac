@@ -8,13 +8,21 @@
 //
 // Integers only, where GNU also does floats and `-w` and `-s`. That much is a genuine shortfall
 // and is stated rather than hidden.
+//
+// **Its refusals are GNU's now, and they were not.** Six scripts of `packages/sh`'s corpus turned on this
+// (wac-mono 0103): a usage error exits **1** in GNU where this exited 2, and an argument that is not a
+// number was read as *zero* rather than refused, so `seq abc` printed `0` and exited 0 and `seq 1 2 x`
+// counted to nothing. `atoi` answering 0 for a word is the same shape as `head -n x` using the default —
+// a mistake in the command coming back as an answer.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { Sink } from "../../../platform/src/stream.wac";
 
 export i32 seq(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // Read positionally, not from `a.rest`, and that is forced rather than preferred: to box's
   // argument parser a leading `-` is a flag, so `seq 10 -3 1` arrives as *two* arguments with
   // the step swallowed and its sign already discarded — `a.num` holds 3, and nothing anywhere
@@ -24,12 +32,35 @@ export i32 seq(Core core, Cli cli, Args a) {
   // is zero, and `seq -- -5 -1` printed a stray 0 before the range.
   i32 skip = cli.argCount().wait() > 1 && string.fromBytes(cli.arg(1).wait()) == "--" ? 2 : 1;
   i32 n = cli.argCount().wait() - skip;
-  if (n < 1 || n > 3) {
-    core.warn("usage: " + a.name + " [first [step]] last");
-    return 2;
+  // GNU's own three sentences, and all of them exit 1: "missing operand" for none, "extra operand 'x'"
+  // for a fourth, and "invalid floating point argument: 'x'" for anything that is not a number. This
+  // said "usage: …" and exited 2 for the first two and nothing at all for the third.
+  if (n < 1) {
+    core.warn(a.name + ": missing operand");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
   }
   string[] args = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i + skip).wait()); }
+  if (n > 3) {
+    core.warn(a.name + ": extra operand '" + args[3] + "'");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
+  for (i32 i = 0; i < n; i++) {
+    if (isNumber(args[i])) { continue; }
+    // **A fraction is a valid argument this does not implement**, and that is a different fact from a
+    // word that is not a number at all. The header above has always claimed fractions were "stated
+    // rather than hidden" and they were not: `atoi` read `1.5` as `1` and counted from there, silently.
+    // Calling it invalid would be the other error — blaming the caller for something GNU accepts.
+    if (isFraction(args[i])) {
+      core.warn(a.name + ": fractions are not implemented: '" + args[i] + "'");
+      return 1;
+    }
+    core.warn(a.name + ": invalid floating point argument: '" + args[i] + "'");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
 
   i32 first = n == 1 ? 1 : atoi(args[0]);
   i32 step = n == 3 ? atoi(args[1]) : 1;
@@ -67,4 +98,37 @@ export i32 seq(Core core, Cli cli, Args a) {
   }
   out.flush();
   return 0;
+}
+
+/**
+ * A whole decimal number, with an optional sign.
+ *
+ * Not a float: fractions are the shortfall this file already states, and `seq 1.5 3` says so rather than
+ * truncating. What this refuses is a *word* — the case where `atoi` used to answer zero and the range was
+ * built from a number nobody wrote.
+ */
+bool isNumber(string s) { return digitsFrom(s, 0) == s.len() && s.len() > signWidth(s); }
+
+/** A number GNU would take and this cannot: digits, a dot, digits. */
+bool isFraction(string s) {
+  i32 dot = digitsFrom(s, 0);
+  if (dot >= s.len() || s.slice(dot, dot + 1) != ".") { return false; }
+  if (dot <= signWidth(s)) { return false; }
+  i32 after = digitsFrom(s, dot + 1);
+  return after == s.len() && after > dot + 1;
+}
+
+i32 signWidth(string s) {
+  if (s.len() == 0) { return 0; }
+  string first = s.slice(0, 1);
+  return first == "-" || first == "+" ? 1 : 0;
+}
+
+/** How far the digits run from `at`, skipping a leading sign when `at` is 0. */
+i32 digitsFrom(string s, i32 at) {
+  u8[] b = s.toBytes();
+  i32 i = at;
+  if (at == 0 && i < b.len() && (b[i] == '-' || b[i] == '+')) { i++; }
+  while (i < b.len() && b[i] >= '0' && b[i] <= '9') { i++; }
+  return i;
 }

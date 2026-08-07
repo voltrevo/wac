@@ -138,6 +138,34 @@ Deno.test("rename moves a name, over an existing one if it has to", async () => 
   ].join("\n"));
 });
 
+Deno.test("rename onto something that is already there, in every combination", async () => {
+  // The four the memory backing had never been asked: a file onto a directory, a directory onto a file,
+  // a directory onto an empty directory, and a directory onto a full one. It answered *success* to all
+  // of them — replacing the entry and orphaning whatever the target held, which is a wrong answer rather
+  // than a missing check, and in an image it is data loss.
+  //
+  // What each should be is not a decision: `rename(2)` has rules and the host follows them. Whatever
+  // this transcript says on the host side is what memory has to say.
+  await bothWays("rename-onto", [
+    "mkdir /de",
+    "mkdir /df",
+    "write /df/x c",
+    "write /f1 a",
+    "write /f2 b",
+    "mkdir /d1",
+    "mv /f1 /de",          // a file onto an empty directory
+    "mv /f1 /df",          // a file onto a full one
+    "mv /d1 /f2",          // a directory onto a file
+    "mv /d1 /df",          // a directory onto a full directory
+    "mv /d1 /de",          // a directory onto an empty one, which is the only allowed pair
+    "ls /",
+    "ls /de",
+    "ls /df",
+    "read /df/x",
+    "read /f1",
+  ].join("\n"));
+});
+
 Deno.test("writing over a directory, and reading one", async () => {
   // Both refuse, and the *category* is what has to match: the messages are the host's own words.
   await bothWays("kinds", [

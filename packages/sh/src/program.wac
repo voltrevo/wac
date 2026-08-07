@@ -28,7 +28,16 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../platform/src/st
 // the digit loop never ran — so `echo $((-2147483648))` printed a bare minus sign where bash prints
 // the number. Three other copies existed, and the correct one was already in `fmt`. wac-mono 0072.
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { search, slotCount } from "../../regex/src/regex.wac";
+import { Compiled } from "../../regex/src/compile.wac";
+import { compileExtended, compileExtendedIgnoreCase } from "../../regex/src/posix.wac";
+import { compileBasic, compileBasicIgnoreCase } from "../../regex/src/basic.wac";
+import { Program, BUDGET, NO_MATCH } from "../../regex/src/program.wac";
+// `isNumber` moved with `printf`, which outlives this file: wac-mono 0103 deletes the twelve
+// below and `printf` is a builtin, so the dependency has to run this way round.
+import { isNumber } from "./printf.wac";
 import { Fs } from "../../fs/src/fs.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 export struct Output {
   u8[] out;
@@ -99,15 +108,9 @@ i32 dispatchProgram(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink
   if (name == "cat") { return cat(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "wc") { return wc(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "head") { return head(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "tail") { return tail(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "rev") { return rev(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "sort") { return sort(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "uniq") { return uniq(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "grep") { return grep(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "tr") { return tr(argv, fed, sink, errs); }
   if (name == "seq") { return seq(argv, sink, errs); }
-  if (name == "nl") { return nl(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "printf") { return printf(argv, sink, errs); }
   return 127;
 }
 
@@ -127,219 +130,14 @@ export string[] programNames() {
 /** Every name `run` will answer to, so `help` and the tests do not have to guess. */
 export Vec<string> names() {
   Vec<string> out = Vec.create();
-  out.push("cat"); out.push("wc"); out.push("head"); out.push("tail"); out.push("rev");
-  out.push("sort"); out.push("uniq"); out.push("grep"); out.push("tr"); out.push("seq");
-  out.push("nl"); out.push("printf");
+  // `nl` and `rev` are gone: `packages/box` has them as applets, its suite holds them to the same
+  // corpus, and two implementations of one tool is what wac-mono 0103 is about. The rest follow.
+  out.push("cat"); out.push("wc"); out.push("head");
+  out.push("sort"); out.push("grep"); out.push("seq");
   return out;
 }
 
 // ── The programs ──────────────────────────────────────────────────────────────
-
-/**
- * `printf FORMAT [ARGS]` — the only one of these with a language of its own.
- *
- * Three rules do most of the work and none of them is guessable:
- *
- *   **The format is reused until the arguments run out.** `printf "%s-%s\n" a b c d` prints two
- *   lines, not one. Only a format that actually consumed something repeats, or one with no
- *   conversions in it would loop for ever.
- *
- *   **A missing argument is not an error.** `printf "%s-%s\n" a` prints `a-` — the second
- *   conversion gets the empty string, and `%d` gets zero. That is what makes a format safe to
- *   write once and feed a variable number of values.
- *
- *   **A bad number is reported and then used anyway.** `printf "%d" abc` writes `0` to standard
- *   output, complains on standard error, and exits 1. All three, not one of them.
- *
- * A bad *format* is different from a bad argument: an unknown conversion character, or a `%` with
- * nothing after it, stops the whole thing. What was already produced still goes out — bash prints
- * the `ab` of `printf "ab%z"` and then gives up — so this is an abort, not a discard.
- *
- * Escapes are processed in the *format*, which is why `printf` is the way to emit a line with no
- * trailing newline and `echo` is not.
- */
-i32 printf(Vec<string> argv, Sink sink, Sink errs) {
-  if (argv.len() < 2) {
-    { errs.bytes("printf: usage: printf format [arguments]\n".toBytes()); errs.flush(); sink.flush(); return 2; }
-  }
-  u8[] f = argv.get(1).toBytes();
-  Buf out = Buf.create();
-  Buf err = Buf.create();
-  i32 status = 0;
-  i32 arg = 2;
-  bool again = true;
-  bool fatal = false;
-
-  while (again && !fatal) {
-    again = false;
-    i32 consumedThisPass = 0;
-    i32 i = 0;
-    while (i < f.len() && !fatal) {
-      if (f[i] == 0x5c) { i = escapeInto(out, f, i); continue; }
-      if (f[i] != 0x25) { out.push(f[i]); i++; continue; }
-
-      i32 j = i + 1;
-      if (j < f.len() && f[j] == 0x25) { out.push(0x25); i = j + 1; continue; }
-
-      bool left = false;
-      bool zero = false;
-      while (j < f.len() && (f[j] == 0x2d || f[j] == 0x30)) {
-        if (f[j] == 0x2d) { left = true; } else { zero = true; }
-        j++;
-      }
-      i32 width = 0;
-      while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { width = width * 10 + (f[j] - 0x30); j++; }
-      i32 prec = -1;
-      if (j < f.len() && f[j] == 0x2e) {
-        j++;
-        prec = 0;
-        while (j < f.len() && f[j] >= 0x30 && f[j] <= 0x39) { prec = prec * 10 + (f[j] - 0x30); j++; }
-      }
-      // A `%` with nothing after it is a format error, not a literal `%`.
-      if (j >= f.len()) {
-        err.pushAll("printf: `%': missing format character\n".toBytes());
-        status = 1;
-        fatal = true;
-        continue;
-      }
-
-      i32 conv = f[j];
-      string a = arg < argv.len() ? argv.get(arg) : "";
-      string text = "";
-      bool numeric = false;
-      bool known = true;
-
-      if (conv == 0x73) {                                   // 's'
-        text = (prec >= 0 && prec < a.len()) ? a.slice(0, prec) : a;
-      } else if (conv == 0x63) {                            // 'c'
-        text = a.len() > 0 ? a.slice(0, 1) : "";
-      } else if (conv == 0x64 || conv == 0x69) {            // 'd', 'i'
-        numeric = true;
-        if (a != "" && !isNumber(a)) {
-          err.pushAll(("printf: " + a + ": invalid number\n").toBytes());
-          status = 1;
-        }
-        text = itoa(atoi(a));
-      } else if (conv == 0x78 || conv == 0x58 || conv == 0x6f) {   // 'x', 'X', 'o'
-        numeric = true;
-        if (a != "" && !isNumber(a)) {
-          err.pushAll(("printf: " + a + ": invalid number\n").toBytes());
-          status = 1;
-        }
-        text = inBase(atoi(a), conv == 0x6f ? 8 : 16, conv == 0x58);
-      } else {
-        known = false;
-      }
-
-      if (!known) {
-        err.pushAll(("printf: `%" + charFor(conv) + "': invalid format character\n").toBytes());
-        status = 1;
-        fatal = true;
-        continue;
-      }
-      arg++;
-      consumedThisPass++;
-      // Zero-padding is a numeric thing: `%05s` pads with spaces, as it does in bash.
-      padInto(out, text, width, left, zero && numeric);
-      i = j + 1;
-    }
-    if (!fatal && consumedThisPass > 0 && arg < argv.len()) { again = true; }
-  }
-  { sink.bytes(out.take()); errs.bytes(err.take()); sink.flush(); errs.flush(); return status; }
-}
-
-/** One backslash escape from the format, appended. Returns the index after it. */
-i32 escapeInto(Buf out, u8[] f, i32 at) {
-  if (at + 1 >= f.len()) { out.push(0x5c); return at + 1; }
-  i32 c = f[at + 1];
-  if (c == 0x6e) { out.push(10); return at + 2; }            // \n
-  if (c == 0x74) { out.push(9); return at + 2; }             // \t
-  if (c == 0x72) { out.push(13); return at + 2; }            // \r
-  if (c == 0x5c) { out.push(0x5c); return at + 2; }          // \\
-  if (c == 0x61) { out.push(7); return at + 2; }             // \a
-  if (c == 0x62) { out.push(8); return at + 2; }             // \b
-  if (c == 0x66) { out.push(12); return at + 2; }            // \f
-  if (c == 0x76) { out.push(11); return at + 2; }            // \v
-  if (c == 0x65) { out.push(27); return at + 2; }            // \e
-  if (c == 0x78) {                                           // \xHH
-    i32 p = at + 2;
-    i32 v = 0;
-    i32 n = 0;
-    while (p < f.len() && n < 2 && hexValue(f[p]) >= 0) { v = v * 16 + hexValue(f[p]); p++; n++; }
-    if (n == 0) { out.push(0x5c); out.push(0x78); return at + 2; }
-    out.push(v);
-    return p;
-  }
-  if (c >= 0x30 && c <= 0x37) {                              // \NNN, and \0NNN for the same thing
-    i32 p = at + 1;
-    if (f[p] == 0x30 && p + 1 < f.len() && f[p + 1] >= 0x30 && f[p + 1] <= 0x37) { p++; }
-    i32 v = 0;
-    i32 n = 0;
-    while (p < f.len() && n < 3 && f[p] >= 0x30 && f[p] <= 0x37) { v = v * 8 + (f[p] - 0x30); p++; n++; }
-    out.push(v & 0xFF);
-    return p;
-  }
-  // Anything else keeps its backslash, as bash does — `\q` is two characters.
-  out.push(0x5c);
-  return at + 1;
-}
-
-i32 hexValue(i32 c) {
-  if (c >= 0x30 && c <= 0x39) { return c - 0x30; }
-  if (c >= 0x61 && c <= 0x66) { return c - 0x61 + 10; }
-  if (c >= 0x41 && c <= 0x46) { return c - 0x41 + 10; }
-  return -1;
-}
-
-/** Whether the whole string is a number, so `%d` can say so before using it as zero. */
-bool isNumber(string s) {
-  u8[] b = s.toBytes();
-  i32 i = 0;
-  if (i < b.len() && (b[i] == 0x2d || b[i] == 0x2b)) { i++; }
-  if (i >= b.len()) { return false; }
-  for (; i < b.len(); i++) {
-    if (b[i] < 0x30 || b[i] > 0x39) { return false; }
-  }
-  return true;
-}
-
-/** A non-negative number in base 8 or 16. Negatives keep their sign rather than wrapping. */
-string inBase(i32 v, i32 base, bool upper) {
-  if (v == 0) { return "0"; }
-  bool neg = v < 0;
-  i32 n = neg ? 0 - v : v;
-  string out = "";
-  while (n > 0) {
-    i32 d = n % base;
-    i32 c = d < 10 ? 0x30 + d : (upper ? 0x41 + d - 10 : 0x61 + d - 10);
-    out = charFor(c) + out;
-    n = n / base;
-  }
-  return neg ? "-" + out : out;
-}
-
-string charFor(i32 c) {
-  u8[] one = u8[1]();
-  one[0] = c;
-  return string.fromBytes(one);
-}
-
-/** `text` padded to `width`, on the right if `left`, with zeros if `zero`. */
-void padInto(Buf out, string text, i32 width, bool left, bool zero) {
-  i32 gap = width - text.len();
-  if (gap <= 0) { out.pushAll(text.toBytes()); return; }
-  if (left) {
-    out.pushAll(text.toBytes());
-    for (i32 i = 0; i < gap; i++) { out.push(32); }
-    return;
-  }
-  // A zero-padded negative number keeps its sign in front of the zeros: `-007`, not `00-7`.
-  u8[] b = text.toBytes();
-  i32 from = 0;
-  if (zero && b.len() > 0 && b[0] == 0x2d) { out.push(0x2d); from = 1; }
-  for (i32 i = 0; i < gap; i++) { out.push(zero ? 0x30 : 32); }
-  for (i32 i = from; i < b.len(); i++) { out.push(b[i]); }
-}
 
 // ── Operands ──────────────────────────────────────────────────────────────────
 
@@ -377,6 +175,25 @@ Reading readOne(Fs fs, string cwd, string name, u8[] stdin) {
 }
 
 /**
+ * The same, but at most `n` bytes.
+ *
+ * `head -c 16 /dev/urandom` is why it exists: a synthesised device has no end, so `readFile` refuses it
+ * and a `head` that read the whole file and then took the front could never have worked. Every other
+ * backing answers this by reading and truncating.
+ */
+Reading readSomeOne(Fs fs, string cwd, string name, u8[] stdin, i32 n) {
+  if (name == "" || name == "-") {
+    if (stdin.len() <= n) { return Reading(true, name, stdin, ""); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(stdin, 0, 0, n);
+    return Reading(true, name, cut, "");
+  }
+  FileResult f = fs.readSome(resolvePath(cwd, name), n);
+  if (!f.ok) { return Reading(false, name, u8[0](), whyUnread(f)); }
+  return Reading(true, name, f.bytes, "");
+}
+
+/**
  * Why a file could not be read, in GNU's words where the category is one GNU has a phrase for.
  *
  * The host's own sentence carried an errno and an absolute path — "No such file or directory (os error
@@ -408,15 +225,14 @@ bool gnuHas(string name, i32 letter) {
   string letters = "";
   if (name == "wc") { letters = "cmlLw"; }
   else if (name == "head") { letters = "cnqvz"; }
-  else if (name == "tail") { letters = "cfFnqsvz"; }
   else if (name == "sort") { letters = "bdfgiMhnRrVcCkmosStTuz"; }
-  else if (name == "uniq") { letters = "cdDfisuzw"; }
-  else if (name == "nl") { letters = "bdfhilnpsvw"; }
-  else if (name == "rev") { letters = "hV"; }
   else if (name == "grep") { letters = "EFGPefiwxzsvVmbnHhoqaIdDrRLlcTZBACU"; }
-  else if (name == "tr") { letters = "cdst"; }
   else if (name == "seq") { letters = "fsw"; }
   else if (name == "cat") { letters = "AbeEnstTuv"; }
+  // `ls` is a *builtin* here rather than one of the programs above, because a shell needs it before it
+  // needs a toolbox — but its refusals are the same question, so it uses the same table. Read out of
+  // `ls --help`, like the rest.
+  else if (name == "ls") { letters = "1aAbBcCdDfFgGhHiIklLmnNopqQrRsStTuUvwxXZ"; }
   u8[] b = letters.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == letter) { return true; }
@@ -425,8 +241,15 @@ bool gnuHas(string name, i32 letter) {
 }
 
 /** What to say about an option this program does not take, and whose gap it is. */
-string optionRefusal(string name, string letter) {
+export string optionRefusal(string name, string letter) {
   u8[] b = letter.toBytes();
+  // A whole word rather than a letter: a long option. Read as a bundle of short ones it refused the
+  // *second dash* — `wc: invalid option -- '-'`, naming a character the caller never typed. None of
+  // these programs implements a long option, so that is the answer, and it needs no table; GNU's split
+  // between one it has and one nobody has is a distinction this cannot draw, so it draws neither.
+  if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
+    return name + ": long options are not implemented: " + letter + "\n";
+  }
   if (b.len() == 1 && gnuHas(name, b[0])) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
     return name + ": -" + letter + " is not implemented\n";
@@ -473,6 +296,7 @@ Options options(Vec<string> argv, string accept) {
     if (more && a == "--") { more = false; continue; }
     u8[] b = a.toBytes();
     if (!more || b.len() < 2 || b[0] != '-') { operands.push(a); continue; }
+    if (b[1] == '-') { return Options(seen, operands, a); }
     for (i32 j = 1; j < b.len(); j++) {
       u8[] one = u8[1](fill: b[j]);
       string letter = string.fromBytes(one);
@@ -492,11 +316,38 @@ i32 indexOfLetter(string s, string letter) {
   return -1;
 }
 
-/** `head`/`tail`'s arguments: how many lines, which files, and the first option refused. */
+/** `head`/`tail`'s arguments: how many lines, which files, and the first thing refused. */
 struct Counted {
   i32 n;
   Vec<string> operands;
+  /**
+   * Whether the count is in **bytes** rather than lines — `-c`.
+   *
+   * The same three signed forms apply, so `head -c -2` is all but the last two bytes and `tail -c +2`
+   * is from the second. The unit is the only difference, which is why it is a field here rather than a
+   * second parser.
+   */
+  bool bytes;
+  /** The option letter this program does not take, if there was one. */
   string bad;
+  /**
+   * `""`, `"+"` or `"-"`: which of GNU's three forms the count was written in.
+   *
+   * The sign is not part of the number, it selects a different question — and only one direction means
+   * anything to each tool. `head -n -2` is "all but the last two" and `head -n +2` is plain; `tail -n +2`
+   * is "from line two" and `tail -n -2` is plain. Measured against GNU rather than remembered, because
+   * the asymmetry is not guessable.
+   */
+  string sign;
+  /**
+   * The count that was not a count, if there was one — `head -n x`.
+   *
+   * A separate field from `bad` because they are separate refusals with separate messages: a letter is
+   * "this program has no such option" and this is "that is not a number". It used to be neither: `atoi`
+   * answered 0 for `x`, so `head -n x` printed **nothing at all** and exited 0, which is the shape of
+   * wrong answer this package keeps finding — a mistake in the command read as an empty result.
+   */
+  string badNumber;
 }
 
 /**
@@ -509,21 +360,60 @@ struct Counted {
  */
 Counted countOf(Vec<string> argv, i32 fallback) {
   i32 n = fallback;
+  bool bytes = false;
+  string sign = "";
   Vec<string> operands = Vec.create();
   bool more = true;
   for (i32 i = 1; i < argv.len(); i++) {
     string a = argv.get(i);
     if (more && a == "--") { more = false; continue; }
     if (!more) { operands.push(a); continue; }
-    if (a == "-n" && i + 1 < argv.len()) { n = atoi(argv.get(i + 1)); i++; continue; }
+    // `-n` counts lines and `-c` counts bytes; everything else about them is the same, which is why
+    // one parser reads both and records which unit it saw.
+    if ((a == "-n" || a == "-c") && i + 1 < argv.len()) {
+      string v = argv.get(i + 1);
+      if (!isNumber(v)) { return Counted(n, operands, a == "-c", "", sign, v); }
+      bytes = a == "-c";
+      sign = signOf(v);
+      n = magnitude(v);
+      i++;
+      continue;
+    }
     u8[] b = a.toBytes();
     if (b.len() < 2 || b[0] != '-') { operands.push(a); continue; }
-    // `-2` reads as -2, so the count is its negation; `-q` is an option this does not have.
-    if (isNumber(a)) { n = -atoi(a); continue; }
+    if (b[1] == '-') { return Counted(n, operands, bytes, a, sign, ""); }
+    // **`-n2`, with the value attached.** GNU takes it, `packages/box` takes it and says so in its
+    // README — "a value attaches or not: head -n2 / -2" — and this refused it with "head: -n is not
+    // implemented", which was false twice over: `-n` is implemented, and the refusal blamed the caller
+    // for a form both of the tools it is measured against accept.
+    if (b.len() > 2 && (b[1] == 'n' || b[1] == 'c')) {
+      string v = a.slice(2, a.len());
+      if (!isNumber(v)) { return Counted(n, operands, b[1] == 'c', "", sign, v); }
+      bytes = b[1] == 'c';
+      sign = signOf(v);
+      n = magnitude(v);
+      continue;
+    }
+    // `-2` reads as -2, so the count is its negation — and it is the *plain* form, not the minus one:
+    // `head -2` is the first two lines and `head -n -2` is all but the last two.
+    if (isNumber(a)) { n = -atoi(a); sign = ""; continue; }
     u8[] one = u8[1](fill: b[1]);
-    return Counted(n, operands, string.fromBytes(one));
+    return Counted(n, operands, bytes, string.fromBytes(one), sign, "");
   }
-  return Counted(n, operands, "");
+  return Counted(n, operands, bytes, "", sign, "");
+}
+
+/** Which of GNU's three forms a count was written in. */
+string signOf(string v) {
+  if (v.len() == 0) { return ""; }
+  string first = v.slice(0, 1);
+  return first == "+" || first == "-" ? first : "";
+}
+
+/** A count without its sign, which is what every path below counts with. */
+i32 magnitude(string v) {
+  i32 n = atoi(v);
+  return n < 0 ? -n : n;
 }
 
 /**
@@ -871,25 +761,48 @@ i32 head(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
   return headOrTail(fs, cli, cwd, argv, fed, sink, errs, true);
 }
 
-i32 tail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  return headOrTail(fs, cli, cwd, argv, fed, sink, errs, false);
-}
 
 i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs, bool front) {
   string who = front ? "head" : "tail";
   Counted c = countOf(argv, 10);
+  string sign = c.sign;
   if (c.bad != "") {
     errs.bytes(optionRefusal(who, c.bad).toBytes());
     errs.flush();
     sink.flush();
     return 1;
   }
+  if (c.badNumber != "") {
+    // GNU's own sentence. Plain apostrophes rather than the typographic quotes it uses in a UTF-8
+    // locale: `LC_ALL=C` is what this repo compares in, and the rest of these messages match it. The
+    // noun follows the flag — "bytes" for `-c`, "lines" for `-n`, from the same tool.
+    string unit = c.bytes ? "bytes" : "lines";
+    errs.bytes((who + ": invalid number of " + unit + ": '" + c.badNumber + "'\n").toBytes());
+    errs.flush();
+    sink.flush();
+    return 1;
+  }
+  // **The sign selects a different question, and only in one direction per tool.** `head -n -2` is
+  // "all but the last two" and `tail -n +2` is "from line two"; the other two signed forms are plain.
+  // This used to read `+2` as 2 and `-2` as a negative count that printed nothing — so `tail -n +2`
+  // answered the *last* two lines, which is a different answer rather than a missing one.
+  bool allButLast = front && sign == "-";
+  bool fromLine = !front && sign == "+";
 
   // Standard input and nothing else — which is what a pipeline stage is — takes the streaming path.
   // `head` stops reading as soon as it has its lines, and that is what stops the stage feeding it;
   // `tail` holds `n` lines rather than the whole input. With an operand the file is read whole, which
   // is bounded by the file and is not what 0061 was reported against.
   if (c.operands.len() == 0) {
+    if (c.bytes) {
+      if (allButLast) { return sinkAll(sink, allButLastBytes(fed.rest(), c.n)); }
+      if (fromLine) { return sinkAll(sink, bytesFrom(fed.rest(), c.n)); }
+      // `head -c` stops as soon as it has its bytes, for the reason `head -n` does.
+      if (front) { return headBytesStream(fed, sink, c.n); }
+      return sinkAll(sink, lastBytes(fed.rest(), c.n));
+    }
+    if (allButLast) { return headAllButLastStream(fed, sink, c.n); }
+    if (fromLine) { return tailFromLineStream(fed, sink, c.n); }
     return front ? headStream(fed, sink, c.n) : tailStream(fed, sink, c.n);
   }
 
@@ -900,7 +813,13 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
   i32 status = 0;
   bool printed = false;
   for (i32 f = 0; f < names.len(); f++) {
-    Reading r = readOne(fs, cwd, names.get(f), stdin);
+    // **`head -c N file` reads N bytes and no more**, which is the only way a file with no end can be
+    // read at all — `/dev/urandom` refuses `readFile` by design (design/0001 step 6). Every other
+    // combination needs the whole file, because it is counted from the far end.
+    bool bounded = c.bytes && front && !allButLast;
+    Reading r = bounded
+      ? readSomeOne(fs, cwd, names.get(f), stdin, c.n)
+      : readOne(fs, cwd, names.get(f), stdin);
     if (!r.ok) {
       err.pushAll((who + ": cannot open '" + r.name + "' for reading: " + r.error + "\n").toBytes());
       status = 1;
@@ -910,7 +829,15 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
       if (printed) { out.push(10); }
       out.pushAll(("==> " + r.name + " <==\n").toBytes());
     }
-    out.pushAll(front ? firstLines(r.bytes, c.n) : lastLines(r.bytes, c.n));
+    if (c.bytes) {
+      if (allButLast) { out.pushAll(allButLastBytes(r.bytes, c.n)); }
+      else if (fromLine) { out.pushAll(bytesFrom(r.bytes, c.n)); }
+      else if (front) { out.pushAll(r.bytes); }          // already cut to `n` by the bounded read
+      else { out.pushAll(lastBytes(r.bytes, c.n)); }
+    }
+    else if (allButLast) { out.pushAll(allButLastLines(r.bytes, c.n)); }
+    else if (fromLine) { out.pushAll(linesFrom(r.bytes, c.n)); }
+    else { out.pushAll(front ? firstLines(r.bytes, c.n) : lastLines(r.bytes, c.n)); }
     printed = true;
   }
   { sink.bytes(out.take()); errs.bytes(err.take()); sink.flush(); errs.flush(); return status; }
@@ -968,6 +895,140 @@ i32 tailStream(Feed fed, Sink sink, i32 n) {
 }
 
 /** The last `n` lines, each with its newline. */
+/**
+ * Every line but the last `n` — `head -n -2`.
+ *
+ * Delayed rather than counted: nothing can be emitted until `n` more lines have arrived behind it, so a
+ * ring of `n` lines is the whole of the state. Asking for more than the file has prints nothing, which is
+ * what GNU does with `head -n -9` on five lines.
+ */
+i32 headAllButLastStream(Feed fed, Sink sink, i32 n) {
+  if (n <= 0) {
+    // `head -n -0` is every line: nothing is being held back.
+    return headStream(fed, sink, 0x7FFFFFFF);
+  }
+  u8[][] ring = u8[][n](fill: u8[0]());
+  u8[] ended = u8[n](fill: 0);
+  i32 count = 0;
+  Lines lines = Lines.create();
+  while (true) {
+    Line l = nextLine(lines, fed);
+    if (!l.ok) { break; }
+    if (count >= n) {
+      i32 at = (count - n) % n;
+      if (!emitTo(sink, ring[at], ended[at] != 0)) { return 0; }
+    }
+    ring[count % n] = l.bytes;
+    ended[count % n] = l.nl ? 1 : 0;
+    count++;
+  }
+  sink.flush();
+  return 0;
+}
+
+/**
+ * From line `n` onwards, counting from one — `tail -n +2`.
+ *
+ * Streams: unlike every other `tail`, this one holds nothing at all, because what it must not print is
+ * at the *start*. `+0` and `+1` are both the whole input, which is what GNU does.
+ */
+i32 tailFromLineStream(Feed fed, Sink sink, i32 n) {
+  i32 skip = n > 0 ? n - 1 : 0;
+  i32 seen = 0;
+  Lines lines = Lines.create();
+  while (true) {
+    Line l = nextLine(lines, fed);
+    if (!l.ok) { break; }
+    seen++;
+    if (seen <= skip) { continue; }
+    if (!emitTo(sink, l.bytes, l.nl)) { return 0; }
+  }
+  sink.flush();
+  return 0;
+}
+
+/** Send a whole array and be done: the byte forms that must see everything share this ending. */
+i32 sinkAll(Sink sink, u8[] data) {
+  emitTo(sink, data, false);
+  sink.flush();
+  return 0;
+}
+
+/**
+ * The first `n` bytes, and then *stop*.
+ *
+ * The same argument as `headStream`: a producer learns nobody is reading when its own write is refused,
+ * so the sooner this stops pulling the sooner that happens. It is not the same code because a chunk is
+ * not a line — this one may have to cut a chunk in half.
+ */
+i32 headBytesStream(Feed fed, Sink sink, i32 n) {
+  i32 sent = 0;
+  while (sent < n) {
+    u8[] chunk = fed.next();
+    if (chunk.len() == 0) { break; }
+    i32 take = chunk.len();
+    if (sent + take > n) { take = n - sent; }
+    u8[] piece = u8[take]();
+    piece.copyFrom(chunk, 0, 0, take);
+    if (!emitTo(sink, piece, false)) { return 0; }
+    sent = sent + take;
+  }
+  sink.flush();
+  return 0;
+}
+
+/** The last `n` bytes. */
+u8[] lastBytes(u8[] data, i32 n) {
+  i32 from = data.len() - n;
+  if (from < 0) { from = 0; }
+  u8[] out = u8[data.len() - from]();
+  out.copyFrom(data, from, 0, data.len() - from);
+  return out;
+}
+
+/** Every byte but the last `n`. */
+u8[] allButLastBytes(u8[] data, i32 n) {
+  i32 upTo = data.len() - n;
+  if (upTo < 0) { upTo = 0; }
+  u8[] out = u8[upTo]();
+  out.copyFrom(data, 0, 0, upTo);
+  return out;
+}
+
+/** From byte `n` onwards, counting from one — `tail -c +2`. */
+u8[] bytesFrom(u8[] data, i32 n) {
+  i32 from = n > 0 ? n - 1 : 0;
+  if (from > data.len()) { from = data.len(); }
+  u8[] out = u8[data.len() - from]();
+  out.copyFrom(data, from, 0, data.len() - from);
+  return out;
+}
+
+/** Every line but the last `n`, from bytes already in hand. */
+u8[] allButLastLines(u8[] data, i32 n) {
+  Vec<u8[]> lines = splitLines(data);
+  i32 upTo = lines.len() - n;
+  if (upTo < 0) { upTo = 0; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < upTo; i++) {
+    out.pushAll(lines.get(i));
+    out.push(10);
+  }
+  return out.take();
+}
+
+/** From line `n` onwards, counting from one, from bytes already in hand. */
+u8[] linesFrom(u8[] data, i32 n) {
+  Vec<u8[]> lines = splitLines(data);
+  i32 from = n > 0 ? n - 1 : 0;
+  Buf out = Buf.create();
+  for (i32 i = from; i < lines.len(); i++) {
+    out.pushAll(lines.get(i));
+    out.push(10);
+  }
+  return out.take();
+}
+
 u8[] lastLines(u8[] data, i32 n) {
   Vec<u8[]> lines = splitLines(data);
   Buf out = Buf.create();
@@ -980,32 +1041,6 @@ u8[] lastLines(u8[] data, i32 n) {
   return out.take();
 }
 
-i32 rev(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("rev", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // One implementation, over a `Feed`, whichever the input is — the shape `cat` took first. Reading
-  // everything and splitting it was two things at once: a stage that could not survive its input
-  // (0071), and a `rev` that *added* a newline to a last line that arrived without one, because
-  // `splitLines` cannot tell the two apart and the buffered loop pushed 10 after every line.
-  if (o.operands.len() == 0) { revFeed(fed, sink); return 0; }
-  i32 status = 0;
-  for (i32 i = 0; i < o.operands.len(); i++) {
-    // **No `-` here.** `cat`, `nl` and `uniq` all read standard input for it; GNU's `rev` does not,
-    // and answers "rev: cannot open -: No such file or directory". Measured rather than assumed —
-    // the three that do take it made it look like a convention.
-    string path = o.operands.get(i);
-    FileResult f = fs.readFile(resolvePath(cwd, path));
-    if (!f.ok) {
-      complain(sink, errs, "rev: cannot open " + path + ": " + whyUnread(f) + "\n");
-      status = 1;
-      continue;
-    }
-    if (!revFeed(Feed.of(cli, f.bytes), sink)) { break; }
-  }
-  { sink.flush(); errs.flush(); return status; }
-}
 
 /** Each line backwards, one line at a time. False when the reader has gone. */
 bool revFeed(Feed fed, Sink sink) {
@@ -1112,34 +1147,6 @@ void mergeSort(u8[][] a, bool reverse) {
   }
 }
 
-/**
- * `uniq [file]` — adjacent duplicates, once each.
- *
- * One operand only. GNU's *second* one is an output file, which it writes: guessing that from an
- * argument this program never read before would be a write nobody asked for, so it is refused.
- */
-i32 uniq(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("uniq", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  if (o.operands.len() > 1) {
-    // GNU's second operand is an output *file*, which it writes. Not implemented rather than refused on
-    // principle: the distinction matters to whoever reads this next, and "not supported" reads as a
-    // decision somebody made.
-    { errs.bytes("uniq: writing to a second operand is not implemented\n".toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // Adjacent duplicates need one line of memory, not all of them: the comparison is with the line
-  // before, which is the whole of the state. 0071.
-  if (o.operands.len() == 0 || o.operands.get(0) == "-") { uniqFeed(fed, sink); return 0; }
-  string path = o.operands.get(0);
-  FileResult f = fs.readFile(resolvePath(cwd, path));
-  if (!f.ok) {
-    { errs.bytes(("uniq: " + path + ": " + whyUnread(f) + "\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  uniqFeed(Feed.of(cli, f.bytes), sink);
-  { sink.flush(); errs.flush(); return 0; }
-}
 
 /** Adjacent duplicates once each, holding one line. */
 bool uniqFeed(Feed fed, Sink sink) {
@@ -1149,7 +1156,7 @@ bool uniqFeed(Feed fed, Sink sink) {
   while (true) {
     Line l = nextLine(lines, fed);
     if (!l.ok) { break; }
-    if (!first && sameBytes(l.bytes, previous)) { continue; }
+    if (!first && equal(l.bytes, previous)) { continue; }
     first = false;
     previous = l.bytes;
     // Terminated whether or not the line was: GNU's `uniq` adds the newline a last line arrived
@@ -1161,8 +1168,14 @@ bool uniqFeed(Feed fed, Sink sink) {
 }
 
 /**
- * `grep [-cinqvx] pattern [file…]` — substring matching, not a regex. `packages/regex` is the obvious
- * next step and is not wired.
+ * `grep [-cinqvx] pattern [file…]`, over `packages/regex`.
+ *
+ * It was **substring matching**, and said so in a comment — "`packages/regex` is the obvious next step
+ * and is not wired". Saying so did not help anybody: `grep '^h'` answered *nothing matched*, silently,
+ * which is this package's own worst-of-three (`test/gaps.test.ts` ranks them). A regex read as a literal
+ * is a plausible wrong answer, not a refusal, and every metacharacter a person types produced one —
+ * `.`, `^`, `$`, `[a-z]`, `*` — while `packages/box`'s `grep`, four directories away, had the engine
+ * wired in all along. Found by using the shell rather than by reading it.
  *
  * The flags are why this is more than a loop. `-v` was the only one read, and an option this did not
  * have became the *pattern*: `grep -c a f` searched for `-c`, found nothing, and exited 1 — which a
@@ -1170,20 +1183,45 @@ bool uniqFeed(Feed fed, Sink sink) {
  * each line is labelled with the file it came from, as GNU's is, and `-c` counts per file.
  */
 i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "cinqvx");
+  Options o = options(argv, "cEinqvx");
   if (o.bad != "") {
     { errs.bytes(optionRefusal("grep", o.bad).toBytes()); errs.flush(); sink.flush(); return 2; }
   }
   if (o.operands.len() == 0) { { errs.bytes("grep: no pattern\n".toBytes()); errs.flush(); sink.flush(); return 2; } }
 
+  // `-x` is "the whole line matched", which is an anchor rather than a different comparison: GNU
+  // implements it exactly this way, and doing it by comparing bytes would have needed the pattern to be
+  // a literal — which is where this started.
+  // **Basic unless `-E`.** `grep` reads basic regular expressions, in which `|`, `+`, `?`, `{` and the
+  // parentheses are literals and their backslashed forms are the operators. This compiled extended, so
+  // `grep 'a|b'` matched a-or-b where GNU matches three characters — wac-mono 0104.
+  bool extended = sawOption(o, "E");
+  string pattern = o.operands.get(0);
+  // `-x` anchors, and the anchoring is written in the dialect the pattern is about to be read in:
+  // `\(` and `\)` group in basic, `(` and `)` group in extended.
+  if (sawOption(o, "x")) {
+    pattern = extended ? "^(" + pattern + ")$" : "^\\(" + pattern + "\\)$";
+  }
+  Compiled got = extended
+    ? (sawOption(o, "i") ? compileExtendedIgnoreCase(pattern.toBytes()) : compileExtended(pattern.toBytes()))
+    : (sawOption(o, "i") ? compileBasicIgnoreCase(pattern.toBytes()) : compileBasic(pattern.toBytes()));
+  Program? prog = got.program;
+  if (prog is null) {
+    // GNU says what is wrong with the pattern rather than naming the pattern, and where the gap is
+    // this engine's rather than the pattern's, `compile.wac` says *that* — "backreferences are not
+    // implemented" for `\(ab\)\1`, which GNU runs.
+    errs.bytes(("grep: " + got.why + "\n").toBytes());
+    errs.flush();
+    sink.flush();
+    return 2;
+  }
   Match how = Match(
     sawOption(o, "v"),
-    sawOption(o, "i"),
     sawOption(o, "c"),
     sawOption(o, "n"),
     sawOption(o, "q"),
-    sawOption(o, "x"),
-    sawOption(o, "i") ? lowered(o.operands.get(0).toBytes()) : o.operands.get(0).toBytes());
+    prog!,
+    i32[slotCount(prog!)](fill: 0));
 
   Vec<string> files = Vec.create();
   for (i32 i = 1; i < o.operands.len(); i++) { files.push(o.operands.get(i)); }
@@ -1209,6 +1247,14 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
       }
       here = grepFeed(Feed.of(cli, r.bytes), sink, how, label);
     }
+    // -1 is the engine giving up on a line, which is neither of grep's two answers. Exiting 2 is what
+    // the real one does when it cannot answer, and it is the only honest status.
+    if (here < 0) {
+      complain(sink, errs, "grep: pattern too expensive on this line, giving up\n");
+      errs.flush();
+      sink.flush();
+      return 2;
+    }
     hits += here;
     // **`-q` stops at the first match**, which is what makes `seq 1 2000000000 | grep -q 1` answer
     // instead of counting to two billion: the sink is never written, so nothing else would ever stop
@@ -1226,13 +1272,13 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
 /** What `grep` was asked for, so one input's worth of matching needs one argument rather than seven. */
 struct Match {
   bool invert;
-  bool fold;
   bool counting;
   bool numbering;
   bool quiet;
-  bool whole;
-  /** Already lower-cased when `-i` is on, so the input is the only thing folded per line. */
-  u8[] needle;
+  /** The compiled pattern. `-i` and `-x` are both folded into it at compile time. */
+  Program prog;
+  /** Capture slots, allocated once: a per-line allocation is one per line. */
+  i32[] caps;
 }
 
 /** One input's matching lines, written as they are found. Answers how many matched. */
@@ -1244,8 +1290,15 @@ i32 grepFeed(Feed fed, Sink sink, Match how, string label) {
     Line l = nextLine(lines, fed);
     if (!l.ok) { break; }
     n++;
-    u8[] against = how.fold ? lowered(l.bytes) : l.bytes;
-    bool hit = how.whole ? sameBytes(against, how.needle) : contains(against, how.needle);
+    i32 found = search(how.prog, l.bytes, 0, how.caps, 1000000);
+    // Three answers, not two, which `packages/box`'s grep learnt first: `BUDGET` means the engine gave
+    // up backtracking on this line, and reading it as a match reports hits that were never found.
+    // Neither "matched" nor "did not match" is known, so neither is claimed.
+    if (found == BUDGET()) {
+      sink.flush();
+      return -1;
+    }
+    bool hit = found != NO_MATCH();
     if (hit == how.invert) { continue; }
     here++;
     if (how.quiet) { break; }
@@ -1270,107 +1323,6 @@ u8[] lowered(u8[] b) {
   return out;
 }
 
-i32 tr(Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  bool del = false;
-  bool squeeze = false;
-  bool comp = false;
-  bool trunc = false;
-
-  // `--` ends the options, which is the only way to pass a set that begins with a `-`. A bare `-` is
-  // a set, not an option, which is why the length is checked before the dash.
-  i32 first = 1;
-  while (first < argv.len()) {
-    string a = argv.get(first);
-    if (a == "--") { first++; break; }
-    u8[] b = a.toBytes();
-    if (b.len() < 2 || b[0] != '-') { break; }
-    for (i32 i = 1; i < b.len(); i++) {
-      if (b[i] == 'd') { del = true; }
-      else if (b[i] == 's') { squeeze = true; }
-      else if (b[i] == 'c' || b[i] == 'C') { comp = true; }
-      else if (b[i] == 't') { trunc = true; }
-      else {
-        u8[] one = u8[1](fill: b[i]);
-        { errs.bytes(optionRefusal("tr", string.fromBytes(one)).toBytes()); errs.flush(); sink.flush(); return 1; }
-      }
-    }
-    first++;
-  }
-
-  i32 sets = argv.len() - first;
-  if (sets == 0) { { errs.bytes("tr: missing operand\n".toBytes()); errs.flush(); sink.flush(); return 1; } }
-  if (sets > 2) {
-    { errs.bytes(("tr: extra operand '" + argv.get(first + 2) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // Two sets to translate, one to delete or squeeze on its own, and two to do both.
-  if (!del && !squeeze && sets != 2) {
-    { errs.bytes(("tr: missing operand after '" + argv.get(first) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  if (del && !squeeze && sets != 1) {
-    { errs.bytes(("tr: extra operand '" + argv.get(first + 1) + "'\n").toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-
-  Set s1 = parseSet(argv.get(first), -1);
-  if (!s1.ok) { { errs.bytes(s1.message.toBytes()); errs.flush(); sink.flush(); return 1; } }
-  // Set2 is parsed knowing set1's length, which is what `[x*]` pads out to.
-  Set s2 = sets == 2 ? parseSet(argv.get(first + 1), s1.bytes.len()) : Set(true, u8[0](), "");
-  if (!s2.ok) { { errs.bytes(s2.message.toBytes()); errs.flush(); sink.flush(); return 1; } }
-
-  u8[] from = comp ? complementOf(s1.bytes) : s1.bytes;
-  u8[] to = s2.bytes;
-  if (!del && s1.bytes.len() > 0 && sets == 2 && to.len() == 0) {
-    { errs.bytes("tr: when not truncating set1, string2 must be non-empty\n".toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // `-t`: the pairs stop where set2 does, instead of set2's last character standing in for the rest.
-  if (trunc && to.len() < from.len()) {
-    u8[] cut = u8[to.len()](fill: 0);
-    cut.copyFrom(from, 0, 0, to.len());
-    from = cut;
-  }
-
-  // 256-entry tables, so the loop over the input is lookups rather than a scan of the set for each
-  // byte. With ranges and classes expanded the sets are big enough for that to be the difference.
-  u8[] map = u8[256](fill: 0);
-  for (i32 i = 0; i < 256; i++) { map[i] = i; }
-  u8[] drop = u8[256](fill: 0);
-  u8[] runs = u8[256](fill: 0);
-
-  if (del) {
-    for (i32 i = 0; i < from.len(); i++) { drop[from[i]] = 1; }
-  } else if (sets == 2) {
-    for (i32 i = 0; i < from.len(); i++) {
-      // A short second set repeats its last character, as tr does.
-      if (to.len() > 0) { map[from[i]] = i < to.len() ? to[i] : to[to.len() - 1]; }
-    }
-  }
-  if (squeeze) {
-    // The *last* set given is the one squeezed: `tr -s ab` collapses runs of a and b, and
-    // `tr -s ab x` collapses runs of x — after the translation, which is what produced them.
-    u8[] runsOf = sets == 2 ? to : from;
-    for (i32 i = 0; i < runsOf.len(); i++) { runs[runsOf[i]] = 1; }
-  }
-
-  // A chunk at a time, holding a chunk. The tables above are the whole of the state that depends on
-  // the *arguments*; the only thing that depends on the input is `previous`, the last byte written,
-  // which is what `-s` needs and which has to carry across a chunk boundary — a run of `aaa` split
-  // between two reads is still one run. 0071.
-  i32 previous = -1;
-  while (true) {
-    u8[] chunk = fed.next();
-    if (chunk.len() == 0) { break; }
-    Buf out = Buf.create();
-    for (i32 i = 0; i < chunk.len(); i++) {
-      i32 c = chunk[i];
-      if (drop[c] != 0) { continue; }
-      i32 v = map[c];
-      if (runs[v] != 0 && v == previous) { continue; }
-      out.push(v);
-      previous = v;
-    }
-    if (!sink.bytes(out.take())) { return 0; }
-  }
-  { sink.flush(); return 0; }
-}
 
 /** A parsed set: the bytes it names, or why it could not be read. */
 struct Set {
@@ -1685,8 +1637,9 @@ i32 seq(Vec<string> argv, Sink sink, Sink errs) {
     // same way: a `-` followed by a digit or a decimal point is a number.
     bool numeric = b.len() >= 2 && (b[1] >= '0' && b[1] <= '9' || b[1] == '.');
     if (!more || b.len() < 2 || b[0] != '-' || numeric) { operands.push(a); continue; }
+    // Was GNU's "unrecognized option", which says the caller invented `--separator`. They did not.
     if (b[1] == '-') {
-      { errs.bytes(("seq: unrecognized option '" + a + "'\n" + tryHelp("seq")).toBytes()); errs.flush(); sink.flush(); return 1; }
+      { errs.bytes(optionRefusal("seq", a).toBytes()); errs.flush(); sink.flush(); return 1; }
     }
     u8[] one = u8[1](fill: b[1]);
     { errs.bytes(optionRefusal("seq", string.fromBytes(one)).toBytes()); errs.flush(); sink.flush(); return 1; }
@@ -1800,29 +1753,6 @@ Numeral numeralOf(string text) {
   return Numeral(ok ? 1 : 2, 0);
 }
 
-i32 nl(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("nl", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // The count runs on across the operands, as GNU's does, so it is state carried between them rather
-  // than a local. Nothing else is held: numbering costs one integer. 0071.
-  Counter state = Counter(0, false);
-  if (o.operands.len() == 0) { nlFeed(fed, sink, state); return 0; }
-  i32 status = 0;
-  for (i32 i = 0; i < o.operands.len(); i++) {
-    string path = o.operands.get(i);
-    if (path == "-") { nlFeed(fed, sink, state); continue; }
-    FileResult f = fs.readFile(resolvePath(cwd, path));
-    if (!f.ok) {
-      complain(sink, errs, "nl: " + path + ": " + whyUnread(f) + "\n");
-      status = 1;
-      continue;
-    }
-    if (!nlFeed(Feed.of(cli, f.bytes), sink, state)) { break; }
-  }
-  { sink.flush(); errs.flush(); return status; }
-}
 
 /**
  * Numbered lines, one at a time.
@@ -1921,13 +1851,6 @@ bool contains(u8[] haystack, u8[] needle) {
   return false;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 
 u8[] sliceOf(u8[] s, i32 from, i32 to) {
   if (to <= from) { return u8[0](); }

@@ -37,6 +37,7 @@ import {
 import {
   RelayOpinion, signatureKeywordText, signedLength, sortedDescriptors, voteSignatureDigest,
 } from "./vote.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 /** One authority's contribution to the consensus, as the document records it. */
 export struct ConsensusVoter {
@@ -197,15 +198,11 @@ RelayOpinion opinionFor(RelayOpinion[] relays, u8[] descriptor) {
   u8[] want = descriptorIdentity(descriptor);
   for (i32 i = 0; i < relays.len(); i++) {
     u8[] have = descriptorIdentity(relays[i].descriptor);
-    if (have.len() == want.len() && want.len() > 0 && same(have, want)) { return relays[i]; }
+    if (have.len() == want.len() && want.len() > 0 && equal(have, want)) { return relays[i]; }
   }
   return relays[0];
 }
 
-bool same(u8[] a, u8[] b) {
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 /** `NoEdConsensus` appears here and not in a vote: it is a thing authorities can fail to agree on. */
 const string CONSENSUS_FLAGS =

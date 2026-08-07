@@ -80,8 +80,11 @@ Deno.test("a program on WACPATH is spawned, and its output is the command's", as
 });
 
 Deno.test("a spawned program is a pipeline stage like any other", async () => {
-  const r = await sh(`WACPATH=${dir}; seq 1 5 | wc | rev`);
-  assertEquals(r.out, "01 5 5\n", r.err);
+  // The last stage is whichever program this shell still has — `rev` went first and `tr` with it
+  // (wac-mono 0103). What is under test is a *spawned* stage in the middle of a pipeline, and any third
+  // stage shows it.
+  const r = await sh(`WACPATH=${dir}; seq 1 5 | wc | head -1`);
+  assertEquals(r.out, "5 5 10\n", r.err);
 });
 
 Deno.test("a spawned program inside a command substitution", async () => {

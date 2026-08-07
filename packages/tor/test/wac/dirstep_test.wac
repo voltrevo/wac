@@ -13,6 +13,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { DirAction, dirStep, filed } from "../../src/dirstep.wac";
 import { DirDocuments } from "../../src/dirserve.wac";
 import { PUB_NOT_NEWER, PUB_OK, revisionOf } from "../../src/hsstore.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 D_DESCRIPTOR = 0;
 const i32 D_BLINDED = 1;
@@ -73,7 +74,7 @@ export string test_a_refused_upload_files_nothing(fn[u8[](i32, u8[], u8[])] ref)
   i32 refused = 0;
   for (i32 i = 0; i < n; i++) {
     u8[] body = ref(D_CONTROL, at(i), none());
-    if (sameBytes(body, ref(D_DESCRIPTOR, none(), none()))) { continue; }  // that control is a name
+    if (equal(body, ref(D_DESCRIPTOR, none(), none()))) { continue; }  // that control is a name
     DirAction a = dirStep(publishRequest(body), empty());
     t.isTrue(a.ready, "a refusal is still an answer, not a hang");
     t.eqI32(a.descriptor.len(), 0, "and a refused descriptor is not filed");
@@ -243,17 +244,7 @@ bool contains(u8[] hay, string needle) {
   return false;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 string itoa(i32 v) {
   if (v == 0) { return "0"; }

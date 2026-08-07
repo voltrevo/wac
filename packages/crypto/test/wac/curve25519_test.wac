@@ -24,33 +24,18 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { x25519, x25519Base } from "../../src/x25519.wac";
 import { ed25519PublicKey, ed25519Sign, ed25519Verify } from "../../src/ed25519.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
 const i32 ED_PUB = 0;
 const i32 ED_SIGN = 1;
 const i32 ED_VERIFY = 2;
 const i32 X_BASE = 3;
 const i32 X_SHARED = 4;
-
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  trap;
-}
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * 41 + seed * 7 + 13) & 0xFF; }
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 u8[] cat3(u8[] a, u8[] b) {
   u8[] o = u8[a.len() + b.len()]();
@@ -61,22 +46,22 @@ u8[] cat3(u8[] a, u8[] b) {
 
 export string test_rfc_7748_x25519_vectors() {
   T t = T.create();
-  t.eqBytes(x25519(unhex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"),
-                   unhex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")),
-            unhex("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"),
+  t.eqBytes(x25519(decoded("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4"),
+                   decoded("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")),
+            decoded("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"),
             "RFC 7748 section 5.2 first vector");
-  t.eqBytes(x25519(unhex("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"),
-                   unhex("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493")),
-            unhex("95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957"),
+  t.eqBytes(x25519(decoded("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"),
+                   decoded("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493")),
+            decoded("95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957"),
             "RFC 7748 section 5.2 second vector");
   // The Diffie-Hellman worked example from section 6.1.
-  u8[] alicePriv = unhex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
-  u8[] bobPriv = unhex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
+  u8[] alicePriv = decoded("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+  u8[] bobPriv = decoded("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
   t.eqBytes(x25519Base(alicePriv),
-            unhex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"),
+            decoded("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"),
             "Alice's public key");
   t.eqBytes(x25519(alicePriv, x25519Base(bobPriv)),
-            unhex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"),
+            decoded("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"),
             "the shared secret");
   return t.report();
 }
@@ -115,7 +100,7 @@ export string test_x25519_clamps_its_scalar() {
   u8[] different = u8[32]();
   for (i32 i = 0; i < 32; i++) { different[i] = base[i]; }
   different[10] = different[10] ^ 0xFF;
-  t.isFalse(same(x25519Base(base), x25519Base(different)), "other bits do matter");
+  t.isFalse(equal(x25519Base(base), x25519Base(different)), "other bits do matter");
   return t.report();
 }
 
@@ -182,7 +167,7 @@ export string test_low_order_points_give_an_all_zero_secret() {
   u8[] scalar = u8[32]();
   for (i32 i = 0; i < 32; i++) { scalar[i] = (i * 29 + 3) & 0xFF; }
   for (i32 i = 0; i < lowOrder.len(); i++) {
-    t.eqBytes(x25519(scalar, unhex(lowOrder[i])), u8[32](),
+    t.eqBytes(x25519(scalar, decoded(lowOrder[i])), u8[32](),
               "low-order point " + itoa64(i as i64) + " gives an all-zero secret");
   }
   return t.report();
@@ -209,25 +194,25 @@ export string test_rfc_8032_ed25519_vectors() {
   // Three of RFC 8032 §7.1's cases: the empty message, one byte, and one that spans a
   // SHA-512 block.
   T t = T.create();
-  u8[] seed1 = unhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-  u8[] pub1 = unhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+  u8[] seed1 = decoded("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+  u8[] pub1 = decoded("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
   t.eqBytes(ed25519PublicKey(seed1), pub1, "RFC 8032 test 1 public key");
   t.eqBytes(ed25519Sign(seed1, u8[0]()),
-            unhex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
+            decoded("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
                   "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"),
             "RFC 8032 test 1 signature over the empty message");
   t.isTrue(ed25519Verify(pub1, u8[0](),
-                         unhex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
+                         decoded("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
                                "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")),
            "and it verifies");
 
-  u8[] seed2 = unhex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
-  u8[] pub2 = unhex("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
+  u8[] seed2 = decoded("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
+  u8[] pub2 = decoded("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c");
   u8[] msg2 = u8[1]();
   msg2[0] = 0x72;
   t.eqBytes(ed25519PublicKey(seed2), pub2, "RFC 8032 test 2 public key");
   t.eqBytes(ed25519Sign(seed2, msg2),
-            unhex("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da" +
+            decoded("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da" +
                   "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"),
             "RFC 8032 test 2 signature");
   return t.report();
@@ -241,14 +226,14 @@ export string test_a_non_canonical_s_is_rejected() {
   //
   // L = 2^252 + 27742317777372353535851937790883648493, little-endian below.
   T t = T.create();
-  u8[] seed = unhex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
+  u8[] seed = decoded("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
   u8[] pub = ed25519PublicKey(seed);
   u8[] msg = u8[1]();
   msg[0] = 0x72;
   u8[] sig = ed25519Sign(seed, msg);
   t.isTrue(ed25519Verify(pub, msg, sig), "the genuine signature verifies");
 
-  u8[] L = unhex("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+  u8[] L = decoded("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
 
   // S + L, added little-endian with carry.
   u8[] plusL = u8[64]();

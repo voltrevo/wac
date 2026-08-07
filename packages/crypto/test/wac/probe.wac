@@ -1,11 +1,13 @@
 // Host-visible wrappers for the differential tests.
-import { sha256 as sha256Impl } from "../../src/sha256.wac";
-import { sha512 as sha512Impl, sha384 as sha384Impl } from "../../src/sha512.wac";
+import { sha256 as sha256Impl, Sha256 } from "../../src/sha256.wac";
+import { sha512 as sha512Impl, sha384 as sha384Impl, Sha512 } from "../../src/sha512.wac";
+import { sha1 as sha1Impl, Sha1 } from "../../src/sha1.wac";
 import { aesEncrypt as aesEncImpl, aesDecrypt as aesDecImpl } from "../../src/aes.wac";
-import { aesCtr as aesCtrImpl } from "../../src/aesctr.wac";
+import { aesCtr as aesCtrImpl, CtrStream } from "../../src/aesctr.wac";
 import { ghash as ghashImpl } from "../../src/ghash.wac";
 import { gcmEncrypt as gcmEncImpl, gcmTag as gcmTagImpl, gcmDecrypt as gcmDecImpl, gcmInc32 as incImpl } from "../../src/aesgcm.wac";
-import { hmacSha256 as hmacImpl } from "../../src/hmac.wac";
+import { hmacSha256 as hmacImpl, hmacSha1 as hmacSha1Impl } from "../../src/hmac.wac";
+import { ctEqual as ctEqualImpl, ctEqualN as ctEqualNImpl } from "../../src/ct.wac";
 import { chachaBlock as blockImpl, chacha20 as chachaImpl } from "../../src/chacha20.wac";
 import { hkdf as hkdfImpl, hkdfExtract as extractImpl } from "../../src/hkdf.wac";
 import { poly1305 as polyImpl } from "../../src/poly1305.wac";
@@ -33,6 +35,41 @@ export u8[] aeadDecrypt(u8[] k, u8[] n, u8[] a, u8[] c, u8[] t) { return decImpl
 export u8[] sha512(u8[] m) { return sha512Impl(m); }
 export u8[] sha384(u8[] m) { return sha384Impl(m); }
 
+// SHA-1's streaming surface, which is the half a one-shot cannot reach. Tor's relay digest is the
+// reason it exists — a running hash read without ending it, and saved and restored across cells —
+// so `peek`, `clone`, `saveState` and `loadState` are the interesting calls, not `sha1` itself.
+export u8[] sha1(u8[] m) { return sha1Impl(m); }
+
+/** Hash `m` in `cut`-byte pieces, peeking and cloning along the way, then finish. */
+export u8[] sha1Streamed(u8[] m, i32 cut) {
+  Sha1 s = Sha1.create();
+  for (i32 i = 0; i < m.len(); i = i + cut) {
+    i32 n = i + cut <= m.len() ? cut : m.len() - i;
+    u8[] piece = u8[n]();
+    piece.copyFrom(m, i, 0, n);
+    s.update(piece);
+    u8[] mid = s.peek();
+    Sha1 c = s.clone();
+    // The clone is independent: feeding it must not move the original.
+    c.update(piece);
+  }
+  return s.finish();
+}
+
+/** Hash `m` in two halves with the state saved and restored in between. */
+export u8[] sha1Restored(u8[] m, i32 at) {
+  Sha1 s = Sha1.create();
+  u8[] a = u8[at]();
+  a.copyFrom(m, 0, 0, at);
+  s.update(a);
+  Sha1 back = Sha1.loadState(s.saveState());
+  i32 n = m.len() - at;
+  u8[] b = u8[n]();
+  b.copyFrom(m, at, 0, n);
+  back.update(b);
+  return back.finish();
+}
+
 export u8[] aesEncrypt(u8[] k, u8[] b) { return aesEncImpl(k, b); }
 export u8[] aesDecrypt(u8[] k, u8[] b) { return aesDecImpl(k, b); }
 
@@ -54,3 +91,94 @@ export u8[] storeLE32(u32 v) { u8[] o = u8[4](); storeLE32Impl(v, o, 0); return 
 export u8[] storeBE32(u32 v) { u8[] o = u8[4](); storeBE32Impl(v, o, 0); return o; }
 export u8[] storeBE64(u64 v) { u8[] o = u8[8](); storeBE64Impl(v, o, 0); return o; }
 export i32 padTo16(i32 n) { return padTo16Impl(n); }
+
+
+// ── The surfaces the driver never reached ─────────────────────────────────────
+//
+// Three more modules were compiled into the coverage run and never called from it, the way `sha1.wac`
+// was: `CtrStream` — the whole of Tor's resumable keystream, 12 of the 26 points in `aesctr.wac` —
+// `hmacSha1`, and `ctEqual` itself. All three are tested elsewhere; none of them was *driven* here, and
+// a report that says 43% of `aesctr.wac` when the untouched half is a struct nothing called is a number
+// that means nothing.
+
+/** HMAC-SHA-1, which Tor's hidden-service directory needs and the driver never asked for. */
+export u8[] hmacSha1(u8[] key, u8[] msg) { return hmacSha1Impl(key, msg); }
+
+export bool ctEqual(u8[] a, u8[] b) { return ctEqualImpl(a, b); }
+export bool ctEqualN(u8[] a, u8[] b, i32 n) { return ctEqualNImpl(a, b, n); }
+
+/**
+ * A keystream taken in `cut`-byte pieces, which is the case the one-shot cannot express.
+ *
+ * A 509-byte cell leaves the stream part-way through a 16-byte block, so `cut` values that are not
+ * factors of 16 are the interesting ones — that is the state `used` exists to carry.
+ */
+export u8[] ctrStreamed(u8[] key, u8[] iv, u8[] data, i32 cut) {
+  CtrStream s = CtrStream.create(key, iv);
+  u8[] out = u8[data.len()]();
+  for (i32 i = 0; i < data.len(); i = i + cut) {
+    i32 n = i + cut <= data.len() ? cut : data.len() - i;
+    u8[] piece = u8[n]();
+    piece.copyFrom(data, i, 0, n);
+    u8[] got = s.apply(piece);
+    out.copyFrom(got, 0, i, n);
+  }
+  return out;
+}
+
+/**
+ * The same, written down at `at` bytes and picked up again — the reason `resume` takes a block and an
+ * offset rather than just a counter. Reconstructing from the counter alone would skip to the next block,
+ * which is a silently wrong keystream rather than an error.
+ */
+export u8[] ctrResumed(u8[] key, u8[] iv, u8[] data, i32 at) {
+  CtrStream s = CtrStream.create(key, iv);
+  u8[] out = u8[data.len()]();
+  u8[] head = u8[at]();
+  head.copyFrom(data, 0, 0, at);
+  u8[] a = s.apply(head);
+  out.copyFrom(a, 0, 0, at);
+
+  CtrStream back = CtrStream.resume(s.key, s.ctr, s.block, s.used);
+  i32 n = data.len() - at;
+  u8[] tail = u8[n]();
+  tail.copyFrom(data, at, 0, n);
+  u8[] b = back.apply(tail);
+  out.copyFrom(b, 0, at, n);
+  return out;
+}
+
+
+// The three refusals and the two partial-block returns that the one-shot callers above cannot reach:
+// a one-shot hands over the whole message at once, so `filled < blockSize` — the "wait for more" arm of
+// the streaming update, which is the only thing a streaming hash does that a one-shot does not — was
+// never taken. Each of these traps or returns early; the driver runs them expecting exactly that.
+
+/** SHA-256 in pieces, so an update that does not complete a block returns rather than compressing. */
+export u8[] sha256Streamed(u8[] m, i32 cut) {
+  Sha256 s = Sha256.create();
+  for (i32 i = 0; i < m.len(); i = i + cut) {
+    i32 n = i + cut <= m.len() ? cut : m.len() - i;
+    u8[] piece = u8[n]();
+    piece.copyFrom(m, i, 0, n);
+    s.update(piece);
+  }
+  return s.finish();
+}
+
+export u8[] sha512Streamed(u8[] m, i32 cut) {
+  Sha512 s = Sha512.create();
+  for (i32 i = 0; i < m.len(); i = i + cut) {
+    i32 n = i + cut <= m.len() ? cut : m.len() - i;
+    u8[] piece = u8[n]();
+    piece.copyFrom(m, i, 0, n);
+    s.update(piece);
+  }
+  return s.digest(64);
+}
+
+/** A saved SHA-1 state of the wrong size, which `loadState` refuses rather than reading short. */
+export u8[] sha1LoadBad(i32 len) { return Sha1.loadState(u8[len]()).finish(); }
+
+/** An IV that is not sixteen bytes, which a counter mode cannot start from. */
+export u8[] ctrBadIv(u8[] key, i32 ivLen) { return CtrStream.create(key, u8[ivLen]()).apply(u8[1]()); }

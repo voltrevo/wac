@@ -54,7 +54,7 @@ export i32[] supportedVersions() { return i32[](4, 5); }
  * mistake that no test here can see — so `relayHandshakeReply` refuses a challenge that is all
  * zeros, which catches the commonest form of it.
  */
-export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiatorIpv4) {
+export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiatorIpv4, i64 now) {
   if (certsCellBody.len() == 0 || challenge.len() != 32 || initiatorIpv4.len() != 4) {
     return u8[0]();
   }
@@ -63,7 +63,13 @@ export u8[] relayHandshakeReply(u8[] certsCellBody, u8[] challenge, u8[] initiat
   u8[] versions = encodeVersions(supportedVersions());
   u8[] certs = encodeVar(0, cmdCerts(), certsCellBody);
   u8[] auth = encodeVar(0, cmdAuthChallenge(), authChallengeBody(challenge));
-  u8[] netinfo = relayNetinfo(initiatorIpv4, u8[0]());
+  // A real timestamp, which is the whole reason a responder sends one. This used to call
+  // `relayNetinfo`, whose timestamp is zero — and a zero read as a time is the epoch, so every C tor
+  // that handshook with us computed a clock skew equal to the current Unix time and warned that
+  // somebody was wrong by twenty thousand days. It bootstrapped anyway, because the recommendation
+  // for that check is `warn` rather than `fail`, which is exactly why nothing here noticed for as
+  // long as no C tor was in the suite.
+  u8[] netinfo = relayNetinfoAt(initiatorIpv4, u8[0](), now);
   return concat4(versions, certs, auth, netinfo);
 }
 

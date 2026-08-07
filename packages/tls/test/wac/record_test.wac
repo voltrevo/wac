@@ -30,6 +30,7 @@ import {
   alertDecryptError, alertProtocolVersion, alertMissingExtension,
   alertNoApplicationProtocol,
 } from "../../src/record.wac";
+import { equal } from "../../../bytes/src/slice.wac";
 
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
@@ -37,11 +38,6 @@ u8[] fill(i32 n, i32 seed) {
   return out;
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}
 
 export string test_round_trips_both_suites_at_every_shape() {
   // No oracle needed: sealing and opening are inverses or they are not.
@@ -77,14 +73,14 @@ export string test_the_sequence_number_is_part_of_the_nonce() {
   i32 aes = suiteAes128Gcm();
   u8[] first = recordSeal(aes, key, iv, 0, typeApplicationData(), content, 0);
   u8[] second = recordSeal(aes, key, iv, 1, typeApplicationData(), content, 0);
-  t.isFalse(same(first, second), "the same content seals differently at two sequence numbers");
+  t.isFalse(equal(first, second), "the same content seals differently at two sequence numbers");
 
   // The counter is right-aligned in the IV, so incrementing it must not disturb the first
   // four bytes. Left-aligning would still work at sequence number zero and nowhere else.
   u8[] big = recordSeal(aes, key, iv, 9223372036854775807, typeApplicationData(), content, 0);
   u8[] back = recordOpen(aes, key, iv, 9223372036854775807, big);
   t.eqBytes(recordContent(back), content, "a large sequence number round trips");
-  t.isFalse(same(big, first), "and seals differently from sequence number zero");
+  t.isFalse(equal(big, first), "and seals differently from sequence number zero");
   return t.report();
 }
 

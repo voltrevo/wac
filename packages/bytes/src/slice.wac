@@ -1,0 +1,82 @@
+// `s[from:to]`, in the two meanings that were being spelled the same way.
+//
+// Nine packages carried a private `u8[] slice(u8[], i32, i32)` and they had already drifted into three
+// answers for a range that is not valid (wac-mono 0093):
+//
+//   - `ens`, `tor/microdesc`, `tor/relayd` allocated `to - from` and read — so a bad range **traps**,
+//     and a backwards one traps on a negative length;
+//   - `tls/x509` and `tor/hsdesc` checked the range and **returned empty**;
+//   - `ssz/container`, `http/incoming`, `http/request`, `server/routes` clamped `to` up to `from` and
+//     then read — so a backwards range is empty and an out-of-range one still traps.
+//
+// The same call with the same arguments therefore did three different things depending on which file it
+// was written in, and nothing said so. That is worse than any one of the three: a reader cannot tell
+// from the call site which they are getting, and neither can the next person to move code between
+// packages.
+//
+// **Two functions, named for what they do**, which is the third option the issue argued for:
+//
+//   - `slice` requires the range to be valid and traps otherwise. It is for a caller that has *already*
+//     checked — `ssz`'s `rootAt` refuses a bad span before it slices, and `http`'s body reads compare
+//     `input.len() - at` against the length first. There the trap is an assertion, and if it ever fires
+//     the bug is in the check above it.
+//   - `clamped` takes any two integers and answers with whatever part of them is inside the array. It is
+//     for a caller that means "as much of this as exists", and a parser reading attacker-supplied bytes
+//     that would rather refuse than abort the process.
+//
+// What neither does is guess. The old naive copies trapped *by accident* — an out-of-bounds read rather
+// than a stated precondition — so a caller could not tell a deliberate limit from an overlooked one.
+
+/**
+ * `s[from:to]`, copied out. The range must satisfy `0 <= from <= to <= s.len()`.
+ *
+ * Traps otherwise, deliberately and before the read: a slice past the end is a bug at the call site, and
+ * this repo's stance is that a gap fails rather than being approximated. Use `clamped` where a bad range
+ * is *input* rather than a mistake — the point of two names is that the call site says which it means.
+ */
+export u8[] slice(u8[] s, i32 from, i32 to) {
+  if (from < 0 || to < from || to > s.len()) { trap; }
+  u8[] out = u8[to - from]();
+  out.copyFrom(s, from, 0, to - from);
+  return out;
+}
+
+/**
+ * `s[from:to]`, clamped into the array: whatever part of that range exists, and empty when none does.
+ *
+ * Never traps and never returns a short array without meaning to — `clamped(s, -5, 2)` is `s[0:2]` and
+ * `clamped(s, 4, 1)` is empty, because a range that runs backwards contains nothing. A caller that
+ * cannot tell "nothing there" from "your arguments were wrong" wants `slice` and a check of its own.
+ */
+export u8[] clamped(u8[] s, i32 from, i32 to) {
+  i32 lo = from < 0 ? 0 : (from > s.len() ? s.len() : from);
+  i32 hi = to < 0 ? 0 : (to > s.len() ? s.len() : to);
+  if (hi < lo) { hi = lo; }
+  u8[] out = u8[hi - lo]();
+  out.copyFrom(s, lo, 0, hi - lo);
+  return out;
+}
+
+/**
+ * Whether two byte arrays hold the same bytes.
+ *
+ * Thirty-eight files had written this out — `same` in twenty-four of them and `sameBytes` in sixteen —
+ * and two had drifted (wac-mono 0093 is the same story about `slice`):
+ *
+ *   - `tor/consensusgen`'s dropped the length check, so it read past the end of the shorter array or
+ *     answered *true* for a prefix, depending on which was shorter. Its one caller compares the lengths
+ *     first, so nothing was wrong yet; the next caller would have inherited the trap.
+ *   - `tor/dirstep`'s answered **false for two empty arrays**, which is not equality. Every key it
+ *     compares is 32 bytes and `filed` refuses any other length, so that clause was dead — but it is the
+ *     kind of dead clause that is copied into somewhere it is not.
+ *
+ * Empty equals empty here. A caller that means "present and equal" should say `a.len() > 0 && equal(...)`
+ * at the call site, where the reader can see it.
+ */
+export bool equal(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}

@@ -33,3 +33,17 @@ Deno.test("the coverage probe compiles against the current platform", async () =
     throw new Error("...and its status was not 0");
   }
 });
+
+Deno.test("help's builtin list and the dispatcher agree", async () => {
+  // Two lists of the same names is how they drift, and these had: the hand-written line in `help` had
+  // lost `read`, `shift` and `set`, and would have lost `printf` the moment it became a builtin. `help`
+  // reads `builtinNames` now, and this is what keeps that list honest against `isBuiltin`.
+  const m = await wacBind("packages/sh/test/wac/probe.wac") as unknown as {
+    shBuiltinsAgree(): number;
+    shBuiltinCount(): number;
+  };
+  const count = m.shBuiltinCount();
+  if (count < 15) throw new Error(`builtinNames lists only ${count} names — did it empty itself?`);
+  const wrong = m.shBuiltinsAgree();
+  if (wrong !== 0) throw new Error(`${wrong} of ${count} builtin names are not dispatched as builtins`);
+});

@@ -17,20 +17,8 @@ import {
   blindedPublicKey, blindingFactor, credential, subcredential,
   timePeriodLength, timePeriodNum, rotationOffsetMinutes,
 } from "../../src/hsblind.wac";
-
-u8[] hexToBytes(u8[] hex) {
-  u8[] out = u8[hex.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) {
-    out[i] = ((nibble(hex[i * 2]) * 16) + nibble(hex[i * 2 + 1]));
-  }
-  return out;
-}
-i32 nibble(i32 c) {
-  if (c >= 48 && c <= 57) { return c - 48; }
-  if (c >= 97 && c <= 102) { return c - 87; }
-  if (c >= 65 && c <= 70) { return c - 55; }
-  return 0;
-}
+import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 u8[] bytesToHex(u8[] b) {
   u8[] digits = "0123456789abcdef".toBytes();
   u8[] out = u8[b.len() * 2]();
@@ -39,13 +27,6 @@ u8[] bytesToHex(u8[] b) {
     out[i * 2 + 1] = digits[b[i] & 0xF];
   }
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
 }
 
 // ── The vector, passed in as bytes so the wac side needs no JSON parser ───────
@@ -70,7 +51,7 @@ export string test_a_real_onion_address_decodes_to_the_services_identity_key(
   fn[u8[](i32, u8[], u8[])] ref
 ) {
   T t = T.create();
-  u8[] identity = hexToBytes(ref(V_IDENTITY, u8[0](), u8[0]()));
+  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
   u8[] onion = ref(V_ONION, u8[0](), u8[0]());
   t.eqI32(identity.len(), 32, "the vector's identity key is 32 bytes");
   t.eqI32(onion.len(), 56, "the vector's address is 56 characters");
@@ -78,15 +59,15 @@ export string test_a_real_onion_address_decodes_to_the_services_identity_key(
   // Both directions against the same pair, which is what makes this more than a round trip: the
   // address came from tor's `hostname` file and the key from tor's key file, so neither side of the
   // equality is ours.
-  t.isTrue(same(onionPubkey(onion), identity), "the address decodes to the identity key");
-  t.isTrue(same(onionAddress(identity), onion), "the identity key encodes to the address");
+  t.isTrue(equal(onionPubkey(onion), identity), "the address decodes to the identity key");
+  t.isTrue(equal(onionAddress(identity), onion), "the identity key encodes to the address");
 
   // With the suffix, which is how a user writes it and how a SOCKS request arrives.
   u8[] withSuffix = u8[onion.len() + 6]();
   for (i32 i = 0; i < onion.len(); i++) { withSuffix[i] = onion[i]; }
   u8[] dot = ".onion".toBytes();
   for (i32 i = 0; i < 6; i++) { withSuffix[onion.len() + i] = dot[i]; }
-  t.isTrue(same(onionPubkey(withSuffix), identity), "the .onion suffix is accepted");
+  t.isTrue(equal(onionPubkey(withSuffix), identity), "the .onion suffix is accepted");
   return t.report();
 }
 
@@ -104,7 +85,7 @@ export string test_every_address_in_the_specification_decodes(fn[u8[](i32, u8[],
     u8[] key = onionPubkey(addr);
     t.eqI32(key.len(), 32, "spec example " + itoa64(i as i64) + " decodes");
     // And re-encodes to itself, so the checksum we computed is the one the spec's author did.
-    t.isTrue(same(onionAddress(key), addr),
+    t.isTrue(equal(onionAddress(key), addr),
              "spec example " + itoa64(i as i64) + " round-trips through our encoder");
   }
 
@@ -157,8 +138,8 @@ export string test_the_blinded_key_matches_the_one_tor_used(fn[u8[](i32, u8[], u
   // The whole reason this file has a vector. tor derived this blinded key from this identity key at
   // this time period, and put it in a descriptor an HSDir accepted.
   T t = T.create();
-  u8[] identity = hexToBytes(ref(V_IDENTITY, u8[0](), u8[0]()));
-  u8[] want = hexToBytes(ref(V_BLINDED, u8[0](), u8[0]()));
+  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
+  u8[] want = decoded(string.fromBytes(ref(V_BLINDED, u8[0](), u8[0]())));
   u8[] period = ref(V_PERIOD, u8[0](), u8[0]());
   i64 tp = be64(period, 0);
   i64 plen = be64(period, 8);
@@ -166,10 +147,10 @@ export string test_the_blinded_key_matches_the_one_tor_used(fn[u8[](i32, u8[], u
 
   u8[] got = blindedPublicKey(identity, tp, plen);
   t.eqI32(got.len(), 32, "we produced a 32-byte blinded key");
-  t.isTrue(same(got, want), "A' = hA agrees with the blinded key tor put in its descriptor");
+  t.isTrue(equal(got, want), "A' = hA agrees with the blinded key tor put in its descriptor");
   // On failure the equality above says only "no". Report where, since a wrong basepoint string and a
   // wrong period give completely different keys while a wrong clamp differs in one byte.
-  if (!same(got, want)) {
+  if (!equal(got, want)) {
     i32 firstDiff = -1;
     for (i32 i = got.len() - 1; i >= 0 && i < want.len(); i--) {
       if (got[i] != want[i]) { firstDiff = i; }
@@ -193,29 +174,29 @@ export string test_the_blinded_key_depends_on_every_input(fn[u8[](i32, u8[], u8[
   // A blinding that ignored the period would match the vector and be wrong for every other period —
   // and the symptom would be a client that works for eight minutes after it is written.
   T t = T.create();
-  u8[] identity = hexToBytes(ref(V_IDENTITY, u8[0](), u8[0]()));
+  u8[] identity = decoded(string.fromBytes(ref(V_IDENTITY, u8[0](), u8[0]())));
   u8[] period = ref(V_PERIOD, u8[0](), u8[0]());
   i64 tp = be64(period, 0);
   i64 plen = be64(period, 8);
   u8[] base = blindedPublicKey(identity, tp, plen);
 
-  t.isFalse(same(blindedPublicKey(identity, tp + 1, plen), base), "the period changes it");
-  t.isFalse(same(blindedPublicKey(identity, tp - 1, plen), base), "so does the previous period");
-  t.isFalse(same(blindedPublicKey(identity, tp, plen + 1), base), "the period length changes it");
+  t.isFalse(equal(blindedPublicKey(identity, tp + 1, plen), base), "the period changes it");
+  t.isFalse(equal(blindedPublicKey(identity, tp - 1, plen), base), "so does the previous period");
+  t.isFalse(equal(blindedPublicKey(identity, tp, plen + 1), base), "the period length changes it");
   u8[] other = u8[32]();
   for (i32 i = 0; i < 32; i++) { other[i] = identity[i]; }
   other[0] = (other[0] ^ 1);
   // A flipped bit may or may not still be a curve point; either a different key or a refusal is
   // correct, and silently returning the same key is not.
-  t.isFalse(same(blindedPublicKey(other, tp, plen), base), "a different identity key changes it");
+  t.isFalse(equal(blindedPublicKey(other, tp, plen), base), "a different identity key changes it");
 
   // The subcredential must move with the blinded key, because it is what decrypts the descriptor:
   // a subcredential that did not change per period would decrypt yesterday's and fail on today's.
   u8[] sub = subcredential(identity, base);
   t.eqI32(sub.len(), 32, "the subcredential is 32 bytes");
-  t.isFalse(same(sub, subcredential(identity, blindedPublicKey(identity, tp + 1, plen))),
+  t.isFalse(equal(sub, subcredential(identity, blindedPublicKey(identity, tp + 1, plen))),
             "the subcredential changes with the period");
-  t.isFalse(same(sub, credential(identity)), "the subcredential is not the credential");
+  t.isFalse(equal(sub, credential(identity)), "the subcredential is not the credential");
   t.eqI32(subcredential(identity, u8[31]()).len(), 0, "a short blinded key has no subcredential");
   return t.report();
 }

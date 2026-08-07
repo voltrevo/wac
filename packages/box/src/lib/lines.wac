@@ -1,6 +1,6 @@
+import { slice } from "../../../bytes/src/slice.wac";
 // Splitting, joining, comparing and sorting lines — what most applets are made of.
 
-import { slice } from "./bytes.wac";
 
 /** Split into lines, dropping the empty one a trailing newline would produce. */
 export u8[][] splitLines(u8[] data) {

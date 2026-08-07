@@ -1,6 +1,6 @@
 # box — a busybox, written in wac
 
-60 applets in one program, chosen by the first argument — 59 tools and `help`, which prints the list. No TypeScript: `src/` is
+61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
 That number is a digit rather than a word because it kept going stale: it said fifty-nine when
@@ -22,7 +22,7 @@ cat README.md | ./box sort -u | ./box wc -l
 
 ```
 base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
-fold get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
+fold fsdump get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
 nc rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
 strings tac tail
 tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
@@ -63,7 +63,7 @@ half-written destination.
 **It also shows what a multicall binary costs.** `box`'s grants are the *union* of what
 its applets need, so `box echo` carries the filesystem access `box cat` wants. Built as
 separate executables, each would state its own: `wc` needs nothing at all and its shebang
-would say `deno run` with no flags. One binary with sixty entry points is the shape
+would say `deno run` with no flags. One binary with 61 entry points is the shape
 BusyBox has to take; it is not the shape this model is best at.
 
 ## In a browser
@@ -244,6 +244,7 @@ because "cannot stream" turned out to be wrong twice:
 |---|---|---|
 | **Streams** | cat wc hex crc32 sha256sum sha512sum tr strings gzip gunzip head tail nl rev uniq grep cut fold cp split sponge | bounded by a chunk, a line, or a flag |
 | **Cannot** | sort tac | need every line before emitting the first |
+| **Cannot** | fsdump | an image's checksum covers the whole file, so a prefix says nothing |
 | **Cannot** | tee | two sinks at once, and the world has one current output |
 | **Could, given an API** | base64 base32 | `codec` encodes a whole array, including the padding, so a chunk cannot be encoded on its own |
 | **Could, given an API** | zstd unzstd | `packages/zstd` has no streaming form — a package limit, not the world's, and the only row left |
@@ -279,6 +280,68 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
+**Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
+runs each applet with each flag and compares against the counterpart — judging only the flags the real
+tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing
+either. The first answer was **64 accepted and ignored against 5 refused**. A flag accepted and ignored is
+the worst of the three answers this repo ranks: the caller asked for it by name and got no error.
+`base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n` printed the newline it exists
+to suppress.
+
+**It is now 0 ignored against 7 refused**, over the same 375 flags and 43 applets (wac-mono 0105). Five
+were implemented; the rest are *refused by name* from
+`lib/flags.wac`, which is one table of what each applet reads and one of what the real tool documents,
+and picks between two sentences:
+
+```
+$ box sort -k2      sort: -k is not implemented
+$ box sort -Q       sort: invalid option -- 'Q'
+                    Try 'sort --help' for more information.
+```
+
+The distinction is the whole point. Calling `-k` invalid says the *command* is wrong when only this
+program is unfinished, and it sends a caller to re-read a manual that was right. Both tables are measured
+rather than remembered — `test/flags.test.ts` reads the installed tools' `--help` and the applets' own
+source — which caught three letters missing from the table on the side that produces exactly that wrong
+sentence: `tr -C`, `rm -R` and `split -C`, all of them the *second* spelling on a line GNU writes as
+`-r, -R, --recursive`.
+
+**A long option is one thing, not a run of short ones.** `sort --key=2` went through the loop that reads
+`-iv` and came out refusing the *dash* — `sort: invalid option -- '-'`, naming a character the caller did
+not type. `Args.longOpt` keeps it whole, and since no applet here implements a single long option, the
+answer needs no table:
+
+```
+$ box ls --all      ls: long options are not implemented: --all
+```
+
+That is the one statement that is true of every applet, so this half of the check runs for all of them
+rather than only the twenty-eight with a short-flag table — and GNU's own split between "unrecognized"
+and a real option we lack is one this cannot make honestly, so it claims neither.
+
+Two applets stay outside it, and both are facts about the real tools. `echo` is not a getopt program —
+`echo -x` prints `-x`, so a refusal there would invent an error GNU does not have. And a short
+`acceptedFlags` list holds letters where ignoring *is* GNU's behaviour: `cat -u`, documented as ignored,
+and `tar -c`, which names the only mode this tar has.
+
+**Three divergences are deliberate**, found by the same sweep and not gaps: `stat` prints a one-line
+summary where GNU prints a block, `diff` defaults to unified output where GNU defaults to normal, and
+`du` counts bytes where GNU counts blocks. Each is a different format for the same fact rather than a
+missing answer, which is why none of them is refused.
+
+**`tr` reads the set language**, which it did not: escapes (`\n`, `\t`, `\NNN`), ranges, the twelve
+character classes, `[=c=]` and `[x*n]`, plus `-c -d -s -t`. It took its operands *literally*, so
+`tr '\n' ' '` looked for a backslash and an `n`, found neither, and copied its input through — a no-op
+that looks like working software until you check the bytes (wac-mono 0098, found by typing into the
+browser terminal). `lib/trset.wac` is the language and the applet is what the flags do with it. It takes
+no file operand, because GNU's does not: `tr a-z A-Z < file`.
+
+**`grep` reads basic regular expressions**, as the real one does with no `-E`: `|`, `+`, `?`, `{` and the
+parentheses are literals and their backslashed forms are the operators. It compiled *extended* until
+wac-mono 0104, so `grep 'a|b'` matched a-or-b where GNU matches three characters — a wrong answer with
+nothing said about it. `-E` selects extended, and `packages/regex/src/basic.wac` is the one translation
+both this and `packages/sh`'s grep go through.
+
 **A flag's value attaches or not**, as GNU's do: `cut -f2 -d,` and `cut -f 2 -d ,` are one
 command, `fold -w 40` works as well as `fold -40`, and `head -n 2` as well as `head -2`.
 Only the attached form used to parse, because a detached value would have been left among
@@ -287,6 +350,27 @@ everywhere, was a usage error. `takesValue` in `lib/args.wac` is the per-applet 
 makes the difference: a letter listed there consumes its value, and a letter not listed
 stays a boolean, which is what keeps `grep -n pattern` from swallowing its pattern and
 `sort -n` from swallowing a filename.
+
+**A value that has to be a number is checked, and its sign is read.** `takesValue` says a letter
+consumes its value; it does not say what the value has to *be*, so a value that was not digits was
+consumed and then ignored — `head -n x` printed the default ten lines and exited 0, turning a mistake in
+the command into an answer. `takesNumber` is the second table, and a value that fails it comes back as
+`Args.badNum` with GNU's own sentence, which differs per tool: "invalid number of lines", "…of columns"
+for `fold`, "invalid line count" for `shuf`, and `strings`, being binutils, "invalid integer argument"
+with no quotes at all. Apostrophes rather than typographic quotes, because `LC_ALL=C` is what this repo
+compares in.
+
+`-c` is the same flag in the other unit, and it was not there at all: it parsed as a boolean, so its
+value became an operand and `head -c 3 f` answered "head: 3: No such file or directory" — blaming the
+caller for a real GNU spelling — while `head -c3 f` printed the whole file. Both units take all three
+signed forms, and the noun in a refusal follows the flag, because GNU says "bytes" for `-c` and "lines"
+for `-n` from the same tool.
+
+The sign was dropped the same way. It is not part of the number — it selects a different question, and
+only in one direction per tool: **`head -n -2` is all but the last two** and **`tail -n +2` is from line
+two**, while `head -n +2` and `tail -n -2` are plain. Both are implemented now and both stream: `head`
+holds the last N lines back, `tail` holds nothing at all. Before, `+2` read as 2, so `tail -n +2`
+answered the *last* two — a different answer rather than a missing one, which is worse.
 
 Two answers changed with it, both found by the same sweep. `sort -n` over lines with equal
 numeric keys is byte order, not input order — GNU's *last-resort comparison*, which `-u`

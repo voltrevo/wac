@@ -26,7 +26,7 @@
 import { Captured, Change, Child, Cli, Core, FAULT_DENIED, FAULT_NONE, FAULT_NOT_FOUND, FileResult,
   Pending, Socket, Stat } from "../../../platform/src/platform.wac";
 import { Read } from core;
-import { Shell, runScript } from "../../src/exec.wac";
+import { Shell, builtinNames, isBuiltin, runScript } from "../../src/exec.wac";
 
 /** A ticket is always ready here, and dropping one does nothing. */
 bool alwaysSettled(i32 id) { return true; }
@@ -314,6 +314,26 @@ Cli fakeCli() {
 // ── What the coverage driver calls ────────────────────────────────────────────
 
 /** Run a script and hand back what it wrote to standard output. */
+/**
+ * Every builtin name, run through the dispatcher, so `help`'s list and `isBuiltin` cannot drift.
+ *
+ * Answers the count of names that the shell does *not* treat as builtins — which should be zero. A name
+ * in `builtinNames` that `isBuiltin` refuses would be spawned and reported not found; a name in
+ * `isBuiltin` that is not in the list is invisible in `help`, which is how `read`, `shift` and `set`
+ * came to be missing from it for as long as they were.
+ */
+export i32 shBuiltinsAgree() {
+  string[] names = builtinNames();
+  i32 wrong = 0;
+  for (i32 i = 0; i < names.len(); i++) {
+    if (!isBuiltin(names[i])) { wrong++; }
+  }
+  return wrong;
+}
+
+/** How many names `builtinNames` lists, so a list that emptied itself cannot pass the check above. */
+export i32 shBuiltinCount() { return builtinNames().len(); }
+
 export u8[] shOut(string src) {
   Shell sh = Shell.capturing(fakeCore(), fakeCli());
   runScript(sh, src);

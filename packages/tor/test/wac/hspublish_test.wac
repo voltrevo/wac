@@ -12,6 +12,7 @@ import { hsPublishRequest } from "../../src/dirclient.wac";
 import {
   DirDocuments, dirRoute, hsPublishResponse, hsPublishVersion,
 } from "../../src/dirserve.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 P_BLINDED = 0;
 const i32 P_QUERY = 1;
@@ -141,7 +142,7 @@ export string test_the_publish_answers_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
   // service told 404 would go looking for another HSDir when the fault is in its own document.
   t.eqI32(hsPublishResponse(false).status, 400, "rejected");
   t.isTrue(hsPublishResponse(true).body.len() > 0, "and each says which it was");
-  t.isTrue(!sameBytes(hsPublishResponse(true).body, hsPublishResponse(false).body),
+  t.isTrue(!equal(hsPublishResponse(true).body, hsPublishResponse(false).body),
            "in words that differ");
   return t.report();
 }
@@ -170,11 +171,6 @@ i32 indexOf(string hay, string needle) { return find(hay.toBytes(), needle); }
 
 string sliceStr(u8[] b, i32 from, i32 to) { return string.fromBytes(slice(b, from, to)); }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
 string itoa(i32 v) {
   if (v == 0) { return "0"; }
@@ -189,8 +185,3 @@ string itoa(i32 v) {
   return out;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

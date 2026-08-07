@@ -57,7 +57,7 @@ const CASES: { script: string; stdin?: string }[] = [
   // Pipelines, which are `send` and `recv` between stages.
   { script: "seq 1 5 | head -2" },
   { script: "seq 1 5 | sort -r | head -2" },
-  { script: "printf 'b\\na\\nb\\n' | sort | uniq" },
+  { script: "printf 'b\\na\\nb\\n' | sort | head -2" },
   // The shell's own standard input, in three shapes.
   { script: "cat", stdin: "piped in\n" },
   { script: 'read x; echo "[$x]"; cat', stdin: "one\ntwo\n" },

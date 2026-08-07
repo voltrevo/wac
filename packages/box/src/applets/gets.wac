@@ -15,13 +15,15 @@
 
 import { Cli, Core, FileResult, Socket } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { concat, slice } from "../lib/bytes.wac";
+import { concat } from "../lib/bytes.wac";
 import { recordsReady } from "../../../tls/src/record.wac";
 import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure } from "../../../tls/src/client.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../../../http/src/incoming.wac";
 import { Read } from core;
+import { slice } from "../../../bytes/src/slice.wac";
 
 /** `[state][toSend][appData]`, each behind a big-endian u32 length. */
 struct Step { u8[] state; u8[] toSend; u8[] appData; }
@@ -38,6 +40,7 @@ Step unpack(u8[] r) {
 }
 
 export i32 gets(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
     core.warn("usage: " + a.name + " <host> <path> <root.der> [-<port>] [-i]");
     return 2;

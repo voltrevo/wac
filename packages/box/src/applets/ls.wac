@@ -11,9 +11,11 @@
 
 import { Cli, Core, faultWords, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
 
 export i32 ls(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.flags != "") {
     core.warn(a.name + ": -" + a.flags + ": not implemented — this ls takes no options");
     return 2;

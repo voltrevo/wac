@@ -33,6 +33,7 @@ import { basename } from "./applets/basename.wac";
 import { cat } from "./applets/cat.wac";
 import { cp } from "./applets/cp.wac";
 import { crc32 } from "./applets/crc32.wac";
+import { fsdump } from "./applets/fsdump.wac";
 import { cut } from "./applets/cut.wac";
 import { date } from "./applets/date.wac";
 import { diff } from "./applets/diff.wac";
@@ -119,6 +120,7 @@ export i32 dispatch(Core core, Cli cli, Args a, string applet) {
   if (applet == "cat")       { return cat(core, cli, a); }
   if (applet == "cp")        { return cp(core, cli, a); }
   if (applet == "crc32")     { return crc32(core, cli, a); }
+  if (applet == "fsdump")    { return fsdump(core, cli, a); }
   if (applet == "cut")       { return cut(core, cli, a); }
   if (applet == "date")      { return date(core, cli, a); }
   if (applet == "diff")      { return diff(core, cli, a); }
@@ -195,7 +197,7 @@ export i32 dispatch(Core core, Cli cli, Args a, string applet) {
 export string[] appletNames() {
   return string[](
     "base32", "base64", "basename", "cat", "cp", "crc32", "cut", "date", "diff", "dirname",
-    "du", "echo", "false", "find", "fold", "get", "gets", "grep", "gunzip", "gzip", "head",
+    "du", "echo", "false", "find", "fold", "fsdump", "get", "gets", "grep", "gunzip", "gzip", "head",
     "help", "hex", "httpd", "json", "ls", "mkdir", "mv", "nc", "nl", "paste", "rev", "rm", "rmdir",
     "seq", "serve", "sha256sum", "sha512sum", "shuf", "sort", "split", "sponge", "stat",
     "strings", "tac", "tail", "tar", "tee", "touch", "tr", "true", "uniq", "unzstd",
@@ -208,6 +210,7 @@ i32 usage(Core core) {
   core.warn(wrapped(appletNames(), "  ", 74));
   core.warn("flags: grep -ivnc   sort -run   uniq -c   wc -lwc   mkdir -p   rm -rf   json -c");
   core.warn("       a value attaches or not: head -n2 / -2, fold -w40 / -40, cut -f2 -d, / -f 2 -d ,");
+  core.warn("       signs and units: head -n -2, tail -n +2, head -c 3, tail -c +3");
   core.warn("net:   get <host> [path] [-<port>] [-i]   wget <host> <path> <out>\n"
             + "       serve [-<port>] [-o]   httpd [-<port>] [dir] [-o] [-x]\n"
             + "       gets <host> <path> <root.der> [-<port>]   (TLS 1.3)\n"

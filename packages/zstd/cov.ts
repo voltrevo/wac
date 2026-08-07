@@ -12,6 +12,7 @@ import { instrument, report } from "../../harness/wacCoverage.ts";
 import { weightBytes } from "./test/frames.ts";
 import { writeDescription } from "./test/writer.ts";
 import { literalsSection, zstd } from "./test/frames.ts";
+import { refCompress } from "./test/reference.ts";
 
 const verbose = Deno.args.includes("--verbose");
 
@@ -577,6 +578,9 @@ const strm = await instrument("packages/zstd/src/stream.wac");
     noise[i] = (st >> 16) & 0xff;
   }
   inputs.push(noise);                                                  // incompressible: raw blocks
+  // Long enough that the reference encoder reaches for an RLE block and for many windows' worth of
+  // eviction; used by the reference-built frames below rather than by ours.
+  const rle200k = new Uint8Array(200000).fill(0x41);
 
   for (const data of inputs) {
     const frame = em.compress(data);
@@ -596,6 +600,62 @@ const strm = await instrument("packages/zstd/src/stream.wac");
   queue = [];
   next = 0;
   ignoringTraps(() => sm.unzstdStream(() => sm.Read.Failed("the disk gave out"), write));
+
+  // ── Frames our own encoder cannot produce ──────────────────────────────────
+  //
+  // Everything above was `em.compress(...)`, and an encoder only emits what it prefers: one header shape,
+  // no RLE block until the input is very long, and — the important one — **a window that always covers its
+  // own content**. So the eviction path, which is the entire reason this file exists separately from
+  // `frame.wac`, had never executed. The reference encoder will build a small window on request.
+  for (const log of [10, 11]) {
+    const frame = refCompress(rle200k, { windowLog: log }).frame;
+    for (const chunk of [1, 64, 4096, frame.length]) stream1(frame, chunk);
+  }
+  // 200 KB of one byte is where the reference encoder chooses an RLE block, which ours never does.
+  {
+    const frame = refCompress(rle200k).frame;
+    for (const chunk of [1, 4096, frame.length]) stream1(frame, chunk);
+  }
+
+  // A far end that stops listening, at both the points that can notice: mid-eviction and at the tail.
+  // `write` answering false is a contract, not an error, and until now nothing had ever answered false.
+  let allow = 0;
+  const writeStops = (_b: Uint8Array) => allow-- > 0;
+  for (const [n, frame] of [
+    [0, refCompress(rle200k, { windowLog: 10 }).frame],   // refused on the first eviction
+    [3, refCompress(rle200k, { windowLog: 10 }).frame],   // refused on a later one
+    [0, em.compress(new TextEncoder().encode("short"))],  // refused at the tail, no eviction to reach
+  ] as [number, Uint8Array][]) {
+    queue = [frame];
+    next = 0;
+    allow = n;
+    ignoringTraps(() => sm.unzstdStream(read, writeStops));
+  }
+
+  // ── In-frame refusals, hand-built ─────────────────────────────────────────
+  //
+  // Each of these is a frame no encoder writes, which is exactly why they need building: a decoder is
+  // judged on what it refuses. `frame()` is the same builder the header section above uses.
+  for (const bad of [
+    frame({ block: blockHeader(3, 0, true) }),                              // a reserved block type
+    frame({ didFlag: 1, dictId: 7, block: raw([1, 2, 3]) }),                // a dictionary we do not have
+    frame({ fcsFlag: 1, contentSize: 99, block: raw([1, 2, 3]) }),          // content size that is not true
+    frame({ fcsFlag: 1, contentSize: 3, checksum: true, block: raw([1, 2, 3]) }),  // checksum of zero
+    frame({ block: blockHeader(0, 200000, true) }),                         // a raw block over the maximum
+    frame({ block: [...blockHeader(1, 200000, true), 0x41] }),              // an RLE block over the maximum
+    frame({ block: [...blockHeader(2, 500, true), 1, 2, 3] }),              // a compressed block cut short
+    frame({ block: blockHeader(0, 4, true).slice(0, 1) }),                  // a block header cut short
+    new Uint8Array([0x28, 0xb5, 0x2f, 0xfd]),                               // magic and nothing after it
+    new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x24]),                         // a header claiming more bytes
+    new Uint8Array([1, 2, 3, 4]),                                           // four bytes that are no magic
+    new Uint8Array([0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0x80]),                // a skippable frame of -2^31
+  ]) {
+    stream1(bad, 7);
+    stream1(bad, bad.length);
+  }
+  // A frame declaring neither a content size nor a window, where retaining everything is the only safe
+  // reading — the `windowSize > 0` ternary's other side.
+  stream1(frame({ singleSegment: true, fcsFlag: 0, contentSize: 0, block: raw([]) }), 3);
 }
 
 // ── FSE encoding ──────────────────────────────────────────────────────────────
@@ -876,7 +936,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 309,
+    line: 342,
     proven: true,
     snippet: "while ((1 << log) < need && log < maxLog) {",
     why: "optimalLog floors the log at highBit(top) + 2, so the table is at least four times " +
@@ -888,7 +948,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 335,
+    line: 368,
     proven: false,
     snippet: "} else {",
     why: "The three-byte sequence count needs 32512 sequences in one block, and a 128 KiB " +
@@ -921,7 +981,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/encode.wac",
-    line: 370,
+    line: 403,
     proven: false,
     snippet: "} else if (n < 4096) {",
     why: "The wider RLE literal headers, which need 32 or more literals that are all the same " +
@@ -931,7 +991,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/zstd/src/block.wac",
-    line: 139,
+    line: 135,
     proven: false,
     snippet: "if (h.compressedSize <= 0) { trap; }",
     why: "A treeless literals section claiming no bytes at all. Reaching it needs a frame " +

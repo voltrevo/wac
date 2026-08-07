@@ -407,3 +407,69 @@ export u8[] rsaSignPkcs1(u8[] n, u8[] d, u8[] msg, i32 hashLen) {
 export u8[] rsaSignRawPkcs1(u8[] n, u8[] d, u8[] payload) {
   return rawSign(n, d, padPkcs1(payload, n.len()));
 }
+
+/**
+ * An RSASSA-PSS signature, RFC 8017 §9.1.1 — the inverse of `rsaVerifyPss`.
+ *
+ * What TLS 1.3 requires in CertificateVerify for an RSA certificate: `rsa_pss_rsae_sha256` and its
+ * siblings are the only RSA schemes it will accept there, PKCS#1 v1.5 having been removed from 1.3
+ * for signing. So a server that presents an RSA certificate cannot complete a handshake without this.
+ *
+ * **`salt` is a parameter rather than drawn here**, for the reason every other salt and ephemeral key
+ * in this repository is: a function that reached for randomness could not be checked against a stated
+ * vector at all, and PSS is precisely the algorithm where a wrong salt still verifies — the verifier
+ * recovers whatever salt the signer used, so a signer that passed the same bytes every time would
+ * produce signatures that pass every check here and leak across signatures in a way nothing local can
+ * see. A caller draws `saltLen` fresh bytes per signature. `saltLen` is the hash length for TLS.
+ *
+ * Empty if the key is too small to hold the encoding, which is the condition RFC 8017 states as
+ * "encoding error" and is not something a caller can recover from by retrying.
+ */
+export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return u8[0](); }
+
+  // emBits is one *less* than the modulus bit length, so the encoded value is always numerically
+  // below the modulus without a comparison. That off-by-one is the whole reason PSS has a
+  // "clear the leading bits" step at the end.
+  i32 emBits = bitLen(modulus) - 1;
+  i32 emLen = (emBits + 7) / 8;
+  i32 saltLen = salt.len();
+  if (emLen < hashLen + saltLen + 2) { return u8[0](); }
+
+  // M' = eight zero bytes || mHash || salt. The zeros are not padding: they are what stops a PSS
+  // signature being reinterpreted as a signature over some other structure that happens to start
+  // with a hash.
+  u8[] mHash = digest(msg, hashLen);
+  u8[] mPrime = u8[8 + hashLen + saltLen]();
+  for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
+  for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
+  u8[] h = digest(mPrime, hashLen);
+
+  // DB = zeros || 0x01 || salt, masked by MGF1 over H.
+  i32 dbLen = emLen - hashLen - 1;
+  u8[] db = u8[dbLen]();
+  db[dbLen - saltLen - 1] = 0x01;
+  for (i32 i = 0; i < saltLen; i++) { db[dbLen - saltLen + i] = salt[i]; }
+  u8[] dbMask = mgf1(h, dbLen, hashLen);
+
+  u8[] em = u8[emLen]();
+  for (i32 i = 0; i < dbLen; i++) { em[i] = db[i] ^ dbMask[i]; }
+  for (i32 i = 0; i < hashLen; i++) { em[dbLen + i] = h[i]; }
+  em[emLen - 1] = 0xBC;
+
+  // Clear the bits the modulus does not have room for. Without this the encoded integer can exceed
+  // the modulus, and `rawSign` would refuse the signature rather than produce a wrong one — which is
+  // the good failure, but it would happen for about half of all keys.
+  i32 unusedBits = 8 * emLen - emBits;
+  if (unusedBits > 0) { em[0] = em[0] & (0xFF >> unusedBits); }
+
+  // A modulus whose top byte is zero makes emLen one short of the modulus length; `rawSign` wants a
+  // block it can turn into an integer, and a leading zero is what an integer does not mind.
+  if (emLen < n.len()) {
+    u8[] padded = u8[n.len()]();
+    for (i32 i = 0; i < emLen; i++) { padded[n.len() - emLen + i] = em[i]; }
+    return rawSign(n, d, padded);
+  }
+  return rawSign(n, d, em);
+}
