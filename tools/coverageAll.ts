@@ -18,7 +18,7 @@
 //
 // This is deliberately **not** wired into `tools/push.sh`. `crypto` is still red — 45 uncovered branch
 // points that are neither covered nor recorded as unreachable — and putting a red check in the gate makes
-// every other agent's push fail for something they did not do. wac-mono 0098 has the list. When that goes
+// every other agent's push fail for something they did not do. wac-mono 0101 has the list. When that goes
 // green, this belongs in the gate, because a check nobody runs rots back into the state above.
 
 const verbose = Deno.args.includes("--verbose");

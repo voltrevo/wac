@@ -10,6 +10,7 @@
     "bench:json": "deno run -A packages/json/bench/throughput.ts",
     "bench:json-lookup": "deno run -A packages/json/bench/lookup.ts",
     "bindgen": "deno run -A tools/emitgen.ts",
+    "corpus:through": "deno run -A tools/corpusThrough.ts",
     "coverage": "deno run -A tools/coverage.ts",
     "coverage:all": "deno run -A tools/coverageAll.ts",
     "size": "deno run -A tools/size.ts",

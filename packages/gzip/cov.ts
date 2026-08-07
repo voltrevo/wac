@@ -290,7 +290,7 @@ const UNREACHABLE: { file: string; line: number; snippet: string; why: string }[
       "is set at most the 32 bits already in `bitBuf` remain. Every path to this line still has an " +
       "eight-byte trailer to read, which cannot come from those bits, so the read traps and the " +
       "line is never reached. If that holds, the comment above it promises a caller something this " +
-      "path cannot deliver — see wac-mono 0099, which is the question of whether the reader should " +
+      "path cannot deliver — see wac-mono 0102, which is the question of whether the reader should " +
       "keep enough to finish a member after a failed refill, not a thing to quietly change here.",
   },
 ];

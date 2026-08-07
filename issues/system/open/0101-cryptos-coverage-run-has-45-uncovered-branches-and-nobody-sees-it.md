@@ -59,4 +59,4 @@ sitting.
 ## See also
 
 - `tools/coverageAll.ts` — runs all eighteen and names the failures; written for this.
-- wac-mono 0099 — one of gzip's, which turned out to be a promise the code cannot keep.
+- wac-mono 0102 — one of gzip's, which turned out to be a promise the code cannot keep.
