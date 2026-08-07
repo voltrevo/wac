@@ -247,6 +247,41 @@ against the real client rather than assumed.
 
 ## The server
 
+## A server that boots an image
+
+    sshd -p 2222 -h hostkey -a authorized_keys -i home.wacimg
+
+design/0001 step 7's criterion is "the ssh demo is one program that boots an image and serves sessions
+from it", and this is that. With `-i` every session gets the same `Fs` — loaded once at startup, written
+back after each connection — so what one client leaves behind the next one finds, and it outlives the
+server process. It is the first composition of three packages end to end: `packages/ssh` carries the
+bytes, `packages/sh` runs the commands, `packages/fs` holds the filesystem and writes it down, with
+OpenSSH's own client driving all of it in `test/server.test.ts`.
+
+Without `-i` nothing changes: the session is `Shell.capturing` on `Fs.onHost`, reaching whatever the
+server was granted. Which of the two a client gets is the operator's decision and never the client's.
+
+**This is what makes the demo offerable to a stranger.** `packages/sh/src/sealed.wac` names that as the
+reason it exists, and until now the ssh server could not use it: a client reached the server's own disk,
+bounded only by the server's grants. On an image it reaches an image.
+
+Three things it decides, none of them arbitrary:
+
+- **The image is loaded before the socket is bound.** A server that cannot read its image is not a
+  server, and binding first meant it announced "listening on port 2222" and *then* refused — a moment in
+  which it looks like it is working.
+- **An unreadable image stops it** rather than starting empty, because starting empty would mean saving
+  over the thing it could not read.
+- **It saves after each connection, not during it.** A session that ends badly has still done work.
+
+Concurrency is not a question here and will be: connections are served one at a time, so "one writer" is
+true by construction rather than by a lock. design/0001 leaves the rule open and this is not the case
+that forces it — the day this serves two at once, it is.
+
+Note the grants: an image server needs `--allow-write` for the image itself. A server built without it
+serves the session, does the work, and **says** it could not save — which `test/server.test.ts` checks,
+because a server that lost the session in silence would look identical from the client's end.
+
 `src/sshd.wac` listens, authenticates and runs a command. **OpenSSH's own client connects to it
 and cannot tell the difference** — until it asks for a shell.
 

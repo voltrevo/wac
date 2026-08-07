@@ -81,8 +81,30 @@ const wacsshdBinary = await (async () => {
   return out;
 })();
 
+/**
+ * The same server, built with `--allow-write` as well.
+ *
+ * A server that boots an image has to be able to write one back, and the binary above deliberately
+ * cannot: every other test here is about what a *read-only* server does, and widening its grants to suit
+ * one test would quietly widen what all of them prove. Two binaries, one line of difference — and the
+ * difference is the point, because the first thing the image tests found was this one warning that it
+ * could not save and carrying on, which is the right behaviour and an invisible one.
+ */
+const wacsshdWritableBinary = await (async () => {
+  const out = await Deno.makeTempFile({ prefix: "wacsshd-" });
+  built.push(out);
+  const r = await new Deno.Command("deno", {
+    args: [
+      "run", "-A", "packages/platform/build.ts", "packages/ssh/src/sshd.wac",
+      "--allow-read", "--allow-write", "--allow-net", "--allow-env", "-o", out,
+    ],
+  }).output();
+  if (!r.success) throw new Error(`building a writable sshd failed: ${new TextDecoder().decode(r.stderr)}`);
+  return out;
+})();
+
 /** Our server, running, with a host key and one authorized client key. */
-async function startWacsshd(): Promise<Wacsshd> {
+async function startWacsshd(extra: string[] = [], binary = wacsshdBinary): Promise<Wacsshd> {
   const dir = await Deno.makeTempDir();
   await Deno.mkdir(`${dir}/.ssh`);
   for (const [name, path] of [["host", `${dir}/.ssh/ssh_host_ed25519_key`], ["client", `${dir}/clientkey`]] as const) {
@@ -97,8 +119,8 @@ async function startWacsshd(): Promise<Wacsshd> {
   const held = holdPort();
   const port = held.port;
   held.release();   // the next statement binds it
-  const proc = new Deno.Command(wacsshdBinary, {
-    args: ["-p", String(port)],
+  const proc = new Deno.Command(binary, {
+    args: ["-p", String(port), ...extra],
     env: { HOME: dir },
     clearEnv: false,
     stdout: "null",
@@ -474,4 +496,122 @@ Deno.test("the abandoned-sshd pattern matches what ps actually prints", () => {
   ]) {
     if (ABANDONED_SSHD.test(other)) throw new Error(`the pattern matches something it must not:\n  ${other}`);
   }
+});
+
+/**
+ * design/0001 step 7, the half of it that is this package's: a server that boots an image and serves
+ * sessions from it.
+ *
+ * The first composition of three packages end to end — `packages/ssh` carries the bytes, `packages/sh`
+ * runs the commands, `packages/fs` holds the filesystem and writes it down — with OpenSSH's own client
+ * driving the whole thing. What makes it worth a test rather than a demo is the *second* connection: a
+ * session that finds what the last one left is a system, and one that does not is a toy.
+ */
+Deno.test({
+  name: "a server booted on an image serves every session from it, and saves what they do",
+  ignore: !haveSshd,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-image-" });
+    const image = `${dir}/home.wacimg`;
+    let s: Wacsshd | null = null;
+    try {
+      s = await startWacsshd(["-i", image], wacsshdWritableBinary);
+
+      // A session with no filesystem grants of its own: `/` is the image, not the server's disk.
+      const made = await realSsh(s, "mkdir /data; echo hello > /data/notes; ls /");
+      if (made.stdout !== "data\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
+
+      // A *second connection to the same process* finds it. This is the assertion the whole thing is
+      // for: without it the test passes for a server that hands each client a fresh empty filesystem.
+      const found = await realSsh(s, "cat /data/notes; ls /data");
+      if (found.stdout !== "hello\nnotes\n") throw new Error(JSON.stringify(found.stdout));
+
+      // And the host's own files are not reachable through it, which is what makes this offerable to a
+      // stranger — `sealed.wac` names that as the reason it exists.
+      const host = await realSsh(s, "cat /etc/passwd; echo status=$?");
+      if (!host.stdout.includes("status=1")) throw new Error(JSON.stringify(host.stdout));
+
+      await stopWacsshd(s);
+      s = null;
+
+      // A different server process, the same file. The image outlived the program that wrote it, which
+      // is the difference between saving state and having it.
+      const again = await startWacsshd(["-i", image], wacsshdWritableBinary);
+      try {
+        const back = await realSsh(again, "cat /data/notes; ls /");
+        if (back.stdout !== "hello\ndata\ndev\nproc\n") throw new Error(JSON.stringify(back.stdout));
+      } finally {
+        await stopWacsshd(again);
+      }
+    } finally {
+      if (s !== null) await stopWacsshd(s);
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: "an image the server cannot read stops it before it binds, and is not written over",
+  ignore: !haveSshd,
+  fn: async () => {
+    // Starting empty would be worse than stopping: the server would then *save over* the image it could
+    // not read. And it used to announce "listening on port …" first and refuse after, which is a moment
+    // in which it looks like it is working.
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-badimage-" });
+    const image = `${dir}/bad.wacimg`;
+    try {
+      await Deno.mkdir(`${dir}/.ssh`);
+      const key = await new Deno.Command("ssh-keygen", {
+        args: ["-t", "ed25519", "-f", `${dir}/.ssh/ssh_host_ed25519_key`, "-N", "", "-q"],
+      }).output();
+      if (!key.success) throw new Error("ssh-keygen failed");
+      await Deno.writeTextFile(`${dir}/.ssh/authorized_keys`, "");
+      await Deno.writeTextFile(image, "not an image");
+      const held = holdPort();
+      const port = held.port;
+      held.release();
+      const r = await new Deno.Command(wacsshdWritableBinary, {
+        args: ["-p", String(port), "-i", image],
+        env: { HOME: dir },
+        clearEnv: false,
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      const said = text(r.stderr);
+      if (r.code === 0) throw new Error(`the server started anyway: ${said}`);
+      if (!said.includes("too short to be an image")) throw new Error(said);
+      if (said.includes("listening on port")) throw new Error(`it bound first: ${said}`);
+      if (await Deno.readTextFile(image) !== "not an image") {
+        throw new Error("the unreadable image was written over");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: "a server that cannot write its image says so rather than losing the session",
+  ignore: !haveSshd,
+  fn: async () => {
+    // The first thing the image tests found, and they found it by failing for the wrong reason: the
+    // binary every other test here uses is built without `--allow-write`, so it served the session, did
+    // the work, and could not save it. Warning and carrying on is right — the client's commands ran and
+    // their output was real — but a server that lost the session in silence would be indistinguishable.
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-nowrite-" });
+    const image = `${dir}/home.wacimg`;
+    const s = await startWacsshd(["-i", image]);        // the read-only binary, deliberately
+    try {
+      const made = await realSsh(s, "mkdir /data; ls /");
+      if (made.stdout !== "data\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
+      await stopWacsshd(s);
+      const said = await s.stderr;
+      if (!said.includes("could not be saved")) throw new Error(`it said nothing: ${said}`);
+      if (await Deno.stat(image).then(() => true, () => false)) {
+        throw new Error("an image appeared, so the server could write after all");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
 });
