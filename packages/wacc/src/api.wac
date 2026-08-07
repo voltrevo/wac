@@ -9,6 +9,7 @@ import { lex, Lexed } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
+import { checkProgram } from "./check.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -32,4 +33,17 @@ export i32[] dumpErrors(u8[] src) {
   i32[] out = i32[p.errorCount * 3]();
   for (i32 i = 0; i < p.errorCount * 3; i++) { out[i] = p.errors[i]; }
   return out;
+}
+
+/**
+ * The type checker's diagnostics, as `(code, line, col)` triples — rung 3's oracle surface.
+ *
+ * The same shape `dumpErrors` returns for the parser, and for the same reason: our side reports
+ * numeric codes and the reference reports English, so the comparison is by code, order and position.
+ */
+export i32[] dumpTypeErrors(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  return checkProgram(src, lexed.tokens, lexed.tokenCount, prog);
 }

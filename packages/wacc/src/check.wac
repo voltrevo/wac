@@ -1,0 +1,163 @@
+// Rung 3, first slice: the type of a returned literal against the function's declared return type.
+//
+// The rung is 3,190 reference lines and ~210 distinct messages. This is one of them, chosen because
+// it is the smallest diagnostic that still needs everything a type checker needs — a declaration
+// walked for its signature, a body walked for a statement nested arbitrarily deep, a type inferred
+// from an expression, the two compared, and a position reported that a caller can point at.
+//
+// ## What it deliberately does not decide
+//
+// **A literal's type is a class, not a type.** `return 1;` is legal from a function returning `i32`,
+// `i64`, `u8` or `f64` — the reference widens integer literals to whatever the context wants — so
+// asking whether `1` "is" an `i32` is the wrong question and answering it would report errors the
+// reference does not. What is decidable from the literal alone is which *class* it belongs to:
+// numeric, string, or boolean. Those three cannot convert into one another, so a disagreement
+// between classes is an error under any widening rule, and a disagreement inside a class is not this
+// slice's business.
+//
+// That is the whole reason this slice is safe to ship before there is an expression typer. It
+// reports a subset of what the reference reports and never a superset, which is the only property
+// that lets a partial checker be compared against a complete one at all.
+//
+// ## Positions
+//
+// The reference reports the **returned expression**, not the `return` keyword:
+//
+//     export i32 main() { return "x"; }
+//     return: expected i32, found string   @ 1:28
+//
+// Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
+// and column, so this is `e.line, e.col` and not arithmetic.
+
+import { lex, tokenStride } from "./lex.wac";
+import {
+  Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
+} from "./ast.wac";
+
+/** A returned value whose class cannot be the declared one. */
+export i32 errReturnTypeMismatch() { return 1; }
+
+/** The three classes a literal can belong to, and `CLASS_UNKNOWN` for everything else. */
+export i32 classUnknown() { return 0; }
+export i32 classNumeric() { return 1; }
+export i32 classString() { return 2; }
+export i32 classBool() { return 3; }
+
+/** The checker's state: what it is reading, and what it has found. */
+export struct C {
+  u8[] src;
+  i32[] toks;
+  /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
+  i32[] errors;
+  i32 errorCount;
+
+  C create(u8[] src, i32[] toks, i32 capacity) {
+    return C(src, toks, i32[capacity * 3](), 0);
+  }
+
+  void report(this, i32 code, i32 line, i32 col) {
+    if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
+    this.errors[this.errorCount * 3] = code;
+    this.errors[this.errorCount * 3 + 1] = line;
+    this.errors[this.errorCount * 3 + 2] = col;
+    this.errorCount = this.errorCount + 1;
+  }
+}
+
+/** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
+string tokenText(C c, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = c.toks[t * tokenStride() + 1];
+  i32 len = c.toks[t * tokenStride() + 2];
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * The class a declared type belongs to.
+ *
+ * Only `Prim` has one. An array, a named struct, a nullable or a funcref is `classUnknown`, which
+ * makes every comparison against it pass — deliberately, because this slice cannot type an
+ * expression well enough to have an opinion about them.
+ */
+export i32 classOfType(C c, Ty t) {
+  match (t.kind) {
+    case Prim(tok): {
+      string name = tokenText(c, tok);
+      if (name == "string") { return classString(); }
+      if (name == "bool") { return classBool(); }
+      // Everything else spelled as a primitive is a number: i32, i64, u8, u32, f32, f64. `void` is
+      // not reachable here — a function returning void has no returned value to disagree with.
+      if (name == "void") { return classUnknown(); }
+      return classNumeric();
+    }
+    else: { return classUnknown(); }
+  }
+}
+
+/**
+ * The class a literal expression belongs to, or `classUnknown` for anything that is not one.
+ *
+ * Unknown is the honest answer for every non-literal, and it is what keeps this slice a subset: an
+ * identifier, a call or an arithmetic expression all need a symbol table or an expression typer, and
+ * reporting nothing about them is right until there is one.
+ */
+export i32 classOfExpr(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return classNumeric(); }
+    case FloatLit(tok): { return classNumeric(); }
+    case StrLit(tok): { return classString(); }
+    case BoolLit(value): { return classBool(); }
+    else: { return classUnknown(); }
+  }
+}
+
+/** Every `return` in a list of statements. */
+void checkAll(C c, Stmt[] body, Ty want) {
+  for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], want); }
+}
+
+/** Every `return` in a statement, however deeply nested, checked against `want`. */
+void checkStmt(C c, Stmt s, Ty want) {
+  match (s.kind) {
+    case Return(value): {
+      if (value is null) { return; }
+      i32 got = classOfExpr(value!);
+      i32 expected = classOfType(c, want);
+      if (got != classUnknown() && expected != classUnknown() && got != expected) {
+        c.report(errReturnTypeMismatch(), value!.line, value!.col);
+      }
+    }
+    // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
+    // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
+    case Block(body): { checkAll(c, body, want); }
+    case If(cond, then, els): { checkAll(c, then, want); checkAll(c, els, want); }
+    case While(cond, body): { checkAll(c, body, want); }
+    case DoWhile(body, cond): { checkAll(c, body, want); }
+    case For(init, cond, update, body): { checkAll(c, body, want); }
+    case Switch(subject, cases): {
+      for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
+    }
+    case Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) { checkAll(c, arms[i].body, want); }
+    }
+    else: { }
+  }
+}
+
+/** Check one program, and return `(code, line, col)` triples in source order. */
+export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
+  C c = C.create(src, toks, tokenCount);
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], returnType); }
+      }
+      else: { }
+    }
+  }
+  i32[] out = i32[c.errorCount * 3]();
+  for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
+  return out;
+}

@@ -156,7 +156,12 @@ malformed types, a nested `>>>` close, a funcref inside a type argument, and the
 326 files plus 32 adversarial cases the corpus cannot cover (unterminated everything, every escape,
 greedy operator runs, non-ASCII columns).
 
-Next: rung 3, the type checker.
+**Rung 3 (type checker) has started.** One diagnostic of ~210: a `return` whose literal cannot be the
+declared return type. `src/check.wac`, `test/typecheck.test.ts`, and positions that match the
+reference exactly — `export i32 main() { return "x"; }` is reported at 1:28, the `"`, which is where
+the reference puts it and not where the `return` is.
+
+Next: more of rung 3.
 
 ### What rung 3's oracle looks like, measured
 
@@ -183,6 +188,27 @@ rather than assumed, because they decide how the rung is cut:
 The corpus point is the one that changes the plan. Rungs 1 and 2 got most of their coverage from real
 code; rung 3 cannot, because working code produces no diagnostics. Its coverage has to be written, and
 the reference's test file is where the list already is.
+
+### How a partial checker is compared to a complete one
+
+Rungs 1 and 2 compare whole outputs and demand equality. Rung 3 cannot do that until it is finished,
+and a test that fails until then is the same as no test. So the comparison is shaped for a subset:
+
+- **soundness** — every diagnostic we report, the reference reports at the same line and column. A
+  position we invent is a bug even when the program really is wrong.
+- **no false alarms** — we say nothing about a program the reference accepts, and nothing about any
+  file in `src/`, all of which type-check cleanly.
+
+Completeness is deliberately not asserted. That makes each slice safe to land on its own, and it puts
+the burden where it belongs: a slice may know about less than the reference, and must never disagree
+with it about what it does know.
+
+The first slice found two things by being written this way. `u8` cannot be a return type at all
+(*"packed type 'u8' cannot be a return type"*), and an integer literal **is** an `i32` rather than
+something that widens — `i64` accepts `return 1`, `f64` does not. Both were assumptions in the test's
+clean list, both were wrong, and both were the reference correcting them rather than a design
+decision. See the note on `u8` as a value type in
+`~/notes/living/wac/language-friction-log.md`.
 
 ## What rung 1 cost, in language terms
 
