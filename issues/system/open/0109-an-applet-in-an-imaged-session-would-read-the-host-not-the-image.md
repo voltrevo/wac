@@ -47,3 +47,38 @@ It is a seam, not a bug in a function, and the three ways out are not equivalent
 Wiring the applets in and leaving it. A session that lists one filesystem and reads another is the exact
 failure design/0001 D1 exists to prevent — and it would look like it worked, because most commands do not
 touch a path.
+
+## 2026-08-07, later: the parameter is not the problem — the streaming capability is
+
+I threaded an `Fs` through all 58 applet signatures and `dispatch` to see how big option (1) really is.
+It compiles in one pass and the mechanical part is an hour. **That is not where the difficulty lives**,
+and it is worth writing down before somebody else spends the hour finding out:
+
+- The whole-file readers (`readInput`, `readAll`) and every writer (`cp`, `mv`, `rm`, `mkdir`, `touch`,
+  `tee`, `sponge`, `stat`, `ls`, `du`, `find`, `tar`, `lib/safe.wac`) call `cli.readFile` /
+  `cli.writeFile` and would move to `fs.` with no change in behaviour. About nineteen call sites.
+- **The streaming readers cannot.** `lib/input.wac`'s `openStream` calls `cli.openInput(path)`, which
+  does not return bytes — it *redirects this process's standard input* to the file, and the applet then
+  pulls with `cli.readChunk`. There is no `Fs` counterpart, and there cannot be a straightforward one:
+  the state lives in the capability rather than in a value.
+
+So `cat`, `grep`, `head`, `tail`, `nl`, `cut`, `fold`, `rev`, `uniq` and the rest of the filters would
+still read the host after the parameter was threaded — which is *worse* than today, because some applets
+would read the image and some the host, and nothing in the output would say which.
+
+### What the fix actually is
+
+`Feed` in `packages/platform/src/stream.wac` already has both shapes: `Feed.fromStdin(cli)` pulls through
+the capability, and `Feed.of(cli, bytes)` serves bytes the caller holds. So the seam is **`Reader`, not
+the applets**: `lib/input.wac`'s reader should choose by mount —
+
+  - a **host** mount keeps `openInput` + `Feed.fromStdin`, so a large file on disk still streams;
+  - anything else reads the node whole through `fs.readFile` and hands back `Feed.of`, which is not
+    streaming but is *correct*, and a memory image is already entirely in memory.
+
+That needs `Fs` to answer "is this path on a host mount?", which it can — `mountOf` and `Backing` are
+right there — and it keeps every applet's code unchanged. It is the option (2) of the original list, one
+layer lower than where I was looking for it: not a synthesised `Cli`, but a `Feed` that already exists.
+
+The applets that reach `cli` for the *filesystem* still need the parameter. Both halves are one change,
+and it is a tick of its own rather than a corner of one.
