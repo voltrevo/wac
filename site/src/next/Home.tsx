@@ -150,29 +150,35 @@ export default function Home() {
               />
             )
             : (
-              <div style={{ padding: "26px 18px", fontFamily: font.mono, fontSize: 13, color: c.dim, lineHeight: 1.7 }}>
-                <span style={{ color: c.accent }}>$</span> the shell is not built in this checkout —{" "}
-                <A href="../shell.html">open it directly</A>
-                <div style={{ color: c.faint, marginTop: 8, fontSize: 12 }}>
-                  tools/syncDemos.ts builds it from wac-mono; CI runs that on every deploy.
+              // No demos in this checkout, so the session is printed rather than run. It is the
+              // same list the terminal opens on, and tools/frontpage.test.ts in wac-mono fails if
+              // this stops being what the shell answers.
+              <div style={{ padding: "18px 16px", fontFamily: font.mono, fontSize: 13, lineHeight: 1.65, color: "#d7dde6" }}>
+                <pre style={{ margin: 0, overflowX: "auto" }}>
+                  {TRANSCRIPT.map(([cmd, out]) => (
+                    <span key={cmd}>
+                      <span style={{ color: c.accent }}>$</span> {cmd}
+                      {"\n"}
+                      {out}
+                      {"\n"}
+                    </span>
+                  ))}
+                </pre>
+                <div style={{ color: c.faint, marginTop: 12, fontSize: 12 }}>
+                  not built in this checkout — tools/syncDemos.ts builds it from wac-mono, and CI
+                  runs that on every deploy. <A href="../shell.html">open it directly</A>
                 </div>
               </div>
             )}
         </div>
 
-        <P>Try the session below, or anything else:</P>
-        <div style={{ border: `1px solid ${c.line}`, borderRadius: 6, overflow: "hidden", marginBottom: space.block }}>
-          <pre style={{ margin: 0, padding: "14px 16px", fontFamily: font.mono, fontSize: 13, lineHeight: 1.65, color: "#d7dde6", overflowX: "auto" }}>
-            {TRANSCRIPT.map(([cmd, out]) => (
-              <span key={cmd}>
-                <span style={{ color: c.accent }}>$</span> {cmd}
-                {"\n"}
-                {out}
-                {"\n"}
-              </span>
-            ))}
-          </pre>
-        </div>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            Those commands were not typed in for the screenshot — the frame runs them on load, and
+            what it prints is this build&rsquo;s own answer. The prompt underneath is live: type
+            anything else.
+          </span>
+        </P>
 
         <Caveat title="not complete yet">
           The shell, the applets and the filesystem are real. The rest of a system — the parts that
