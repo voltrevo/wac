@@ -172,6 +172,41 @@ Deno.test("site: every page in the nav is a route, and every route renders somet
   }
 });
 
+// ── Headings, and the contents that reads them ─────────────────────────────
+
+Deno.test("site: every heading has an id, so the contents can list it", async () => {
+  // `Contents` builds itself from `main h2[id], h3[id]`, which means a heading without an id is
+  // simply absent from the navigation — no error, no blank space, nothing to notice. That is the
+  // failure this catches, and it is the price of not hand-writing the list.
+  const files = ["Language", "Roadmap", "sections/Built", "sections/CaseStudies"];
+  const missing: string[] = [];
+  let total = 0;
+  for (const name of files) {
+    // Per file, because each of these is one page and an id only has to be unique within the
+    // document it lands in — `#/showcase/ethereum` and `#/roadmap/ethereum` are different places
+    // and the route says which.
+    const seen = new Map<string, number>();
+    const path = new URL(`../src/${name}.tsx`, import.meta.url);
+    const text = await Deno.readTextFile(path);
+    for (const m of text.matchAll(/<h([23]) style=\{s\.h[23]\}([^>]*)>([^<{]*)/g)) {
+      const [, level, attrs, label] = m;
+      const id = attrs.match(/id="([^"]+)"/)?.[1];
+      const line = text.slice(0, m.index!).split("\n").length;
+      if (id === undefined) {
+        missing.push(`${name}.tsx:${line}: <h${level}> ${label.trim().slice(0, 48)} — no id`);
+        continue;
+      }
+      // Ids are anchors in a URL, so two headings sharing one makes the second unreachable.
+      const before = seen.get(id);
+      if (before !== undefined) missing.push(`${name}.tsx:${line}: id "${id}" is already used on line ${before}`);
+      seen.set(id, line);
+      total++;
+    }
+  }
+  if (missing.length) throw new Error(`${missing.length} heading problem(s):\n  ${missing.join("\n  ")}`);
+  if (total < 25) throw new Error(`only ${total} headings found — did the scan resolve?`);
+});
+
 // ── Running, not just compiling ─────────────────────────────────────────────
 //
 // Compiling was not enough. The panel's runner held its own copy of the marshalling accessor

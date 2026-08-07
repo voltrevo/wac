@@ -72,8 +72,8 @@ export default function Built() {
   const sizes = useDemoSizes();
   return (
     <>
-      <div style={s.section} id="built">
-        <h2 style={s.h2}>What has been built in it</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="built">What has been built in it</h2>
         <p style={s.p}>
           The argument for a language is what people finish in it.{" "}
           <a href={MONO} target="_blank" rel="noopener" style={{ color: "#60a5fa" }}>wac-mono</a>{" "}
@@ -161,8 +161,8 @@ export default function Built() {
         </div>
       </div>
 
-      <div style={s.section} id="capabilities">
-        <h2 style={s.h2}>Capabilities, because imports name files</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="capabilities">Capabilities, because imports name files</h2>
         <p style={s.p}>
           wac's {kwImport} reads other wac source and does nothing else — a file beside it, or{" "}
           {kw("core")}, which the compiler ships. There is no {tp("extern")}, no declaration form,
@@ -190,7 +190,7 @@ export default function Built() {
           everything that reaches it.
         </p>
 
-        <h3 style={s.h3}>A filesystem is a value, not the machine</h3>
+        <h3 style={s.h3} id="filesystem">A filesystem is a value, not the machine</h3>
         <p style={s.p}>
           The newest package takes that one step further. Every filesystem capability a program had
           was the <em>host&rsquo;s</em>, so an SSH session got the real disk of whatever ran the
@@ -210,7 +210,7 @@ export default function Built() {
           a memory version that disagrees is wrong even when its own tests pass.
         </p>
 
-        <h3 style={s.h3}>Granted at build, not at run</h3>
+        <h3 style={s.h3} id="grants">Granted at build, not at run</h3>
         <p style={s.p}>
           The built program takes no permission flags of its own and every argument goes to the
           application. Whoever packages it decides what it may do; whoever runs it cannot widen

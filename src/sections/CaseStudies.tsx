@@ -117,8 +117,8 @@ export const i32 KIND_CONTAINER = 5;`;
 export default function CaseStudies() {
   return (
     <>
-      <div style={s.section} id="shell">
-        <h2 style={s.h2}>A shell, and an sshd that runs it</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="shell">A shell, and an sshd that runs it</h2>
         <p style={s.p}>
           Quoting, expansion, here-documents, {tp("$(…)")}, pipelines, redirection, functions,
           loops, {tp("case")}, {tp("read")} — <strong style={{ color: "#e2e8f0" }}>652 scripts run
@@ -156,7 +156,7 @@ export default function CaseStudies() {
           mutable working directory is ambient state that changes what every relative path in a
           program means.
         </p>
-        <h3 style={s.h3}>Sixty programs it did not have to contain</h3>
+        <h3 style={s.h3} id="applets">Sixty programs it did not have to contain</h3>
         <p style={s.p}>
           The shell used to carry its own small {tp("cat")}, {tp("wc")}, {tp("grep")} and nine
           more, written only because nothing could be started. Meanwhile another package had those
@@ -185,8 +185,8 @@ export default function CaseStudies() {
         </p>
       </div>
 
-      <div style={s.section} id="tor">
-        <h2 style={s.h2}>Tor, both ends, on a TLS 1.3 stack that is also wac</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="tor">Tor, both ends, on a TLS 1.3 stack that is also wac</h2>
 
         <div
           style={{
@@ -230,7 +230,7 @@ export default function CaseStudies() {
           contribution in turn.
         </p>
 
-        <h3 style={s.h3}>One worker, every socket, one wait</h3>
+        <h3 style={s.h3} id="waitany">One worker, every socket, one wait</h3>
         <p style={s.p}>
           A SOCKS5 proxy on top of it, so anything that speaks SOCKS goes over Tor. It holds one
           outstanding read per socket plus an accept, hands the list to {tp("waitAny")}, and
@@ -246,7 +246,7 @@ export default function CaseStudies() {
           KiB</strong> as a self-contained executable — 234.2 KiB of wasm, 71.8 KiB gzipped.
         </p>
 
-        <h3 style={s.h3}>It reaches onion services</h3>
+        <h3 style={s.h3} id="onion">It reaches onion services</h3>
         <p style={s.p}>
           A v3 onion address <em>is</em> an ed25519 public key, so there is no lookup and no
           registry: a client that reaches the right address cannot be talking to the wrong service.
@@ -289,7 +289,7 @@ export default function CaseStudies() {
           service to point at.
         </p>
 
-        <h3 style={s.h3}>And it runs the other side</h3>
+        <h3 style={s.h3} id="relay">And it runs the other side</h3>
         <p style={s.p}>
           There is a relay now, and a directory authority, and a launcher that stands a whole network
           up from a description — waiting for each node to announce itself rather than sleeping, and
@@ -323,7 +323,7 @@ export default function CaseStudies() {
           reader.
         </p>
 
-        <h3 style={s.h3}>What building it actually found</h3>
+        <h3 style={s.h3} id="found">What building it actually found</h3>
         <p style={s.p}>
           The first real transfer through the proxy aborted the client, and the bug was older than
           the proxy: the Tor link layer had been handing the TLS client whatever the socket
@@ -342,8 +342,8 @@ export default function CaseStudies() {
         </p>
       </div>
 
-      <div style={s.section} id="ethereum">
-        <h2 style={s.h2}>Ethereum, against the published vectors</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="ethereum">Ethereum, against the published vectors</h2>
         <p style={s.p}>
           A pairing-based signature scheme is the least forgiving thing to write in a new language:
           the answer is one bit, every intermediate is a 381-bit field element, and nothing short
@@ -376,7 +376,7 @@ export default function CaseStudies() {
           an {tp("i64")} accumulator.
         </p>
 
-        <h3 style={s.h3}>A hash_tree_root that is described, not written</h3>
+        <h3 style={s.h3} id="ssz">A hash_tree_root that is described, not written</h3>
         <p style={s.p}>
           Beside it, SSZ — the consensus layer&rsquo;s serialization and the Merkle proofs over it.{" "}
           <strong style={{ color: "#e2e8f0" }}>2,233 vectors from{" "}
@@ -404,7 +404,7 @@ export default function CaseStudies() {
           otherwise is malformed rather than merely unusual.
         </p>
 
-        <h3 style={s.h3}>A light client that follows the chain</h3>
+        <h3 style={s.h3} id="lightclient">A light client that follows the chain</h3>
         <p style={s.p}>
           On top of those two, the Altair sync protocol.{" "}
           <strong style={{ color: "#e2e8f0" }}>All four{" "}
@@ -433,7 +433,7 @@ export default function CaseStudies() {
           32. <em>A passing suite is evidence about the cases it contains and about nothing else.</em>
         </p>
 
-        <h3 style={s.h3}>From a verified header to a contract&rsquo;s answer</h3>
+        <h3 style={s.h3} id="proofs">From a verified header to a contract&rsquo;s answer</h3>
         <p style={s.p}>
           A light client gives you a header, and a header says nothing about what is <em>in</em> the
           state it commits to. Four packages close that gap, and together they mean a contract read
