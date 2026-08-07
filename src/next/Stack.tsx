@@ -1,0 +1,297 @@
+// The stack: what has been built in wac, and what says each claim is true.
+//
+// This page merges what used to be two — an inventory of packages and a set of case studies — because
+// they were arguing the same thing from two ends and a reader had to visit both to get the point.
+// The order is deliberate: the capability world first, since it is what makes an *application*
+// possible at all, then the four things that would be hard to fake, then the whole inventory.
+//
+// Prose carried over from the pages this replaces, which had been corrected against the sources
+// several times; the numbers come from `../data/built`, generated from wac-mono's own generated map.
+
+import { BUILT, TOTALS } from "../data/built";
+import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
+import { c, font, space } from "./tokens";
+
+const MONO_SRC = "https://github.com/voltrevo/wac-mono/tree/master/packages";
+
+const EX_WC = `// packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
+export i32 main(Core core, Cli cli) {
+  u8[] data = u8[0]();
+  if (cli.argCount().wait() < 1) {
+    data = cli.readStdin().wait();
+  } else {
+    FileResult f = cli.readFile(cli.arg(0).wait()).wait();
+    if (!f.ok) { core.warn("wc: " + f.error); return 1; }
+    data = f.bytes;
+  }
+  Counts n = count(data);
+  core.log(itoa(n.lines) + " " + itoa(n.words) + " " + itoa(n.bytes));
+  return 0;
+}`;
+
+const EX_SHEBANG = `#!/usr/bin/env -S deno run                    # built with no capabilities
+#!/usr/bin/env -S deno run --allow-read       # built with --allow-read`;
+
+const EX_SEAM = `export struct Output {
+  u8[] out;
+  u8[] err;
+  i32 status;
+  /** False when no program of that name exists, which the shell reports as 127. */
+  bool found;
+}`;
+
+const EX_NTOR = `// packages/tor/src/ntor.wac — tor-spec §5.1.4
+u8[] xy = x25519(ephemeralPriv, serverEph);
+u8[] xb = x25519(ephemeralPriv, onionKey);
+// A small-order Y or B makes the shared value all zero for every scalar, so an
+// attacker needs no private key at all. tor-spec says abort; nothing to salvage.
+if (allZero(xy) || allZero(xb)) { return u8[0](); }
+
+// Constant time, because a caller may retry and a timing difference here leaks
+// which byte of AUTH was wrong.
+i32 diff = 0;
+for (i32 i = 0; i < 32; i++) { diff = diff | (expected[i] ^ auth[i]); }
+if (diff != 0) { return u8[0](); }`;
+
+const EX_NETWORK = `network: all 4 nodes are up
+consensus verified: 1 of 1 authorities signed
+path: wacrelay2 -> wacrelay -> wacrelay3
+circuit built, 3 hops
+network: ok`;
+
+const EX_PROOF = `// packages/mpt/src/account.wac — what an eth_getProof answer actually is
+AccountProof a = accountAt(stateRoot, address, accountNodes);
+if (a.ok && a.present) {
+  // The storage root comes *out of the account proof*. A caller that supplies it
+  // from anywhere else can be handed a perfectly valid proof of a different
+  // account's storage.
+  StorageProof s = storageAt(a.account.storageRoot, slot, storageNodes);
+}`;
+
+export default function Stack() {
+  return (
+    <Page current="stack">
+      <Section id="top" kicker="the stack" title="What is built in it">
+        <P>
+          <Lead>{TOTALS.packages} packages, {TOTALS.lines.toLocaleString()} lines of wac,{" "}
+          {TOTALS.programs} command-line programs and four browser pages.</Lead> No C, no libc, no
+          runtime library, and no third-party code in any package&rsquo;s {m({ children: "src/" })}.
+          Each was written because the layer under it needed something, which is why the list reads
+          like an operating system rather than a portfolio.
+        </P>
+        <Facts
+          rows={[
+            ["packages", String(TOTALS.packages)],
+            ["lines of wac", `${Math.round(TOTALS.lines / 1000)}k`],
+            ["tests, both suites", `~${Math.round(TOTALS.testsAll / 100) * 100}`],
+          ]}
+        />
+      </Section>
+
+      <Section id="capabilities" kicker="why an application is possible" title="Capabilities, because an import names a file">
+        <P>
+          wac&rsquo;s {m({ children: "import" })} reads other wac source and does nothing else — a
+          file beside it, or {m({ children: "core" })}, which the compiler ships. There is no{" "}
+          {m({ children: "extern" })}, no declaration form, no way to write down the name of a
+          function that lives outside the program. The only host code a module can call is a value
+          somebody handed it.
+        </P>
+        <P>
+          Take that seriously and a whole program becomes a function that takes the world as
+          parameters. Here is one, and there is no TypeScript in its directory:
+        </P>
+        <Code label="the whole thing" code={EX_WC} />
+        <P>
+          Reading {m({ children: "main" })}&rsquo;s parameters tells you this program reads the
+          clock, prints, and touches the filesystem. Nothing else is reachable, because there is
+          nowhere else to reach. Behind {m({ children: "readFile(…).wait()" })} the host is doing
+          asynchronous work on another thread while this one is parked — asynchronous work called
+          synchronously, with none of the colouring that usually spreads through everything it
+          touches.
+        </P>
+        <Sub id="grants" title="Granted at build, not at run">
+          <P>
+            A built program takes no permission flags of its own and every argument goes to the
+            application. Whoever packages it decides what it may do; whoever runs it cannot widen
+            that. The shebang is exactly the grants, so the answer is readable with{" "}
+            {m({ children: "head -1" })}:
+          </P>
+          <Code label="the first line of the artifact" code={EX_SHEBANG} lang="ts" />
+        </Sub>
+      </Section>
+
+      <Section id="shell" kicker="hard to fake, #1" title="A shell that agrees with bash">
+        <P>
+          Quoting, expansion, here-documents, {m({ children: "$(…)" })}, pipelines, redirection,
+          functions, loops, {m({ children: "case" })}, {m({ children: "read" })} —{" "}
+          <Lead>652 scripts run through GNU bash and through this one</Lead>, and the two must agree
+          on standard output <em>and</em> on the exit status. That is the only test worth much for a
+          shell: nearly every rule has a case where the obvious implementation is subtly wrong, and
+          bash is the one thing that will say so.
+        </P>
+        <Code label="sh/src/program.wac · the seam external commands go through" code={EX_SEAM} />
+        <P>
+          Bytes in, bytes out, a status, and {m({ children: "found" })} — because a shell reports
+          127 for <em>no such command</em> and the program&rsquo;s own code for <em>ran and
+          failed</em>, and one integer cannot say both. That seam is why sixty applets from another
+          package became commands you can type with a single line of wiring, in a browser tab as
+          much as on a command line, running the same code either way.
+        </P>
+        <P>
+          An SSH server hands a channel&rsquo;s command string to that shell and sends the buffer
+          back down the channel. <Lead>OpenSSH&rsquo;s own client cannot tell the difference.</Lead>
+        </P>
+      </Section>
+
+      <Section id="tor" kicker="hard to fake, #2" title="Tor, both ends">
+        <Caveat title="Not for production, and the packages say so first">
+          None of this has been reviewed by anyone. On side channels the honest statement is a
+          measurement rather than a shrug — see <A href="#/stack/crypto">below</A> — and anonymity
+          is a separate question from correctness that this does not have yet: Proposal 271 is
+          partial, there is no padding, and stream isolation is by port rather than by destination.
+          A wrong path selection builds a circuit that works perfectly with the anonymity quietly
+          removed, which is the failure mode that does not announce itself.{" "}
+          <Lead>Do not point it at the real Tor network.</Lead>
+        </Caveat>
+        <P>
+          It bootstraps <em>over Tor</em>: a one-hop circuit to a starting relay fetches the
+          consensus, the certificates and the microdescriptors, verifies them against the directory
+          authorities, and every circuit after that is chosen from what it learnt —
+          bandwidth-weighted per position, distinct /16s, mutual families excluded, an exit whose
+          policy carries the port, through a pinned guard set. There is a SOCKS5 proxy on top, and
+          it reaches onion services.
+        </P>
+        <Code label="tor/src/ntor.wac · the handshake, abridged" code={EX_NTOR} />
+        <P>
+          The two Diffie-Hellmans do different jobs: the one between ephemeral keys gives forward
+          secrecy, the one against the relay&rsquo;s published onion key is what makes it{" "}
+          <em>authenticated</em>. Drop either and the handshake still completes and still agrees a
+          key — so a round-trip test cannot tell the difference, and the tests remove each
+          contribution in turn.
+        </P>
+        <Sub id="tor-both" title="And it runs the other side">
+          <P>
+            There is a relay, a directory authority, and a launcher that stands a whole network up
+            from a description — waiting for each node to announce itself rather than sleeping, and
+            failing by name if one never does.
+          </P>
+          <Code label="a Tor network with no C tor in it, in about a second" code={EX_NETWORK} lang="text" />
+          <P>
+            Which buys the test nothing else can give, with the other implementation as the client:{" "}
+            <Lead>a real C tor bootstraps from our directory authority, builds a three-hop circuit
+            through our relays, and carries a stream over it</Lead> — reaching <em>Bootstrapped
+            100%</em> having accepted our descriptor, certificate, vote and both consensus flavours
+            through its own parsers.
+          </P>
+          <P>
+            It also fills a window, which is the only way a flow-control bug shows itself. Without
+            SENDMEs a 200KB upload works and a 300KB one fails: 500 cells of 498 bytes is 249,000,
+            exactly where it stopped. With them, 1MB goes through, and 8MB the other way past a slow
+            reader.
+          </P>
+        </Sub>
+      </Section>
+
+      <Section id="ethereum" kicker="hard to fake, #3" title="Ethereum, against the published vectors">
+        <P>
+          A pairing-based signature scheme is the least forgiving thing to write in a new language:
+          the answer is one bit, every intermediate is a 381-bit field element, and nothing short of
+          the whole tower being right produces anything but noise.{" "}
+          <Lead>It agrees with all 29 of {m({ children: "ethereum/bls12-381-tests" })}&rsquo; verify
+          fixtures</Lead>, all 28 deserialization fixtures and all 21 aggregate ones, at about 8ms a
+          signature. Verification only, deliberately — no signing, no key generation, no secret
+          material anywhere in the package.
+        </P>
+        <P>
+          Beside it SSZ, the consensus layer&rsquo;s serialization and the Merkle proofs over it:{" "}
+          <Lead>2,233 vectors from {m({ children: "consensus-spec-tests" })}</Lead>, including all
+          1,131 <em>invalid</em> ones — the half a decoder passes by being too permissive. On top of
+          those, the Altair sync protocol runs all four {m({ children: "light_client/sync" })} cases
+          step by step: nineteen steps, sixteen real sync-committee signatures, every Merkle branch.
+        </P>
+        <P>
+          The interesting part is what those vectors <em>cannot</em> check. Every update in them is
+          valid, so a {m({ children: "validateUpdate" })} that returns true unconditionally passes
+          all nineteen steps. The negatives are built by corrupting real data one field at a time,
+          and <Lead>each was confirmed to fail against a deliberately broken client before being
+          kept</Lead>.
+        </P>
+        <Sub id="proofs" title="From a verified header to a contract's answer">
+          <P>
+            A light client gives you a header, and a header says nothing about what is <em>in</em>{" "}
+            the state it commits to. keccak256, RLP, the contract ABI and Merkle-Patricia proofs
+            close that gap, so a contract read is <Lead>checked rather than trusted</Lead> — the
+            provider serving the answer cannot change it without the state root disagreeing.
+          </P>
+          <Code label="mpt/src/account.wac · what a proof is worth" code={EX_PROOF} />
+          <P>
+            Two things that snippet hides. <Lead>Absence is an answer</Lead> — a sound proof that
+            nothing is stored at a slot is a result, not a failure. And the walk is <em>two</em>{" "}
+            steps, which is the trap: the storage proof must be checked under the root the account
+            proof yielded, or a caller can be handed a perfectly valid proof of a different
+            account&rsquo;s storage.
+          </P>
+        </Sub>
+      </Section>
+
+      <Section id="crypto" kicker="the unflattering part" title="What the side-channel trace says">
+        <P>
+          The compiler has a mode that records the ordered sequence of branches taken{" "}
+          <em>and</em> memory indices used. Run a routine twice with the same public input and
+          different secrets, compare the two traces, and a difference is a leak with a source line
+          on it. Both halves matter: a secret-dependent branch is the obvious one, and a
+          secret-dependent <em>index</em> has no branch at all — {m({ children: "SBOX[key_byte]" })}{" "}
+          touches a cache line the key chose, which is how AES keys have been recovered from cache
+          timing since 2005.
+        </P>
+        <Table
+          head={["routine", "events per run", "result"]}
+          align={["left", "right", "left"]}
+          rows={[
+            [<span style={{ fontFamily: font.mono }}>sha256</span>, "1,555", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>chachaBlock</span>, "1,598", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>poly1305</span>, "139", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>x25519Base</span>, "1,620,094", <span style={{ color: c.accent }}>uniform</span>],
+            [<span style={{ fontFamily: font.mono }}>ghash</span>, "513", <span style={{ color: c.warm }}>leaks — control flow diverges</span>],
+            [<span style={{ fontFamily: font.mono }}>aesExpandKey</span>, "455", <span style={{ color: c.warm }}>leaks — four secret-dependent indices</span>],
+            [<span style={{ fontFamily: font.mono }}>aesEncrypt</span>, "8,631", <span style={{ color: c.warm }}>leaks — five, plus divergence</span>],
+            [<span style={{ fontFamily: font.mono }}>bcryptPbkdf</span>, "&gt; 4,194,304", <span style={{ color: c.dim }}>not measured — exceeds the buffer</span>],
+          ]}
+        />
+        <P>
+          This is on the site because it is the shape of claim the rest of the site is making. The
+          x25519 row is the one worth reading twice — the ladder is uniform across every one of 1.6
+          million events, which is what &ldquo;structurally uniform&rdquo; used to assert without
+          evidence. And AES leaks in five places rather than one.
+        </P>
+        <Caveat title="Uniform is not a proof of constant time">
+          The trace is dynamic, it sees only what wasm does, and it cannot see that an
+          instruction&rsquo;s own latency may depend on its operands. It says two runs took the same
+          path, not that they took the same time. Do not use any of this where an attacker can
+          observe timing.
+        </Caveat>
+      </Section>
+
+      <Section id="packages" kicker="all of it" title="Every package">
+        <P>
+          In dependency order — nothing imports anything above it. Generated from wac-mono&rsquo;s
+          own generated map, so these numbers are the tree&rsquo;s rather than a claim about it.
+        </P>
+        <Table
+          head={["package", "what it is", "lines", "tests"]}
+          align={["left", "left", "right", "right"]}
+          rows={BUILT.map((p) => [
+            <a href={`${MONO_SRC}/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
+            <span style={{ color: c.dim }}>{p.what}</span>,
+            <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.lines.toLocaleString()}</span>,
+            <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.tests}</span>,
+          ])}
+        />
+        <div style={{ height: space.tight }} />
+        <P>
+          <A href="#/roadmap">Where this is going →</A>
+        </P>
+      </Section>
+    </Page>
+  );
+}

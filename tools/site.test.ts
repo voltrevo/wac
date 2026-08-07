@@ -13,9 +13,10 @@
 import { wacCompile } from "../atoms/wac/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
 
-// The snippets used to live in one file. They are spread over the pages that print them now, so
-// this looks in each — a snippet is found by name, and a name exists once.
-const PAGES = ["Landing", "Language", "Roadmap"].map((n) => new URL(`../src/${n}.tsx`, import.meta.url));
+// Snippets live in `src/snippets.ts` (the tour, printed by two pages while the rewrite is staged)
+// and beside the page that prints only its own. A name exists once across all of them.
+const PAGES = ["snippets.ts", "Landing.tsx", "next/Home.tsx", "Roadmap.tsx"]
+  .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
   return wacCompile(new Map(Object.entries(files)), entry);
@@ -154,6 +155,16 @@ Deno.test("site: every page in the nav is a route, and every route renders somet
   const chrome = await Deno.readTextFile(new URL("chrome.tsx", dir));
   const app = await Deno.readTextFile(new URL("App.tsx", dir));
 
+  // The staging rewrite has its own Route type and its own switch, and the same way to break it.
+  const nextUi = await Deno.readTextFile(new URL("next/ui.tsx", dir));
+  const nextApp = await Deno.readTextFile(new URL("next/App.tsx", dir));
+  const nextDeclared = [...nextUi.matchAll(/export type Route =([^;]+);/g)]
+    .flatMap((m) => [...m[1].matchAll(/"([a-z]+)"/g)].map((x) => x[1]));
+  const nextRouted = new Set([...[...nextApp.matchAll(/case "([a-z]+)":/g)].map((m) => m[1]), "home"]);
+  const nextMissing = nextDeclared.filter((r) => !nextRouted.has(r));
+  if (nextMissing.length) throw new Error(`next/ui.tsx has ${nextMissing.join(", ")}, next/App.tsx does not`);
+  if (nextDeclared.length < 4) throw new Error(`only ${nextDeclared.length} routes in the staging Route type`);
+
   const declared = [...chrome.matchAll(/export type Route =([^;]+);/g)]
     .flatMap((m) => [...m[1].matchAll(/"([a-z]+)"/g)].map((x) => x[1]));
   if (declared.length < 5) throw new Error(`only ${declared.length} routes in the Route type`);
@@ -178,7 +189,8 @@ Deno.test("site: every heading has an id, so the contents can list it", async ()
   // `Contents` builds itself from `main h2[id], h3[id]`, which means a heading without an id is
   // simply absent from the navigation — no error, no blank space, nothing to notice. That is the
   // failure this catches, and it is the price of not hand-writing the list.
-  const files = ["Language", "Roadmap", "sections/Built", "sections/CaseStudies"];
+  const files = ["Language", "Roadmap", "sections/Built", "sections/CaseStudies",
+                 "next/Home", "next/Language", "next/Stack", "next/Roadmap"];
   const missing: string[] = [];
   let total = 0;
   for (const name of files) {
@@ -188,7 +200,14 @@ Deno.test("site: every heading has an id, so the contents can list it", async ()
     const seen = new Map<string, number>();
     const path = new URL(`../src/${name}.tsx`, import.meta.url);
     const text = await Deno.readTextFile(path);
-    for (const m of text.matchAll(/<h([23]) style=\{s\.h[23]\}([^>]*)>([^<{]*)/g)) {
+    const live = [...text.matchAll(/<h([23]) style=\{s\.h[23]\}([^>]*)>([^<{]*)/g)];
+    // `<Section id="x" title="…">` and `<Sub …>` render an h2/h3 with that id.
+    const next = [...text.matchAll(/<(Section|Sub)\s+id="([^"]+)"([^>]*)/g)].map((x) => {
+      const shaped = [x[0], x[1] === "Section" ? "2" : "3", ` id="${x[2]}"`, x[3]] as unknown as RegExpMatchArray;
+      shaped.index = x.index;   // carried, or every message names the last line of the file
+      return shaped;
+    });
+    for (const m of [...live, ...next]) {
       const [, level, attrs, label] = m;
       const id = attrs.match(/id="([^"]+)"/)?.[1];
       const line = text.slice(0, m.index!).split("\n").length;
