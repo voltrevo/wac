@@ -253,13 +253,13 @@ function Footer() {
   );
 }
 
-export function Page({ current, children }: { current: Route; children: ReactNode }) {
+export function Page({ current, children, contents = true }: { current: Route; children: ReactNode; contents?: boolean }) {
   return (
     <div style={{ background: c.bg, minHeight: "100vh", color: c.text, fontFamily: font.sans, WebkitFontSmoothing: "antialiased" }}>
       <Nav current={current} />
       <div style={{ maxWidth: COLUMN, margin: "0 auto", padding: "0 24px" }}>
         <main>
-          <Contents route={current} />
+          {contents && <Contents route={current} />}
           {children}
         </main>
         <Footer />

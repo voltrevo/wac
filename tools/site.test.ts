@@ -86,9 +86,10 @@ async function snippet(name: string): Promise<string> {
 
 Deno.test("site: the pages' runnable snippets compile", async () => {
   for (const [name, file] of [
-    // The front page prints this one and invites the reader to run it, which makes it the single
-    // most embarrassing snippet on the site to have broken.
+    // The front pages print these and invite the reader to run them, which makes them the two most
+    // embarrassing snippets on the site to have broken.
     ["EX_FRONT", "a.wac"],
+    ["EX_HELLO", "a.wac"],
     ["EX_SURFACE_WAC", "a.wac"],
     ["EX_SURFACE_WAPY", "a.wapy"],
     ["EX_WAPY_LIVE", "a.wapy"],
