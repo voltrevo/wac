@@ -132,3 +132,26 @@ the language cases in the same commit that deletes its copies.
 
 None of it is hard and none of it can be done half way: a shell with no commands and a suite that still
 expects them is a red tree, so it is one commit.
+
+## 2026-08-07, later still: two down, nine to go, and the method
+
+They cannot all go at once — half of `packages/sh`'s own tests use `wc` and `seq` as *incidental*
+commands rather than as subjects, so the tree would be red for as long as it took to convert them. So
+they go a few at a time, and the machinery for that is in place:
+
+- `packages/sh/test/corpus.ts` has `DELETED` and `usesDeleted`. Every script list in
+  `differential.test.ts` is filtered through it, including the `cd`-wrapped ones built at run time.
+- `packages/box/test/corpus.test.ts` runs every script naming any of the eleven, so nothing is lost as
+  names move over.
+- `packages/box/test/programs.test.ts` holds the error-wording cases for the ones already gone.
+
+**One step is: add the name to `DELETED`, delete the function and its dispatch line from `program.wac`,
+drop it from `gnuHas` and from `gaps.test.ts`'s tool list, and fix whatever incidental use turns up.**
+`nl` and `rev` took about forty minutes including the four bugs they found in `packages/box` on the way
+(carry-on after an unreadable operand, three error wordings, two exit statuses, and `rev -`).
+
+Nine left: `cat`, `wc`, `head`, `tail`, `sort`, `uniq`, `grep`, `tr`, `seq`. `cat`, `wc` and `seq` are
+the heavily-used ones and are best left until last. When the last goes, `program.wac` loses `run`,
+`runStreaming`, `isProgram`, `programNames`, `names` and `dispatchProgram`; `Output` and `optionRefusal`
+stay and want a file of their own; and `packages/ssh`'s `sshd` needs `boxRun` — the `ssh` → `box` edge,
+which is still the one new dependency this whole thing adds.
