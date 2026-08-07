@@ -194,15 +194,28 @@ function Nav({ current }: { current: Route }) {
         borderBottom: `1px solid ${c.line}`, marginBottom: 56,
       }}
     >
-      <div style={{ maxWidth: COLUMN, margin: "0 auto", padding: "13px 24px", display: "flex", gap: 22, alignItems: "baseline", flexWrap: "wrap", fontSize: 14, fontFamily: font.mono }}>
-        <a href="#/" style={{ textDecoration: "none" }}><Wordmark size={19} /></a>
-        {PAGES.map(({ href, label, route }) => (
-          <a key={href} href={href} aria-current={route === current ? "page" : undefined}
-             style={{ color: route === current ? c.text : c.dim, textDecoration: "none", borderBottom: `1px solid ${route === current ? c.accent : "transparent"}`, paddingBottom: 3 }}>
-            {label}
-          </a>
-        ))}
-        <a href="#/playground" style={{ marginLeft: "auto", color: c.accent, textDecoration: "none" }}>playground →</a>
+      {/* Three parts, and only the middle one is allowed to wrap.
+          The row used to be one wrapping flex line with `margin-left: auto` on the playground
+          link, which fits on a wide window and comes apart on a narrower one: the link is the
+          item that overflows, so it drops to a second line and the auto margin parks it alone at
+          the far right, reading as a mistake rather than as a second row. Here the links are
+          their own wrapping group and take the slack, so the wordmark and the playground link
+          stay on the first line at any width and the labels flow underneath.
+
+          The clamps are what keep it to one line in the first place, and are `clamp` rather than
+          a media query because this site has no stylesheet — an inline style would win over one
+          anyway. Measured: it now holds a single line down to a 640px window, against 783px. */}
+      <div style={{ maxWidth: COLUMN, margin: "0 auto", padding: "13px clamp(14px, 2.4vw, 24px)", display: "flex", gap: "clamp(11px, 2.1vw, 22px)", alignItems: "baseline", fontSize: "clamp(12.5px, 1.6vw, 14px)", fontFamily: font.mono }}>
+        <a href="#/" style={{ textDecoration: "none", flexShrink: 0 }}><Wordmark size={19} /></a>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "clamp(11px, 2.1vw, 22px)", alignItems: "baseline", flex: "1 1 auto", minWidth: 0 }}>
+          {PAGES.map(({ href, label, route }) => (
+            <a key={href} href={href} aria-current={route === current ? "page" : undefined}
+               style={{ color: route === current ? c.text : c.dim, textDecoration: "none", borderBottom: `1px solid ${route === current ? c.accent : "transparent"}`, paddingBottom: 3 }}>
+              {label}
+            </a>
+          ))}
+        </div>
+        <a href="#/playground" style={{ color: c.accent, textDecoration: "none", flexShrink: 0 }}>playground →</a>
       </div>
     </nav>
   );
