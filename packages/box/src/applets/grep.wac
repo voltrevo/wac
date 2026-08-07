@@ -15,8 +15,9 @@ import { compileExtended, compileExtendedIgnoreCase } from "../../../regex/src/p
 import { compileBasic, compileBasicIgnoreCase } from "../../../regex/src/basic.wac";
 import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 import { tryHelp } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 grep(Core core, Cli cli, Args a) {
+export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) {
     // GNU's own summary, and **2** rather than 1: for `grep`, 1 means "no line matched".
@@ -71,7 +72,7 @@ export i32 grep(Core core, Cli cli, Args a) {
   // first, and answering 1 said the pattern was absent from files that were never read.
   bool unreadable = false;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, a, 1 + f);
+    Input in = openStream(core, cli, fs, a, 1 + f);
     if (!in.ok) { unreadable = true; continue; }
     string where = label ? in.label + ":" : "";
     i32 n = 0;

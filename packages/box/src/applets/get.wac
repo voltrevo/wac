@@ -6,8 +6,9 @@ import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 get(Core core, Cli cli, Args a) {
+export i32 get(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) {
     core.warn("usage: " + a.name + " <host> [path] [-<port>] [-i]");

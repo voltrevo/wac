@@ -4,14 +4,15 @@ import { Change, Cli, Core, FAULT_EXISTS } from "../../../platform/src/platform.
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 mkdir(Core core, Cli cli, Args a) {
+export i32 mkdir(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   bool parents = has(a, 'p');
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    Change c = cli.mkdir(a.rest[i], parents).wait();
+    Change c = fs.mkdir(a.rest[i], parents);
     if (c.ok()) { continue; }
     // "File exists" is what GNU says, and the category is the same on every host where the message is
     // not: "already exists" in a browser, "File exists (os error 17)" under Deno. Issue 0009.

@@ -24,6 +24,7 @@ import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
 import { Incoming, ParsedResponse, parseResponse } from "../../../http/src/incoming.wac";
 import { Read } from core;
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
 /** `[state][toSend][appData]`, each behind a big-endian u32 length. */
 struct Step { u8[] state; u8[] toSend; u8[] appData; }
@@ -39,7 +40,7 @@ Step unpack(u8[] r) {
   return Step(parts[0], parts[1], parts[2]);
 }
 
-export i32 gets(Core core, Cli cli, Args a) {
+export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
     core.warn("usage: " + a.name + " <host> <path> <root.der> [-<port>] [-i]");
@@ -49,7 +50,7 @@ export i32 gets(Core core, Cli cli, Args a) {
   string path = a.rest[1];
   i32 port = a.hasNum ? a.num : 443;
 
-  FileResult rootFile = cli.readFile(a.rest[2]).wait();
+  FileResult rootFile = fs.readFile(a.rest[2]);
   if (!rootFile.ok) { core.warn(a.name + ": " + a.rest[2] + ": " + rootFile.error); return 1; }
   u8[] root = rootFile.bytes;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.

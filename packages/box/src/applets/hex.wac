@@ -6,13 +6,19 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Span, nextSpan } from "../lib/input.wac";
 import { encode as hexencode } from "../../../codec/src/hex.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 hex(Core core, Cli cli, Args a) {
+export i32 hex(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 at = 0;
   bool opened = false;
+  // The feed travels with the span: it changes at an operand boundary, and on anything but a host mount
+  // it serves bytes this filesystem handed over rather than pulling on the process's own input.
+  Feed fed = Feed.of(cli, u8[0]());
   while (true) {
-    Span got = nextSpan(core, cli, a, at, opened);
+    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    fed = got.fed;
     if (!got.ok) { return 1; }
     opened = true;
     at = got.at;

@@ -13,20 +13,21 @@ import { Cli, Core, faultWords, Stat } from "../../../platform/src/platform.wac"
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 ls(Core core, Cli cli, Args a) {
+export i32 ls(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.flags != "") {
     core.warn(a.name + ": -" + a.flags + ": not implemented — this ls takes no options");
     return 2;
   }
   string path = a.rest.len() < 1 ? "." : a.rest[0];
-  string[]? names = cli.readDir(path).wait();
+  string[]? names = fs.readDir(path);
   if (names is null) {
     // Not a directory, not there, or not permitted. The comment here used to say the application could not
     // tell "by design" — it can now: `Stat` carries a fault, so a path this host cannot name and a path
     // with nothing at it are different answers rather than the same `exists = false`. wac-mono 0065.
-    Stat st = cli.stat(path).wait();
+    Stat st = fs.stat(path);
     if (st.exists) { core.log(path); return 0; }
     string words = faultWords(st.fault);
     core.warn(a.name + ": " + path + ": " + (words == "" ? "cannot list" : words));

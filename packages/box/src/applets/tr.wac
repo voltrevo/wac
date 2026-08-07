@@ -20,8 +20,10 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk } from "../lib/input.wac";
 import { TrSet, complementOf, parseSet } from "../lib/trset.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 tr(Core core, Cli cli, Args a) {
+export i32 tr(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
@@ -108,12 +110,14 @@ export i32 tr(Core core, Cli cli, Args a) {
     for (i32 i = 0; i < which.len(); i++) { squeezed[which[i]] = 1; }
   }
 
-  Input in = openStream(core, cli, a, 2);
+  Input in = openStream(core, cli, fs, a, 2);
   if (!in.ok) { return 1; }
+
+  Feed fed = in.fed;
 
   i32 last = -1;
   while (true) {
-    Chunk got = nextChunk(core, cli, a);
+    Chunk got = nextChunk(core, cli, fed, a);
     if (!got.ok) { return 1; }
     if (!got.more) { return 0; }
     u8[] chunk = got.bytes;

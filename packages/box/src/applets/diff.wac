@@ -16,11 +16,12 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";
 import { cmpBytes, splitLines } from "../lib/lines.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
 /** Above this the table is more memory than the job is worth. */
 i32 MAX_LINES() { return 4000; }
 
-export i32 diff(Core core, Cli cli, Args a) {
+export i32 diff(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 2) {
     // `diff` is not coreutils and words this its own way, down to putting its name on the second line
@@ -30,9 +31,9 @@ export i32 diff(Core core, Cli cli, Args a) {
     core.warn(a.name + ": Try '" + a.name + " --help' for more information.");
     return 2;
   }
-  Input x = readInput(core, cli, a, 0);
+  Input x = readInput(core, cli, fs, a, 0);
   if (!x.ok) { return 2; }
-  Input y = readInput(core, cli, a, 1);
+  Input y = readInput(core, cli, fs, a, 1);
   if (!y.ok) { return 2; }
 
   u8[][] old = splitLines(x.bytes);

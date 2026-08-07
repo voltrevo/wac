@@ -21,8 +21,9 @@ import { Parsed, Request, parseRequest } from "../../../http/src/request.wac";
 import { Response, write as writeResponse } from "../../../http/src/response.wac";
 import { Read } from core;
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 httpd(Core core, Cli cli, Args a) {
+export i32 httpd(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 port = a.num == 0 ? 8080 : a.num;
   string root = a.rest.len() > 0 ? a.rest[0] : ".";
@@ -42,7 +43,7 @@ export i32 httpd(Core core, Cli cli, Args a) {
   while (true) {
     Socket c = cli.accept(l.handle).wait();
     if (c.handle < 0) { core.warn(a.name + ": accept: " + c.error); break; }
-    connection(core, cli, c.handle, root, isolate);
+    connection(core, cli, fs, c.handle, root, isolate);
     cli.closeSocket(c.handle);
     if (once) { break; }
   }
@@ -51,7 +52,7 @@ export i32 httpd(Core core, Cli cli, Args a) {
 }
 
 /** One connection: read a request, answer it, close. No keep-alive — one at a time anyway. */
-void connection(Core core, Cli cli, i32 sock, string root, bool isolate) {
+void connection(Core core, Cli cli, Fs fs, i32 sock, string root, bool isolate) {
   u8[] buffered = u8[0]();
   while (true) {
     match (parseRequest(buffered, 1 << 20)) {
@@ -69,14 +70,14 @@ void connection(Core core, Cli cli, i32 sock, string root, bool isolate) {
         return;
       }
       case Ok(req): {
-        answer(core, cli, sock, root, req, isolate);
+        answer(core, cli, fs, sock, root, req, isolate);
         return;
       }
     }
   }
 }
 
-void answer(Core core, Cli cli, i32 sock, string root, Request req, bool isolate) {
+void answer(Core core, Cli cli, Fs fs, i32 sock, string root, Request req, bool isolate) {
   bool isGet = eq(req.method, "GET") || eq(req.method, "HEAD");
   if (!isGet) {
     cli.send(sock, writeResponse(Response.create(405), req.method, false)).wait();
@@ -89,10 +90,10 @@ void answer(Core core, Cli cli, i32 sock, string root, Request req, bool isolate
     return;
   }
   string path = root + string.fromBytes(target);
-  Stat st = cli.stat(path).wait();
+  Stat st = fs.stat(path);
   if (st.exists && st.isDir) { path = path + (endsWithSlash(target) ? "index.html" : "/index.html"); }
 
-  FileResult f = cli.readFile(path).wait();
+  FileResult f = fs.readFile(path);
   if (!f.ok) {
     Response nf = Response.create(404);
     nf.set("Content-Type", "text/plain; charset=utf-8");

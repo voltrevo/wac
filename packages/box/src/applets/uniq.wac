@@ -11,8 +11,9 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src
 import { cmpBytes } from "../lib/lines.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 uniq(Core core, Cli cli, Args a) {
+export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **`uniq INPUT [OUTPUT]`.** The second operand is a *file to write*, not an extra one, so calling it
   // extra blamed the caller for GNU's own syntax — and named the wrong operand as well, since a third is
@@ -23,7 +24,7 @@ export i32 uniq(Core core, Cli cli, Args a) {
     return 1;
   }
   if (extraOperand(core, a, 2)) { return 1; }
-  Input in = openStream(core, cli, a, 0);
+  Input in = openStream(core, cli, fs, a, 0);
   if (!in.ok) { return 1; }
   bool counting = has(a, 'c');
   // **`-d` and `-u` select which runs are shown**, and both were accepted and ignored: `uniq -d` printed

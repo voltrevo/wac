@@ -16,13 +16,14 @@ import { Cli, Core, FileResult, Stat } from "../../../platform/src/platform.wac"
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tar(Core core, Cli cli, Args a) {
+export i32 tar(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: " + a.name + " <path>..."); return 2; }
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    if (!add(core, cli, a.rest[i], a.name)) { code = 1; }
+    if (!add(core, cli, fs, a.rest[i], a.name)) { code = 1; }
   }
   // Two zero blocks end the archive. Without them GNU tar reads the stream fine and then
   // says "unexpected EOF", which is the sort of thing a round trip with itself misses.
@@ -41,11 +42,11 @@ export i32 tar(Core core, Cli cli, Args a) {
 i32 MAX_DEPTH() { return 64; }
 
 /** One path, and everything under it if it is a directory. */
-bool add(Core core, Cli cli, string path, string name) {
-  return addAt(core, cli, path, name, 0);
+bool add(Core core, Cli cli, Fs fs, string path, string name) {
+  return addAt(core, cli, fs, path, name, 0);
 }
 
-bool addAt(Core core, Cli cli, string path, string name, i32 depth) {
+bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // **The link, before what it points at.** `stat` follows, so a link to a directory looked exactly
   // like the directory: this walked into it, stored its contents under the link's name, and a cycle
   // grew the path until something trapped. The header of this file has always said links are
@@ -56,7 +57,7 @@ bool addAt(Core core, Cli cli, string path, string name, i32 depth) {
     return false;
   }
 
-  Stat st = cli.stat(path).wait();
+  Stat st = fs.stat(path);
   if (!st.exists) { core.warn(name + ": " + path + ": not found"); return false; }
 
   // A name that does not fit is refused, which is what this file has always said it does — there
@@ -79,17 +80,17 @@ bool addAt(Core core, Cli cli, string path, string name, i32 depth) {
   if (st.isDir) {
     // The directory's own entry first, so an empty one survives the round trip.
     cli.write(header(path + "/", 0, st.modifiedMillis, '5'));
-    string[]? names = cli.readDir(path).wait();
+    string[]? names = fs.readDir(path);
     if (names is null) { core.warn(name + ": " + path + ": cannot list"); return false; }
     string[] found = names!;
     bool ok = true;
     for (i32 i = 0; i < found.len(); i++) {
-      if (!addAt(core, cli, path + "/" + found[i], name, depth + 1)) { ok = false; }
+      if (!addAt(core, cli, fs, path + "/" + found[i], name, depth + 1)) { ok = false; }
     }
     return ok;
   }
 
-  FileResult f = cli.readFile(path).wait();
+  FileResult f = fs.readFile(path);
   if (!f.ok) { core.warn(name + ": " + path + ": " + f.error); return false; }
   cli.write(header(path, f.bytes.len(), st.modifiedMillis, '0'));
   cli.write(f.bytes);

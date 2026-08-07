@@ -10,6 +10,7 @@ import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
 /**
  * How deep the walk goes.
@@ -21,23 +22,23 @@ import { itoa } from "../../../fmt/src/itoa.wac";
  */
 i32 MAX_DEPTH() { return 64; }
 
-export i32 find(Core core, Cli cli, Args a) {
+export i32 find(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
-  Stat st = cli.stat(root).wait();
+  Stat st = fs.stat(root);
   if (!st.exists) { core.warn(a.name + ": " + root + ": not found"); return 1; }
   core.log(root);
-  return walk(core, cli, a.name, root, 0) ? 0 : 1;
+  return walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
 }
 
 /** False if any part of this subtree could not be listed. */
-bool walk(Core core, Cli cli, string name, string dir, i32 depth) {
+bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
   if (depth > MAX_DEPTH()) {
     core.warn(name + ": " + dir + ": deeper than " + itoa(MAX_DEPTH()) +
       " levels, not descending (a symlink loop, or a genuinely deep tree)");
     return false;
   }
-  string[]? names = cli.readDir(dir).wait();
+  string[]? names = fs.readDir(dir);
   if (names is null) {
     core.warn(name + ": " + dir + ": cannot read directory");
     return false;
@@ -47,8 +48,8 @@ bool walk(Core core, Cli cli, string name, string dir, i32 depth) {
   for (i32 i = 0; i < found.len(); i++) {
     string path = dir + "/" + found[i];
     core.log(path);
-    if (cli.stat(path).wait().isDir) {
-      if (!walk(core, cli, name, path, depth + 1)) { complete = false; }
+    if (fs.stat(path).isDir) {
+      if (!walk(core, cli, fs, name, path, depth + 1)) { complete = false; }
     }
   }
   return complete;

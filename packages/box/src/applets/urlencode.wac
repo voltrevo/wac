@@ -14,10 +14,11 @@ import { withNewline } from "../lib/bytes.wac";
 
 import { encode, SET_COMPONENT } from "../../../url/src/percent.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 urlencode(Core core, Cli cli, Args a) {
+export i32 urlencode(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  Input in = readAll(core, cli, a, 0);
+  Input in = readAll(core, cli, fs, a, 0);
   if (!in.ok) { return 1; }
   cli.write(withNewline(encode(trimNewline(in.bytes), SET_COMPONENT())));
   return 0;

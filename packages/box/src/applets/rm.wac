@@ -11,8 +11,9 @@ import { Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 rm(Core core, Cli cli, Args a) {
+export i32 rm(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   bool force = has(a, 'f');
   if (a.rest.len() < 1) {
@@ -23,7 +24,7 @@ export i32 rm(Core core, Cli cli, Args a) {
   bool recursive = has(a, 'r') || has(a, 'R');
   i32 code = 0;
   for (i32 i = 0; i < a.rest.len(); i++) {
-    Change c = cli.remove(a.rest[i], recursive).wait();
+    Change c = fs.remove(a.rest[i], recursive);
     if (c.ok()) { continue; }
     // The only fault `-f` forgives. Everything else — denied, a non-empty directory, a disk that
     // is full — happened to a file that was there, and `-f` does not get to hide that.

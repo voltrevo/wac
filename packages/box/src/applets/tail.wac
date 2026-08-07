@@ -15,8 +15,9 @@ import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tail(Core core, Cli cli, Args a) {
+export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 want = a.hasNum ? a.num : 10;
@@ -33,7 +34,7 @@ export i32 tail(Core core, Cli cli, Args a) {
   bool banner = files > 1;
   Sink out = Sink.create(cli);
   for (i32 f = 0; f < fileCount; f++) {
-  Input in = openStream(core, cli, a, f);
+  Input in = openStream(core, cli, fs, a, f);
   if (!in.ok) { return 1; }
   if (banner) {
     if (f > 0) { out.line(""); }

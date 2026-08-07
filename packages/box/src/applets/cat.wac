@@ -19,8 +19,9 @@ import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wa
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 cat(Core core, Cli cli, Args a) {
+export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
   // accepted and does nothing there too — it means "unbuffered", and this is.
@@ -42,7 +43,7 @@ export i32 cat(Core core, Cli cli, Args a) {
   bool numberFilled = has(a, 'b');
   bool squeeze = has(a, 's');
 
-  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return copy(core, cli, a); }
+  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return copy(core, cli, fs, a); }
 
   // Numbering and squeezing run *across* the operands, as GNU's do: `cat -n f g` keeps counting.
   i32 count = 0;
@@ -51,7 +52,8 @@ export i32 cat(Core core, Cli cli, Args a) {
   i32 many = files == 0 ? 1 : files;
   Sink out = Sink.create(cli);
   for (i32 f = 0; f < many; f++) {
-    Input in = openStream(core, cli, a, f);
+    Input in = openStream(core, cli, fs, a, f);
+    Feed fed = in.fed;
     if (!in.ok) { out.flush(); return 1; }
     Lines s = Lines.create();
     Feed fed = Feed.fromStdin(cli);
@@ -97,11 +99,15 @@ export i32 cat(Core core, Cli cli, Args a) {
 }
 
 /** The plain path: bytes through, a chunk at a time, which is what `cat` is for. */
-i32 copy(Core core, Cli cli, Args a) {
+i32 copy(Core core, Cli cli, Fs fs, Args a) {
   i32 at = 0;
   bool opened = false;
+  // The feed travels with the span: it changes when the run moves to the next operand, and on anything
+  // but a host mount it is serving bytes rather than pulling on the process's own input.
+  Feed fed = Feed.of(cli, u8[0]());
   while (true) {
-    Span got = nextSpan(core, cli, a, at, opened);
+    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    fed = got.fed;
     if (!got.ok) { return 1; }
     opened = true;
     at = got.at;

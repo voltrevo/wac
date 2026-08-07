@@ -10,10 +10,11 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, readAll } from "../lib/input.wac";
 import { cmpBytes, cmpNumeric, cmpNumericThenBytes, joinLines, mergeSortWith, splitLines } from "../lib/lines.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 sort(Core core, Cli cli, Args a) {
+export i32 sort(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  Input in = readAll(core, cli, a, 0);
+  Input in = readAll(core, cli, fs, a, 0);
   // **2, not 1.** GNU's `sort` reserves 1 for "the input was not sorted" under `-c` and answers 2 for
   // anything that went wrong, which a caller checking `$?` can tell apart. `grep` does the same.
   if (!in.ok) { return 2; }

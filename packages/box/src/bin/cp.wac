@@ -10,7 +10,10 @@
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { parseFrom } from "../lib/args.wac";
 import { cp } from "../applets/cp.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 main(Core core, Cli cli) {
-  return cp(core, cli, parseFrom(cli, 0, "cp"));
+  // The host's filesystem, which is what a program built alone is standing on. `box` and a shell hand
+  // their applets an `Fs` for the same reason — see `box.wac` and wac-mono 0109.
+  return cp(core, cli, Fs.onHost(cli, 0), parseFrom(cli, 0, "cp"));
 }

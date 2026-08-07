@@ -23,11 +23,13 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
 /** One file's counts. */
 struct Counts { i32 lines; i32 words; i32 bytes; }
 
-export i32 wc(Core core, Cli cli, Args a) {
+export i32 wc(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 files = operandCount(a, 0);
   // No operands means standard input, which is one unnamed pass.
@@ -44,12 +46,13 @@ export i32 wc(Core core, Cli cli, Args a) {
 
   Counts total = Counts(0, 0, 0);
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, a, f);
+    Input in = openStream(core, cli, fs, a, f);
     if (!in.ok) { return 1; }
+    Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);
     bool inWord = false;
     while (true) {
-      Chunk got = nextChunk(core, cli, a);
+      Chunk got = nextChunk(core, cli, fed, a);
       if (!got.ok) { return 1; }
       if (!got.more) { break; }
       u8[] data = got.bytes;

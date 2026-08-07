@@ -34,6 +34,7 @@ import { Vec } from "../../std/src/vec.wac";
 import { Args, parseList } from "./lib/args.wac";
 import { UNKNOWN, appletNames, dispatch } from "./box.wac";
 import { Output } from "../../sh/src/program.wac";
+import { Fs } from "../../fs/src/fs.wac";
 
 /**
  * Run `argv` as a `box` applet, with `stdin` as its input and `cwd` as where it stands.
@@ -45,7 +46,7 @@ import { Output } from "../../sh/src/program.wac";
  * typo. The `UNKNOWN` sentinel exists for exactly this: an applet that ran and failed returns 1,
  * and one that does not exist has to be a different answer.
  */
-export Output boxRun(Core core, Cli cli, string cwd, Vec<string> argv, u8[] stdin) {
+export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin) {
   if (argv.len() == 0) { return Output.missing(); }
 
   // The applet's own name is `argv[0]` here, where under `box` it is `argv[1]` — `box grep x` and
@@ -61,7 +62,7 @@ export Output boxRun(Core core, Cli cli, string cwd, Vec<string> argv, u8[] stdi
   // output for ever afterwards, and the failure would appear as a terminal that has gone silent
   // rather than as anything to do with this function.
   cli.pushChild(args, stdin, cwd).wait();
-  i32 code = dispatch(core, cli, a, name);
+  i32 code = dispatch(core, cli, fs, a, name);
   Captured got = cli.popChild().wait();
 
   if (code == UNKNOWN) { return Output.missing(); }
@@ -87,7 +88,9 @@ export i32 boxApplet(Core core, Cli cli) {
   string[] args = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
   string name = args[0];
-  return dispatch(core, cli, parseList(args, 1, name), name);
+  // `boxApplet` is the multi-call entry — this program run *as* an applet — so the filesystem is the
+  // host's, exactly as it is for `box` itself. A shell hands its own in through `boxRun` above.
+  return dispatch(core, cli, Fs.onHost(cli, 0), parseList(args, 1, name), name);
 }
 
 /**

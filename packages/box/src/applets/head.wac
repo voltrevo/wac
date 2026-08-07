@@ -14,8 +14,9 @@ import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 head(Core core, Cli cli, Args a) {
+export i32 head(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // A count that is not a count is a mistake in the command, not a reason to use the default: this
   // used to print ten lines for `head -n x` and exit 0.
@@ -37,7 +38,7 @@ export i32 head(Core core, Cli cli, Args a) {
 
   Sink out = Sink.create(cli);
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, a, f);
+    Input in = openStream(core, cli, fs, a, f);
     if (!in.ok) { return 1; }
     if (banner) {
       if (f > 0) { out.line(""); }

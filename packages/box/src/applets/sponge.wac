@@ -9,13 +9,16 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { streamAtomic } from "../lib/safe.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 sponge(Core core, Cli cli, Args a) {
+export i32 sponge(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: " + a.name + " <file>"); return 2; }
-  Input in = openStream(core, cli, a, 1);   // index 1: the file is the destination
+  Input in = openStream(core, cli, fs, a, 1);   // index 1: the file is the destination
   if (!in.ok) { return 1; }
-  Change wrote = streamAtomic(core, cli, a.rest[0]);
+  Feed fed = in.fed;
+  Change wrote = streamAtomic(core, cli, fs, fed, a.rest[0]);
   if (wrote.ok()) { return 0; }
   core.warn(a.name + ": " + a.rest[0] + ": " + wrote.message);
   return 1;

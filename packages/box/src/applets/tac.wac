@@ -6,8 +6,9 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Input, operandCount, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 tac(Core core, Cli cli, Args a) {
+export i32 tac(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **Each file reversed, in the order they were named** — not the concatenation reversed. `tac a b`
   // prints `a` backwards and then `b` backwards, which is what the real one does and is not what
@@ -17,7 +18,7 @@ export i32 tac(Core core, Cli cli, Args a) {
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
   for (i32 f = 0; f < count; f++) {
-    Input in = readInput(core, cli, a, f);
+    Input in = readInput(core, cli, fs, a, f);
     if (!in.ok) { return 1; }
     u8[][] lines = splitLines(in.bytes);
     i32 n = lines.len();

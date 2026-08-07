@@ -7,9 +7,10 @@ import { Input, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 import { concat } from "../lib/bytes.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
 
-export i32 paste(Core core, Cli cli, Args a) {
+export i32 paste(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // **Any number of files, and none means standard input.** This took exactly two and answered anything
   // else with a `usage:` line of its own invention — so `paste` in a pipeline, which is how the real one
@@ -18,7 +19,7 @@ export i32 paste(Core core, Cli cli, Args a) {
   u8[][][] columns = u8[][][files](fill: u8[][0]());
   i32 rows = 0;
   for (i32 f = 0; f < files; f++) {
-    Input in = readInput(core, cli, a, f);
+    Input in = readInput(core, cli, fs, a, f);
     if (!in.ok) { return 1; }
     columns[f] = splitLines(in.bytes);
     if (columns[f].len() > rows) { rows = columns[f].len(); }

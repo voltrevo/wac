@@ -190,6 +190,27 @@ export struct Fs {
     return (bits & want) == want;
   }
 
+  /**
+   * Whether this path is served by the *host*, rather than by a memory or synthesised mount.
+   *
+   * The one thing a caller needs to know to choose how to read: the host has a streaming capability —
+   * `openInput` redirects standard input to a file and `readChunk` pulls it a piece at a time, so a
+   * large file on disk never has to be held whole — and this filesystem does not. A memory image is
+   * already in memory, so reading a node whole costs nothing it has not already paid, and there is
+   * nothing to stream *from*.
+   *
+   * Exposed rather than a `read` method that decides, because the decision is about which capability
+   * the caller may use afterwards, and only the caller knows what it is going to do with it.
+   */
+  bool isHostPath(const this, string path) {
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return false; }
+    match (this.mounts.get(mi).backing) {
+      case Host(cli): { return true; }
+      else: { return false; }
+    }
+  }
+
   /** What `/proc/self/cmdline` will answer. NUL-separated, as Linux's is. */
   void setCmdline(this, string cmdline) { this.cmdline = cmdline; }
 

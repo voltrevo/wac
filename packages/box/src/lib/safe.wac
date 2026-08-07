@@ -8,6 +8,8 @@
 // This is why the mutation tier exists at all, and `cp` uses it.
 
 import { Change, Cli, Core, FAULT_OTHER } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
 // There was a `writeAtomic(core, cli, path, bytes)` here — the whole-buffer form of the same
 // dance — and nothing ever called it. `cp` and `sponge` both stream, which is the point of the
@@ -23,7 +25,16 @@ import { Change, Cli, Core, FAULT_OTHER } from "../../../platform/src/platform.w
  * makes it possible: the bytes go straight to the temporary file rather than being
  * gathered first, and the rename still happens only once all of them are there.
  */
-export Change streamAtomic(Core core, Cli cli, string path) {
+export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
+  // **The host streams; anything else is written whole.** `openOutput` redirects this process's standard
+  // output to a file — the state is in the capability — and a memory image has no such thing. Writing
+  // the bytes in one call is not a compromise there: an image is already in memory, and the
+  // write-beside-and-rename that makes this atomic on a disk is not what makes it atomic in a value.
+  if (!fs.isHostPath(path)) {
+    u8[] all = fed.rest();
+    if (fed.why != "") { return Change.of(FAULT_OTHER(), fed.why); }
+    return fs.writeFile(path, all);
+  }
   string tmp = tempName(core, path);
   // The `Change` is returned as it came: it used to be flattened to `FAULT_OTHER` because `openOutput`
   // answered a bare string, so a caller could not tell "no such directory" from "not permitted".
@@ -48,22 +59,22 @@ export Change streamAtomic(Core core, Cli cli, string path) {
   }
   if (broke != "") {
     cli.openOutput("").wait();
-    cli.remove(tmp, false).wait();
+    fs.remove(tmp, false);
     return Change.of(FAULT_OTHER(), broke);
   }
   // Back to standard output, which closes the temporary file — a rename over a file still
   // open would move it half-written.
   cli.openOutput("").wait();
-  return finish(cli, tmp, path);
+  return finish(cli, fs, tmp, path);
 }
 
 /** The rename, and the cleanup if it fails. */
-Change finish(Cli cli, string tmp, string path) {
-  Change moved = cli.rename(tmp, path).wait();
+Change finish(Cli cli, Fs fs, string tmp, string path) {
+  Change moved = fs.rename(tmp, path);
   if (moved.ok()) { return moved; }
   // The rename is the only step that can leave litter, so clean up after it and not
   // before: until it succeeds, the temporary file is the only copy of the new contents.
-  cli.remove(tmp, false).wait();
+  fs.remove(tmp, false);
   return moved;
 }
 

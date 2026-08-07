@@ -18,11 +18,12 @@ import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { Read } from core;
+import { Fs } from "../../../fs/src/fs.wac";
 
 /** Standard input, as a handle `recv` accepts. See `deno.ts`. */
 i32 STDIN() { return 0; }
 
-export i32 nc(Core core, Cli cli, Args a) {
+export i32 nc(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   Socket peer = has(a, 'l') ? accepted(core, cli, a) : dialled(core, cli, a);
   if (peer.handle < 0) { return 1; }

@@ -12,8 +12,9 @@ import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { tryHelp } from "../lib/operands.wac";
 import { Ranges, parseRanges } from "../lib/ranges.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 cut(Core core, Cli cli, Args a) {
+export i32 cut(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string d = flagValue(a, 'd');
   i32 delim = d == "" ? '\t' : d.toBytes()[0];
@@ -35,10 +36,10 @@ export i32 cut(Core core, Cli cli, Args a) {
     return 1;
   }
 
-  Reader r = Reader.create(core, cli, a, 0);
+  Reader r = Reader.create(core, cli, fs, a, 0);
   Sink out = Sink.create(cli);
   while (true) {
-    Line l = r.next(core, cli, a);
+    Line l = r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     emitTo(out, byBytes ? bytesOf(l.bytes, want) : fieldsOf(l.bytes, delim, want), true);
   }

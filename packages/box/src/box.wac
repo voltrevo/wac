@@ -85,11 +85,15 @@ import { wc } from "./applets/wc.wac";
 import { wget } from "./applets/wget.wac";
 import { yes } from "./applets/yes.wac";
 import { zstd } from "./applets/zstd.wac";
+import { Fs } from "../../fs/src/fs.wac";
 
 export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() < 1) { return usage(core); }
   string applet = string.fromBytes(cli.arg(0).wait());
-  i32 code = dispatch(core, cli, parseArgs(cli), applet);
+  // **The filesystem an applet reads is a value now, not the host by assumption.** Standing alone, `box`
+  // is a program on the real machine and hands its applets exactly that; a shell holding an image hands
+  // them the image, and no applet knows the difference (wac-mono 0109).
+  i32 code = dispatch(core, cli, Fs.onHost(cli, 0), parseArgs(cli), applet);
   if (code != UNKNOWN) { return code; }
 
   core.warn("box: unknown applet '" + applet + "'");
@@ -113,70 +117,70 @@ export const i32 UNKNOWN = -1;
  * two lists of sixty names drifting apart. `main` is now the argv-reading half and this is the
  * choosing half.
  */
-export i32 dispatch(Core core, Cli cli, Args a, string applet) {
-  if (applet == "base32")    { return base32(core, cli, a); }
-  if (applet == "base64")    { return base64(core, cli, a); }
-  if (applet == "basename")  { return basename(core, cli, a); }
-  if (applet == "cat")       { return cat(core, cli, a); }
-  if (applet == "cp")        { return cp(core, cli, a); }
-  if (applet == "crc32")     { return crc32(core, cli, a); }
-  if (applet == "fsdump")    { return fsdump(core, cli, a); }
-  if (applet == "cut")       { return cut(core, cli, a); }
-  if (applet == "date")      { return date(core, cli, a); }
-  if (applet == "diff")      { return diff(core, cli, a); }
-  if (applet == "dirname")   { return dirname(core, cli, a); }
-  if (applet == "du")        { return du(core, cli, a); }
-  if (applet == "echo")      { return echo(core, cli, a); }
-  if (applet == "find")      { return find(core, cli, a); }
-  if (applet == "fold")      { return fold(core, cli, a); }
-  if (applet == "get")       { return get(core, cli, a); }
-  if (applet == "gets")      { return gets(core, cli, a); }
-  if (applet == "grep")      { return grep(core, cli, a); }
-  if (applet == "gunzip")    { return gunzip(core, cli, a); }
-  if (applet == "gzip")      { return gzip(core, cli, a); }
-  if (applet == "head")      { return head(core, cli, a); }
+export i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
+  if (applet == "base32")    { return base32(core, cli, fs, a); }
+  if (applet == "base64")    { return base64(core, cli, fs, a); }
+  if (applet == "basename")  { return basename(core, cli, fs, a); }
+  if (applet == "cat")       { return cat(core, cli, fs, a); }
+  if (applet == "cp")        { return cp(core, cli, fs, a); }
+  if (applet == "crc32")     { return crc32(core, cli, fs, a); }
+  if (applet == "fsdump")    { return fsdump(core, cli, fs, a); }
+  if (applet == "cut")       { return cut(core, cli, fs, a); }
+  if (applet == "date")      { return date(core, cli, fs, a); }
+  if (applet == "diff")      { return diff(core, cli, fs, a); }
+  if (applet == "dirname")   { return dirname(core, cli, fs, a); }
+  if (applet == "du")        { return du(core, cli, fs, a); }
+  if (applet == "echo")      { return echo(core, cli, fs, a); }
+  if (applet == "find")      { return find(core, cli, fs, a); }
+  if (applet == "fold")      { return fold(core, cli, fs, a); }
+  if (applet == "get")       { return get(core, cli, fs, a); }
+  if (applet == "gets")      { return gets(core, cli, fs, a); }
+  if (applet == "grep")      { return grep(core, cli, fs, a); }
+  if (applet == "gunzip")    { return gunzip(core, cli, fs, a); }
+  if (applet == "gzip")      { return gzip(core, cli, fs, a); }
+  if (applet == "head")      { return head(core, cli, fs, a); }
   // **Asked for is not got wrong.** `usage` answers 2 because reaching it means the command line was
   // not understood; `box help`, `box --help` and `box -h` are a person asking, and a person who asked
   // gets 0. Every tool this package imitates does the same, and a script testing `box --help` for
   // success is a reasonable thing to write.
   if (applet == "help" || applet == "--help" || applet == "-h") { usage(core); return 0; }
-  if (applet == "hex")       { return hex(core, cli, a); }
-  if (applet == "httpd")     { return httpd(core, cli, a); }
-  if (applet == "json")      { return json(core, cli, a); }
-  if (applet == "ls")        { return ls(core, cli, a); }
-  if (applet == "mkdir")     { return mkdir(core, cli, a); }
-  if (applet == "mv")        { return mv(core, cli, a); }
-  if (applet == "nc")        { return nc(core, cli, a); }
-  if (applet == "nl")        { return nl(core, cli, a); }
-  if (applet == "paste")     { return paste(core, cli, a); }
-  if (applet == "rev")       { return rev(core, cli, a); }
-  if (applet == "rm")        { return rm(core, cli, a); }
-  if (applet == "rmdir")     { return rmdir(core, cli, a); }
-  if (applet == "seq")       { return seq(core, cli, a); }
-  if (applet == "serve")     { return serve(core, cli, a); }
-  if (applet == "sha256sum") { return sha256sum(core, cli, a); }
-  if (applet == "sha512sum") { return sha512sum(core, cli, a); }
-  if (applet == "shuf")      { return shuf(core, cli, a); }
-  if (applet == "sort")      { return sort(core, cli, a); }
-  if (applet == "split")     { return split(core, cli, a); }
-  if (applet == "sponge")    { return sponge(core, cli, a); }
-  if (applet == "stat")      { return stat(core, cli, a); }
-  if (applet == "strings")   { return strings(core, cli, a); }
-  if (applet == "tac")       { return tac(core, cli, a); }
-  if (applet == "tail")      { return tail(core, cli, a); }
-  if (applet == "tar")       { return tar(core, cli, a); }
-  if (applet == "tee")       { return tee(core, cli, a); }
-  if (applet == "touch")     { return touch(core, cli, a); }
-  if (applet == "tr")        { return tr(core, cli, a); }
-  if (applet == "uniq")      { return uniq(core, cli, a); }
-  if (applet == "unzstd")    { return unzstd(core, cli, a); }
-  if (applet == "urldecode") { return urldecode(core, cli, a); }
-  if (applet == "urlencode") { return urlencode(core, cli, a); }
-  if (applet == "uuid")      { return uuid(core, cli, a); }
-  if (applet == "wc")        { return wc(core, cli, a); }
-  if (applet == "wget")      { return wget(core, cli, a); }
-  if (applet == "yes")       { return yes(core, cli, a); }
-  if (applet == "zstd")      { return zstd(core, cli, a); }
+  if (applet == "hex")       { return hex(core, cli, fs, a); }
+  if (applet == "httpd")     { return httpd(core, cli, fs, a); }
+  if (applet == "json")      { return json(core, cli, fs, a); }
+  if (applet == "ls")        { return ls(core, cli, fs, a); }
+  if (applet == "mkdir")     { return mkdir(core, cli, fs, a); }
+  if (applet == "mv")        { return mv(core, cli, fs, a); }
+  if (applet == "nc")        { return nc(core, cli, fs, a); }
+  if (applet == "nl")        { return nl(core, cli, fs, a); }
+  if (applet == "paste")     { return paste(core, cli, fs, a); }
+  if (applet == "rev")       { return rev(core, cli, fs, a); }
+  if (applet == "rm")        { return rm(core, cli, fs, a); }
+  if (applet == "rmdir")     { return rmdir(core, cli, fs, a); }
+  if (applet == "seq")       { return seq(core, cli, fs, a); }
+  if (applet == "serve")     { return serve(core, cli, fs, a); }
+  if (applet == "sha256sum") { return sha256sum(core, cli, fs, a); }
+  if (applet == "sha512sum") { return sha512sum(core, cli, fs, a); }
+  if (applet == "shuf")      { return shuf(core, cli, fs, a); }
+  if (applet == "sort")      { return sort(core, cli, fs, a); }
+  if (applet == "split")     { return split(core, cli, fs, a); }
+  if (applet == "sponge")    { return sponge(core, cli, fs, a); }
+  if (applet == "stat")      { return stat(core, cli, fs, a); }
+  if (applet == "strings")   { return strings(core, cli, fs, a); }
+  if (applet == "tac")       { return tac(core, cli, fs, a); }
+  if (applet == "tail")      { return tail(core, cli, fs, a); }
+  if (applet == "tar")       { return tar(core, cli, fs, a); }
+  if (applet == "tee")       { return tee(core, cli, fs, a); }
+  if (applet == "touch")     { return touch(core, cli, fs, a); }
+  if (applet == "tr")        { return tr(core, cli, fs, a); }
+  if (applet == "uniq")      { return uniq(core, cli, fs, a); }
+  if (applet == "unzstd")    { return unzstd(core, cli, fs, a); }
+  if (applet == "urldecode") { return urldecode(core, cli, fs, a); }
+  if (applet == "urlencode") { return urlencode(core, cli, fs, a); }
+  if (applet == "uuid")      { return uuid(core, cli, fs, a); }
+  if (applet == "wc")        { return wc(core, cli, fs, a); }
+  if (applet == "wget")      { return wget(core, cli, fs, a); }
+  if (applet == "yes")       { return yes(core, cli, fs, a); }
+  if (applet == "zstd")      { return zstd(core, cli, fs, a); }
 
   // `true` and `false` have no body: the dispatcher returning a constant *is* the whole
   // applet, and a file containing one `return` would be ceremony rather than clarity.

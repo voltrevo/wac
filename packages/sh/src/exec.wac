@@ -89,7 +89,12 @@ export struct Shell {
    * exactly that: a `Shell` built by anything that has never heard of `box` behaves as it always
    * did, which is what keeps this package testable on its own.
    */
-  fn[Output(Core, Cli, string, Vec<string>, u8[])] external;
+  /**
+   * Run an external command. The `Fs` is **this shell's**, not the host's — an applet that reads a file
+   * has to read the one the shell is talking to, or a session on an image lists one filesystem and reads
+   * another (wac-mono 0109).
+   */
+  fn[Output(Core, Cli, Fs, string, Vec<string>, u8[])] external;
 
   /**
    * What `external` will answer to, for `help` to list.
@@ -1647,7 +1652,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   // could not until issue 0030, and something has to answer there.
   // The two in-process routes run *here*, so they need the bytes: reading the input now is what a
   // program reading it would have done.
-  Output given = sh.external(sh.core, sh.cli, sh.cwd, argv, sh.restOfStdin());
+  Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv, sh.restOfStdin());
   if (given.found) { return given; }
   return run(sh.fs, sh.cli, sh.cwd, argv, sh.restOfStdin());
 }
@@ -1671,7 +1676,7 @@ export string[] builtinNames() {
 string[] noExternalNames() { return string[0](fill: ""); }
 
 /** The default `Shell.external`: nothing is wired in, so every name falls through. */
-Output noExternal(Core core, Cli cli, string cwd, Vec<string> argv, u8[] stdin) {
+Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin) {
   return Output.missing();
 }
 

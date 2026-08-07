@@ -8,8 +8,10 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { crc32Start, crc32Update, crc32Finish, crcTable8 } from "../../../gzip/src/crc32.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
 
-export i32 crc32(Core core, Cli cli, Args a) {
+export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   // A line per file, as `cksum` and the checksums here do — it used to read the first operand and stop
   // (wac-mono 0096). There is no `crc32` on this machine to compare against, so the test asserts the
@@ -18,12 +20,13 @@ export i32 crc32(Core core, Cli cli, Args a) {
   i32 count = files == 0 ? 1 : files;
   u32[] table = crcTable8();
   for (i32 f = 0; f < count; f++) {
-  Input in = openStream(core, cli, a, f);
+  Input in = openStream(core, cli, fs, a, f);
   if (!in.ok) { return 1; }
+  Feed fed = in.fed;
 
   u32 acc = crc32Start();
   while (true) {
-    Chunk got = nextChunk(core, cli, a);
+    Chunk got = nextChunk(core, cli, fed, a);
     if (!got.ok) { return 1; }
     if (!got.more) { break; }
     u8[] chunk = got.bytes;

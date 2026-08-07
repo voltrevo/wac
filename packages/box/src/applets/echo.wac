@@ -13,8 +13,9 @@
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 echo(Core core, Cli cli, Args a) {
+export i32 echo(Core core, Cli cli, Fs fs, Args a) {
   bool newline = true;
   bool escapes = false;
   i32 from = 0;

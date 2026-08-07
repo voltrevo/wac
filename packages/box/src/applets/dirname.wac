@@ -5,8 +5,9 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { dirName } from "../lib/path.wac";
 import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 dirname(Core core, Cli cli, Args a) {
+export i32 dirname(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   // **Every operand, not the first.** `dirname a b c` prints three lines in GNU and printed one here,

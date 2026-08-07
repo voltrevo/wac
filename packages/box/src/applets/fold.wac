@@ -7,8 +7,9 @@ import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 fold(Core core, Cli cli, Args a) {
+export i32 fold(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 width = a.hasNum ? a.num : 80;
@@ -20,11 +21,11 @@ export i32 fold(Core core, Cli cli, Args a) {
     return 1;
   }
 
-  Reader r = Reader.create(core, cli, a, 0);
+  Reader r = Reader.create(core, cli, fs, a, 0);
 
   Sink out = Sink.create(cli);
   while (true) {
-    Line l = r.next(core, cli, a);
+    Line l = r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     u8[] line = l.bytes;
     if (line.len() == 0) { emitTo(out, line, l.nl); continue; }

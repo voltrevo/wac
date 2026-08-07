@@ -16,8 +16,9 @@ import { concat } from "../lib/bytes.wac";
 import { Served, serve as handle } from "../../../server/src/serve.wac";
 import { Read } from core;
 import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 serve(Core core, Cli cli, Args a) {
+export i32 serve(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 port = a.num == 0 ? 8080 : a.num;
   // Every interface: `serve` exists to hand a file to another machine. Issue 0025.

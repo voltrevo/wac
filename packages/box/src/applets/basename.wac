@@ -6,8 +6,9 @@ import { refuseFlags } from "../lib/flags.wac";
 import { baseName } from "../lib/path.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { extraOperand, missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 basename(Core core, Cli cli, Args a) {
+export i32 basename(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
   // `basename NAME [SUFFIX]` — a third operand was being *ignored*, which answered a mistyped command

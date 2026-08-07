@@ -11,11 +11,12 @@ import { withNewline } from "../lib/bytes.wac";
 import { decode as unb32, encode as b32, ALPHABET_STANDARD } from "../../../codec/src/base32.wac";
 import { slice } from "../../../bytes/src/slice.wac";
 import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
 
-export i32 base32(Core core, Cli cli, Args a) {
+export i32 base32(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (extraOperand(core, a, 1)) { return 1; }
-  Input in = readInput(core, cli, a, 0);
+  Input in = readInput(core, cli, fs, a, 0);
   if (!in.ok) { return 1; }
   if (has(a, 'd')) {
     u8[]? out = unb32(withoutSpace(in.bytes), ALPHABET_STANDARD());
