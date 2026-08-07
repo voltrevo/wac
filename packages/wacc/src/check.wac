@@ -63,11 +63,17 @@ export i32 primF64() { return 6; }
 export i32 primBool() { return 7; }
 export i32 primString() { return 8; }
 /**
- * `u8` and `u16`: storage types, which WasmGC allows as array elements and nowhere else.
+ * `u8` `u16` `i8` `i16`: storage types, which WasmGC allows as array elements and nowhere else.
  *
- * One id for both because nothing distinguishes them here — neither can be a return type, so the
+ * One id for all four because nothing distinguishes them here — none can be a return type, so the
  * answer for every literal and every name is the same refusal. Distinct from `primNone`, and the
  * distinction is the point: none means *say nothing*, packed means *nothing fits*.
+ *
+ * The signed pair was missing until the spec's rejection corpus was wired in, and it was the first
+ * thing that corpus found: `[§wac-arr-i8-noreturn-k7fn2qp]` is `export i8 getByte() { return 0; }`,
+ * which the reference rejects and this did not. The unsigned pair was here because those are the two
+ * *I* thought of when deriving the grid by hand — which is the whole argument for having an oracle
+ * that was not written by the same person as the code.
  */
 export i32 primPacked() { return 9; }
 
@@ -162,7 +168,7 @@ export i32 primOfType(C c, Ty t) {
       if (n == "f64") { return primF64(); }
       if (n == "bool") { return primBool(); }
       if (n == "string") { return primString(); }
-      if (n == "u8" || n == "u16") { return primPacked(); }
+      if (n == "u8" || n == "u16" || n == "i8" || n == "i16") { return primPacked(); }
       // `void` among others: a function returning void has no returned value to disagree with.
       return primNone();
     }

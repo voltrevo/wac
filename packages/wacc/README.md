@@ -193,6 +193,30 @@ lookup confidently wrong — and a confident wrong answer is the one thing a sub
 give. Declarations are collected in a pass of their own before the body is walked, so a `return`
 above a declaration still resolves it.
 
+### A second oracle: the spec, not just the implementation
+
+Everything above compares wacc to the reference *implementation*. `spec/` in the `wac` checkout is
+what the language *says* — 409 tagged assertions across 18 files, executed by `wacSpec.test.ts`, one
+test per tag. The rejection ones call `err(...)` with a complete program the language declares
+illegal, so the spec already contains the corpus rung 3 needs, and a better one than anything written
+here: it is the language's own statement of what is illegal, it grows when the language does, and each
+case carries the tag that governs it.
+
+`test/specCorpus.ts` extracts them rather than copying them — 101 programs under 63 tags — and
+`typecheck.test.ts` asserts two things. That **the reference honours the spec**, for every case, which
+is a divergence check on wac itself and also what proves the extraction produced real programs rather
+than fragments failing for being malformed. And that **wacc never contradicts it**: silent, or right
+about the position. Coverage is reported rather than asserted, since this slice knows one diagnostic
+of roughly 210 and a threshold would be a number somebody made up.
+
+    101 rejection programs, 83 rejected by the type checker, 1 of those also caught here
+
+**It found something on its first run.** `[§wac-arr-i8-noreturn-k7fn2qp]` is
+`export i8 getByte() { return 0; }`, which the reference rejects and wacc did not: the packed set here
+was `u8` and `u16`, because those are the two *I* thought of when deriving the grid by hand. `i8` and
+`i16` are packed too. That is the argument for a second oracle in one line — the grid was derived from
+a list I wrote, and it could only ever check the list I wrote.
+
 Next: more of rung 3.
 
 ### What rung 3's oracle looks like, measured

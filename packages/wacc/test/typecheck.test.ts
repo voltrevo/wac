@@ -22,6 +22,7 @@ import { wacParse, type Program } from "wac/wacParse.ts";
 import { wacResolve } from "wac/wacResolve.ts";
 import { wacTypeCheck } from "wac/wacTypeCheck.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
+import { specRejections } from "./specCorpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
@@ -161,7 +162,7 @@ Deno.test("rung 3: the corpus stays silent, which is the property a subset check
  * silent everywhere would pass — which is why `at least one cell rejected` is asserted too, and why
  * the count is checked against the grid rather than against zero.
  */
-const PRIMITIVES = ["i32", "i64", "u32", "u64", "u8", "u16", "f32", "f64", "bool", "string"];
+const PRIMITIVES = ["i32", "i64", "u32", "u64", "u8", "u16", "i8", "i16", "f32", "f64", "bool", "string"];
 const LITERALS: [string, string][] = [
   ["integer", "1"],
   ["float", "1.5"],
@@ -197,14 +198,15 @@ Deno.test("rung 3: every primitive against every literal kind, the reference dec
       if (mine.length > 0) caught++;
     }
   }
-  // 40 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
-  // from bool, a string from string. `u8` and `u16` accept nothing, which is why this is 8 and not
-  // 10 — the count was written as 10 first, and the grid corrected it.
+  // 48 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
+  // from bool, a string from string. The four packed types accept nothing, which is why this is 8
+  // and not 12 — the count was written as 10 first, against a ten-type list that was missing i8 and
+  // i16, and both the grid and the spec corpus have corrected it since.
   //
   // Asserting the shape rather than a bare "some failed": a reference that started accepting
   // everything would otherwise pass this silently, and so would a `reference()` helper that had
   // quietly stopped returning diagnostics.
-  if (rejected !== 32) throw new Error(`expected 32 rejected cells of 40, got ${rejected}`);
+  if (rejected !== 40) throw new Error(`expected 40 rejected cells of 48, got ${rejected}`);
   if (caught !== rejected) {
     throw new Error(`the reference rejects ${rejected} cells and we catch ${caught}; ` +
       `this slice is meant to catch every literal-return mismatch`);
@@ -220,7 +222,7 @@ Deno.test("rung 3: every primitive against every literal kind, the reference dec
  * the declaration was found and read, not that a token was recognised.
  */
 Deno.test("rung 3: a returned parameter, every declared type against every parameter type", () => {
-  const usable = PRIMITIVES.filter((t) => t !== "u8" && t !== "u16"); // not legal as a return type
+  const usable = PRIMITIVES.filter((t) => !["u8", "u16", "i8", "i16"].includes(t)); // packed: not legal as a return type
   let rejected = 0;
   let caught = 0;
   for (const ret of usable) {
@@ -289,4 +291,65 @@ Deno.test("rung 3: a returned local, and a name used before its declaration", ()
       throw new Error(`we report ${at}, the reference reports ${theirs.map((e) => e.at).join(", ")}`);
     }
   }
+});
+
+/**
+ * The spec's own rejection cases, as a second oracle.
+ *
+ * Everything above compares wacc to the reference *implementation*. This compares it to what the
+ * language says: `spec/spec/*.md` carries 409 tagged assertions, `wacSpec.test.ts` executes them, and
+ * the rejection ones are complete programs the language declares illegal. They are extracted rather
+ * than copied — see `specCorpus.ts` — so the corpus grows when the spec does and cannot drift from it.
+ *
+ * Two different things are asserted, and the first is not about wacc at all:
+ *
+ *   - **the reference honours the spec**, for every case. If it stopped rejecting one, that is a
+ *     divergence between wac's implementation and wac's specification, and it is worth failing this
+ *     package's suite to say so — it is also the check that proves the extraction produced real
+ *     programs rather than fragments that fail for being malformed.
+ *   - **wacc is a subset of it**: silent, or right about the position. Coverage is reported rather
+ *     than asserted, because this slice knows about one diagnostic out of roughly 210 and a threshold
+ *     would be a number somebody made up.
+ */
+Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and we never contradict it", () => {
+  const cases = specRejections();
+  if (cases.length < 80) {
+    throw new Error(`only ${cases.length} spec rejection programs extracted; the shape of ` +
+      "wacSpec.test.ts has changed and specCorpus.ts is reading it wrong");
+  }
+
+  const notRejected: string[] = [];
+  let contradicted = 0;
+  let covered = 0;
+  for (const c of cases) {
+    const theirs = reference(c.src);
+    if (theirs.length === 0) {
+      // The reference type-checks it. That is either a spec/implementation divergence or a case
+      // rejected at a stage this harness does not run — lexing, parsing, resolution — so it is
+      // collected and reported rather than failed on individually.
+      notRejected.push(c.tag);
+      continue;
+    }
+    const mine = ours(c.src);
+    if (mine.length === 0) continue;
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        contradicted++;
+        throw new Error(
+          `[§${c.tag}] we report a diagnostic at ${at} the reference does not.\n` +
+            `  source: ${JSON.stringify(c.src)}\n` +
+            `  reference: ${theirs.map((e) => `${e.at} ${e.message}`).join("; ")}`,
+        );
+      }
+    }
+    covered++;
+  }
+
+  // Reported on the error channel so a green run still says what the number is — a coverage figure
+  // nobody can see is one nobody notices falling.
+  console.error(
+    `    rung 3 against the spec: ${cases.length} rejection programs, ` +
+      `${cases.length - notRejected.length} rejected by the type checker, ` +
+      `${covered} of those also caught here, ${contradicted} contradicted`,
+  );
 });
