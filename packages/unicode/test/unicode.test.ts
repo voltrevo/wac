@@ -41,6 +41,28 @@ function single(s: string): number {
   return points.length === 1 ? points[0].codePointAt(0)! : -1;
 }
 
+/**
+ * Whether the host says these two code points are the same letter ignoring case.
+ *
+ * A `u`-mode `RegExp` canonicalizes by Unicode **simple case folding**, which is a different table
+ * from `toLowerCase` and the one this package's `fold` is supposed to be. Using case mapping as
+ * the oracle for case folding is what let `ı` and `i` into the same class: they share an uppercase
+ * and are not the same letter.
+ */
+function sameLetter(a: number, b: number): boolean {
+  return new RegExp("\\u{" + a.toString(16) + "}", "iu").test(String.fromCodePoint(b));
+}
+
+/** The same question for whole strings: equal length in scalars, and every pair the same letter. */
+function sameFolded(a: string, b: string): boolean {
+  const x = [...a], y = [...b];
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) {
+    if (!sameLetter(x[i].codePointAt(0)!, y[i].codePointAt(0)!)) return false;
+  }
+  return true;
+}
+
 Deno.test("simple case mapping agrees with the host at every code point", () => {
   let checkedLower = 0;
   let checkedUpper = 0;
@@ -118,12 +140,28 @@ Deno.test("fold is an equivalence, and agrees with case mapping", () => {
       if (bad.length < 10) bad.push(`U+${cp.toString(16)} folds to ${f}, which folds again to ${mod.mapFold(f)}`);
     }
 
-    // Consistent with the classes: two code points with the same single-code-point uppercase are
-    // the same letter, so they must fold together.
+    // **The oracle, in both directions.** This used to assert that two code points sharing a
+    // single-code-point uppercase must fold together — the same rule the generator used, so it
+    // could only ever confirm the generator. It is also false: `ı` and `i` both uppercase to `I`
+    // and are *not* the same letter under case folding, which is the one conflation this package's
+    // own comment says it will not make. So the rule was wrong, the table was wrong in exactly
+    // that place, and the test asserted the wrongness.
+    //
+    // `RegExp` in `u` mode canonicalizes by Unicode simple case folding, which is a different
+    // table from `toLowerCase` and is the definition of this function.
+    if (f !== cp && !sameLetter(cp, f)) {
+      if (bad.length < 10) bad.push(`U+${cp.toString(16)} folds to U+${f.toString(16)}, which the host says is a different letter`);
+    }
     const up = single(String.fromCodePoint(cp).toUpperCase());
-    if (up >= 0 && up !== cp && mod.mapFold(up) !== f) {
+    if (up >= 0 && up !== cp && sameLetter(cp, up) && mod.mapFold(up) !== f) {
       if (bad.length < 10) {
-        bad.push(`U+${cp.toString(16)} and its uppercase U+${up.toString(16)} fold apart: ${f} vs ${mod.mapFold(up)}`);
+        bad.push(`U+${cp.toString(16)} and its uppercase U+${up.toString(16)} are the same letter and fold apart: ${f} vs ${mod.mapFold(up)}`);
+      }
+    }
+    const lo = single(String.fromCodePoint(cp).toLowerCase());
+    if (lo >= 0 && lo !== cp && sameLetter(cp, lo) && mod.mapFold(lo) !== f) {
+      if (bad.length < 10) {
+        bad.push(`U+${cp.toString(16)} and its lowercase U+${lo.toString(16)} are the same letter and fold apart: ${f} vs ${mod.mapFold(lo)}`);
       }
     }
   }
@@ -132,9 +170,18 @@ Deno.test("fold is an equivalence, and agrees with case mapping", () => {
   // The three that are the point of folding at all.
   const classes: number[][] = [
     [0x61, 0x41],                 // a A
-    [0x3c3, 0x3c2, 0x3a3],        // σ ς Σ — the contextual form is why fold is lower(upper(x))
+    [0x3c3, 0x3c2, 0x3a3],        // σ ς Σ — the contextual form is why the candidate is lower(upper(x))
     [0x6b, 0x4b, 0x212a],         // k K and the Kelvin sign
   ];
+  // And the class that is *not* a class: `ı` uppercases to `I`, so a fold built out of case
+  // mapping alone put it with `i`. Unicode does not, Turkish locale rules are the only thing that
+  // would, and this package says in its first paragraph that it does not do those.
+  if (mod.mapFold(0x131) !== 0x131) {
+    bad.push(`U+131 (dotless i) folds to ${mod.mapFold(0x131)}; it is its own letter unless the locale is Turkish`);
+  }
+  if (mod.equalFold(enc.encode("ı"), enc.encode("i"))) {
+    bad.push("foldEqual says ı and i are the same string");
+  }
   for (const group of classes) {
     const first = mod.mapFold(group[0]);
     for (const cp of group) {
@@ -236,10 +283,11 @@ Deno.test("foldEqual agrees with the host's case-insensitive comparison", () => 
     if (got !== want) bad.push(`${JSON.stringify(a)} vs ${JSON.stringify(b)}: ${got}, want ${want}`);
   }
 
-  // And over random strings. The oracle is uppercase equality, not lowercase: uppercase is the
-  // direction that has no contextual forms, so it is the one that puts `ς` and `σ` in the same
-  // class. Restricted to code points whose mappings are single in both directions, since that is
-  // the subset simple folding claims to handle.
+  // And over random strings. The oracle is a `u`-mode `RegExp` built from one string and matched
+  // against the other, which canonicalizes by simple case folding — the definition — rather than
+  // uppercase equality, which is what the generator already assumed and so could not check.
+  // Restricted to code points whose mappings are single in both directions, since that is the
+  // subset simple folding claims to handle.
   const points: number[] = [];
   for (let cp = 0x20; cp < 0x2000; cp++) {
     const ch = String.fromCodePoint(cp);
@@ -260,7 +308,7 @@ Deno.test("foldEqual agrees with the host's case-insensitive comparison", () => 
     const b = next() % 2 === 0
       ? [...a].map(c => next() % 2 === 0 ? c.toUpperCase() : c.toLowerCase()).join("")
       : String.fromCodePoint(points[next() % points.length]) + a;
-    const want = a.toUpperCase() === b.toUpperCase();
+    const want = sameFolded(a, b);
     const got = mod.equalFold(enc.encode(a), enc.encode(b));
     if (got !== want) {
       bad.push(`${JSON.stringify(a)} vs ${JSON.stringify(b)}: ${got}, want ${want}`);

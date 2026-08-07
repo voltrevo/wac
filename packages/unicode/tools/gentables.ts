@@ -20,6 +20,16 @@ const lower: Pair[] = [];
 const upper: Pair[] = [];
 const fold: Pair[] = [];
 
+/**
+ * Whether the host considers these two code points the same letter ignoring case.
+ *
+ * `RegExp`'s `u` mode canonicalizes by Unicode **simple case folding** — a different table from
+ * `toLowerCase`, and the only one of the two that is the definition of this function.
+ */
+function sameLetter(a: number, b: number): boolean {
+  return new RegExp("\\u{" + a.toString(16) + "}", "iu").test(String.fromCodePoint(b));
+}
+
 /** The single code point `s` maps to, or -1 if it is not exactly one. */
 function single(s: string): number {
   const points = [...s];
@@ -37,16 +47,23 @@ for (let cp = 0; cp <= MAX; cp++) {
   const up = single(ch.toUpperCase());
   if (up >= 0 && up !== cp) upper.push({ from: cp, to: up });
 
-  // Simple case folding: two code points are case-insensitively equal exactly when they fold to
-  // the same value. Derived as lower(upper(cp)) rather than lower(cp), because lowercase alone
-  // does not unify a *contextual* form with its base — Greek final sigma `ς` lowercases to
-  // itself, so `ΣΊΣΥΦΟΣ` and `σίσυφος` would not have compared equal. Going up first collapses
-  // both sigmas to `Σ`, and coming back down gives `σ` for each.
+  // Simple case folding. The candidate is lower(upper(cp)) rather than lower(cp), because
+  // lowercase alone does not unify a *contextual* form with its base — Greek final sigma `ς`
+  // lowercases to itself, so `ΣΊΣΥΦΟΣ` and `σίσυφος` would not have compared equal. Going up first
+  // collapses both sigmas to `Σ`, and coming back down gives `σ` for each.
   //
-  // Where either direction is not a single code point the fold is the identity, which is what
-  // *simple* folding means: `ß` folds to itself, and only full folding turns it into `ss`.
+  // **A candidate, and then the oracle decides.** Round-tripping through uppercase is not case
+  // folding and gets one class wrong in the direction that matters: Turkish dotless `ı`
+  // uppercases to `I`, which lowercases to `i`, so `ı` and `i` came out equal — the exact
+  // conflation this package's own comment says it does not do. `RegExp` with `iu` canonicalizes
+  // by Unicode simple case folding and is not built from `toLowerCase`, so it can say the guess
+  // is wrong; `test/unicode.test.ts` asks it about every entry from the other direction.
+  //
+  // Where neither candidate survives, the fold is the identity, which is also what *simple*
+  // folding means for `ß`: it folds to itself, and only full folding turns it into `ss`.
   const viaUpper = up >= 0 ? single(String.fromCodePoint(up).toLowerCase()) : -1;
-  const folded = viaUpper >= 0 ? viaUpper : (lo >= 0 ? lo : cp);
+  const guess = viaUpper >= 0 ? viaUpper : (lo >= 0 ? lo : cp);
+  const folded = guess !== cp && sameLetter(cp, guess) ? guess : (lo >= 0 && lo !== cp && sameLetter(cp, lo) ? lo : cp);
   if (folded !== cp) fold.push({ from: cp, to: folded });
 }
 
