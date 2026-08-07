@@ -184,6 +184,12 @@ void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
     return;
   }
 
+  // **The system reads the policy, not the last user.** `Fs.user` is whatever the previous connection
+  // was served as — this filesystem outlives the session — and `authenticate` has to read `/etc/passwd`
+  // and every user's `~/.ssh/authorized_keys` before it knows who is asking. Left as the previous user,
+  // a login worked or failed depending on *who happened to connect before*: grace with a 0700 `.ssh`
+  // could not log in after ada, and could before her.
+  fs.setUser("root");
   string who = authenticate(conn, cli, sessionId, o, fs);
   if (who == "") {
     if (conn.failed()) { core.warn("sshd: " + conn.error); }

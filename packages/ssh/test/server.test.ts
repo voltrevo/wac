@@ -686,6 +686,11 @@ Deno.test({
         "chmod 600 /home/ada/secret; chown ada /home/ada/secret",
         "chmod 600 /home/grace/secret; chown grace /home/grace/secret",
         "chown ada /home/ada; chown grace /home/grace",
+        // **A private `.ssh`, which is what everyone is told to keep.** It is also the case that catches
+        // a server reading policy files as whoever logged in last: `authenticate` runs before it knows
+        // who this is, so it has to read as the system rather than as the previous session.
+        "chmod 700 /home/grace/.ssh; chown grace /home/grace/.ssh",
+        "chmod 600 /home/grace/.ssh/authorized_keys; chown grace /home/grace/.ssh/authorized_keys",
       ].join("; ");
       const built = await realSsh(s, build);
       if (built.code !== 0) throw new Error(`building the image failed: ${built.stderr}`);
@@ -708,6 +713,8 @@ Deno.test({
         // Each key lands in its own home, with its own name, without the server being told either.
         const adaHome = await realSsh(live, "pwd; echo $USER", `${dir}/ada`);
         if (adaHome.stdout !== "/home/ada\nada\n") throw new Error(JSON.stringify(adaHome));
+        // Grace logs in *after* ada, and her key file is one only she may read — so this fails unless
+        // the server reads it as the system rather than as the user it last served.
         const graceHome = await realSsh(live, "pwd; echo $USER", `${dir}/grace`);
         if (graceHome.stdout !== "/home/grace\ngrace\n") throw new Error(JSON.stringify(graceHome.stdout));
 
