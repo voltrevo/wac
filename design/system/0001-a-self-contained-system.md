@@ -417,7 +417,7 @@ Each step is an issue when it becomes actionable, and each references this docum
 | 4. users and login | not started |
 | 5. line discipline | not started |
 | 6. synthesised files | **done.** `Backing.Synth` — `/dev/null`, `/dev/zero`, `/dev/urandom`, `/proc/self/cmdline`, generated on read and carrying `randomBytes` and nothing else, so a *sealed* session has a real CSPRNG without a grant. The endless two refuse a whole read by name and point at the bounded one, which is what `head -c` uses. `/proc/<pid>` waits on step 3 |
-| 7. init | not started |
+| 7. init | **the ssh half is done.** `sshd -i home.wacimg` boots an image and serves every session from it — three packages end to end, driven by OpenSSH's own client. What is left of step 7 is the *init* half: something that starts daemons and reaps. Concurrency stays open because connections are served one at a time, so one writer is true by construction |
 | 8. desktop | not started |
 
 ## Open questions
