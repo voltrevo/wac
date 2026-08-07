@@ -100,7 +100,9 @@ Deno.test({
       // option was read as a filename: `ls -l` said "cannot access '-l': No such file or
       // directory", blaming the caller for a real flag. It answers to the same table now, so it
       // belongs in the same sweep.
-      const tools = ["wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "ls"];
+      // No `nl` or `rev`: this shell has given them up to `packages/box`, whose `test/flags.test.ts`
+      // asks the same question of the applets. The list shrinks as the rest follow (wac-mono 0103).
+      const tools = ["wc", "head", "tail", "sort", "uniq", "grep", "tr", "ls"];
       const cases: { tool: string; letter: string; script: string }[] = [];
       for (const tool of tools) {
         for (const letter of await gnuOptions(tool)) {

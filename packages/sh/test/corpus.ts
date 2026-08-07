@@ -907,3 +907,22 @@ export const PROGRAMS = ["cat", "wc", "head", "tail", "sort", "uniq", "nl", "rev
 export function needsProgram(script: string): boolean {
   return PROGRAMS.some((p) => new RegExp(`(^|[|;&(\`$\\s{])${p}\\b`).test(script));
 }
+
+/**
+ * The programs `packages/sh` no longer carries, deleted in favour of `packages/box`'s applets.
+ *
+ * wac-mono 0103 wants all eleven gone, and the reason it had not started is that they cannot all go at
+ * once without a red tree — half the shell's own tests use `wc` and `seq` as *incidental* commands
+ * rather than as subjects. So they go a few at a time, and this list is what makes that safe: every
+ * script list in `packages/sh`'s differential is filtered through `usesDeleted`, so a script naming a
+ * program this shell no longer has is skipped here and still runs in `packages/box`'s suite, which owns
+ * every script that names any of the eleven.
+ *
+ * Adding a name here and deleting the program from `program.wac` is the whole of one step.
+ */
+export const DELETED = ["nl", "rev"];
+
+/** Whether a script runs a program `packages/sh` has already given up. */
+export function usesDeleted(script: string): boolean {
+  return DELETED.some((p) => new RegExp(`(^|[|;&(\`$\\s{])${p}\\b`).test(script));
+}

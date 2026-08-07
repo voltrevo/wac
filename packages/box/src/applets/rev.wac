@@ -15,12 +15,11 @@ import { decode, Scalar } from "../../../unicode/src/utf8.wac";
 export i32 rev(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   Reader r = Reader.create(core, cli, a, 0);
-  if (!r.ok) { return 1; }
 
   Sink out = Sink.create(cli);
   while (true) {
     Line l = r.next(core, cli, a);
-    if (!l.ok) { out.flush(); return r.broken ? 1 : 0; }
+    if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     if (!emitTo(out, reversed(l.bytes), l.nl)) { return 0; }
   }
   return 0;

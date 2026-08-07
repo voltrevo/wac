@@ -4,7 +4,7 @@ import { appRunner } from "../../../harness/appRun.ts";
 import { pool } from "../../../harness/inFlight.ts";
 import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
-import { CORPUS } from "./corpus.ts";
+import { CORPUS, usesDeleted } from "./corpus.ts";
 // The shell, against bash.
 //
 // Every script here runs through GNU bash and through ours, and the two must agree on standard
@@ -19,7 +19,11 @@ import { CORPUS } from "./corpus.ts";
 // bash runs with `LC_ALL=C` so `sort` compares bytes, which is what ours does. Without it the
 // locale decides and the two disagree on case.
 
-const CASES: string[] = [...CORPUS];
+// **Filtered.** `packages/sh` is giving its programs up a few at a time in favour of `packages/box`'s
+// applets (wac-mono 0103), and a script naming one it no longer has would run against a shell without
+// it. Those scripts are not lost: `packages/box/test/corpus.test.ts` runs every script that names any of
+// the eleven through a shell built with the applets. `corpus.ts`'s `DELETED` is the line between them.
+const CASES: string[] = CORPUS.filter((s) => !usesDeleted(s));
 
 /**
  * A directory to glob against, made once and used by the pattern cases below.
@@ -246,7 +250,7 @@ for (const [i, script] of [
   `echo x | tail -Z; echo status=$?`,
   `echo x | nl -Z; echo status=$?`,
   `echo x | rev -Z; echo status=$?`,
-].entries()) {
+].filter((script) => !usesDeleted(script)).entries()) {
   // A directory per case, made by the harness rather than the script, so one failure cannot
   // leave a mess that changes what the next case sees.
   const dir = `${globDir}/w${i}`;
@@ -689,9 +693,10 @@ Deno.test({
         "tail -1 missing",
         "sort missing",
         "uniq missing",
-        "rev missing",
-        "nl missing",
         "grep x missing",
+        // Not `rev missing` or `nl missing`: those programs are gone from this shell, and the same two
+        // cases run against `packages/box`'s in `packages/box/test/programs.test.ts`. The rest of this
+        // list follows them as each is deleted.
         // `ls`'s own wording, which was invented rather than GNU's until 0067's work went past it: it said
         // `ls: x: no such file or directory` where GNU says `ls: cannot access 'x': No such file or
         // directory`. Nothing compared it, because every `ls` case in the corpus lists something that

@@ -59,9 +59,14 @@ export i32 grep(Core core, Cli cli, Args a) {
   i32 files = operandCount(a, 1);
   i32 count = files == 0 ? 1 : files;
   bool label = files > 1;
+  // A file that will not open is reported and skipped, and the rest are still searched — GNU's does
+  // that and answers **2** at the end, which is its status for "something went wrong" as distinct from
+  // 1, "no line matched". Giving up on the first one made `grep x *.c` depend on which file sorted
+  // first, and answering 1 said the pattern was absent from files that were never read.
+  bool unreadable = false;
   for (i32 f = 0; f < count; f++) {
     Input in = openStream(core, cli, a, 1 + f);
-    if (!in.ok) { return 1; }
+    if (!in.ok) { unreadable = true; continue; }
     string where = label ? in.label + ":" : "";
     i32 n = 0;
     i32 here = 0;
@@ -97,5 +102,6 @@ export i32 grep(Core core, Cli cli, Args a) {
     if (countOnly) { out.line(where + itoa(here)); }
   }
   out.flush();
+  if (unreadable) { return 2; }
   return matches > 0 ? 0 : 1;
 }

@@ -14,7 +14,9 @@ import { cmpBytes, cmpNumeric, cmpNumericThenBytes, joinLines, mergeSortWith, sp
 export i32 sort(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   Input in = readAll(core, cli, a, 0);
-  if (!in.ok) { return 1; }
+  // **2, not 1.** GNU's `sort` reserves 1 for "the input was not sorted" under `-c` and answers 2 for
+  // anything that went wrong, which a caller checking `$?` can tell apart. `grep` does the same.
+  if (!in.ok) { return 2; }
   bool reverse = has(a, 'r');
   bool unique = has(a, 'u');
   bool numeric = has(a, 'n');

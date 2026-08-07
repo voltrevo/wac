@@ -19,11 +19,10 @@ export i32 cut(Core core, Cli cli, Args a) {
   if (field < 1) { core.warn("usage: " + a.name + " -f<n> [-d<c>] [file]"); return 2; }
 
   Reader r = Reader.create(core, cli, a, 0);
-  if (!r.ok) { return 1; }
   Sink out = Sink.create(cli);
   while (true) {
     Line l = r.next(core, cli, a);
-    if (!l.ok) { out.flush(); return r.broken ? 1 : 0; }
+    if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
     emitTo(out, fieldOf(l.bytes, delim, field), true);
   }
   return 0;

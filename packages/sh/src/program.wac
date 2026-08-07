@@ -109,13 +109,11 @@ i32 dispatchProgram(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink
   if (name == "wc") { return wc(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "head") { return head(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "tail") { return tail(fs, cli, cwd, argv, fed, sink, errs); }
-  if (name == "rev") { return rev(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "sort") { return sort(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "uniq") { return uniq(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "grep") { return grep(fs, cli, cwd, argv, fed, sink, errs); }
   if (name == "tr") { return tr(argv, fed, sink, errs); }
   if (name == "seq") { return seq(argv, sink, errs); }
-  if (name == "nl") { return nl(fs, cli, cwd, argv, fed, sink, errs); }
   return 127;
 }
 
@@ -135,9 +133,10 @@ export string[] programNames() {
 /** Every name `run` will answer to, so `help` and the tests do not have to guess. */
 export Vec<string> names() {
   Vec<string> out = Vec.create();
-  out.push("cat"); out.push("wc"); out.push("head"); out.push("tail"); out.push("rev");
+  // `nl` and `rev` are gone: `packages/box` has them as applets, its suite holds them to the same
+  // corpus, and two implementations of one tool is what wac-mono 0103 is about. The rest follow.
+  out.push("cat"); out.push("wc"); out.push("head"); out.push("tail");
   out.push("sort"); out.push("uniq"); out.push("grep"); out.push("tr"); out.push("seq");
-  out.push("nl");
   return out;
 }
 
@@ -232,8 +231,6 @@ bool gnuHas(string name, i32 letter) {
   else if (name == "tail") { letters = "cfFnqsvz"; }
   else if (name == "sort") { letters = "bdfgiMhnRrVcCkmosStTuz"; }
   else if (name == "uniq") { letters = "cdDfisuzw"; }
-  else if (name == "nl") { letters = "bdfhilnpsvw"; }
-  else if (name == "rev") { letters = "hV"; }
   else if (name == "grep") { letters = "EFGPefiwxzsvVmbnHhoqaIdDrRLlcTZBACU"; }
   else if (name == "tr") { letters = "cdst"; }
   else if (name == "seq") { letters = "fsw"; }
@@ -1053,32 +1050,6 @@ u8[] lastLines(u8[] data, i32 n) {
   return out.take();
 }
 
-i32 rev(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("rev", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // One implementation, over a `Feed`, whichever the input is — the shape `cat` took first. Reading
-  // everything and splitting it was two things at once: a stage that could not survive its input
-  // (0071), and a `rev` that *added* a newline to a last line that arrived without one, because
-  // `splitLines` cannot tell the two apart and the buffered loop pushed 10 after every line.
-  if (o.operands.len() == 0) { revFeed(fed, sink); return 0; }
-  i32 status = 0;
-  for (i32 i = 0; i < o.operands.len(); i++) {
-    // **No `-` here.** `cat`, `nl` and `uniq` all read standard input for it; GNU's `rev` does not,
-    // and answers "rev: cannot open -: No such file or directory". Measured rather than assumed —
-    // the three that do take it made it look like a convention.
-    string path = o.operands.get(i);
-    FileResult f = fs.readFile(resolvePath(cwd, path));
-    if (!f.ok) {
-      complain(sink, errs, "rev: cannot open " + path + ": " + whyUnread(f) + "\n");
-      status = 1;
-      continue;
-    }
-    if (!revFeed(Feed.of(cli, f.bytes), sink)) { break; }
-  }
-  { sink.flush(); errs.flush(); return status; }
-}
 
 /** Each line backwards, one line at a time. False when the reader has gone. */
 bool revFeed(Feed fed, Sink sink) {
@@ -1923,29 +1894,6 @@ Numeral numeralOf(string text) {
   return Numeral(ok ? 1 : 2, 0);
 }
 
-i32 nl(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "");
-  if (o.bad != "") {
-    { errs.bytes(optionRefusal("nl", o.bad).toBytes()); errs.flush(); sink.flush(); return 1; }
-  }
-  // The count runs on across the operands, as GNU's does, so it is state carried between them rather
-  // than a local. Nothing else is held: numbering costs one integer. 0071.
-  Counter state = Counter(0, false);
-  if (o.operands.len() == 0) { nlFeed(fed, sink, state); return 0; }
-  i32 status = 0;
-  for (i32 i = 0; i < o.operands.len(); i++) {
-    string path = o.operands.get(i);
-    if (path == "-") { nlFeed(fed, sink, state); continue; }
-    FileResult f = fs.readFile(resolvePath(cwd, path));
-    if (!f.ok) {
-      complain(sink, errs, "nl: " + path + ": " + whyUnread(f) + "\n");
-      status = 1;
-      continue;
-    }
-    if (!nlFeed(Feed.of(cli, f.bytes), sink, state)) { break; }
-  }
-  { sink.flush(); errs.flush(); return status; }
-}
 
 /**
  * Numbered lines, one at a time.
