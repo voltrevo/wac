@@ -28,7 +28,8 @@ import {
   CERT_TYPE_SIGNING, CERT_TYPE_LINK, CERT_TYPE_RSA_CROSSCERT,
   KEY_TYPE_ED25519, KEY_TYPE_SHA256_X509, EXT_SIGNED_WITH_KEY,
 } from "../../src/relaycert.wac";
-import { certSignedWithKey, certCertifiedKey, certType, slice } from "../../src/hsdesc.wac";
+import { certSignedWithKey, certCertifiedKey, certType} from "../../src/hsdesc.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_COUNT = 0;
 const i32 V_CERT = 1;        // a[0]=i: the signing certificate
@@ -40,13 +41,6 @@ const i32 V_ONION_N = 6;     // a second RSA-1024 modulus, standing in for the T
 const i32 V_ONION_D = 7;     // its private exponent
 const i32 V_RECOVER_ONION = 8;      // a[..] = a signature; the payload the host recovers
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 u8[] arg1(i32 i) {
   u8[] a = u8[1]();
   a[0] = i;
@@ -70,7 +64,7 @@ export string test_every_certificate_tor_made_verifies(fn[u8[](i32, u8[], u8[])]
     // Extension 4 carries the key that signed it, and for a signing certificate that is the relay's
     // master identity — which the vector has independently from the relay's own key file.
     u8[] inExtension = certSignedWithKey(cert);
-    t.isTrue(same(inExtension, master),
+    t.isTrue(equal(inExtension, master),
              which + ": extension 4 is the master identity from the relay's key file");
 
     // The signature covers the first N-64 bytes with no prefix. This is the assertion the whole file
@@ -106,7 +100,7 @@ export string test_a_certificate_we_build_is_byte_for_byte_reproducible(
 
   u8[] cert = ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, certified, identity, seed);
   t.eqI32(cert.len(), 140, "the same 140 bytes a real signing certificate is");
-  t.isTrue(same(cert, ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, certified,
+  t.isTrue(equal(cert, ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_ED25519, certified,
                                   identity, seed)),
            "building it twice gives identical bytes");
   t.isTrue(verifyEd25519Cert(cert, identity), "and it verifies under the key that signed it");
@@ -117,18 +111,18 @@ export string test_a_certificate_we_build_is_byte_for_byte_reproducible(
   t.eqI32((cert[2] * 16777216) + (cert[3] * 65536) + (cert[4] * 256) + cert[5], 496804,
           "expiration is big-endian hours since the epoch");
   t.eqI32(cert[6], KEY_TYPE_ED25519, "key type");
-  t.isTrue(same(certCertifiedKey(cert), certified), "the certified key");
+  t.isTrue(equal(certCertifiedKey(cert), certified), "the certified key");
   t.eqI32(cert[39], 1, "one extension");
   t.eqI32(cert[42], EXT_SIGNED_WITH_KEY, "which is signed-with-ed25519-key");
-  t.isTrue(same(certSignedWithKey(cert), identity), "carrying the signing key");
+  t.isTrue(equal(certSignedWithKey(cert), identity), "carrying the signing key");
 
   // Every input must change the bytes. A field silently ignored gives a certificate that verifies
   // and means something else.
-  t.isFalse(same(cert, ed25519Cert(CERT_TYPE_LINK, 496804, KEY_TYPE_ED25519, certified,
+  t.isFalse(equal(cert, ed25519Cert(CERT_TYPE_LINK, 496804, KEY_TYPE_ED25519, certified,
                                    identity, seed)), "the cert type is covered");
-  t.isFalse(same(cert, ed25519Cert(CERT_TYPE_SIGNING, 496805, KEY_TYPE_ED25519, certified,
+  t.isFalse(equal(cert, ed25519Cert(CERT_TYPE_SIGNING, 496805, KEY_TYPE_ED25519, certified,
                                    identity, seed)), "the expiration is covered");
-  t.isFalse(same(cert, ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_SHA256_X509, certified,
+  t.isFalse(equal(cert, ed25519Cert(CERT_TYPE_SIGNING, 496804, KEY_TYPE_SHA256_X509, certified,
                                    identity, seed)), "the key type is covered");
 
   // Wrong widths are refused rather than padded.
@@ -154,19 +148,19 @@ export string test_a_link_certificate_names_the_tls_certificate(fn[u8[](i32, u8[
 
   u8[] digest = linkCertDigest(tlsCert);
   t.eqI32(digest.len(), 32, "the digest is SHA-256");
-  t.isTrue(same(digest, sha256(tlsCert)), "and it is of the DER certificate itself");
+  t.isTrue(equal(digest, sha256(tlsCert)), "and it is of the DER certificate itself");
 
   u8[] cert = ed25519Cert(CERT_TYPE_LINK, 500000, KEY_TYPE_SHA256_X509, digest, signing, seed);
   t.eqI32(certType(cert), CERT_TYPE_LINK, "a type-5 certificate");
   t.eqI32(cert[6], KEY_TYPE_SHA256_X509, "whose certified key is a digest, not a key");
-  t.isTrue(same(certCertifiedKey(cert), digest), "and it is the TLS certificate's digest");
+  t.isTrue(equal(certCertifiedKey(cert), digest), "and it is the TLS certificate's digest");
   t.isTrue(verifyEd25519Cert(cert, signing), "signed by the signing key");
 
   // A different TLS certificate must give a different link certificate, or the binding is nominal.
   u8[] otherTls = u8[400]();
   for (i32 i = 0; i < 400; i++) { otherTls[i] = tlsCert[i]; }
   otherTls[399] = (otherTls[399] ^ 1);
-  t.isFalse(same(linkCertDigest(otherTls), digest), "one changed byte changes the digest");
+  t.isFalse(equal(linkCertDigest(otherTls), digest), "one changed byte changes the digest");
   return t.report();
 }
 
@@ -184,7 +178,7 @@ export string test_the_rsa_crosscert_has_its_own_shape(fn[u8[](i32, u8[], u8[])]
 
   u8[] cert = rsaCrossCert(ed, 496804, n, d);
   t.eqI32(cert.len(), 32 + 4 + 1 + n.len(), "key, expiration, one length byte, and the signature");
-  t.isTrue(same(slice(cert, 0, 32), ed), "the ed25519 identity comes first");
+  t.isTrue(equal(slice(cert, 0, 32), ed), "the ed25519 identity comes first");
   t.eqI32((cert[32] * 16777216) + (cert[33] * 65536) + (cert[34] * 256) + cert[35], 496804,
           "then the expiration, big-endian hours");
   t.eqI32(cert[36], n.len(), "then SIGLEN, which is one byte and so bounds the modulus");
@@ -199,8 +193,8 @@ export string test_the_rsa_crosscert_has_its_own_shape(fn[u8[](i32, u8[], u8[])]
   u8[] other = u8[32]();
   for (i32 i = 0; i < 32; i++) { other[i] = ed[i]; }
   other[0] = (other[0] ^ 1);
-  t.isFalse(same(rsaCrossCert(other, 496804, n, d), cert), "the ed25519 key is signed over");
-  t.isFalse(same(rsaCrossCert(ed, 496805, n, d), cert), "and so is the expiration");
+  t.isFalse(equal(rsaCrossCert(other, 496804, n, d), cert), "the ed25519 key is signed over");
+  t.isFalse(equal(rsaCrossCert(ed, 496805, n, d), cert), "and so is the expiration");
   t.eqI32(rsaCrossCert(u8[31](), 496804, n, d).len(), 0, "a short ed25519 key is refused");
   return t.report();
 }
@@ -221,8 +215,8 @@ export string test_a_certs_cell_carries_one_of_each(fn[u8[](i32, u8[], u8[])] re
   u8[] cell = certsCell(i32[](CERT_TYPE_SIGNING, CERT_TYPE_LINK), certs);
   t.eqI32(cell.len(), 1 + 3 + 10 + 3 + 300, "the cell is a count and two length-prefixed entries");
   t.eqI32(cell[0], 2, "two certificates");
-  t.isTrue(same(certOfType(cell, CERT_TYPE_SIGNING), a), "the signing certificate reads back");
-  t.isTrue(same(certOfType(cell, CERT_TYPE_LINK), b), "and so does the link certificate");
+  t.isTrue(equal(certOfType(cell, CERT_TYPE_SIGNING), a), "the signing certificate reads back");
+  t.isTrue(equal(certOfType(cell, CERT_TYPE_LINK), b), "and so does the link certificate");
   t.eqI32(certOfType(cell, CERT_TYPE_RSA_CROSSCERT).len(), 0, "an absent type is empty");
 
   // A 300-byte certificate exercises the two-byte length; a one-byte length would truncate it.
@@ -315,7 +309,7 @@ export string test_the_onion_key_crosscert_binds_both_identities(fn[u8[](i32, u8
   u8[] swapped = u8[52]();
   for (i32 i = 0; i < 32; i++) { swapped[i] = edIdentity[i]; }
   for (i32 i = 0; i < 20; i++) { swapped[32 + i] = fingerprint[i]; }
-  t.isFalse(same(ref(V_RECOVER_ONION, sig, none()), swapped),
+  t.isFalse(equal(ref(V_RECOVER_ONION, sig, none()), swapped),
             "the identity does not come first");
 
   // A digest of the wrong length is refused rather than padded or truncated into place.

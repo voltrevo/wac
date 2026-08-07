@@ -46,9 +46,48 @@ async function gnuOptions(tool: string): Promise<string[]> {
   if (r === null || !r.success) return [];
   const help = new TextDecoder().decode(r.stdout);
   const letters = new Set<string>();
-  for (const m of help.matchAll(/^\s+-([a-zA-Z])[,\s]/gm)) letters.add(m[1]);
+  // Both spellings on a line: GNU documents `-r, -R, --recursive` and `-c, -C, --complement`, and an
+  // anchor at the start of the line sees only the first — so this swept neither `rm -R` nor `tr -C`
+  // while claiming to sweep every option GNU has. Found from the other end, in wac-mono 0105, where the
+  // same omission put three real flags in the table that decides who gets blamed.
+  for (const m of help.matchAll(/(?:^\s+|,\s*)-([a-zA-Z])(?=[,\s=[]|$)/gm)) letters.add(m[1]);
   return [...letters];
 }
+
+Deno.test("a long option is one word, not a bundle of short ones", async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const built = await Deno.makeTempFile({ prefix: "wacsh-long-" });
+  try {
+    await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
+    const err = (script: string) => {
+      const r = new Deno.Command(built, {
+        args: ["-c", script],
+        stdout: "null",
+        stderr: "piped",
+        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+        clearEnv: true,
+      }).outputSync();
+      return new TextDecoder().decode(r.stderr).trim();
+    };
+
+    // Read as a bundle, the first letter these could not implement was the *second dash*, so the
+    // refusal named a character the caller never typed: `wc: invalid option -- '-'`.
+    assertEquals(err("wc --lines"), "wc: long options are not implemented: --lines");
+    // Each of the scanners this shell still has: `options`, `head`'s counter, and `ls` in `exec.wac`.
+    // `tr`'s loop went with `tr`.
+    assertEquals(err("head --lines=2"), "head: long options are not implemented: --lines=2");
+    // Was `tr --delete`; `tr` has gone to `packages/box` (wac-mono 0103) and `sort` reaches the same
+    // scanner — `options`, the one `wc`, `sort`, `uniq` and `rev` all share.
+    assertEquals(err("echo x | sort --reverse"), "sort: long options are not implemented: --reverse");
+    assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
+    // `seq` said GNU's "unrecognized option", which tells a caller they invented `--separator`.
+    assertEquals(err("seq --separator=, 3"), "seq: long options are not implemented: --separator=,");
+    // `echo` is not a getopt program: GNU's prints `--nonsense` and says nothing.
+    assertEquals(err("echo --nonsense"), "");
+  } finally {
+    await Deno.remove(built);
+  }
+});
 
 Deno.test({
   name: "no option that GNU has is called invalid — a gap says it is a gap",
@@ -64,7 +103,9 @@ Deno.test({
       // option was read as a filename: `ls -l` said "cannot access '-l': No such file or
       // directory", blaming the caller for a real flag. It answers to the same table now, so it
       // belongs in the same sweep.
-      const tools = ["wc", "head", "tail", "sort", "uniq", "nl", "rev", "grep", "tr", "ls"];
+      // No `nl` or `rev`: this shell has given them up to `packages/box`, whose `test/flags.test.ts`
+      // asks the same question of the applets. The list shrinks as the rest follow (wac-mono 0103).
+      const tools = ["wc", "head", "sort", "grep", "ls"];
       const cases: { tool: string; letter: string; script: string }[] = [];
       for (const tool of tools) {
         for (const letter of await gnuOptions(tool)) {

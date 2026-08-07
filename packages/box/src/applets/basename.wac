@@ -2,13 +2,34 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { baseName } from "../lib/path.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { extraOperand, missingOperand } from "../lib/operands.wac";
 
 export i32 basename(Core core, Cli cli, Args a) {
-  if (a.rest.len() < 1) { core.warn("usage: " + a.name + " <path>"); return 2; }
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+  // `basename NAME [SUFFIX]` — a third operand was being *ignored*, which answered a mistyped command
+  // with a plausible answer.
+  if (extraOperand(core, a, 2)) { return 1; }
   // The rules live in `lib/path.wac`, with `dirname`'s, because trailing slashes are the whole of
   // both and they have to agree. This used to scan for the last `/` here, so `a/b/` answered with
   // what follows the final slash: nothing.
-  core.log(string.fromBytes(baseName(a.rest[0].toBytes())));
+  u8[] base = baseName(a.rest[0].toBytes());
+  // **The second operand is a suffix to strip**, and it was being ignored — `basename x/c.txt .txt`
+  // answered `c.txt`, which is a plausible answer to a different question. Not stripped when it is the
+  // whole name: GNU leaves `basename .txt .txt` as `.txt` rather than answering nothing.
+  if (a.rest.len() == 2) { base = withoutSuffix(base, a.rest[1].toBytes()); }
+  core.log(string.fromBytes(base));
   return 0;
+}
+
+/** `name` without `suffix`, unless that would leave nothing. */
+u8[] withoutSuffix(u8[] name, u8[] suffix) {
+  if (suffix.len() == 0 || suffix.len() >= name.len()) { return name; }
+  for (i32 i = 0; i < suffix.len(); i++) {
+    if (name[name.len() - suffix.len() + i] != suffix[i]) { return name; }
+  }
+  return slice(name, 0, name.len() - suffix.len());
 }

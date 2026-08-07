@@ -34,6 +34,7 @@ import { decode } from "../../codec/src/base64.wac";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { bcryptPbkdf } from "../../crypto/src/bcryptpbkdf.wac";
 import { Reader } from "./wire.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 /** What went wrong, so a caller can say something useful rather than "bad key". */
 export enum KeyError {
@@ -113,8 +114,8 @@ export PrivateKey readEd25519(u8[] pem, u8[] passphrase) {
   const u8[] BCRYPT = u8[](0x62, 0x63, 0x72, 0x79, 0x70, 0x74);          // "bcrypt"
 
   u8[] plain = section;
-  if (!same(cipherName, NONE)) {
-    if (!same(cipherName, AES256CTR) || !same(kdfName, BCRYPT)) {
+  if (!equal(cipherName, NONE)) {
+    if (!equal(cipherName, AES256CTR) || !equal(kdfName, BCRYPT)) {
       return fail(KeyError.Unsupported);
     }
     Reader kr = Reader.over(kdfOptions);
@@ -145,7 +146,7 @@ export PrivateKey readEd25519(u8[] pem, u8[] passphrase) {
   u8[] pub = p.str();
   u8[] priv = p.str();
   if (!p.ok) { return fail(KeyError.Malformed); }
-  if (!same(keyType, ED25519)) { return fail(KeyError.NotEd25519); }
+  if (!equal(keyType, ED25519)) { return fail(KeyError.NotEd25519); }
   // The private string is the seed followed by the public key; only the first half is the secret.
   if (pub.len() != 32 || priv.len() != 64) { return fail(KeyError.Malformed); }
 
@@ -165,7 +166,7 @@ export PrivateKey readEd25519(u8[] pem, u8[] passphrase) {
   Reader pubReader = Reader.over(publicBlob);
   u8[] blobType = pubReader.str();
   u8[] blobPoint = pubReader.str();
-  if (!pubReader.ok || !same(blobType, ED25519) || blobPoint.len() != 32) {
+  if (!pubReader.ok || !equal(blobType, ED25519) || blobPoint.len() != 32) {
     return fail(KeyError.Malformed);
   }
   for (i32 i = 0; i < 32; i++) {
@@ -181,10 +182,3 @@ PrivateKey fail(KeyError e) {
   return PrivateKey(e, u8[0](), u8[0]());
 }
 
-bool same(u8[] a, const u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

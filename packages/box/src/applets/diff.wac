@@ -12,6 +12,7 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";
 import { cmpBytes, splitLines } from "../lib/lines.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -20,7 +21,15 @@ import { itoa } from "../../../fmt/src/itoa.wac";
 i32 MAX_LINES() { return 4000; }
 
 export i32 diff(Core core, Cli cli, Args a) {
-  if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <old> <new>"); return 2; }
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() < 2) {
+    // `diff` is not coreutils and words this its own way, down to putting its name on the second line
+    // too. The operand it names is the last one it saw — its own name when there were none at all.
+    string last = a.rest.len() == 0 ? a.name : a.rest[0];
+    core.warn(a.name + ": missing operand after '" + last + "'");
+    core.warn(a.name + ": Try '" + a.name + " --help' for more information.");
+    return 2;
+  }
   Input x = readInput(core, cli, a, 0);
   if (!x.ok) { return 2; }
   Input y = readInput(core, cli, a, 1);

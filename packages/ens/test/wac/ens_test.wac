@@ -9,6 +9,7 @@ import { namehash, dnsEncode, rootNode, hashInto, selector, resolverCall, addrCa
          contenthashCall, addressFromWord, isZeroAddress } from "../../src/ens.wac";
 import { ownerSlot, resolverSlot, ttlSlot } from "../../src/registry.wac";
 import { keccak256 } from "../../../crypto/src/keccak.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 export string test_namehash_and_dns_encoding_match_ethers(fn[string(i32)] cases, fn[i32()] count,
                                                           fn[string(i32)] sigs, fn[i32()] sigCount) {
@@ -122,11 +123,6 @@ string[] split(string s) {
   return out;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = b[from + i]; }
-  return out;
-}
 
 string hex(u8[] b) {
   u8[] out = u8[b.len() * 2]();

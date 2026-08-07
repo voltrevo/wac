@@ -23,32 +23,17 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
 const i32 SHA3_256 = 0;
 const i32 SHA3_512 = 1;
 const i32 SHAKE128 = 2;
 const i32 SHAKE256 = 3;
-
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  trap;
-}
 u8[] fill(i32 n, i32 seed) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
   return out;
-}
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
 }
 
 export string test_the_permutation_of_an_all_zero_state() {
@@ -68,7 +53,7 @@ export string test_the_permutation_of_an_all_zero_state() {
   for (i32 i = 0; i < 16; i++) {
     first[i] = ((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
   }
-  t.eqBytes(first, unhex("e7dde140798f25f18a47c033f9ccd584"), "keccakF over a zero state");
+  t.eqBytes(first, decoded("e7dde140798f25f18a47c033f9ccd584"), "keccakF over a zero state");
   return t.report();
 }
 
@@ -150,7 +135,7 @@ export string test_the_domain_separation_actually_separates() {
   i32[] lens = i32[](0, 1, 135, 136, 200);
   for (i32 i = 0; i < lens.len(); i++) {
     u8[] m = fill(lens[i], 9);
-    t.isFalse(same(sha3_256(m), shake256(m, 32)),
+    t.isFalse(equal(sha3_256(m), shake256(m, 32)),
               "sha3-256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
   }
   return t.report();
@@ -167,12 +152,12 @@ export string test_keccak256_matches_the_published_vectors() {
 
   // KECCAK_EMPTY — the code hash of an account with no code.
   t.eqBytes(keccak256(u8[0]()),
-            unhex("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+            decoded("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
             "keccak256 of the empty string");
 
   // The root of an empty Merkle-Patricia trie, which is keccak256 of RLP's empty string: one byte, 0x80.
   t.eqBytes(keccak256(u8[](0x80)),
-            unhex("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+            decoded("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
             "keccak256 of the single byte 0x80 — the empty trie root");
 
   // ERC-20's `transfer` selector: the first four bytes of the keccak256 of the signature, over 25 bytes
@@ -180,7 +165,7 @@ export string test_keccak256_matches_the_published_vectors() {
   u8[] sig = keccak256("transfer(address,uint256)".toBytes());
   u8[] selector = u8[4]();
   for (i32 i = 0; i < 4; i++) { selector[i] = sig[i]; }
-  t.eqBytes(selector, unhex("a9059cbb"), "the ERC-20 transfer selector");
+  t.eqBytes(selector, decoded("a9059cbb"), "the ERC-20 transfer selector");
 
   return t.report();
 }
@@ -196,10 +181,10 @@ export string test_keccak256_is_not_sha3_256() {
     u8[] m = fill(lens[i], 5);
     u8[] k = keccak256(m);
     t.eqI32(k.len(), 32, "keccak256 is 32 bytes at " + itoa64(lens[i] as i64));
-    t.isFalse(same(k, sha3_256(m)),
+    t.isFalse(equal(k, sha3_256(m)),
               "keccak256 and sha3-256 differ at " + itoa64(lens[i] as i64) + " bytes");
     // And not a truncated SHAKE either, which shares the rate and differs only in the same byte.
-    t.isFalse(same(k, shake256(m, 32)),
+    t.isFalse(equal(k, shake256(m, 32)),
               "keccak256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
   }
   return t.report();

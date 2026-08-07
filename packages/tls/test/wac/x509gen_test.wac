@@ -18,19 +18,13 @@ import {
 } from "../../src/derwrite.wac";
 import { parseCert, certSignedBy, Cert, keyEd25519, keyRsa, sigEd25519Alg, sigRsaSha256 }
   from "../../src/x509.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_RSA_KEY = 0;        // n(len2) n e(len2) e d(len2) d
 const i32 V_CHECK_CERT = 1;     // a = DER; [1] if openssl parses and the self-signature verifies
 const i32 V_CERT_SUBJECT = 2;   // a = DER; openssl's idea of the subject CN
 const i32 V_CERT_KEYTYPE = 3;   // a = DER; openssl's idea of the key algorithm
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
 u8[] none() { return u8[0](); }
 
 // 2026-08-05 and a year later, well inside UTCTime's range.
@@ -50,9 +44,9 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
 
   t.eqI32(ref(V_CHECK_CERT, der, none())[0], 1,
           "openssl parses it and the self-signature verifies");
-  t.isTrue(same(ref(V_CERT_SUBJECT, der, none()), "wac relay".toBytes()),
+  t.isTrue(equal(ref(V_CERT_SUBJECT, der, none()), "wac relay".toBytes()),
            "openssl reads the subject we asked for");
-  t.isTrue(same(ref(V_CERT_KEYTYPE, der, none()), "ED25519".toBytes()),
+  t.isTrue(equal(ref(V_CERT_KEYTYPE, der, none()), "ED25519".toBytes()),
            "and sees an ed25519 key");
 
   // And our own parser, which is what a peer's TLS stack would do with it.
@@ -60,7 +54,7 @@ export string test_openssl_reads_and_verifies_an_ed25519_certificate(
   t.isTrue(c.wellFormed, "our parser reads it");
   t.eqI32(c.keyType, keyEd25519(), "as an ed25519 key");
   t.eqI32(c.sigAlg, sigEd25519Alg(), "signed with ed25519");
-  t.isTrue(same(c.publicKey, ed25519PublicKey(seed)),
+  t.isTrue(equal(c.publicKey, ed25519PublicKey(seed)),
            "carrying the key derived from the seed, not one passed in beside it");
   t.eqI64(c.notBefore, NOT_BEFORE, "notBefore round-trips through UTCTime");
   t.eqI64(c.notAfter, NOT_AFTER, "and so does notAfter");
@@ -90,9 +84,9 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(fn[u8[](i32, u8
   t.isTrue(der.len() > 300, "a certificate was produced");
   t.eqI32(ref(V_CHECK_CERT, der, none())[0], 1,
           "openssl parses it and the RSA self-signature verifies");
-  t.isTrue(same(ref(V_CERT_SUBJECT, der, none()), "wac relay identity".toBytes()),
+  t.isTrue(equal(ref(V_CERT_SUBJECT, der, none()), "wac relay identity".toBytes()),
            "with the subject we asked for");
-  t.isTrue(same(ref(V_CERT_KEYTYPE, der, none()), "rsaEncryption".toBytes()),
+  t.isTrue(equal(ref(V_CERT_KEYTYPE, der, none()), "rsaEncryption".toBytes()),
            "and an RSA key");
 
   // **The NULL parameters, asserted against the RFC rather than against a verifier.** RFC 4055 §2.1
@@ -125,8 +119,8 @@ export string test_openssl_reads_and_verifies_an_rsa_certificate(fn[u8[](i32, u8
   t.isTrue(c.wellFormed, "our parser reads it");
   t.eqI32(c.keyType, keyRsa(), "as an RSA key");
   t.eqI32(c.sigAlg, sigRsaSha256(), "signed sha256WithRSAEncryption");
-  t.isTrue(same(c.publicKey, n), "carrying the modulus, with the DER sign byte stripped");
-  t.isTrue(same(c.rsaExponent, e), "and the exponent");
+  t.isTrue(equal(c.publicKey, n), "carrying the modulus, with the DER sign byte stripped");
+  t.isTrue(equal(c.rsaExponent, e), "and the exponent");
   t.isTrue(certSignedBy(c, c), "and our verifier accepts the self-signature");
   return t.report();
 }
@@ -203,13 +197,13 @@ export string test_time_crosses_the_utc_boundary_correctly(fn[u8[](i32, u8[], u8
   u8[] utc = derUtcTime(1785888000);
   t.eqI32(utc[0], 0x17, "tag UTCTime");
   t.eqI32(utc[1], 13, "thirteen characters");
-  t.isTrue(same(slice(utc, 2, 15), "260805000000Z".toBytes()), "YYMMDDHHMMSSZ");
+  t.isTrue(equal(slice(utc, 2, 15), "260805000000Z".toBytes()), "YYMMDDHHMMSSZ");
 
   // The epoch, and a leap day, since the month arithmetic is where a date routine goes wrong.
-  t.isTrue(same(slice(derUtcTime(0), 2, 15), "700101000000Z".toBytes()), "the epoch is 1970-01-01");
-  t.isTrue(same(slice(derUtcTime(951782400), 2, 15), "000229000000Z".toBytes()),
+  t.isTrue(equal(slice(derUtcTime(0), 2, 15), "700101000000Z".toBytes()), "the epoch is 1970-01-01");
+  t.isTrue(equal(slice(derUtcTime(951782400), 2, 15), "000229000000Z".toBytes()),
            "2000-02-29 exists — 2000 is a leap year despite being a century");
-  t.isTrue(same(slice(derUtcTime(1709164800), 2, 15), "240229000000Z".toBytes()),
+  t.isTrue(equal(slice(derUtcTime(1709164800), 2, 15), "240229000000Z".toBytes()),
            "and so does 2024-02-29");
 
   // The boundary itself.
@@ -221,13 +215,8 @@ export string test_time_crosses_the_utc_boundary_correctly(fn[u8[](i32, u8[], u8
   t.eqI32(derTime(2556144000)[0], 0x18, "and so is 2051");
   u8[] gen = derGeneralizedTime(2556144000);
   t.eqI32(gen[1], 15, "fifteen characters, with a four-digit year");
-  t.isTrue(same(slice(gen, 2, 17), "20510101000000Z".toBytes()), "YYYYMMDDHHMMSSZ");
+  t.isTrue(equal(slice(gen, 2, 17), "20510101000000Z".toBytes()), "YYYYMMDDHHMMSSZ");
   t.eqI32(derUtcTime(2556144000).len(), 0, "and UTCTime refuses 2051 rather than writing 51");
   return t.report();
 }
 
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}

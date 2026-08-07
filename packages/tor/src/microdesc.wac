@@ -46,6 +46,7 @@
 import { Buf } from "../../bytes/src/buf.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { b64Unpadded, lineValue, pastLineStarting } from "./routerdesc.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** The summary a non-exit relay gets, and the one whose `p` line tor omits. */
 export const string POLICY_REJECT_ALL = "reject 1-65535";
@@ -141,11 +142,6 @@ bool startsAt(u8[] text, i32 at, u8[] needle) {
   return true;
 }
 
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
-  return out;
-}
 
 /**
  * The PEM block following the descriptor's `onion-key` keyword, newline included.

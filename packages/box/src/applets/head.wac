@@ -11,10 +11,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, badNumberMessage, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 
 export i32 head(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // A count that is not a count is a mistake in the command, not a reason to use the default: this
   // used to print ten lines for `head -n x` and exit 0.
   if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }

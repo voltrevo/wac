@@ -31,8 +31,9 @@
 // full-length and works today.
 
 import { Response, write } from "../../http/src/response.wac";
-import { encodeUpper } from "../../codec/src/hex.wac";
+import { decode, digitValue, encodeUpper } from "../../codec/src/hex.wac";
 import { b64Unpadded } from "./routerdesc.wac";
+import { clamped, slice } from "../../bytes/src/slice.wac";
 
 /** The documents an authority can hand out. Empty means "not produced", which answers 404. */
 export struct DirDocuments {
@@ -318,27 +319,15 @@ export u8[] dirSourceFingerprint(u8[] consensus) {
     while (end < consensus.len() && consensus[end] != 32 && consensus[end] != 10) {
       end = end + 1;
     }
-    return unhex(consensus, at, end);
+    // **`clamped`, not `slice`.** These offsets come from scanning a document handed to this relay by
+    // somebody else, and a `dir-source` line truncated at the end of the buffer leaves `at` one past
+    // it — which the private copy answered with empty and a trapping slice would answer by taking the
+    // relay down. The decode is `packages/codec`'s and refuses anything that is not hex.
+    u8[]? raw = decode(clamped(consensus, at, end));
+    return raw is null ? u8[0]() : raw!;
   }
   return u8[0]();
 }
 
-u8[] unhex(u8[] s, i32 from, i32 to) {
-  if ((to - from) % 2 != 0) { return u8[0](); }
-  u8[] out = u8[(to - from) / 2]();
-  for (i32 i = 0; i < out.len(); i++) {
-    i32 hi = hexValue(s[from + i * 2]);
-    i32 lo = hexValue(s[from + i * 2 + 1]);
-    if (hi < 0 || lo < 0) { return u8[0](); }
-    out[i] = hi * 16 + lo;
-  }
-  return out;
-}
 
-i32 hexValue(i32 c) {
-  if (c >= 48 && c <= 57) { return c - 48; }
-  if (c >= 65 && c <= 70) { return c - 55; }
-  if (c >= 97 && c <= 102) { return c - 87; }
-  return -1;
-}
 

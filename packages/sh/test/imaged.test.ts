@@ -70,11 +70,13 @@ Deno.test("a redirection lands in the image and not on the host, pipeline or not
   const host = `${dir}/leaked`;
   try {
     await imaged(image, "mkdir /d");
-    const run = await imaged(image, `echo hello | tr a-z A-Z > /d/up; echo plain > /d/flat`);
+    // `cat` rather than `tr`, which has gone to `packages/box` (wac-mono 0103). What is under test is a
+    // redirection at the end of a pipeline, and any second stage shows it.
+    const run = await imaged(image, `echo hello | cat > /d/up; echo plain > /d/flat`);
     if (run.code !== 0) throw new Error(`${run.code} ${run.err}`);
 
     const back = await imaged(image, "cat /d/up; cat /d/flat");
-    if (back.out !== "HELLO\nplain\n") throw new Error(JSON.stringify(back.out));
+    if (back.out !== "hello\nplain\n") throw new Error(JSON.stringify(back.out));
 
     // Nothing of the sort appeared beside the image on the real disk.
     for await (const entry of Deno.readDir(dir)) {

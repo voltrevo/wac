@@ -25,7 +25,7 @@ export i32 OP_SPLIT() { return 5; }      // try a, and on failure b
 export i32 OP_SAVE() { return 6; }       // a: capture slot
 export i32 OP_BOL() { return 7; }
 export i32 OP_EOL() { return 8; }
-export i32 OP_WORDB() { return 9; }      // a: 1 for \b, 0 for \B
+export i32 OP_WORDB() { return 9; }      // a: 1 \b, 0 \B, 2 \< (word start), 3 \> (word end)
 export i32 OP_MARK() { return 10; }      // a: loop slot — remember where this iteration began
 export i32 OP_PROGRESS() { return 11; }  // a: loop slot — fail if the iteration consumed nothing
 // a..b: capture slots to reset. Every iteration of a quantifier clears the groups inside its
@@ -180,8 +180,13 @@ export i32 runAt(Program p, u8[] input, i32 at, i32[] caps, i32 budget) {
     } else if (op == OP_WORDB()) {
       bool before = sp > 0 && isWordByte(input[sp - 1]);
       bool after = sp < input.len() && isWordByte(input[sp]);
-      bool boundary = before != after;
-      if (boundary == (a == 1)) { pc++; } else { ok = false; }
+      // `\b` and `\B` ask whether this is a boundary; GNU's `\<` and `\>` ask *which* boundary, and
+      // that is one more bit rather than another opcode. A `grep '\<a'` had no way to say it and
+      // matched nothing at all, silently, because an unknown escape is a literal.
+      bool want = a == 1 ? before != after
+        : (a == 0 ? before == after
+        : (a == 2 ? !before && after : before && !after));
+      if (want) { pc++; } else { ok = false; }
     } else if (op == OP_MARK()) {
       if (undoLen >= undoSlot.len()) {
         if (undoSlot.len() >= budget) { return BUDGET(); }

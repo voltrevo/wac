@@ -903,10 +903,34 @@ Deno.test("the applets that read several files read all of them", async () => {
         // …and `-E` is extended.
         ["grep", "-Ec", "a|b", dashFile], ["grep", "-Ec", "a+", dashFile],
         ["grep", "-Ec", "(a)", dashFile], ["grep", "-Ec", "a{2}", dashFile],
+        // **`tr` took its sets literally and had no flags** — wac-mono 0098, found by typing into the
+        // browser terminal. `tr '\n' ' '` looked for a backslash and an `n` and copied its input
+        // through, which looks like working software until you check the bytes.
+        ["tr", "-d", "12"], ["tr", "-d", "\\n"], ["tr", "-s", " "], ["tr", "-s", "ab", "x"],
+        ["tr", "-ds", "a", "b"], ["tr", "-c", "a-z", "."], ["tr", "-c", "a-z", "xy"],
+        ["tr", "-cd", "a-z"], ["tr", "-cs", "a-z", "xy"], ["tr", "-t", "abc", "xy"],
+        ["tr", "-ts", "abc", "x"], ["tr", "a\\142c", "xyz"], ["tr", "\\t", "_"], ["tr", "\\101", "x"],
+        ["tr", "[:digit:]", "x"], ["tr", "[:upper:]", "[:lower:]"], ["tr", "[:alnum:]", "x"],
+        ["tr", "[:blank:]", "_"], ["tr", "[:punct:]", "_"], ["tr", "[:xdigit:]", "_"],
+        ["tr", "-s", "[:space:]", " "], ["tr", "[a*3]", "x"], ["tr", "abc", "[x*]"],
+        ["tr", "abc", "[x*0]y"], ["tr", "[a*2]c", "xyz"], ["tr", "a[x*", "y"], ["tr", "[=a=]", "x"],
+        // **Flags accepted and ignored**, found by asking every applet whether each flag the real tool
+        // documents actually does anything (wac-mono 0105). `base64 -d` re-encoded, `uniq -d` and `-u`
+        // filtered nothing, and `echo -n` printed the newline it exists to suppress.
+        ["uniq", "-d"], ["uniq", "-u"], ["uniq", "-c"], ["uniq", "-du"],
+        ["echo", "-n", "hi"], ["echo", "hi"], ["echo", "-n"], ["echo", "-n", "-n", "x"],
+        ["echo", "x", "-n"], ["echo", "-ne", "x"],
+        ["echo", "-e", "a\tb"], ["echo", "-e", "a\\b"], ["echo", "-e", "a\\x41b"],
+        ["echo", "-e", "ab\\cd"], ["echo", "-E", "a\\tb"],
+        // …and its refusals, which are their own set of sentences.
+        ["tr"], ["tr", "-d"], ["tr", "-d", "a", "b"], ["tr", "-q", "a", "b"], ["tr", "a", "b", "c"],
+        ["tr", "z-a", "x"], ["tr", "[:foo:]", "x"], ["tr", "[=ab=]", "x"], ["tr", "[a*]", "x"],
+        ["tr", "a[b*c]d", "x"], ["tr", "", ""],
       ]
     ) {
       // `-` and the flag-only forms read standard input, so every case gets the same bytes on it.
       const stdin = "a\n\n\n\nb\tc\n";
+      // `cat` with only a flag needs a file to read; everything else here reads standard input.
       const args = argv[0] === "cat" && argv.length === 2 ? [...argv, dashFile] : argv;
       const real = await sysBoth(args[0], args.slice(1), stdin);
       const got = await runner.run(args, { stdin });
@@ -919,6 +943,17 @@ Deno.test("the applets that read several files read all of them", async () => {
         const named = real.err.replaceAll(new RegExp(`/\\S*/${args[0]}\\b`, "g"), args[0]);
         assertEquals(got.err, named, `box ${args.join(" ")}: message`);
       }
+    }
+
+    // `-d` needs input that *is* base64, which the loop above feeds none of — GNU emits whatever it
+    // decoded before erroring, and comparing partial output would be testing that rather than `-d`.
+    // A round trip, with the real tool as the oracle in both directions, is what the flag is for.
+    for (const [enc, real] of [["base64", "/usr/bin/base64"], ["base32", "/usr/bin/base32"]]) {
+      const plain = "hello world\n";
+      const encoded = (await runner.run([enc], { stdin: plain })).out;
+      assertEquals(encoded, (await sysBoth(real, [], plain)).out, `${enc} encode`);
+      assertEquals((await runner.run([enc, "-d"], { stdin: encoded })).out, plain, `${enc} -d`);
+      assertEquals((await sysBoth(real, ["-d"], encoded)).out, plain, `${enc} -d oracle`);
     }
 
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
@@ -1311,6 +1346,29 @@ Deno.test("bin/: one applet alone states only the grants it needs", async () => 
     for (const b of built) await Deno.remove(b);
   }
 });
+/** Run a built applet with `input` on standard input and return its output. */
+async function pipedThrough(binary: string, args: string[], input: string): Promise<string> {
+  const child = new Deno.Command(binary, {
+    args,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  // **Start draining before writing.** A large input fills the child's output pipe while we are still
+  // pushing its input, and nothing is reading the far end — so both sides block and the test hangs. It
+  // did, for ten minutes. `output()` is started first and awaited last.
+  const done = child.output();
+  const w = child.stdin.getWriter();
+  try {
+    await w.write(new TextEncoder().encode(input));
+    await w.close();
+  } catch {
+    // The applet exited without reading, which is its business.
+  }
+  const r = await done;
+  return new TextDecoder().decode(r.stdout);
+}
+
 Deno.test("streaming applets hold a chunk, not the input", async () => {
   // The point of `openInput`/`readChunk`. Correctness first — a streaming rewrite is easy
   // to get subtly wrong at a chunk boundary, and every case here is one that a
@@ -1345,7 +1403,13 @@ Deno.test("streaming applets hold a chunk, not the input", async () => {
     // The real `wc` pads its columns; the numbers are what is under test.
     const cols = (s: string) => s.trim().split(/\s+/).slice(0, 3).join(" ");
     assertEquals(cols(box(["wc", fixture]).out), cols(sys("wc", [fixture])), "wc across chunks");
-    assertEquals(box(["tr", "a-z", "A-Z", fixture]).out, text.toUpperCase(), "tr across chunks");
+    // Through standard input, because `tr` takes no file operand — GNU's does not either, and this one
+    // stopped pretending to (wac-mono 0098). The streaming property is the same either way.
+    assertEquals(
+      await pipedThrough(built, ["tr", "a-z", "A-Z"], text),
+      text.toUpperCase(),
+      "tr across chunks",
+    );
 
     // A run that spans several chunks must come out as one string, not several.
     const spanning = await Deno.makeTempFile({ prefix: "wac-stream-span-" });
@@ -2124,10 +2188,16 @@ Deno.test("nc relays both directions at once", async () => {
   try {
     await buildApp(BOX, built, { net: true });
 
-    const port = freePort();
+    // **Bound before the number is handed out.** This asked `freePort` for a number, let it go, and
+    // then listened on it — the exact probe-close-hand-over shape `harness/port.ts` exists to describe,
+    // with an extra window because the listen happens later still. Several agents share this machine and
+    // it lost a gate run to `AddrInUse` from somebody else's server. The listener here is *ours* and is
+    // never released, so binding `port: 0` first and reading the number back has no window at all.
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const port = (listener.addr as Deno.NetAddr).port;
     const seen: string[] = [];
     const peer = (async () => {
-      const l = Deno.listen({ hostname: "127.0.0.1", port });
+      const l = listener;
       try {
         const c = await l.accept();
         await c.write(new TextEncoder().encode("peer speaks first\n"));

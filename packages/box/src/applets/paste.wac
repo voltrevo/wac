@@ -2,29 +2,40 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 import { concat } from "../lib/bytes.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+
 
 export i32 paste(Core core, Cli cli, Args a) {
-  if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <file1> <file2>"); return 2; }
-  Input x = readInput(core, cli, a, 0);
-  if (!x.ok) { return 1; }
-  Input y = readInput(core, cli, a, 1);
-  if (!y.ok) { return 1; }
-
-  u8[][] left = splitLines(x.bytes);
-  u8[][] right = splitLines(y.bytes);
-  // The longer file decides the line count; the shorter contributes empty strings, which
-  // is what the real one does rather than stopping early.
-  i32 n = left.len() > right.len() ? left.len() : right.len();
-  u8[][] out = u8[][n](fill: u8[0]());
-  u8[] tab = u8[1](fill: '\t');
-  for (i32 i = 0; i < n; i++) {
-    u8[] l = i < left.len() ? left[i] : u8[0]();
-    u8[] r = i < right.len() ? right[i] : u8[0]();
-    out[i] = concat(concat(l, tab), r);
+  if (refuseFlags(core, a)) { return 1; }
+  // **Any number of files, and none means standard input.** This took exactly two and answered anything
+  // else with a `usage:` line of its own invention — so `paste` in a pipeline, which is how the real one
+  // is most often used, was a usage error. GNU pastes as many columns as it is given operands.
+  i32 files = a.rest.len() == 0 ? 1 : a.rest.len();
+  u8[][][] columns = u8[][][files](fill: u8[][0]());
+  i32 rows = 0;
+  for (i32 f = 0; f < files; f++) {
+    Input in = readInput(core, cli, a, f);
+    if (!in.ok) { return 1; }
+    columns[f] = splitLines(in.bytes);
+    if (columns[f].len() > rows) { rows = columns[f].len(); }
   }
-  cli.write(joinLines(out, n));
+
+  // The longest file decides the line count; the shorter ones contribute empty strings, which is what
+  // the real one does rather than stopping early.
+  u8[][] out = u8[][rows](fill: u8[0]());
+  u8[] tab = u8[1](fill: '\t');
+  for (i32 i = 0; i < rows; i++) {
+    u8[] line = u8[0]();
+    for (i32 f = 0; f < files; f++) {
+      if (f > 0) { line = concat(line, tab); }
+      line = concat(line, i < columns[f].len() ? columns[f][i] : u8[0]());
+    }
+    out[i] = line;
+  }
+  cli.write(joinLines(out, rows));
   return 0;
 }

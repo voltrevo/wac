@@ -29,6 +29,8 @@ import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
 import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeline, Redir,
          RedirKind, Script, Simple, Word, parse } from "./parse.wac";
 import { Output, names, optionRefusal, run } from "./program.wac";
+import { Sink } from "../../platform/src/stream.wac";
+import { printf } from "./printf.wac";
 // Not through `program.wac`: wac has no re-export, and the one implementation lives in `fmt`.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "./path.wac";
@@ -297,6 +299,14 @@ export struct Shell {
     }
     out.params = this.params;
     out.status = this.status;
+    // **The external commands come too.** They did not, so a command substitution ran in a shell with
+    // nothing wired in: `x=$(echo abc | tr a-c x)` said "tr: command not found" in `packages/box`'s
+    // shell while the same pipeline outside `$( )` worked. Nothing noticed for as long as
+    // `packages/sh` carried its own copies of those programs, because the fallback answered — which is
+    // the drift wac-mono 0103 is about, hiding a bug rather than merely duplicating one.
+    out.external = this.external;
+    out.externalNames = this.externalNames;
+    out.externalSpawnable = this.externalSpawnable;
     out.capture = true;
     return out;
   }
@@ -773,15 +783,19 @@ bool spawnableName(Shell sh, string name) {
  * here would be spawned as a program and then not found — which is why `echo`, which is both a
  * builtin and a `box` applet, has to be listed.
  */
-bool isBuiltin(string name) {
+export bool isBuiltin(string name) {
   // Exactly the eighteen `dispatch` answers above, in the order it asks — nothing more, so that a
   // name added there and forgotten here would be *spawned* and reported not found rather than
   // silently changing meaning. `echo` is the one worth noticing: it is a builtin here and an applet
   // in `box`, and the builtin wins.
+  //
+  // `printf` joined them, from the other direction: it was one of the twelve external programs, and in
+  // bash it is a builtin — a script that writes `printf` gets the shell's. wac-mono 0103 made the
+  // difference matter, because `packages/box` has no `printf` to inherit it.
   return name == ":" || name == "true" || name == "false" || name == "echo" || name == "exit"
       || name == "export" || name == "unset" || name == "cd" || name == "pwd" || name == "ls"
       || name == "mkdir" || name == "rm" || name == "read" || name == "shift" || name == "set"
-      || name == "test" || name == "[" || name == "help";
+      || name == "test" || name == "[" || name == "help" || name == "printf";
 }
 
 /**
@@ -1450,6 +1464,7 @@ Output ls(Shell sh, Vec<string> argv) {
     // refusing every option by name. Whose gap it is decides which of the two sentences it gets.
     u8[] b = a.toBytes();
     if (b.len() >= 2 && b[0] == '-') {
+      if (b[1] == '-') { return Output.fail(optionRefusal("ls", a).toBytes(), 2); }
       u8[] one = u8[1](fill: b[1]);
       return Output.fail(optionRefusal("ls", string.fromBytes(one)).toBytes(), 2);
     }
@@ -1552,6 +1567,14 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "set") { return setBuiltin(sh, argv); }
   if (name == "test" || name == "[") { return test(sh, argv); }
   if (name == "help") { return help(sh); }
+  if (name == "printf") {
+    // Collected exactly the way `program.wac`'s `run` collects the twelve — `Sink.toBuffer` and
+    // `taken()` — because a builtin answers with bytes rather than writing as it goes.
+    Sink out = Sink.toBuffer(sh.cli);
+    Sink errs = Sink.toBuffer(sh.cli);
+    i32 code = printf(argv, out, errs);
+    return Output(out.taken(), errs.taken(), code, true);
+  }
 
   // A real program if `$WACPATH` has one, and the wac implementation if it does not. That order
   // is the whole point of the table in `program.wac`: those exist because nothing could be
@@ -1570,6 +1593,20 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   Output given = sh.external(sh.core, sh.cli, sh.cwd, argv, sh.restOfStdin());
   if (given.found) { return given; }
   return run(sh.fs, sh.cli, sh.cwd, argv, sh.restOfStdin());
+}
+
+/**
+ * Every name `isBuiltin` answers to, in one place, so `help` cannot drift from the dispatcher.
+ *
+ * A list rather than a derivation because wac has no reflection — but *this* list is the one the
+ * predicate is written from, and a name in one and not the other now shows up in `help` rather than
+ * nowhere. `test/probe.test.ts` compares the two.
+ */
+export string[] builtinNames() {
+  return string[](
+    ":", "true", "false", "echo", "exit", "export", "unset", "cd", "pwd", "ls", "mkdir", "rm",
+    "read", "shift", "set", "test", "[", "help", "printf"
+  );
 }
 
 /** The default `Shell.externalNames`: nothing is wired in, so there is nothing to list. */
@@ -1961,7 +1998,10 @@ bool gnuTestOperator(string op) {
  * a smaller list than the truth.
  */
 Output help(Shell sh) {
-  string s = "builtins: : true false echo exit export unset test [ help cd pwd ls mkdir rm\n";
+  // **The names `isBuiltin` answers to, not a list beside it.** The hand-written one had already lost
+  // `read`, `shift` and `set`, and would have lost `printf` the moment it became a builtin — which is
+  // the same shape as `packages/box`'s applet list before `appletNames` became the only copy.
+  string s = "builtins: " + wrapNames(builtinNames()) + "\n";
 
   string[] wired = sh.externalNames();
   if (wired.len() > 0) {
@@ -2737,6 +2777,16 @@ string expandPart(Shell sh, Part p) {
       // trailing newlines removed — the removal is why `x=$(pwd)` does not end in a newline.
       Shell inner = Shell.capturing(sh.core, sh.cli);
       inner.vars = sh.vars;
+      // …and the commands. A substitution that could not run the shell's own external programs said
+      // "tr: command not found" for a pipeline that works outside `$( )`, and nothing noticed while
+      // `packages/sh` still carried copies for the fallback to find (wac-mono 0103). `fork` had the
+      // same hole; both are fixed, and `capturing` deliberately does not carry them, because the two
+      // callers that use it directly — `sshd` and the tests — start from nothing on purpose.
+      inner.external = sh.external;
+      inner.externalNames = sh.externalNames;
+      inner.externalSpawnable = sh.externalSpawnable;
+      inner.fs = sh.fs;
+      inner.cwd = sh.cwd;
       // The *returned* status, not `inner.status`: `$(exit 3)` leaves the inner shell exiting
       // with a code rather than with a status, and only `runScript` reconciles the two. The exit
       // itself stops there — it ends the substitution, not the shell that asked for it.

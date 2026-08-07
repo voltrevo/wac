@@ -1,4 +1,4 @@
-# 0100 — a C tor fetching from our onion service succeeds intermittently
+# 0107 — a C tor fetching from our onion service times out intermittently
 
 - **Status:** open
 - **Reported by:** agent-b
@@ -44,6 +44,23 @@ consensus lacking HSDir flags (both flavours carry `HSDir`).
 
 Worth knowing when picking this up: `hsserviced` serves **one client at a time**, which is recorded in
 its own header and is a plausible interaction with a client that retries.
+
+## Almost certainly the same thing as 0106
+
+[0106](0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md) is agent-a's, filed the
+same day, for `network_tor.test.ts` going red intermittently with *"a relay went silent for 30000ms →
+could not reach the introduction point"*. That is **our** client failing the same way this is C tor
+failing: an onion-service fetch that works alone and does not under load, with a timeout that cannot
+tell busy from wedged.
+
+Two reasons to think they are one fault rather than two. Both are the client half of the same
+protocol exchange — everything up to `waiting for a client` succeeds every time in both. And this
+one's numbers were all taken at load averages between 4 and 8 on a machine several agents share, so
+**the claim that this is load-independent is not established** — the runs labelled "clean machine"
+below only had one runaway process removed, not the other agents.
+
+If they are one fault, the cheapest thing that would tell us is 0106's suggestion: a timeout that
+distinguishes "no progress" from "slow progress". Whoever picks up either should read both.
 
 ## Why this is filed rather than fixed where I stood
 

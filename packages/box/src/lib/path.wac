@@ -1,3 +1,4 @@
+import { slice } from "../../../bytes/src/slice.wac";
 // Splitting a path the way `basename` and `dirname` do.
 //
 // Here rather than in either applet because they have to agree: every rule below is about trailing
@@ -12,7 +13,6 @@
 //   basename /a      a        dirname /a       /
 //   basename a//b//  b        dirname a//b//   a
 
-import { slice } from "./bytes.wac";
 
 /** A path with its trailing slashes removed. `"//"` becomes empty, which callers handle. */
 export u8[] stripTrailing(u8[] b) {

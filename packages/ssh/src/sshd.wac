@@ -51,6 +51,7 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          readOpenChannel, requestWantsReply,
          requestName, serverProposal, serviceAccept, sharedSecret, verifyAuth,
          byApplication, disconnect } from "./server.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 i32 defaultPort() { return 2222; }
 i32 windowSize() { return 2 * 1024 * 1024; }
@@ -374,8 +375,8 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
     if (r.kind != msgChannelRequest()) { continue; }
 
     u8[] name = requestName(p);
-    if (sameBytes(name, "shell".toBytes())) { interactive = true; break; }
-    if (sameBytes(name, "exec".toBytes())) {
+    if (equal(name, "shell".toBytes())) { interactive = true; break; }
+    if (equal(name, "exec".toBytes())) {
       command = execCommand(p);
       // An `exec` we cannot read the command out of is a refusal, and it did want an answer.
       if (command.len() == 0 && requestWantsReply(p)) {
@@ -610,10 +611,3 @@ i32 atoi(string s) {
   return s.len() == 0 ? -1 : v;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}

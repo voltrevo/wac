@@ -17,6 +17,7 @@ import {
   MAC_LEN,
 } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_COUNT = 0;
 const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
@@ -24,18 +25,6 @@ const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) sv
                         // introEncSecret(32) serviceEphemeralSecret(32) — appended, so the
                         // offsets above are unchanged
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) {
-    if (a[i] != b[i]) { return false; }
-  }
-  return true;
-}
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}
 u8[] arg1(i32 i) {
   u8[] a = u8[1]();
   a[0] = i;
@@ -57,14 +46,14 @@ export string test_the_introduce1_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
 
     // Our own derivation of the client's public key must match the one openssl produced, or every
     // comparison below would be against a different handshake.
-    t.isTrue(same(clientPublicKey(csec), cpub),
+    t.isTrue(equal(clientPublicKey(csec), cpub),
              "case " + itoa64(i as i64) + ": the client's public key agrees with openssl's");
 
     u8[] keys = clientIntroduceKeys(auth, enc, csec, subcred);
     t.eqI32(keys.len(), S_KEY_LEN + MAC_LEN, "case " + itoa64(i as i64) + ": 64 bytes of keys");
-    t.isTrue(same(slice(keys, 0, 32), slice(c, 192, 224)),
+    t.isTrue(equal(slice(keys, 0, 32), slice(c, 192, 224)),
              "case " + itoa64(i as i64) + ": ENC_KEY agrees with tor's");
-    t.isTrue(same(slice(keys, 32, 64), slice(c, 224, 256)),
+    t.isTrue(equal(slice(keys, 32, 64), slice(c, 224, 256)),
              "case " + itoa64(i as i64) + ": MAC_KEY agrees with tor's");
   }
   return t.report();
@@ -124,13 +113,13 @@ export string test_the_service_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] 
   u8[] encSecret = slice(c, 320, 352);
   u8[] good = serviceIntroduceKeys(authKey, encSecret, clientPub, subcred);
 
-  t.isTrue(!same(good, serviceIntroduceKeys(flip(authKey), encSecret, clientPub, subcred)),
+  t.isTrue(!equal(good, serviceIntroduceKeys(flip(authKey), encSecret, clientPub, subcred)),
            "the auth key changes the keys");
-  t.isTrue(!same(good, serviceIntroduceKeys(authKey, flipScalar(encSecret), clientPub, subcred)),
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, flipScalar(encSecret), clientPub, subcred)),
            "the service secret changes the keys");
-  t.isTrue(!same(good, serviceIntroduceKeys(authKey, encSecret, flip(clientPub), subcred)),
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, encSecret, flip(clientPub), subcred)),
            "the client key changes the keys");
-  t.isTrue(!same(good, serviceIntroduceKeys(authKey, encSecret, clientPub, flip(subcred))),
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, encSecret, clientPub, flip(subcred))),
            "the subcredential changes the keys");
 
   // A small-order client key makes the shared value zero whatever the service's secret is, so anyone
@@ -155,9 +144,9 @@ export string test_the_rendezvous_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
 
     u8[] out = clientRendezvousKeys(auth, csec, enc, svc);
     t.eqI32(out.len(), 64, "case " + itoa64(i as i64) + ": 64 bytes out");
-    t.isTrue(same(slice(out, 0, 32), slice(c, 256, 288)),
+    t.isTrue(equal(slice(out, 0, 32), slice(c, 256, 288)),
              "case " + itoa64(i as i64) + ": AUTH_INPUT_MAC agrees with tor's");
-    t.isTrue(same(slice(out, 32, 64), slice(c, 288, 320)),
+    t.isTrue(equal(slice(out, 32, 64), slice(c, 288, 320)),
              "case " + itoa64(i as i64) + ": NTOR_KEY_SEED agrees with tor's");
   }
   return t.report();
@@ -214,13 +203,13 @@ export string test_the_service_rendezvous_refuses_what_it_should(fn[u8[](i32, u8
   u8[] svcSecret = slice(c, 352, 384);
   u8[] good = serviceRendezvousKeys(authKey, encSecret, svcSecret, clientPub);
 
-  t.isTrue(!same(good, serviceRendezvousKeys(flip(authKey), encSecret, svcSecret, clientPub)),
+  t.isTrue(!equal(good, serviceRendezvousKeys(flip(authKey), encSecret, svcSecret, clientPub)),
            "the auth key changes the keys");
-  t.isTrue(!same(good, serviceRendezvousKeys(authKey, flipScalar(encSecret), svcSecret, clientPub)),
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, flipScalar(encSecret), svcSecret, clientPub)),
            "the introduction secret changes the keys");
-  t.isTrue(!same(good, serviceRendezvousKeys(authKey, encSecret, flipScalar(svcSecret), clientPub)),
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, encSecret, flipScalar(svcSecret), clientPub)),
            "the ephemeral secret changes the keys");
-  t.isTrue(!same(good, serviceRendezvousKeys(authKey, encSecret, svcSecret, flip(clientPub))),
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, encSecret, svcSecret, flip(clientPub))),
            "the client key changes the keys");
 
   t.eqI32(serviceRendezvousKeys(authKey, encSecret, svcSecret, u8[32]()).len(), 0,
@@ -244,19 +233,19 @@ export string test_every_input_changes_the_keys(fn[u8[](i32, u8[], u8[])] ref) {
   u8[] subcred = slice(c, 160, 192);
 
   u8[] base = clientIntroduceKeys(auth, enc, csec, subcred);
-  t.isFalse(same(clientIntroduceKeys(flip(auth), enc, csec, subcred), base),
+  t.isFalse(equal(clientIntroduceKeys(flip(auth), enc, csec, subcred), base),
             "the introduction point's auth key is bound in");
-  t.isFalse(same(clientIntroduceKeys(auth, enc, csec, flip(subcred)), base),
+  t.isFalse(equal(clientIntroduceKeys(auth, enc, csec, flip(subcred)), base),
             "the subcredential is bound in, so the keys change with the time period");
-  t.isFalse(same(clientIntroduceKeys(auth, enc, flipScalar(csec), subcred), base),
+  t.isFalse(equal(clientIntroduceKeys(auth, enc, flipScalar(csec), subcred), base),
             "the client's ephemeral secret is bound in");
 
   u8[] rend = clientRendezvousKeys(auth, csec, enc, svc);
-  t.isFalse(same(clientRendezvousKeys(flip(auth), csec, enc, svc), rend),
+  t.isFalse(equal(clientRendezvousKeys(flip(auth), csec, enc, svc), rend),
             "the rendezvous keys depend on the auth key");
-  t.isFalse(same(clientRendezvousKeys(auth, csec, enc, flip(svc)), rend),
+  t.isFalse(equal(clientRendezvousKeys(auth, csec, enc, flip(svc)), rend),
             "and on the service's ephemeral key");
-  t.isFalse(same(clientRendezvousKeys(auth, csec, flip(enc), svc), rend),
+  t.isFalse(equal(clientRendezvousKeys(auth, csec, flip(enc), svc), rend),
             "and on the service's introduction encryption key");
   // Deliberately *not* the subcredential: unlike the introduction half it is not an input here, which
   // tor's `hs_ntor_client_get_rendezvous1_keys()` confirms by not taking one. `clientRendezvousKeys`
@@ -264,8 +253,8 @@ export string test_every_input_changes_the_keys(fn[u8[](i32, u8[], u8[])] ref) {
 
   // The two halves are different functions of overlapping inputs; if one were reachable from the
   // other by relabelling, a mistake in wiring them up would be invisible.
-  t.isFalse(same(slice(base, 0, 32), slice(rend, 0, 32)), "ENC_KEY is not AUTH_INPUT_MAC");
-  t.isFalse(same(slice(base, 32, 64), slice(rend, 32, 64)), "MAC_KEY is not NTOR_KEY_SEED");
+  t.isFalse(equal(slice(base, 0, 32), slice(rend, 0, 32)), "ENC_KEY is not AUTH_INPUT_MAC");
+  t.isFalse(equal(slice(base, 32, 64), slice(rend, 32, 64)), "MAC_KEY is not NTOR_KEY_SEED");
   return t.report();
 }
 
@@ -304,16 +293,16 @@ export string test_the_mac_binds_its_key_length(fn[u8[](i32, u8[], u8[])] ref) {
   T t = T.create();
   // `hsMac(key, message)`. Same concatenated bytes, split differently: without the length prefix
   // these two would hash identically.
-  t.isFalse(same(hsMac("ab".toBytes(), "c".toBytes()), hsMac("a".toBytes(), "bc".toBytes())),
+  t.isFalse(equal(hsMac("ab".toBytes(), "c".toBytes()), hsMac("a".toBytes(), "bc".toBytes())),
             "a key and a message cannot be resplit into the same hash");
-  t.isTrue(same(hsMac("x".toBytes(), "y".toBytes()), hsMac("x".toBytes(), "y".toBytes())),
+  t.isTrue(equal(hsMac("x".toBytes(), "y".toBytes()), hsMac("x".toBytes(), "y".toBytes())),
            "the MAC is a function");
   t.eqI32(hsMac("x".toBytes(), "y".toBytes()).len(), 32, "and is 32 bytes");
 
   // The four tweaks must all differ, since two of them are applied to the same input.
-  t.isFalse(same(tHsEnc(), tHsVerify()), "t_hsenc and t_hsverify differ");
-  t.isFalse(same(tHsEnc(), tHsMac()), "t_hsenc and t_hsmac differ");
-  t.isFalse(same(tHsVerify(), mHsExpand()), "t_hsverify and m_hsexpand differ");
+  t.isFalse(equal(tHsEnc(), tHsVerify()), "t_hsenc and t_hsverify differ");
+  t.isFalse(equal(tHsEnc(), tHsMac()), "t_hsenc and t_hsmac differ");
+  t.isFalse(equal(tHsVerify(), mHsExpand()), "t_hsverify and m_hsexpand differ");
   return t.report();
 }
 
@@ -366,4 +355,4 @@ export string test_the_rendezvous_hop_keys_are_a_full_hop(fn[u8[](i32, u8[], u8[
   return t.report();
 }
 
-bool sameBytes(u8[] a, u8[] b) { return same(a, b); }
+bool sameBytes(u8[] a, u8[] b) { return equal(a, b); }

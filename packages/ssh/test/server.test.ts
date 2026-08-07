@@ -265,7 +265,10 @@ Deno.test({
       // rather than a name the server knows. Each of these needs a different part of it.
       for (const [script, want] of [
         ["seq 1 100 | grep 7 | wc -l", "19\n"],                       // pipeline, three stages
-        ['x="a b c"; echo "$x" | tr " " "-"', "a-b-c\n"],             // quoting and expansion
+        // `head` rather than `tr`: `packages/sh` has given `tr` up to `packages/box`'s applet, and this
+        // server still gets its commands from `packages/sh` (wac-mono 0103 — the `ssh` → `box` edge is
+        // blocked on a compiler bug, wac 0076). What is under test is quoting and expansion.
+        ['x="a b c"; echo "$x" | head -1', "a b c\n"],
         ['echo "there are $(seq 1 5 | wc -l) lines"', "there are 5 lines\n"],   // substitution
         ["false || echo fallback", "fallback\n"],                     // and-or
         ["echo a; echo b", "a\nb\n"],                                 // a list

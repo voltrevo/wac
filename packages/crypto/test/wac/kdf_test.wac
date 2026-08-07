@@ -21,18 +21,8 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { hmacSha1, hmacSha256 } from "../../src/hmac.wac";
 import { hkdf, hkdfExtract } from "../../src/hkdf.wac";
-
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  trap;
-}
+import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 u8[] rep(i32 byte, i32 n) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = byte; }
@@ -56,27 +46,27 @@ u8[] fill(i32 n, i32 a, i32 b) {
 export string test_rfc_2202_hmac_sha1_vectors() {
   T t = T.create();
   t.eqBytes(hmacSha1(rep(0x0b, 20), "Hi There".toBytes()),
-            unhex("b617318655057264e28bc0b6fb378c8ef146be00"), "RFC 2202 case 1");
+            decoded("b617318655057264e28bc0b6fb378c8ef146be00"), "RFC 2202 case 1");
   t.eqBytes(hmacSha1("Jefe".toBytes(), "what do ya want for nothing?".toBytes()),
-            unhex("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"), "RFC 2202 case 2");
+            decoded("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"), "RFC 2202 case 2");
   t.eqBytes(hmacSha1(rep(0xaa, 20), rep(0xdd, 50)),
-            unhex("125d7342b9ac11cd91a39af48aa17b4f63f175d3"), "RFC 2202 case 3");
+            decoded("125d7342b9ac11cd91a39af48aa17b4f63f175d3"), "RFC 2202 case 3");
   t.eqBytes(hmacSha1(rep(0xaa, 80),
                      "Test Using Larger Than Block-Size Key - Hash Key First".toBytes()),
-            unhex("aa4ae5e15272d00e95705637ce8a3b55ed402112"), "RFC 2202 case 6");
+            decoded("aa4ae5e15272d00e95705637ce8a3b55ed402112"), "RFC 2202 case 6");
   return t.report();
 }
 
 export string test_rfc_4231_hmac_vectors() {
   T t = T.create();
   t.eqBytes(hmacSha256(rep(0x0b, 20), "Hi There".toBytes()),
-            unhex("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"),
+            decoded("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"),
             "RFC 4231 case 1");
   t.eqBytes(hmacSha256("Jefe".toBytes(), "what do ya want for nothing?".toBytes()),
-            unhex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"),
+            decoded("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"),
             "RFC 4231 case 2");
   t.eqBytes(hmacSha256(rep(0xaa, 20), rep(0xdd, 50)),
-            unhex("773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"),
+            decoded("773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"),
             "RFC 4231 case 3");
   return t.report();
 }
@@ -107,20 +97,20 @@ export string test_the_key_length_boundaries(fn[u8[](u8[], u8[])] ref) {
 export string test_rfc_5869_hkdf_vectors() {
   T t = T.create();
   // A.1, the basic case.
-  u8[] salt1 = unhex("000102030405060708090a0b0c");
+  u8[] salt1 = decoded("000102030405060708090a0b0c");
   u8[] ikm1 = rep(0x0b, 22);
   t.eqBytes(hkdfExtract(salt1, ikm1),
-            unhex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
+            decoded("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
             "A.1 extract");
-  t.eqBytes(hkdf(salt1, ikm1, unhex("f0f1f2f3f4f5f6f7f8f9"), 42),
-            unhex("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf" +
+  t.eqBytes(hkdf(salt1, ikm1, decoded("f0f1f2f3f4f5f6f7f8f9"), 42),
+            decoded("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf" +
                   "34007208d5b887185865"),
             "A.1 expand to 42 bytes");
 
   // A.3, an empty salt and empty info — the case where an implementation that treats an
   // absent salt as absent rather than as a block of zeros diverges.
   t.eqBytes(hkdf(u8[0](), rep(0x0b, 22), u8[0](), 42),
-            unhex("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d" +
+            decoded("8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d" +
                   "9d201395faa4b61a96c8"),
             "A.3, empty salt and info");
   return t.report();
@@ -170,9 +160,9 @@ export string test_every_input_changes_the_output() {
   u8[] ikm = fill(32, 5, 2);
   u8[] info = fill(8, 7, 3);
   u8[] base = hkdf(salt, ikm, info, 32);
-  t.isFalse(same(base, hkdf(fill(16, 3, 2), ikm, info, 32)), "the salt matters");
-  t.isFalse(same(base, hkdf(salt, fill(32, 5, 3), info, 32)), "the input keying material matters");
-  t.isFalse(same(base, hkdf(salt, ikm, fill(8, 7, 4), 32)), "the info matters");
+  t.isFalse(equal(base, hkdf(fill(16, 3, 2), ikm, info, 32)), "the salt matters");
+  t.isFalse(equal(base, hkdf(salt, fill(32, 5, 3), info, 32)), "the input keying material matters");
+  t.isFalse(equal(base, hkdf(salt, ikm, fill(8, 7, 4), 32)), "the info matters");
   // A longer output must extend the shorter one, since the chain is a stream.
   u8[] long = hkdf(salt, ikm, info, 96);
   bool prefix = true;
@@ -181,8 +171,3 @@ export string test_every_input_changes_the_output() {
   return t.report();
 }
 
-bool same(u8[] a, u8[] b) {
-  if (a.len() != b.len()) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

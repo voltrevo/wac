@@ -2321,7 +2321,7 @@ piped configuration gave fail, succeed, succeed.
 
 Ten runs now: four succeed in 3.4–8.0s, six time out at 60. It either works quickly or not at all,
 and no configuration predicts which. Filed as [issue
-0100](../issues/open/0100-a-c-tor-fetching-from-our-onion-service-succeeds-intermittently.md).
+0107](../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md).
 
 **Three lessons, and the third is the one that cost most.**
 

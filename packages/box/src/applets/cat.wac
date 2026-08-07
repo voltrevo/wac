@@ -14,12 +14,14 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 
 export i32 cat(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
   // accepted and does nothing there too — it means "unbuffered", and this is.
   u8[] flags = a.flags.toBytes();

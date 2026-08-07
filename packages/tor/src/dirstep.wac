@@ -29,6 +29,7 @@ import {
   DirDocuments, dirResponse, hsPublishResponseBytes, hsPublishVersion,
 } from "./dirserve.wac";
 import { PUB_NOT_NEWER, PUB_OK, Checked, checkForPublication, revisionOf } from "./hsstore.wac";
+import { equal } from "../../bytes/src/slice.wac";
 
 /** `HS_DESC_MAX_LEN`, since a descriptor is the only body a directory accepts. */
 export const i32 MAX_BODY = 50000;
@@ -67,7 +68,7 @@ export DirAction dirStep(u8[] pending, DirDocuments docs) {
       // A publish is the only request with a body, and the only one that changes anything. The
       // version comes out of the middle of the target rather than the path being matched whole,
       // because `/tor/hs/3/publish` and `/tor/hs/3/<z>` differ only after it and one is a POST.
-      if (sameBytes(request.method, "POST".toBytes()) && hsPublishVersion(request.target) == 3) {
+      if (equal(request.method, "POST".toBytes()) && hsPublishVersion(request.target) == 3) {
         Checked checked = checkForPublication(request.body, 0);
         if (checked.reason != PUB_OK) {
           return DirAction(true, hsPublishResponseBytes(false), u8[0](), u8[0](), checked.reason);
@@ -102,7 +103,7 @@ export DirAction dirStep(u8[] pending, DirDocuments docs) {
 export DirDocuments filed(DirDocuments docs, u8[] descriptor, u8[] blindedKey, i32 max) {
   if (blindedKey.len() != 32 || descriptor.len() == 0) { return docs; }
   for (i32 i = 0; i < docs.hsBlindedKeys.len(); i++) {
-    if (sameBytes(docs.hsBlindedKeys[i], blindedKey)) {
+    if (equal(docs.hsBlindedKeys[i], blindedKey)) {
       docs.hsDescriptors[i] = descriptor;
       return docs;
     }
@@ -125,13 +126,8 @@ export DirDocuments filed(DirDocuments docs, u8[] descriptor, u8[] blindedKey, i
 /** The revision counter of the descriptor already filed under `blindedKey`, or -1 if none is. */
 i64 heldRevision(DirDocuments docs, u8[] blindedKey) {
   for (i32 i = 0; i < docs.hsBlindedKeys.len(); i++) {
-    if (sameBytes(docs.hsBlindedKeys[i], blindedKey)) { return revisionOf(docs.hsDescriptors[i]); }
+    if (equal(docs.hsBlindedKeys[i], blindedKey)) { return revisionOf(docs.hsDescriptors[i]); }
   }
   return -1 as i64;
 }
 
-bool sameBytes(u8[] a, u8[] b) {
-  if (a.len() != b.len() || a.len() == 0) { return false; }
-  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
-  return true;
-}

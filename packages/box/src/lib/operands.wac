@@ -1,0 +1,73 @@
+// What a tool says when the operands are wrong, in the words the real one uses.
+//
+// Twelve applets answered a missing or extra operand with a `usage:` line of their own invention and a
+// status of 2. Every one of their counterparts says something else, in two lines, and exits **1**:
+//
+//     $ basename                 basename: missing operand
+//                                Try 'basename --help' for more information.
+//     $ box basename             usage: basename <path>
+//
+// Both refuse, so this is not the silent-gap class — but a caller who greps for GNU's sentence, or a
+// script that tests for status 1, gets a different answer from a program that is otherwise the same. And
+// the invented line is *less* informative: "usage: cut -f<n>" does not say which of the several things
+// `cut` needs is the one that was missing, where GNU's "you must specify a list of bytes, characters, or
+// fields" does.
+//
+// The sentences here are measured, one tool at a time, in the C locale. They differ more than they look:
+// coreutils says "missing operand", `cp` and `mv` and `touch` say "missing **file** operand", `cp` and
+// `mv` name the one they got when only one arrived, `cut` names the flag it wanted, and `grep` prints a
+// usage summary and exits **2** rather than 1. Deriving any of that from the majority would have been
+// wrong for half of them — the same lesson `cannotOpen` in `input.wac` records one file over.
+
+import { Core } from "../../../platform/src/platform.wac";
+import { Args } from "./args.wac";
+
+/**
+ * The second line, which every one of these ends with.
+ *
+ * Except `diff`, which prefixes it with its own name — `diff: Try 'diff --help' …` — because it is not
+ * coreutils. `usageOf` handles that one; nothing else needs to.
+ */
+export void tryHelp(Core core, string name) {
+  core.warn("Try '" + name + " --help' for more information.");
+}
+
+/**
+ * `name: missing operand`, and the status GNU exits with.
+ *
+ * `what` is the noun in between: "" for coreutils' plain form, "file" for the three that say
+ * "missing file operand". A caller passing the wrong one gets a sentence that is close and wrong, which
+ * is why they are measured per tool rather than guessed.
+ */
+export i32 missingOperand(Core core, string name, string what) {
+  core.warn(name + ": missing " + (what == "" ? "" : what + " ") + "operand");
+  tryHelp(core, name);
+  return 1;
+}
+
+/** `name: missing destination file operand after 'src'` — `cp` and `mv`, given only one. */
+export i32 missingAfter(Core core, string name, string what, string after) {
+  core.warn(name + ": missing " + what + " after '" + after + "'");
+  tryHelp(core, name);
+  return 1;
+}
+
+/**
+ * `name: extra operand 'x'` for the first operand past `most`. True when it complained.
+ *
+ * Was `tooManyOperands`, which said the same first line and stopped there. The second line is not
+ * decoration: it is how the caller finds out what the tool *does* take.
+ */
+export bool extraOperand(Core core, Args a, i32 most) {
+  if (a.rest.len() <= most) { return false; }
+  core.warn(a.name + ": extra operand '" + a.rest[most] + "'");
+  tryHelp(core, a.name);
+  return true;
+}
+
+/** `name: option requires an argument -- 'c'` — a flag that takes a value and was given none. */
+export i32 needsValue(Core core, string name, string letter) {
+  core.warn(name + ": option requires an argument -- '" + letter + "'");
+  tryHelp(core, name);
+  return 1;
+}

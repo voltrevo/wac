@@ -50,6 +50,7 @@ import {
   oidRsaSha512, oidSecp384r1, oidSubjectAltName, oidExtKeyUsage, oidServerAuth,
   oidAnyExtKeyUsage, oidNameConstraints, unsignedInteger,
 } from "./asn1.wac";
+import { clamped } from "../../bytes/src/slice.wac";
 
 /**
  * The time a certificate carries when its date could not be read.
@@ -830,7 +831,7 @@ export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffs
   i32 nRoots = rootOffsets.len() / 2;
   if (nChain == 0) { return 8; }                 // nothing to verify
 
-  Cert leaf = parseCert(slice(chain, chainOffsets[0], chainOffsets[1]));
+  Cert leaf = parseCert(clamped(chain, chainOffsets[0], chainOffsets[1]));
   if (now < leaf.notBefore) { return 1; }
   if (now > leaf.notAfter) { return 2; }
   if (!certMatchesHost(leaf, host)) { return 7; }
@@ -842,7 +843,7 @@ export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffs
   while (depth < maxDepth) {
     // A root that signed the current certificate ends the path.
     for (i32 r = 0; r < nRoots; r++) {
-      Cert root = parseCert(slice(roots, rootOffsets[2 * r], rootOffsets[2 * r + 1]));
+      Cert root = parseCert(clamped(roots, rootOffsets[2 * r], rootOffsets[2 * r + 1]));
       if (!nameEquals(current.issuer, root.subject)) { continue; }
       if (root.keyType == 0) { continue; }       // an algorithm we cannot check
       if (root.badCritical) { continue; }        // terms we cannot honour
@@ -864,7 +865,7 @@ export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffs
     // Otherwise look for an intermediate in the chain the server sent.
     bool advanced = false;
     for (i32 i = 1; i < nChain; i++) {
-      Cert cand = parseCert(slice(chain, chainOffsets[2 * i], chainOffsets[2 * i + 1]));
+      Cert cand = parseCert(clamped(chain, chainOffsets[2 * i], chainOffsets[2 * i + 1]));
       if (!nameEquals(current.issuer, cand.subject)) { continue; }
       if (cand.keyType == 0) { continue; }
       if (cand.badCritical) { continue; }
@@ -887,10 +888,3 @@ export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffs
   return 9;                                      // ran past the depth limit
 }
 
-/** A copy of `[start, end)`, or empty if that is not a range within `b`. */
-u8[] slice(u8[] b, i32 start, i32 end) {
-  if (start < 0 || end > b.len() || start > end) { return u8[0](); }
-  u8[] out = u8[end - start]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = b[start + i]; }
-  return out;
-}

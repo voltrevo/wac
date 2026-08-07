@@ -5,10 +5,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
 import { crc32Start, crc32Update, crc32Finish, crcTable8 } from "../../../gzip/src/crc32.wac";
 
 export i32 crc32(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // A line per file, as `cksum` and the checksums here do — it used to read the first operand and stop
   // (wac-mono 0096). There is no `crc32` on this machine to compare against, so the test asserts the
   // shape instead: two files give exactly what the two single-file runs give.

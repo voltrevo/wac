@@ -6,9 +6,11 @@
 
 import { Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
 
 export i32 wget(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 3) {
     core.warn("usage: " + a.name + " <host> <path> <outfile> [-<port>]");
     return 2;

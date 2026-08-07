@@ -1,0 +1,110 @@
+// A `cut` list: `2`, `2,5`, `2-4`, `3-`, `-3`, and any of those joined by commas.
+//
+// `cut -f2` worked and `cut -f2,3` returned **field 2 alone** — the list was read with `atoi`, which
+// stops at the comma, so everything after it was silently dropped. `cut -f2-4` gave field 2 as well, and
+// `cut -f-3` was refused as if no list had been given at all. A flag accepted and half honoured is the
+// worst of the three answers this repo ranks, and it is worse still here than for a missing flag: the
+// caller *sees* output, in the right shape, with columns missing.
+//
+// The syntax is small enough to write out. GNU's rules, measured:
+//
+//   - positions count from **1**; `0` is an error and so is a range that runs backwards;
+//   - `N-` is N to the end of the line, `-N` is the start to N, `N-M` is inclusive both ends;
+//   - the parts may be in any order and may overlap, and the output is always in *line* order with each
+//     selected position appearing once — `cut -f3,1` prints field 1 then field 3.
+//
+// That last rule is why this answers a predicate rather than a list of positions: asking "is position i
+// selected?" while walking the line gives line order and de-duplication for free, and neither has to be
+// spelled out.
+
+/** A parsed list, or why it could not be read. */
+export struct Ranges {
+  bool ok;
+  /** The reason, worded as GNU words it, when `ok` is false. */
+  string error;
+  /** Pairs of `lo, hi` — inclusive, 1-based, `hi` of 0 meaning "to the end". */
+  i32[] bounds;
+
+  /** Whether position `n` — 1-based — is in the list. */
+  bool has(const this, i32 n) {
+    for (i32 i = 0; i + 1 < this.bounds.len(); i = i + 2) {
+      i32 lo = this.bounds[i];
+      i32 hi = this.bounds[i + 1];
+      if (n >= lo && (hi == 0 || n <= hi)) { return true; }
+    }
+    return false;
+  }
+
+  /** The largest position named, or 0 when the list runs to the end of the line. */
+  i32 highest(const this) {
+    i32 top = 0;
+    for (i32 i = 0; i + 1 < this.bounds.len(); i = i + 2) {
+      if (this.bounds[i + 1] == 0) { return 0; }
+      if (this.bounds[i + 1] > top) { top = this.bounds[i + 1]; }
+    }
+    return top;
+  }
+}
+
+/** Read a `cut` list. `who` is the program name, for the error. */
+export Ranges parseRanges(string who, string text) {
+  u8[] b = text.toBytes();
+  if (b.len() == 0) { return Ranges(false, who + ": you must specify a list of bytes, characters, or fields", i32[]()); }
+  // Counted first, then filled: a position can be any i32, so there is nothing byte-shaped to collect
+  // it in on the way past, and the syntax is short enough to read twice.
+  i32 count = 0;
+  i32 i = 0;
+  while (i < b.len()) {
+    i32 lo = 0;
+    bool sawLo = false;
+    while (i < b.len() && b[i] >= '0' && b[i] <= '9') { lo = lo * 10 + (b[i] - '0'); sawLo = true; i++; }
+    i32 hi = lo;
+    if (i < b.len() && b[i] == '-') {
+      i++;
+      i32 upper = 0;
+      bool sawHi = false;
+      while (i < b.len() && b[i] >= '0' && b[i] <= '9') { upper = upper * 10 + (b[i] - '0'); sawHi = true; i++; }
+      // `-N` is "from the first", `N-` is "to the last", and `-` alone is neither.
+      if (!sawLo && !sawHi) { return Ranges(false, who + ": invalid range with no endpoint: -", i32[]()); }
+      if (!sawLo) { lo = 1; }
+      hi = sawHi ? upper : 0;
+      if (hi != 0 && hi < lo) {
+        return Ranges(false, who + ": invalid decreasing range", i32[]());
+      }
+    } else if (!sawLo) {
+      return Ranges(false, who + ": invalid byte, character or field list", i32[]());
+    }
+    if (lo == 0) {
+      // GNU's own sentence, and it is about the *numbering* rather than about this list: positions
+      // count from one, so a zero is not a position that happens to be out of range.
+      return Ranges(false, who + ": fields are numbered from 1", i32[]());
+    }
+    count++;
+    if (i < b.len() && b[i] == ',') { i++; continue; }
+    if (i < b.len()) { return Ranges(false, who + ": invalid byte, character or field list", i32[]()); }
+  }
+
+  // The second pass. Everything it could refuse has been refused above, so it only reads.
+  i32[] bounds = i32[count * 2](fill: 0);
+  i32 at = 0;
+  i32 k = 0;
+  while (at < b.len()) {
+    i32 lo = 0;
+    bool sawLo = false;
+    while (at < b.len() && b[at] >= '0' && b[at] <= '9') { lo = lo * 10 + (b[at] - '0'); sawLo = true; at++; }
+    i32 hi = lo;
+    if (at < b.len() && b[at] == '-') {
+      at++;
+      i32 upper = 0;
+      bool sawHi = false;
+      while (at < b.len() && b[at] >= '0' && b[at] <= '9') { upper = upper * 10 + (b[at] - '0'); sawHi = true; at++; }
+      if (!sawLo) { lo = 1; }
+      hi = sawHi ? upper : 0;
+    }
+    bounds[k * 2] = lo;
+    bounds[k * 2 + 1] = hi;
+    k++;
+    if (at < b.len() && b[at] == ',') { at++; }
+  }
+  return Ranges(true, "", bounds);
+}

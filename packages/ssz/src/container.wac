@@ -40,6 +40,7 @@
 
 import { merkleize, mixInLength, padToChunks, chunkCount, rootBasic, rootBitvector,
          rootBitlist, rootBasicVector, rootBasicList } from "./merkle.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 export const i32 KIND_BASIC = 0;
 export const i32 KIND_BITVECTOR = 1;
@@ -348,13 +349,6 @@ i32[]? elementBounds(i32[] t, i32[] fields, i32 i, u8[] data, i32 start, i32 end
   return b;
 }
 
-/** `data[from..to)`. */
-u8[] slice(u8[] data, i32 from, i32 to) {
-  i32 n = to - from;
-  u8[] out = u8[(n > 0) ? n : 0]();
-  for (i32 i = 0; i < n; i++) { out[i] = data[from + i]; }
-  return out;
-}
 
 /** The whole value: `hash_tree_root` of type `root` over all of `data`. */
 export u8[]? hashTreeRoot(i32[] t, i32[] fields, i32 root, u8[] data) {

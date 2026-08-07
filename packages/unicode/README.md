@@ -23,15 +23,18 @@ direction.** It also means there is no `UnicodeData.txt` in the repo to go stale
 `deno task gen:unicode`, and the tests fail if the generated tables and the host disagree.
 
 Checking generated tables against the generator's source looks circular, and for the mapping
-*values* it partly is. What the tests actually establish is not:
+*values* it partly is — and where it was fully circular, it hid a wrong answer for a year. See
+**Folding** below. What the tests establish beyond the values is not circular:
 
-- **the lookup is right.** A binary search over 1,482 sorted pairs is exactly the code that is
+- **the lookup is right.** A binary search over 1,481 sorted pairs is exactly the code that is
   off by one at the ends, and the generator has no opinion about it;
 - **the boundary is where it is claimed to be.** The test enumerates every code point the host maps
   to *more than one*, and requires simple mapping to leave each alone — rather than assuming there
   are none;
 - **UTF-8 is right**, judged by `TextEncoder` and a `fatal: true` `TextDecoder`, neither of which
-  the generator touched.
+  the generator touched;
+- **folding is right**, judged by a `u`-mode `RegExp`, which canonicalizes by simple case folding —
+  a table the generator does not consult and cannot influence.
 
 Every code point, 0 to 0x10FFFF, on every run.
 
@@ -44,10 +47,28 @@ silently did some of that and not the rest would be worse than one that does non
 So where the host's mapping is more than one code point, the code point is left alone, and the
 tests say exactly which ones those are.
 
-**Folding is `lower(upper(x))`, not `lower(x)`**, and that is not a detail. Greek `Σ` lowercases to
-`σ` at the start of a word and `ς` at the end — a *contextual* form. A fold derived from lowercase
-alone leaves `ς` as itself, so `ΣΊΣΥΦΟΣ` and `σίσυφος` compare unequal. Going up first collapses
-both sigmas, and coming back down gives one answer. It cost a test failure to find.
+## Folding is not case mapping, and the difference is one code point
+
+The candidate for a fold is `lower(upper(x))` rather than `lower(x)`, and that much is not a
+detail: Greek `Σ` lowercases to `σ` at the start of a word and `ς` at the end — a *contextual*
+form — so a fold derived from lowercase alone leaves `ς` as itself and `ΣΊΣΥΦΟΣ` compares unequal
+to `σίσυφος`. Going up first collapses both sigmas.
+
+**But that is a candidate, not the answer.** Case mapping and case *folding* are two Unicode
+tables, and `lower(upper(x))` gets one class wrong: `ı` uppercases to `I`, which lowercases to
+`i`, so dotless `ı` and `i` came out equal — the exact Turkish conflation the paragraph above says
+this package does not do. It said it in the same file as the code that did it.
+
+Nothing caught it because everything asking the question asked it the generator's way. The test
+asserted "two code points with the same uppercase fold together", which is the generator's rule
+restated, so it could only ever agree; the random sweep used uppercase equality as its oracle, the
+same rule again.
+
+A `u`-mode `RegExp` canonicalizes by **simple case folding**, and is built from a different table
+than `toLowerCase`. `new RegExp("\u{131}", "iu").test("i")` is `false`, which is the whole finding.
+The generator now proposes `lower(upper(x))` and keeps it only if that oracle agrees, and the test
+asks the oracle about every entry from both directions: every fold we perform is one the host
+calls the same letter, and every pair the host calls the same letter folds together.
 
 ## UTF-8 is strict
 
