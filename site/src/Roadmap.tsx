@@ -65,7 +65,7 @@ export default function Roadmap() {
       </div>
 
       <div style={s.section}>
-        <h2 style={s.h2}>One image, two very different hosts</h2>
+        <h2 style={s.h2} id="wacland">One image, two very different hosts</h2>
         <p style={s.p}>
           <strong style={{ color: "#e2e8f0" }}>Wacland</strong> is a system that is the same system
           wherever it runs: in a browser tab, on Deno or Node, and in the userland of a bootable
@@ -111,7 +111,7 @@ export default function Roadmap() {
       </div>
 
       <div style={s.section}>
-        <h2 style={s.h2}>A host with no JavaScript in it</h2>
+        <h2 style={s.h2} id="native-host">A host with no JavaScript in it</h2>
         <p style={s.p}>
           There are three hosts today — browser, Node, Deno — and they are all JavaScript, so they
           share the transport, the worker model and the event loop. That makes them poor evidence for
@@ -173,7 +173,7 @@ export default function Roadmap() {
       </div>
 
       <div style={s.section}>
-        <h2 style={s.h2}>Reading a contract without trusting whoever served it</h2>
+        <h2 style={s.h2} id="ethereum">Reading a contract without trusting whoever served it</h2>
         <p style={s.p}>
           An <strong style={{ color: "#e2e8f0" }}>Ethereum-centric reference distribution</strong>:
           one coherent system where a person can see which network backend is in use and replace it,
@@ -213,7 +213,7 @@ export default function Roadmap() {
       </div>
 
       <div style={s.section}>
-        <h2 style={s.h2}>Packages, and the version diamond wac cannot have</h2>
+        <h2 style={s.h2} id="packages">Packages, and the version diamond wac cannot have</h2>
         <p style={s.p}>
           Every import is a relative file path, plus one that is not: {tp("core")}, the module the
           compiler ships.
@@ -251,7 +251,7 @@ export default function Roadmap() {
       </div>
 
       <div style={s.section}>
-        <h2 style={s.h2}>What is deliberately not on this list</h2>
+        <h2 style={s.h2} id="not-this">What is deliberately not on this list</h2>
         <p style={{ ...s.p, marginBottom: 0 }}>
           A package manager with a website. A standard library that grows by accretion. Anything that
           requires a maintainer&rsquo;s permission. The compiler is ~6,000 lines of dependency-free

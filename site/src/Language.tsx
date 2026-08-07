@@ -279,24 +279,24 @@ export function sumArray(
 export default function Language() {
   return (
     <Page current="language">
-      <div style={s.section} id="tour">
-        <h2 style={s.h2}>Language tour</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="tour">Language tour</h2>
 
-        <h3 style={s.h3}>Hello world</h3>
+        <h3 style={s.h3} id="hello">Hello world</h3>
         <p style={s.p}>
           Functions have explicit return types. {kw("export")} makes them
           available to the host and other {tp(".wac")} files.
         </p>
         <InlineDemo initialCode={EX_HELLO} />
 
-        <h3 style={s.h3}>Primitives and control flow</h3>
+        <h3 style={s.h3} id="primitives">Primitives and control flow</h3>
         <p style={s.p}>
           Types: {tp("i32")} {tp("i64")} {tp("f32")} {tp("f64")} {tp("bool")} {tp("string")}.
           Full control flow: {kw("if")}/{kw("else")}, {kw("while")}, {kw("for")}, {kw("do")}-{kw("while")}, {kw("switch")}, ternary.
         </p>
         <InlineDemo initialCode={EX_MATH} />
 
-        <h3 style={s.h3}>Error diagnostics</h3>
+        <h3 style={s.h3} id="errors">Error diagnostics</h3>
         <p style={s.p}>
           No implicit conversions — write {fn_("while (b != 0)")} not {fn_("while (b)")}.
           Try it — the code block above is editable! The compiler tells you
@@ -304,21 +304,21 @@ export default function Language() {
         </p>
         <Solo code={EX_ERROR} lang="wac" />
 
-        <h3 style={s.h3}>Structs and methods</h3>
+        <h3 style={s.h3} id="structs">Structs and methods</h3>
         <p style={s.p}>
           Structs compile to WasmGC struct types. Methods use {kw("this")} (mutable)
           or {kw("const")} {kw("this")} (readonly). Static methods omit {kw("this")}.
         </p>
         <Solo code={EX_STRUCT} lang="wac" />
 
-        <h3 style={s.h3}>Nullable references</h3>
+        <h3 style={s.h3} id="nullable">Nullable references</h3>
         <p style={s.p}>
           {op("?")} makes a type nullable. {op("!")} unwraps (traps on null).
           Test with {kw("is")} {kw("null")} / {kw("is")} {kw("not")} {kw("null")}.
         </p>
         <Solo code={EX_NULLABLE} lang="wac" />
 
-        <h3 style={s.h3}>Enums carry payloads, and match is exhaustive</h3>
+        <h3 style={s.h3} id="enums">Enums carry payloads, and match is exhaustive</h3>
         <p style={s.p}>
           A variant may hold values, and {kw("match")} over one must cover every case — a missing
           arm is a compile error, not a fallthrough. Generic enums give you {tp("Option<T>")} and{" "}
@@ -326,7 +326,7 @@ export default function Language() {
         </p>
         <InlineDemo initialCode={EX_ENUM} />
 
-        <h3 style={s.h3}>Generics, monomorphised</h3>
+        <h3 style={s.h3} id="generics">Generics, monomorphised</h3>
         <p style={s.p}>
           A struct may take type parameters. {tp("Pair<i32>")} and {tp("Pair<string>")} are
           separate types the compiler stamps out — no boxing, and nothing erased, so a{" "}
@@ -334,14 +334,14 @@ export default function Language() {
         </p>
         <InlineDemo initialCode={EX_GENERIC} />
 
-        <h3 style={s.h3}>Arrays</h3>
+        <h3 style={s.h3} id="arrays">Arrays</h3>
         <p style={s.p}>
           GC-managed arrays with {fn_(".len()")} and bounds checking.
           Construct with {tp("i32[5]()")} (sized) or {tp("i32[](1,2,3)")} (fixed).
         </p>
         <Solo code={EX_ARRAYS} lang="wac" />
 
-        <h3 style={s.h3}>Multi-file imports</h3>
+        <h3 style={s.h3} id="imports">Multi-file imports</h3>
         <p style={s.p}>
           File-based imports with {kw("import")} / {kw("from")}. Diamond
           imports resolve correctly. Rename with {kw("as")} to avoid collisions.
@@ -352,7 +352,7 @@ export default function Language() {
           leftLang="wac" rightLang="wac"
         />
 
-        <h3 style={s.h3}>One import is not a file</h3>
+        <h3 style={s.h3} id="core">One import is not a file</h3>
         <p style={s.p}>
           {kw("core")} ships inside the compiler, so it is written without quotes — there is no path
           to be right or wrong about, and it cannot be pointed anywhere else. It holds one enum, and
@@ -390,8 +390,8 @@ export default function Language() {
           to be misread as a transpiler — hence the byte-identity claim, which is the shortest
           way to say that it is not one. */}
 
-      <div style={s.section} id="surfaces">
-        <h2 style={s.h2}>Two surfaces, one language</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="surfaces">Two surfaces, one language</h2>
         <p style={s.p}>
           The same language can be written with braces or with indentation. {tp(".wapy")} is the
           second surface — {kw("def")}, {kw("class")}, {kw("and")}/{kw("or")}/{kw("not")},{" "}
@@ -412,7 +412,7 @@ export default function Language() {
           checker and emitter never learn which surface ran.
         </p>
 
-        <h3 style={s.h3}>Editable, and running here</h3>
+        <h3 style={s.h3} id="wapy-live">Editable, and running here</h3>
         <p style={s.p}>
           Compiled in this tab by the same {fn_("wacCompile")} call as every other demo on the
           page. The extension is what selects the frontend, so the only thing that differs is
@@ -420,7 +420,7 @@ export default function Language() {
         </p>
         <InlineDemo initialCode={EX_WAPY_LIVE} surface="wapy" />
 
-        <h3 style={s.h3}>Mixed freely, in one program</h3>
+        <h3 style={s.h3} id="mixed">Mixed freely, in one program</h3>
         <p style={s.p}>
           Neither surface is privileged, so an import graph may cross between them as often as it
           likes. Here a {tp(".wac")} file imports a class from a {tp(".wapy")} file, and a{" "}
@@ -459,8 +459,8 @@ export default function Language() {
       {/* What WebAssembly is missing. Evidence collected from writing 50,000 lines against it,
           which is a thing this project has and most WasmGC users do not — the languages with GC
           arrays are not parsing wire protocols with them. */}
-      <div style={s.section} id="wasm-gaps">
-        <h2 style={s.h2}>What WebAssembly is missing</h2>
+      <div style={s.section}>
+        <h2 style={s.h2} id="wasm-gaps">What WebAssembly is missing</h2>
         <p style={s.p}>
           Writing 50,000 lines of byte-heavy systems code against WasmGC — TLS, SSH, Tor, gzip,
           Zstandard, BLS12-381, SHA-2, ChaCha20 — with no C runtime underneath and no linear

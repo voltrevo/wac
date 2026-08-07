@@ -5,6 +5,7 @@
 // merely shorter is that the navigation is the same object on every one of them — a reader always
 // knows what else there is and which of it they are looking at.
 
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { GITHUB, MONO, s } from "./theme";
 
@@ -91,13 +92,74 @@ export function Footer() {
   );
 }
 
-/** A page: the glow, the navigation, the content, the footer. */
+/**
+ * The page's own headings, as a list of links.
+ *
+ * Read out of the rendered page rather than written beside it. A hand-kept list of headings is the
+ * same shape of bug as a hand-kept inventory: it type-checks, it renders, and it quietly stops
+ * matching the thing it describes the first time somebody adds a section. There is nothing here
+ * that *can* disagree — if a heading has an id it is listed, and `site.test.ts` checks that every
+ * heading has one.
+ */
+export function Contents({ route }: { route: Route }) {
+  const [items, setItems] = useState<{ id: string; label: string; sub: boolean }[]>([]);
+
+  useEffect(() => {
+    const found = [...document.querySelectorAll<HTMLElement>("main h2[id], main h3[id]")].map((h) => ({
+      id: h.id,
+      label: (h.textContent ?? "").trim(),
+      sub: h.tagName === "H3",
+    }));
+    setItems(found);
+  }, [route]);
+
+  // Below about four entries a contents list is furniture rather than navigation.
+  if (items.length < 5) return null;
+
+  return (
+    <nav
+      aria-label="Contents"
+      style={{
+        border: "1px solid #2e2e3e", borderRadius: 8, background: "#181825",
+        padding: "14px 18px", marginBottom: 40,
+      }}
+    >
+      <div style={{ fontSize: 11, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+        On this page
+      </div>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0, columns: "2 220px", columnGap: 28 }}>
+        {items.map(({ id, label, sub }) => (
+          <li key={id} style={{ breakInside: "avoid", marginBottom: 3 }}>
+            <a
+              href={`#/${route}/${id}`}
+              style={{
+                color: sub ? "#9ca3af" : "#e2e8f0",
+                fontSize: sub ? 13 : 14,
+                textDecoration: "none",
+                paddingLeft: sub ? 14 : 0,
+                lineHeight: 1.6,
+              }}
+            >
+              {label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/** A page: the glow, the navigation, its contents, the content, the footer. */
 export function Page({ current, children }: { current: Route; children: ReactNode }) {
   return (
     <div style={s.page}>
       <Glow />
       <Nav current={current} />
-      {children}
+      {/* `main` is what `Contents` scans, so the navigation and the footer stay out of it. */}
+      <main>
+        <Contents route={current} />
+        {children}
+      </main>
       <Footer />
     </div>
   );
