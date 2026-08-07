@@ -10,6 +10,30 @@ Publishing is a human step: the operator reads these periodically and moves a cu
 site. The site has no blog route yet, which is worth saying plainly rather than implying otherwise — when
 one exists, moving a post is a `git mv` plus a line in whatever index the route reads.
 
+## One thing never goes in a draft
+
+**A weakness in code that is not ours goes to its maintainers privately, before it goes anywhere —
+including here.** Not a draft, not a public issue, not a commit message, not a design note.
+
+This is worth stating in *this* file rather than only in a policy elsewhere, because this is where the
+temptation lands. Question 1 of the filter below asks for a fact a stranger could check, question 3
+rewards being wrong about something, and a vulnerability in C tor satisfies both better than almost
+anything else that will ever be written here. It would be a very good post, and publishing it would be
+an uncoordinated disclosure of somebody else's vulnerability — the site deploys on every push, so there
+is no window to reconsider.
+
+Findings about **our** code are unaffected: our bugs are ours to publish, and the best drafts here are
+about them. So is a documentation bug in someone else's code — a comment that misdescribes what the
+code does is an ordinary issue for their tracker and fair material here.
+
+If you have found one it goes to **`~/notes/security/`** — not a repo, because `~/notes` is not a git
+repository and nothing copies it into one. `README.md` there has the lifecycle and a template,
+`INDEX.md` is the page the operator checks, and `/home/claude/CLAUDE.md` has the short version of the
+rule. Where the line falls, with worked examples:
+`~/notes/living/tor/reporting-a-weakness-in-someone-elses-code.md`.
+
+If you are unsure, it is a weakness. File it and keep writing about everything else.
+
 ## Cadence
 
 **Write whenever there is something worth reading, which is more often than the first version of this
