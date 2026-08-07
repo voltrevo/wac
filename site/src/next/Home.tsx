@@ -1,203 +1,323 @@
 // The front page.
 //
-// It leads with the language, because that is where everything here started and because a reader
-// who does not believe the language is good will not believe anything built in it. Then it turns,
-// deliberately and early, to the thing that makes this unlike other language sites: the stack is
-// being rebuilt in it, and the rebuild is far enough along to be checked against the software it
-// has to interoperate with.
+// The sequence, settled over several mockups with the operator: the wordmark, one sentence, then
+// *the shell* — a real one, running here — then the honesty about what it is not yet, then one
+// editable program, then Tor, Ethereum, and every package.
 //
-// Written for somebody who has seen a lot of language sites and assumes there is nothing behind
-// them. That reader is not moved by adjectives; they are moved by a number they can go and verify
-// and by the name of the implementation that disagreed with us and lost. So: no superlatives, every
-// claim with its oracle attached, and the disclaimers left exactly where they are.
+// The shell comes before the code on purpose. A reader who has seen a hundred language sites is not
+// moved by a tour; they are moved by typing into something that could not exist unless the claims
+// were true. And it is introduced as *wacland* rather than as a demo, because the point is not that
+// a terminal is on the page — it is that the shell, the applets and the filesystem are all wac.
+//
+// Written for somebody who assumes there is nothing behind a language site: no superlatives, every
+// number checkable, and the unflattering parts kept.
 
+import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
-import { TOTALS } from "../data/built";
-import { A, Code, Facts, Lead, m, n, P, PAGES, Page, Section, Table, Wordmark } from "./ui";
+import { BUILT, TOTALS } from "../data/built";
+import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Table } from "./ui";
 import { c, font, space } from "./tokens";
 
-// A whole program: a struct with a method, an array, a loop, and an export the reader can call.
-// Compiled in their tab by the same `wacCompile` the playground uses.
-const EX_FRONT = `export struct Histogram {
-  i32[] bins;
-
-  /// A histogram with \`n\` empty bins.
-  Histogram of(i32 n) { return Histogram(i32[n]()); }
-
-  void add(this, i32 v) {
-    this.bins[v % this.bins.len()]++;
-  }
-
-  i32 peak(const this) {
-    i32 best = 0;
-    for (i32 i = 0; i < this.bins.len(); i++) {
-      if (this.bins[i] > best) { best = this.bins[i]; }
-    }
-    return best;
-  }
-}
-
-export i32 busiest(i32[] hours) {
-  Histogram h = Histogram.of(24);
-  for (i32 i = 0; i < hours.len(); i++) { h.add(hours[i]); }
-  return h.peak();
-}`;
-
-/** The capability signature of a whole application — the argument for what "no ambient" buys. */
-const EX_MAIN = `// packages/platform/example/wc.wac — the whole program's authority, in one line
-export i32 main(Core core, Cli cli) { … }`;
-
-const STACK: [string, string, string][] = [
-  ["TLS 1.3", "client and server, X25519MLKEM768", "interoperates with OpenSSL and rustls"],
-  ["Tor", "client, relay, directory authority, onion services", "a C tor bootstraps from our authority and carries a stream through our relays"],
-  ["SSH-2", "client and server", "OpenSSH's own client cannot tell the difference"],
-  ["a shell", "quoting, expansion, here-docs, pipelines, functions", "652 scripts agree with GNU bash on stdout and exit status"],
-  ["60 applets", "cat, grep, sort, gzip, tar, diff, sha256sum, httpd, nc", "differential against the GNU tool where one exists"],
-  ["Ethereum", "BLS12-381, SSZ, an Altair light client, RLP, ABI, state proofs", "2,233 vectors from consensus-spec-tests, all 29 BLS verify fixtures"],
-  ["compression", "gzip, DEFLATE, Zstandard", "at or under the reference tools; zlib accepts the output"],
-  ["a compiler", "wac's own lexer and parser, ported to wac", "agrees with the reference on every .wac file in the repo"],
+/**
+ * The commands the terminal shows, and what they print.
+ *
+ * Hardcoded, because a page cannot run a shell to render itself — but wac-mono's
+ * `tools/frontpage.test.ts` runs these exact lines through `packages/box/example/boxsh.wac` and
+ * fails if the output ever stops matching. So this is a claim with a test behind it rather than a
+ * plausible-looking screenshot.
+ */
+export const TRANSCRIPT: [string, string][] = [
+  ["seq 1 20 | grep 7 | wc -l", "2"],
+  ["echo 'a whole new stack' | gzip -c | wc -c", "41"],
+  ["echo hello | sha256sum", "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  -"],
 ];
 
+/**
+ * One program, compiled and run through `wacx` before it was put here.
+ *
+ * `main` first and the enum after it, because a file is a set of declarations rather than a
+ * sequence of them — and because the point of the example is what it does, not its vocabulary. The
+ * commented line is the invitation: swapping the markers gives `Hello, Alice and Bob!`.
+ */
+const EX_HELLO = `export string main() {
+  Option<string> name = Option.None;
+  // Option<string> name = Option.Some("Alice and Bob");
+
+  return "Hello, " + match (name) {
+    case Some(v): v,
+    case None: "world"
+  } + "!";
+}
+
+/// A value that might not be there. Declared after it is used — wac has no
+/// forward declarations, because a file is a set of declarations rather than
+/// a sequence of them.
+enum Option<T> {
+  Some(T value),
+  None
+}`;
+
+const MONO_SRC = "https://github.com/voltrevo/wac-mono/tree/master/packages";
+
+/**
+ * Whether the browser demos are built beside this page.
+ *
+ * `tools/syncDemos.ts` writes them into `public/` from wac-mono, and CI runs it — but a plain
+ * checkout has none, and a dev server answers a missing `shell.html` with `index.html`, which
+ * renders the entire site inside the iframe. `demos.json` is written next to them, so its presence
+ * is the honest signal, and its absence gets a link instead of a nested copy of this page.
+ */
+function useDemosBuilt(): boolean {
+  const [built, setBuilt] = useState(false);
+  useEffect(() => {
+    let live = true;
+    // `r.ok` is not the test: a dev server answers a missing path with `index.html`, so the fetch
+    // succeeds and the iframe renders the whole site inside itself. Only JSON that parses means the
+    // demos are really there.
+    fetch("../demos.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no demos"))))
+      .then(() => { if (live) setBuilt(true); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return built;
+}
+
 export default function Home() {
+  const demosBuilt = useDemosBuilt();
   return (
-    <Page current="home">
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: space.section, marginTop: -18 }}>
-        <div style={{ marginBottom: 22 }}><Wordmark size={64} /></div>
-        <h1 style={{ fontFamily: font.mono, fontSize: 31, lineHeight: 1.35, fontWeight: 600, color: c.text, margin: `0 0 22px`, letterSpacing: "-0.02em" }}>
-          A C-family language for WebAssembly GC —<br />
-          <span style={{ color: c.accent }}>and a systems stack being rebuilt in it.</span>
-        </h1>
-        <P>
-          Structs, methods, subtyping, generics, enums with payloads, nullable references — and
-          WebAssembly&rsquo;s own collector owns the heap, so there is no allocator to write and no
-          linear memory in the artifact. The compiler is TypeScript with{" "}
-          <Lead>no dependencies</Lead>: no LLVM, no binaryen, nothing to install. It runs in a
-          browser tab, which is how the editor below compiles.
-        </P>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 34 }}>
-          <a href="#/playground" style={{ background: c.accent, color: "#06231f", padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, fontWeight: 600, textDecoration: "none" }}>
-            Playground
-          </a>
-          <a href="../shell.html" style={{ border: `1px solid ${c.lineBright}`, color: c.text, padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, textDecoration: "none" }}>
-            A shell in your browser →
-          </a>
-          <a href="#/stack" style={{ border: `1px solid ${c.lineBright}`, color: c.text, padding: "10px 18px", borderRadius: 5, fontFamily: font.mono, fontSize: 14, textDecoration: "none" }}>
-            What is built in it →
-          </a>
+    <Page current="home" contents={false}>
+      {/* ── The wordmark, as a prompt ─────────────────────────────────────
+          The gradient is spent here and nowhere else on the page; the rule beside it is solid, so
+          the two do not compete. `clamp` reaches its cap by about 620px, because keying the middle
+          term to the viewport made the heading *smaller* than the fixed size it replaced at every
+          width below a wide desktop. */}
+      <div style={{ display: "flex", gap: 22, alignItems: "stretch", marginBottom: 66, marginTop: 4 }}>
+        <div style={{ width: 2, borderRadius: 2, flex: "none", background: c.text, opacity: 0.85 }} />
+        <div>
+          <h1
+            style={{
+              margin: 0, fontFamily: font.mono, fontWeight: 700, letterSpacing: "-0.04em",
+              lineHeight: 0.95, fontSize: "clamp(56px, 18vw, 112px)",
+            }}
+          >
+            <span style={{ color: c.faint, fontWeight: 400 }}>$</span>{" "}
+            <span
+              style={{
+                background: "linear-gradient(104deg, #5eead4 2%, #67e8f9 26%, #818cf8 58%, #c084fc 86%)",
+                WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
+              }}
+            >
+              wac
+            </span>
+            <span style={{ color: c.accent }}>_</span>
+          </h1>
+          {/* One sentence, left to wrap where it must. Forcing a break after the em dash put it on
+              two lines even where one fitted; the non-breaking spaces only stop the two places a
+              natural break reads as a mistake. */}
+          <p style={{ margin: "16px 0 0", maxWidth: "62ch", color: c.body, fontSize: "clamp(16px, 3.4vw, 20px)", lineHeight: 1.5, textWrap: "balance" }}>
+            A C-family language for WebAssembly&nbsp;GC — and a whole new stack written&nbsp;in&nbsp;it.
+          </p>
         </div>
       </div>
 
-      {/* ── The language, running ────────────────────────────────────────── */}
-      <Section id="try" kicker="the language" title="Edit it, and press run">
+      {/* ── The shell ─────────────────────────────────────────────────────── */}
+      <Section id="wacland" kicker="start here" title="Meet wacland: userland written in wac">
         <P>
-          This compiles here — not on a server, and not ahead of time. Every demo on this site is
-          the same pipeline the command line uses — ~16,000 lines of dependency-free TypeScript — running on this page.
+          A shell, sixty applets and a filesystem, running on a worker in this tab — and{" "}
+          <Lead>all of it is wac</Lead>. Not busybox compiled to wasm, not a libc port, not wac glue
+          around somebody else&rsquo;s binaries: it is {m({ children: "packages/sh" })} itself, the
+          same program that runs on a command line, and the only thing underneath it is the compiler.
         </P>
-        <InlineDemo initialCode={EX_FRONT} />
+
+        {/* The real thing, in an iframe. It loads in parallel with this page rather than blocking
+            it — a separate document never holds up the parent's first paint — and it needs the
+            cross-origin isolation headers the service worker installs, which is why it can only be
+            embedded from this origin. */}
+        <div style={{ border: `1px solid ${c.lineBright}`, borderRadius: 7, overflow: "hidden", background: "#06070a", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 13px", background: c.panelHi, borderBottom: `1px solid ${c.line}`, fontFamily: font.mono, fontSize: 11.5, color: c.faint }}>
+            {[0, 1, 2].map((i) => (
+              <span key={i} style={{ width: 9, height: 9, borderRadius: "50%", background: c.lineBright }} />
+            ))}
+            <span style={{ marginLeft: 6 }}>wacland · in your browser</span>
+          </div>
+          {demosBuilt
+            ? (
+              <iframe
+                src="../shell.html"
+                title="A shell written in wac, running in this page"
+                style={{ display: "block", width: "100%", height: 340, border: 0, background: "#06070a" }}
+              />
+            )
+            : (
+              <div style={{ padding: "26px 18px", fontFamily: font.mono, fontSize: 13, color: c.dim, lineHeight: 1.7 }}>
+                <span style={{ color: c.accent }}>$</span> the shell is not built in this checkout —{" "}
+                <A href="../shell.html">open it directly</A>
+                <div style={{ color: c.faint, marginTop: 8, fontSize: 12 }}>
+                  tools/syncDemos.ts builds it from wac-mono; CI runs that on every deploy.
+                </div>
+              </div>
+            )}
+        </div>
+
+        <P>Try the session below, or anything else:</P>
+        <div style={{ border: `1px solid ${c.line}`, borderRadius: 6, overflow: "hidden", marginBottom: space.block }}>
+          <pre style={{ margin: 0, padding: "14px 16px", fontFamily: font.mono, fontSize: 13, lineHeight: 1.65, color: "#d7dde6", overflowX: "auto" }}>
+            {TRANSCRIPT.map(([cmd, out]) => (
+              <span key={cmd}>
+                <span style={{ color: c.accent }}>$</span> {cmd}
+                {"\n"}
+                {out}
+                {"\n"}
+              </span>
+            ))}
+          </pre>
+        </div>
+
+        <Caveat title="not complete yet">
+          The shell, the applets and the filesystem are real. The rest of a system — the parts that
+          make a session something you can save, reopen and log back into — is still being written.
+        </Caveat>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            {m({ children: "sort" })}, {m({ children: "sha256sum" })}, {m({ children: "gzip" })},{" "}
+            {m({ children: "diff" })}, {m({ children: "tar" })}, {m({ children: "nc" })} — with
+            pipelines, loops, variables, history, and redirection into a filesystem that survives a
+            reload. The shell agrees with GNU bash on <Lead>652 differential scripts</Lead>, on
+            standard output and exit status.
+          </span>
+        </P>
+      </Section>
+
+      {/* ── The language ──────────────────────────────────────────────────── */}
+      <Section id="language" kicker="and this is the language it is written in" title="Edit it, and press run">
+        <P>
+          Generics are monomorphised, so {m({ children: "Option<T>" })} costs what writing it out by
+          hand costs. {m({ children: "match" })} is exhaustive, so the empty case cannot be
+          forgotten. This compiles in your tab, by a compiler with no dependencies at all.
+        </P>
+        <InlineDemo initialCode={EX_HELLO} />
         <div style={{ height: space.block }} />
         <P>
-          Three properties matter more than the feature list, and each one is the reason something
-          further down this page was possible.{" "}
-          <Lead>The collector owns the heap</Lead> — no allocator, no free, no linear memory, so a
-          buffer overrun is not a thing the language can express.{" "}
-          <Lead>Types are nominal and there are no closures</Lead>, which costs a little at every
-          seam and buys the property that a value cannot be quietly converted into something it is
-          not. And <Lead>an import names a wac file and nothing else</Lead>:
-        </P>
-        <Code label="the entire authority of a program that reads files and prints" code={EX_MAIN} />
-        <P>
-          There is no {m({ children: "extern" })}, no declaration form, no way to write down the
-          name of a function outside the program. So a module that takes no function parameter has{" "}
-          <Lead>no wasm imports at all</Lead> — not "none that it uses", none in the binary — and
-          the parameters of {m({ children: "main" })} are the complete list of what an application
-          may do. Most sandboxes are a list of things taken away. This is the other direction:
-          nothing is there until something hands it over.
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            The collector owns the heap, so there is no allocator to write and no linear memory in
+            the artifact. The compiler is TypeScript with no LLVM, no binaryen and nothing to
+            install. <A href="#/language">The rest of the language →</A>
+          </span>
         </P>
       </Section>
 
-      {/* ── The turn ─────────────────────────────────────────────────────── */}
-      <div style={{ borderTop: `1px solid ${c.line}`, paddingTop: space.section - 24, marginBottom: space.section }}>
-        <Section id="stack" kicker="and then" title="We are rebuilding the stack in it">
-          <P>
-            A language is an argument until somebody finishes something in it. So the point of this
-            project is not the tour above — it is the{" "}
-            <Lead>{TOTALS.packages} packages and {Math.round(TOTALS.lines / 1000)},000 lines of wac</Lead>{" "}
-            underneath, with <Lead>no C, no libc, no runtime library and no third-party code of any
-            kind</Lead> in any of them. Not bindings to someone else&rsquo;s TLS. Not a wrapper
-            around a Tor daemon. The bytes on the wire are produced by wac.
-          </P>
-          <Table
-            head={["what", "how far", "what says so"]}
-            rows={STACK.map(([what, far, oracle]) => [
-              <span style={{ fontFamily: font.mono, whiteSpace: "nowrap" }}>{what}</span>,
-              far,
-              <span style={{ color: c.dim }}>{oracle}</span>,
-            ])}
-          />
-          <P>
-            That last column is the point of the whole table, and the next section is about why.
-          </P>
-          <Facts
-            rows={[
-              ["packages", String(TOTALS.packages)],
-              ["lines of wac", `${Math.round(TOTALS.lines / 1000)}k`],
-              ["tests", `~${Math.round(TOTALS.testsAll / 100) * 100}`],
-              ["programs", String(TOTALS.programs)],
-              ["dependencies", "0"],
-              ["TypeScript in them", "0"],
-            ]}
-          />
-          <P>
-            <A href="#/stack">What each of those is, and how far it actually goes →</A>
-          </P>
-        </Section>
-      </div>
-
-      {/* ── The method, in one paragraph and a link ──────────────────────── */}
-      <Section id="checked" kicker="how this is checked" title="We do not grade our own homework">
+      {/* ── Tor ───────────────────────────────────────────────────────────── */}
+      <Section id="tor" kicker="one of them, in full" title="Tor">
         <P>
-          A test suite written by the same people as the code is a check on internal consistency and
-          almost nothing else. So the rule, everywhere it is possible:{" "}
-          <Lead>the oracle is somebody else&rsquo;s implementation</Lead> — OpenSSL and rustls,
-          a real C tor, OpenSSH, GNU bash, zlib — and where there is no implementation to ask, a
-          published vector nobody here produced.
+          A client that verifies a consensus and builds circuits; a SOCKS5 proxy; a relay; a
+          directory authority; onion services. On this repository&rsquo;s own TLS 1.3, on its own
+          crypto, with nothing borrowed from the C implementation but the specification.
         </P>
         <P>
-          There are five more kinds of evidence under that one, including a state-space walk over
-          every interleaving rather than a thousand random runs, and a trace that tells you which
-          two routines leak a secret and at which lines.{" "}
-          <A href="#/checked">All six, ordered by how much they are worth →</A>
+          The strongest evidence is somebody else&rsquo;s client. An unmodified{" "}
+          {m({ children: "curl" })}, through our SOCKS proxy, fetching a page from an onion service{" "}
+          <em>we host</em>:
         </P>
+        <Code
+          label="curl, our proxy, our relays, our onion service"
+          lang="text"
+          code={"$ curl --socks5-hostname 127.0.0.1:9250 http://kybekhk…qqd.onion/\nhello from behind an onion"}
+        />
+        <P>
+          <Lead>And it works the other way round.</Lead> A real C tor bootstraps from our directory
+          authority, builds a three-hop circuit through our relays and carries a stream over it —
+          reaching <em>Bootstrapped 100%</em> having accepted our descriptor, certificate, vote and
+          both consensus flavours through its own parsers. Every component is tracked in both
+          directions, and the ones where our code is on both sides are recorded as exactly that
+          rather than counted as green.
+        </P>
+        <Caveat title="not ready to be relied on">
+          Try it — that is what it is for. Just do not depend on it yet: <Lead>wac is unstable by
+          choice</Lead>, and still breaks its own language when that makes the language better, so
+          everything written in it moves with it. None of this has been reviewed by anyone, and
+          anonymity is a separate question from correctness that it does not answer yet.
+        </Caveat>
       </Section>
 
-      {/* ── The live proof ───────────────────────────────────────────────── */}
-      <Section id="run" kicker="or stop reading" title="Run it, in this tab">
+      {/* ── Ethereum ──────────────────────────────────────────────────────── */}
+      <Section id="ethereum" kicker="and another" title="Ethereum">
         <P>
-          A shell — {m({ children: "packages/sh" })} itself, with the sixty applets as commands —
-          compiled to wasm, on a worker, talking to a capability world on the page&rsquo;s thread.
-          It is the artifact {m({ children: "app:build --target browser" })} produces, copied
-          unmodified. <A href="#/run">That, a hasher and a Mandelbrot set →</A>
+          Ask a node who owns a name, or what a balance is, and you believe what it tells you. There
+          is no way to check it — you are trusting whoever runs the endpoint, and a wrong answer
+          looks exactly like a right one.
         </P>
+        <P>
+          <Lead>This checks.</Lead> It follows the chain&rsquo;s headers itself and verifies the
+          committee signatures on them, so a header it accepts is one that was signed rather than one
+          a server asserted. Every answer is then proved against that header: a node returns the
+          value <em>and</em> the path through the trie that leads to it, and a value somebody altered
+          cannot produce a path that still hashes to the root.
+        </P>
+        <P>
+          Worked all the way through, that is a name resolving without trust — from{" "}
+          {m({ children: "vitalik.eth" })} to the registry&rsquo;s storage to the owner recorded
+          there, each step proved against a root the light client verified rather than taken on the
+          node&rsquo;s word.
+        </P>
+        <P>
+          <span style={{ fontSize: 15, color: c.dim }}>
+            What that rests on: an Altair light client (all four sync cases from{" "}
+            {m({ children: "consensus-spec-tests" })}), SSZ (2,233 published vectors, including all
+            1,131 <em>invalid</em> ones), BLS12-381 verification (all 29 fixtures), keccak256, RLP,
+            the contract ABI, and Merkle-Patricia proofs anchored to an{" "}
+            {m({ children: "eth_getProof" })} from a real client.
+          </span>
+        </P>
+        <Caveat title="to do">
+          No EVM, so no contract calls — and no simulation of a transaction before it is approved. A
+          verified resolution stops at ownership and the resolver&rsquo;s address. No signing, so it
+          reads the chain and does not write to it. No receipts or logs, so contract events cannot
+          arrive as notifications. The light client is Altair on a minimal config and has never
+          followed mainnet. Being a full node is not the target: a light client that follows
+          consensus, and local execution backed by state proofs.
+        </Caveat>
       </Section>
 
-      {/* ── Where to go ──────────────────────────────────────────────────── */}
-      <Section id="more" kicker="the rest" title="Where to go">
-        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", marginBottom: space.block }}>
-          {PAGES.map(({ href, label, blurb }) => (
-            <a key={href} href={href} style={{ display: "block", border: `1px solid ${c.line}`, borderRadius: 6, padding: "16px 18px", textDecoration: "none", background: c.panel }}>
-              <div style={{ fontFamily: font.mono, fontSize: 15, color: c.accent, marginBottom: 7 }}>{label} →</div>
-              <div style={{ color: c.dim, fontSize: 14, lineHeight: 1.55 }}>{blurb}</div>
-            </a>
-          ))}
-        </div>
+      {/* ── Everything ────────────────────────────────────────────────────── */}
+      <Section
+        id="packages"
+        kicker="all of it"
+        title={`${TOTALS.packages} packages, ${Math.round(TOTALS.lines / 1000)}k lines, no dependencies`}
+      >
         <P>
-          <span style={{ color: c.dim, fontSize: 15 }}>
-            One note on how this is possible at all, since it is a fair question at this size and
-            pace: the work is done by AI agents, with a human deciding what is worth building and
-            what a claim has to survive before it goes on a page like this one. That is worth saying
-            once, and it is secondary — the reason to look is the code and what it agrees with, both
-            of which are linked from every claim above.
+          In dependency order — nothing imports anything above it. No C, no libc, no runtime library,
+          and no third-party code in any package&rsquo;s {m({ children: "src/" })}.
+        </P>
+        <Table
+          head={["package", "what it is", "lines", "tests"]}
+          align={["left", "left", "right", "right"]}
+          rows={[
+            ...BUILT.map((p) => [
+              <a href={`${MONO_SRC}/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
+              <span style={{ color: c.dim }}>{p.what}</span>,
+              <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.lines.toLocaleString()}</span>,
+              <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.tests}</span>,
+            ]),
+            [
+              <span style={{ fontFamily: font.mono, color: c.text }}>total</span>,
+              "",
+              <span style={{ fontFamily: font.mono, color: c.text, fontVariantNumeric: "tabular-nums" }}>{TOTALS.lines.toLocaleString()}</span>,
+              <span style={{ fontFamily: font.mono, color: c.text, fontVariantNumeric: "tabular-nums" }}>{TOTALS.tests.toLocaleString()}</span>,
+            ],
+          ]}
+        />
+        <Facts
+          rows={[
+            ["dependencies", "0"],
+            ["TypeScript in them", "0"],
+            ["tests, both suites", `~${Math.round(TOTALS.testsAll / 100) * 100}`],
+          ]}
+        />
+        <P>
+          <A href="#/checked">How each of those is checked →</A>{" "}
+          <span style={{ color: c.dim }}>
+            — six kinds of evidence, starting with a foreign implementation on the other end.
           </span>
         </P>
       </Section>
