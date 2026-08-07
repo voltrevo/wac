@@ -108,6 +108,7 @@ import {
   cmdRelayEarly, cmdPadding, cmdDestroy, cmdCreateFast, cmdCreated2, decodeCreated2, encodeCreate2,
   encodeFixed,
 } from "./cell.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** How long a circuit may be silent before the connection is dropped. */
 const i32 IDLE_TIMEOUT_MS = 120000;
@@ -1779,11 +1780,6 @@ u8[] concat(u8[] a, u8[] b) {
   return out;
 }
 
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}
 
 string hex(u8[] b) {
   u8[] digits = "0123456789ABCDEF".toBytes();

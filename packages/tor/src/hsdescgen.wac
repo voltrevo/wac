@@ -44,8 +44,9 @@ import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { ed25519Sign } from "../../crypto/src/ed25519.wac";
 import { encode as b64encode } from "../../codec/src/base64.wac";
 import {
-  MAC_KEY_LEN, MAC_LEN, S_IV_LEN, S_KEY_LEN, SALT_LEN, layerKeys, layerMac, slice,
+  MAC_KEY_LEN, MAC_LEN, S_IV_LEN, S_KEY_LEN, SALT_LEN, layerKeys, layerMac
 } from "./hsdesc.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** tor's `HS_DESC_SUPERENC_PLAINTEXT_PAD_MULTIPLE`. */
 export const i32 SUPERENC_PAD_MULTIPLE = 10000;

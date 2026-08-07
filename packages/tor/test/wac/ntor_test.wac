@@ -9,15 +9,11 @@ import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { ntorClientRequest, ntorClientFinish, ntorServerRespond } from "../../src/ntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
   for (i32 i = 0; i < n; i++) { o[i] = (i * 41 + seed * 7 + 11) & 0xFF; }
-  return o;
-}
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
   return o;
 }
 bool same(u8[] a, u8[] b) {

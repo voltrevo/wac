@@ -12,12 +12,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { sha3_256 } from "../../../crypto/src/keccak.wac";
-import {
-  decryptLayer, layerKeys, layerMac, keywordValue, keywordInt, pemBlock, findKeywordLine,
-  certSignedWithKey, certCertifiedKey, certType, slice,
-  superencryptedConstant, encryptedConstant,
-  S_KEY_LEN, S_IV_LEN, MAC_KEY_LEN, SALT_LEN, MAC_LEN,
-} from "../../src/hsdesc.wac";
+import { decryptLayer, layerKeys, layerMac, keywordValue, keywordInt, pemBlock, findKeywordLine, certSignedWithKey, certCertifiedKey, certType, superencryptedConstant, encryptedConstant, S_KEY_LEN, S_IV_LEN, MAC_KEY_LEN, SALT_LEN, MAC_LEN} from "../../src/hsdesc.wac";
 import {
   IntroPoint, parseIntroPoints, linkSpecifiersValid, linkSpecifier,
   introduce1Plaintext, introduce1Cell, introduce1MacInput, establishRendezvousCell,
@@ -25,6 +20,7 @@ import {
 } from "../../src/hsintro.wac";
 import { hsMac } from "../../src/hsntor.wac";
 import { aesCtr } from "../../../crypto/src/aesctr.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_DESCRIPTOR = 0;
 const i32 V_KEYS = 1;         // identity(32) blinded(32) signing(32) subcred(32) revision(8)

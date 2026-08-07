@@ -35,8 +35,8 @@
 import { decode as b64decode } from "../../codec/src/base64.wac";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { hsMac } from "./hsntor.wac";
-import { findKeywordLine, keywordValue, pemBlock, certCertifiedKey, certType, slice }
-  from "./hsdesc.wac";
+import { findKeywordLine, keywordValue, pemBlock, certCertifiedKey, certType} from "./hsdesc.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 export const i32 LS_IPV4 = 0;
 export const i32 LS_IPV6 = 1;

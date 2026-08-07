@@ -18,6 +18,7 @@ import {
 } from "../../src/derwrite.wac";
 import { parseCert, certSignedBy, Cert, keyEd25519, keyRsa, sigEd25519Alg, sigRsaSha256 }
   from "../../src/x509.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_RSA_KEY = 0;        // n(len2) n e(len2) e d(len2) d
 const i32 V_CHECK_CERT = 1;     // a = DER; [1] if openssl parses and the self-signature verifies
@@ -226,8 +227,3 @@ export string test_time_crosses_the_utc_boundary_correctly(fn[u8[](i32, u8[], u8
   return t.report();
 }
 
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}

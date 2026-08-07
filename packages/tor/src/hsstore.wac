@@ -41,12 +41,13 @@
 // depends on it.
 
 import {
-  certCertifiedKey, certSignedWithKey, certType, keywordInt, keywordValue, pemBlock, slice,
+  certCertifiedKey, certSignedWithKey, certType, keywordInt, keywordValue, pemBlock
 } from "./hsdesc.wac";
 import { CERT_TYPE_SIGNING_HS_DESC, verifyEd25519Cert } from "./relaycert.wac";
 import { prefixed, signedSpanOf } from "./hsdescgen.wac";
 import { ed25519Verify } from "../../crypto/src/ed25519.wac";
 import { decode as b64decode } from "../../codec/src/base64.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** `HS_DESC_MAX_LEN`. A descriptor of exactly this length is refused, as tor's `>=` refuses it. */
 export const i32 MAX_DESCRIPTOR_LEN = 50000;

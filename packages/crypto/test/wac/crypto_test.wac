@@ -11,6 +11,7 @@ import { Sha512, sha384, sha512 } from "../../src/sha512.wac";
 import { hmacSha256 } from "../../src/hmac.wac";
 import { chacha20 } from "../../src/chacha20.wac";
 import { hkdf } from "../../src/hkdf.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 /** Bytes differing between two equal-length arrays. */
 i32 diffCount(u8[] a, u8[] b) {
@@ -74,11 +75,6 @@ export string test_sha256_streaming_matches_oneshot() {
   return t.report();
 }
 
-u8[] slice(u8[] a, i32 lo, i32 hi) {
-  u8[] out = u8[hi - lo]();
-  for (i32 i = lo; i < hi; i++) { out[i - lo] = a[i]; }
-  return out;
-}
 
 /**
  * The same treatment for SHA-512, whose block is 128 bytes and whose padding reserves

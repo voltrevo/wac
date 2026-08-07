@@ -12,6 +12,7 @@ import {
   PUB_NO_BODY, PUB_NO_CERT, PUB_OK, PUB_SIGNATURE, PUB_TOO_LARGE, certExpiryHours,
   checkForPublication,
 } from "../../src/hsstore.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 S_DESCRIPTOR = 0;
 const i32 S_BLINDED = 1;
@@ -188,11 +189,6 @@ i32 findFrom(u8[] hay, string needle, i32 from) {
   return -1;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
 bool sameBytes(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }

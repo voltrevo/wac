@@ -28,7 +28,8 @@ import {
   CERT_TYPE_SIGNING, CERT_TYPE_LINK, CERT_TYPE_RSA_CROSSCERT,
   KEY_TYPE_ED25519, KEY_TYPE_SHA256_X509, EXT_SIGNED_WITH_KEY,
 } from "../../src/relaycert.wac";
-import { certSignedWithKey, certCertifiedKey, certType, slice } from "../../src/hsdesc.wac";
+import { certSignedWithKey, certCertifiedKey, certType} from "../../src/hsdesc.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_COUNT = 0;
 const i32 V_CERT = 1;        // a[0]=i: the signing certificate

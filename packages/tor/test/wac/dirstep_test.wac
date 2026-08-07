@@ -13,6 +13,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { DirAction, dirStep, filed } from "../../src/dirstep.wac";
 import { DirDocuments } from "../../src/dirserve.wac";
 import { PUB_NOT_NEWER, PUB_OK, revisionOf } from "../../src/hsstore.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 D_DESCRIPTOR = 0;
 const i32 D_BLINDED = 1;
@@ -243,11 +244,6 @@ bool contains(u8[] hay, string needle) {
   return false;
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
 bool sameBytes(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }

@@ -34,6 +34,7 @@ import {
   encodeCreate2, decodeCreated2, cellPayload, cellCommand, cellCircId, cmdCreated2, cmdDestroy,
   handshakeNtor,
 } from "../../src/cell.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 bool same(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
@@ -419,11 +420,6 @@ i32 nib(i32 c) {
   return 0;
 }
 
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}
 
 export string test_a_begin_says_where_to_connect() {
   T t = T.create();

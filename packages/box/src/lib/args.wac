@@ -4,8 +4,8 @@
 // could not do `-l`. One parser makes a dozen of them real rather than approximate.
 
 import { Cli } from "../../../platform/src/platform.wac";
-import { slice } from "./bytes.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 export struct Args {
   /**

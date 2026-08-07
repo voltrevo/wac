@@ -20,6 +20,7 @@
 // Each of those is a rejection below, and each has a test naming the shape it prevents.
 
 import { Headers, eqFold, isToken, isOws, isFieldValueByte } from "./headers.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 export i32 ERR_METHOD() { return 1; }         // the method is not a token
 export i32 ERR_TARGET() { return 2; }         // an empty or malformed request target
@@ -48,12 +49,6 @@ export enum Parsed {
   Incomplete,
 }
 
-u8[] slice(u8[] s, i32 lo, i32 hi) {
-  if (hi < lo) { hi = lo; }
-  u8[] out = u8[hi - lo]();
-  for (i32 i = lo; i < hi; i++) { out[i - lo] = s[i]; }
-  return out;
-}
 
 /** The index just past the next CRLF at or after `at`, or -1 if there is not one yet. */
 i32 findCrlf(u8[] s, i32 at) {

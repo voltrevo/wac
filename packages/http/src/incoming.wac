@@ -27,6 +27,7 @@
 import { Headers, eqFold, isToken, isOws, isFieldValueByte } from "./headers.wac";
 import { ERR_VERSION, ERR_LINE, ERR_HEADER_NAME, ERR_HEADER_VALUE, ERR_OBS_FOLD, ERR_FRAMING,
          ERR_CHUNK, ERR_TOO_LARGE } from "./request.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 /** A status line outside 100..599, which is not a status at all. */
 export i32 ERR_STATUS() { return 11; }
@@ -49,12 +50,6 @@ export enum ParsedResponse {
   Incomplete,
 }
 
-u8[] slice(u8[] s, i32 lo, i32 hi) {
-  if (hi < lo) { hi = lo; }
-  u8[] out = u8[hi - lo]();
-  for (i32 i = lo; i < hi; i++) { out[i - lo] = s[i]; }
-  return out;
-}
 
 i32 findCrlf(u8[] s, i32 at) {
   for (i32 i = at; i + 1 < s.len(); i++) {

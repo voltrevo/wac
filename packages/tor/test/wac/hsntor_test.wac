@@ -17,6 +17,7 @@ import {
   MAC_LEN,
 } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_COUNT = 0;
 const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
@@ -30,11 +31,6 @@ bool same(u8[] a, u8[] b) {
     if (a[i] != b[i]) { return false; }
   }
   return true;
-}
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
 }
 u8[] arg1(i32 i) {
   u8[] a = u8[1]();

@@ -7,7 +7,9 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Buf } from "../../../bytes/src/buf.wac";
 import { Input, readInput, tooManyOperands } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
+
 import { decode as unb32, encode as b32, ALPHABET_STANDARD } from "../../../codec/src/base32.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 export i32 base32(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }

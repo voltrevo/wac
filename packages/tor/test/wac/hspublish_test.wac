@@ -12,6 +12,7 @@ import { hsPublishRequest } from "../../src/dirclient.wac";
 import {
   DirDocuments, dirRoute, hsPublishResponse, hsPublishVersion,
 } from "../../src/dirserve.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 P_BLINDED = 0;
 const i32 P_QUERY = 1;
@@ -170,11 +171,6 @@ i32 indexOf(string hay, string needle) { return find(hay.toBytes(), needle); }
 
 string sliceStr(u8[] b, i32 from, i32 to) { return string.fromBytes(slice(b, from, to)); }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}
 
 string itoa(i32 v) {
   if (v == 0) { return "0"; }

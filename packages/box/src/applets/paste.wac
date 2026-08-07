@@ -6,6 +6,8 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Input, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 import { concat } from "../lib/bytes.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+
 
 export i32 paste(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }

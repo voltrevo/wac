@@ -25,6 +25,7 @@ import { writeValue } from "../../json/src/stringify.wac";
 import { decode as b64Decode, ALPHABET_URL } from "../../codec/src/base64.wac";
 import { Program, NO_MATCH, BUDGET } from "../../regex/src/program.wac";
 import { compile as reCompile, search as reSearch, slotCount } from "../../regex/src/regex.wac";
+import { slice } from "../../bytes/src/slice.wac";
 
 bool eqBytes(u8[] a, string b) {
   u8[] bs = b.toBytes();
@@ -35,12 +36,6 @@ bool eqBytes(u8[] a, string b) {
   return true;
 }
 
-u8[] slice(u8[] s, i32 lo, i32 hi) {
-  if (hi < lo) { hi = lo; }
-  u8[] out = u8[hi - lo]();
-  for (i32 i = lo; i < hi; i++) { out[i - lo] = s[i]; }
-  return out;
-}
 
 Response text(i32 status, u8[] body) {
   Response res = Response.create(status);

@@ -45,6 +45,7 @@
 import { sha3_256, shake256 } from "../../crypto/src/keccak.wac";
 import { aesCtr } from "../../crypto/src/aesctr.wac";
 import { decode as b64decode } from "../../codec/src/base64.wac";
+import { clamped } from "../../bytes/src/slice.wac";
 
 export const i32 S_KEY_LEN = 32;      // AES-256
 export const i32 S_IV_LEN = 16;
@@ -73,12 +74,6 @@ u8[] concat(u8[][] parts) {
   return out;
 }
 
-export u8[] slice(u8[] s, i32 from, i32 to) {
-  if (from < 0 || to > s.len() || from > to) { return u8[0](); }
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
-}
 
 /**
  * The three keys for one layer: `SECRET_KEY | SECRET_IV | MAC_KEY`, 80 bytes.
@@ -121,20 +116,20 @@ export u8[] layerMac(u8[] macKey, u8[] salt, u8[] ciphertext) {
  */
 export u8[] decryptLayer(u8[] blob, u8[] secretData, u8[] subcredential, i64 revision, u8[] constant) {
   if (blob.len() < SALT_LEN + MAC_LEN) { return u8[0](); }
-  u8[] salt = slice(blob, 0, SALT_LEN);
-  u8[] ciphertext = slice(blob, SALT_LEN, blob.len() - MAC_LEN);
-  u8[] mac = slice(blob, blob.len() - MAC_LEN, blob.len());
+  u8[] salt = clamped(blob, 0, SALT_LEN);
+  u8[] ciphertext = clamped(blob, SALT_LEN, blob.len() - MAC_LEN);
+  u8[] mac = clamped(blob, blob.len() - MAC_LEN, blob.len());
 
   u8[] keys = layerKeys(secretData, subcredential, revision, salt, constant);
   if (keys.len() != S_KEY_LEN + S_IV_LEN + MAC_KEY_LEN) { return u8[0](); }
-  u8[] macKey = slice(keys, S_KEY_LEN + S_IV_LEN, keys.len());
+  u8[] macKey = clamped(keys, S_KEY_LEN + S_IV_LEN, keys.len());
 
   u8[] want = layerMac(macKey, salt, ciphertext);
   i32 diff = 0;
   for (i32 i = 0; i < MAC_LEN; i++) { diff = diff | (want[i] ^ mac[i]); }
   if (diff != 0) { return u8[0](); }
 
-  return aesCtr(slice(keys, 0, S_KEY_LEN), slice(keys, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), ciphertext);
+  return aesCtr(clamped(keys, 0, S_KEY_LEN), clamped(keys, S_KEY_LEN, S_KEY_LEN + S_IV_LEN), ciphertext);
 }
 
 /** `"hsdir-superencrypted-data"` — the first layer's customisation constant. */
@@ -171,7 +166,7 @@ export i32 findKeywordLine(u8[] doc, u8[] keyword, i32 from) {
 u8[] lineFrom(u8[] doc, i32 at) {
   i32 end = at;
   while (end < doc.len() && doc[end] != 10 && doc[end] != 13) { end++; }
-  return slice(doc, at, end);
+  return clamped(doc, at, end);
 }
 
 /**
@@ -215,7 +210,7 @@ export u8[] pemBlock(u8[] doc, u8[] keyword, u8[] label) {
   if (e < 0) { return u8[0](); }
 
   // Strip the newlines the base64 is wrapped at; the decoder wants a single run of digits.
-  u8[] wrapped = slice(doc, bodyStart, e);
+  u8[] wrapped = clamped(doc, bodyStart, e);
   u8[] flat = u8[wrapped.len()]();
   i32 n = 0;
   for (i32 i = 0; i < wrapped.len(); i++) {
@@ -224,7 +219,7 @@ export u8[] pemBlock(u8[] doc, u8[] keyword, u8[] label) {
       n = n + 1;
     }
   }
-  u8[]? decoded = b64decode(slice(flat, 0, n));
+  u8[]? decoded = b64decode(clamped(flat, 0, n));
   return (decoded is null) ? u8[0]() : decoded!;
 }
 
@@ -261,7 +256,7 @@ export u8[] certSignedWithKey(u8[] cert) {
     i32 length = (cert[at] * 256) + cert[at + 1];
     i32 type = cert[at + 2];
     if (at + 4 + length > cert.len()) { return u8[0](); }
-    if (type == 4 && length == 32) { return slice(cert, at + 4, at + 36); }
+    if (type == 4 && length == 32) { return clamped(cert, at + 4, at + 36); }
     at = at + 4 + length;
   }
   return u8[0]();
@@ -270,7 +265,7 @@ export u8[] certSignedWithKey(u8[] cert) {
 /** The key a proposal-220 certificate certifies — for a descriptor cert, the signing key. */
 export u8[] certCertifiedKey(u8[] cert) {
   if (cert.len() < 39) { return u8[0](); }
-  return slice(cert, 7, 39);
+  return clamped(cert, 7, 39);
 }
 
 /** A certificate's type byte: 8 for a descriptor signing cert, 9 for an intro auth key. */

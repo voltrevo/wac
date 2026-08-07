@@ -16,6 +16,7 @@ import {
   hybridClientOffer, hybridServerAccept, hybridClientFinish,
   groupX25519MlKem768, hybridClientShareLen, hybridServerShareLen, hybridSecretLen,
 } from "../../src/hybrid.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 DK_LEN = 2400;
 const i32 EK_LEN = 1184;
@@ -27,11 +28,6 @@ u8[] pattern(i32 n, i32 seed) {
   return out;
 }
 
-u8[] slice(u8[] src, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = src[from + i]; }
-  return out;
-}
 
 bool sameBytes(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }

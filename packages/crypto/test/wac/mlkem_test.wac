@@ -30,6 +30,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { mlkemKeyGen, mlkemEncaps, mlkemDecaps } from "../../src/mlkem.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 SEED = 64;
 const i32 EK = 1184;
@@ -38,11 +39,6 @@ const i32 CT = 1088;
 const i32 SS = 32;
 const i32 RECORD = 2368;
 
-u8[] slice(u8[] src, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = src[from + i]; }
-  return o;
-}
 bool same(u8[] a, u8[] b) {
   if (a.len() != b.len()) { return false; }
   for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }

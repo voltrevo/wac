@@ -13,6 +13,7 @@ import { ReplayCache, cookieReplayCache, introReplayCache } from "../../src/hsre
 import { REND_OK } from "../../src/hsrendpoint.wac";
 import { serviceRendezvousKeys } from "../../src/hsntor.wac";
 import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 I_COUNT = 0;
 const i32 I_CELL = 1;
@@ -220,8 +221,3 @@ export string test_what_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
   return t.report();
 }
 
-u8[] slice(u8[] b, i32 from, i32 to) {
-  u8[] out = u8[to - from]();
-  for (i32 i = from; i < to; i++) { out[i - from] = b[i]; }
-  return out;
-}

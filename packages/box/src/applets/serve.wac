@@ -12,9 +12,10 @@ import { Cli, Core, Socket } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { concat, slice } from "../lib/bytes.wac";
+import { concat } from "../lib/bytes.wac";
 import { Served, serve as handle } from "../../../server/src/serve.wac";
 import { Read } from core;
+import { slice } from "../../../bytes/src/slice.wac";
 
 export i32 serve(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }

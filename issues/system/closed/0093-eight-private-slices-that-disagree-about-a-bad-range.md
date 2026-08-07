@@ -1,6 +1,6 @@
 # 0093 — eight private `slice`s, and they disagree about a bad range
 
-- **Status:** open
+- **Status:** closed, 2026-08-07
 - **Claimed by:** agent-a, 2026-08-07 — taking the "both, named" answer
 - **Reported by:** agent-a
 - **Date:** 2026-08-06
@@ -47,3 +47,34 @@ the i32-minimum bug was fixed in four copies separately (GitHub wac-mono#6), and
 still returned `""` for a negative until today. `slice` has not cost anything yet. It is filed rather than
 fixed because the fix has to pick a semantics for other people's parsers, and picking wrong is expensive to
 undo.
+
+## Closed: two names, and twenty-eight copies gone
+
+`packages/bytes/src/slice.wac` has both, and each says in its own doc comment what it is for:
+
+- **`slice`** requires `0 <= from <= to <= s.len()` and traps otherwise, *before* the read rather than
+  during it. The old naive copies trapped by accident, which is not the same thing: a caller could not
+  tell a stated precondition from an overlooked one, and an inverted range trapped on a negative
+  allocation with nothing to read in the message.
+- **`clamped`** takes any two integers and answers with whatever part of the range exists.
+
+**Twenty-eight copies, not eight.** Nine in `src` — `packages/http` had two, and `packages/box`'s
+`lib/bytes.wac` exported a tenth that eleven files imported — and eighteen more in test wac files, which
+is where a copy is least likely to be looked at and most likely to be pasted from.
+
+**Which one each site got was decided by reading, not by rewriting.** Every `src` caller of the four
+clamp-only copies already validates its range: `ssz`'s `rootAt` refuses a span outside `data` before it
+slices, `http`'s two body reads compare `input.len() - at` against the length and answer Incomplete, and
+`server/routes` scans the same array it slices. Those all take `slice`, where the trap is now an
+assertion on the check above it. The two parsers that answered a bad range with an empty array —
+`tls/x509` and `tor/hsdesc` — take `clamped`, because a certificate and a hidden-service descriptor are
+attacker-supplied and refusing beats aborting. That was already their behaviour; it is now a choice with
+a name on it rather than a check hidden inside a helper.
+
+**No behaviour changed anywhere.** Every file kept the semantics its private copy had. What changed is
+that the call site says which semantics it is asking for, and there is one implementation to fix if
+either is wrong.
+
+`packages/bytes/test/bounds.wac` covers both, one entry point per refusal because a trap ends the
+module: the three ranges `slice` refuses, the empty-slice-at-the-end boundary that must *not* trap, and
+the same three ranges answered by `clamped`.

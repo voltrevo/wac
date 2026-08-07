@@ -23,6 +23,7 @@ import {
   serviceStorePeriods, consensusTimePeriod, Publication, servicePlan,
 } from "../../src/hsdir.wac";
 import { Relay, parseConsensus, attachMicrodescriptors, base64NoPad } from "../../src/directory.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 const i32 V_CASE_COUNT = 0;
 const i32 V_CASE_META = 1;      // blindedKey(32) srv(32) tp(8) plen(8)
@@ -39,11 +40,6 @@ bool same(u8[] a, u8[] b) {
     if (a[i] != b[i]) { return false; }
   }
   return true;
-}
-u8[] slice(u8[] s, i32 from, i32 to) {
-  u8[] o = u8[to - from]();
-  for (i32 i = 0; i < o.len(); i++) { o[i] = s[from + i]; }
-  return o;
 }
 i64 be64(u8[] b, i32 at) {
   i64 v = 0;
