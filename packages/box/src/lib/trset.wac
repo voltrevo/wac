@@ -19,6 +19,7 @@
 // nobody writes down.
 
 import { Buf } from "../../../bytes/src/buf.wac";
+import { classRanges } from "../../../regex/src/posix.wac";
 
 /** A parsed set: the bytes it names, or why it could not be read. */
 export struct TrSet {
@@ -238,41 +239,18 @@ u8[] sliceOf(u8[] raw, i32 from, i32 to) {
 string charOf(i32 c) { return string.fromBytes(u8[1](fill: c)); }
 
 /**
- * The twelve POSIX classes, in the C locale.
+ * The twelve POSIX classes, in the C locale, as the bytes they name.
  *
- * Written out rather than derived from `isalpha`-style predicates, because the set is the specification:
- * a reader can check `[:punct:]` against the table here, and cannot check it against a chain of range
- * comparisons without rebuilding the table in their head.
+ * The ranges come from `packages/regex`, which needs the same twelve for `[[:alpha:]]`. There were two
+ * copies of this table — this one written out by hand and that one written out by hand again — and two
+ * copies of a table that is a *specification* is the kind of duplicate that agrees for a year and then
+ * does not. Both are checked against the real tools over every byte, `tr` here and `grep` there.
  */
 u8[] classBytes(string name) {
+  i32[] ranges = classRanges(name);
   Buf out = Buf.create();
-  for (i32 c = 0; c < 128; c++) {
-    bool upper = c >= 'A' && c <= 'Z';
-    bool lower = c >= 'a' && c <= 'z';
-    bool digit = c >= '0' && c <= '9';
-    bool space = c == 32 || (c >= 9 && c <= 13);
-    bool cntrl = c < 32 || c == 127;
-    bool print = c >= 32 && c < 127;
-    bool graph = c > 32 && c < 127;
-    bool alpha = upper || lower;
-    bool alnum = alpha || digit;
-    bool punct = graph && !alnum;
-    bool xdigit = digit || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    bool blank = c == 32 || c == 9;
-    bool want = false;
-    if (name == "alpha") { want = alpha; }
-    else if (name == "alnum") { want = alnum; }
-    else if (name == "digit") { want = digit; }
-    else if (name == "upper") { want = upper; }
-    else if (name == "lower") { want = lower; }
-    else if (name == "space") { want = space; }
-    else if (name == "blank") { want = blank; }
-    else if (name == "cntrl") { want = cntrl; }
-    else if (name == "print") { want = print; }
-    else if (name == "graph") { want = graph; }
-    else if (name == "punct") { want = punct; }
-    else if (name == "xdigit") { want = xdigit; }
-    if (want) { out.push(c); }
+  for (i32 k = 0; k + 1 < ranges.len(); k = k + 2) {
+    for (i32 c = ranges[k]; c <= ranges[k + 1]; c++) { out.push(c); }
   }
   return out.take();
 }

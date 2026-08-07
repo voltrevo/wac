@@ -14,6 +14,7 @@ import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/regex/test/probe.wac") as unknown as {
   execBasic(pattern: Uint8Array, input: Uint8Array, at: number): Int32Array;
+  execExtended(pattern: Uint8Array, input: Uint8Array, at: number): Int32Array;
   basicAsExtended(pattern: Uint8Array): Uint8Array;
 };
 
@@ -30,10 +31,10 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** Whether GNU grep, reading basic regular expressions, finds `pattern` in `line`. */
-async function gnuMatches(pattern: string, line: string): Promise<boolean | "rejected"> {
+/** Whether GNU grep finds `pattern` in `line`, in whichever dialect `flags` selects. */
+async function gnuMatches(pattern: string, line: string, flags: string[] = []): Promise<boolean | "rejected"> {
   const child = new Deno.Command("/bin/grep", {
-    args: ["-c", "-e", pattern],
+    args: [...flags, "-c", "-e", pattern],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
@@ -54,6 +55,16 @@ async function gnuMatches(pattern: string, line: string): Promise<boolean | "rej
 
 function ours(pattern: string, line: string): boolean | "rejected" {
   const out = mod.execBasic(b(pattern), b(line), 0);
+  if (out[0] === -1) return "rejected";
+  if (out[0] === -2) throw new Error(`budget exhausted on ${JSON.stringify(pattern)}`);
+  return out[0] === 1;
+}
+
+/** The two dialects, which differ in their operators and agree about everything inside a bracket. */
+const DIALECTS: { flags: string[]; run: (p: string, l: string) => boolean | "rejected" }[] = [];
+
+function oursExtended(pattern: string, line: string): boolean | "rejected" {
+  const out = mod.execExtended(b(pattern), b(line), 0);
   if (out[0] === -1) return "rejected";
   if (out[0] === -2) throw new Error(`budget exhausted on ${JSON.stringify(pattern)}`);
   return out[0] === 1;
@@ -119,4 +130,68 @@ Deno.test("generated basic patterns mean what GNU grep says they mean", async ()
     }
   }
   assertEquals(checked > 3000, true, `only ${checked} pairs were compared`);
+});
+
+/**
+ * Bracket expressions, which are POSIX's in both dialects and **not** this engine's.
+ *
+ * `[[:digit:]]` was a set of the six characters `[ : d i g t` followed by a required `]`, so
+ * `grep '[[:digit:]]'` matched nothing at all and said nothing — a caller who greps for digits and gets
+ * no lines concludes there are none. `[]a]` was the empty class for the same reason.
+ *
+ * Every byte, because a class is a claim about all of them and the twelve names were typed by hand:
+ * `[:punct:]` is the one nobody can check by reading.
+ */
+DIALECTS.push({ flags: [], run: ours }, { flags: ["-E"], run: oursExtended });
+
+Deno.test("bracket expressions mean what GNU grep says they mean, byte by byte", async () => {
+  const patterns = [
+    "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
+    "[[:blank:]]", "[[:cntrl:]]", "[[:print:]]", "[[:graph:]]", "[[:punct:]]", "[[:xdigit:]]",
+    "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
+    "[]a]", "[^]a]", "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a",
+  ];
+  // One byte per subject, every byte a line can hold. NUL cannot reach `grep` through argv or a line
+  // here, and LF is the line terminator itself.
+  let checked = 0;
+  for (const pattern of patterns) {
+    for (let byte = 1; byte <= 255; byte++) {
+      if (byte === 10) continue;
+      const line = String.fromCharCode(byte);
+      for (const { flags, run } of DIALECTS) {
+        const want = await gnuMatches(pattern, line, flags);
+        const got = run(pattern, line);
+        assertEquals(got, want, `grep ${flags.join(" ")} ${JSON.stringify(pattern)} against byte ${byte}`);
+        checked++;
+      }
+    }
+  }
+  assertEquals(checked > 10000, true, `only ${checked} pairs were compared`);
+});
+
+/**
+ * The anchors GNU spells with a backslash, which were passing through as literals.
+ *
+ * `\<` and `\>` are word edges and `` \` `` and `\'` are the buffer's, which in a line-oriented grep
+ * are the line's. Unknown escapes were the character itself, so `grep '\<a'` searched for a `<`, found
+ * none, and reported no lines — the same silence as the brackets above, in a different syntax.
+ */
+Deno.test("GNU's backslash anchors are anchors, in both dialects", async () => {
+  const patterns = ["\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<", "\\>", "x\\<y"];
+  const subjects = [
+    "a", "ab", "ba", "abc", "a b", "b a", "-a-", "a-b", "_a", "a_", "1a", "a1", "", "aa",
+    "abc def", "def abc", "x<y", "x`y", "a'", "`a",
+  ];
+  let checked = 0;
+  for (const pattern of patterns) {
+    for (const subject of subjects) {
+      for (const { flags, run } of DIALECTS) {
+        const want = await gnuMatches(pattern, subject, flags as string[]);
+        const got = run(pattern, subject);
+        assertEquals(got, want, `grep ${(flags as string[]).join(" ")} ${JSON.stringify(pattern)} against ${JSON.stringify(subject)}`);
+        checked++;
+      }
+    }
+  }
+  assertEquals(checked > 300, true, `only ${checked} pairs were compared`);
 });

@@ -9,7 +9,8 @@ import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
-import { compile, compileIgnoreCase, search, slotCount } from "../../../regex/src/regex.wac";
+import { search, slotCount } from "../../../regex/src/regex.wac";
+import { compileExtended, compileExtendedIgnoreCase } from "../../../regex/src/posix.wac";
 import { compileBasic, compileBasicIgnoreCase } from "../../../regex/src/basic.wac";
 import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 
@@ -22,8 +23,8 @@ export i32 grep(Core core, Cli cli, Args a) {
   bool extended = has(a, 'E');
   u8[] pattern = a.rest[0].toBytes();
   Program? prog = has(a, 'i')
-    ? (extended ? compileIgnoreCase(pattern) : compileBasicIgnoreCase(pattern))
-    : (extended ? compile(pattern) : compileBasic(pattern));
+    ? (extended ? compileExtendedIgnoreCase(pattern) : compileBasicIgnoreCase(pattern))
+    : (extended ? compileExtended(pattern) : compileBasic(pattern));
   if (prog is null) { core.warn(a.name + ": bad pattern: " + a.rest[0]); return 2; }
   Program p = prog!;
 

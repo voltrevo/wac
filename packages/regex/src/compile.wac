@@ -33,6 +33,15 @@ struct C {
   // table lookup on the hot path of every match, and would have to answer for a byte that is half
   // of a multi-byte scalar. See the README on why this is ASCII only.
   bool ignoreCase;
+  /**
+   * Whether this pattern came from a POSIX layer — `grep`, not JavaScript.
+   *
+   * It enables exactly one thing: GNU's `\<` and `\>`. JavaScript spells those with lookahead, which
+   * this engine does not have, so there is nothing for `posix.wac` to rewrite them into and the choice
+   * was between a flag here and answering "no lines" for a pattern GNU answers. A flag, then — and
+   * kept to that one meaning, because the dialect this file implements is still JavaScript's.
+   */
+  bool posix;
 
   void grow(this, i32 want) {
     if (want * 3 <= this.code.len()) { return; }
@@ -337,6 +346,8 @@ void parseAtom(C c) {
       c.emit(OP_CLASS(), index, 0);
     } else if (e == 'b' || e == 'B') {
       c.emit(OP_WORDB(), e == 'b' ? 1 : 0, 0);
+    } else if (c.posix && (e == '<' || e == '>')) {
+      c.emit(OP_WORDB(), e == '<' ? 2 : 3, 0);
     } else if (isDigit(e) && e != '0') {
       c.fail();                                // a backreference; not implemented
     } else {
@@ -680,12 +691,12 @@ void parseAlternation(C c) {
 }
 
 /** Compile `pattern`, or null if it is not one this engine accepts. */
-export Program? compile(u8[] pattern) { return compileFlags(pattern, false); }
+export Program? compile(u8[] pattern) { return compileFlags(pattern, false, false); }
 
-/** As `compile`, with `ignoreCase` for the `i` flag. */
-export Program? compileFlags(u8[] pattern, bool ignoreCase) {
+/** As `compile`, with `ignoreCase` for the `i` flag and `posix` for `\<` and `\>`. */
+export Program? compileFlags(u8[] pattern, bool ignoreCase, bool posix) {
   C c = C(i32[0](), 0, 0, pattern, 0, 0, i32[0](), i32[0](), i32[0](), i32[0](), bool[0](), 0, 0,
-          false, ignoreCase);
+          false, ignoreCase, posix);
   c.emit(OP_SAVE(), 0, 0);
   parseAlternation(c);
   if (c.failed || c.pos < c.src.len()) { return null; }

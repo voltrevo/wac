@@ -102,13 +102,45 @@ groups and `(?:)`, alternation, `* + ? {n} {n,} {n,m}` greedy and lazy, the usua
 Refused, rather than mis-parsed — which is the dangerous alternative, since `(?=a)` read as a
 group containing `?=a` would silently match the wrong thing:
 
-- lookahead and lookbehind, backreferences, named groups, and every flag but `i`;
+- lookahead and lookbehind, backreferences, named groups, and every flag but `i`. GNU `grep` accepts
+  `\(ab\)\1` and this refuses it, which is the one place a `grep` here still exits 2 where GNU
+  exits 1 — a refusal rather than a wrong answer, and the message says the pattern is bad when what
+  is bad is this engine;
 - a quantified assertion (`^?`, `\b+`), which is a syntax error in JavaScript too;
 - `[\D]`, `[\W]`, `[\S]` — a negated shorthand inside a positive class needs set subtraction.
 
 **Bytes, not code points.** A `.` matches one byte, so a multi-byte character is several. `\s` is
 the ASCII set where JavaScript's also has Unicode spaces. The tests keep to ASCII for exactly this
 reason, and lifting it means a UTF-8-aware machine, not a bigger table.
+
+## POSIX, which is a different dialect and now says so
+
+`grep` does not read this dialect. `basic.wac` has translated its *operators* since wac-mono 0104 —
+in basic regular expressions `| + ? { ( )` are literals and their backslashed forms are the
+operators — and `posix.wac` is the rest of the difference, which is inside the brackets and in three
+escapes:
+
+| POSIX | here, before | now |
+| --- | --- | --- |
+| `[[:digit:]]` | a set of `[ : d i g t`, then a required `]` — **matched nothing** | `[0-9]` |
+| `[]a]` | the empty class, which matches nothing | `[\]a]` |
+| `[.x.]`, `[=x=]` | literal dots and equals signs | the character, this being the C locale |
+| `.` | any byte but LF **and CR**, JavaScript having four line terminators | any byte but LF |
+| `\<`, `\>` | a literal `<` and `>` | the word edges, `OP_WORDB` with two more answers |
+| `` \` ``, `\'` | a literal back-tick and quote | `^` and `$`, a grep matching one line at a time |
+
+Every one of those was silence rather than an error: the pattern compiled, meant something else, and
+answered "no lines". `grep '[[:digit:]]'` finding nothing looks exactly like a file with no digits in
+it.
+
+`compileExtended` is the entry point for `grep -E`; `compileBasic` calls the same bracket rewriter, so
+the two dialects cannot drift apart about what a bracket means. The only thing the engine itself
+learned is `\<` and `\>`, behind a `posix` flag on `compileFlags` — JavaScript spells those with
+lookahead, which this engine does not have, so there was nothing to rewrite them into.
+
+`test/basic.test.ts` compares both dialects against `/bin/grep` over **every byte** for the twelve
+class names, because a class is a claim about all of them and `[:punct:]` cannot be checked by
+reading.
 
 ## Not here yet
 

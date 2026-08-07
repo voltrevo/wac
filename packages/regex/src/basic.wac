@@ -35,20 +35,31 @@
 //     "invalid pattern".
 //   - **A `]` first in a bracket expression is a member**, which is POSIX and is *not* this engine's
 //     rule: `compile.wac` says so in as many words, "that is Perl and POSIX, not JavaScript". So
-//     `[]a]` has to become `[\]a]` on the way through, or the engine reads an empty class.
+//     `[]a]` has to become `[\]a]` on the way through, or the engine reads an empty class. That rule and
+//     the rest of the bracket — `[[:digit:]]`, `[.x.]`, `[=x=]` — live in `posix.wac` now, because they
+//     are the same in basic and extended and this file was the only one applying them.
 //   - `^` and `$` in the middle, which are literal in POSIX basic. GNU treats them as anchors anyway in
 //     some positions; this follows POSIX, and the difference is noted in the README rather than guessed
 //     at, because a test that disagrees with GNU here would be testing GNU's extensions.
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Program } from "./program.wac";
-import { compile, compileFlags } from "./compile.wac";
+import { compileFlags } from "./compile.wac";
+import { bufferAnchor, copyBracket, writeAny } from "./posix.wac";
 
 /** Compile a basic regular expression. Null when it will not compile. */
-export Program? compileBasic(u8[] pattern) { return compile(toExtended(pattern)); }
+export Program? compileBasic(u8[] pattern) {
+  u8[]? js = toExtended(pattern);
+  if (js is null) { return null; }
+  return compileFlags(js!, false, true);
+}
 
 /** As `compileBasic`, with the `i` flag. */
-export Program? compileBasicIgnoreCase(u8[] pattern) { return compileFlags(toExtended(pattern), true); }
+export Program? compileBasicIgnoreCase(u8[] pattern) {
+  u8[]? js = toExtended(pattern);
+  if (js is null) { return null; }
+  return compileFlags(js!, true, true);
+}
 
 /**
  * A basic pattern as the extended one that means the same thing.
@@ -56,7 +67,7 @@ export Program? compileBasicIgnoreCase(u8[] pattern) { return compileFlags(toExt
  * Exported because it is the whole of the difference between the two dialects, and a caller comparing
  * against `grep -E` should be able to see what its pattern became.
  */
-export u8[] toExtended(u8[] pattern) {
+export u8[]? toExtended(u8[] pattern) {
   Buf out = Buf.create();
   i32 i = 0;
   // Where the last quantifiable unit began in `out`, so a *second* quantifier can be made to apply to
@@ -71,39 +82,43 @@ export u8[] toExtended(u8[] pattern) {
   // more of "zero or more a", so it matches the empty string. Getting that backwards made `[ab]*\+` a
   // literal plus, which is a different pattern that happens to look reasonable.
   bool quantifiable = false;
-  bool inClass = false;
   while (i < pattern.len()) {
     i32 c = pattern[i];
 
-    // A bracket expression is copied through untouched: inside one, none of the six is special in either
-    // dialect, and `[|]` must not become `[\|]`.
-    if (inClass) {
-      out.push(c);
-      if (c == ']') { inClass = false; }
+    // A bracket expression is a POSIX bracket expression in both dialects — none of the six operators is
+    // special inside one, and `[|]` must not become `[\|]` — so it is handed to `posix.wac` whole. That
+    // is where `[]a]`, `[[:digit:]]` and `[.x.]` are turned into what this engine understands, and having
+    // the rule in one place is the point: basic and extended differ in their operators and nowhere else.
+    // `.` is POSIX's, not JavaScript's — see `writeAny`. Basic and extended agree about this one.
+    if (c == '.') {
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      writeAny(out);
+      quantifiable = true;
       i++;
       continue;
     }
     if (c == '[') {
       unitStart = out.len;
       lastWasQuantifier = false;
-      out.push(c);
-      i++;
-      if (i < pattern.len() && pattern[i] == '^') { out.push(pattern[i]); i++; }
-      // `[]abc]` and `[^]abc]`: POSIX says the first `]` is a *member*. This engine has no such rule —
-      // `compile.wac` states it — so the member is escaped rather than passed through, which is the same
-      // set said in a syntax the engine does have.
-      if (i < pattern.len() && pattern[i] == ']') {
-        out.push('\\');
-        out.push(pattern[i]);
-        i++;
-      }
-      inClass = true;
+      i32 next = copyBracket(out, pattern, i);
+      if (next < 0) { return null; }
+      i = next;
       quantifiable = true;
       continue;
     }
 
     if (c == '\\' && i + 1 < pattern.len()) {
       i32 next = pattern[i + 1];
+      i32 anchor = bufferAnchor(next);
+      if (anchor >= 0) {
+        unitStart = out.len;
+        lastWasQuantifier = false;
+        out.push(anchor);
+        quantifiable = true;
+        i = i + 2;
+        continue;
+      }
       if (isSpecialWhenEscaped(next)) {
         // `\(` `\)` `\|` `\+` `\?` `\{` `\}` — the operators, which extended spells bare.
         //
