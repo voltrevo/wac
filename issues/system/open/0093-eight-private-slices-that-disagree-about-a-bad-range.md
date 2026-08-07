@@ -1,7 +1,7 @@
 # 0093 — eight private `slice`s, and they disagree about a bad range
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a, 2026-08-07 — taking the "both, named" answer
 - **Reported by:** agent-a
 - **Date:** 2026-08-06
 - **Kind:** bug
