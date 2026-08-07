@@ -141,6 +141,10 @@ const CASES = [
   `mkdir d; cd d; cd ..; echo x > f; ls`,              // leaving and coming back
   `echo x > f; test -f ./f && echo isfile`,            // `stat` through a relative path
   `mkdir d; test -d d/ && echo isdir`,                 // `stat` with a trailing slash
+  // A mount point belongs here in principle and cannot be: the host side runs with grants that stop at
+  // the directory it was given, so `mkdir -p /dev` on that side fails with "Requires all access" rather
+  // than answering the filesystem question. `packages/fs/test/synth.test.ts` checks it against the real
+  // `mkdir` instead, measured rather than compared.
 ];
 
 Deno.test("every filesystem script answers the same on the host and in memory", async () => {

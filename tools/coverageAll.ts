@@ -24,7 +24,7 @@
 const verbose = Deno.args.includes("--verbose");
 
 const PACKAGES = [
-  "bignum", "bytes", "codec", "crypto", "datetime", "fmt", "gzip", "http", "json",
+  "bignum", "bytes", "codec", "crypto", "datetime", "fmt", "fs", "gzip", "http", "json",
   "regex", "server", "sh", "ssh", "std", "stream", "unicode", "url", "zstd",
 ];
 

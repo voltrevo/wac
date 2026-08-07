@@ -141,7 +141,7 @@ export Written write(Fs fs) {
  * was written with, which is the whole point of recording metadata rather than deriving it.
  */
 export Loaded read(u8[] data, i64 now) {
-  Reader r = Reader(data, 0, false);
+  Reader r = Reader(data, data.len() - 4, 0, false, "");
 
   if (data.len() < 13) { return failed("too short to be an image"); }
   u8[] magic = "wacimg\0".toBytes();
@@ -173,9 +173,9 @@ export Loaded read(u8[] data, i64 now) {
   i32 mounts = r.u32();
   for (i32 i = 0; i < mounts; i++) {
     string at = r.string();
-    if (r.bad) { return failed("the image ends inside a mount point"); }
+    if (r.bad) { return failed(r.why == "" ? "the image ends inside a mount point" : r.why); }
     i32 root = getNode(r, fs, now);
-    if (r.bad) { return failed("the image ends inside a node"); }
+    if (r.bad) { return failed(r.why == "" ? "the image ends inside a node" : r.why); }
     fs.mounts.push(Mount(at, Backing.Memory, root));
   }
   if (r.at != end) { return failed("trailing bytes after the last mount"); }
@@ -262,11 +262,30 @@ void putI64(Buf out, i64 v) {
  */
 struct Reader {
   u8[] data;
+  /**
+   * One past the last byte of the *body* — the checksum's four bytes are not content.
+   *
+   * This was `data.len()`, so a malformed image could read its own checksum as payload: the first thing
+   * a hand-built short body did was take those four bytes as a string length and report "a length above
+   * two gigabytes". Harmless there, and not harmless in general — four bytes that happened to complete a
+   * structure would have been *accepted* as part of it. The checksum proves the bytes are the ones that
+   * were written; it is not one of them.
+   */
+  i32 end;
   i32 at;
   bool bad;
+  /**
+   * What was wrong, when it was something more specific than running out.
+   *
+   * Empty means "the bytes ended", which is what an overrun is and what every caller assumed. It was not
+   * always true: a node whose kind byte is neither 0 nor 1 was reported as "the image ends inside a
+   * node", and the image had not ended — somebody's *writer* had produced a byte nothing means. Telling
+   * them the file was truncated sends them to look at the wrong end of the problem.
+   */
+  string why;
 
   i32 byte(this) {
-    if (this.bad || this.at >= this.data.len()) { this.bad = true; return 0; }
+    if (this.bad || this.at >= this.end) { this.bad = true; return 0; }
     i32 v = this.data[this.at];
     this.at++;
     return v;
@@ -281,7 +300,11 @@ struct Reader {
     // real length here, and letting it wrap would turn "an enormous count" into "a negative one" and then
     // into a loop that never runs. Refusing is the point.
     i32 v = a | (b << 8) | (c << 16) | (d << 24);
-    if (v < 0) { this.bad = true; return 0; }
+    if (v < 0) {
+      this.bad = true;
+      if (this.why == "") { this.why = "a length above two gigabytes, which cannot be one"; }
+      return 0;
+    }
     return v;
   }
 
@@ -293,15 +316,22 @@ struct Reader {
 
   string string(this) {
     i32 n = this.u32();
-    if (this.bad || this.at + n > this.data.len()) { this.bad = true; return ""; }
+    if (this.bad || this.at + n > this.end) { this.bad = true; return ""; }
     u8[] b = u8[n]();
     b.copyFrom(this.data, this.at, 0, n);
     this.at = this.at + n;
     return string.fromBytes(b);
   }
 
+  /** Mark a specific failure and answer -1, which is what every node reader returns for one. */
+  i32 wrong(this, string why) {
+    this.bad = true;
+    if (this.why == "") { this.why = why; }
+    return -1;
+  }
+
   u8[] bytes(this, i32 n) {
-    if (this.bad || n < 0 || this.at + n > this.data.len()) { this.bad = true; return u8[0](); }
+    if (this.bad || n < 0 || this.at + n > this.end) { this.bad = true; return u8[0](); }
     u8[] b = u8[n]();
     b.copyFrom(this.data, this.at, 0, n);
     this.at = this.at + n;
@@ -316,7 +346,7 @@ i32 getNode(Reader r, Fs fs, i64 now) {
   string owner = r.string();
   i64 mtime = r.i64();
   if (r.bad) { return -1; }
-  if (kind != KIND_FILE() && kind != KIND_DIR()) { r.bad = true; return -1; }
+  if (kind != KIND_FILE() && kind != KIND_DIR()) { return r.wrong("a node that is neither a file nor a directory"); }
 
   if (kind == KIND_FILE()) {
     i32 len = r.u32();

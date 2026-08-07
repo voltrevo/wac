@@ -297,6 +297,17 @@ export struct Fs {
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
+    // **A mount point is a directory, and its parent lives in the mount above.** So the lookup below
+    // searches the wrong tree for it and used to answer "no such file or directory" for `/mnt`, and the
+    // synthesised backing answered "read-only file system" for `/dev` — three different wrong answers
+    // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
+    // this correctly already, and asking it twice would cost a round trip to be told what it just said.
+    match (m.backing) {
+      case Host(cli): {}
+      else: {
+        if (this.stat(path).isDir) { return Change.of(FAULT_OTHER(), "is a directory"); }
+      }
+    }
     match (m.backing) {
       case Host(cli): { return cli.writeFile(path, data).wait(); }
       case Synth(rand): {
@@ -338,6 +349,26 @@ export struct Fs {
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
+    // The same for `mkdir`, where the answer is "file exists" rather than "is a directory" — except
+    // under `-p`, which is the flag that means "and say nothing if it is already there".
+    // **A mount point is a directory, and its parent lives in the mount above.** So the lookup below
+    // searches the wrong tree for it and used to answer "no such file or directory" for `/mnt`, and the
+    // synthesised backing answered "read-only file system" for `/dev` — three different wrong answers
+    // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
+    // this correctly already, and asking it twice would cost a round trip to be told what it just said.
+    match (m.backing) {
+      case Host(cli): {}
+      else: {
+        if (this.stat(path).isDir) {
+          // `-p` is the flag that means "and say nothing if it is already there", so an existing
+          // directory is success under it and "file exists" without it. This answered neither for a
+          // mount point: the read-only refusal below fired first and `mkdir -p /dev` failed.
+          return parents
+            ? Change.of(FAULT_NONE(), "")
+            : Change.of(FAULT_EXISTS(), "file exists");
+        }
+      }
+    }
     match (m.backing) {
       case Host(cli): { return cli.mkdir(path, parents).wait(); }
       case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
@@ -478,6 +509,25 @@ export struct Fs {
     i32 toParent = this.find(toMount, parentOf(to));
     if (toParent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     if (!this.nodes.get(toParent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
+
+    // **Renaming onto something that is already there.** `rename(2)` has four rules here and this had
+    // none of them: it replaced the entry whatever it was, so `mv f d` where `d` is a directory
+    // succeeded and orphaned everything `d` held. Not a missing check — a wrong answer, and in an image
+    // it is data loss. The categories are the host's, taken from `test/host.test.ts`'s transcript rather
+    // than chosen: a file onto any directory and a directory onto a file are both `FAULT_OTHER`, a
+    // directory onto a *non-empty* directory is `FAULT_NOT_EMPTY`, and a directory onto an empty one is
+    // the single pair that is allowed.
+    i32 existing = this.child(toParent, baseOf(to));
+    if (existing >= 0 && existing != node) {
+      bool fromDir = this.nodes.get(node).isDir;
+      bool toDir = this.nodes.get(existing).isDir;
+      if (!fromDir && toDir) { return Change.of(FAULT_OTHER(), "is a directory"); }
+      if (fromDir && !toDir) { return Change.of(FAULT_OTHER(), "not a directory"); }
+      if (fromDir && toDir && this.nodes.get(existing).entries.len() > 0) {
+        return Change.of(FAULT_NOT_EMPTY(), "directory not empty");
+      }
+    }
+
     this.nodes.get(fromParent).entries.remove(baseOf(from));
     this.nodes.get(toParent).entries.set(baseOf(to), node);
     return Change.of(FAULT_NONE(), "");
@@ -600,9 +650,6 @@ i32 synthKind(Mount m, string path) {
   }
   return SYNTH_NONE();
 }
-
-/** Whether this one has no end — the two that `readFile` cannot answer. */
-bool synthEndless(i32 kind) { return kind == SYNTH_ZERO() || kind == SYNTH_RANDOM(); }
 
 /**
  * Read a synthesised file. `n` is -1 for "the whole of it", which the endless two refuse.

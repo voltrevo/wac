@@ -123,3 +123,32 @@ Deno.test("design/0001 step 6's own criterion, in a session with no grants at al
   const sixteen = await sh("head -c 16 /dev/urandom | wc -c");
   assertEquals(sixteen.out, "16\n", sixteen.err);
 });
+
+Deno.test("a mount point is a directory, and every question about it had a different wrong answer", async () => {
+  // `/dev` is a mount point, so its **parent lives in the mount above** and the lookup inside `writeFile`
+  // and `mkdir` searched the mounted tree for it. It found nothing, and each backing invented its own
+  // reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
+  // system". Neither is what `/dev` is, which is a directory.
+  //
+  // The right answers are GNU's, measured on this machine rather than remembered — `backings.test.ts`
+  // would be the place to compare them, and cannot be: its host side runs with grants that stop at the
+  // directory it was handed, so it fails on `/dev` with "Requires all access" instead of answering.
+  //
+  //     echo x > /dev     ->  Is a directory,  status 1
+  //     mkdir /dev        ->  File exists,     status 1
+  //     mkdir -p /dev     ->                   status 0
+  const wrote = await sh("echo x > /dev; echo status=$?");
+  assertEquals(wrote.out, "status=1\n");
+  assertEquals(wrote.err.includes("is a directory"), true, wrote.err);
+
+  const made = await sh("mkdir /dev; echo status=$?");
+  assertEquals(made.out, "status=1\n");
+  assertEquals(made.err.includes("File exists"), true, made.err);
+
+  // `-p` means "and say nothing if it is already there", which is the whole of that flag.
+  assertEquals((await sh("mkdir -p /dev; echo status=$?")).out, "status=0\n");
+  // And an ordinary directory answers the same way, so this is about being a directory rather than
+  // about being a mount.
+  assertEquals((await sh("mkdir /d; mkdir /d; echo status=$?")).out, "status=1\n");
+  assertEquals((await sh("mkdir /d; mkdir -p /d; echo status=$?")).out, "status=0\n");
+});

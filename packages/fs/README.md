@@ -123,6 +123,34 @@ directly in the path being listed, so `ls /` shows `dev` and `proc`. Before, onl
 they existed, and a listing that omits a directory you can `cd` into is worse than a wrong one — nothing
 about it looks wrong.
 
+## Coverage, and the three things it found on its first run
+
+`deno task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
+in size — a synthesised backing and an image format, one of them a parser for bytes somebody else wrote —
+which is two ticks of new code with no branch measured in a repo that measures eighteen other packages.
+The first run found three defects, and none of them was a missing test so much as a wrong answer nothing
+had asked for:
+
+- **`rename` onto something that is already there.** `rename(2)` has four rules and this had none of them:
+  it replaced the entry whatever it was, so `mv f d` where `d` is a directory succeeded and orphaned
+  everything `d` held. In an image that is data loss. `test/host.test.ts` had had the oracle since the
+  package was written and nothing had asked it — the case is in it now.
+- **A mount point is a directory**, and its parent lives in the mount *above*, so the lookup inside
+  `writeFile` and `mkdir` searched the mounted tree and found nothing. Each backing then invented its own
+  reason: a memory mount said "no such file or directory" and a synthesised one said "read-only file
+  system". Three wrong answers to what `/dev` is.
+- **The image reader was bounded by the whole array rather than by the body**, so a malformed image could
+  read its own checksum as payload — four bytes that happened to complete a structure would have been
+  accepted as part of it. Found because getting past the checksum at all means computing the right CRC
+  over the wrong body, which nothing had ever done: every malformed image a test had shown the reader was
+  refused by the checksum, so the reader's own guards had never run.
+
+`synthEndless` was deleted in the same pass, being a function nothing called.
+
+Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
+as gaps either: `test/host.test.ts` and `packages/sh/test/backings.test.ts` run every one of them against
+the real filesystem, which is a better oracle than a probe could be.
+
 ## Not here yet
 
 - **`/proc/<pid>` is only `/proc/self`.** There are no other pids to answer for — the process table is

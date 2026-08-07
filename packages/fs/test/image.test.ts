@@ -322,3 +322,41 @@ Deno.test("the fixture image, written by the build of 2026-08-07, still loads", 
     throw new Error(`the fixture's mode and owner did not survive:\n${mod.dump(bytes)}`);
   }
 });
+
+Deno.test("an image whose checksum is right and whose body is wrong", async () => {
+  // Every malformed image above is caught by the **checksum**, which means the reader's own guards — a
+  // short read inside a mount name, a node kind that is neither, a length that runs past the end — had
+  // never executed once. Those are its defences against a *writer* with a bug rather than against a
+  // damaged file, and a damaged file was the only thing anything had ever handed it.
+  //
+  // Getting past the first gate means computing the right CRC over the wrong body, which
+  // `test/wac/cov_probe.wac` does in wac. This drives the same bodies from here so the *reasons* are
+  // asserted rather than merely reached: two of them were wrong when they were first run. A node whose
+  // kind byte is neither 0 nor 1 was reported as "the image ends inside a node" — it had not ended,
+  // somebody's writer had produced a byte nothing means, and that sends a reader to the wrong end of the
+  // problem. And the `Reader` was bounded by the whole array rather than by the body, so a malformed
+  // image could read its own **checksum as payload**; four bytes that happened to complete a structure
+  // would have been accepted as part of it.
+  const probe = await wacBind("packages/fs/test/wac/cov_probe.wac") as unknown as {
+    imageBadOps(): string;
+  };
+  const lines = probe.imageBadOps().trim().split("\n");
+  const expected: [string, string][] = [
+    ["no mount name", "ends inside a mount point"],
+    ["no node", "ends inside a node"],
+    ["bad kind", "neither a file nor a directory"],
+    ["node cut short", "ends inside a node"],
+    ["length past the end", "ends inside a node"],
+    ["negative length", "above two gigabytes"],
+    ["entry cut short", "ends inside a node"],
+    ["trailing", "trailing bytes"],
+  ];
+  if (lines.length !== expected.length) throw new Error(lines.join(" | "));
+  for (let i = 0; i < expected.length; i++) {
+    const [what, reason] = expected[i];
+    if (!lines[i].startsWith(what)) throw new Error(`case ${i}: ${lines[i]}`);
+    if (!lines[i].includes(reason)) {
+      throw new Error(`${what}: expected the reason to mention "${reason}", got ${JSON.stringify(lines[i])}`);
+    }
+  }
+});

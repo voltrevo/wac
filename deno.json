@@ -19,6 +19,7 @@
     "coverage:crypto": "deno run -A packages/crypto/cov.ts",
     "coverage:datetime": "deno run -A packages/datetime/cov.ts",
     "coverage:fmt": "deno run -A packages/fmt/cov.ts",
+    "coverage:fs": "deno run -A packages/fs/cov.ts",
     "coverage:gzip": "deno run -A packages/gzip/cov.ts",
     "coverage:http": "deno run -A packages/http/cov.ts",
     "coverage:json": "deno run -A packages/json/cov.ts",
