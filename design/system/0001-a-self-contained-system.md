@@ -420,6 +420,13 @@ Each step is an issue when it becomes actionable, and each references this docum
 | 7. init | **the ssh half is done.** `sshd -i home.wacimg` boots an image and serves every session from it — three packages end to end, driven by OpenSSH's own client. What is left of step 7 is the *init* half: something that starts daemons and reaps. Concurrency stays open because connections are served one at a time, so one writer is true by construction |
 | 8. desktop | not started |
 
+An applet reads the filesystem the **shell** is holding as of 2026-08-07 (wac-mono 0109): they take an
+`Fs`, and `lib/input.wac` picks how to read it by mount — a host path still streams through `openInput`,
+anything else is served from the bytes the filesystem hands over. `packages/box/src/bin/sealedsh.wac` is
+a shell on `Fs.inMemory()` with all sixty applets and **no capabilities at all**, which is the shape
+steps 7 and 8 both need and the first time D1's "the shell asks its filesystem" is true of the commands
+as well as of the shell.
+
 ## Open questions
 
 - **The native core has no oracle.** D7 makes differential testing the oracle, and the oracles are bash
