@@ -1,6 +1,6 @@
 # 0109 — an applet in an imaged session would read the host, not the image
 
-- **Status:** open
+- **Status:** closed, 2026-08-07
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-07
@@ -82,3 +82,28 @@ layer lower than where I was looking for it: not a synthesised `Cli`, but a `Fee
 
 The applets that reach `cli` for the *filesystem* still need the parameter. Both halves are one change,
 and it is a tick of its own rather than a corner of one.
+
+## Closed: applets take an `Fs`, and `bin/sealedsh.wac` is the proof
+
+Every applet takes one. `box` standing alone hands them `Fs.onHost`, so nothing about its behaviour
+changes; a shell hands them its own, and `Shell.external` carries it.
+
+**The streaming was the whole difficulty and it is settled the way the note above predicted.**
+`lib/input.wac` chooses by mount: a host path streams through `openInput` so a large file on disk is
+never held whole, and anything else is read through `fs.readFile` and served with `Feed.of`, which is
+where a memory image already was. `Span` and `Reader` carry the feed, since it changes at an operand
+boundary and that state cannot live in the capability when the source is an image. `lib/safe.wac`'s
+atomic write splits the same way.
+
+**`packages/box/src/bin/sealedsh.wac`** is a shell on `Fs.inMemory()` with all sixty applets and **no
+capabilities at all**. `seq 1 20 > n; sort -nr n | head -3` runs entirely inside the process;
+`cat /etc/passwd` finds nothing, and there is no read grant it could have reached the host with.
+`test/sealed.test.ts` is that, asserted.
+
+One gap is named rather than hidden: `head -c 8 /dev/urandom` in a sealed shell refuses, because a
+synthesised device has no whole to read and the reader has no bounded-chunk route for a non-host mount.
+`Fs.readSome` is that route and nothing plumbs it in yet. The refusal is accurate about the file and
+misleading about what to do; it is written into `sealedsh.wac` where somebody will meet it.
+
+The `ssh` → `box` edge — which this was blocking — now waits only on **wac 0076**, a compiler bug:
+adding the import makes an untouched function fail to compile.

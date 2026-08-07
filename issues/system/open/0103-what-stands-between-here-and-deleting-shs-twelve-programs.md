@@ -163,8 +163,8 @@ twice over:
 
 - **wac 0076** — adding the import makes an untouched function fail to compile, and the module is
   rejected at instantiate.
-- **wac-mono 0109** — applets take a `Cli` and the shell holds an `Fs`, so an applet in an imaged session
-  would read the *host*. Wiring them together would give one session two filesystems.
+- ~~**wac-mono 0109**~~ — closed: applets take an `Fs` now, and `packages/box/src/bin/sealedsh.wac` is
+  sixty of them over a filesystem that is not the host's, built with no capabilities at all.
 
 Neither is a reason to stop deleting: five are gone and the remaining six are still duplicates. It does
 mean the last one cannot simply be followed by "and now sshd uses box".
