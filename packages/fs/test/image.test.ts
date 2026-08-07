@@ -33,15 +33,15 @@ const mod = await wacBind("packages/fs/src/image.wac") as unknown as {
 };
 
 type FsHandle = {
-  mkdir(path: string, parents: boolean): { fault: number; error: string };
-  writeFile(path: string, data: Uint8Array): { fault: number; error: string };
+  mkdir(path: string, parents: boolean): { fault: number; message: string };
+  writeFile(path: string, data: Uint8Array): { fault: number; message: string };
   readFile(path: string): { ok: boolean; bytes: Uint8Array; error: string };
   readDir(path: string): string[] | null;
   stat(path: string): { exists: boolean; isFile: boolean; isDir: boolean; size: bigint; modifiedMillis: bigint };
-  chmod(path: string, mode: number): { fault: number; error: string };
-  chown(path: string, owner: string): { fault: number; error: string };
+  chmod(path: string, mode: number): { fault: number; message: string };
+  chown(path: string, owner: string): { fault: number; message: string };
   mountMemory(at: string): void;
-  remove(path: string, recursive: boolean): { fault: number; error: string };
+  remove(path: string, recursive: boolean): { fault: number; message: string };
 };
 
 const NOW = 1754500000000n;
