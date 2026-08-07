@@ -2077,3 +2077,28 @@ by-hand runs kept going wrong.
 bundle, so `network.wac` cannot start a C tor, and every `live` row in `INTEROP.md` is still witnessed
 by hand. This condition was always about a network with no C in it. The other half of step 7, *each of
 our components inside a chutney network of real tors*, is a separate claim and is not this.
+
+### The C half was never blocked on the platform
+
+This document said for a week that `network.wac` cannot start a C tor, and drew from it that the C
+half of the interop matrix "stays a shell script". The first clause is true and deliberate — `Cli.spawn`
+takes a worker bundle so that what a child may do is the *parent's* choice, and `--allow-run` cannot
+express that at any granularity. The second does not follow from it, and nobody checked.
+
+A C tor never needed to live inside the capability world. It needs to be **a peer on a socket**. The
+suite is TypeScript, `tools/runTests.ts` already gives every test subprocess `--allow-run` and
+`--allow-net`, and `network_tor.test.ts` was already shelling out — to run the launcher. So
+`test/ctor_live.test.ts` starts a real tor beside the wac network and requires it to bootstrap through
+it. No platform change was needed. What needs one is `network.wac` *owning* a C tor, which is a much
+weaker claim than the one being made.
+
+**It found a bug on its first run.** Our responder's NETINFO carried a timestamp of zero:
+`relayHandshakeReply` called `relayNetinfo`, whose timestamp is hardcoded to zero, rather than
+`relayNetinfoAt`, which takes one. So every C tor that ever handshook with us read the epoch and
+warned that one of us was out by twenty thousand days — then bootstrapped regardless, because that
+check's recommendation is `warn` rather than `fail`. The unit test walked the NETINFO cell and
+asserted its command and its length and never looked at the four bytes in question.
+
+That is the whole case for this file in one bug: **a wrong value that still works is invisible to a
+suite where both ends are ours.** The same shape as D1 and the same shape as the symmetric-oracle
+problem — our code agreeing with itself proves the least interesting thing.

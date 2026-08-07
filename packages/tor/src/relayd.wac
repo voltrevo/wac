@@ -1216,7 +1216,8 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
         }
         core.log("relayd: [" + itoa(c.id) + "]  link protocol " + itoa(version));
         c.versionsSeen = true;
-        u8[] reply = relayHandshakeReply(certs, core.randomBytes(32).wait(), peerIpv4(c.sockObj.peer));
+        u8[] reply = relayHandshakeReply(certs, core.randomBytes(32).wait(),
+                                         peerIpv4(c.sockObj.peer), core.nowMillis().wait() / 1000);
         if (reply.len() == 0) {
           core.warn("relayd: [" + itoa(c.id) + "]  could not build the handshake reply");
           c.live = false;
