@@ -242,7 +242,23 @@ That guard now runs over **every `.wac` file in the repo** rather than wacc's ow
 that catches a rule which looked sound on a dozen hand-written cases and is not, and it has earned
 that twice already.
 
-Next: more of rung 3 — the type-mismatch family is the largest one left, at 12 spec cases.
+### The same question one position over
+
+A variable's declared type against its initialiser, reusing the return rules exactly — a literal is
+polymorphic over a family, a name has one type. That reuse is the point: if the second position needed
+different rules, one of the two would be wrong.
+
+`null` is the new part and it covers two spellings. `i32 z;` and `i32 x = null;` parse to the same
+`NullLit` initialiser and the reference gives both *"expected i32, got null"*, so a missing
+initialiser needs no rule of its own — it is already this one. A `T?` declaration legitimately takes a
+null, and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
+wrongly refused.
+
+**Spec coverage: 12 of 83**, from 8.
+
+Next: more of rung 3. What is left in the type-mismatch family needs machinery this does not have —
+binary operator operands (`i32 + f64`), call arguments against parameters, and generics — and each is
+a slice of its own.
 
 ### What rung 3's oracle looks like, measured
 

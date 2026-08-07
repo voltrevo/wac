@@ -41,6 +41,15 @@ import {
 export i32 errReturnTypeMismatch() { return 1; }
 /** A non-void function that can reach its closing brace. */
 export i32 errMissingReturn() { return 2; }
+/**
+ * A variable initialised with something that cannot be its declared type.
+ *
+ * A separate code from the return mismatch because the reference words them differently — *"type
+ * mismatch: expected i32, got string"* against *"return: expected i32, found string"* — and rung 3's
+ * comparison is by code and position, so two families that a caller could tell apart should not
+ * arrive here as one.
+ */
+export i32 errInitTypeMismatch() { return 3; }
 
 /**
  * The primitive types, as ids. `primNone` is "this slice does not know".
@@ -85,6 +94,14 @@ export i32 litInteger() { return 1; }
 export i32 litFloat() { return 2; }
 export i32 litBool() { return 3; }
 export i32 litString() { return 4; }
+/**
+ * `null`, which is also what an *uninitialised* declaration holds.
+ *
+ * `i32 z;` and `i32 x = null;` parse to the same thing — a `NullLit` init — and the reference gives
+ * them the same diagnostic, *"expected i32, got null"*. So the missing initialiser needs no separate
+ * rule; it is already this one.
+ */
+export i32 litNull() { return 5; }
 
 /** The checker's state: what it is reading, and what it has found. */
 export struct C {
@@ -185,6 +202,7 @@ export i32 litKindOf(Expr e) {
     case FloatLit(tok): { return litFloat(); }
     case StrLit(tok): { return litString(); }
     case BoolLit(value): { return litBool(); }
+    case NullLit: { return litNull(); }
     else: { return litNone(); }
   }
 }
@@ -202,6 +220,9 @@ export bool acceptsLiteral(i32 want, i32 lit) {
   if (lit == litFloat()) { return want == primF32() || want == primF64(); }
   if (lit == litBool()) { return want == primBool(); }
   if (lit == litString()) { return want == primString(); }
+  // No primitive is nullable. A `T?` is, and `primOfType` answers `primNone` for one, so a nullable
+  // declaration never reaches here — silence rather than a wrong refusal.
+  if (lit == litNull()) { return false; }
   return true;
 }
 
@@ -356,6 +377,22 @@ void checkAll(C c, Stmt[] body, Ty want) {
 /** Every `return` in a statement, however deeply nested, checked against `want`. */
 void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
+    // The same question one position over: a declared type, and something that has to fit it.
+    case Var(type, nameTok, init, isConst): {
+      i32 wantVar = primOfType(c, type);
+      if (wantVar == primNone()) { return; }
+      i32 litVar = litKindOf(init);
+      if (litVar != litNone()) {
+        if (!acceptsLiteral(wantVar, litVar)) {
+          c.report(errInitTypeMismatch(), init.line, init.col);
+        }
+        return;
+      }
+      i32 gotVar = primOfExpr(c, init);
+      if (gotVar != primNone() && gotVar != wantVar) {
+        c.report(errInitTypeMismatch(), init.line, init.col);
+      }
+    }
     case Return(value): {
       if (value is null) { return; }
       i32 expected = primOfType(c, want);

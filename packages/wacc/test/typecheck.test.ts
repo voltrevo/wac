@@ -415,3 +415,54 @@ Deno.test("rung 3: a function that can reach its closing brace, against the refe
     }
   }
 });
+
+/**
+ * The same question one position over: a variable's declared type against its initialiser.
+ *
+ * Reusing the return rules exactly — a literal is polymorphic over a family, a name has one type —
+ * which is the point: if the second position needed different rules, one of the two would be wrong.
+ *
+ * `null` is the new part, and it covers two spellings. `i32 z;` and `i32 x = null;` parse to the same
+ * `NullLit` initialiser and the reference gives both *"expected i32, got null"*, so a missing
+ * initialiser needs no rule of its own. A `T?` declaration is nullable and legitimately takes one,
+ * and `primOfType` answers `primNone` for a nullable type, so those stay silent rather than being
+ * wrongly refused.
+ */
+Deno.test("rung 3: a variable's initialiser against its declared type", () => {
+  const CASES = [
+    "export void a() { i32 x = null; }",
+    "export void b() { i32 z; }",
+    "export void c() { i8 x = 5; }",
+    'export void d() { i32 x = "s"; }',
+    "export void e() { f64 x = 1; }",
+    'export void f(string s) { i32 x = s; }',
+    "export void g(i64 n) { i32 x = n; }",
+    // Accepted, and each is a way the rule could be wrong in the other direction.
+    "export void h() { i32 x = 5; }",
+    "export void i() { i64 x = 5; }",
+    "export void j() { f64 x = 1.5; }",
+    "export void k() { i32? n = null; }",
+    'export void l() { string s = "x"; }',
+    "export void m(i32 a) { i32 b = a; }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      if (mine.length !== 0) {
+        throw new Error(`the reference accepts ${JSON.stringify(src)} and we report ${mine.join(", ")}`);
+      }
+      continue;
+    }
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+});
