@@ -672,3 +672,21 @@ something in the corpus whose only purpose is to trip it.
 The comparison that makes the point is `packages/abi`, swept the same evening: also a codec, also driven
 by an oracle, 25/26 — and its one survivor was a guard on a *path the corpus cannot reach*, because every
 case in it came from encoding a valid value. Malformed-input corpora are what separate the two.
+
+## 2026-08-07: the list has gone stale in one direction, and the sweep is slow in another
+
+**Two of the twelve named above no longer exist.** `extreme/url/percent/isHexDigit` and
+`extreme/url/percent/needsEncoding` name functions that `packages/url` has since refactored away —
+`percent.wac` has `hexDigitValue` and `inEncodeSet` now. So the list is a snapshot of 2026-08-01 and
+should be re-measured rather than worked through: anyone starting from it will spend the first half hour
+looking for functions that are not there. A mutant name is a *coordinate*, and coordinates move.
+
+**And a practical note for whoever re-runs it.** `--operators=guard,extreme` over `packages/url` takes
+far longer than the number of mutants suggests, because the `extreme` mutation of a *state constant* —
+`S_SCHEME`, `S_NO_SCHEME`, the rest of the parser's states — makes the parser loop, so each one costs the
+full per-mutant timeout rather than a test run. They are all killed, by timing out; the sweep is simply
+paying seconds where the others pay milliseconds. A run of 67 mutants was still going after 40 minutes on
+an idle machine, and nearly all of that was the state table.
+
+That is worth knowing before budgeting a sweep, and it may be worth teaching the tool: a mutant that
+kills by timeout is still killed, and a run could say so early rather than waiting for the bound.
