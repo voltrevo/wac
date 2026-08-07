@@ -162,9 +162,19 @@ plausible, and `-f`, `-s` and `-w` say the same.
 
 Those twelve exist because, when they were written, nothing could be started and nothing could be
 handed over. Both of those are now false, and they have become what the seam always said they
-were: a fallback. They are still weaker than `box`'s — this `grep` matches substrings rather than
-regular expressions, this `sort` is an insertion sort — so the sensible end state is to delete them
-once something checks that `box`'s pass the same differential scripts against bash. Kept for now
+were: a fallback. They are still weaker than `box`'s — this `sort` is an insertion sort and refuses
+`-n` and `-u`, which `box`'s implements — so the sensible end state is to delete them once something
+checks that `box`'s pass the same differential scripts against bash.
+
+`grep` was on that list until it was used by hand. It matched **substrings**, and the comment above it
+said so — "`packages/regex` is the obvious next step and is not wired" — which helped nobody: `grep '^h'`
+answered *nothing matched*, silently, and so did every other metacharacter a person types. That is the
+worst of the three answers this shell ranks in `test/gaps.test.ts`, and it was being given by the one
+program most likely to be handed a pattern. `packages/regex` is not `packages/box`, so there was never
+anything in the way of importing it. It is wired now, `-i` and `-x` fold into the compiled pattern, a
+pattern that will not compile is a usage error rather than "no lines matched", and the engine giving up
+on a line exits 2 rather than claiming either answer — which is the distinction `box`'s grep learnt
+first. Fourteen more differential scripts pin it against bash. Kept for now
 because 652 of those scripts currently agree with bash *through these*, and swapping the
 implementation under a passing suite without measuring it first is how a green suite starts lying.
 

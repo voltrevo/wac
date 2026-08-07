@@ -28,6 +28,8 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../platform/src/st
 // the digit loop never ran — so `echo $((-2147483648))` printed a bare minus sign where bash prints
 // the number. Three other copies existed, and the correct one was already in `fmt`. wac-mono 0072.
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { compile, compileIgnoreCase, search, slotCount } from "../../regex/src/regex.wac";
+import { Program, BUDGET, NO_MATCH } from "../../regex/src/program.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 export struct Output {
@@ -1423,8 +1425,14 @@ bool uniqFeed(Feed fed, Sink sink) {
 }
 
 /**
- * `grep [-cinqvx] pattern [file…]` — substring matching, not a regex. `packages/regex` is the obvious
- * next step and is not wired.
+ * `grep [-cinqvx] pattern [file…]`, over `packages/regex`.
+ *
+ * It was **substring matching**, and said so in a comment — "`packages/regex` is the obvious next step
+ * and is not wired". Saying so did not help anybody: `grep '^h'` answered *nothing matched*, silently,
+ * which is this package's own worst-of-three (`test/gaps.test.ts` ranks them). A regex read as a literal
+ * is a plausible wrong answer, not a refusal, and every metacharacter a person types produced one —
+ * `.`, `^`, `$`, `[a-z]`, `*` — while `packages/box`'s `grep`, four directories away, had the engine
+ * wired in all along. Found by using the shell rather than by reading it.
  *
  * The flags are why this is more than a loop. `-v` was the only one read, and an option this did not
  * have became the *pattern*: `grep -c a f` searched for `-c`, found nothing, and exited 1 — which a
@@ -1438,14 +1446,25 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
   }
   if (o.operands.len() == 0) { { errs.bytes("grep: no pattern\n".toBytes()); errs.flush(); sink.flush(); return 2; } }
 
+  // `-x` is "the whole line matched", which is an anchor rather than a different comparison: GNU
+  // implements it exactly this way, and doing it by comparing bytes would have needed the pattern to be
+  // a literal — which is where this started.
+  string pattern = o.operands.get(0);
+  if (sawOption(o, "x")) { pattern = "^(" + pattern + ")$"; }
+  Program? prog = sawOption(o, "i") ? compileIgnoreCase(pattern.toBytes()) : compile(pattern.toBytes());
+  if (prog is null) {
+    errs.bytes(("grep: " + o.operands.get(0) + ": invalid regular expression\n").toBytes());
+    errs.flush();
+    sink.flush();
+    return 2;
+  }
   Match how = Match(
     sawOption(o, "v"),
-    sawOption(o, "i"),
     sawOption(o, "c"),
     sawOption(o, "n"),
     sawOption(o, "q"),
-    sawOption(o, "x"),
-    sawOption(o, "i") ? lowered(o.operands.get(0).toBytes()) : o.operands.get(0).toBytes());
+    prog!,
+    i32[slotCount(prog!)](fill: 0));
 
   Vec<string> files = Vec.create();
   for (i32 i = 1; i < o.operands.len(); i++) { files.push(o.operands.get(i)); }
@@ -1471,6 +1490,14 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
       }
       here = grepFeed(Feed.of(cli, r.bytes), sink, how, label);
     }
+    // -1 is the engine giving up on a line, which is neither of grep's two answers. Exiting 2 is what
+    // the real one does when it cannot answer, and it is the only honest status.
+    if (here < 0) {
+      complain(sink, errs, "grep: pattern too expensive on this line, giving up\n");
+      errs.flush();
+      sink.flush();
+      return 2;
+    }
     hits += here;
     // **`-q` stops at the first match**, which is what makes `seq 1 2000000000 | grep -q 1` answer
     // instead of counting to two billion: the sink is never written, so nothing else would ever stop
@@ -1488,13 +1515,13 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
 /** What `grep` was asked for, so one input's worth of matching needs one argument rather than seven. */
 struct Match {
   bool invert;
-  bool fold;
   bool counting;
   bool numbering;
   bool quiet;
-  bool whole;
-  /** Already lower-cased when `-i` is on, so the input is the only thing folded per line. */
-  u8[] needle;
+  /** The compiled pattern. `-i` and `-x` are both folded into it at compile time. */
+  Program prog;
+  /** Capture slots, allocated once: a per-line allocation is one per line. */
+  i32[] caps;
 }
 
 /** One input's matching lines, written as they are found. Answers how many matched. */
@@ -1506,8 +1533,15 @@ i32 grepFeed(Feed fed, Sink sink, Match how, string label) {
     Line l = nextLine(lines, fed);
     if (!l.ok) { break; }
     n++;
-    u8[] against = how.fold ? lowered(l.bytes) : l.bytes;
-    bool hit = how.whole ? sameBytes(against, how.needle) : contains(against, how.needle);
+    i32 found = search(how.prog, l.bytes, 0, how.caps, 1000000);
+    // Three answers, not two, which `packages/box`'s grep learnt first: `BUDGET` means the engine gave
+    // up backtracking on this line, and reading it as a match reports hits that were never found.
+    // Neither "matched" nor "did not match" is known, so neither is claimed.
+    if (found == BUDGET()) {
+      sink.flush();
+      return -1;
+    }
+    bool hit = found != NO_MATCH();
     if (hit == how.invert) { continue; }
     here++;
     if (how.quiet) { break; }

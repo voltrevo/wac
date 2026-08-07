@@ -147,8 +147,22 @@ async function startWacsshd(extra: string[] = [], binary = wacsshdBinary): Promi
   })();
 
   // Poll rather than sleep: the first run compiles the wac and the rest do not.
+  //
+  // **Sixty seconds, not twenty.** The old bound was twenty and it expired once — in the gate, where the
+  // whole suite runs at once and a 561 KB wasm module has to be instantiated against a load average of
+  // ten. The same test takes under a second on its own. A patient bound costs nothing when the server is
+  // quick, because the loop leaves the moment it connects; an impatient one fails a test for the state of
+  // the machine, which is a report about the wrong thing entirely.
+  //
+  // **And it stops the moment the process dies.** It used to poll the full bound and then say "our sshd
+  // never accepted a connection", which is true and useless: a server that refused its host key, or
+  // could not bind, said exactly why on stderr and exited in milliseconds, and the harness spent a
+  // minute not reading it. Waiting for something that has already stopped happening is the wrong
+  // failure to report — twice over, because the first thing it hides is the message that explains it.
   let accepted = false;
-  for (let i = 0; i < 200 && !accepted; i++) {
+  let died: number | null = null;
+  proc.status.then((st) => { died = st.code; });
+  for (let i = 0; i < 600 && !accepted && died === null; i++) {
     try {
       const probe = await Deno.connect({ hostname: "127.0.0.1", port });
       probe.close();
@@ -157,7 +171,15 @@ async function startWacsshd(extra: string[] = [], binary = wacsshdBinary): Promi
       await new Promise((r) => setTimeout(r, 100));
     }
   }
-  if (!accepted) throw new Error("our sshd never accepted a connection");
+  if (!accepted) {
+    const why = (await Promise.race([stderr, new Promise<string>((r) => setTimeout(() => r(said), 500))]))
+      .trim();
+    throw new Error(
+      died === null
+        ? `our sshd never accepted a connection on port ${port}. It said: ${why || "nothing"}`
+        : `our sshd exited ${died} before accepting anything. It said: ${why || "nothing"}`,
+    );
+  }
 
   // **And wait for the announcement, not just for the socket.** A successful connect only proves
   // the listener is bound; the startup line is written around the same moment and read here a

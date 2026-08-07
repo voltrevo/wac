@@ -209,6 +209,28 @@ const CASES: string[] = [
   `seq 1 5 | head -n 2`,
   `seq 1 5 | tail -n 2`,
   `seq 1 10 | grep 1`,
+  // **`grep` is a regex, and was a substring.** Every one of these answered "nothing matched" — silently,
+  // which is this shell's own worst-of-three. The comment above it said `packages/regex` "is the obvious
+  // next step and is not wired", and saying so helped nobody: a person types `grep '^h'` and believes the
+  // answer. Found by using the shell rather than by reading it; `packages/box`'s grep has had the engine
+  // wired in all along, four directories away.
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c .`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep '^h'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep 'o$'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep '[a-z]'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep 'h.llo'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c 'l*'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c '.*'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -n '[0-9]'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -c '^$'`,
+  // `-i` and `-x` still mean what they meant: one folds the pattern, the other anchors it, and both are
+  // now the engine's job rather than a second kind of comparison.
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -ci 'HELLO'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'hello'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'h.llo'`,
+  String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -civ '[0-9]'`,
+  // A pattern the engine cannot compile is a usage error, not "no lines matched".
+  String.raw`printf 'x\n' | grep '[' ; echo status=$?`,
   `seq 1 3 | nl`,
   `echo one two three | tr ' ' ','`,
   // `tr`'s flags, its escapes and its character classes — none of which it had. `tr -d 12` used to
