@@ -32,6 +32,15 @@ const sha1Restored = f<(b: Uint8Array, at: number) => Uint8Array>("sha1Restored"
 const sha512 = f<(b: Uint8Array) => Uint8Array>("sha512");
 const sha384 = f<(b: Uint8Array) => Uint8Array>("sha384");
 const hmac = f<(k: Uint8Array, m: Uint8Array) => Uint8Array>("hmac");
+const hmacSha1 = f<(k: Uint8Array, m: Uint8Array) => Uint8Array>("hmacSha1");
+const ctEqual = f<(a: Uint8Array, b: Uint8Array) => boolean>("ctEqual");
+const ctEqualN = f<(a: Uint8Array, b: Uint8Array, n: number) => boolean>("ctEqualN");
+const ctrStreamed = f<(k: Uint8Array, iv: Uint8Array, d: Uint8Array, cut: number) => Uint8Array>("ctrStreamed");
+const ctrResumed = f<(k: Uint8Array, iv: Uint8Array, d: Uint8Array, at: number) => Uint8Array>("ctrResumed");
+const sha256Streamed = f<(m: Uint8Array, cut: number) => Uint8Array>("sha256Streamed");
+const sha512Streamed = f<(m: Uint8Array, cut: number) => Uint8Array>("sha512Streamed");
+const sha1LoadBad = f<(len: number) => Uint8Array>("sha1LoadBad");
+const ctrBadIv = f<(k: Uint8Array, ivLen: number) => Uint8Array>("ctrBadIv");
 const hkdf = f<(s: Uint8Array, i: Uint8Array, n: Uint8Array, l: number) => Uint8Array>("hkdf");
 const hkdfExtract = f<(s: Uint8Array, i: Uint8Array) => Uint8Array>("hkdfExtract");
 const chachaBlock = f<(k: Uint8Array, c: number, n: Uint8Array) => Uint8Array>("chachaBlock");
@@ -105,6 +114,47 @@ for (const n of SHA256_LENS) {
 for (const n of SHA512_LENS) {
   sha512(bytes(n));
   sha384(bytes(n));
+}
+
+// ── Three more modules that were compiled in and never called ────────────────
+//
+// The same hole `sha1` was in: `CtrStream` is Tor's resumable keystream and held twelve of `aesctr.wac`'s
+// twenty-six points at zero, `hmacSha1` is what the hidden-service directory hashes with, and `ctEqual`
+// — the constant-time comparison the whole package's tag checking rests on — had never been called from
+// here at all. Every one of them is tested in `test/`; none was measured.
+{
+  const key = bytes(16);
+  const iv = bytes(16);
+  // 509 is a Tor cell payload, which is the length that leaves the stream mid-block; the rest straddle a
+  // block boundary from either side. `cut` values that do not divide 16 are the point.
+  for (const len of [0, 1, 15, 16, 17, 509, 1024]) {
+    for (const cut of [1, 5, 16, 509]) ctrStreamed(key, iv, bytes(len), cut);
+    for (const at of [0, 1, 11, 16]) if (at <= len) ctrResumed(key, iv, bytes(len), at);
+  }
+  // Both key regimes for HMAC-SHA-1: SHA-1's block is 64 too, so the boundary is the same one.
+  for (const n of [0, 1, 63, 64, 65, 200]) hmacSha1(bytes(n), bytes(n));
+  // Equal, differing, and differing in length — the third returns early, and that is deliberate.
+  const a = bytes(32);
+  const b = bytes(32);
+  b[31] ^= 1;
+  ctEqual(a, a);
+  ctEqual(a, b);
+  ctEqual(a, bytes(31));
+  ctEqualN(a, a, 32);
+  ctEqualN(a, b, 32);
+  ctEqualN(a, bytes(31), 31);
+
+  // The partial-block arm of each streaming hash, which no one-shot can take, and the two refusals.
+  for (const n of [1, 63, 64, 65, 200]) {
+    sha256Streamed(bytes(n), 1);
+    sha256Streamed(bytes(n), 7);
+    sha512Streamed(bytes(n), 1);
+    sha512Streamed(bytes(n), 7);
+  }
+  for (const len of [0, 95, 97]) {
+    mustTrap(`Sha1.loadState of ${len} bytes`, () => sha1LoadBad(len));
+  }
+  for (const len of [0, 15, 17]) mustTrap(`a ${len}-byte CTR IV`, () => ctrBadIv(key, len));
 }
 
 /** HMAC's three key regimes: shorter than the block, exactly it, and hashed down. */

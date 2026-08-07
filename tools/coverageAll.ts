@@ -16,7 +16,7 @@
 // Each of those tasks was working exactly as designed. The check that catches a moved exemption is good,
 // and it fired, and it printed the right thing every time. It just printed it where nothing was looking.
 //
-// This is deliberately **not** wired into `tools/push.sh`. `crypto` is still red — 68 uncovered branch
+// This is deliberately **not** wired into `tools/push.sh`. `crypto` is still red — 45 uncovered branch
 // points that are neither covered nor recorded as unreachable — and putting a red check in the gate makes
 // every other agent's push fail for something they did not do. wac-mono 0098 has the list. When that goes
 // green, this belongs in the gate, because a check nobody runs rots back into the state above.
