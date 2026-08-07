@@ -7,7 +7,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs } from "../../src/fs.wac";
-import { FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER }
+import { FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FileResult }
   from "../../../platform/src/platform.wac";
 
 export string test_a_file_written_reads_back() {
@@ -128,5 +128,94 @@ export string test_names_are_bytes() {
   t.eqI32(names.len(), 1, "and lists as one name");
   t.eqI32(names[0].toBytes().len(), 4, "of four bytes, unchanged");
   t.eqI32(names[0].toBytes()[1], 0xff, "including the one a decoder would have replaced");
+  return t.report();
+}
+
+// ── Users, modes and who may do what ─────────────────────────────────────────
+//
+// design/0001 step 4. `mode` and `owner` were recorded on every node and enforced nowhere, which the
+// struct's own comment said out loud — so a session could read anything, and the metadata was decoration.
+// What is enforced is the permission on the thing being touched; **traversal is not**, and these cases
+// say which is which rather than leaving a reader to infer it.
+
+export string test_a_private_file_is_private() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(1000);
+  fs.mkdir("/home", true);
+  fs.mkdir("/home/ada", true);
+  fs.writeFile("/home/ada/secret", "engine\n".toBytes());
+  fs.chmod("/home/ada/secret", 384);            // 0600
+  fs.chown("/home/ada/secret", "ada");
+
+  // Root is exempt, which is what every existing caller relies on: a filesystem with no user set behaves
+  // as it did before there were users at all.
+  t.eqStr(string.fromBytes(fs.readFile("/home/ada/secret").bytes), "engine\n", "root reads it");
+
+  fs.setUser("grace");
+  FileResult denied = fs.readFile("/home/ada/secret");
+  t.isTrue(!denied.ok, "another user cannot read it");
+  t.eqI32(denied.fault, FAULT_DENIED(), "and is told that, rather than that it is missing");
+
+  fs.setUser("ada");
+  t.eqStr(string.fromBytes(fs.readFile("/home/ada/secret").bytes), "engine\n", "its owner can");
+  return t.report();
+}
+
+export string test_the_other_bits_are_the_ones_that_apply() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(1000);
+  fs.writeFile("/shared", "for everyone\n".toBytes());
+  fs.chmod("/shared", 420);                     // 0644
+  fs.chown("/shared", "ada");
+  fs.writeFile("/half", "readable\n".toBytes());
+  fs.chmod("/half", 292);                       // 0444 — nobody may write, not even the owner
+  fs.chown("/half", "ada");
+
+  fs.setUser("grace");
+  t.isTrue(fs.readFile("/shared").ok, "0644 is readable by another user");
+  t.eqI32(fs.writeFile("/shared", "x".toBytes()).fault, FAULT_DENIED(), "and not writable by them");
+
+  fs.setUser("ada");
+  t.eqI32(fs.writeFile("/shared", "mine\n".toBytes()).fault, FAULT_NONE(), "its owner may write it");
+  // The owner bits are the owner's, and they can say no: 0444 means no, to everyone.
+  t.eqI32(fs.writeFile("/half", "x".toBytes()).fault, FAULT_DENIED(), "0444 refuses its own owner");
+  return t.report();
+}
+
+export string test_a_directory_carries_its_own_permission() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(1000);
+  fs.mkdir("/private", false);
+  fs.writeFile("/private/note", "hello\n".toBytes());
+  fs.chmod("/private", 448);                    // 0700
+  fs.chown("/private", "ada");
+  fs.chown("/private/note", "ada");
+
+  fs.setUser("grace");
+  t.isTrue(fs.readDir("/private") is null, "another user cannot list it");
+  t.eqI32(fs.writeFile("/private/new", "x".toBytes()).fault, FAULT_DENIED(), "or create in it");
+  t.eqI32(fs.remove("/private/note", false).fault, FAULT_DENIED(), "or remove from it");
+  // **Traversal is not enforced**, and this is the case that says so: the file's own mode is what
+  // protects it, not the directory above. Said in a test rather than left for someone to discover.
+  t.isTrue(fs.readFile("/private/note").ok, "but the file inside is protected by its own mode, not by the path");
+
+  fs.setUser("ada");
+  t.isTrue(!(fs.readDir("/private") is null), "its owner can list it");
+  return t.report();
+}
+
+export string test_changing_the_metadata_is_not_a_way_in() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(1000);
+  fs.writeFile("/secret", "engine\n".toBytes());
+  fs.chmod("/secret", 384);                     // 0600
+  fs.chown("/secret", "ada");
+
+  fs.setUser("grace");
+  // Widening it and then reading is the obvious way around a permission check, so `chmod` is the
+  // owner's and `chown` is root's.
+  t.eqI32(fs.chmod("/secret", 511).fault, FAULT_DENIED(), "another user cannot widen the mode");
+  t.eqI32(fs.chown("/secret", "grace").fault, FAULT_DENIED(), "or take the file");
+  t.isTrue(!fs.readFile("/secret").ok, "so it stays unreadable");
   return t.report();
 }

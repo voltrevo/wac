@@ -74,7 +74,12 @@ export struct Mount {
  *
  * Metadata is stored beside the bytes because users are data in the image (design/0001 D5): a host's
  * idea of who owns a file cannot survive an image that is one blob owned by whoever ran the process.
- * `mode` and `owner` are recorded now and enforced later — step 4 is where a session gets a user.
+ *
+ * `mode` and `owner` are **enforced** now — `Fs.user` says who is asking, and `may` decides. What is
+ * enforced is the permission on the file or directory being touched; **directory traversal is not**, so
+ * a private file inside a readable directory is protected and one inside an unreadable directory is
+ * protected by its own mode rather than by the path to it. That is less than POSIX and is said here
+ * rather than implied, per design/0001 D6.
  */
 export struct Inode {
   bool isDir;
@@ -112,8 +117,14 @@ export struct Inode {
 export struct Fs {
   Vec<Mount> mounts;
   Vec<Inode> nodes;
-  /** What a newly created file is owned by until there are users. */
-  string owner;
+  /**
+   * Who is acting: the owner of anything created, and the identity every permission check is against.
+   *
+   * `"root"` is exempt from the checks, and is what a filesystem starts as — so every caller that has
+   * not been given a user behaves exactly as it did before there were any. A session gets a real one
+   * from `/etc/passwd` (design/0001 step 4), and `packages/ssh`'s server is the first thing to set it.
+   */
+  string user;
   /** Milliseconds, from whoever built this: wac has no clock of its own. */
   i64 now;
   /**
@@ -156,12 +167,35 @@ export struct Fs {
     this.mounts.push(Mount(trimSlash(at), Backing.Synth(randomBytes), -1));
   }
 
+  /**
+   * Act as `who` from here on: what new files are owned by, and who the checks are against.
+   *
+   * A separate call rather than a constructor argument because the user is learned *after* the
+   * filesystem exists — `sshd` boots an image, reads `/etc/passwd` out of it, and only then knows whose
+   * session this is.
+   */
+  void setUser(this, string who) { this.user = who; }
+
+  /**
+   * Whether the current user may do `want` — 4 read, 2 write, 1 execute — to this node.
+   *
+   * Owner bits or other bits; there are **no groups**, because there is no group table to consult and
+   * inventing one would be the faking design/0001 D6 rules out. `root` may do anything, and so may a
+   * filesystem whose user was never set, which is what keeps every existing caller working unchanged.
+   */
+  bool may(const this, i32 node, i32 want) {
+    if (this.user == "" || this.user == "root") { return true; }
+    Inode n = this.nodes.get(node);
+    i32 bits = n.owner == this.user ? (n.mode >> 6) & 7 : n.mode & 7;
+    return (bits & want) == want;
+  }
+
   /** What `/proc/self/cmdline` will answer. NUL-separated, as Linux's is. */
   void setCmdline(this, string cmdline) { this.cmdline = cmdline; }
 
   /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
   void mountMemory(this, string at) {
-    this.nodes.push(dirNode(this.owner, this.now));
+    this.nodes.push(dirNode(this.user, this.now));
     this.mounts.push(Mount(trimSlash(at), Backing.Memory, this.nodes.len() - 1));
   }
 
@@ -207,6 +241,9 @@ export struct Fs {
     }
     i32 node = this.find(m, path);
     if (node < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    if (!this.may(node, 4)) {
+      return FileResult.of(false, u8[0](), "permission denied", FAULT_DENIED());
+    }
     if (this.nodes.get(node).isDir) {
       // `FAULT_OTHER`, not `FAULT_DENIED`, because that is what the hosts answer: the category set has no
       // "is a directory", so `faults.ts` classifies Deno's `EISDIR` as other and the message carries it.
@@ -283,6 +320,10 @@ export struct Fs {
         // Null rather than empty for "not a directory" or "not there", which is what the capability
         // answers and what lets `ls` tell an empty directory from a missing one.
         if (node < 0 || !this.nodes.get(node).isDir) { own = null; }
+        // A directory nobody may read lists as nothing rather than as empty — `null` is what the
+        // capability says for "you cannot have this", and `ls` reports it rather than printing a
+        // convincing empty directory.
+        else if (!this.may(node, 4)) { own = null; }
         else { own = this.nodes.get(node).entries.keys(); }
       }
     }
@@ -328,10 +369,14 @@ export struct Fs {
     string name = baseOf(path);
     i32 existing = this.child(parent, name);
     if (existing >= 0) {
+      if (!this.may(existing, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
       this.nodes.get(existing).replace(data, this.now);
       return Change.of(FAULT_NONE(), "");
     }
-    this.nodes.push(fileNode(data, this.owner, this.now));
+    // Creating is a change to the *directory*, which is why the check is on the parent and not on the
+    // file that does not exist yet. Same rule as removing, below.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+    this.nodes.push(fileNode(data, this.user, this.now));
     this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);
     return Change.of(FAULT_NONE(), "");
   }
@@ -378,7 +423,7 @@ export struct Fs {
     if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
     string name = baseOf(path);
     if (this.child(parent, name) >= 0) { return Change.of(FAULT_EXISTS(), "file exists"); }
-    this.nodes.push(dirNode(this.owner, this.now));
+    this.nodes.push(dirNode(this.user, this.now));
     this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);
     return Change.of(FAULT_NONE(), "");
   }
@@ -391,7 +436,7 @@ export struct Fs {
     for (i32 i = 0; i < parts.len(); i++) {
       i32 next = this.child(at, parts.get(i));
       if (next < 0) {
-        this.nodes.push(dirNode(this.owner, this.now));
+        this.nodes.push(dirNode(this.user, this.now));
         next = this.nodes.len() - 1;
         this.nodes.get(at).entries.set(parts.get(i), next);
       } else if (!this.nodes.get(next).isDir) {
@@ -425,6 +470,9 @@ export struct Fs {
     if (this.nodes.get(node).isDir && this.nodes.get(node).entries.len() > 0 && !recursive) {
       return Change.of(FAULT_NOT_EMPTY(), "directory not empty");
     }
+    // Removing is a change to the directory the name is in, not to the file — which is why a read-only
+    // file in a writable directory can be deleted, on a real system and here.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
     // Nothing is freed: a node nobody points at is unreachable, and an image writer walks from the roots.
     // Reference counting would buy memory back in a program that deletes a great deal, and there is no
     // such program yet — said here rather than discovered later.
@@ -454,6 +502,11 @@ export struct Fs {
     }
     i32 node = this.find(m, path);
     if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    // The owner's to give away, and root's to take: `chmod` on somebody else's file is refused, which is
+    // what stops a user opening a private file by widening it first.
+    if (this.user != "" && this.user != "root" && this.nodes.get(node).owner != this.user) {
+      return Change.of(FAULT_DENIED(), "operation not permitted");
+    }
     this.nodes.get(node).setMode(mode);
     return Change.of(FAULT_NONE(), "");
   }
@@ -470,6 +523,11 @@ export struct Fs {
     }
     i32 node = this.find(m, path);
     if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    // **Root's alone.** On a real system giving a file away is privileged precisely because it is how a
+    // user would otherwise escape their own quota or hide a file behind somebody else's name.
+    if (this.user != "" && this.user != "root") {
+      return Change.of(FAULT_DENIED(), "operation not permitted");
+    }
     this.nodes.get(node).setOwner(owner);
     return Change.of(FAULT_NONE(), "");
   }

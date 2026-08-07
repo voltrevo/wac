@@ -1,0 +1,100 @@
+// `/etc/passwd` — the user table, read out of the image rather than out of the host.
+//
+// design/0001 D5: users are *data in the image*. A host's idea of who is logged in cannot survive a file
+// that is one blob owned by whoever ran the process, so the system carries its own table and the host's
+// is irrelevant. This is step 4's half of that: the parser, and the two questions a login asks of it.
+//
+// The format is Unix's, and only the fields this system has anything to do with are read:
+//
+//     name:x:uid:gid:comment:home:shell
+//
+// The password field is `x` and is never anything else — there are no passwords here, only keys, and a
+// hash in this file would be a hash nothing checks. `gid`, `comment` and `shell` are parsed and kept so
+// that a file written elsewhere round-trips, and the group id is **not** used for anything: there is no
+// group table, so `packages/fs` compares owner-or-other and says so.
+
+import { Vec } from "../../std/src/vec.wac";
+
+/** One line of the table. */
+export struct User {
+  string name;
+  i32 uid;
+  i32 gid;
+  string comment;
+  string home;
+  string shell;
+}
+
+/** Every user in the file, in the order they appear. Malformed lines are skipped. */
+export Vec<User> parsePasswd(u8[] text) {
+  Vec<User> out = Vec.create();
+  i32 at = 0;
+  while (at < text.len()) {
+    i32 stop = at;
+    while (stop < text.len() && text[stop] != 10) { stop++; }
+    i32 end = stop;
+    if (end > at && text[end - 1] == 13) { end--; }
+    addLine(out, text, at, end);
+    at = stop + 1;
+  }
+  return out;
+}
+
+/**
+ * The user with this name, or a `User` with an empty name.
+ *
+ * An absent user is a value rather than an option because every caller asks the same next question —
+ * "is this a real user?" — and `name == ""` answers it without unwrapping.
+ */
+export User userNamed(Vec<User> users, string name) {
+  for (i32 i = 0; i < users.len(); i++) {
+    if (users.get(i).name == name) { return users.get(i); }
+  }
+  return User("", -1, -1, "", "", "");
+}
+
+/**
+ * Where a user's `authorized_keys` lives: `<home>/.ssh/authorized_keys`.
+ *
+ * In the image, under the user's own home, which is what makes "two keys land in two homes" a fact about
+ * the image rather than about the server's command line. A user with no home has no such file and gets
+ * an empty path, which a caller must not read.
+ */
+export string authorizedKeysOf(User u) {
+  if (u.home == "") { return ""; }
+  return u.home + "/.ssh/authorized_keys";
+}
+
+/** A line, if it is one: at least a name and enough fields to find the home. */
+void addLine(Vec<User> out, u8[] text, i32 at, i32 end) {
+  if (end <= at) { return; }
+  if (text[at] == '#') { return; }
+  Vec<string> fields = Vec.create();
+  i32 start = at;
+  for (i32 i = at; i <= end; i++) {
+    if (i == end || text[i] == ':') {
+      u8[] part = u8[i - start]();
+      part.copyFrom(text, start, 0, i - start);
+      fields.push(string.fromBytes(part));
+      start = i + 1;
+    }
+  }
+  // Seven fields is the format; fewer means this is not a passwd line, and guessing which ones are
+  // missing is how a comment or a stray line becomes a user.
+  if (fields.len() != 7) { return; }
+  if (fields.get(0) == "") { return; }
+  out.push(User(fields.get(0), toInt(fields.get(2)), toInt(fields.get(3)),
+                fields.get(4), fields.get(5), fields.get(6)));
+}
+
+/** A field as a number, or -1 when it is not one. Not `atoi`: an empty or lettered id is not zero. */
+i32 toInt(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}

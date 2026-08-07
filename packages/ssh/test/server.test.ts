@@ -640,3 +640,97 @@ Deno.test({
     }
   },
 });
+
+/**
+ * design/0001 step 4: two keys land in two homes, and neither can read the other's private file.
+ *
+ * The whole of the step in one test, and it is a composition of three packages rather than a feature of
+ * any of them. `packages/fs` enforces `mode` and `owner` — which it recorded and ignored until now, and
+ * said so in its own comment. `packages/fs/src/passwd.wac` reads the user table **out of the image**,
+ * per design/0001 D5: a host's idea of who is logged in cannot survive a file that is one blob owned by
+ * whoever ran the process. `packages/ssh` matches the client's key against each user's own
+ * `~/.ssh/authorized_keys` and hands the session that name.
+ *
+ * The image is built by the first server through an ordinary session — there is no other way to write
+ * one, and that is the point: the system builds its own world with the tools it ships.
+ */
+Deno.test({
+  name: "two keys land in two homes, and neither can read the other's private file",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-users-" });
+    const image = `${dir}/system.wacimg`;
+    let s: Wacsshd | null = null;
+    try {
+      // Two client keys, made the way the harness makes its own.
+      for (const name of ["ada", "grace"]) {
+        const r = await new Deno.Command("ssh-keygen", {
+          args: ["-t", "ed25519", "-f", `${dir}/${name}`, "-N", "", "-q"],
+        }).output();
+        if (!r.success) throw new Error(`ssh-keygen failed for ${name}`);
+        await Deno.chmod(`${dir}/${name}`, 0o600);
+      }
+      const pub = async (name: string) => (await Deno.readTextFile(`${dir}/${name}.pub`)).trim();
+
+      // ── The first server writes the world ───────────────────────────────────
+      s = await startWacsshd(["-i", image], wacsshdWritableBinary);
+      const build = [
+        "mkdir /etc",
+        `printf 'ada:x:1000:1000::/home/ada:/bin/sh\ngrace:x:1001:1001::/home/grace:/bin/sh\n' > /etc/passwd`,
+        "mkdir /home; mkdir /home/ada; mkdir /home/ada/.ssh; mkdir /home/grace; mkdir /home/grace/.ssh",
+        `printf '%s\n' '${await pub("ada")}' > /home/ada/.ssh/authorized_keys`,
+        `printf '%s\n' '${await pub("grace")}' > /home/grace/.ssh/authorized_keys`,
+        "echo the difference engine > /home/ada/secret",
+        "echo the first compiler > /home/grace/secret",
+        "chmod 600 /home/ada/secret; chown ada /home/ada/secret",
+        "chmod 600 /home/grace/secret; chown grace /home/grace/secret",
+        "chown ada /home/ada; chown grace /home/grace",
+      ].join("; ");
+      const built = await realSsh(s, build);
+      if (built.code !== 0) throw new Error(`building the image failed: ${built.stderr}`);
+      // Said out loud on the same server that wrote it: an image that did not get the table is a
+      // different failure from a key that did not match, and the second is unreadable without the first.
+      //
+      // **It is also load-bearing, which is a bug rather than a feature of this test.** Without this
+      // second connection the image had not been written by the time `stopWacsshd` killed the server,
+      // and the next server booted a world with no users in it. wac-mono 0108.
+      const check = await realSsh(s, "cat /etc/passwd; ls /home/ada/.ssh; ls /home/grace/.ssh");
+      if (!check.stdout.includes("ada:x:1000") || !check.stdout.includes("authorized_keys")) {
+        throw new Error(`the image did not get the users: ${JSON.stringify(check)}`);
+      }
+      await stopWacsshd(s);
+      s = null;
+
+      // ── …and a second server serves it, to two people ───────────────────────
+      const live = await startWacsshd(["-i", image], wacsshdWritableBinary);
+      try {
+        // Each key lands in its own home, with its own name, without the server being told either.
+        const adaHome = await realSsh(live, "pwd; echo $USER", `${dir}/ada`);
+        if (adaHome.stdout !== "/home/ada\nada\n") throw new Error(JSON.stringify(adaHome));
+        const graceHome = await realSsh(live, "pwd; echo $USER", `${dir}/grace`);
+        if (graceHome.stdout !== "/home/grace\ngrace\n") throw new Error(JSON.stringify(graceHome.stdout));
+
+        // Each can read their own.
+        const own = await realSsh(live, "cat /home/ada/secret", `${dir}/ada`);
+        if (own.stdout !== "the difference engine\n") throw new Error(JSON.stringify(own.stdout));
+
+        // **And not the other's**, which is the criterion the design states.
+        const other = await realSsh(live, "cat /home/grace/secret; echo status=$?", `${dir}/ada`);
+        if (other.stdout !== "status=1\n") throw new Error(JSON.stringify(other.stdout));
+        if (!other.stderr.includes("Permission denied")) {
+          throw new Error(`expected a permission error, got ${JSON.stringify(other.stderr)}`);
+        }
+
+        // Nor by widening it first, which is the obvious way round a check.
+        const widen = await realSsh(live, "chmod 644 /home/grace/secret; cat /home/grace/secret; echo status=$?", `${dir}/ada`);
+        if (!widen.stdout.includes("status=1")) throw new Error(JSON.stringify(widen.stdout));
+      } finally {
+        await stopWacsshd(live);
+      }
+    } finally {
+      if (s !== null) await stopWacsshd(s);
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});

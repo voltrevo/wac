@@ -794,7 +794,8 @@ export bool isBuiltin(string name) {
   // difference matter, because `packages/box` has no `printf` to inherit it.
   return name == ":" || name == "true" || name == "false" || name == "echo" || name == "exit"
       || name == "export" || name == "unset" || name == "cd" || name == "pwd" || name == "ls"
-      || name == "mkdir" || name == "rm" || name == "read" || name == "shift" || name == "set"
+      || name == "mkdir" || name == "rm" || name == "chmod" || name == "chown"
+      || name == "read" || name == "shift" || name == "set"
       || name == "test" || name == "[" || name == "help" || name == "printf";
 }
 
@@ -1372,6 +1373,61 @@ Output cd(Shell sh, Vec<string> argv) {
  * three builtins above look broken when they are merely alone. `-p` is the usual "and its parents,
  * and no complaint if it exists".
  */
+/**
+ * `chmod MODE path…` and `chown USER path…`, which a session needs to look after its own files.
+ *
+ * Builtins rather than applets for the same reason `mkdir` and `rm` are: the filesystem a session is
+ * talking to is the *shell's* — a value it holds, which may be an image with nothing of the host in it —
+ * and an external program gets its own view of the world. They arrived with design/0001 step 4, where a
+ * user first has files that are theirs: without them a session cannot make a file private, and the
+ * permission bits `packages/fs` now enforces would be unreachable from inside the system.
+ *
+ * One function for both because they differ only in how the first operand is read, and GNU words their
+ * failures the same way.
+ */
+Output ownership(Shell sh, Vec<string> argv) {
+  string name = argv.get(0);
+  if (argv.len() < 3) {
+    return Output.fail((name + ": missing operand\nTry '" + name + " --help' for more information.\n").toBytes(), 1);
+  }
+  string spec = argv.get(1);
+  i32 mode = name == "chmod" ? octalMode(spec) : 0;
+  if (name == "chmod" && mode < 0) {
+    return Output.fail((name + ": invalid mode: '" + spec + "'\n").toBytes(), 1);
+  }
+
+  Buf err = Buf.create();
+  i32 status = 0;
+  for (i32 i = 2; i < argv.len(); i++) {
+    string given = argv.get(i);
+    Change done = name == "chmod" ? sh.fs.chmod(sh.resolve(given), mode)
+                                  : sh.fs.chown(sh.resolve(given), spec);
+    if (!done.ok()) {
+      err.pushAll((name + ": cannot access '" + given + "': " + reasonOf(done) + "\n").toBytes());
+      status = 1;
+    }
+  }
+  return status == 0 ? Output.ok(u8[0]()) : Output.fail(err.take(), status);
+}
+
+/**
+ * An octal mode, or -1.
+ *
+ * Only the numeric form: `chmod u+x` is a small language of its own — who, operator, which bits, and
+ * relative to what is already there — and a `chmod` that took `600` and quietly ignored `u+x` would be
+ * the accepted-and-ignored answer this repo ranks worst. It is refused as an invalid mode instead.
+ */
+i32 octalMode(string spec) {
+  u8[] b = spec.toBytes();
+  if (b.len() == 0 || b.len() > 4) { return -1; }
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '7') { return -1; }
+    v = v * 8 + (b[i] - '0');
+  }
+  return v;
+}
+
 Output mkdir(Shell sh, Vec<string> argv) {
   bool parents = false;
   Vec<string> paths = Vec.create();
@@ -1553,6 +1609,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "pwd") { return Output.ok((sh.cwd + "\n").toBytes()); }
   if (name == "ls") { return ls(sh, argv); }
   if (name == "mkdir") { return mkdir(sh, argv); }
+  if (name == "chmod" || name == "chown") { return ownership(sh, argv); }
   if (name == "rm") { return rm(sh, argv); }
   if (name == "read") { return readLine(sh, argv); }
   if (name == "shift") {
@@ -1605,6 +1662,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
 export string[] builtinNames() {
   return string[](
     ":", "true", "false", "echo", "exit", "export", "unset", "cd", "pwd", "ls", "mkdir", "rm",
+    "chmod", "chown",
     "read", "shift", "set", "test", "[", "help", "printf"
   );
 }

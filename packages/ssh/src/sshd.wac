@@ -52,6 +52,7 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          requestName, serverProposal, serviceAccept, sharedSecret, verifyAuth,
          byApplication, disconnect } from "./server.wac";
 import { equal } from "../../bytes/src/slice.wac";
+import { User, authorizedKeysOf, parsePasswd, userNamed } from "../../fs/src/passwd.wac";
 
 i32 defaultPort() { return 2222; }
 i32 windowSize() { return 2 * 1024 * 1024; }
@@ -155,6 +156,20 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
   Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
   sh.capture = true;
   if (o.image != "") { sh.cwd = "/"; }
+  // **A session starts in its own home, as its own user.** `fs.user` was set when the key was matched;
+  // the rest — `$HOME`, `$USER`, and where `cd` with no argument goes — is read from the same
+  // `/etc/passwd` the key was found through, so there is one table rather than a second idea of it.
+  if (fs.user != "" && fs.user != "root") {
+    sh.setVar("USER", fs.user);
+    FileResult passwd = fs.readFile("/etc/passwd");
+    if (passwd.ok) {
+      User u = userNamed(parsePasswd(passwd.bytes), fs.user);
+      if (u.home != "") {
+        sh.setVar("HOME", u.home);
+        sh.cwd = u.home;
+      }
+    }
+  }
   return sh;
 }
 
@@ -169,11 +184,16 @@ void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
     return;
   }
 
-  if (!authenticate(conn, cli, sessionId, o)) {
+  string who = authenticate(conn, cli, sessionId, o, fs);
+  if (who == "") {
     if (conn.failed()) { core.warn("sshd: " + conn.error); }
     conn.sendPacket(disconnect(byApplication(), "no supported authentication methods".toBytes()));
     return;
   }
+  // **The session acts as them from here.** Every file it touches is checked against this name, and
+  // anything it creates is owned by it — design/0001 step 4, and the reason `mode` and `owner` stopped
+  // being decoration.
+  fs.setUser(who);
 
   session(conn, cli, core, o, fs);
   if (conn.failed()) { core.warn("sshd: " + conn.error); }
@@ -281,26 +301,53 @@ u8[] hostPublicPoint(PrivateKey host) {
 }
 
 /** Service request and publickey authentication. False when the client did not get in. */
-bool authenticate(Conn conn, Cli cli, u8[] sessionId, Options o) {
+/**
+ * Who logged in: the user name, or "" when nobody did.
+ *
+ * A name rather than a boolean because a session belongs to somebody — design/0001 step 4 — and the
+ * server cannot ask again later: the key that proved it is gone by then.
+ */
+string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
   u8[] request = conn.readPacket();
-  if (conn.failed()) { return false; }
-  if (request[0] != 5) { conn.fail("expected a service request"); return false; }
+  if (conn.failed()) { return ""; }
+  if (request[0] != 5) { conn.fail("expected a service request"); return ""; }
   if (!conn.sendPacket(serviceAccept("ssh-userauth".toBytes()))) {
     conn.fail("cannot accept the service");
-    return false;
+    return "";
   }
 
+  // **Two places a key can be named, and the image wins.** With `-i`, users are data in the image
+  // (design/0001 D5): `/etc/passwd` lists them and each one's `~/.ssh/authorized_keys` names their keys,
+  // so two keys land in two homes without the server being told anything on its command line. Without an
+  // image there is no table, and the single `-a` file is the whole policy — as it was.
+  Vec<User> users = Vec.create();
+  FileResult passwd = fs.readFile("/etc/passwd");
+  if (passwd.ok) { users = parsePasswd(passwd.bytes); }
   FileResult keys = cli.readFile(o.authorizedKeys).wait();
   u8[] allowed = keys.ok ? keys.bytes : u8[0]();
 
   // A client may try several keys, and the first attempt is usually a probe with no signature.
   for (i32 attempt = 0; attempt < 16; attempt++) {
     u8[] payload = conn.readPacket();
-    if (conn.failed()) { return false; }
+    if (conn.failed()) { return ""; }
     AuthRequest a = parseAuthRequest(payload);
-    if (!a.ok) { conn.fail("the authentication request did not parse"); return false; }
+    if (!a.ok) { conn.fail("the authentication request did not parse"); return ""; }
 
+    // The image's users first, each against their own file, then the server-wide one. `who` stays empty
+    // for the second: a key allowed by `-a` alone belongs to nobody in particular, which is exactly what
+    // the filesystem's unset user means.
+    string who = "";
     bool named = false;
+    for (i32 u = 0; u < users.len() && !named; u++) {
+      string path = authorizedKeysOf(users.get(u));
+      if (path == "") { continue; }
+      FileResult theirs = fs.readFile(path);
+      if (!theirs.ok) { continue; }
+      match (lookUp(theirs.bytes, "ssh-ed25519".toBytes(), a.publicBlob)) {
+        case Ok: { named = true; who = users.get(u).name; }
+        else: {}
+      }
+    }
     match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
       case Ok: { named = true; }
       else: {}
@@ -312,18 +359,20 @@ bool authenticate(Conn conn, Cli cli, u8[] sessionId, Options o) {
       // this server would have accepted.
       if (!conn.sendPacket(pkOk(a.keyType, a.publicBlob))) {
         conn.fail("cannot answer the key probe");
-        return false;
+        return "";
       }
       continue;
     }
     if (named && a.hasSignature && verifyAuth(a, sessionId)) {
       if (!conn.sendPacket(authSuccess())) { conn.fail("cannot confirm authentication"); }
-      return !conn.failed();
+      // A name, or "root" for a key the image knows nothing about: somebody authenticated, and a
+      // session with no user is one the filesystem exempts from every check.
+      return conn.failed() ? "" : (who == "" ? "root" : who);
     }
-    if (!conn.sendPacket(authFailure())) { conn.fail("cannot refuse authentication"); return false; }
+    if (!conn.sendPacket(authFailure())) { conn.fail("cannot refuse authentication"); return ""; }
   }
   conn.fail("too many authentication attempts");
-  return false;
+  return "";
 }
 
 /** One session channel, one command. */
