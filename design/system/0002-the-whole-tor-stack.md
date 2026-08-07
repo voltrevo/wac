@@ -2273,3 +2273,37 @@ retrievable and decryptable by *something* that computes the ring the way we do.
 **A latent bug fell out of the attempt and is fixed.** `startTor` stood up its own network, which was
 fine while one test used it and wrong the moment a test wanted a network *and* a tor: it got two sets
 of three relays writing to the same descriptor paths in one directory. The network is passed in now.
+
+### The onion row: the stack works, the harness does not
+
+Attempt two. The doc said to put tor at `Log info` and ask three narrow questions. Doing that as a
+standalone probe answered a bigger one first: **the whole path works.**
+
+    >>> service at 6cffmbyb…dqpoarid.onion
+    hsserviced: published to 6 directories
+    hsserviced: waiting for a client
+    >>> curl exit=0 body="hello from behind an onion\n"
+    hsserviced: an introduction, meeting at 127.0.0.1:39667
+    hsserviced: rendezvous joined, the client is hop 4
+    hsserviced: served 92 bytes to a client
+
+A C tor client, our relays, our introduction point, our rendezvous point, our service. Step 6's
+condition, reproduced on demand rather than remembered from a date.
+
+**The test built from the same steps still fails**, and that is now the whole of the problem. In it
+the service publishes to six directories and waits, tor reaches `Bootstrapped 100%`, and curl times
+out at ninety seconds — a *timeout*, not a refusal, so tor accepted the SOCKS request and never
+finished it.
+
+What has been eliminated: a SocksPort collision (a refusal would look different), the microdesc
+consensus lacking HSDir flags (checked, both flavours carry them), and the stack itself (the probe).
+
+What differs between the probe and the test, and has not been eliminated: the probe writes
+`Log info` and spawns tor with its streams to `null`; the harness writes `Log notice` and pipes and
+pumps both. Neither should matter, which is exactly why it is worth finding out — an
+onion-service fetch that depends on the log level or on who drains a pipe is a fact about something,
+and the something is more likely ours than tor's.
+
+The test is not committed, for the second time, on the same principle as the first: a test whose
+behaviour I cannot explain is worse than none. The difference from last time is that the row is no
+longer in doubt — only its automation is.
