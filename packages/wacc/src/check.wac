@@ -5,19 +5,22 @@
 // walked for its signature, a body walked for a statement nested arbitrarily deep, a type inferred
 // from an expression, the two compared, and a position reported that a caller can point at.
 //
-// ## What it deliberately does not decide
+// ## Two rules, because the language has two
 //
-// **A literal's type is a class, not a type.** `return 1;` is legal from a function returning `i32`,
-// `i64`, `u8` or `f64` — the reference widens integer literals to whatever the context wants — so
-// asking whether `1` "is" an `i32` is the wrong question and answering it would report errors the
-// reference does not. What is decidable from the literal alone is which *class* it belongs to:
-// numeric, string, or boolean. Those three cannot convert into one another, so a disagreement
-// between classes is an error under any widening rule, and a disagreement inside a class is not this
-// slice's business.
+// A returned **name** must have the declared type *exactly*: `return p` where `p` is an `i64` is an
+// error from an `i32` function, and `f32` from `f64` is too. A returned **literal** is not a value of
+// some type that has to match — it is polymorphic over a family, and any of `i32 i64 u32 u64` accepts
+// an integer literal.
 //
-// That is the whole reason this slice is safe to ship before there is an expression typer. It
-// reports a subset of what the reference reports and never a superset, which is the only property
-// that lets a partial checker be compared against a complete one at all.
+// Modelling only the family is what the first version did, and the parameter grid found it: 58 of 72
+// rejections caught, the missing fourteen all within a family. Modelling only exact types would be
+// worse, because it would report `return 1` from an `i64` as an error the reference does not.
+//
+// ## Why a subset is the point
+//
+// Everything this slice cannot type — a call, a member, arithmetic, a name from another module — is
+// silence rather than a guess. It reports a subset of the reference and never a superset, which is
+// the only property that lets a partial checker be compared against a complete one at all.
 //
 // ## Positions
 //
@@ -34,54 +37,104 @@ import {
   Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 
-/** A returned value whose class cannot be the declared one. */
+/** A returned value whose type cannot be the declared one. */
 export i32 errReturnTypeMismatch() { return 1; }
 
 /**
- * What a literal must be to satisfy a declared type.
+ * The primitive types, as ids. `primNone` is "this slice does not know".
  *
- * Derived from the reference rather than assumed, by generating every (declared primitive × literal
- * kind) pair and asking it — see `test/typecheck.test.ts`, which now runs that whole cross product
- * on every suite run so the table cannot drift away from the language:
+ * Exact types rather than classes, because the language needs both and only one of them is a class.
+ * A returned **name** must have the declared type exactly — `return p` where `p` is an `i64` is an
+ * error from an `i32` function, and so is `f32` from `f64`. A returned **literal** is not a value of
+ * some type that must match; it is polymorphic over a family, and the reference accepts an integer
+ * literal from any of `i32 i64 u32 u64`.
  *
- *     i32 i64 u32 u64   integer literal only
- *     f32 f64           float literal only
- *     bool              boolean literal only
- *     string            string literal only
- *     u8 u16            nothing — a packed type cannot be a return type at all
- *
- * The first version of this slice had one `numeric` class covering both integers and floats, which
- * was coarser than the language in two places: `return 1` from an `f64` is an error, and `u8` accepts
- * nothing. Coarse cost recall and never precision, so it was sound — but it missed real mismatches,
- * and the cross product is what turned "probably fine" into a table.
+ * The first version of this slice modelled only the family, which is why it caught 58 of the 72
+ * rejections in the parameter grid and missed exactly the fourteen within-family ones. Both rules are
+ * needed and they are different rules.
  */
-export i32 classUnknown() { return 0; }
-export i32 classIntegral() { return 1; }
-export i32 classString() { return 2; }
-export i32 classBool() { return 3; }
-export i32 classFloating() { return 4; }
+export i32 primNone() { return 0; }
+export i32 primI32() { return 1; }
+export i32 primI64() { return 2; }
+export i32 primU32() { return 3; }
+export i32 primU64() { return 4; }
+export i32 primF32() { return 5; }
+export i32 primF64() { return 6; }
+export i32 primBool() { return 7; }
+export i32 primString() { return 8; }
 /**
- * A declared type no literal can satisfy.
+ * `u8` `u16` `i8` `i16`: storage types, which WasmGC allows as array elements and nowhere else.
  *
- * Distinct from `classUnknown`, and the distinction is the whole point: unknown means *say nothing*,
- * this means *nothing fits*. `u8` and `u16` are storage types — WasmGC allows them as array elements
- * and nowhere else — so the reference answers `packed type 'u8' cannot be a return type` at the
- * declaration and, separately, a return mismatch at the returned value. This slice reports the
- * second, which is the one at a position it can name.
+ * One id for all four because nothing distinguishes them here — none can be a return type, so the
+ * answer for every literal and every name is the same refusal. Distinct from `primNone`, and the
+ * distinction is the point: none means *say nothing*, packed means *nothing fits*.
+ *
+ * The signed pair was missing until the spec's rejection corpus was wired in, and it was the first
+ * thing that corpus found: `[§wac-arr-i8-noreturn-k7fn2qp]` is `export i8 getByte() { return 0; }`,
+ * which the reference rejects and this did not. The unsigned pair was here because those are the two
+ * *I* thought of when deriving the grid by hand — which is the whole argument for having an oracle
+ * that was not written by the same person as the code.
  */
-export i32 classPacked() { return 5; }
+export i32 primPacked() { return 9; }
+
+/** The families a literal is polymorphic over. */
+export i32 litNone() { return 0; }
+export i32 litInteger() { return 1; }
+export i32 litFloat() { return 2; }
+export i32 litBool() { return 3; }
+export i32 litString() { return 4; }
 
 /** The checker's state: what it is reading, and what it has found. */
 export struct C {
   u8[] src;
   i32[] toks;
+  /**
+   * The names declared in the function being checked, and the primitive each was declared with.
+   *
+   * Two parallel arrays because wac has no map, which is the shape every symbol table in this
+   * package will have. Rebuilt per function: a name means nothing outside the one that declared it.
+   */
+  string[] names;
+  i32[] prims;
+  i32 nameCount;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, i32[capacity * 3](), 0);
+    return C(src, toks, string[capacity](), i32[capacity](), 0, i32[capacity * 3](), 0);
   }
+
+  /**
+   * Record a declared name.
+   *
+   * A second declaration of the same name **poisons** it to `primNone` rather than replacing or
+   * keeping the first. wac scopes by block, and this slice does not track blocks — so a local
+   * shadowing a parameter, or two locals of different types in sibling blocks, would otherwise make
+   * a lookup confidently wrong and produce a diagnostic the reference does not. Poisoning costs the
+   * few names that are declared twice and keeps the checker a subset, which is the property
+   * everything here depends on.
+   */
+  void declare(this, string name, i32 prim) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { this.prims[i] = primNone(); return; }
+    }
+    if (this.nameCount >= this.names.len()) { return; }
+    this.names[this.nameCount] = name;
+    this.prims[this.nameCount] = prim;
+    this.nameCount = this.nameCount + 1;
+  }
+
+  /** The primitive a name was declared with, or `primNone` for one this slice never saw. */
+  i32 primOfName(this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return this.prims[i]; }
+    }
+    return primNone();
+  }
+
+  /** Forget every name, for the next function. */
+  void clearScope(this) { this.nameCount = 0; }
 
   void report(this, i32 code, i32 line, i32 col) {
     if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
@@ -102,47 +155,93 @@ string tokenText(C c, i32 t) {
   return string.fromBytes(out);
 }
 
-/**
- * The class a declared type belongs to.
- *
- * Only `Prim` has one. An array, a named struct, a nullable or a funcref is `classUnknown`, which
- * makes every comparison against it pass — deliberately, because this slice cannot type an
- * expression well enough to have an opinion about them.
- */
-export i32 classOfType(C c, Ty t) {
+/** The primitive a declared type names, or `primNone` for anything else. */
+export i32 primOfType(C c, Ty t) {
   match (t.kind) {
     case Prim(tok): {
-      string name = tokenText(c, tok);
-      if (name == "string") { return classString(); }
-      if (name == "bool") { return classBool(); }
-      if (name == "f32" || name == "f64") { return classFloating(); }
-      if (name == "u8" || name == "u16") { return classPacked(); }
-      if (name == "i32" || name == "i64" || name == "u32" || name == "u64") {
-        return classIntegral();
-      }
-      // `void` has no returned value to disagree with, and anything else spelled as a primitive is
-      // something this slice has not been taught — silence rather than a guess.
-      return classUnknown();
+      string n = tokenText(c, tok);
+      if (n == "i32") { return primI32(); }
+      if (n == "i64") { return primI64(); }
+      if (n == "u32") { return primU32(); }
+      if (n == "u64") { return primU64(); }
+      if (n == "f32") { return primF32(); }
+      if (n == "f64") { return primF64(); }
+      if (n == "bool") { return primBool(); }
+      if (n == "string") { return primString(); }
+      if (n == "u8" || n == "u16" || n == "i8" || n == "i16") { return primPacked(); }
+      // `void` among others: a function returning void has no returned value to disagree with.
+      return primNone();
     }
-    else: { return classUnknown(); }
+    else: { return primNone(); }
+  }
+}
+
+/** The family a literal expression belongs to, or `litNone` when the expression is not one. */
+export i32 litKindOf(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return litInteger(); }
+    case FloatLit(tok): { return litFloat(); }
+    case StrLit(tok): { return litString(); }
+    case BoolLit(value): { return litBool(); }
+    else: { return litNone(); }
   }
 }
 
 /**
- * The class a literal expression belongs to, or `classUnknown` for anything that is not one.
+ * Whether a declared primitive accepts a literal of this family.
  *
- * Unknown is the honest answer for every non-literal, and it is what keeps this slice a subset: an
- * identifier, a call or an arithmetic expression all need a symbol table or an expression typer, and
- * reporting nothing about them is right until there is one.
+ * The grid in `test/typecheck.test.ts` regenerates this from the reference on every run, so a
+ * disagreement fails loudly rather than sitting here as a stale table.
  */
-export i32 classOfExpr(Expr e) {
-  match (e.kind) {
-    case IntLit(tok): { return classIntegral(); }
-    case FloatLit(tok): { return classFloating(); }
-    case StrLit(tok): { return classString(); }
-    case BoolLit(value): { return classBool(); }
-    else: { return classUnknown(); }
+export bool acceptsLiteral(i32 want, i32 lit) {
+  if (lit == litInteger()) {
+    return want == primI32() || want == primI64() || want == primU32() || want == primU64();
   }
+  if (lit == litFloat()) { return want == primF32() || want == primF64(); }
+  if (lit == litBool()) { return want == primBool(); }
+  if (lit == litString()) { return want == primString(); }
+  return true;
+}
+
+/**
+ * The primitive a non-literal expression has, or `primNone`.
+ *
+ * Only a name, resolved against the parameters and locals of the function being checked. A call, a
+ * member access or arithmetic still needs an expression typer, and silence is the honest answer for
+ * all of them.
+ */
+export i32 primOfExpr(C c, Expr e) {
+  match (e.kind) {
+    case Ident(tok): { return c.primOfName(tokenText(c, tok)); }
+    else: { return primNone(); }
+  }
+}
+
+/** Every name a statement declares, however deeply nested. */
+void declareStmt(C c, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): { c.declare(tokenText(c, nameTok), primOfType(c, type)); }
+    case Block(body): { declareAll(c, body); }
+    case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
+    case While(cond, body): { declareAll(c, body); }
+    case DoWhile(body, cond): { declareAll(c, body); }
+    case For(init, cond, update, body): {
+      if (!(init is null)) { declareStmt(c, init!); }
+      declareAll(c, body);
+    }
+    case Switch(subject, cases): {
+      for (i32 i = 0; i < cases.len(); i++) { declareAll(c, cases[i].body); }
+    }
+    case Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) { declareAll(c, arms[i].body); }
+    }
+    else: { }
+  }
+}
+
+/** Every name declared in a list of statements. */
+void declareAll(C c, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
 }
 
 /** Every `return` in a list of statements. */
@@ -155,10 +254,21 @@ void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
     case Return(value): {
       if (value is null) { return; }
-      i32 got = classOfExpr(value!);
-      i32 expected = classOfType(c, want);
-      if (got != classUnknown() && expected != classUnknown() && got != expected) {
-        c.report(errReturnTypeMismatch(), value!.line, value!.col);
+      i32 expected = primOfType(c, want);
+      if (expected == primNone()) { return; }
+      Expr e = value!;
+      i32 lit = litKindOf(e);
+      if (lit != litNone()) {
+        // A literal: polymorphic over a family, so the question is whether the declared type is in it.
+        if (!acceptsLiteral(expected, lit)) {
+          c.report(errReturnTypeMismatch(), e.line, e.col);
+        }
+        return;
+      }
+      // A name: a value of exactly one type, so the question is whether it is the declared one.
+      i32 got = primOfExpr(c, e);
+      if (got != primNone() && got != expected) {
+        c.report(errReturnTypeMismatch(), e.line, e.col);
       }
     }
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
@@ -184,7 +294,16 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], returnType); }
+        // Declarations first, in a pass of their own over the whole body, so a `return` that reads a
+        // name declared later still resolves it. A checker that declared as it walked would treat a
+        // forward reference as unknown for no reason — the reference has the whole function in hand
+        // and so does this.
+        c.clearScope();
+        for (i32 i = 0; i < params.len(); i++) {
+          c.declare(tokenText(c, params[i].nameTok), primOfType(c, params[i].type));
+        }
+        declareAll(c, body);
+        checkAll(c, body, returnType);
       }
       else: { }
     }
