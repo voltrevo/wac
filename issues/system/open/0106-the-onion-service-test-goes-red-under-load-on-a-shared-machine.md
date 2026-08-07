@@ -19,11 +19,11 @@ tor: no introduction point accepted the cell
 network: visit exited 1
 ```
 
-Three times on 2026-08-07, in full-suite runs, on a machine several agents share. Both times the same test
-passed immediately afterwards when run alone — twice in a row, in 16 seconds each — and the second full
-suite passed too. Nothing in either failing run's tree touched `packages/tor`.
+Three times on 2026-08-07, in full-suite runs, on a machine several agents share. Every time the same test
+passed immediately afterwards when run alone — 11 to 16 seconds — and a repeated full suite passed too.
+Nothing in the second or third run's tree touched `packages/tor`.
 
-The first of the two had a real cause underneath (a trapping `slice` in `dirserve`, fixed the same day),
+The first of the three had a real cause underneath (a trapping `slice` in `dirserve`, fixed the same day),
 which is exactly what makes this worth a number: **the same red says "your change broke the relay" and
 "the machine was busy"**, and telling them apart costs a re-run every time.
 
