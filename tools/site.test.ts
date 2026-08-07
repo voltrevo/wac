@@ -13,7 +13,9 @@
 import { wacCompile } from "../atoms/wac/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
 
-const LANDING = new URL("../src/Landing.tsx", import.meta.url);
+// The snippets used to live in one file. They are spread over the pages that print them now, so
+// this looks in each — a snippet is found by name, and a name exists once.
+const PAGES = ["Landing", "Language", "Roadmap"].map((n) => new URL(`../src/${n}.tsx`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
   return wacCompile(new Map(Object.entries(files)), entry);
@@ -59,10 +61,15 @@ Deno.test("site: an example's extension matches the surface it is written in", (
 
 /** A template literal assigned to `const <name> = ` … `, with its escapes undone. */
 async function snippet(name: string): Promise<string> {
-  const src = await Deno.readTextFile(LANDING);
   const open = `const ${name} = \``;
-  const at = src.indexOf(open);
-  if (at < 0) throw new Error(`Landing.tsx has no ${name}`);
+  let src = "";
+  let at = -1;
+  for (const page of PAGES) {
+    src = await Deno.readTextFile(page);
+    at = src.indexOf(open);
+    if (at >= 0) break;
+  }
+  if (at < 0) throw new Error(`no page declares ${name}`);
   let i = at + open.length;
   const start = i;
   while (i < src.length) {
@@ -76,8 +83,11 @@ async function snippet(name: string): Promise<string> {
     .replace(/\\\\/g, "\\");
 }
 
-Deno.test("site: the landing page's runnable snippets compile", async () => {
+Deno.test("site: the pages' runnable snippets compile", async () => {
   for (const [name, file] of [
+    // The front page prints this one and invites the reader to run it, which makes it the single
+    // most embarrassing snippet on the site to have broken.
+    ["EX_FRONT", "a.wac"],
     ["EX_SURFACE_WAC", "a.wac"],
     ["EX_SURFACE_WAPY", "a.wapy"],
     ["EX_WAPY_LIVE", "a.wapy"],
@@ -131,6 +141,34 @@ Deno.test("site: the mixed-import snippets are a real program", async () => {
   if (!r.ok) {
     const d = r.diagnostics[0];
     throw new Error(`${d.file}:${d.line}:${d.col} ${d.message}`);
+  }
+});
+
+// ── The routes and the pages agree ─────────────────────────────────────────
+
+Deno.test("site: every page in the nav is a route, and every route renders something", async () => {
+  // The site is five pages behind a hash router, so the way to break it is to add a page to the
+  // navigation and not to the switch — which gives a link that silently lands on the front page.
+  // `tsc -b` cannot see that, because both halves type-check perfectly well apart.
+  const dir = new URL("../src/", import.meta.url);
+  const chrome = await Deno.readTextFile(new URL("chrome.tsx", dir));
+  const app = await Deno.readTextFile(new URL("App.tsx", dir));
+
+  const declared = [...chrome.matchAll(/export type Route =([^;]+);/g)]
+    .flatMap((m) => [...m[1].matchAll(/"([a-z]+)"/g)].map((x) => x[1]));
+  if (declared.length < 5) throw new Error(`only ${declared.length} routes in the Route type`);
+
+  const routed = new Set([
+    ...[...app.matchAll(/case "([a-z]+)":/g)].map((m) => m[1]),
+    "home", // the default arm
+  ]);
+  const unrouted = declared.filter((r) => !routed.has(r));
+  if (unrouted.length) throw new Error(`Route has ${unrouted.join(", ")}, App.tsx does not`);
+
+  // And every nav entry names one of them.
+  for (const m of chrome.matchAll(/route: "([a-z]+)", href: "#\/([a-z]*)"/g)) {
+    if (!declared.includes(m[1])) throw new Error(`nav names route ${m[1]}, which the Route type does not`);
+    if (m[1] !== m[2]) throw new Error(`nav entry ${m[1]} points at #/${m[2]}`);
   }
 });
 

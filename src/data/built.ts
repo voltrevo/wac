@@ -20,19 +20,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 32,
-  lines: 65038,
+  lines: 65245,
   /** wac-mono's *packages* — the number that belongs beside the package table. */
-  tests: 1334,
+  tests: 1338,
   programs: 38,
   pages: 4,
   /**
-   * Both suites: wac-mono's packages (1334), its harness and tools (90),
-   * and this repo's compiler (1215).
+   * Both suites: wac-mono's packages (1338), its harness and tools (90),
+   * and this repo's compiler (1216).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 2639,
+  testsAll: 2644,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
@@ -53,7 +53,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 3808, tests: 14 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 2686, tests: 42 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 6 },
-  { name: "crypto", what: "SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and…", lines: 5596, tests: 149 },
+  { name: "crypto", what: "SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and…", lines: 5667, tests: 149 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 594, tests: 12 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 51 },
   { name: "rlp", what: "Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac.", lines: 317, tests: 8 },
@@ -68,5 +68,5 @@ export const BUILT: BuiltPackage[] = [
   { name: "box", what: "60 applets in one program, chosen by the first argument.", lines: 4008, tests: 33 },
   { name: "lightclient", what: "The Altair sync protocol works.", lines: 642, tests: 12 },
   { name: "ssh", what: "An SSH-2 client and server, in wac, and ssh and sshd programs built from them.", lines: 3551, tests: 46 },
-  { name: "tor", what: "Tor in wac — a client, a relay, a directory authority and an onion-service client, on top of this repo's TLS 1.3 stack.", lines: 13912, tests: 259 },
+  { name: "tor", what: "Tor in wac — a client, a relay, a directory authority and an onion-service client, on top of this repo's TLS 1.3 stack.", lines: 14048, tests: 263 },
 ];
