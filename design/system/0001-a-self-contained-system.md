@@ -411,7 +411,7 @@ Each step is an issue when it becomes actionable, and each references this docum
 | step | state |
 |---|---|
 | 1. VFS with two backings | **done.** `packages/fs`, threaded through `packages/sh` as a value the shell holds; `sealed.wac` is a session on `Fs.inMemory()` built with no filesystem grants at all. 57 scripts answer identically on both backings and identically to bash — 0067 |
-| 2. image format | **done.** `packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so |
+| 2. image format | **done.** `packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so. `packages/sh/src/imaged.wac` is the restart the criterion asks for: two processes, nothing shared but the file |
 | 2a. a second host, no JavaScript | not started — [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md) |
 | 3. process table | not started |
 | 4. users and login | not started |

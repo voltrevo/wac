@@ -15,11 +15,17 @@
 //   sealed -c 'mkdir d; echo hi > d/f; cat d/f; ls d'      ->  hi, then f
 //   sealed -c 'ls /'                                       ->  nothing: an empty world
 //
-// **What is not sealed yet, said plainly.** A redirection streams through `openOutput`, which is a
-// capability rather than a filesystem operation, so `echo hi > f` writes into memory only because the
-// shell's *collecting* path handles it — a redirection on a pipeline's last stage still reaches the host.
-// `packages/fs` needs an output sink before that is a choice too, and until it has one this program is a
-// sealed shell with one hole in it, named here rather than discovered later.
+// **The hole this used to name is not one, and the reason matters.** It said a redirection on a
+// pipeline's last stage still reached the host, because that path streams through `openOutput` — a
+// capability rather than a filesystem operation. It does, but only in a world that can `spawn`: the
+// streaming pipeline in `exec.wac` gives up the moment `spawnStage` reports no spawn in this world, and
+// the sequential path it falls back to writes through `Fs`. This program is built with **no capabilities
+// at all**, so it never gets there. Checked by running it, not by reading it — `test/imaged.test.ts`
+// pins the same property for the shell that does have read and write.
+//
+// What is still true is the shape of the risk: `packages/fs` has no output sink, so the day this program
+// is built with `spawn`, a redirected pipeline would reach the host again. That is a fact about the
+// grants rather than about the shell, which is why it is stated as one.
 
 import { Core, Cli } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";

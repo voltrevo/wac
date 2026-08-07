@@ -283,6 +283,32 @@ That works because of `Shell.capturing`: standard output collects into a buffer 
 to the process's own terminal. Command substitution needs exactly the same thing, so it is one
 flag rather than two mechanisms.
 
+## Three shells, and the line between them
+
+`wacsh` is a shell on the real disk. `sealed.wac` is the same shell handed `Fs.inMemory()` and built with
+no filesystem grants at all. `imaged.wac` is the same shell again, handed a filesystem loaded from a file
+and saved back to it — so a session's writes survive a restart, which is design/0001 step 2's criterion.
+
+One line of difference between each pair, which is the argument for a filesystem being a *value* the
+shell holds rather than something it reaches for per operation (wac-mono 0067). The grants differ because
+the programs differ: `imaged` needs read and write on its image, and giving `sealed` that option would
+have spent the property that makes it sealed.
+
+    imaged home.wacimg -c 'mkdir /data; echo one > /data/notes'
+    imaged home.wacimg -c 'cat /data/notes'          ->  one
+    box fsdump home.wacimg                           ->  the tree, with modes and owners
+
+It saves after the script whether or not the script succeeded: the session whose work is most worth
+keeping is the one that ended badly. It refuses an image it cannot read rather than starting empty,
+because starting empty would then save over the thing it could not read.
+
+**A correction worth keeping.** `sealed.wac` used to say a redirection on a pipeline's last stage reached
+the host, because that path streams through `openOutput` — a capability rather than a filesystem
+operation. Building `imaged` and trying it showed otherwise: the streaming pipeline in `exec.wac` gives
+up as soon as `spawnStage` reports no spawn in this world, and the sequential path it falls back to
+writes through `Fs`. Neither shell is built with `spawn`, so neither reaches it. The risk belongs to the
+grants rather than to the shell, and `test/imaged.test.ts` fails if that ever stops being true.
+
 ## What it does not do
 
 **`set` does the positional parameters and nothing else.** `set --`, `set a b c` and `shift`
