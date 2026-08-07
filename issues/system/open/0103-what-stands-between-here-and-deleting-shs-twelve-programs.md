@@ -13,12 +13,13 @@ and the deletion never had a next step.
 `deno task corpus:through <shell>` is that check. It reads `packages/sh/test/differential.test.ts`'s own
 corpus — so it cannot go stale — and runs every script through some other shell against bash.
 
-Through `packages/box/src/bin/sh.wac`, on 2026-08-07: **563/632**, with the 69 in five programs. Four of
-the five are now fixed and the score is **588/632**; everything left is `tr`.
+Through `packages/box/src/bin/sh.wac`, on 2026-08-07: **563/632**, with the 69 in five programs. All five
+are fixed and the score is **649/649** — every script in `packages/sh`'s own corpus now agrees with bash
+through `packages/box`'s applets, which is the precondition this issue exists to establish.
 
 | program | was | now | what |
 | --- | --- | --- | --- |
-| `tr` | 44 | 44 | backslash escapes are taken literally — **wac-mono 0098**, filed independently, and left to it |
+| `tr` | 44 | 0 | took its sets literally and had no flags at all — **wac-mono 0098**, now closed |
 | `cat` | 17 | 0 | all nine flags were accepted and ignored, and `-Q` — not a GNU flag — was accepted too |
 | `seq` | 6 | 0 | usage errors exited 0 or 2 where GNU exits 1, and a word was read as zero rather than refused |
 | `uniq`, `sort` | 1 each | 0 | a lone `-` was read as a filename |
@@ -45,8 +46,9 @@ lying".
 
 ## What is left
 
-`tr`, and only `tr`: 44 scripts, all of them wac-mono 0098, which another agent filed while this was being
-measured. Nothing here should touch it.
+**The deletion itself.** The measurement is done and says the replacement is ready; removing the twelve
+from `packages/sh` and having it run the applets it is handed is the remaining work, and it is a change
+to `packages/sh`'s seam rather than to any applet. Worth its own tick.
 
 ## Done when
 

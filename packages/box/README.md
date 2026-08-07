@@ -280,6 +280,13 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
+**`tr` reads the set language**, which it did not: escapes (`\n`, `\t`, `\NNN`), ranges, the twelve
+character classes, `[=c=]` and `[x*n]`, plus `-c -d -s -t`. It took its operands *literally*, so
+`tr '\n' ' '` looked for a backslash and an `n`, found neither, and copied its input through — a no-op
+that looks like working software until you check the bytes (wac-mono 0098, found by typing into the
+browser terminal). `lib/trset.wac` is the language and the applet is what the flags do with it. It takes
+no file operand, because GNU's does not: `tr a-z A-Z < file`.
+
 **`grep` reads basic regular expressions**, as the real one does with no `-E`: `|`, `+`, `?`, `{` and the
 parentheses are literals and their backslashed forms are the operators. It compiled *extended* until
 wac-mono 0104, so `grep 'a|b'` matched a-or-b where GNU matches three characters — a wrong answer with
