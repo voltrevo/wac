@@ -2240,3 +2240,36 @@ no test, because it reports success in exactly the case you most need told about
 
 The previous slot removed this test rather than commit it, on the grounds that its passing condition
 was unexplained. That was right, and the explanation was one `env | grep` away.
+
+### The C-tor-to-our-onion-service row, attempt one
+
+Not landed. Recorded because the next attempt should start from what is already known rather than
+from the top.
+
+Everything up to the client works. Our service, started against the wac network and bootstrapping
+through it, says:
+
+    hsserviced: vfsow6hb…ellulmdad
+    consensus verified: 1 of 1 authorities signed
+    hsserviced: bootstrapped, 3 relays
+    hsserviced: introduction circuit wacc3 -> wacc1 -> wacc2
+    hsserviced: published to 6 directories
+    hsserviced: waiting for a client
+
+Six uploads, both time periods, three HSDirs each. Then `curl --socks5-hostname` through a C tor at
+that address times out at 90 seconds with no rendezvous ever reported by the service.
+
+**One hypothesis checked and eliminated:** that the microdesc consensus — the flavour a client uses —
+might carry different flags from the ns one, leaving tor with no relay it considers an HSDir. Both
+flavours carry `s Exit Fast Guard HSDir Running Stable V2Dir Valid`, so that is not it.
+
+**What the next attempt needs first**, and this is the same discipline the streams row eventually
+taught: `Log info` rather than `Log notice` in the torrc, and then the question is narrow — does tor
+compute the same responsible HSDirs we uploaded to, does it fetch a descriptor, and does it decrypt
+one. At `notice` the log says nothing about any of that, which is why this attempt ran out of room.
+Our own client fetches from this same service in `network_tor.test.ts`, so the descriptor is
+retrievable and decryptable by *something* that computes the ring the way we do.
+
+**A latent bug fell out of the attempt and is fixed.** `startTor` stood up its own network, which was
+fine while one test used it and wrong the moment a test wanted a network *and* a tor: it got two sets
+of three relays writing to the same descriptor paths in one directory. The network is passed in now.
