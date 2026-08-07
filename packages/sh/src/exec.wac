@@ -1456,6 +1456,7 @@ Output ls(Shell sh, Vec<string> argv) {
     // refusing every option by name. Whose gap it is decides which of the two sentences it gets.
     u8[] b = a.toBytes();
     if (b.len() >= 2 && b[0] == '-') {
+      if (b[1] == '-') { return Output.fail(optionRefusal("ls", a).toBytes(), 2); }
       u8[] one = u8[1](fill: b[1]);
       return Output.fail(optionRefusal("ls", string.fromBytes(one)).toBytes(), 2);
     }

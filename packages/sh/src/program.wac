@@ -249,6 +249,13 @@ bool gnuHas(string name, i32 letter) {
 /** What to say about an option this program does not take, and whose gap it is. */
 export string optionRefusal(string name, string letter) {
   u8[] b = letter.toBytes();
+  // A whole word rather than a letter: a long option. Read as a bundle of short ones it refused the
+  // *second dash* — `wc: invalid option -- '-'`, naming a character the caller never typed. None of
+  // these programs implements a long option, so that is the answer, and it needs no table; GNU's split
+  // between one it has and one nobody has is a distinction this cannot draw, so it draws neither.
+  if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
+    return name + ": long options are not implemented: " + letter + "\n";
+  }
   if (b.len() == 1 && gnuHas(name, b[0])) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
     return name + ": -" + letter + " is not implemented\n";
@@ -295,6 +302,7 @@ Options options(Vec<string> argv, string accept) {
     if (more && a == "--") { more = false; continue; }
     u8[] b = a.toBytes();
     if (!more || b.len() < 2 || b[0] != '-') { operands.push(a); continue; }
+    if (b[1] == '-') { return Options(seen, operands, a); }
     for (i32 j = 1; j < b.len(); j++) {
       u8[] one = u8[1](fill: b[j]);
       string letter = string.fromBytes(one);
@@ -379,6 +387,7 @@ Counted countOf(Vec<string> argv, i32 fallback) {
     }
     u8[] b = a.toBytes();
     if (b.len() < 2 || b[0] != '-') { operands.push(a); continue; }
+    if (b[1] == '-') { return Counted(n, operands, bytes, a, sign, ""); }
     // **`-n2`, with the value attached.** GNU takes it, `packages/box` takes it and says so in its
     // README — "a value attaches or not: head -n2 / -2" — and this refused it with "head: -n is not
     // implemented", which was false twice over: `-n` is implemented, and the refusal blamed the caller
@@ -1387,6 +1396,9 @@ i32 tr(Vec<string> argv, Feed fed, Sink sink, Sink errs) {
     if (a == "--") { first++; break; }
     u8[] b = a.toBytes();
     if (b.len() < 2 || b[0] != '-') { break; }
+    if (b[1] == '-') {
+      { errs.bytes(optionRefusal("tr", a).toBytes()); errs.flush(); sink.flush(); return 1; }
+    }
     for (i32 i = 1; i < b.len(); i++) {
       if (b[i] == 'd') { del = true; }
       else if (b[i] == 's') { squeeze = true; }
@@ -1788,8 +1800,9 @@ i32 seq(Vec<string> argv, Sink sink, Sink errs) {
     // same way: a `-` followed by a digit or a decimal point is a number.
     bool numeric = b.len() >= 2 && (b[1] >= '0' && b[1] <= '9' || b[1] == '.');
     if (!more || b.len() < 2 || b[0] != '-' || numeric) { operands.push(a); continue; }
+    // Was GNU's "unrecognized option", which says the caller invented `--separator`. They did not.
     if (b[1] == '-') {
-      { errs.bytes(("seq: unrecognized option '" + a + "'\n" + tryHelp("seq")).toBytes()); errs.flush(); sink.flush(); return 1; }
+      { errs.bytes(optionRefusal("seq", a).toBytes()); errs.flush(); sink.flush(); return 1; }
     }
     u8[] one = u8[1](fill: b[1]);
     { errs.bytes(optionRefusal("seq", string.fromBytes(one)).toBytes()); errs.flush(); sink.flush(); return 1; }

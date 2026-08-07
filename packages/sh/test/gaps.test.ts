@@ -54,6 +54,38 @@ async function gnuOptions(tool: string): Promise<string[]> {
   return [...letters];
 }
 
+Deno.test("a long option is one word, not a bundle of short ones", async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const built = await Deno.makeTempFile({ prefix: "wacsh-long-" });
+  try {
+    await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
+    const err = (script: string) => {
+      const r = new Deno.Command(built, {
+        args: ["-c", script],
+        stdout: "null",
+        stderr: "piped",
+        env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+        clearEnv: true,
+      }).outputSync();
+      return new TextDecoder().decode(r.stderr).trim();
+    };
+
+    // Read as a bundle, the first letter these could not implement was the *second dash*, so the
+    // refusal named a character the caller never typed: `wc: invalid option -- '-'`.
+    assertEquals(err("wc --lines"), "wc: long options are not implemented: --lines");
+    // Each of the four scanners: `options`, `head`/`tail`'s counter, `tr`'s loop, and `ls` in exec.
+    assertEquals(err("head --lines=2"), "head: long options are not implemented: --lines=2");
+    assertEquals(err("echo x | tr --delete x"), "tr: long options are not implemented: --delete");
+    assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
+    // `seq` said GNU's "unrecognized option", which tells a caller they invented `--separator`.
+    assertEquals(err("seq --separator=, 3"), "seq: long options are not implemented: --separator=,");
+    // `echo` is not a getopt program: GNU's prints `--nonsense` and says nothing.
+    assertEquals(err("echo --nonsense"), "");
+  } finally {
+    await Deno.remove(built);
+  }
+});
+
 Deno.test({
   name: "no option that GNU has is called invalid — a gap says it is a gap",
   fn: async () => {

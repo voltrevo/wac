@@ -1548,7 +1548,12 @@ Deno.test({
         "seq 1 2 3 4",
         "seq 1 0 3",
         "seq -q 1",
-        "seq --nope 1",
+        // Not `seq --nope 1`, which used to be here. GNU answers "unrecognized option '--nope'", and
+        // this shell said the same — correctly for `--nope`, and *falsely* for `--separator`, which GNU
+        // has and this does not. Telling the two apart needs a table of every long name GNU documents,
+        // which nothing here has; so both now get one sentence that is true of either, and it is ours
+        // rather than GNU's: "seq: long options are not implemented: --nope". Under the rule this list
+        // states, a message that is ours is not comparable and is not compared.
         "echo x | cat -Q",
         "cat missing",
         "wc -l missing",
