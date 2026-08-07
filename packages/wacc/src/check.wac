@@ -39,6 +39,8 @@ import {
 
 /** A returned value whose type cannot be the declared one. */
 export i32 errReturnTypeMismatch() { return 1; }
+/** A non-void function that can reach its closing brace. */
+export i32 errMissingReturn() { return 2; }
 
 /**
  * The primitive types, as ids. `primNone` is "this slice does not know".
@@ -217,6 +219,108 @@ export i32 primOfExpr(C c, Expr e) {
   }
 }
 
+/**
+ * Whether a statement list always leaves the function — the reference's *"not all code paths return
+ * a value"*.
+ *
+ * Control flow rather than types, and the second kind of thing rung 3 does. The rule is the ordinary
+ * definite-return analysis with one subtlety that the spec's own cases are mostly about:
+ *
+ * **`while (true)` leaves the function unless something can break out of it.** An infinite loop with
+ * no exit never reaches the statement after it, so a function ending in one needs no return; give it
+ * a reachable `break` and the loop can finish, so the closing brace becomes reachable again and a
+ * return is required. Four of the seven spec cases are exactly this, and they place the `break`
+ * inside a block, inside an `else if`, and inside a `match` arm — so "does this loop contain a
+ * break" has to walk as deep as the statements go.
+ *
+ * A `break` inside a **nested** loop or a `switch` belongs to that construct, not to this loop, and
+ * does not make it finite. That is why `breaksOut` stops descending at a loop or a switch and
+ * `alwaysLeaves` does not.
+ */
+bool alwaysLeaves(Stmt[] body) {
+  // Only the last statement can settle it: anything before it either leaves — making the rest
+  // unreachable, which the reference reports separately and this slice does not — or falls through.
+  if (body.len() == 0) { return false; }
+  return leaves(body[body.len() - 1]);
+}
+
+/** Whether one statement always leaves the function. */
+bool leaves(Stmt s) {
+  match (s.kind) {
+    case Return(value): { return true; }
+    case Trap: { return true; }
+    case Block(body): { return alwaysLeaves(body); }
+    // Both arms, and there must be an arm to take: an `if` with no `else` falls through when the
+    // condition is false.
+    case If(cond, then, els): {
+      return els.len() > 0 && alwaysLeaves(then) && alwaysLeaves(els);
+    }
+    case While(cond, body): { return isTrueLiteral(cond) && !breaksOut(body); }
+    case DoWhile(body, cond): { return isTrueLiteral(cond) && !breaksOut(body); }
+    // A `for` with no condition is the other spelling of `while (true)`.
+    case For(init, cond, update, body): { return (cond is null) && !breaksOut(body); }
+    // A `match` is exhaustive by construction — the language requires every variant — so it leaves
+    // when every arm does. Modelling it was not optional: six functions in this very file are a
+    // single `match` whose arms all return, and treating that as falling through reported all six.
+    case Match(subject, arms): {
+      if (arms.len() == 0) { return false; }
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (!alwaysLeaves(arms[i].body)) { return false; }
+      }
+      return true;
+    }
+    // A `switch` needs a `default` as well: without one, a subject matching no case falls straight
+    // through. A `break` in a case leaves the switch and not the function, so `alwaysLeaves` on the
+    // case body is exactly the right question.
+    case Switch(subject, cases): {
+      bool hasDefault = false;
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { hasDefault = true; }
+        if (!alwaysLeaves(cases[i].body)) { return false; }
+      }
+      return hasDefault;
+    }
+    else: { return false; }
+  }
+}
+
+/** `true`, written literally — the only condition this slice will call infinite. */
+bool isTrueLiteral(Expr e) {
+  match (e.kind) {
+    case BoolLit(value): { return value; }
+    else: { return false; }
+  }
+}
+
+/**
+ * Whether a `break` in this list belongs to the loop enclosing it.
+ *
+ * Does not descend into a nested loop or a `switch`: a `break` there is that construct's, and the
+ * outer loop is still infinite. Does descend into blocks, `if`/`else` and `match` arms, because a
+ * break in any of those is the loop's — which is what three of the spec's cases check.
+ */
+bool breaksOut(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    if (breaksOutOf(body[i])) { return true; }
+  }
+  return false;
+}
+
+bool breaksOutOf(Stmt s) {
+  match (s.kind) {
+    case Break: { return true; }
+    case Block(body): { return breaksOut(body); }
+    case If(cond, then, els): { return breaksOut(then) || breaksOut(els); }
+    case Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (breaksOut(arms[i].body)) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
+}
+
 /** Every name a statement declares, however deeply nested. */
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
@@ -304,6 +408,11 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
+        // Reported at the declaration rather than at the closing brace, which is where the reference
+        // puts it: the fault is the function's, not any one statement's.
+        if (primOfType(c, returnType) != primNone() && !alwaysLeaves(body)) {
+          c.report(errMissingReturn(), prog.decls[d].line, prog.decls[d].col);
+        }
       }
       else: { }
     }

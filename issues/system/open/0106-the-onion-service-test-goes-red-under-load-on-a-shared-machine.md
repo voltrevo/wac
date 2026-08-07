@@ -88,6 +88,13 @@ Demonstrated against a listener that accepts and never speaks.
 protocol library reaching into `/proc` to describe its own environment is the wrong layer; the test
 harness already knows it is a test.
 
+*Corrected 2026-08-07, later:* the first version read `/proc/loadavg` directly and never worked.
+Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()` behind
+`--allow-sys`, and `tools/runTests.ts` grants neither — so it silently degraded to `load unknown`,
+which is what a real failure message said. It goes through `cat` now, since `--allow-run` is granted.
+A diagnostic that fails silently is worse than none, and this one failed silently at exactly the
+moment it existed for.
+
 **"Measure the wait against work rather than wall-clock."** Not done, and it is the one that would
 actually stop the red. It needs a deadline that resets on progress rather than on entry, which is a
 change to `pumpFor`'s contract and to every caller that passes a bound — worth doing deliberately

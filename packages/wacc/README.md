@@ -217,7 +217,32 @@ was `u8` and `u16`, because those are the two *I* thought of when deriving the g
 `i16` are packed too. That is the argument for a second oracle in one line — the grid was derived from
 a list I wrote, and it could only ever check the list I wrote.
 
-Next: more of rung 3.
+### Control flow, the second kind of thing rung 3 does
+
+*"not all code paths return a value"* is the largest family in the spec's rejection corpus after plain
+type mismatches, and it needs no expression typer at all — only the statement walk that was already
+there. Reported at the **function declaration** rather than the closing brace, which is where the
+reference puts it: the fault is the function's, not any one statement's.
+
+The interesting rule is `while (true)`. A loop with no exit never reaches the statement after it, so a
+function ending in one needs no return; give it a reachable `break` and the closing brace is reachable
+again and a return is required. Four of the spec's seven cases are that, with the `break` hidden in a
+block, an `else if`, and a `match` arm — so "does this loop contain a break" walks as deep as the
+statements go, while stopping at a nested loop or `switch`, whose breaks are their own.
+
+**Spec coverage: 8 of 83**, from 1.
+
+`match` and `switch` had to be modelled rather than skipped, and the repo corpus is what said so: six
+functions in `check.wac` are a single `match` with a return in every arm, and treating that as falling
+through reported all six. A `match` leaves when every arm does, since the language makes it
+exhaustive; a `switch` also needs a `default`, because without one a subject matching no case falls
+straight through.
+
+That guard now runs over **every `.wac` file in the repo** rather than wacc's own six. It is the test
+that catches a rule which looked sound on a dozen hand-written cases and is not, and it has earned
+that twice already.
+
+Next: more of rung 3 — the type-mismatch family is the largest one left, at 12 spec cases.
 
 ### What rung 3's oracle looks like, measured
 

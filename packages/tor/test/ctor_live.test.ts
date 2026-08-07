@@ -55,8 +55,16 @@ if (!haveTor) {
  * or "investigate", put where somebody reading the failure will see it.
  */
 function load(): string {
+  // Through a subprocess, which looks absurd for reading a file and is the only way that works.
+  // Deno gates `/proc` behind `--allow-all` rather than `--allow-read`, and `Deno.loadavg()` behind
+  // `--allow-sys`; `tools/runTests.ts` grants neither, so both paths return "load unknown" under the
+  // runner — which is exactly the situation this was added for, and it did, silently, until a real
+  // failure message read `(load unknown)`. `--allow-run` is granted, so `cat` it is.
   try {
-    return `load ${Deno.readTextFileSync("/proc/loadavg").split(" ").slice(0, 3).join(" ")}`;
+    const r = new Deno.Command("cat", { args: ["/proc/loadavg"], stdout: "piped", stderr: "null" })
+      .outputSync();
+    const text = new TextDecoder().decode(r.stdout).trim();
+    return text === "" ? "load unknown" : `load ${text.split(" ").slice(0, 3).join(" ")}`;
   } catch {
     return "load unknown";
   }

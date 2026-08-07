@@ -126,26 +126,35 @@ Deno.test("rung 3: we report nothing for a program the reference accepts", () =>
   }
 });
 
-Deno.test("rung 3: the corpus stays silent, which is the property a subset checker can lose", () => {
-  // Every `.wac` file in the repo type-checks cleanly under the reference — that is what makes them
-  // a corpus. So anything we say about one is a false alarm, and this is the cheapest way to catch a
-  // rule that looked sound on eight hand-written cases and is not.
+Deno.test("rung 3: the whole repo stays silent, which is the property a subset checker can lose", () => {
+  // Every `.wac` file in the repo type-checks cleanly — that is what makes it a corpus — so anything
+  // we say about one is a false alarm. This is the cheapest way to catch a rule that looked sound on
+  // a dozen hand-written cases and is not, and it has already earned itself twice: the missing-return
+  // analysis reported six functions in `check.wac` whose body is a single `match` with a return in
+  // every arm, because `match` had not been modelled as leaving.
   //
-  // Single-file only: `wacResolve` would need the whole import graph to judge these, and this slice
-  // reports nothing that depends on another module. The files are read as text and checked by us
-  // alone; the reference's verdict on them is not needed to know that *we* should be quiet.
+  // Single-file: this slice reports nothing that depends on another module, so the import graph is
+  // not needed to know that *we* should be quiet about all of them.
   let checked = 0;
-  for (const entry of Deno.readDirSync("packages/wacc/src")) {
-    if (!entry.name.endsWith(".wac")) continue;
-    const src = Deno.readTextFileSync(`packages/wacc/src/${entry.name}`);
-    const mine = ours(src);
-    if (mine.length !== 0) {
-      throw new Error(`we report ${mine.length} diagnostic(s) at ${mine.join(", ")} in ` +
-        `packages/wacc/src/${entry.name}, which type-checks cleanly`);
+  const complaints: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of Deno.readDirSync(dir)) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory) {
+        if (entry.name !== "node_modules" && !entry.name.startsWith(".")) walk(path);
+      } else if (entry.name.endsWith(".wac")) {
+        const mine = ours(Deno.readTextFileSync(path));
+        if (mine.length !== 0) complaints.push(`${path}: ${mine.join(", ")}`);
+        checked++;
+      }
     }
-    checked++;
+  };
+  walk("packages");
+  if (checked < 250) throw new Error(`only ${checked} .wac files checked — the corpus did not load`);
+  if (complaints.length !== 0) {
+    throw new Error(`we report diagnostics in ${complaints.length} file(s) that type-check ` +
+      `cleanly:\n  ${complaints.slice(0, 12).join("\n  ")}`);
   }
-  if (checked < 6) throw new Error(`only ${checked} files checked — the corpus did not load`);
 });
 
 /**
@@ -352,4 +361,57 @@ Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and
       `${cases.length - notRejected.length} rejected by the type checker, ` +
       `${covered} of those also caught here, ${contradicted} contradicted`,
   );
+});
+
+/**
+ * The second kind of thing rung 3 does: control flow, not types.
+ *
+ * *"not all code paths return a value"* is the largest family in the spec's rejection corpus after
+ * plain type mismatches, and it needs no expression typer at all — only the statement walk that was
+ * already here. The reference reports it at the **function declaration** rather than at the closing
+ * brace, because the fault is the function's and not any one statement's.
+ *
+ * The interesting rule is `while (true)`. A loop with no exit never reaches the statement after it,
+ * so a function ending in one needs no return; give it a reachable `break` and the closing brace is
+ * reachable again and a return is required. Four of the spec's seven cases are that, with the break
+ * hidden in a block, an `else if`, and a `match` arm.
+ */
+Deno.test("rung 3: a function that can reach its closing brace, against the reference", () => {
+  const CASES = [
+    // Wrong: the reference reports each of these.
+    "i32 bad(bool x) { if (x) { return 1; } }",
+    "i32 noElse(bool x) { if (x) { return 1; } else { } }",
+    "i32 brk(i32 n) { while (true) { if (n > 0) { break; } n++; } }",
+    "i32 deep(i32 n) { while (true) { { break; } } }",
+    "i32 elseIf(i32 n) { while (true) { if (n > 10) { n++; } else if (n > 5) { break; } } }",
+    "i32 empty() { }",
+    // Right: the reference accepts each of these.
+    "i32 ok(bool x) { if (x) { return 1; } return 0; }",
+    "i32 both(bool x) { if (x) { return 1; } else { return 2; } }",
+    "i32 inf(i32 n) { while (true) { n++; } }",
+    "i32 nestedBreak(i32 n) { while (true) { while (n > 0) { break; } } }",
+    "i32 trapping() { trap; }",
+    "void nothing() { }",
+    "void early(bool x) { if (x) { return; } }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src).filter((e) => e.message.includes("all code paths"));
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      if (mine.length !== 0) {
+        throw new Error(`the reference accepts ${JSON.stringify(src)} and we report ` +
+          mine.join(", "));
+      }
+      continue;
+    }
+    if (mine.length === 0) {
+      throw new Error(`the reference wants a return in ${JSON.stringify(src)} and we said nothing`);
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
 });
