@@ -161,6 +161,21 @@ declared return type. `src/check.wac`, `test/typecheck.test.ts`, and positions t
 reference exactly — `export i32 main() { return "x"; }` is reported at 1:28, the `"`, which is where
 the reference puts it and not where the `return` is.
 
+It catches **every** literal-return mismatch across the primitive grid — 32 of 40 (type, literal)
+pairs are rejections, and all 32 are found. The rule was derived from the reference rather than
+assumed, by generating the grid and asking:
+
+| declared | accepts |
+|---|---|
+| `i32` `i64` `u32` `u64` | an integer literal |
+| `f32` `f64` | a float literal |
+| `bool` / `string` | a boolean / a string literal |
+| `u8` `u16` | nothing — a packed type cannot be a return type at all |
+
+The grid is regenerated on every suite run rather than tabulated here, because a table copied into a
+test is a second implementation of the language's assignability and drifts the first time the
+reference changes its mind.
+
 Next: more of rung 3.
 
 ### What rung 3's oracle looks like, measured
@@ -209,6 +224,12 @@ something that widens — `i64` accepts `return 1`, `f64` does not. Both were as
 clean list, both were wrong, and both were the reference correcting them rather than a design
 decision. See the note on `u8` as a value type in
 `~/notes/living/wac/language-friction-log.md`.
+
+The two test kinds do different jobs, which is visible when one is broken. Merging integral and
+floating back together — the coarse rule the first slice shipped — leaves soundness, the clean list
+and the corpus all green, and fails only the grid, with *"the reference rejects 32 cells and we catch
+26"*. Soundness catches a checker that is wrong; the grid catches one that is merely incomplete, and
+nothing else here can.
 
 ## What rung 1 cost, in language terms
 

@@ -146,3 +146,67 @@ Deno.test("rung 3: the corpus stays silent, which is the property a subset check
   }
   if (checked < 6) throw new Error(`only ${checked} files checked — the corpus did not load`);
 });
+
+/**
+ * Every declared primitive against every literal kind, asked of the reference at run time.
+ *
+ * The hand-written lists above are cases somebody thought of; this is the whole grid, and it is what
+ * turned the first slice's single `numeric` class into the real rule. Generated rather than
+ * tabulated on purpose — a table copied into this file would be a second implementation of the
+ * language's assignability, drifting quietly the first time the reference changed its mind. Here the
+ * reference decides each cell on every run, and our job is only to agree with it.
+ *
+ * This is the strongest form of the subset comparison: for the cells the reference accepts we must be
+ * silent, and for the cells it rejects we must either be silent or right about the position. Being
+ * silent everywhere would pass — which is why `at least one cell rejected` is asserted too, and why
+ * the count is checked against the grid rather than against zero.
+ */
+const PRIMITIVES = ["i32", "i64", "u32", "u64", "u8", "u16", "f32", "f64", "bool", "string"];
+const LITERALS: [string, string][] = [
+  ["integer", "1"],
+  ["float", "1.5"],
+  ["string", '"x"'],
+  ["boolean", "true"],
+];
+
+Deno.test("rung 3: every primitive against every literal kind, the reference deciding each cell", () => {
+  let rejected = 0;
+  let caught = 0;
+  for (const type of PRIMITIVES) {
+    for (const [kind, lit] of LITERALS) {
+      const src = `export ${type} f() { return ${lit}; }`;
+      const theirs = reference(src);
+      const mine = ours(src);
+
+      if (theirs.length === 0) {
+        if (mine.length !== 0) {
+          throw new Error(`${type} accepts a ${kind} literal, and we reported ${mine.join(", ")}` +
+            ` for ${JSON.stringify(src)}`);
+        }
+        continue;
+      }
+      rejected++;
+      for (const at of mine) {
+        if (!theirs.some((e) => e.at === at)) {
+          throw new Error(
+            `${type} vs ${kind} literal: we report ${at}, the reference reports ` +
+              `${theirs.map((e) => e.at).join(", ")} — ${JSON.stringify(src)}`,
+          );
+        }
+      }
+      if (mine.length > 0) caught++;
+    }
+  }
+  // 40 cells, 8 accepted: an integer literal from i32/i64/u32/u64, a float from f32/f64, a boolean
+  // from bool, a string from string. `u8` and `u16` accept nothing, which is why this is 8 and not
+  // 10 — the count was written as 10 first, and the grid corrected it.
+  //
+  // Asserting the shape rather than a bare "some failed": a reference that started accepting
+  // everything would otherwise pass this silently, and so would a `reference()` helper that had
+  // quietly stopped returning diagnostics.
+  if (rejected !== 32) throw new Error(`expected 32 rejected cells of 40, got ${rejected}`);
+  if (caught !== rejected) {
+    throw new Error(`the reference rejects ${rejected} cells and we catch ${caught}; ` +
+      `this slice is meant to catch every literal-return mismatch`);
+  }
+});

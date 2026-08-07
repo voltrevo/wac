@@ -37,11 +37,39 @@ import {
 /** A returned value whose class cannot be the declared one. */
 export i32 errReturnTypeMismatch() { return 1; }
 
-/** The three classes a literal can belong to, and `CLASS_UNKNOWN` for everything else. */
+/**
+ * What a literal must be to satisfy a declared type.
+ *
+ * Derived from the reference rather than assumed, by generating every (declared primitive × literal
+ * kind) pair and asking it — see `test/typecheck.test.ts`, which now runs that whole cross product
+ * on every suite run so the table cannot drift away from the language:
+ *
+ *     i32 i64 u32 u64   integer literal only
+ *     f32 f64           float literal only
+ *     bool              boolean literal only
+ *     string            string literal only
+ *     u8 u16            nothing — a packed type cannot be a return type at all
+ *
+ * The first version of this slice had one `numeric` class covering both integers and floats, which
+ * was coarser than the language in two places: `return 1` from an `f64` is an error, and `u8` accepts
+ * nothing. Coarse cost recall and never precision, so it was sound — but it missed real mismatches,
+ * and the cross product is what turned "probably fine" into a table.
+ */
 export i32 classUnknown() { return 0; }
-export i32 classNumeric() { return 1; }
+export i32 classIntegral() { return 1; }
 export i32 classString() { return 2; }
 export i32 classBool() { return 3; }
+export i32 classFloating() { return 4; }
+/**
+ * A declared type no literal can satisfy.
+ *
+ * Distinct from `classUnknown`, and the distinction is the whole point: unknown means *say nothing*,
+ * this means *nothing fits*. `u8` and `u16` are storage types — WasmGC allows them as array elements
+ * and nowhere else — so the reference answers `packed type 'u8' cannot be a return type` at the
+ * declaration and, separately, a return mismatch at the returned value. This slice reports the
+ * second, which is the one at a position it can name.
+ */
+export i32 classPacked() { return 5; }
 
 /** The checker's state: what it is reading, and what it has found. */
 export struct C {
@@ -87,10 +115,14 @@ export i32 classOfType(C c, Ty t) {
       string name = tokenText(c, tok);
       if (name == "string") { return classString(); }
       if (name == "bool") { return classBool(); }
-      // Everything else spelled as a primitive is a number: i32, i64, u8, u32, f32, f64. `void` is
-      // not reachable here — a function returning void has no returned value to disagree with.
-      if (name == "void") { return classUnknown(); }
-      return classNumeric();
+      if (name == "f32" || name == "f64") { return classFloating(); }
+      if (name == "u8" || name == "u16") { return classPacked(); }
+      if (name == "i32" || name == "i64" || name == "u32" || name == "u64") {
+        return classIntegral();
+      }
+      // `void` has no returned value to disagree with, and anything else spelled as a primitive is
+      // something this slice has not been taught — silence rather than a guess.
+      return classUnknown();
     }
     else: { return classUnknown(); }
   }
@@ -105,8 +137,8 @@ export i32 classOfType(C c, Ty t) {
  */
 export i32 classOfExpr(Expr e) {
   match (e.kind) {
-    case IntLit(tok): { return classNumeric(); }
-    case FloatLit(tok): { return classNumeric(); }
+    case IntLit(tok): { return classIntegral(); }
+    case FloatLit(tok): { return classFloating(); }
     case StrLit(tok): { return classString(); }
     case BoolLit(value): { return classBool(); }
     else: { return classUnknown(); }
