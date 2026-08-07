@@ -914,6 +914,14 @@ Deno.test("the applets that read several files read all of them", async () => {
         ["tr", "[:blank:]", "_"], ["tr", "[:punct:]", "_"], ["tr", "[:xdigit:]", "_"],
         ["tr", "-s", "[:space:]", " "], ["tr", "[a*3]", "x"], ["tr", "abc", "[x*]"],
         ["tr", "abc", "[x*0]y"], ["tr", "[a*2]c", "xyz"], ["tr", "a[x*", "y"], ["tr", "[=a=]", "x"],
+        // **Flags accepted and ignored**, found by asking every applet whether each flag the real tool
+        // documents actually does anything (wac-mono 0105). `base64 -d` re-encoded, `uniq -d` and `-u`
+        // filtered nothing, and `echo -n` printed the newline it exists to suppress.
+        ["uniq", "-d"], ["uniq", "-u"], ["uniq", "-c"], ["uniq", "-du"],
+        ["echo", "-n", "hi"], ["echo", "hi"], ["echo", "-n"], ["echo", "-n", "-n", "x"],
+        ["echo", "x", "-n"], ["echo", "-ne", "x"],
+        ["echo", "-e", "a\tb"], ["echo", "-e", "a\\b"], ["echo", "-e", "a\\x41b"],
+        ["echo", "-e", "ab\\cd"], ["echo", "-E", "a\\tb"],
         // …and its refusals, which are their own set of sentences.
         ["tr"], ["tr", "-d"], ["tr", "-d", "a", "b"], ["tr", "-q", "a", "b"], ["tr", "a", "b", "c"],
         ["tr", "z-a", "x"], ["tr", "[:foo:]", "x"], ["tr", "[=ab=]", "x"], ["tr", "[a*]", "x"],
@@ -935,6 +943,17 @@ Deno.test("the applets that read several files read all of them", async () => {
         const named = real.err.replaceAll(new RegExp(`/\\S*/${args[0]}\\b`, "g"), args[0]);
         assertEquals(got.err, named, `box ${args.join(" ")}: message`);
       }
+    }
+
+    // `-d` needs input that *is* base64, which the loop above feeds none of — GNU emits whatever it
+    // decoded before erroring, and comparing partial output would be testing that rather than `-d`.
+    // A round trip, with the real tool as the oracle in both directions, is what the flag is for.
+    for (const [enc, real] of [["base64", "/usr/bin/base64"], ["base32", "/usr/bin/base32"]]) {
+      const plain = "hello world\n";
+      const encoded = (await runner.run([enc], { stdin: plain })).out;
+      assertEquals(encoded, (await sysBoth(real, [], plain)).out, `${enc} encode`);
+      assertEquals((await runner.run([enc, "-d"], { stdin: encoded })).out, plain, `${enc} -d`);
+      assertEquals((await sysBoth(real, ["-d"], encoded)).out, plain, `${enc} -d oracle`);
     }
 
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here

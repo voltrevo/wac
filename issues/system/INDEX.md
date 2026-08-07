@@ -15,6 +15,7 @@ record of what has been fixed and why.
 | [0087](open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md) | the native runtime: a second host, with no JavaScript and no WASI in it | missing feature | not implemented |
 | [0076](open/0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md) | an app worker runs `main` once, so a test pays a fresh one per case | performance | not implemented |
 | [0066](open/0066-the-light-client-is-minimal-config-only-and-has-never-seen-a-real-chain.md) | the light client is minimal-config only and has never seen a real chain | missing feature | not implemented |
+| [0105](open/0105-fifty-nine-applet-flags-are-accepted-and-ignored.md) | fifty-nine applet flags are accepted and ignored, which is the worst of the three answers | bug | wrong answer |
 | [0103](open/0103-what-stands-between-here-and-deleting-shs-twelve-programs.md) | what stands between here and deleting sh's twelve programs: 649/649 measured, deletion remains | task | wrong answer |
 | [0101](open/0101-cryptos-coverage-run-has-45-uncovered-branches-and-nobody-sees-it.md) | crypto's coverage run has 45 uncovered branches, and nothing was looking | task | no error |
 | [0102](open/0102-gunzipstream-promises-a-broken-source-report-it-cannot-deliver.md) | gunzipStream promises a broken-source report it cannot deliver | bug | wrong answer |

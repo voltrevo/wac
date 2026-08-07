@@ -1,15 +1,44 @@
-// Encoded, with a trailing newline.
+// Encoded, with a trailing newline — or **decoded** with `-d`, which it used to ignore, exactly as
+// `base64` did (wac-mono 0105).
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
+import { Args, has } from "../lib/args.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
 import { Input, readInput, tooManyOperands } from "../lib/input.wac";
 import { withNewline } from "../lib/bytes.wac";
-import { encode as b32, ALPHABET_STANDARD } from "../../../codec/src/base32.wac";
+import { decode as unb32, encode as b32, ALPHABET_STANDARD } from "../../../codec/src/base32.wac";
 
 export i32 base32(Core core, Cli cli, Args a) {
   if (tooManyOperands(core, a, 1)) { return 1; }
   Input in = readInput(core, cli, a, 0);
   if (!in.ok) { return 1; }
+  if (has(a, 'd')) {
+    u8[]? out = unb32(withoutSpace(in.bytes), ALPHABET_STANDARD());
+    if (out is null) {
+      core.warn(a.name + ": invalid input");
+      return 1;
+    }
+    cli.write(out!);
+    return 0;
+  }
   cli.write(withNewline(b32(in.bytes, ALPHABET_STANDARD(), true)));
   return 0;
+}
+
+/**
+ * The text without its whitespace, which is what decoding has to be given.
+ *
+ * GNU ignores newlines when decoding, and it has to: its own encoder wraps at 76 columns and this one
+ * ends with a newline, so a round trip through either fails without this. `packages/codec`'s `decode` is
+ * strict on purpose — a stray byte in the middle of a base64 field is a real error to a *protocol* — so
+ * the leniency belongs here, in the tool whose input is a text file.
+ */
+u8[] withoutSpace(u8[] text) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < text.len(); i++) {
+    i32 c = text[i];
+    if (c == 32 || c == 9 || c == 10 || c == 13) { continue; }
+    out.push(c);
+  }
+  return out.take();
 }

@@ -280,6 +280,14 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
+**Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
+runs each applet with each flag and compares against the counterpart — judging only the flags the real
+tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing
+either. The answer was **64 accepted and ignored against 5 refused**; five are fixed and 59 are wac-mono
+0105. A flag accepted and ignored is the worst of the three answers this repo ranks: the caller asked for
+it by name and got no error. `base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n`
+printed the newline it exists to suppress.
+
 **`tr` reads the set language**, which it did not: escapes (`\n`, `\t`, `\NNN`), ranges, the twelve
 character classes, `[=c=]` and `[x*n]`, plus `-c -d -s -t`. It took its operands *literally*, so
 `tr '\n' ' '` looked for a backslash and an `n`, found neither, and copied its input through — a no-op

@@ -15,6 +15,12 @@ export i32 uniq(Core core, Cli cli, Args a) {
   Input in = openStream(core, cli, a, 0);
   if (!in.ok) { return 1; }
   bool counting = has(a, 'c');
+  // **`-d` and `-u` select which runs are shown**, and both were accepted and ignored: `uniq -d` printed
+  // every line where GNU prints only the repeated ones, and `-u` printed every line where GNU prints only
+  // the ones that appear once. Two flags whose whole purpose is to *filter*, filtering nothing, silently
+  // (wac-mono 0105). They are opposites, so asking for both selects nothing, which is what GNU does too.
+  bool onlyRepeated = has(a, 'd');
+  bool onlyUnique = has(a, 'u');
 
   Lines s = Lines.create();
   Feed fed = Feed.fromStdin(cli);
@@ -26,12 +32,12 @@ export i32 uniq(Core core, Cli cli, Args a) {
     Line l = nextLine(s, fed);
     if (!l.ok) { break; }
     if (run > 0 && cmpBytes(l.bytes, prev) == 0) { run++; lastNl = l.nl; continue; }
-    if (run > 0) { show(out, prev, run, counting, lastNl); }
+    if (run > 0) { show(out, prev, run, counting, lastNl, onlyRepeated, onlyUnique); }
     prev = l.bytes;
     lastNl = l.nl;
     run = 1;
   }
-  if (run > 0) { show(out, prev, run, counting, lastNl); }
+  if (run > 0) { show(out, prev, run, counting, lastNl, onlyRepeated, onlyUnique); }
   out.flush();
   return 0;
 }
@@ -41,7 +47,11 @@ export i32 uniq(Core core, Cli cli, Args a) {
  * one, which is not uniform across these tools: `head`, `tail` and `rev` preserve a
  * missing final newline and `uniq` and `nl` add one.
  */
-void show(Sink out, u8[] line, i32 run, bool counting, bool nl) {
+void show(Sink out, u8[] line, i32 run, bool counting, bool nl, bool onlyRepeated, bool onlyUnique) {
+  // A run of one is "unique"; a run of more is "repeated". `-d` keeps the second, `-u` the first, and
+  // asking for both keeps neither.
+  if (onlyRepeated && run < 2) { return; }
+  if (onlyUnique && run > 1) { return; }
   if (!counting) { emitTo(out, line, true); return; }
   // The real one right-aligns the count in a field of seven, then a space.
   string n = itoa(run);

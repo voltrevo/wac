@@ -66,6 +66,15 @@ export struct Args {
    * in-process with a command line of its own.
    */
   string[] argv;
+  /**
+   * The applet's *own* arguments — `argv` from where they begin, with the applet name dropped.
+   *
+   * `argv` is the whole array, and where an applet's arguments start inside it depends on how it was
+   * launched: `box echo -n hi` has the name at index 0 and `bin/echo -n hi` does not. An applet that
+   * must read arguments raw — `echo`, whose `-n` is not an option and is only special leading — had no
+   * way to ask for that, so reading `argv` printed the applet's own name back at the caller.
+   */
+  string[] own;
 }
 
 export bool has(Args a, i32 flag) {
@@ -174,7 +183,9 @@ export Args parseList(string[] argv, i32 first, string name) {
   for (i32 k = 0; k < at; k++) { rest[k] = scratch[k]; }
   string[] values = string[np](fill: "");
   for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
-  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv);
+  string[] own = string[argv.len() - first > 0 ? argv.len() - first : 0](fill: "");
+  for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
+  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own);
 }
 
 /**
