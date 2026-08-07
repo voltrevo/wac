@@ -975,8 +975,10 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
   }
   if (c.badNumber != "") {
     // GNU's own sentence. Plain apostrophes rather than the typographic quotes it uses in a UTF-8
-    // locale: `LC_ALL=C` is what this repo compares in, and the rest of these messages match it.
-    errs.bytes((who + ": invalid number of lines: '" + c.badNumber + "'\n").toBytes());
+    // locale: `LC_ALL=C` is what this repo compares in, and the rest of these messages match it. The
+    // noun follows the flag — "bytes" for `-c`, "lines" for `-n`, from the same tool.
+    string unit = c.bytes ? "bytes" : "lines";
+    errs.bytes((who + ": invalid number of " + unit + ": '" + c.badNumber + "'\n").toBytes());
     errs.flush();
     sink.flush();
     return 1;

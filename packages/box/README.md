@@ -298,6 +298,12 @@ for `fold`, "invalid line count" for `shuf`, and `strings`, being binutils, "inv
 with no quotes at all. Apostrophes rather than typographic quotes, because `LC_ALL=C` is what this repo
 compares in.
 
+`-c` is the same flag in the other unit, and it was not there at all: it parsed as a boolean, so its
+value became an operand and `head -c 3 f` answered "head: 3: No such file or directory" — blaming the
+caller for a real GNU spelling — while `head -c3 f` printed the whole file. Both units take all three
+signed forms, and the noun in a refusal follows the flag, because GNU says "bytes" for `-c` and "lines"
+for `-n` from the same tool.
+
 The sign was dropped the same way. It is not part of the number — it selects a different question, and
 only in one direction per tool: **`head -n -2` is all but the last two** and **`tail -n +2` is from line
 two**, while `head -n +2` and `tail -n -2` are plain. Both are implemented now and both stream: `head`

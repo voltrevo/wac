@@ -1,4 +1,5 @@
-// The last N lines, ten by default — or, with `-n +N`, everything from line N.
+// The last N lines, ten by default — the last N **bytes** with `-c`, or, with a plus, everything from
+// the Nth of whichever unit.
 //
 // It has to *reach* the end but not *hold* it: a ring of N lines, overwritten as they go
 // by, costs what the flag asks for rather than what the input is. `tail -10` of a
@@ -10,7 +11,7 @@
 // mistake this repo keeps finding.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args, badNumberMessage } from "../lib/args.wac";
+import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 
@@ -19,6 +20,9 @@ export i32 tail(Core core, Cli cli, Args a) {
   i32 want = a.hasNum ? a.num : 10;
   // `-n +N` counts from the front. `+0` and `+1` are both the whole input, as GNU's are.
   bool fromLine = a.numSign == "+";
+  // `-c` is bytes. It used to be a boolean flag, so `tail -c 3 f` said "tail: 3: No such file or
+  // directory" — the value became an operand and the caller was blamed for a real GNU spelling.
+  bool bytes = has(a, 'c');
   if (want <= 0 && !fromLine) { return 0; }
 
   // A banner over each file once there is more than one, as `head` does and the real one does.
@@ -34,6 +38,18 @@ export i32 tail(Core core, Cli cli, Args a) {
     out.line("==> " + in.label + " <==");
   }
 
+  if (bytes) {
+    // Both byte forms have to reach the end — the last N, or everything after the Nth — so both read
+    // the input through. Only the amount *held* differs, and for the plus form that is nothing.
+    u8[] all = fed0(cli).rest();
+    i32 from = fromLine ? (want > 0 ? want - 1 : 0) : all.len() - want;
+    if (from < 0) { from = 0; }
+    if (from > all.len()) { from = all.len(); }
+    u8[] piece = u8[all.len() - from]();
+    piece.copyFrom(all, from, 0, all.len() - from);
+    if (!emitTo(out, piece, false)) { out.flush(); return 0; }
+    continue;
+  }
   if (fromLine) {
     i32 skip = want > 0 ? want - 1 : 0;
     i32 at = 0;
@@ -74,3 +90,6 @@ export i32 tail(Core core, Cli cli, Args a) {
   out.flush();
   return 0;
 }
+
+/** Standard input as a `Feed`, named so the byte path reads the same as the line paths above. */
+Feed fed0(Cli cli) { return Feed.fromStdin(cli); }

@@ -1,4 +1,5 @@
-// The first N lines, ten by default — or, with `-n -N`, everything but the last N.
+// The first N lines, ten by default — or the first N **bytes** with `-c`, or, with a minus, everything
+// but the last N of whichever unit.
 //
 // **The minus form is not a negative count**, it is a different question, and only `head` asks it —
 // `tail`'s signed spelling is `+N` and means something else again. It used to be read as a plain count,
@@ -9,7 +10,7 @@
 // here can do that, and it is the reason `head` no longer shares `pick` with `tail`.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args, badNumberMessage } from "../lib/args.wac";
+import { Args, badNumberMessage, has } from "../lib/args.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 
@@ -20,6 +21,10 @@ export i32 head(Core core, Cli cli, Args a) {
   // `hasNum`, not `num == 0`: `head -0` and `head -n 0` mean no lines, as GNU's do.
   i32 want = a.hasNum ? a.num : 10;
   bool allButLast = a.numSign == "-";
+  // `-c` is bytes. It used to be a boolean flag, so its value became an operand: `head -c 3 f` said
+  // "head: 3: No such file or directory", blaming the caller for a real GNU spelling, and `head -c3 f`
+  // printed the whole file.
+  bool bytes = has(a, 'c');
 
   // A banner over each file, and a blank line between them, once there is more than one — which is what
   // the real one does and the only way to tell whose lines you are looking at. It used to read the first
@@ -38,6 +43,10 @@ export i32 head(Core core, Cli cli, Args a) {
     }
     Lines s = Lines.create();
     Feed fed = Feed.fromStdin(cli);
+    if (bytes) {
+      if (!headBytes(out, fed, want, allButLast)) { out.flush(); return 0; }
+      continue;
+    }
     if (allButLast) {
       // Delayed by `want` lines: a line can only be emitted once that many more have arrived behind
       // it. Asking for more than the input holds prints nothing, as GNU does.
@@ -73,4 +82,34 @@ export i32 head(Core core, Cli cli, Args a) {
   }
   out.flush();
   return 0;
+}
+
+/**
+ * The first `want` bytes, or everything but the last `want`.
+ *
+ * `head -c` stops as soon as it has its bytes, for the reason `head -n` does — a producer learns nobody
+ * is reading when its own write is refused. The all-but-last form cannot: it has to reach the end to
+ * know where the end is, so it holds `want` bytes back and no more.
+ */
+bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
+  if (!allButLast) {
+    i32 sent = 0;
+    while (sent < want) {
+      u8[] chunk = fed.next();
+      if (chunk.len() == 0) { return true; }
+      i32 take = chunk.len();
+      if (sent + take > want) { take = want - sent; }
+      u8[] piece = u8[take]();
+      piece.copyFrom(chunk, 0, 0, take);
+      if (!emitTo(out, piece, false)) { return false; }
+      sent = sent + take;
+    }
+    return true;
+  }
+  u8[] all = fed.rest();
+  i32 upTo = all.len() - want;
+  if (upTo < 0) { upTo = 0; }
+  u8[] head = u8[upTo]();
+  head.copyFrom(all, 0, 0, upTo);
+  return emitTo(out, head, false);
 }

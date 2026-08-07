@@ -58,6 +58,9 @@ const CASES: string[] = [
   "printf 'abcdefghij' | tail -c -3",
   "printf 'abcdefghij' | head -c 0",
   "printf 'abcdefghij' | head -c 99",
+  // The noun in the refusal follows the flag, which is a fact about GNU and not about us.
+  "printf 'abcdefghij' | head -c x; echo status=$?",
+  "printf 'abcdefghij' | head -n x; echo status=$?",
   // ── Words and quoting ───────────────────────────────────────────────────────
   `echo hello`,
   `echo hello world`,

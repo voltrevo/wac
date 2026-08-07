@@ -816,6 +816,13 @@ Deno.test("the applets that read several files read all of them", async () => {
         ["head", "-n", "-2"], ["head", "-n", "+2"], ["head", "-n", "-9"], ["head", "-n", "-0"],
         ["tail", "-n", "+2"], ["tail", "-n", "-2"], ["tail", "-n", "+9"], ["tail", "-n", "+0"],
         ["head", "-n2"], ["tail", "-n2"], ["head", "-n", "2"], ["tail", "-n", "2"],
+        // `-c` counts bytes. It was a boolean flag, so its value became an operand — `head -c 3 f` said
+        // "head: 3: No such file or directory", blaming the caller for a real GNU spelling — and
+        // `head -c3 f` printed the whole file. The noun in the refusal follows the flag: GNU says
+        // "bytes" for `-c` and "lines" for `-n`, from the same tool.
+        ["head", "-c", "3"], ["head", "-c3"], ["head", "-c", "-3"], ["head", "-c", "+3"],
+        ["tail", "-c", "3"], ["tail", "-c", "+3"], ["tail", "-c", "-3"],
+        ["head", "-c", "0"], ["head", "-c", "99"], ["head", "-c", "x"], ["tail", "-c", "x"],
       ]
     ) {
       const args = [...argv, counted];
