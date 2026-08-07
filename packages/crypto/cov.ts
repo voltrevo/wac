@@ -26,6 +26,9 @@ const curve = await instrument("packages/crypto/test/wac/curve25519_probe.wac");
 const f = <T extends (...a: never[]) => unknown>(name: string) => run.mod[name] as T;
 
 const sha256 = f<(b: Uint8Array) => Uint8Array>("sha256");
+const sha1 = f<(b: Uint8Array) => Uint8Array>("sha1");
+const sha1Streamed = f<(b: Uint8Array, cut: number) => Uint8Array>("sha1Streamed");
+const sha1Restored = f<(b: Uint8Array, at: number) => Uint8Array>("sha1Restored");
 const sha512 = f<(b: Uint8Array) => Uint8Array>("sha512");
 const sha384 = f<(b: Uint8Array) => Uint8Array>("sha384");
 const hmac = f<(k: Uint8Array, m: Uint8Array) => Uint8Array>("hmac");
@@ -87,6 +90,18 @@ const SHA256_LENS = [0, 1, 55, 56, 63, 64, 65, 119, 120, 200];
 const SHA512_LENS = [0, 1, 111, 112, 127, 128, 129, 239, 240, 400];
 
 for (const n of SHA256_LENS) sha256(bytes(n));
+// SHA-1 was compiled into this run and never called: 41 branch points at 0%, which is not a hole in
+// the tests — `test/sha1_wac.test.ts` covers it — but a hole in the *driver*. A module that is
+// instrumented and never driven reads as untested code, and a report nobody can act on is one
+// nobody reads. Its padding boundaries are SHA-256's, being the same 64-byte block and 9-byte tail.
+for (const n of SHA256_LENS) {
+  sha1(bytes(n));
+  sha1Streamed(bytes(n), 1);
+  sha1Streamed(bytes(n), 7);
+  sha1Streamed(bytes(n), 64);
+  if (n > 1) sha1Restored(bytes(n), 1);
+  if (n > 64) sha1Restored(bytes(n), 64);
+}
 for (const n of SHA512_LENS) {
   sha512(bytes(n));
   sha384(bytes(n));
@@ -350,7 +365,7 @@ const UNREACHED: { file: string; line: number; snippet: string; why: string }[] 
   },
   {
     file: "packages/crypto/src/rsa.wac",
-    line: 234,
+    line: 279,
     snippet: "if (diff != 0) { return false; }",
     why: "PSS's check that the unmasked DB is zeros then 0x01. Reaching it needs a " +
       "signature whose masked DB unmasks to the wrong shape *and* whose trailer and " +

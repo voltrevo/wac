@@ -13,7 +13,7 @@
 // wac-mono 0088 asked for exactly this shape, borrowed from `packages/gzip/test/stream.test.ts`, which
 // 0006 wrote for the same reason: fixed vectors do not find boundary bugs, and cutting at every byte does.
 
-import zlib from "node:zlib";
+import { refCompress } from "./reference.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/zstd/src/stream.wac") as unknown as {
@@ -126,7 +126,6 @@ Deno.test("frames from the reference encoder, which are not the shape ours emits
   //
   // This is the "suspect the oracle" question asked of a test I wrote two hours ago: the answer was that
   // the inputs were self-produced, which is a narrower thing than it looked.
-  const ref = (zlib as unknown as { zstdCompressSync(b: Uint8Array): Uint8Array }).zstdCompressSync;
   const enc = new TextEncoder();
   const inputs = [
     enc.encode("hello"),
@@ -136,7 +135,7 @@ Deno.test("frames from the reference encoder, which are not the shape ours emits
   ];
   const shapes = new Set<number>();
   for (const data of inputs) {
-    const frame = ref(data);
+    const frame = refCompress(data).frame;
     shapes.add(frame[4]);
     const want = buffered.decompress(frame);
     if (!same(want, data)) throw new Error("the buffered decoder cannot read a reference frame either");
@@ -154,6 +153,33 @@ Deno.test("frames from the reference encoder, which are not the shape ours emits
   const oursDescriptor = encoder.compress(enc.encode("hello"))[4];
   if (shapes.has(oursDescriptor) && shapes.size === 1) {
     throw new Error("the reference encoder emitted only the shape ours does — this test proves nothing");
+  }
+});
+
+Deno.test("a window smaller than the content, so output is actually evicted", () => {
+  // **The whole claim of streaming, and nothing tested it.** Every frame in the tests above declares a
+  // window larger than its own content, so the decoder retained everything and the eviction path — write
+  // the front away, drop it, keep a window behind — never ran once. The branch report said so:
+  // `stream.wac:189`, never executed.
+  //
+  // The reference encoder will build a small window on request. `windowLog: 10` is 1 KiB against 176 KB
+  // of content, so the eviction runs about two hundred times and matches reach back across the hand-over
+  // it makes — which is the case that would break if the offsets were absolute rather than counted from
+  // the current length.
+  const data = new TextEncoder().encode("the quick brown fox jumps over the lazy dog\n".repeat(4000));
+  for (const log of [10, 11, 17]) {
+    const frame = refCompress(data, { windowLog: log }).frame;
+    const want = buffered.decompress(frame);
+    if (!same(want, data)) throw new Error(`windowLog ${log}: the buffered decoder disagrees`);
+    for (const chunk of [1, 64, 4096, frame.length]) {
+      const got = streamed(frame, chunk);
+      if (!same(got, want)) {
+        throw new Error(
+          `windowLog ${log}, frame ${frame.length} bytes, cut every ${chunk}: ` +
+            `got ${got.length} bytes, want ${want.length}`,
+        );
+      }
+    }
   }
 });
 

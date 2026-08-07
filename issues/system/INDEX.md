@@ -14,6 +14,8 @@ record of what has been fixed and why.
 | [0087](open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md) | the native runtime: a second host, with no JavaScript and no WASI in it | missing feature | not implemented |
 | [0076](open/0076-an-app-worker-runs-main-once-so-a-test-pays-a-fresh-one-per-case.md) | an app worker runs `main` once, so a test pays a fresh one per case | performance | not implemented |
 | [0066](open/0066-the-light-client-is-minimal-config-only-and-has-never-seen-a-real-chain.md) | the light client is minimal-config only and has never seen a real chain | missing feature | not implemented |
+| [0098](open/0098-cryptos-coverage-run-has-68-uncovered-branches-and-nobody-sees-it.md) | crypto's coverage run has 68 uncovered branches, and nothing was looking | task | no error |
+| [0099](open/0099-gunzipstream-promises-a-broken-source-report-it-cannot-deliver.md) | gunzipStream promises a broken-source report it cannot deliver | bug | wrong answer |
 | [0009](open/0009-forty-two-exported-wac-functions-that-nothing-calls.md) | forty-two exported wac functions that nothing calls, across eight packages | bug | no error |
 | [0005](open/0005-mutation-testing-found-54-untested-behaviours.md) | surviving mutants: behaviours nothing checks (crypto finished; tls at 75, five other packages unmeasured) | task | wrong answer |
 
