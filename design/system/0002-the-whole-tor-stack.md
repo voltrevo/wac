@@ -2133,3 +2133,20 @@ NETINFO zero: correct enough to pass, wrong enough to be visible from outside.
 RSA-PSS. We have PSS verification and raw RSA signing; EMSA-PSS encoding on the signing side is the
 missing piece, and it is pinnable against OpenSSL like the rest. That is the next piece of work rather
 than a decision anyone needs to make.
+
+`rsaSignPss` is that piece, and it is done. RFC 8017 §9.1.1, the exact inverse of the verifier that
+was already here, with the salt a parameter for the reason every salt in this repository is one — PSS
+is precisely the algorithm where a *wrong* salt still verifies, because the verifier recovers whatever
+salt the signer used, so a signer reaching for its own randomness could repeat itself forever and pass
+every check we could write.
+
+The differential is the direction that had never been checked. Every PSS case here had node signing
+and us verifying, which establishes that our *verifier* reads their encoding and says nothing at all
+about ours producing one — and the encoding is a masked block, a salt recovered from the signature,
+and a final step clearing bits the modulus has no room for. Any of those can be wrong in a way our own
+verifier accepts, because the two halves would be wrong together. So now node verifies what we sign,
+at three salt lengths, and a one-byte fault in the trailer was planted to confirm the assertion is
+load-bearing rather than decorative.
+
+Still to do: presenting the RSA certificate, which is the TLS server offering `rsa_pss_rsae_sha256`
+in CertificateVerify and `relayd` generating an RSA link certificate instead of an Ed25519 one.

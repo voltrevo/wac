@@ -15,6 +15,10 @@ const KEYGEN = 0, SIGN_PKCS1 = 1, SIGN_PSS = 2;
 // Added for signing (design/0002 step 1). The wac side can now produce a signature, so the host has
 // to be able to hand over a private exponent and to check what came back.
 const PRIVATE = 3, VERIFY_PKCS1 = 4, RECOVER_RAW = 5;
+// And PSS in the direction that had never been checked: *we* sign, node verifies. Every PSS case
+// before this one had node signing and us verifying, which says our verifier reads their encoding and
+// nothing at all about ours producing one.
+const VERIFY_PSS = 6;
 // Named outright rather than as `ReturnType<typeof generateKeyPairSync<"rsa">>`: that spelling
 // asks an overloaded function to be instantiated with a type argument, and none of the overloads
 // accepts one, so it fails to type-check. `deno test` type-checks by default, so it fails the
@@ -61,6 +65,17 @@ function ref(mode: number, a: Uint8Array, b: Uint8Array): Uint8Array {
     const v = createVerify(hLen === 32 ? "sha256" : hLen === 48 ? "sha384" : "sha512");
     v.update(b);
     const ok = v.verify(keys.get(current)!.publicKey, a.subarray(1));
+    return new Uint8Array([ok ? 1 : 0]);
+  }
+  if (mode === VERIFY_PSS) {
+    // `a` is the hash length, the salt length, then the signature; `b` is the message.
+    const hLen = a[0];
+    const v = createVerify(hLen === 32 ? "sha256" : hLen === 48 ? "sha384" : "sha512");
+    v.update(b);
+    const ok = v.verify(
+      { key: keys.get(current)!.publicKey, padding: 6, saltLength: a[1] },
+      a.subarray(2),
+    );
     return new Uint8Array([ok ? 1 : 0]);
   }
   if (mode === RECOVER_RAW) {
