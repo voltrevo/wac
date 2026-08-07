@@ -2180,3 +2180,32 @@ and the only thing that noticed was a C tor in the suite.
 ours is self-signed. Nothing on this path checks that — the ed25519 chain in the CERTS cell binds the
 TLS certificate by digest, which is what tor verifies for a modern handshake — but it is a difference
 and it is written here rather than left to be rediscovered.
+
+### An attempt at the streams row, and what it turned up instead
+
+`INTEROP.md` marks streams **live** in both directions on a run somebody did by hand — `stream 5129
+open to …:8087`, 5004 bytes byte-identical. Automating it is the obvious next row to move into the
+suite, and the attempt did not land. What it found is worth more than the test would have been.
+
+Driving a C tor's `SocksPort` at a loopback HTTP server, with `tor -f` at `Log info`, tor says:
+
+    connection_ap_handshake_send_begin(): Sending relay cell 1 on circ … to begin stream 7400.
+    connection_edge_process_relay_cell_not_open(): 'connected' received … streamid 7400 after 0 seconds.
+    handle_relay_cell_command(): -1: end cell (closed normally) for stream 7400. Removing stream.
+    connection_free_minimal(): Freeing linked Socks connection [open] with 0 bytes on inbuf, 0 on outbuf.
+
+three times over. So the exit answers `BEGIN` with `CONNECTED` and then ends the stream **carrying no
+bytes** — the shape of a stream that opened and immediately closed rather than one that failed to
+open. Whether the exit is ours or whether these are tor's own predicted streams during bootstrap is
+not established: the diagnostic that would say so is a relay's own `stream … open to` line, and the
+run did not capture one either way.
+
+The test was written, failed, and has been removed rather than committed. It asserted that a relay of
+ours reported opening the stream, which it never did — while `curl` returned the body byte-identical,
+which is the combination that makes it untrustworthy rather than merely failing. One of those two
+observations is about something other than what the test claims to measure, and committing a test
+whose passing condition I cannot explain is worse than not having it.
+
+**What the next attempt should establish first**, before asserting anything: whether a relay of ours
+logs `open to <host>:<port>` at all during that fetch. That single line separates "our exit carried
+it" from "the bytes arrived some other way", and everything else follows from knowing which.

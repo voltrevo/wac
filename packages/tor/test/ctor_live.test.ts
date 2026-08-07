@@ -72,6 +72,90 @@ async function until(what: string, ok: () => boolean, ms: number): Promise<void>
   throw new Error(`timed out after ${ms}ms waiting for ${what}`);
 }
 
+/**
+ * Three relays and an authority, and the two facts a tor needs to be told about them.
+ *
+ * Port 0 throughout, so this cannot collide with another agent's suite — the same property that let
+ * the wac-only network into the suite in the first place.
+ */
+async function standUpNetwork(dir: string, running: Running[]) {
+  await buildApp("packages/tor/src/relayd.wac", `${dir}/relayd`, { read: true, write: true, net: true });
+  await buildApp("packages/tor/src/gendesc.wac", `${dir}/gendesc`, { read: true, write: true });
+
+  for (const n of [1, 2, 3]) {
+    await Deno.writeFile(`${dir}/s${n}`, crypto.getRandomValues(new Uint8Array(32)));
+  }
+
+  const docs = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
+    " -M v.consensus.micro -m v.consensus.mds";
+  for (const n of [1, 2, 3]) {
+    const args = [`s${n}`, "-p", "0", "-n", `wacc${n}`, "--descriptor", `r${n}.desc`];
+    if (n === 1) args.push("--seedline", "seed.txt");
+    running.push(start(`${dir}/relayd`, [...args, ...docs.split(" ")], dir));
+  }
+  await until(
+    "three relays to bind and write descriptors",
+    () => running.every((r) => r.said().includes("-byte descriptor for port")),
+    120000,
+  );
+
+  const vote = await new Deno.Command(`${dir}/gendesc`, {
+    args: ["keys.json", "cert", "vote", "v", "-", "r1.desc", "r2.desc", "r3.desc"],
+    cwd: dir,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (vote.code !== 0) {
+    throw new Error(`gendesc failed:\n${new TextDecoder().decode(vote.stderr)}`);
+  }
+  await until(
+    "the relays to find the documents and start serving them",
+    () => running.every((r) => r.said().includes("serving the consensus")),
+    30000,
+  );
+
+  // What tor has to be told, and both halves come out of the network rather than out of this file.
+  // `v3ident` is whose signature to trust on the consensus; the trailing fingerprint is whose TLS
+  // identity to expect on the wire. They are different keys answering different questions, which is
+  // the whole shape of the DirAuthority line — and tor dials the **ORPort** named here rather than
+  // the DirPort, because it prefers a tunnelled directory connection even for a direct fetch. A
+  // `dird` serving only a DirPort is unreachable to it; a relay answering BEGIN_DIR is not.
+  const seed = (await Deno.readTextFile(`${dir}/seed.txt`)).trim().split(/\s+/);
+  const v3ident = (await Deno.readTextFile(`${dir}/cert.fingerprint`)).trim();
+  return { orPort: seed[1], relayFingerprint: seed[2], v3ident };
+}
+
+/** Start a tor against that network, and wait for a line in its log. */
+async function startTor(dir: string, running: Running[], extra: string[], awaitLine: string) {
+  const net = await standUpNetwork(dir, running);
+  await Deno.mkdir(`${dir}/tordata`);
+  await Deno.writeTextFile(
+    `${dir}/torrc`,
+    [
+      `DataDirectory ${dir}/tordata`,
+      "ControlPort 0",
+      "TestingTorNetwork 1",
+      `DirAuthority wacauth orport=${net.orPort} no-v2 v3ident=${net.v3ident} 127.0.0.1:17999 ${net.relayFingerprint}`,
+      `Log notice file ${dir}/tor.log`,
+      ...extra,
+      "",
+    ].join("\n"),
+  );
+  running.push(start(TOR, ["-f", `${dir}/torrc`], dir));
+
+  let log = "";
+  const readLog = () => {
+    Deno.readTextFile(`${dir}/tor.log`).then((t) => (log = t)).catch(() => {});
+    return log.includes(awaitLine);
+  };
+  await until(`tor to reach ${JSON.stringify(awaitLine)}`, readLog, 120000).catch(async (e) => {
+    let final = "";
+    try { final = await Deno.readTextFile(`${dir}/tor.log`); } catch { /* never wrote one */ }
+    throw new Error(`${e.message}\n--- tor.log ---\n${final}`);
+  });
+  return { log: () => log, refresh: readLog };
+}
+
 Deno.test({
   name: "a C tor bootstraps from our authority and through our relays",
   ignore: !haveTor,
@@ -81,83 +165,8 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "wac-ctor-" });
   const running: Running[] = [];
   try {
-    await buildApp("packages/tor/src/relayd.wac", `${dir}/relayd`, { read: true, write: true, net: true });
-    await buildApp("packages/tor/src/gendesc.wac", `${dir}/gendesc`, { read: true, write: true });
-
-    for (const n of [1, 2, 3]) {
-      await Deno.writeFile(`${dir}/s${n}`, crypto.getRandomValues(new Uint8Array(32)));
-    }
-
-    // Port 0 throughout, so this cannot collide with another agent's suite — the same property that
-    // let the wac-only network into the suite in the first place.
-    const docs = "-C v.consensus -K cert.cert -D r1.desc -D r2.desc -D r3.desc" +
-      " -M v.consensus.micro -m v.consensus.mds";
-    for (const n of [1, 2, 3]) {
-      const args = [`s${n}`, "-p", "0", "-n", `wacc${n}`, "--descriptor", `r${n}.desc`];
-      if (n === 1) args.push("--seedline", "seed.txt");
-      running.push(start(`${dir}/relayd`, [...args, ...docs.split(" ")], dir));
-    }
-    await until(
-      "three relays to bind and write descriptors",
-      () => running.every((r) => r.said().includes("-byte descriptor for port")),
-      120000,
-    );
-
-    // The authority, over the descriptors they just wrote.
-    const vote = await new Deno.Command(`${dir}/gendesc`, {
-      args: ["keys.json", "cert", "vote", "v", "-", "r1.desc", "r2.desc", "r3.desc"],
-      cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    if (vote.code !== 0) {
-      throw new Error(`gendesc failed:\n${new TextDecoder().decode(vote.stderr)}`);
-    }
-    await until(
-      "the relays to find the documents and start serving them",
-      () => running.every((r) => r.said().includes("serving the consensus")),
-      30000,
-    );
-
-    // What tor has to be told, and both halves come out of the network rather than out of this file.
-    // `v3ident` is whose signature to trust on the consensus; the trailing fingerprint is whose TLS
-    // identity to expect on the wire. They are different keys answering different questions, which is
-    // the whole shape of the DirAuthority line — and tor dials the **ORPort** named here rather than
-    // the DirPort, because it prefers a tunnelled directory connection even for a direct fetch. A
-    // `dird` serving only a DirPort is unreachable to it; a relay answering BEGIN_DIR is not.
-    const seed = (await Deno.readTextFile(`${dir}/seed.txt`)).trim().split(/\s+/);
-    const [, orPort, relayFingerprint] = seed;
-    const v3ident = (await Deno.readTextFile(`${dir}/cert.fingerprint`)).trim();
-
-    await Deno.mkdir(`${dir}/tordata`);
-    await Deno.writeTextFile(
-      `${dir}/torrc`,
-      [
-        `DataDirectory ${dir}/tordata`,
-        "SocksPort 0",
-        "ControlPort 0",
-        "TestingTorNetwork 1",
-        `DirAuthority wacauth orport=${orPort} no-v2 v3ident=${v3ident} 127.0.0.1:17999 ${relayFingerprint}`,
-        `Log notice file ${dir}/tor.log`,
-        "",
-      ].join("\n"),
-    );
-
-    running.push(start(TOR, ["-f", `${dir}/torrc`], dir));
-    const torLog = async () => {
-      try {
-        return await Deno.readTextFile(`${dir}/tor.log`);
-      } catch {
-        return "";
-      }
-    };
-    let log = "";
-    await until("tor to bootstrap", () => {
-      Deno.readTextFile(`${dir}/tor.log`).then((t) => (log = t)).catch(() => {});
-      return log.includes("Bootstrapped 100%");
-    }, 120000).catch(async (e) => {
-      throw new Error(`${e.message}\n--- tor.log ---\n${await torLog()}`);
-    });
+    const tor = await startTor(dir, running, ["SocksPort 0"], "Bootstrapped 100%");
+    const log = tor.log();
 
     // Bootstrapping is not one event, and which stages it passed is the interesting part. A tor that
     // reached 100% from a *cached* consensus would prove nothing, which is why the DataDirectory is
