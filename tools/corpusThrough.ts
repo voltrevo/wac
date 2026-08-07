@@ -14,9 +14,8 @@
 //     --allow-read --allow-write --allow-net --allow-env -o /tmp/boxsh
 //   deno task corpus:through /tmp/boxsh
 //
-// The corpus is read out of `differential.test.ts` rather than copied, so it cannot go stale: a script
-// added there is measured here the next time this runs. Scripts whose text is a template with an
-// interpolated path are skipped — they name directories that only exist inside that test.
+// The corpus is `packages/sh/test/corpus.ts`, imported rather than copied, so it cannot go stale: a
+// script added there is measured here the next time this runs.
 
 const shell = Deno.args[0];
 if (shell === undefined) {
@@ -24,22 +23,11 @@ if (shell === undefined) {
   Deno.exit(2);
 }
 
-const src = await Deno.readTextFile("packages/sh/test/differential.test.ts");
-const block = src.match(/const CASES: string\[\] = \[([\s\S]*?)\n\];/);
-if (block === null) throw new Error("CASES not found — has differential.test.ts changed shape?");
-
-const cases: string[] = [];
-let skipped = 0;
-for (const line of block[1].split("\n")) {
-  const t = line.trim().replace(/,$/, "");
-  if (!t.startsWith("`") && !t.startsWith('"') && !t.startsWith("String.raw`")) continue;
-  try {
-    cases.push(eval(t) as string);
-  } catch {
-    // A template with `${…}` in it: those name a directory built by the test and cannot run here.
-    skipped++;
-  }
-}
+// Imported rather than scraped. This used to match the array out of `differential.test.ts` with a
+// regular expression and throw "has differential.test.ts changed shape?" if anyone reformatted it —
+// a fixture read by three things should be a module, and now is.
+const { CORPUS } = await import("../packages/sh/test/corpus.ts");
+const cases: string[] = CORPUS;
 
 const dir = await Deno.makeTempDir({ prefix: "corpus-through-" });
 const env = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: dir };
@@ -106,11 +94,6 @@ console.log(`${cases.length - differ.length}/${cases.length} agree with bash thr
 if (hung.length > 0) {
   console.log(`  ${hung.length} of them never finished, where bash did:`);
   for (const h of hung) console.log(`      ${JSON.stringify(h)}`);
-}
-if (skipped > 0) {
-  // Said rather than left out of the denominator: a count that quietly drops what it could not run is
-  // the shape of measurement this repo keeps finding.
-  console.log(`(${skipped} scripts skipped: their text interpolates a path the test builds)`);
 }
 for (const [p, n] of [...byProgram].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(3)}  ${p}`);
 

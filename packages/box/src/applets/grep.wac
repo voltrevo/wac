@@ -22,7 +22,15 @@ export i32 grep(Core core, Cli cli, Args a) {
   // `grep 'a|b'` matched a-or-b where GNU matches the three characters `a|b` — a wrong answer with
   // nothing said about it, in the tool most likely to be handed a pattern (wac-mono 0104).
   bool extended = has(a, 'E');
-  u8[] pattern = a.rest[0].toBytes();
+  string source = a.rest[0];
+  // **`-x` anchors, in the dialect the pattern is about to be read in**: `\(` and `\)` group in basic
+  // and `(` and `)` in extended, so the wrapping cannot be written once for both. `packages/sh`'s grep
+  // has had this and this one did not, which is the drift wac-mono 0103 is about — four corpus scripts
+  // found it the first time `packages/box`'s shell was held to the same corpus.
+  if (has(a, 'x')) {
+    source = extended ? "^(" + source + ")$" : "^\\(" + source + "\\)$";
+  }
+  u8[] pattern = source.toBytes();
   Compiled got = has(a, 'i')
     ? (extended ? compileExtendedIgnoreCase(pattern) : compileBasicIgnoreCase(pattern))
     : (extended ? compileExtended(pattern) : compileBasic(pattern));

@@ -71,7 +71,7 @@ export string implementedFlags(string name) {
   if (name == "base32" || name == "base64") { return "d"; }
   if (name == "cat") { return "AETbenstv"; }
   if (name == "cut") { return "df"; }
-  if (name == "grep") { return "Ecinqv"; }
+  if (name == "grep") { return "Ecinqvx"; }
   if (name == "head") { return "cn"; }
   if (name == "tail") { return "cn"; }
   if (name == "sort") { return "nru"; }
