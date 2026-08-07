@@ -125,9 +125,16 @@ async function standUpNetwork(dir: string, running: Running[]) {
   return { orPort: seed[1], relayFingerprint: seed[2], v3ident };
 }
 
-/** Start a tor against that network, and wait for a line in its log. */
-async function startTor(dir: string, running: Running[], extra: string[], awaitLine: string) {
-  const net = await standUpNetwork(dir, running);
+/**
+ * Start a tor against a network `standUpNetwork` has already brought up, and wait for a line in its
+ * log.
+ *
+ * `net` is passed in rather than stood up here. It used to stand one up itself, which was fine while
+ * one test used it and wrong the moment a second wanted a network *and* a tor: that test called
+ * `standUpNetwork` for the service's sake and then this, and got two sets of three relays writing to
+ * the same descriptor paths in one directory.
+ */
+async function startTor(dir: string, running: Running[], net: { orPort: string; relayFingerprint: string; v3ident: string }, extra: string[], awaitLine: string) {
   await Deno.mkdir(`${dir}/tordata`);
   await Deno.writeTextFile(
     `${dir}/torrc`,
@@ -165,7 +172,8 @@ Deno.test({
   const dir = await Deno.makeTempDir({ prefix: "wac-ctor-" });
   const running: Running[] = [];
   try {
-    const tor = await startTor(dir, running, ["SocksPort 0"], "Bootstrapped 100%");
+    const net = await standUpNetwork(dir, running);
+    const tor = await startTor(dir, running, net, ["SocksPort 0"], "Bootstrapped 100%");
     const log = tor.log();
 
     // Bootstrapping is not one event, and which stages it passed is the interesting part. A tor that
@@ -248,7 +256,8 @@ Deno.test({
 
     // `TestingTorNetwork` sets `ClientRejectInternalAddresses 0`, which is what makes a loopback
     // target reachable through a circuit at all — on a real network a client refuses one, correctly.
-    const tor = await startTor(dir, running, [`SocksPort ${socksPort}`], "Bootstrapped 100%");
+    const net = await standUpNetwork(dir, running);
+    const tor = await startTor(dir, running, net, [`SocksPort ${socksPort}`], "Bootstrapped 100%");
 
     const got = await new Deno.Command("curl", {
       args: ["--silent", "--show-error", "--max-time", "60", "--noproxy", "",
