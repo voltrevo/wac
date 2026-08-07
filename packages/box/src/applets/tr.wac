@@ -51,6 +51,10 @@ export i32 tr(Core core, Cli cli, Args a) {
   }
   if (!del && !squeeze && sets != 2) {
     core.warn(a.name + ": missing operand after '" + a.rest[0] + "'");
+    // GNU says why here too, and this had the first line and neither of the others — so `tr a` told the
+    // caller something was missing without saying what, in the one case where the answer is not obvious.
+    core.warn("Two strings must be given when translating.");
+    core.warn("Try '" + a.name + " --help' for more information.");
     return 1;
   }
   if (del && !squeeze && sets != 1) {

@@ -4,10 +4,14 @@
 import { Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
+import { missingAfter, missingOperand } from "../lib/operands.wac";
 
 export i32 mv(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  if (a.rest.len() < 2) { core.warn("usage: " + a.name + " <src> <dst>"); return 2; }
+  if (a.rest.len() == 0) { return missingOperand(core, a.name, "file"); }
+  // GNU names the one it *did* get, which is the difference between "you forgot both" and "you forgot
+  // where to put it" — and the second is the mistake people actually make.
+  if (a.rest.len() < 2) { return missingAfter(core, a.name, "destination file operand", a.rest[0]); }
   Change c = cli.rename(a.rest[0], a.rest[1]).wait();
   if (c.ok()) { return 0; }
   core.warn(a.name + ": " + a.rest[0] + ": " + c.message);

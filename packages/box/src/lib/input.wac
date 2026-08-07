@@ -109,21 +109,6 @@ export Input openStream(Core core, Cli cli, Args a, i32 n) {
   return Input(false, u8[0](), label);
 }
 
-/**
- * Refuse more operands than this applet takes, in the words the real one uses.
- *
- * Not every tool reads many files: `base64`, `base32`, `shuf` and `tr` answer "extra operand" in GNU, and
- * `uniq`'s second operand is an *output* file. Reading a second one for them would be an incompatibility
- * invented here — but so is **ignoring** it, which is what they all did (wac-mono 0096). Refusing is what
- * is left, and it is what the real ones do.
- *
- * Returns true when the caller should stop, having already reported why.
- */
-export bool tooManyOperands(Core core, Args a, i32 most) {
-  if (a.rest.len() <= most) { return false; }
-  core.warn(a.name + ": extra operand '" + a.rest[most] + "'");
-  return true;
-}
 
 /**
  * Every file from operand `n` on, concatenated — or standard input when there are none.

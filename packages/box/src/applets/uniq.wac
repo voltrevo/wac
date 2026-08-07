@@ -6,14 +6,23 @@
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Input, openStream, tooManyOperands } from "../lib/input.wac";
+import { Input, openStream } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { cmpBytes } from "../lib/lines.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
+import { extraOperand } from "../lib/operands.wac";
 
 export i32 uniq(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  if (tooManyOperands(core, a, 1)) { return 1; }
+  // **`uniq INPUT [OUTPUT]`.** The second operand is a *file to write*, not an extra one, so calling it
+  // extra blamed the caller for GNU's own syntax — and named the wrong operand as well, since a third is
+  // where GNU starts complaining. Writing it is not implemented; saying which of the two that is beats
+  // both the old message and quietly ignoring it.
+  if (a.rest.len() == 2) {
+    core.warn(a.name + ": writing to a second operand is not implemented; redirect instead");
+    return 1;
+  }
+  if (extraOperand(core, a, 2)) { return 1; }
   Input in = openStream(core, cli, a, 0);
   if (!in.ok) { return 1; }
   bool counting = has(a, 'c');

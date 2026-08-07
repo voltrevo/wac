@@ -76,6 +76,15 @@ export struct Args {
    */
   string[] own;
   /**
+   * The letter of a flag that takes a value and was given none — `head -n` with nothing after it.
+   *
+   * Empty when there was none. It used to be nothing at all: the parser ran out of arguments, recorded
+   * the flag without a value, and the applet fell back to its default, so `head -n` printed ten lines
+   * and exited 0 where GNU says "option requires an argument -- 'n'" and exits 1. A mistake in the
+   * command came back as an answer, which is the worst of the three things it could do.
+   */
+  string missingValue;
+  /**
    * The first `--long` option given, spelled as it was written, or `""`.
    *
    * A long option is not a run of short ones, and reading it as one produced the worst message in the
@@ -130,6 +139,7 @@ export Args parseList(string[] argv, i32 first, string name) {
   bool hasNum = false;
   string numSign = "";
   string badNum = "";
+  string missingValue = "";
   string longOpt = "";
   i32 i = first;
   bool optionsOver = false;
@@ -188,6 +198,12 @@ export Args parseList(string[] argv, i32 first, string name) {
             } else { badNum = detached; }
           } else if (allDigits(detached)) { num = atoi(detached); hasNum = true; }
           i++;
+        } else {
+          // **A flag that takes a value, at the end of the line.** `head -n` and `fold -w` were
+          // *ignored* here: the loop ran out of arguments, the flag was recorded with no value, and the
+          // applet used its default — so `head -n` printed ten lines and exited 0 where GNU refuses.
+          // Recorded rather than reported, because `Args` has no `Core` to warn through.
+          missingValue = string.fromBytes(slice(b, k, k + 1));
         }
         k++;
       }
@@ -201,7 +217,7 @@ export Args parseList(string[] argv, i32 first, string name) {
   for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
   string[] own = string[argv.len() - first > 0 ? argv.len() - first : 0](fill: "");
   for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
-  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, longOpt);
+  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, missingValue, longOpt);
 }
 
 /**

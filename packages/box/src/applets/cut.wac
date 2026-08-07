@@ -7,6 +7,7 @@ import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
 import { slice } from "../../../bytes/src/slice.wac";
+import { tryHelp } from "../lib/operands.wac";
 
 export i32 cut(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
@@ -16,7 +17,12 @@ export i32 cut(Core core, Cli cli, Args a) {
   // Either spelling: `-f2` and `-f 2` are the same, since `takesValue` in `args.wac` knows that `-d`
   // and `-f` have values and consumes them. The detached form used to arrive here as no value at all
   // and got this message, which is how GNU's own documented spelling was a usage error.
-  if (field < 1) { core.warn("usage: " + a.name + " -f<n> [-d<c>] [file]"); return 2; }
+  if (field < 1) {
+    // GNU says which of the several things `cut` needs was missing; "usage: cut -f<n>" did not.
+    core.warn(a.name + ": you must specify a list of bytes, characters, or fields");
+    tryHelp(core, a.name);
+    return 1;
+  }
 
   Reader r = Reader.create(core, cli, a, 0);
   Sink out = Sink.create(cli);
