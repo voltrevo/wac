@@ -2,6 +2,14 @@
 
 A backtracking regular expression engine, with JavaScript's semantics.
 
+**And POSIX *basic* ones, through `src/basic.wac`.** That is a rewrite rather than a second engine: basic
+and extended differ only in which spelling of `| + ? { ( )` is the operator and which is the literal, so a
+basic pattern becomes the equivalent extended one by swapping the escaping and nothing about matching
+changes. It exists because `grep` without `-E` reads basic, and both of this repo's greps were compiling
+their patterns as extended — so `grep 'a|b'` matched a-or-b where GNU matches three characters, silently
+(wac-mono 0104). The engine was never wrong; the callers were speaking a different dialect to the one they
+were named after.
+
 ```wac
 import { compile, search, slotCount } from "../../regex/src/regex.wac";
 import { Program, NO_MATCH } from "../../regex/src/program.wac";

@@ -29,6 +29,7 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../platform/src/st
 // the number. Three other copies existed, and the correct one was already in `fmt`. wac-mono 0072.
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../../regex/src/regex.wac";
+import { compileBasic, compileBasicIgnoreCase } from "../../regex/src/basic.wac";
 import { Program, BUDGET, NO_MATCH } from "../../regex/src/program.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
@@ -1440,7 +1441,7 @@ bool uniqFeed(Feed fed, Sink sink) {
  * each line is labelled with the file it came from, as GNU's is, and `-c` counts per file.
  */
 i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs) {
-  Options o = options(argv, "cinqvx");
+  Options o = options(argv, "cEinqvx");
   if (o.bad != "") {
     { errs.bytes(optionRefusal("grep", o.bad).toBytes()); errs.flush(); sink.flush(); return 2; }
   }
@@ -1449,9 +1450,19 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
   // `-x` is "the whole line matched", which is an anchor rather than a different comparison: GNU
   // implements it exactly this way, and doing it by comparing bytes would have needed the pattern to be
   // a literal — which is where this started.
+  // **Basic unless `-E`.** `grep` reads basic regular expressions, in which `|`, `+`, `?`, `{` and the
+  // parentheses are literals and their backslashed forms are the operators. This compiled extended, so
+  // `grep 'a|b'` matched a-or-b where GNU matches three characters — wac-mono 0104.
+  bool extended = sawOption(o, "E");
   string pattern = o.operands.get(0);
-  if (sawOption(o, "x")) { pattern = "^(" + pattern + ")$"; }
-  Program? prog = sawOption(o, "i") ? compileIgnoreCase(pattern.toBytes()) : compile(pattern.toBytes());
+  // `-x` anchors, and the anchoring is written in the dialect the pattern is about to be read in:
+  // `\(` and `\)` group in basic, `(` and `)` group in extended.
+  if (sawOption(o, "x")) {
+    pattern = extended ? "^(" + pattern + ")$" : "^\\(" + pattern + "\\)$";
+  }
+  Program? prog = extended
+    ? (sawOption(o, "i") ? compileIgnoreCase(pattern.toBytes()) : compile(pattern.toBytes()))
+    : (sawOption(o, "i") ? compileBasicIgnoreCase(pattern.toBytes()) : compileBasic(pattern.toBytes()));
   if (prog is null) {
     errs.bytes(("grep: " + o.operands.get(0) + ": invalid regular expression\n").toBytes());
     errs.flush();

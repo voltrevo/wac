@@ -367,11 +367,18 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
 
     // A pattern that exhausts the backtracking budget is not a match. It used to be counted as one,
     // because only NO_MATCH was checked. GitHub wac-mono#26.
+    //
+    // Spelled twice, because `grep` reads *basic* regular expressions and this was written extended:
+    // `(a|a)*b` in basic is the literal characters, which matches nothing and exits 1, and the test that
+    // caught that was this one (wac-mono 0104). `\(a\|a\)*b` is the same pattern in the dialect `grep`
+    // actually speaks, and `-E` is the other way round.
     const patho = await Deno.makeTempFile({ prefix: "wac-box-patho-" });
     await Deno.writeTextFile(patho, "a".repeat(30) + "\n");
-    const gave = (await box(["grep", "(a|a)*b", patho]));
-    assertEquals(gave.code, 2, `budget exhaustion should exit 2, got ${gave.code}`);
-    assertEquals(gave.out, "", "and should print no matches");
+    for (const argv of [["grep", "\\(a\\|a\\)*b", patho], ["grep", "-E", "(a|a)*b", patho]]) {
+      const gave = await box(argv);
+      assertEquals(gave.code, 2, `budget exhaustion should exit 2 for ${argv[1]}, got ${gave.code}`);
+      assertEquals(gave.out, "", `and should print no matches for ${argv[1]}`);
+    }
     await Deno.remove(patho);
 
     // A name that does not fit a ustar header is refused, which is what tar.wac has always claimed.
@@ -884,6 +891,18 @@ Deno.test("the applets that read several files read all of them", async () => {
         // `grep -q` printed every matching line, which is the opposite of what it asks for.
         ["grep", "-q", "a", dashFile], ["grep", "-q", "zzz", dashFile],
         ["grep", "-qc", "a", dashFile],
+        // **`grep` is *basic***: `|`, `+`, `?`, `{` and the parentheses are literals and the backslashed
+        // forms are the operators. This compiled extended, so every one of these meant something else —
+        // silently, in the tool most likely to be handed a pattern. wac-mono 0104.
+        ["grep", "-c", "a|b", dashFile], ["grep", "-c", "a\\|b", dashFile],
+        ["grep", "-c", "a+", dashFile], ["grep", "-c", "a\\+", dashFile],
+        ["grep", "-c", "a?", dashFile], ["grep", "-c", "a\\?", dashFile],
+        ["grep", "-c", "a{2}", dashFile], ["grep", "-c", "a\\{2\\}", dashFile],
+        ["grep", "-c", "(a)", dashFile], ["grep", "-c", "\\(a\\)", dashFile],
+        ["grep", "-c", "*a", dashFile], ["grep", "-c", "a*", dashFile],
+        // …and `-E` is extended.
+        ["grep", "-Ec", "a|b", dashFile], ["grep", "-Ec", "a+", dashFile],
+        ["grep", "-Ec", "(a)", dashFile], ["grep", "-Ec", "a{2}", dashFile],
       ]
     ) {
       // `-` and the flag-only forms read standard input, so every case gets the same bytes on it.

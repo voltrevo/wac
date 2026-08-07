@@ -179,7 +179,14 @@ program most likely to be handed a pattern. `packages/regex` is not `packages/bo
 anything in the way of importing it. It is wired now, `-i` and `-x` fold into the compiled pattern, a
 pattern that will not compile is a usage error rather than "no lines matched", and the engine giving up
 on a line exits 2 rather than claiming either answer — which is the distinction `box`'s grep learnt
-first. Fourteen more differential scripts pin it against bash. Kept for now
+first. Fourteen more differential scripts pin it against bash.
+
+And then the *dialect* was wrong, which reading `packages/regex` end to end turned up the tick after.
+`grep` with no `-E` reads **basic** regular expressions, in which `|`, `+`, `?`, `{` and the parentheses
+are literals and their backslashed forms are the operators; both greps here compiled extended, so
+`grep 'a|b'` matched a-or-b where GNU matches three characters. Seven spellings, all silently wrong, in
+the tool most likely to be handed a pattern. `packages/regex/src/basic.wac` is the translation and `-E`
+selects extended; seventeen more scripts pin both dialects. wac-mono 0104. Kept for now
 because 652 of those scripts currently agree with bash *through these*, and swapping the
 implementation under a passing suite without measuring it first is how a green suite starts lying.
 

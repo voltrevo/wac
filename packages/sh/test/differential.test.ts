@@ -229,6 +229,30 @@ const CASES: string[] = [
   String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'hello'`,
   String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -cx 'h.llo'`,
   String.raw`printf 'hello\nworld\nHELLO\n\nabc123\n' | grep -civ '[0-9]'`,
+  // **`grep` reads *basic* regular expressions**, in which `|`, `+`, `?`, `{` and the parentheses are
+  // literals and their backslashed forms are the operators — the opposite of every dialect written today,
+  // and the opposite of what this compiled. `grep 'a|b'` matched a-or-b where GNU matches three
+  // characters: a wrong answer with nothing said about it. wac-mono 0104.
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a|b'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\|b'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a+'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\+'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a?'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a\?'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -c 'a{2}'`,
+  String.raw`printf 'a\nb\na|b\naab\n' | grep -c 'a\{2\}'`,
+  String.raw`printf 'a\nb\n(x)\n' | grep -c '(x)'`,
+  String.raw`printf 'a\nb\n(x)\n' | grep -c '\(x\)'`,
+  // `*` with nothing to repeat is a literal asterisk in basic, which is the one rule that needs memory.
+  String.raw`printf 'a\n*a\n' | grep -c '*a'`,
+  // …and `-E` is the extended dialect, where the bare forms are the operators again.
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -Ec 'a|b'`,
+  String.raw`printf 'a\nb\na|b\na+b\naab\n' | grep -Ec 'a+'`,
+  String.raw`printf 'a\nb\n(x)\n' | grep -Ec '(x)'`,
+  String.raw`printf 'a\nb\naab\n' | grep -Ec 'a{2}'`,
+  // `-x` anchors in whichever dialect the pattern is being read in.
+  String.raw`printf 'hello\nhallo\n' | grep -cx 'h.llo'`,
+  String.raw`printf 'hello\nhallo\n' | grep -Ecx 'h.llo'`,
   // A pattern the engine cannot compile is a usage error, not "no lines matched".
   String.raw`printf 'x\n' | grep '[' ; echo status=$?`,
   `seq 1 3 | nl`,

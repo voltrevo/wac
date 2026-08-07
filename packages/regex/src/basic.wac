@@ -1,0 +1,133 @@
+// POSIX **basic** regular expressions, as `grep` without `-E` takes them.
+//
+// The engine next door has JavaScript's semantics and says so. `grep` does not: with no `-E` it reads
+// *basic* regular expressions, in which the six characters `| + ? { ( )` are **literals** and their
+// backslashed forms are the operators — exactly the opposite of every other dialect anyone writes today.
+//
+//     grep 'a|b'     matches the three characters a, |, b
+//     grep 'a\|b'    matches a or b
+//     grep 'a+'      matches a followed by +
+//     grep 'a\+'     matches one or more a
+//
+// Both of this repo's greps compiled their pattern as if it were extended, so every one of those gave the
+// wrong answer *silently* — `grep 'a|b'` found five lines where GNU finds one. Nothing was refused and
+// nothing was reported; the pattern simply meant something else. Found by reading `packages/regex` end to
+// end after wiring it into `packages/sh`'s grep, and then asking which dialect each side thought it was
+// speaking (wac-mono 0104).
+//
+// ## A rewrite rather than a second engine
+//
+// Basic and extended differ only in *which* spelling of those six is the operator, so a basic pattern
+// becomes the equivalent extended one by swapping the escaping — and nothing about matching changes. One
+// engine, one set of semantics, and a translation small enough to read.
+//
+// What is deliberately not translated, because in basic these are ordinary characters and stay so:
+//
+//   - `\b`, `\w`, `\s` and the rest of the class escapes. POSIX basic has no such thing; GNU adds `\w`
+//     and `\b` as extensions and this passes them through unchanged, which is what GNU does with them.
+//   - A `*` at the start of a pattern or right after `\(`, which POSIX says is a literal asterisk. GNU
+//     agrees, and so does this.
+//   - `^` and `$` in the middle, which are literal in POSIX basic. GNU treats them as anchors anyway in
+//     some positions; this follows POSIX, and the difference is noted in the README rather than guessed
+//     at, because a test that disagrees with GNU here would be testing GNU's extensions.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Program } from "./program.wac";
+import { compile, compileFlags } from "./compile.wac";
+
+/** Compile a basic regular expression. Null when it will not compile. */
+export Program? compileBasic(u8[] pattern) { return compile(toExtended(pattern)); }
+
+/** As `compileBasic`, with the `i` flag. */
+export Program? compileBasicIgnoreCase(u8[] pattern) { return compileFlags(toExtended(pattern), true); }
+
+/**
+ * A basic pattern as the extended one that means the same thing.
+ *
+ * Exported because it is the whole of the difference between the two dialects, and a caller comparing
+ * against `grep -E` should be able to see what its pattern became.
+ */
+export u8[] toExtended(u8[] pattern) {
+  Buf out = Buf.create();
+  i32 i = 0;
+  // Whether the last thing emitted can be quantified. A `*` with nothing to repeat is a literal `*` in
+  // basic — at the start, and directly after `\(` or `\|` — which is the one rule that needs memory.
+  bool quantifiable = false;
+  bool inClass = false;
+  while (i < pattern.len()) {
+    i32 c = pattern[i];
+
+    // A bracket expression is copied through untouched: inside one, none of the six is special in either
+    // dialect, and `[|]` must not become `[\|]`.
+    if (inClass) {
+      out.push(c);
+      // `]` closes it, except immediately after the opening bracket or a leading `^`, where it is
+      // literal — the POSIX rule, and the one place basic and this engine's syntax already agree.
+      if (c == ']') { inClass = false; }
+      i++;
+      continue;
+    }
+    if (c == '[') {
+      out.push(c);
+      i++;
+      // `[]abc]` and `[^]abc]`: the first `]` is a literal member.
+      if (i < pattern.len() && pattern[i] == '^') { out.push(pattern[i]); i++; }
+      if (i < pattern.len() && pattern[i] == ']') { out.push(pattern[i]); i++; }
+      inClass = true;
+      quantifiable = true;
+      continue;
+    }
+
+    if (c == '\\' && i + 1 < pattern.len()) {
+      i32 next = pattern[i + 1];
+      if (isSpecialWhenEscaped(next)) {
+        // `\(` `\)` `\|` `\+` `\?` `\{` `\}` — the operators, which extended spells bare.
+        out.push(next);
+        quantifiable = next == ')' || next == '}';
+        i = i + 2;
+        continue;
+      }
+      // Anything else keeps its backslash: `\.` is a literal dot in both, `\w` is GNU's extension in
+      // both, and `\\` is a backslash in both.
+      out.push(c);
+      out.push(next);
+      quantifiable = true;
+      i = i + 2;
+      continue;
+    }
+
+    if (isSpecialWhenBare(c)) {
+      // `(`, `)`, `|`, `+`, `?`, `{`, `}` written bare are *characters* in basic. Escaped so the engine
+      // reads them as such.
+      out.push('\\');
+      out.push(c);
+      quantifiable = true;
+      i++;
+      continue;
+    }
+
+    if (c == '*' && !quantifiable) {
+      // Nothing to repeat, so it is an asterisk. POSIX says so and GNU agrees.
+      out.push('\\');
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    out.push(c);
+    // `^` at the start and `$` at the end are assertions and cannot be quantified; everything else can.
+    quantifiable = c != '^' && c != '$' && c != '*';
+    i++;
+  }
+  return out.take();
+}
+
+/** The seven whose *escaped* form is the operator in basic. */
+bool isSpecialWhenEscaped(i32 c) {
+  return c == '(' || c == ')' || c == '|' || c == '+' || c == '?' || c == '{' || c == '}';
+}
+
+/** The same seven, which written bare are ordinary characters in basic. */
+bool isSpecialWhenBare(i32 c) {
+  return c == '(' || c == ')' || c == '|' || c == '+' || c == '?' || c == '{' || c == '}';
+}

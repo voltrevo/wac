@@ -280,6 +280,12 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
+**`grep` reads basic regular expressions**, as the real one does with no `-E`: `|`, `+`, `?`, `{` and the
+parentheses are literals and their backslashed forms are the operators. It compiled *extended* until
+wac-mono 0104, so `grep 'a|b'` matched a-or-b where GNU matches three characters — a wrong answer with
+nothing said about it. `-E` selects extended, and `packages/regex/src/basic.wac` is the one translation
+both this and `packages/sh`'s grep go through.
+
 **A flag's value attaches or not**, as GNU's do: `cut -f2 -d,` and `cut -f 2 -d ,` are one
 command, `fold -w 40` works as well as `fold -40`, and `head -n 2` as well as `head -2`.
 Only the attached form used to parse, because a detached value would have been left among
