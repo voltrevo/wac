@@ -158,6 +158,32 @@ greedy operator runs, non-ASCII columns).
 
 Next: rung 3, the type checker.
 
+### What rung 3's oracle looks like, measured
+
+The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,
+which is what the reference's own test drives, and a one-line wrong program comes back as
+
+    return: expected i32, found string   @ 1:28
+
+So the oracle is available today and needs no new plumbing. Three things about its shape, measured
+rather than assumed, because they decide how the rung is cut:
+
+- **`wacTypeCheck` takes a resolved multi-module result, not a source string.** Rungs 1 and 2 each
+  took bytes and gave an answer; this one needs `wacResolve` in front of it, so wacc will need a
+  resolver — or a stub of one — before a single diagnostic can be compared. That is a rung-3
+  dependency that the ladder does not currently name.
+- **~210 distinct message texts across 3,190 reference lines.** Rung 2 compared diagnostics by count
+  and position rather than by text, because the wac side reports numeric codes and the reference
+  reports English. The same applies here and matters more: 210 messages is a lot of English to
+  reproduce, and none of it is the language.
+- **The reference's own test is 267 `ok`/`fail` cases**, which is the closest thing to a specification
+  of what the checker is supposed to reject. It is a better starting corpus than the repo's 326
+  files, which all type-check cleanly and therefore exercise only the accepting half.
+
+The corpus point is the one that changes the plan. Rungs 1 and 2 got most of their coverage from real
+code; rung 3 cannot, because working code produces no diagnostics. Its coverage has to be written, and
+the reference's test file is where the list already is.
+
 ## What rung 1 cost, in language terms
 
 Worth recording precisely, since measuring this is the point.
