@@ -19,7 +19,7 @@ tor: no introduction point accepted the cell
 network: visit exited 1
 ```
 
-Twice on 2026-08-07, in full-suite runs, on a machine several agents share. Both times the same test
+Three times on 2026-08-07, in full-suite runs, on a machine several agents share. Both times the same test
 passed immediately afterwards when run alone — twice in a row, in 16 seconds each — and the second full
 suite passed too. Nothing in either failing run's tree touched `packages/tor`.
 
@@ -50,3 +50,21 @@ making it mean anything. Some combination of:
 
 Retrying the test on failure. A live-network test that passes on the second try is a test nobody will
 believe on the first, and this suite has three of these; the point of them is that they are real.
+
+## 2026-08-07, later: it also **hangs**, which is worse than failing
+
+The third occurrence did not fail — it stopped. `tools/push.sh` sat inside this case for **18 minutes**
+with the machine's load down at 1.75, until it was killed by hand; the same test run alone immediately
+afterwards passed in 11 seconds. So the 30-second bound does not always fire, and when it does not there
+is no output at all: no relay named, no cell named, nothing but a test name and a cursor.
+
+That makes the case for the fix above concrete rather than aesthetic. A gate that goes red costs a
+re-run; a gate that hangs costs however long it takes somebody to notice, and there is nothing in the log
+to look at afterwards. Whatever bound replaces the 30 seconds has to cover the whole case rather than one
+wait inside it.
+
+**And one thing not to do, learned the hard way in the same hour**: killing the wedged run's processes
+by pattern left `tools/push.sh` half alive, and the next run reported "suite passed" on **1147 tests**
+rather than 1548 — a partial suite counted as a whole one, because the shard that had been killed simply
+was not there to fail. That is its own bug and its own issue if it reproduces deliberately; here it is a
+warning about how to clean up after this one.
