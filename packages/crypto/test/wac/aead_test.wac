@@ -19,18 +19,7 @@ import { itoa64 } from "../../../wactest/src/itoa64.wac";
 import { poly1305 } from "../../src/poly1305.wac";
 import { aeadEncrypt, aeadTag } from "../../src/aead.wac";
 import { equal } from "../../../bytes/src/slice.wac";
-
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  trap;
-}
+import { decoded } from "../../../codec/src/hex.wac";
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
@@ -44,14 +33,14 @@ u8[] cat(u8[] a, u8[] b) {
 }
 
 u8[] aeadKey() {
-  return unhex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
+  return decoded("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
 }
 
 export string test_rfc_8439_poly1305() {
   T t = T.create();
-  t.eqBytes(poly1305(unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b"),
+  t.eqBytes(poly1305(decoded("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b"),
                      "Cryptographic Forum Research Group".toBytes()),
-            unhex("a8061dc1305136c6c22b8baf0c0127a9"),
+            decoded("a8061dc1305136c6c22b8baf0c0127a9"),
             "RFC 8439 section 2.5.2");
   return t.report();
 }
@@ -95,20 +84,20 @@ export string test_rfc_8439_aead(fn[u8[](u8[], u8[], u8[], u8[])] ref) {
   // §2.8.2's worked example, then the same inputs through the host.
   T t = T.create();
   u8[] key = aeadKey();
-  u8[] nonce = unhex("070000004041424344454647");
-  u8[] aad = unhex("50515253c0c1c2c3c4c5c6c7");
+  u8[] nonce = decoded("070000004041424344454647");
+  u8[] aad = decoded("50515253c0c1c2c3c4c5c6c7");
   string plainText = "Ladies and Gentlemen of the class of '99: If I could offer you " +
                      "only one tip for the future, sunscreen would be it.";
   u8[] plain = plainText.toBytes();
 
   u8[] ct = aeadEncrypt(key, nonce, plain);
   t.eqBytes(ct,
-            unhex("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" +
+            decoded("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" +
                   "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36" +
                   "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc" +
                   "3ff4def08e4b7a9de576d26586cec64b6116"),
             "RFC 8439 2.8.2 ciphertext");
-  t.eqBytes(aeadTag(key, nonce, aad, ct), unhex("1ae10b594f09e26a7e902ecbd0600691"),
+  t.eqBytes(aeadTag(key, nonce, aad, ct), decoded("1ae10b594f09e26a7e902ecbd0600691"),
             "RFC 8439 2.8.2 tag");
 
   // And the host, which agrees only if the framing matches too.
@@ -127,7 +116,7 @@ export string test_the_length_fields_stop_a_block_moving(fn[u8[](u8[], u8[], u8[
   // the same 32 bytes with exactly the same padding, so only the counts tell them apart.
   T t = T.create();
   u8[] key = aeadKey();
-  u8[] nonce = unhex("070000004041424344454647");
+  u8[] nonce = decoded("070000004041424344454647");
   u8[] a = fill(16, 3, 1);
   u8[] c = fill(16, 5, 9);
 
@@ -152,7 +141,7 @@ export string test_the_tag_covers_everything(fn[u8[](u8[], u8[], u8[], u8[])] re
   // diverges from one that pads it to a full block of nothing.
   T t = T.create();
   u8[] key = aeadKey();
-  u8[] nonce = unhex("070000004041424344454647");
+  u8[] nonce = decoded("070000004041424344454647");
   i32[] plainLens = i32[](0, 1, 15, 16, 17, 63, 64, 65);
   i32[] aadLens = i32[](0, 1, 15, 16, 17);
   for (i32 p = 0; p < plainLens.len(); p++) {

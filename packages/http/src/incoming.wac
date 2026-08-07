@@ -28,6 +28,7 @@ import { Headers, eqFold, isToken, isOws, isFieldValueByte } from "./headers.wac
 import { ERR_VERSION, ERR_LINE, ERR_HEADER_NAME, ERR_HEADER_VALUE, ERR_OBS_FOLD, ERR_FRAMING,
          ERR_CHUNK, ERR_TOO_LARGE } from "./request.wac";
 import { slice } from "../../bytes/src/slice.wac";
+import { digitValue } from "../../codec/src/hex.wac";
 
 /** A status line outside 100..599, which is not a status at all. */
 export i32 ERR_STATUS() { return 11; }
@@ -60,12 +61,6 @@ i32 findCrlf(u8[] s, i32 at) {
 
 bool isDigit(i32 c) { return c >= '0' && c <= '9'; }
 
-i32 hexValue(i32 c) {
-  if (isDigit(c)) { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-  return -1;
-}
 
 bool isHead(u8[] method) {
   return method.len() == 4 && method[0] == 'H' && method[1] == 'E' && method[2] == 'A'
@@ -233,10 +228,10 @@ ParsedResponse readChunked(u8[] input, i32 start, Incoming res, i32 maxBody) {
     i64 acc = 0;
     i32 i = at;
     i32 digitsSeen = 0;
-    while (i < end && hexValue(input[i]) >= 0) {
+    while (i < end && digitValue(input[i]) >= 0) {
       // In i64, for the reason given where `Content-Length` is parsed: a check against `maxBody`
       // is meaningless once the accumulation has wrapped.
-      acc = acc * 16 + (hexValue(input[i]) as i64);
+      acc = acc * 16 + (digitValue(input[i]) as i64);
       digitsSeen++;
       if (acc > (maxBody as i64)) { return ParsedResponse.Bad(ERR_TOO_LARGE()); }
       i++;

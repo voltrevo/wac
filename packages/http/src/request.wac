@@ -21,6 +21,7 @@
 
 import { Headers, eqFold, isToken, isOws, isFieldValueByte } from "./headers.wac";
 import { slice } from "../../bytes/src/slice.wac";
+import { digitValue } from "../../codec/src/hex.wac";
 
 export i32 ERR_METHOD() { return 1; }         // the method is not a token
 export i32 ERR_TARGET() { return 2; }         // an empty or malformed request target
@@ -75,12 +76,6 @@ bool isValidTarget(u8[] s, i32 lo, i32 hi) {
   return false;
 }
 
-i32 hexValue(i32 c) {
-  if (isDigit(c)) { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-  return -1;
-}
 
 /**
  * Parse a request from the front of `input`.
@@ -238,10 +233,10 @@ Parsed readChunked(u8[] input, i32 start, Request req, i32 maxBody) {
     i64 acc = 0;
     i32 i = at;
     i32 digitsSeen = 0;
-    while (i < end && hexValue(input[i]) >= 0) {
+    while (i < end && digitValue(input[i]) >= 0) {
       // In i64, for the reason given where `Content-Length` is parsed: a check against `maxBody`
       // is meaningless once the accumulation has wrapped.
-      acc = acc * 16 + (hexValue(input[i]) as i64);
+      acc = acc * 16 + (digitValue(input[i]) as i64);
       digitsSeen++;
       if (acc > (maxBody as i64)) { return Parsed.Bad(ERR_TOO_LARGE()); }
       i++;

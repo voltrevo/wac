@@ -35,6 +35,7 @@ import {
   handshakeNtor,
 } from "../../src/cell.wac";
 import { equal, slice } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
 u8[] fill(i32 n, i32 seed) {
   u8[] o = u8[n]();
@@ -352,11 +353,11 @@ export string test_create_fast_agrees_with_kdf_tor() {
 
   u8[] k = kdfTor(k0, 92);
   t.eqI32(k.len(), 92, "KH, Df, Db, Kf, Kb");
-  t.isTrue(equal(slice(k, 0, 20), hexBytes("75b3852b0170087ed080a8a96147791f47e46423")),
+  t.isTrue(equal(slice(k, 0, 20), decoded("75b3852b0170087ed080a8a96147791f47e46423")),
            "KH agrees with an independently computed KDF-TOR");
-  t.isTrue(equal(slice(k, 20, 40), hexBytes("9296d9bd66de03163a7191c588020feeee3f04eb")),
+  t.isTrue(equal(slice(k, 20, 40), decoded("9296d9bd66de03163a7191c588020feeee3f04eb")),
            "and so does Df");
-  t.isTrue(equal(slice(k, 60, 76), hexBytes("a2429f1a2281bff1ad72ecd550bb24f1")),
+  t.isTrue(equal(slice(k, 60, 76), decoded("a2429f1a2281bff1ad72ecd550bb24f1")),
            "and Kf");
 
   // The reply is `Y | KH`, and the hop's keys are what follows KH.
@@ -397,20 +398,6 @@ export string test_create_fast_agrees_with_kdf_tor() {
   }
   t.eqI32(bad, 0, "three cells each way over a CREATE_FAST circuit");
   return t.report();
-}
-
-u8[] hexBytes(string hex) {
-  u8[] h = hex.toBytes();
-  u8[] out = u8[h.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) {
-    out[i] = (nib(h[i * 2]) * 16) + nib(h[i * 2 + 1]);
-  }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= 48 && c <= 57) { return c - 48; }
-  if (c >= 97 && c <= 102) { return c - 87; }
-  return 0;
 }
 
 

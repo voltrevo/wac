@@ -29,7 +29,7 @@
 import { Buf } from "../../bytes/src/buf.wac";
 import { ALPHABET_STANDARD, encode } from "../../codec/src/base64.wac";
 import { civilFrom, derConcat, derInteger, derSequence } from "../../tls/src/derwrite.wac";
-import { encodeUpper } from "../../codec/src/hex.wac";
+import { decode, encodeUpper } from "../../codec/src/hex.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import {
   curve25519ToEd25519Secret, ed25519PublicKey, ed25519PublicKeyExpanded, ed25519Sign,
@@ -336,7 +336,7 @@ export u8[] descriptorIdentityDigest(u8[] descriptor) { return rsaDescriptorDige
 
 /** The relay's 20-byte identity digest, read from its descriptor's `fingerprint` line. */
 export u8[] descriptorIdentity(u8[] descriptor) {
-  return unhex(lineValue(descriptor, "fingerprint "));
+  return fingerprintBytes(lineValue(descriptor, "fingerprint "));
 }
 
 /**
@@ -373,7 +373,7 @@ u8[] statusLine(u8[] descriptor, bool withDigest) {
   u8[][] parts = splitSpaces(router);
   if (parts.len() < 5) { return u8[0](); }
 
-  u8[] identity = unhex(fingerprint);
+  u8[] identity = fingerprintBytes(fingerprint);
   if (identity.len() != 20) { return u8[0](); }
   u8[] digest = descriptorIdentityDigest(descriptor);
   if (digest.len() != 20) { return u8[0](); }
@@ -435,26 +435,19 @@ u8[][] splitSpaces(u8[] s) {
   return out;
 }
 
-/** Hex to bytes, spaces ignored — a descriptor's fingerprint line is written in groups. */
-u8[] unhex(u8[] text) {
-  i32 count = 0;
-  for (i32 i = 0; i < text.len(); i++) { if (text[i] != 32) { count = count + 1; } }
-  if (count % 2 != 0) { return u8[0](); }
-  u8[] out = u8[count / 2]();
-  i32 n = 0;
-  i32 hi = -1;
+/**
+ * A fingerprint, which a descriptor writes in space-separated groups of four.
+ *
+ * The spaces are Tor's rule and not hex's, so they are removed here and the decoding is
+ * `packages/codec`'s — whose `decode` says in as many words that ignoring whitespace is a decision for
+ * the caller to make out loud. This file used to make it silently, in a private `unhex` that was one of
+ * twelve and the only one of them that skipped anything.
+ */
+u8[] fingerprintBytes(u8[] text) {
+  Buf packed = Buf.create();
   for (i32 i = 0; i < text.len(); i++) {
-    if (text[i] == 32) { continue; }
-    i32 v = hexValue(text[i]);
-    if (v < 0) { return u8[0](); }
-    if (hi < 0) { hi = v; } else { out[n] = hi * 16 + v; n = n + 1; hi = -1; }
+    if (text[i] != 32) { packed.push(text[i]); }
   }
-  return out;
-}
-
-i32 hexValue(i32 c) {
-  if (c >= 48 && c <= 57) { return c - 48; }
-  if (c >= 65 && c <= 70) { return c - 55; }
-  if (c >= 97 && c <= 102) { return c - 87; }
-  return -1;
+  u8[]? raw = decode(packed.take());
+  return raw is null ? u8[0]() : raw!;
 }

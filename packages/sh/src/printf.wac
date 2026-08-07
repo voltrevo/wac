@@ -15,6 +15,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
+import { digitValue } from "../../codec/src/hex.wac";
 
 /**
  * `printf FORMAT [ARGS]` — the only one of these with a language of its own.
@@ -146,7 +147,7 @@ i32 escapeInto(Buf out, u8[] f, i32 at) {
     i32 p = at + 2;
     i32 v = 0;
     i32 n = 0;
-    while (p < f.len() && n < 2 && hexValue(f[p]) >= 0) { v = v * 16 + hexValue(f[p]); p++; n++; }
+    while (p < f.len() && n < 2 && digitValue(f[p]) >= 0) { v = v * 16 + digitValue(f[p]); p++; n++; }
     if (n == 0) { out.push(0x5c); out.push(0x78); return at + 2; }
     out.push(v);
     return p;
@@ -203,12 +204,6 @@ void padInto(Buf out, string text, i32 width, bool left, bool zero) {
   for (i32 i = from; i < b.len(); i++) { out.push(b[i]); }
 }
 
-i32 hexValue(i32 c) {
-  if (c >= 0x30 && c <= 0x39) { return c - 0x30; }
-  if (c >= 0x61 && c <= 0x66) { return c - 0x61 + 10; }
-  if (c >= 0x41 && c <= 0x46) { return c - 0x41 + 10; }
-  return -1;
-}
 
 /** Whether the whole string is a number, so `%d` can say so before using it as zero. */
 export bool isNumber(string s) {

@@ -56,3 +56,22 @@ export u8[]? decode(u8[] text) {
   }
   return out;
 }
+
+/**
+ * Decode hex written in a source file, trapping if it is not hex.
+ *
+ * Twelve files carried a private `unhex` and four of them behaved differently on bad input — one
+ * trapped, one returned empty, one skipped spaces, nine read whatever `nib` gave them for a
+ * non-digit and produced silent rubbish (wac-mono 0093 is the same story about `slice`). All twelve
+ * were decoding a **literal in the source next to them**, where a bad digit is a typo rather than
+ * input, so the honest answer is the one `decode` cannot give: fail loudly and immediately.
+ *
+ * This is `decode`'s pair, and the split is the same as `slice`/`clamped` in `packages/bytes`: the
+ * strict one for a caller who has to handle malformed input, the trapping one for a caller who is
+ * asserting there is none. Never use it on anything that arrived from outside the program.
+ */
+export u8[] decoded(string text) {
+  u8[]? out = decode(text.toBytes());
+  if (out is null) { trap; }
+  return out!;
+}

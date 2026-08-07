@@ -25,22 +25,11 @@ import { aesEncrypt, aesDecrypt } from "../../src/aes.wac";
 import { aesCtr, CtrStream } from "../../src/aesctr.wac";
 import { gcmEncrypt, gcmTag, gcmInc32 } from "../../src/aesgcm.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
 const i32 ECB = 0;
 const i32 CTR = 1;
 const i32 GCM = 2;
-
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  trap;
-}
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[n]();
   for (i32 i = 0; i < n; i++) { out[i] = (i * a + b) & 0xFF; }
@@ -57,18 +46,18 @@ export string test_fips_197_worked_examples() {
   // Appendix B and C. Published values, so this is agreement with the standard rather
   // than with another implementation.
   T t = T.create();
-  t.eqBytes(aesEncrypt(unhex("2b7e151628aed2a6abf7158809cf4f3c"),
-                       unhex("3243f6a8885a308d313198a2e0370734")),
-            unhex("3925841d02dc09fbdc118597196a0b32"), "FIPS 197 appendix B");
-  t.eqBytes(aesEncrypt(unhex("000102030405060708090a0b0c0d0e0f"),
-                       unhex("00112233445566778899aabbccddeeff")),
-            unhex("69c4e0d86a7b0430d8cdb78070b4c55a"), "C.1, AES-128");
-  t.eqBytes(aesEncrypt(unhex("000102030405060708090a0b0c0d0e0f1011121314151617"),
-                       unhex("00112233445566778899aabbccddeeff")),
-            unhex("dda97ca4864cdfe06eaf70a0ec0d7191"), "C.2, AES-192");
-  t.eqBytes(aesEncrypt(unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
-                       unhex("00112233445566778899aabbccddeeff")),
-            unhex("8ea2b7ca516745bfeafc49904b496089"), "C.3, AES-256");
+  t.eqBytes(aesEncrypt(decoded("2b7e151628aed2a6abf7158809cf4f3c"),
+                       decoded("3243f6a8885a308d313198a2e0370734")),
+            decoded("3925841d02dc09fbdc118597196a0b32"), "FIPS 197 appendix B");
+  t.eqBytes(aesEncrypt(decoded("000102030405060708090a0b0c0d0e0f"),
+                       decoded("00112233445566778899aabbccddeeff")),
+            decoded("69c4e0d86a7b0430d8cdb78070b4c55a"), "C.1, AES-128");
+  t.eqBytes(aesEncrypt(decoded("000102030405060708090a0b0c0d0e0f1011121314151617"),
+                       decoded("00112233445566778899aabbccddeeff")),
+            decoded("dda97ca4864cdfe06eaf70a0ec0d7191"), "C.2, AES-192");
+  t.eqBytes(aesEncrypt(decoded("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
+                       decoded("00112233445566778899aabbccddeeff")),
+            decoded("8ea2b7ca516745bfeafc49904b496089"), "C.3, AES-256");
   return t.report();
 }
 

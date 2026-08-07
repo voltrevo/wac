@@ -22,6 +22,7 @@
 import { T } from "../../../wactest/src/assert.wac";
 import { decode, encode, fromI64, Decoded, Item } from "../../src/rlp.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
 /** `(` … `)` for a list, `<hex>` for a byte string. One rendering per tree, and no two trees alike. */
 string render(Item it) {
@@ -46,19 +47,6 @@ string hex(u8[] b) {
   return string.fromBytes(out);
 }
 
-u8[] unhex(string h) {
-  u8[] src = h.toBytes();
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) { out[i] = nib(src[2 * i]) * 16 + nib(src[2 * i + 1]); }
-  return out;
-}
-i32 nib(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-  trap;
-}
-
 
 /**
  * Every valid fixture: `cases(i)` gives `<hex bytes>|<expected rendering>|<name>`, and `count()` how many.
@@ -74,7 +62,7 @@ export string test_the_published_vectors_decode_and_re_encode(
   t.isTrue(n >= 25, "the fixture set should have twenty-odd cases, got " + itoa(n));
   for (i32 i = 0; i < n; i++) {
     string[] parts = split(cases(i));
-    u8[] bytes = unhex(parts[0]);
+    u8[] bytes = decoded(parts[0]);
     Decoded got = decode(bytes);
     t.isTrue(got.ok, parts[2] + ": decode refused a valid encoding — " + got.error);
     if (!got.ok) { continue; }
@@ -96,7 +84,7 @@ export string test_the_invalid_vectors_are_all_refused(
   t.isTrue(n >= 20, "the invalid set should have twenty-odd cases, got " + itoa(n));
   for (i32 i = 0; i < n; i++) {
     string[] parts = split(bad(i));
-    Decoded got = decode(unhex(parts[0]));
+    Decoded got = decode(decoded(parts[0]));
     // Named, because "one of twenty-six was accepted" is a bisect and "wrongSizeList was accepted" is a
     // fix. Each of these is a consensus fault if it decodes.
     t.isFalse(got.ok, parts[1] + ": accepted an invalid encoding, rendered " + render(got.item));
@@ -121,11 +109,11 @@ export string test_trailing_bytes_are_refused() {
     "0f10"               // two small bytes, each valid alone
   );
   for (i32 i = 0; i < cases.len(); i++) {
-    Decoded got = decode(unhex(cases[i]));
+    Decoded got = decode(decoded(cases[i]));
     t.isFalse(got.ok, "0x" + cases[i] + " is two items, not one — rendered " + render(got.item));
   }
   // And the same bytes *are* accepted when they are what a single item says they are.
-  t.isTrue(decode(unhex("c2800f")).ok, "a list of two items is one item");
+  t.isTrue(decode(decoded("c2800f")).ok, "a list of two items is one item");
   return t.report();
 }
 

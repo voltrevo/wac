@@ -19,24 +19,8 @@ import {
   masterSecret, nextTrafficSecret, trafficKeyIv,
 } from "../../src/keyschedule.wac";
 import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
 
-/** Hex, so vectors read as they do in the RFC. */
-u8[] unhex(string s) {
-  u8[] src = s.toBytes();
-  if (src.len() % 2 != 0) { trap; }
-  u8[] out = u8[src.len() / 2]();
-  for (i32 i = 0; i < out.len(); i++) {
-    out[i] = nibble(src[2 * i]) * 16 + nibble(src[2 * i + 1]);
-  }
-  return out;
-}
-
-i32 nibble(i32 c) {
-  if (c >= '0' && c <= '9') { return c - '0'; }
-  if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-  if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-  trap;
-}
 
 u8[] fill(i32 n, i32 a, i32 b) {
   u8[] out = u8[n]();
@@ -84,20 +68,20 @@ export string test_the_rfc_8448_chain(fn[u8[](u8[], u8[])] hmac) {
   // the protocol rather than with ourselves. Values that did not match the trace were
   // removed when this was written rather than adjusted to what we produce.
   T t = T.create();
-  u8[] shared = unhex("8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
-  u8[] chsh = unhex("860c06edc07858ee8e78f0e7428c58edd6b43f2ca3e6e95f02ed063cf0e1cad8");
+  u8[] shared = decoded("8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
+  u8[] chsh = decoded("860c06edc07858ee8e78f0e7428c58edd6b43f2ca3e6e95f02ed063cf0e1cad8");
 
   u8[] early = earlySecret(u8[32]());
-  t.eqBytes(early, unhex("33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"),
+  t.eqBytes(early, decoded("33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"),
             "early secret");
   u8[] hs = handshakeSecret(early, shared);
-  t.eqBytes(hs, unhex("1dc826e93606aa6fdc0aadc12f741b01046aa6b99f691ed221a9f0ca043fbeac"),
+  t.eqBytes(hs, decoded("1dc826e93606aa6fdc0aadc12f741b01046aa6b99f691ed221a9f0ca043fbeac"),
             "handshake secret");
   t.eqBytes(deriveSecret(hs, "c hs traffic".toBytes(), chsh),
-            unhex("b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21"),
+            decoded("b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21"),
             "client handshake traffic secret");
   t.eqBytes(deriveSecret(hs, "s hs traffic".toBytes(), chsh),
-            unhex("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"),
+            decoded("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"),
             "server handshake traffic secret");
   return t.report();
 }
@@ -128,7 +112,7 @@ export string test_traffic_keys_come_from_the_pinned_secret(fn[u8[](u8[], u8[])]
   // Derived from a secret RFC 8448 has already pinned above, so a failure here is in the
   // key derivation rather than anywhere upstream of it.
   T t = T.create();
-  u8[] serverHs = unhex("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
+  u8[] serverHs = decoded("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
   i32[] keyLens = i32[](16, 32);
   for (i32 k = 0; k < keyLens.len(); k++) {
     i32 keyLen = keyLens[k];
@@ -191,7 +175,7 @@ export string test_the_empty_context_hash_is_sha256_of_nothing(fn[u8[](u8[], u8[
   // constant — the SHA-256 of the empty string, which appears in RFC 8446 §7.1 itself.
   T t = T.create();
   t.eqBytes(emptyHash(),
-            unhex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            decoded("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
             "SHA-256 of the empty string");
   return t.report();
 }
