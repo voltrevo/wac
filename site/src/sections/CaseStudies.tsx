@@ -202,7 +202,12 @@ export default function CaseStudies() {
           Nothing in the dependency chain is constant-time, and none of it has been reviewed by
           anyone. The compiler's own {tp("ctTrace")} mode found the leaks it found — two known,
           one that was not — which is evidence that the tooling works, not that the result is safe
-          to point at a real peer. What follows is a demonstration of what the language can carry.
+          to point at a real peer. What follows is a demonstration of what the language can carry.{" "}
+          <strong style={{ color: "#e2e8f0" }}>Do not point it at the real Tor network.</strong>{" "}
+          Anonymity is a separate question from correctness, and this does not have it yet: Proposal
+          271 is partial, there is no padding, and stream isolation is by port rather than by
+          destination. A wrong path selection builds a circuit that works perfectly with the
+          anonymity quietly removed, which is the failure mode that does not announce itself.
         </div>
 
         <p style={s.p}>
