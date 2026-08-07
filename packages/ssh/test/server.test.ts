@@ -11,7 +11,7 @@
 // test-lane: exclusive — a real OpenSSH client against our server, on a real port.
 
 import { haveSshd } from "./server.ts";
-import { holdPort } from "../../../harness/port.ts";  // one allocator — wac-mono 0069
+import { holdPort, isAddrInUse } from "../../../harness/port.ts";  // one allocator — wac-mono 0069
 import { ABANDONED_SSHD } from "./server.ts";
 import { reapOrphans } from "../../../harness/reap.ts";
 
@@ -104,7 +104,29 @@ const wacsshdWritableBinary = await (async () => {
 })();
 
 /** Our server, running, with a host key and one authorized client key. */
+/**
+ * Start one, retrying a port that somebody else took between the probe and the bind.
+ *
+ * `harness/port.ts` describes that window and provides `withPort` for exactly this; this call site was
+ * not using it, and lost a gate run to `Address already in use` from another agent's server on the same
+ * machine. A bind failure is the *only* thing retried — anything else is a real failure and is thrown
+ * on the first attempt, because retrying those turns one clear error into three slow ones.
+ */
 async function startWacsshd(extra: string[] = [], binary = wacsshdBinary): Promise<Wacsshd> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await startWacsshdOnce(extra, binary);
+    } catch (e) {
+      if (!isAddrInUse(e)) throw e;
+      last = e;
+      console.error(`the port was taken between the probe and the bind; retrying (${attempt}/3)`);
+    }
+  }
+  throw last;
+}
+
+async function startWacsshdOnce(extra: string[] = [], binary = wacsshdBinary): Promise<Wacsshd> {
   const dir = await Deno.makeTempDir();
   await Deno.mkdir(`${dir}/.ssh`);
   for (const [name, path] of [["host", `${dir}/.ssh/ssh_host_ed25519_key`], ["client", `${dir}/clientkey`]] as const) {
