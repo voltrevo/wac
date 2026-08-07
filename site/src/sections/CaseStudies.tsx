@@ -199,10 +199,17 @@ export default function CaseStudies() {
         >
           <strong style={{ color: "#e2e8f0" }}>Not for production, and the packages say so
           first.</strong>{" "}
-          Nothing in the dependency chain is constant-time, and none of it has been reviewed by
-          anyone. The compiler's own {tp("ctTrace")} mode found the leaks it found — two known,
-          one that was not — which is evidence that the tooling works, not that the result is safe
-          to point at a real peer. What follows is a demonstration of what the language can carry.{" "}
+          None of this has been reviewed by anyone. On side channels the honest statement is a
+          measurement rather than a shrug: the compiler&rsquo;s {tp("ctTrace")} mode runs each
+          routine twice with different secrets and compares the branches taken <em>and</em> the
+          memory indices used — {tp("sha256")}, {tp("chachaBlock")}, {tp("poly1305")} and the
+          x25519 ladder come out uniform, the ladder across 1.6 million events, while{" "}
+          <strong style={{ color: "#e2e8f0" }}>AES and GHASH leak</strong>, by construction, because
+          a table indexed by a secret byte touches a cache line the key chose. That is how AES keys
+          have been recovered from cache timing since 2005.{" "}
+          <em>Uniform under that trace is not the same as constant-time</em> — it is dynamic, it
+          sees only what wasm does, and it cannot see an instruction whose latency depends on its
+          operands. What follows is a demonstration of what the language can carry.{" "}
           <strong style={{ color: "#e2e8f0" }}>Do not point it at the real Tor network.</strong>{" "}
           Anonymity is a separate question from correctness, and this does not have it yet: Proposal
           271 is partial, there is no padding, and stream isolation is by port rather than by
