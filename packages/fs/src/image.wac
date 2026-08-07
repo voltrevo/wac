@@ -60,8 +60,9 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
+import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "../../platform/src/platform.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
-import { Backing, Fs, Inode, Mount, sortNames } from "./fs.wac";
+import { Backing, Fs, Inode, Mount, mountSystem, sortNames } from "./fs.wac";
 
 /** The version this build writes. A reader refuses anything else, by number, rather than guessing. */
 i32 VERSION() { return 1; }
@@ -180,6 +181,65 @@ export Loaded read(u8[] data, i64 now) {
   }
   if (r.at != end) { return failed("trailing bytes after the last mount"); }
   return Loaded.of(true, fs, "");
+}
+
+/** A booted image: the filesystem, or why the program should stop. */
+export struct Booted {
+  bool ok;
+  Fs fs;
+  /** What was wrong with the file, empty when `ok`. */
+  string error;
+
+  Booted of(bool ok, Fs fs, string error) { return Booted(ok, fs, error); }
+}
+
+/**
+ * Load an image from a path, or start an empty world, and mount `/dev` and `/proc` over it.
+ *
+ * Two programs boot an image — `packages/sh/src/imaged.wac` and `packages/ssh/src/sshd.wac` — and both
+ * had this written out, which is two copies of three decisions that must not drift:
+ *
+ *   * **a path that is not there is an empty world**, so a first run needs no separate step;
+ *   * **an image that cannot be read stops the program**, because starting empty means the next save
+ *     writes over the thing that could not be read — one unreadable file becoming no file;
+ *   * **anything else the host says is also a stop**, and it says which, because "I could not open your
+ *     filesystem" and "you had none" are different facts and a program that conflates them loses data.
+ *
+ * `argv` becomes `/proc/self/cmdline`. The caller passes it because a filesystem cannot know its own
+ * program's arguments.
+ */
+export Booted boot(Core core, Cli cli, string path, Vec<string> argv) {
+  Fs fs = Fs.inMemory(core.nowMillis().wait());
+  FileResult existing = cli.readFile(path).wait();
+  if (existing.ok) {
+    Loaded got = read(existing.bytes, core.nowMillis().wait());
+    if (!got.ok) { return Booted.of(false, fs, got.error); }
+    fs = got.fs;
+  } else if (existing.fault != FAULT_NOT_FOUND()) {
+    // A directory, or no permission, or a disk that is not there. Only "not found" means "new".
+    return Booted.of(false, fs, existing.error);
+  }
+  mountSystem(fs, core.randomBytes, argv);
+  return Booted.of(true, fs, "");
+}
+
+/**
+ * Write a filesystem back to `path`, warning about anything it could not save.
+ *
+ * The warnings are the point rather than an extra: a program that could not write its image has served a
+ * session, done the work, and lost it, and from the far end that is indistinguishable from success.
+ * `who` is the program's own name, since a wac program is not given argv[0].
+ */
+export bool save(Core core, Cli cli, string who, string path, Fs fs) {
+  Written w = write(fs);
+  for (i32 i = 0; i < w.skipped.len(); i++) {
+    core.warn(who + ": not saved: " + w.skipped[i]);
+  }
+  if (cli.writeFile(path, w.bytes).wait().fault != 0) {
+    core.warn(who + ": " + path + ": the session could not be saved");
+    return false;
+  }
+  return true;
 }
 
 /**

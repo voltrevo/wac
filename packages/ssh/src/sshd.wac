@@ -41,8 +41,8 @@ import { Match, lookUp } from "./authorizedkeys.wac";
 import { Incoming, msgChannelClose, msgChannelData, msgChannelEof, msgChannelOpen,
          msgChannelRequest, msgChannelWindowAdjust, parse } from "./channel.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
-import { Fs, mountSystem } from "../../fs/src/fs.wac";
-import { Loaded, Written, read as readImage, write as writeImage } from "../../fs/src/image.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../fs/src/image.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { AuthRequest, authFailure, authSuccess, channelClose, channelData, channelEof,
          pkOk,
@@ -104,21 +104,17 @@ export i32 main(Core core, Cli cli) {
   // serves two at once.
   Fs fs = Fs.inMemory(core.nowMillis().wait());
   if (o.image != "") {
-    FileResult existing = cli.readFile(o.image).wait();
-    if (existing.ok) {
-      Loaded got = readImage(existing.bytes, core.nowMillis().wait());
-      if (!got.ok) {
-        // Refusing beats starting empty: a server that began with nothing would then *save over* the
-        // image it could not read, which turns one unreadable file into no file at all.
-        core.warn("sshd: " + o.image + ": " + got.error);
-        return 1;
-      }
-      fs = got.fs;
-    }
-    // A path that is not there yet is an empty world, so the first run needs no separate step.
     Vec<string> argv = Vec.create();
     argv.push("sshd");
-    mountSystem(fs, core.randomBytes, argv);
+    Booted booted = boot(core, cli, o.image, argv);
+    if (!booted.ok) {
+      // Before the socket: a server that cannot read its image is not a server, and binding first meant
+      // it announced "listening on port 2222" and *then* refused — a moment in which it looked like it
+      // was working.
+      core.warn("sshd: " + o.image + ": " + booted.error);
+      return 1;
+    }
+    fs = booted.fs;
   }
 
   // Every interface, as a real sshd does: a daemon nobody can reach is not a daemon. Said rather than
@@ -140,7 +136,7 @@ export i32 main(Core core, Cli cli) {
     cli.closeSocket(c.handle);
     // After the connection, not during it: a session that ends badly has still done work, and a client
     // that hangs up mid-command has still created what it created.
-    if (o.image != "") { saveImage(core, cli, o.image, fs); }
+    if (o.image != "") { save(core, cli, "sshd", o.image, fs); }
     if (o.once) { break; }
   }
   cli.closeSocket(listener.handle);
@@ -159,17 +155,6 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
   sh.capture = true;
   if (o.image != "") { sh.cwd = "/"; }
   return sh;
-}
-
-/** Write the image back, and say so if it cannot be — a session's work is worth an error. */
-void saveImage(Core core, Cli cli, string path, Fs fs) {
-  Written w = writeImage(fs);
-  for (i32 i = 0; i < w.skipped.len(); i++) {
-    core.warn("sshd: not saved: " + w.skipped[i]);
-  }
-  if (cli.writeFile(path, w.bytes).wait().fault != 0) {
-    core.warn("sshd: " + path + ": the session could not be saved");
-  }
 }
 
 /** One connection, to completion. Errors are logged and end the connection, never the server. */

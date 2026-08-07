@@ -155,6 +155,12 @@ a percentage is how the three defects above survived as long as they did. Sevent
 recorded points are host mounts, which need a `Cli` that only a built program has; they are measured
 nowhere and *tested* against the real filesystem, which is a better oracle than a probe.
 
+The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an image
+or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and the run
+went red with eight branches nobody had accounted for. They are recorded rather than driven, because
+driving them means fabricating a whole `Cli`, and `packages/sh/test/imaged.test.ts` and
+`packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
+
 Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
 as gaps either: `test/host.test.ts` and `packages/sh/test/backings.test.ts` run every one of them against
 the real filesystem, which is a better oracle than a probe could be.

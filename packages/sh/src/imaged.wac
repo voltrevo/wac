@@ -33,8 +33,8 @@
 
 import { Core, Cli } from "../../platform/src/platform.wac";
 import { FileResult } from "../../platform/src/platform.wac";
-import { Fs, mountSystem } from "../../fs/src/fs.wac";
-import { Loaded, Written, read, write } from "../../fs/src/image.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../fs/src/image.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";
@@ -47,43 +47,24 @@ export i32 main(Core core, Cli cli) {
   }
   string path = string.fromBytes(cli.arg(0).wait());
 
-  Fs fs = Fs.inMemory(0);
-  FileResult existing = cli.readFile(path).wait();
-  if (existing.ok) {
-    Loaded got = read(existing.bytes, 0);
-    if (!got.ok) {
-      // Refusing beats starting empty: a session that silently began with nothing would then *save* over
-      // the image it could not read, which turns one unreadable file into no file at all.
-      core.warn("imaged: " + path + ": " + got.error);
-      return 1;
-    }
-    fs = got.fs;
-  }
-  // Anything else — a missing file, a directory, no permission — is a filesystem with nothing in it. Only
-  // the first is really expected, and the others show up on the way out, where the write says so.
-
-  // `/dev` and `/proc`, which cost nothing until something reads them — step 6 of design/0001. They
-  // are mounted here rather than inside `Fs.inMemory` because which of them a session gets is the
-  // caller's decision, the same way the backing is.
   Vec<string> argv = Vec.create();
   for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
-  mountSystem(fs, core.randomBytes, argv);
+  Booted booted = boot(core, cli, path, argv);
+  if (!booted.ok) {
+    core.warn("imaged: " + path + ": " + booted.error);
+    return 1;
+  }
+  Fs fs = booted.fs;
 
   Shell sh = Shell.onFs(core, cli, fs);
   sh.cwd = "/";
   sh.externalNames = programNames;
   i32 code = shellMain(core, cli, sh, 1);
 
-  // After the script, whatever happened to it.
-  Written w = write(sh.fs);
-  for (i32 i = 0; i < w.skipped.len(); i++) {
-    // Cannot happen for a filesystem this program built — it has no host mount — but a shell that grew a
-    // `mount` builtin would make it possible, and a silently smaller image is the failure worth naming.
-    core.warn("imaged: not saved: " + w.skipped[i]);
-  }
-  if (cli.writeFile(path, w.bytes).wait().fault != 0) {
-    core.warn("imaged: " + path + ": the session could not be saved");
-    return 1;
-  }
+  // After the script, whatever happened to it. `save` warns about anything it could not write, which
+  // is the whole reason it is a shared function rather than a `writeFile` call: losing a session in
+  // silence looks exactly like keeping it.
+  if (!save(core, cli, "imaged", path, sh.fs)) { return 1; }
+
   return code;
 }
