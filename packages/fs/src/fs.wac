@@ -423,6 +423,8 @@ export struct Fs {
     if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
     string name = baseOf(path);
     if (this.child(parent, name) >= 0) { return Change.of(FAULT_EXISTS(), "file exists"); }
+    // Making a directory is a change to the directory it goes in, exactly as writing a file is.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
     this.nodes.push(dirNode(this.user, this.now));
     this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);
     return Change.of(FAULT_NONE(), "");
@@ -436,6 +438,9 @@ export struct Fs {
     for (i32 i = 0; i < parts.len(); i++) {
       i32 next = this.child(at, parts.get(i));
       if (next < 0) {
+        // `-p` creates several, and each one is a change to the directory above it. Checked here rather
+        // than once at the top: the first few components may exist and be somebody else's.
+        if (!this.may(at, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
         this.nodes.push(dirNode(this.user, this.now));
         next = this.nodes.len() - 1;
         this.nodes.get(at).entries.set(parts.get(i), next);
@@ -583,6 +588,13 @@ export struct Fs {
       }
     }
 
+    // **Both directories change**, so both have to allow it — and neither check is about the file: a
+    // rename does not read or write a byte of it, which is why a file nobody may read can still be moved
+    // by whoever owns the directory it is in. Missing entirely until now, so a stranger could take a file
+    // out of a private directory without ever being able to read it.
+    if (!this.may(fromParent, 2) || !this.may(toParent, 2)) {
+      return Change.of(FAULT_DENIED(), "permission denied");
+    }
     this.nodes.get(fromParent).entries.remove(baseOf(from));
     this.nodes.get(toParent).entries.set(baseOf(to), node);
     return Change.of(FAULT_NONE(), "");

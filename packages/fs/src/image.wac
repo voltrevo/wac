@@ -100,6 +100,11 @@ export struct Loaded {
  * order `readDir` gives — so the same filesystem written twice gives the same bytes, which is what lets a
  * test compare images rather than only compare what they load into.
  */
+// **The system's view, and deliberately not a user's.** Everything below walks the node pool directly,
+// so it sees every file whatever its mode — which is right for the thing that persists the world and
+// wrong for anything a session can call. `packages/fs`'s permission checks are on the `Fs` methods; a
+// future applet that dumps an image has to go through those or be a privileged one, and saying so here
+// is cheaper than discovering it from a session that read somebody else's home (design/0001 step 4).
 export Written write(Fs fs) {
   Vec<i32> memory = Vec.create();
   Vec<string> skipped = Vec.create();

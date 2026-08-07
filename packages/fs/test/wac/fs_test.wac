@@ -219,3 +219,38 @@ export string test_changing_the_metadata_is_not_a_way_in() {
   t.isTrue(!fs.readFile("/secret").ok, "so it stays unreadable");
   return t.report();
 }
+
+export string test_every_way_of_changing_a_directory_is_checked() {
+  T t = T.create();
+  Fs fs = Fs.inMemory(1000);
+  fs.mkdir("/home", false);
+  fs.mkdir("/home/ada", false);
+  fs.writeFile("/home/ada/secret", "engine\n".toBytes());
+  fs.chmod("/home/ada", 448);                   // 0700
+  fs.chown("/home/ada", "ada");
+  fs.chmod("/home/ada/secret", 384);            // 0600
+  fs.chown("/home/ada/secret", "ada");
+  fs.mkdir("/tmp", false);
+  fs.chmod("/tmp", 511);                        // 0777, so the *other* end of a rename is allowed
+
+  // Writing and removing were checked when the enforcement went in. These four are the ones that were
+  // not, and every one of them changes what a directory holds — which is the property, rather than the
+  // list of functions that happened to be remembered.
+  fs.setUser("grace");
+  t.eqI32(fs.mkdir("/home/ada/mine", false).fault, FAULT_DENIED(), "mkdir in another user's directory");
+  t.eqI32(fs.mkdir("/home/ada/a/b", true).fault, FAULT_DENIED(), "and with -p, which creates several");
+  // A rename is not a read and not a write of the file — it is two directory changes — so a file this
+  // user could never open can still be *taken* unless the directories are checked.
+  t.eqI32(fs.rename("/home/ada/secret", "/tmp/taken").fault, FAULT_DENIED(), "moving it out of the directory");
+  // …and into it, which needs a file to move: `/tmp` is 0777, so this user may make one there. The
+  // "not there" answer comes first for a source that does not exist, which is what a real system says
+  // too — so the case has to be a rename that would otherwise work.
+  t.eqI32(fs.writeFile("/tmp/x", "mine\n".toBytes()).fault, FAULT_NONE(), "a file of her own in /tmp");
+  t.eqI32(fs.rename("/tmp/x", "/home/ada/planted").fault, FAULT_DENIED(), "cannot be moved into another user's directory");
+  t.isTrue(fs.stat("/home/ada/secret").exists, "so the file is still where its owner left it");
+
+  fs.setUser("ada");
+  t.eqI32(fs.mkdir("/home/ada/mine", false).fault, FAULT_NONE(), "its owner may make one");
+  t.eqI32(fs.rename("/home/ada/secret", "/home/ada/mine/secret").fault, FAULT_NONE(), "and move it about");
+  return t.report();
+}
