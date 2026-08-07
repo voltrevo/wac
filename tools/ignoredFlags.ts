@@ -58,6 +58,18 @@ const STDIN = "banana\napple\napple\ncherry\n";
 
 const ignored: string[] = [];
 const refused: string[] = [];
+const accepted: string[] = [];
+/** `acceptedFlags` from `packages/box/src/lib/flags.wac`: applet → the letters it ignores on purpose. */
+const deliberate = new Map<string, string>();
+{
+  const src = await Deno.readTextFile("packages/box/src/lib/flags.wac");
+  const body = src.split("export string acceptedFlags(string name) {")[1]?.split("\n  return \"\";")[0] ?? "";
+  for (const line of body.split("\n")) {
+    const value = line.match(/return "([^"]*)";/);
+    if (value === null) continue;
+    for (const n of line.matchAll(/name == "([a-z0-9]+)"/g)) deliberate.set(n[1], value[1]);
+  }
+}
 let checked = 0;
 for (const applet of APPLETS) {
   const flags = await help(applet);
@@ -83,7 +95,12 @@ for (const applet of APPLETS) {
     if (!realDoes) continue;
     const saidSomething = got.err.trim() !== "";
     const changed = got.out !== bare.out || got.code !== bare.code;
-    if (!changed && !saidSomething) ignored.push(`${applet} -${f}`);
+    if (!changed && !saidSomething) {
+      // `acceptedFlags` is a claim that ignoring this letter *is* the right answer — `cat -u`, which GNU
+      // documents as ignored, and `tar -c`, which names the only mode this tar has. Reading it here keeps
+      // the two categories apart: a deliberate agreement is not the silent gap this tool exists to count.
+      (deliberate.get(applet)?.includes(f) ? accepted : ignored).push(`${applet} -${f}`);
+    }
     else if (!changed && saidSomething) refused.push(`${applet} -${f}`);
   }
   await Deno.remove(dir, { recursive: true });
@@ -91,5 +108,7 @@ for (const applet of APPLETS) {
 console.log(`${checked} flags tried across ${APPLETS.length} applets; only those the real tool acts on are judged\n`);
 console.log(`ACCEPTED AND IGNORED (${ignored.length}) — changed nothing, said nothing:`);
 for (const i of ignored) console.log("  " + i);
+console.log(`\naccepted deliberately (${accepted.length}) — the real tool ignores these too:`);
+console.log("  " + accepted.join("  "));
 console.log(`\nrefused with a message (${refused.length}) — honest:`);
 console.log("  " + refused.join("  "));

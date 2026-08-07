@@ -2,12 +2,14 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, flagValue } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { slice } from "../lib/bytes.wac";
 import { atoi } from "../../../fmt/src/itoa.wac";
 
 export i32 cut(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   string d = flagValue(a, 'd');
   i32 delim = d == "" ? '\t' : d.toBytes()[0];
   i32 field = atoi(flagValue(a, 'f'));

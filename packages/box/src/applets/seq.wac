@@ -17,10 +17,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { atoi, itoa } from "../../../fmt/src/itoa.wac";
 import { Sink } from "../../../platform/src/stream.wac";
 
 export i32 seq(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // Read positionally, not from `a.rest`, and that is forced rather than preferred: to box's
   // argument parser a leading `-` is a flag, so `seq 10 -3 1` arrives as *two* arguments with
   // the step swallowed and its sign already discarded — `a.num` holds 3, and nothing anywhere

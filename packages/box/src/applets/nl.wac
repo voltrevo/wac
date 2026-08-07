@@ -4,11 +4,13 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 export i32 nl(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   Reader r = Reader.create(core, cli, a, 0);
   if (!r.ok) { return 1; }
 

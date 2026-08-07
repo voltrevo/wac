@@ -2,8 +2,10 @@
 
 import { Change, Cli, Core, FAULT_EXISTS } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 
 export i32 mkdir(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: " + a.name + " [-p] <dir>..."); return 2; }
   bool parents = has(a, 'p');
   i32 code = 0;

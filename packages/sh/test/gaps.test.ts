@@ -46,7 +46,11 @@ async function gnuOptions(tool: string): Promise<string[]> {
   if (r === null || !r.success) return [];
   const help = new TextDecoder().decode(r.stdout);
   const letters = new Set<string>();
-  for (const m of help.matchAll(/^\s+-([a-zA-Z])[,\s]/gm)) letters.add(m[1]);
+  // Both spellings on a line: GNU documents `-r, -R, --recursive` and `-c, -C, --complement`, and an
+  // anchor at the start of the line sees only the first — so this swept neither `rm -R` nor `tr -C`
+  // while claiming to sweep every option GNU has. Found from the other end, in wac-mono 0105, where the
+  // same omission put three real flags in the table that decides who gets blamed.
+  for (const m of help.matchAll(/(?:^\s+|,\s*)-([a-zA-Z])(?=[,\s=[]|$)/gm)) letters.add(m[1]);
   return [...letters];
 }
 

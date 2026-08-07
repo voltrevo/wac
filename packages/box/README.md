@@ -283,10 +283,38 @@ reasoning from first principles would have produced.
 **Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
 runs each applet with each flag and compares against the counterpart — judging only the flags the real
 tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing
-either. The answer was **64 accepted and ignored against 5 refused**; five are fixed and 59 are wac-mono
-0105. A flag accepted and ignored is the worst of the three answers this repo ranks: the caller asked for
-it by name and got no error. `base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n`
-printed the newline it exists to suppress.
+either. The first answer was **64 accepted and ignored against 5 refused**. A flag accepted and ignored is
+the worst of the three answers this repo ranks: the caller asked for it by name and got no error.
+`base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n` printed the newline it exists
+to suppress.
+
+**It is now 0 ignored against 7 refused**, over the same 375 flags and 43 applets (wac-mono 0105). Five
+were implemented; the rest are *refused by name* from
+`lib/flags.wac`, which is one table of what each applet reads and one of what the real tool documents,
+and picks between two sentences:
+
+```
+$ box sort -k2      sort: -k is not implemented
+$ box sort -Q       sort: invalid option -- 'Q'
+                    Try 'sort --help' for more information.
+```
+
+The distinction is the whole point. Calling `-k` invalid says the *command* is wrong when only this
+program is unfinished, and it sends a caller to re-read a manual that was right. Both tables are measured
+rather than remembered — `test/flags.test.ts` reads the installed tools' `--help` and the applets' own
+source — which caught three letters missing from the table on the side that produces exactly that wrong
+sentence: `tr -C`, `rm -R` and `split -C`, all of them the *second* spelling on a line GNU writes as
+`-r, -R, --recursive`.
+
+Two applets stay outside it, and both are facts about the real tools. `echo` is not a getopt program —
+`echo -x` prints `-x`, so a refusal there would invent an error GNU does not have. And a short
+`acceptedFlags` list holds letters where ignoring *is* GNU's behaviour: `cat -u`, documented as ignored,
+and `tar -c`, which names the only mode this tar has.
+
+**Three divergences are deliberate**, found by the same sweep and not gaps: `stat` prints a one-line
+summary where GNU prints a block, `diff` defaults to unified output where GNU defaults to normal, and
+`du` counts bytes where GNU counts blocks. Each is a different format for the same fact rather than a
+missing answer, which is why none of them is refused.
 
 **`tr` reads the set language**, which it did not: escapes (`\n`, `\t`, `\NNN`), ranges, the twelve
 character classes, `[=c=]` and `[x*n]`, plus `-c -d -s -t`. It took its operands *literally*, so

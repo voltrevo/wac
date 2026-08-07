@@ -17,10 +17,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Chunk, Input, openStream, nextChunk } from "../lib/input.wac";
 import { TrSet, complementOf, parseSet } from "../lib/trset.wac";
 
 export i32 tr(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   u8[] flags = a.flags.toBytes();
   for (i32 i = 0; i < flags.len(); i++) {
     if (!known(flags[i])) {

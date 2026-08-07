@@ -1,7 +1,8 @@
 # Fifty-nine applet flags are accepted and ignored
 
-**Status**: open
+**Status**: closed
 **Filed**: 2026-08-07
+**Closed**: 2026-08-07
 
 ## What
 
@@ -63,3 +64,36 @@ down.
 
 And two honest refusals that could name the gap better: `cut -c` and `paste -s` answer with a `usage:`
 line, which says the caller was wrong rather than that the tool is unfinished.
+
+## Closed: 0 ignored, over the same 375 flags and 43 applets
+
+Answer 2 for nearly all of them. `packages/box/src/lib/flags.wac` is the refusal in one place —
+`refuseFlags(core, a)` at the top of twenty-eight applets — and it rests on two tables, `implementedFlags`
+(what the applet reads) and `gnuFlags` (what the real tool documents), which pick between "not
+implemented" and "invalid option". `deno task flags:ignored` now prints **0 accepted and ignored** where
+it printed 59.
+
+**The tables are checked rather than trusted.** `packages/box/test/flags.test.ts` reads the installed
+tools' `--help` and the applets' own source, and it earned that on the first run: three letters were
+missing from `gnuFlags` — `tr -C`, `rm -R`, `split -C` — each of them the *second* spelling on a line GNU
+writes as `-r, -R, --recursive`, and each would have produced "invalid option" for a real flag, which is
+the one sentence this issue exists to prevent. `rm -R` turned out to be missing from the applet too, and
+is an alias now rather than a refusal.
+
+The same blind spot was in `packages/sh/test/gaps.test.ts`, whose sweep is the same idea a package over:
+its regex was anchored at the start of the line, so it had never asked about `tr -C` or `rm -R` while
+claiming to ask about every option GNU has. Widened, and it still passes.
+
+**Three exceptions, each a fact about the real tool rather than about us:**
+
+- `echo` is not in the sweep at all. It is not a getopt program — `echo -x` prints `-x` — so refusing
+  there would invent an error GNU does not have, which is the same blaming-the-caller failure as calling
+  `-k` invalid.
+- `acceptedFlags` holds `cat -u`, which GNU documents as ignored, and `tar -c`, which names the only mode
+  this tar has. `flags:ignored` reads that list and reports them apart from the silent ones.
+- `cut -c` and `paste -s` answered with a `usage:` line, which says the caller was wrong. Both are in the
+  table now and say which side is unfinished.
+
+What is left is ordinary work rather than an issue: `sort -k`, `uniq -f` and `wc -m` are still not
+implemented, and now say so. The three deliberate divergences — `stat`, `diff`, `du` — are written into
+`packages/box/README.md` where the sweep that found them is described.

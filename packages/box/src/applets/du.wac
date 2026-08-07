@@ -7,6 +7,7 @@
 
 import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
 
 /** As in `find`: a bound rather than a cycle check, because `stat` cannot see a symlink. */
@@ -16,6 +17,7 @@ i32 MAX_DEPTH() { return 64; }
 struct Sum { i64 bytes; bool complete; }
 
 export i32 du(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
   Stat st = cli.stat(root).wait();
   if (!st.exists) { core.warn(a.name + ": " + root + ": not found"); return 1; }

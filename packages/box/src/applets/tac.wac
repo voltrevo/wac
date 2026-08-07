@@ -2,10 +2,12 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Input, operandCount, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
 
 export i32 tac(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   // **Each file reversed, in the order they were named** — not the concatenation reversed. `tac a b`
   // prints `a` backwards and then `b` backwards, which is what the real one does and is not what
   // "reverse the input" would give you. Measured against it: reversing the join puts `b`'s lines first,

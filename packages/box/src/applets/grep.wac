@@ -5,6 +5,7 @@
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -13,6 +14,7 @@ import { compileBasic, compileBasicIgnoreCase } from "../../../regex/src/basic.w
 import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 
 export i32 grep(Core core, Cli cli, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: " + a.name + " [-cEinqv] <pattern> [file]"); return 2; }
   // **Basic unless `-E`**, which is what `grep` is. This compiled every pattern as *extended*, so
   // `grep 'a|b'` matched a-or-b where GNU matches the three characters `a|b` — a wrong answer with
