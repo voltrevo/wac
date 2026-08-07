@@ -78,7 +78,8 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
     i32 n = 0;
     i32 here = 0;
     Lines s = Lines.create();
-    Feed fed = Feed.fromStdin(cli);
+    // The feed the opener chose — see `lib/input.wac`; not the process's own input.
+    Feed fed = in.fed;
     while (true) {
       Line l = nextLine(s, fed);
       if (!l.ok) { break; }

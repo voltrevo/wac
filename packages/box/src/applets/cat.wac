@@ -53,10 +53,12 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   Sink out = Sink.create(cli);
   for (i32 f = 0; f < many; f++) {
     Input in = openStream(core, cli, fs, a, f);
-    Feed fed = in.fed;
     if (!in.ok) { out.flush(); return 1; }
     Lines s = Lines.create();
-    Feed fed = Feed.fromStdin(cli);
+    // **The feed the opener chose**, not the process's own input. `openStream` redirects standard input
+    // only when the path is on the host; anywhere else it hands back a feed over the bytes the
+    // filesystem gave it, and an applet that built its own read an empty stdin instead (wac-mono 0109).
+    Feed fed = in.fed;
     while (true) {
       Line l = nextLine(s, fed);
       if (!l.ok) { break; }

@@ -44,7 +44,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   if (bytes) {
     // Both byte forms have to reach the end — the last N, or everything after the Nth — so both read
     // the input through. Only the amount *held* differs, and for the plus form that is nothing.
-    u8[] all = fed0(cli).rest();
+    u8[] all = in.fed.rest();
     i32 from = fromLine ? (want > 0 ? want - 1 : 0) : all.len() - want;
     if (from < 0) { from = 0; }
     if (from > all.len()) { from = all.len(); }
@@ -57,7 +57,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
     i32 skip = want > 0 ? want - 1 : 0;
     i32 at = 0;
     Lines from = Lines.create();
-    Feed feed = Feed.fromStdin(cli);
+    Feed feed = in.fed;
     while (true) {
       Line l = nextLine(from, feed);
       if (!l.ok) { break; }
@@ -72,7 +72,7 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   bool[] terminated = bool[want](fill: true);
   i32 seen = 0;
   Lines s = Lines.create();
-  Feed fed = Feed.fromStdin(cli);
+  Feed fed = in.fed;
   while (true) {
     Line l = nextLine(s, fed);
     if (!l.ok) { break; }
@@ -94,5 +94,3 @@ export i32 tail(Core core, Cli cli, Fs fs, Args a) {
   return 0;
 }
 
-/** Standard input as a `Feed`, named so the byte path reads the same as the line paths above. */
-Feed fed0(Cli cli) { return Feed.fromStdin(cli); }
