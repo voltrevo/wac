@@ -123,6 +123,12 @@ What is still by hand: everything a bootstrapping client does not exercise — t
 against C tor, streams both ways, and our client inside a chutney of real tors. Those rows can still
 rot without anything going red.
 
+The streams row has had one attempt at automation and it did not land — see *An attempt at the streams
+row* in design 0002. The attempt is worth knowing about before the next one: tor's own log shows an
+exit answering `BEGIN` with `CONNECTED` and then ending the stream with zero bytes carried, and it is
+not established whether that exit was ours. **This row's evidence is a hand run from a date, and one
+observation now sits beside it that nobody has explained.**
+
 ## Regressions this table is meant to catch
 
 A row moving from **live** or **pinned** back to **ours only** is the event worth noticing, and it can
