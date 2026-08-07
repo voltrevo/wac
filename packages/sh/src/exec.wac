@@ -28,7 +28,7 @@ import { Change, Child, Cli, Core, faultWords, FileResult,
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
 import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeline, Redir,
          RedirKind, Script, Simple, Word, parse } from "./parse.wac";
-import { Output, names, run } from "./program.wac";
+import { Output, names, optionRefusal, run } from "./program.wac";
 // Not through `program.wac`: wac has no re-export, and the one implementation lives in `fmt`.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "./path.wac";
@@ -415,6 +415,13 @@ void runAndOr(Shell sh, AndOr list) {
  * unchanged and still correct.
  */
 void runPipeline(Shell sh, Pipeline pipeline) {
+  // **Before any stage runs**, and for the whole pipeline rather than per stage. `N>&M` is parsed and
+  // not implemented, and refusing it inside a stage left the *pipeline's* status at whatever the last
+  // stage returned — `echo hi 2>&1 | cat` printed the refusal and exited 0, which is the same "said no
+  // and reported success" this file had in `writeTo`. One stage refusing means the pipeline refused.
+  for (i32 i = 0; i < pipeline.stages.len(); i++) {
+    if (refuseDup(sh, pipeline.stages.get(i).simple.redirs)) { return; }
+  }
   // `streamPipeline` answers false for a world that cannot spawn at all, which is not a failure of
   // the pipeline: the sequential path below runs the same stages in process, which is what a browser
   // tab did before a page could spawn. Nothing has started when it answers that, so falling through
@@ -803,6 +810,7 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
   i32 savedPos = sh.stdinPos;
   bool savedHeld = sh.heldInput;
   bool ownInput = stdin.len() > 0;
+  if (refuseDup(sh, cmd.redirs)) { return u8[0](); }
   if (ownInput) {
     sh.stdinBytes = stdin;
     sh.stdinPos = 0;
@@ -1004,6 +1012,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
   // `while … done < file` sees the file rather than an empty stage.
   u8[] input = stdin;
   bool hasInput = stdin.len() > 0;
+  if (refuseDup(sh, cmd.redirs)) { return u8[0](); }
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
@@ -1094,6 +1103,33 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
     return u8[0]();
   }
   return out;
+}
+
+/**
+ * Report an `N>&M`, which is parsed and not implemented, and say so before anything runs.
+ *
+ * True when there was one. It is refused *before* the command rather than after because the command's
+ * output would otherwise go somewhere the caller did not ask for — the same mistake `writeTo` made by
+ * answering true for a descriptor it could not write.
+ *
+ * `2>&1` used to be a **syntax error**, which told the caller they had written something invalid. They
+ * had not: the gap is ours, `exec.wac` said as much in a comment about `2>`, and only the parser
+ * disagreed. Recognising the form is what lets this name it.
+ */
+bool refuseDup(Shell sh, Vec<Redir> redirs) {
+  for (i32 i = 0; i < redirs.len(); i++) {
+    Redir r = redirs.get(i);
+    match (r.kind) {
+      case Dup: {
+        sh.err(("sh: " + itoa(r.fd) + ">&" + joinWord(sh, r.target)
+                + " is not implemented\n").toBytes());
+        sh.status = 2;
+        return true;
+      }
+      else: {}
+    }
+  }
+  return false;
 }
 
 /** Write a redirection's target. False when it failed, which is already reported. */
@@ -1402,9 +1438,22 @@ Output rm(Shell sh, Vec<string> argv) {
 Output ls(Shell sh, Vec<string> argv) {
   Vec<string> paths = Vec.create();
   bool all = false;
+  bool optionsOver = false;
   for (i32 i = 1; i < argv.len(); i++) {
     string a = argv.get(i);
-    if (a == "-a") { all = true; } else { paths.push(a); }
+    if (!optionsOver && a == "--") { optionsOver = true; continue; }
+    if (optionsOver) { paths.push(a); continue; }
+    if (a == "-a") { all = true; continue; }
+    // **An option is not a filename.** `ls -l` used to answer "cannot access '-l': No such file or
+    // directory", which blames the caller for writing a real flag — the same mistake `cat -n f` made
+    // before the programs grew `optionRefusal`, and the one `packages/box`'s `ls` already avoids by
+    // refusing every option by name. Whose gap it is decides which of the two sentences it gets.
+    u8[] b = a.toBytes();
+    if (b.len() >= 2 && b[0] == '-') {
+      u8[] one = u8[1](fill: b[1]);
+      return Output.fail(optionRefusal("ls", string.fromBytes(one)).toBytes(), 2);
+    }
+    paths.push(a);
   }
   if (paths.len() == 0) { paths.push("."); }
 

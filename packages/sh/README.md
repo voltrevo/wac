@@ -449,6 +449,19 @@ expanding to something plausible is the failure mode this package exists to avoi
 seam, so there is nothing of the error stream to redirect — and the message names the gap rather than
 the command: this shell is unfinished here, and the caller who wrote `2>err` was not wrong.
 
+Saying so was the *only* thing it did right. `echo hi 2>/dev/null` printed that message and then
+**swallowed `hi` and exited 0**: `writeTo` answered true for a descriptor it cannot write, which told
+both of its callers that the output had gone to a file, so it went nowhere. A comment directly above it
+read "said, not silently skipped" while the code silently skipped it. It answers false now, the output
+goes where it would have gone, and `test/gaps.test.ts` fails if it stops doing so.
+
+**`N>&M` is parsed and not implemented**, which is a deliberate pair. It used to be a *syntax error* —
+the lexer made `2>&1` into three tokens and the redirection parser refused a target that was not a word
+— and a syntax error tells the caller they wrote something invalid, which `2>&1` is not. The parser
+recognises the form so the refusal can name the descriptors, and a refused stage fails the whole
+pipeline: `echo hi 2>&1 | cat` printed the refusal and exited 0, because the status came from `cat`
+succeeding at doing nothing.
+
 **Standard error arrives when it happened**, interleaved with standard output as bash's is, which
 is what `2>&1` has to show. It used to be collected and flushed at the end through `Core.warn` —
 the world had no byte-level error stream — so `echo one; nope; echo two` printed the complaint

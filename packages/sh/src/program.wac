@@ -417,6 +417,10 @@ bool gnuHas(string name, i32 letter) {
   else if (name == "tr") { letters = "cdst"; }
   else if (name == "seq") { letters = "fsw"; }
   else if (name == "cat") { letters = "AbeEnstTuv"; }
+  // `ls` is a *builtin* here rather than one of the programs above, because a shell needs it before it
+  // needs a toolbox — but its refusals are the same question, so it uses the same table. Read out of
+  // `ls --help`, like the rest.
+  else if (name == "ls") { letters = "1aAbBcCdDfFgGhHiIklLmnNopqQrRsStTuUvwxXZ"; }
   u8[] b = letters.toBytes();
   for (i32 i = 0; i < b.len(); i++) {
     if (b[i] == letter) { return true; }
@@ -425,7 +429,7 @@ bool gnuHas(string name, i32 letter) {
 }
 
 /** What to say about an option this program does not take, and whose gap it is. */
-string optionRefusal(string name, string letter) {
+export string optionRefusal(string name, string letter) {
   u8[] b = letter.toBytes();
   if (b.len() == 1 && gnuHas(name, b[0])) {
     // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
