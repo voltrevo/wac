@@ -492,11 +492,30 @@ i32 indexOfLetter(string s, string letter) {
   return -1;
 }
 
-/** `head`/`tail`'s arguments: how many lines, which files, and the first option refused. */
+/** `head`/`tail`'s arguments: how many lines, which files, and the first thing refused. */
 struct Counted {
   i32 n;
   Vec<string> operands;
+  /** The option letter this program does not take, if there was one. */
   string bad;
+  /**
+   * `""`, `"+"` or `"-"`: which of GNU's three forms the count was written in.
+   *
+   * The sign is not part of the number, it selects a different question — and only one direction means
+   * anything to each tool. `head -n -2` is "all but the last two" and `head -n +2` is plain; `tail -n +2`
+   * is "from line two" and `tail -n -2` is plain. Measured against GNU rather than remembered, because
+   * the asymmetry is not guessable.
+   */
+  string sign;
+  /**
+   * The count that was not a count, if there was one — `head -n x`.
+   *
+   * A separate field from `bad` because they are separate refusals with separate messages: a letter is
+   * "this program has no such option" and this is "that is not a number". It used to be neither: `atoi`
+   * answered 0 for `x`, so `head -n x` printed **nothing at all** and exited 0, which is the shape of
+   * wrong answer this package keeps finding — a mistake in the command read as an empty result.
+   */
+  string badNumber;
 }
 
 /**
@@ -509,21 +528,54 @@ struct Counted {
  */
 Counted countOf(Vec<string> argv, i32 fallback) {
   i32 n = fallback;
+  string sign = "";
   Vec<string> operands = Vec.create();
   bool more = true;
   for (i32 i = 1; i < argv.len(); i++) {
     string a = argv.get(i);
     if (more && a == "--") { more = false; continue; }
     if (!more) { operands.push(a); continue; }
-    if (a == "-n" && i + 1 < argv.len()) { n = atoi(argv.get(i + 1)); i++; continue; }
+    if (a == "-n" && i + 1 < argv.len()) {
+      string v = argv.get(i + 1);
+      if (!isNumber(v)) { return Counted(n, operands, "", sign, v); }
+      sign = signOf(v);
+      n = magnitude(v);
+      i++;
+      continue;
+    }
     u8[] b = a.toBytes();
     if (b.len() < 2 || b[0] != '-') { operands.push(a); continue; }
-    // `-2` reads as -2, so the count is its negation; `-q` is an option this does not have.
-    if (isNumber(a)) { n = -atoi(a); continue; }
+    // **`-n2`, with the value attached.** GNU takes it, `packages/box` takes it and says so in its
+    // README — "a value attaches or not: head -n2 / -2" — and this refused it with "head: -n is not
+    // implemented", which was false twice over: `-n` is implemented, and the refusal blamed the caller
+    // for a form both of the tools it is measured against accept.
+    if (b.len() > 2 && b[1] == 'n') {
+      string v = a.slice(2, a.len());
+      if (!isNumber(v)) { return Counted(n, operands, "", sign, v); }
+      sign = signOf(v);
+      n = magnitude(v);
+      continue;
+    }
+    // `-2` reads as -2, so the count is its negation — and it is the *plain* form, not the minus one:
+    // `head -2` is the first two lines and `head -n -2` is all but the last two.
+    if (isNumber(a)) { n = -atoi(a); sign = ""; continue; }
     u8[] one = u8[1](fill: b[1]);
-    return Counted(n, operands, string.fromBytes(one));
+    return Counted(n, operands, string.fromBytes(one), sign, "");
   }
-  return Counted(n, operands, "");
+  return Counted(n, operands, "", sign, "");
+}
+
+/** Which of GNU's three forms a count was written in. */
+string signOf(string v) {
+  if (v.len() == 0) { return ""; }
+  string first = v.slice(0, 1);
+  return first == "+" || first == "-" ? first : "";
+}
+
+/** A count without its sign, which is what every path below counts with. */
+i32 magnitude(string v) {
+  i32 n = atoi(v);
+  return n < 0 ? -n : n;
 }
 
 /**
@@ -878,18 +930,35 @@ i32 tail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
 i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink errs, bool front) {
   string who = front ? "head" : "tail";
   Counted c = countOf(argv, 10);
+  string sign = c.sign;
   if (c.bad != "") {
     errs.bytes(optionRefusal(who, c.bad).toBytes());
     errs.flush();
     sink.flush();
     return 1;
   }
+  if (c.badNumber != "") {
+    // GNU's own sentence. Plain apostrophes rather than the typographic quotes it uses in a UTF-8
+    // locale: `LC_ALL=C` is what this repo compares in, and the rest of these messages match it.
+    errs.bytes((who + ": invalid number of lines: '" + c.badNumber + "'\n").toBytes());
+    errs.flush();
+    sink.flush();
+    return 1;
+  }
+  // **The sign selects a different question, and only in one direction per tool.** `head -n -2` is
+  // "all but the last two" and `tail -n +2` is "from line two"; the other two signed forms are plain.
+  // This used to read `+2` as 2 and `-2` as a negative count that printed nothing — so `tail -n +2`
+  // answered the *last* two lines, which is a different answer rather than a missing one.
+  bool allButLast = front && sign == "-";
+  bool fromLine = !front && sign == "+";
 
   // Standard input and nothing else — which is what a pipeline stage is — takes the streaming path.
   // `head` stops reading as soon as it has its lines, and that is what stops the stage feeding it;
   // `tail` holds `n` lines rather than the whole input. With an operand the file is read whole, which
   // is bounded by the file and is not what 0061 was reported against.
   if (c.operands.len() == 0) {
+    if (allButLast) { return headAllButLastStream(fed, sink, c.n); }
+    if (fromLine) { return tailFromLineStream(fed, sink, c.n); }
     return front ? headStream(fed, sink, c.n) : tailStream(fed, sink, c.n);
   }
 
@@ -910,7 +979,9 @@ i32 headOrTail(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink
       if (printed) { out.push(10); }
       out.pushAll(("==> " + r.name + " <==\n").toBytes());
     }
-    out.pushAll(front ? firstLines(r.bytes, c.n) : lastLines(r.bytes, c.n));
+    if (allButLast) { out.pushAll(allButLastLines(r.bytes, c.n)); }
+    else if (fromLine) { out.pushAll(linesFrom(r.bytes, c.n)); }
+    else { out.pushAll(front ? firstLines(r.bytes, c.n) : lastLines(r.bytes, c.n)); }
     printed = true;
   }
   { sink.bytes(out.take()); errs.bytes(err.take()); sink.flush(); errs.flush(); return status; }
@@ -968,6 +1039,83 @@ i32 tailStream(Feed fed, Sink sink, i32 n) {
 }
 
 /** The last `n` lines, each with its newline. */
+/**
+ * Every line but the last `n` — `head -n -2`.
+ *
+ * Delayed rather than counted: nothing can be emitted until `n` more lines have arrived behind it, so a
+ * ring of `n` lines is the whole of the state. Asking for more than the file has prints nothing, which is
+ * what GNU does with `head -n -9` on five lines.
+ */
+i32 headAllButLastStream(Feed fed, Sink sink, i32 n) {
+  if (n <= 0) {
+    // `head -n -0` is every line: nothing is being held back.
+    return headStream(fed, sink, 0x7FFFFFFF);
+  }
+  u8[][] ring = u8[][n](fill: u8[0]());
+  u8[] ended = u8[n](fill: 0);
+  i32 count = 0;
+  Lines lines = Lines.create();
+  while (true) {
+    Line l = nextLine(lines, fed);
+    if (!l.ok) { break; }
+    if (count >= n) {
+      i32 at = (count - n) % n;
+      if (!emitTo(sink, ring[at], ended[at] != 0)) { return 0; }
+    }
+    ring[count % n] = l.bytes;
+    ended[count % n] = l.nl ? 1 : 0;
+    count++;
+  }
+  sink.flush();
+  return 0;
+}
+
+/**
+ * From line `n` onwards, counting from one — `tail -n +2`.
+ *
+ * Streams: unlike every other `tail`, this one holds nothing at all, because what it must not print is
+ * at the *start*. `+0` and `+1` are both the whole input, which is what GNU does.
+ */
+i32 tailFromLineStream(Feed fed, Sink sink, i32 n) {
+  i32 skip = n > 0 ? n - 1 : 0;
+  i32 seen = 0;
+  Lines lines = Lines.create();
+  while (true) {
+    Line l = nextLine(lines, fed);
+    if (!l.ok) { break; }
+    seen++;
+    if (seen <= skip) { continue; }
+    if (!emitTo(sink, l.bytes, l.nl)) { return 0; }
+  }
+  sink.flush();
+  return 0;
+}
+
+/** Every line but the last `n`, from bytes already in hand. */
+u8[] allButLastLines(u8[] data, i32 n) {
+  Vec<u8[]> lines = splitLines(data);
+  i32 upTo = lines.len() - n;
+  if (upTo < 0) { upTo = 0; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < upTo; i++) {
+    out.pushAll(lines.get(i));
+    out.push(10);
+  }
+  return out.take();
+}
+
+/** From line `n` onwards, counting from one, from bytes already in hand. */
+u8[] linesFrom(u8[] data, i32 n) {
+  Vec<u8[]> lines = splitLines(data);
+  i32 from = n > 0 ? n - 1 : 0;
+  Buf out = Buf.create();
+  for (i32 i = from; i < lines.len(); i++) {
+    out.pushAll(lines.get(i));
+    out.push(10);
+  }
+  return out.take();
+}
+
 u8[] lastLines(u8[] data, i32 n) {
   Vec<u8[]> lines = splitLines(data);
   Buf out = Buf.create();

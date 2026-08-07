@@ -289,6 +289,21 @@ makes the difference: a letter listed there consumes its value, and a letter not
 stays a boolean, which is what keeps `grep -n pattern` from swallowing its pattern and
 `sort -n` from swallowing a filename.
 
+**A value that has to be a number is checked, and its sign is read.** `takesValue` says a letter
+consumes its value; it does not say what the value has to *be*, so a value that was not digits was
+consumed and then ignored — `head -n x` printed the default ten lines and exited 0, turning a mistake in
+the command into an answer. `takesNumber` is the second table, and a value that fails it comes back as
+`Args.badNum` with GNU's own sentence, which differs per tool: "invalid number of lines", "…of columns"
+for `fold`, "invalid line count" for `shuf`, and `strings`, being binutils, "invalid integer argument"
+with no quotes at all. Apostrophes rather than typographic quotes, because `LC_ALL=C` is what this repo
+compares in.
+
+The sign was dropped the same way. It is not part of the number — it selects a different question, and
+only in one direction per tool: **`head -n -2` is all but the last two** and **`tail -n +2` is from line
+two**, while `head -n +2` and `tail -n -2` are plain. Both are implemented now and both stream: `head`
+holds the last N lines back, `tail` holds nothing at all. Before, `+2` read as 2, so `tail -n +2`
+answered the *last* two — a different answer rather than a missing one, which is worse.
+
 Two answers changed with it, both found by the same sweep. `sort -n` over lines with equal
 numeric keys is byte order, not input order — GNU's *last-resort comparison*, which `-u`
 alone skips, since uniqueness is the key's and `1` and `01` are one line. And `shuf -n 0`

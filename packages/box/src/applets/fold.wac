@@ -1,13 +1,14 @@
 // Lines wrapped at a width, eighty by default: `fold -w 40`, or `fold -40`.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
 import { Reader } from "../lib/input.wac";
 import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 import { slice } from "../lib/bytes.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 
 export i32 fold(Core core, Cli cli, Args a) {
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 width = a.hasNum ? a.num : 80;
   // **A width of zero never finishes.** `end = start + 0` leaves `start` where it was, so the inner loop
   // emits an empty line for ever — on a pipe that is an out-of-memory kill rather than a hang, which is

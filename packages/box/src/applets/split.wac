@@ -5,7 +5,7 @@
 // `openOutput` nothing had exercised.
 
 import { Change, Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
 import { Input, openStream } from "../lib/input.wac";
 import { Feed, Line, Lines, emit, nextLine } from "../../../platform/src/stream.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -15,6 +15,7 @@ export i32 split(Core core, Cli cli, Args a) {
     core.warn("usage: " + a.name + " [-<lines>] <file> [prefix]");
     return 2;
   }
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 per = a.hasNum ? a.num : 1000;
   // Zero lines a piece is not a small piece, it is no piece: the counter never reaches the limit and every
   // line lands in the first file, or — depending where the check goes — a new file is opened per line

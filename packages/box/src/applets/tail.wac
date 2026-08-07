@@ -1,17 +1,25 @@
-// The last N lines, ten by default.
+// The last N lines, ten by default — or, with `-n +N`, everything from line N.
 //
 // It has to *reach* the end but not *hold* it: a ring of N lines, overwritten as they go
 // by, costs what the flag asks for rather than what the input is. `tail -10` of a
 // gigabyte holds ten lines.
+//
+// **The plus form holds nothing at all**, because what it must not print is at the start. It is a real
+// GNU spelling and it used to be read as a plain count, so `tail -n +2` answered the last two lines
+// instead of all but the first — a different answer rather than a missing one, which is the shape of
+// mistake this repo keeps finding.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 
 export i32 tail(Core core, Cli cli, Args a) {
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   i32 want = a.hasNum ? a.num : 10;
-  if (want <= 0) { return 0; }
+  // `-n +N` counts from the front. `+0` and `+1` are both the whole input, as GNU's are.
+  bool fromLine = a.numSign == "+";
+  if (want <= 0 && !fromLine) { return 0; }
 
   // A banner over each file once there is more than one, as `head` does and the real one does.
   i32 files = operandCount(a, 0);
@@ -24,6 +32,21 @@ export i32 tail(Core core, Cli cli, Args a) {
   if (banner) {
     if (f > 0) { out.line(""); }
     out.line("==> " + in.label + " <==");
+  }
+
+  if (fromLine) {
+    i32 skip = want > 0 ? want - 1 : 0;
+    i32 at = 0;
+    Lines from = Lines.create();
+    Feed feed = Feed.fromStdin(cli);
+    while (true) {
+      Line l = nextLine(from, feed);
+      if (!l.ok) { break; }
+      at++;
+      if (at <= skip) { continue; }
+      if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return 0; }
+    }
+    continue;
   }
 
   u8[][] ring = u8[][want](fill: u8[0]());

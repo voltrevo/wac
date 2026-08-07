@@ -794,6 +794,45 @@ Deno.test("the applets that read several files read all of them", async () => {
     assertEquals(missing.code, 1, `a missing operand should fail, got ${missing.code}`);
     assertEquals(missing.err.includes("nope.txt"), true, missing.err);
 
+    // **A numeric option whose value is not a number**, and the signed forms, against the real tools.
+    //
+    // Every one of these used to be swallowed: `args.wac` consumed a value it could not read as digits
+    // and left `hasNum` false, so `head -n x` printed the *default* ten lines and exited 0 — a mistake
+    // in the command coming back as an answer. And the sign was dropped, so `tail -n +2` gave the last
+    // two lines rather than everything from the second: a different answer, not a missing one.
+    const lc = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
+    const sysBoth = (cmd: string, args: string[]) => {
+      const r = new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped", env: lc, clearEnv: true })
+        .outputSync();
+      const d = new TextDecoder();
+      return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
+    };
+    const counted = `${dir}/counted.txt`;
+    await Deno.writeTextFile(counted, "1\n2\n3\n4\n5\n");
+    for (
+      const argv of [
+        ["head", "-n", "x"], ["tail", "-n", "x"], ["head", "-nx"],
+        ["fold", "-w", "x"], ["split", "-l", "x"], ["shuf", "-n", "x"], ["strings", "-n", "x"],
+        ["head", "-n", "-2"], ["head", "-n", "+2"], ["head", "-n", "-9"], ["head", "-n", "-0"],
+        ["tail", "-n", "+2"], ["tail", "-n", "-2"], ["tail", "-n", "+9"], ["tail", "-n", "+0"],
+        ["head", "-n2"], ["tail", "-n2"], ["head", "-n", "2"], ["tail", "-n", "2"],
+      ]
+    ) {
+      const args = [...argv, counted];
+      const real = sysBoth(argv[0], args.slice(1));
+      const got = await runner.run(args);
+      assertEquals(got.out, real.out, `box ${args.join(" ")}: output`);
+      assertEquals(got.code, real.code, `box ${args.join(" ")}: status`);
+      // The wording too, where the real tool said anything: these are our messages claiming to be its.
+      //
+      // Its own name first: a tool found on `PATH` is exec'd with the resolved path as argv[0] and puts
+      // that in its diagnostics, so GNU says `/usr/bin/head:` where a program invoked as `head` says
+      // `head:`. That prefix is the harness's doing rather than a difference in the message.
+      const named = real.err.replace(new RegExp(`^\\S*/${argv[0]}: `, "gm"), `${argv[0]}: `);
+      if (real.err !== "") assertEquals(got.err, named, `box ${args.join(" ")}: message`);
+    }
+    // No cleanup needed: the only `split` here is one that refuses, so it writes nothing.
+
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
     // either, and the oracle is again the shape. `packages/fs/test/image.test.ts` is where the format is
     // checked; what matters at this end is that the applet is wired up, names its operands, and *fails*

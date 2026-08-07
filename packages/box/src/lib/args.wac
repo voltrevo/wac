@@ -28,6 +28,22 @@ export struct Args {
    * every applet spelled its default as `a.num == 0 ? 10 : a.num`, and there was no way to say zero.
    */
   bool hasNum;
+  /**
+   * `""`, `"+"` or `"-"`: which of GNU's three forms a numeric value was written in.
+   *
+   * The sign is not part of the number — it selects a different question, and only for `head` and
+   * `tail`, in opposite directions. `num` is the magnitude either way.
+   */
+  string numSign;
+  /**
+   * The value given for a numeric option that is not a number — `head -n x`.
+   *
+   * Empty when there was none. It used to be nothing at all: a value that failed `allDigits` was
+   * consumed and then *ignored*, so `head -n x` fell back to the default and printed ten lines with a
+   * status of 0. A mistake in the command came back as an answer, which is the worst of the three
+   * things it could have done.
+   */
+  string badNum;
   string[] rest;
   /**
    * The value of each flag that took one, as `letter` then the value: `-d,` and `-d ,` both give
@@ -94,6 +110,8 @@ export Args parseList(string[] argv, i32 first, string name) {
   string flags = "";
   i32 num = 0;
   bool hasNum = false;
+  string numSign = "";
+  string badNum = "";
   i32 i = first;
   bool optionsOver = false;
   while (i < argv.len()) {
@@ -121,7 +139,13 @@ export Args parseList(string[] argv, i32 first, string name) {
           string attached = string.fromBytes(slice(b, k + 1, b.len()));
           pairs[np] = valueOf(letter, attached);
           np++;
-          if (allDigits(attached)) { num = atoi(attached); hasNum = true; }
+          if (takesNumber(name, letter)) {
+            if (numeric(attached)) {
+              numSign = signOf(attached);
+              num = magnitude(attached);
+              hasNum = true;
+            } else { badNum = attached; }
+          } else if (allDigits(attached)) { num = atoi(attached); hasNum = true; }
           k = b.len();
           continue;
         }
@@ -131,7 +155,13 @@ export Args parseList(string[] argv, i32 first, string name) {
           string detached = argv[i + 1];
           pairs[np] = valueOf(letter, detached);
           np++;
-          if (allDigits(detached)) { num = atoi(detached); hasNum = true; }
+          if (takesNumber(name, letter)) {
+            if (numeric(detached)) {
+              numSign = signOf(detached);
+              num = magnitude(detached);
+              hasNum = true;
+            } else { badNum = detached; }
+          } else if (allDigits(detached)) { num = atoi(detached); hasNum = true; }
           i++;
         }
         k++;
@@ -144,7 +174,7 @@ export Args parseList(string[] argv, i32 first, string name) {
   for (i32 k = 0; k < at; k++) { rest[k] = scratch[k]; }
   string[] values = string[np](fill: "");
   for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
-  return Args(name, flags, num, hasNum, rest, values, argv);
+  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv);
 }
 
 /**
@@ -162,6 +192,45 @@ export Args parseList(string[] argv, i32 first, string name) {
  * GNU's spellings are what these are: `cut -d, -f2` and `cut -d , -f 2` are the same command, and
  * `fold -w 40` is how `fold` is documented — `-40` works here too, and works nowhere else.
  */
+/**
+ * Whether this option's value is a *number*, as opposed to a delimiter or a field list.
+ *
+ * Separate from `takesValue` because the two ask different things: `cut -d` takes a value and a comma is
+ * a perfectly good one, while `head -n` takes a value that has to be a number and `x` is a mistake. The
+ * parser could not tell them apart, so it quietly ignored every value it could not read as digits.
+ */
+bool takesNumber(string name, i32 letter) {
+  if (name == "head" || name == "tail" || name == "shuf" || name == "strings") { return letter == 'n'; }
+  if (name == "fold") { return letter == 'w'; }
+  if (name == "split") { return letter == 'l'; }
+  return false;
+}
+
+/** A number in any of GNU's three forms: `2`, `+2`, `-2`. */
+bool numeric(string v) {
+  u8[] b = v.toBytes();
+  i32 i = 0;
+  if (i < b.len() && (b[i] == '+' || b[i] == '-')) { i++; }
+  if (i >= b.len()) { return false; }
+  for (; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return false; }
+  }
+  return true;
+}
+
+/** Which of GNU's three forms a count was written in. */
+string signOf(string v) {
+  if (v.len() == 0) { return ""; }
+  string first = v.slice(0, 1);
+  return first == "+" || first == "-" ? first : "";
+}
+
+/** A count without its sign. */
+i32 magnitude(string v) {
+  i32 n = atoi(v);
+  return n < 0 ? -n : n;
+}
+
 bool takesValue(string name, i32 letter) {
   if (name == "head" || name == "tail" || name == "shuf" || name == "strings") {
     return letter == 'n';
@@ -170,6 +239,26 @@ bool takesValue(string name, i32 letter) {
   if (name == "fold") { return letter == 'w'; }
   if (name == "split") { return letter == 'l'; }
   return false;
+}
+
+/**
+ * GNU's sentence for a numeric option's value that is not a number.
+ *
+ * Each tool words it differently and the differences are not guessable — `head` says "invalid number of
+ * lines", `fold` says "columns", `shuf` says "invalid line count" and `strings`, being binutils rather
+ * than coreutils, says "invalid integer argument" with no quotes at all. Read off the installed tools
+ * rather than remembered; `test/box.test.ts` compares them. No trailing newline: `core.warn` adds one.
+ *
+ * **Plain apostrophes, not typographic ones.** GNU quotes with `‘x’` in a UTF-8 locale and `'x'` under
+ * `LC_ALL=C`, and `LC_ALL=C` is what this repo compares in — `packages/sh/test/differential.test.ts`
+ * fixes it so `sort` compares bytes, and every other diagnostic here already uses apostrophes.
+ */
+export string badNumberMessage(Args a) {
+  if (a.name == "strings") { return "strings: invalid integer argument " + a.badNum; }
+  string what = "lines";
+  if (a.name == "fold") { what = "columns"; }
+  if (a.name == "shuf") { return "shuf: invalid line count: '" + a.badNum + "'"; }
+  return a.name + ": invalid number of " + what + ": '" + a.badNum + "'";
 }
 
 /** One entry of `Args.values`: the letter, then its value. */

@@ -1,17 +1,25 @@
-// The first N lines, ten by default.
+// The first N lines, ten by default — or, with `-n -N`, everything but the last N.
+//
+// **The minus form is not a negative count**, it is a different question, and only `head` asks it —
+// `tail`'s signed spelling is `+N` and means something else again. It used to be read as a plain count,
+// so `head -n -2` printed the default ten lines.
 //
 // The only applet that need not reach the end of its input: once it has the lines it was
 // asked for it stops reading, so `head -1` of a huge file costs one chunk. Nothing else
 // here can do that, and it is the reason `head` no longer shares `pick` with `tail`.
 
 import { Cli, Core } from "../../../platform/src/platform.wac";
-import { Args } from "../lib/args.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
 import { Input, openStream, operandCount } from "../lib/input.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
 
 export i32 head(Core core, Cli cli, Args a) {
+  // A count that is not a count is a mistake in the command, not a reason to use the default: this
+  // used to print ten lines for `head -n x` and exit 0.
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
   // `hasNum`, not `num == 0`: `head -0` and `head -n 0` mean no lines, as GNU's do.
   i32 want = a.hasNum ? a.num : 10;
+  bool allButLast = a.numSign == "-";
 
   // A banner over each file, and a blank line between them, once there is more than one — which is what
   // the real one does and the only way to tell whose lines you are looking at. It used to read the first
@@ -30,6 +38,33 @@ export i32 head(Core core, Cli cli, Args a) {
     }
     Lines s = Lines.create();
     Feed fed = Feed.fromStdin(cli);
+    if (allButLast) {
+      // Delayed by `want` lines: a line can only be emitted once that many more have arrived behind
+      // it. Asking for more than the input holds prints nothing, as GNU does.
+      if (want <= 0) {
+        while (true) {
+          Line l = nextLine(s, fed);
+          if (!l.ok) { break; }
+          if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return 0; }
+        }
+        continue;
+      }
+      u8[][] held = u8[][want](fill: u8[0]());
+      bool[] ended = bool[want](fill: true);
+      i32 seen = 0;
+      while (true) {
+        Line l = nextLine(s, fed);
+        if (!l.ok) { break; }
+        if (seen >= want) {
+          i32 at = (seen - want) % want;
+          if (!emitTo(out, held[at], ended[at])) { out.flush(); return 0; }
+        }
+        held[seen % want] = l.bytes;
+        ended[seen % want] = l.nl;
+        seen++;
+      }
+      continue;
+    }
     for (i32 i = 0; i < want; i++) {
       Line l = nextLine(s, fed);
       if (!l.ok) { break; }

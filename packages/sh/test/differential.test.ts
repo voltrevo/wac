@@ -29,6 +29,24 @@ const CASES: string[] = [
   "seq 1 5 | head -0",
   "printf 'a\\nb\\nc\\n' | head -1",
   "printf 'a\\nb\\nc\\n' | tail -1",
+  // **The value attached to the flag**, which GNU takes and `packages/box` takes and this refused with
+  // "head: -n is not implemented" — false twice over, since `-n` is implemented and the caller had
+  // written a form both of the tools this is measured against accept.
+  "seq 1 5 | head -n2",
+  "seq 1 5 | tail -n2",
+  // **The sign selects a different question**, and only in one direction per tool: `head -n -2` is all
+  // but the last two and `tail -n +2` is from line two. The other two signed spellings are plain. This
+  // read `+2` as 2 — so `tail -n +2` answered the *last* two, a different answer rather than a missing
+  // one — and `-2` as a negative count that printed nothing at all.
+  "seq 1 5 | head -n -2",
+  "seq 1 5 | head -n +2",
+  "seq 1 5 | tail -n +2",
+  "seq 1 5 | tail -n -2",
+  "seq 1 5 | head -n -9",
+  "seq 1 5 | tail -n +9",
+  "seq 1 5 | tail -n +0",
+  "seq 1 5 | tail -n +1",
+  "seq 1 5 | head -n -0",
   // ── Words and quoting ───────────────────────────────────────────────────────
   `echo hello`,
   `echo hello world`,
