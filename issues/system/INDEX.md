@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0099](open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md) | a 2048-bit RSA private-key operation does not finish in any time a test will wait | performance | hangs |
 | [0098](open/0098-box-tr-and-ls-take-their-arguments-literally.md) | `box tr` ignores backslash escapes, and `ls` reads an unknown flag as a filename | bug | wrong answer |
 | [0097](open/0097-how-much-of-packages-tor-is-ours-rather-than-a-transliteration.md) | how much of `packages/tor` is genuinely ours rather than a transliteration of C tor? | task | no error |
 | [0095](open/0095-sha256-is-13x-off-openssl-and-most-of-it-is-not-shape.md) | `sha256` is 13x off OpenSSL, and most of that is not a shape problem | performance | not implemented |

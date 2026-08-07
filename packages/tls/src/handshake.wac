@@ -44,6 +44,15 @@ export i32 groupP256() { return 0x0017; }
 export i32 groupHybrid() { return 0x11EC; }
 /** ed25519 in the signature-algorithms registry. */
 export i32 sigEd25519() { return 0x0807; }
+/**
+ * `rsa_pss_rsae_sha256`, the scheme a TLS 1.3 server with an RSA certificate must use.
+ *
+ * 1.3 removed PKCS#1 v1.5 from signing entirely, so an RSA certificate and this scheme go together —
+ * there is no other pairing a 1.3 peer will accept. `rsae` is the key encoding: an ordinary
+ * `rsaEncryption` SubjectPublicKeyInfo, as against `rsa_pss_pss_*`, which needs a key marked
+ * RSASSA-PSS in the certificate itself. tor's relays use ordinary RSA keys, so `rsae` is the one.
+ */
+export i32 sigRsaPssSha256() { return 0x0804; }
 
 /** What a server needs out of a ClientHello. */
 export struct ClientHello {
@@ -59,6 +68,8 @@ export struct ClientHello {
   i32 suite;
   bool offersTls13;
   bool offersEd25519;
+  /** Whether the client offered `rsa_pss_rsae_sha256`, which an RSA certificate needs. */
+  bool offersRsaPss;
   /** The server_name extension's host name, or empty. */
   u8[] serverName;
 }
@@ -90,6 +101,7 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
   u8[] keyShare = u8[0]();
   bool tls13 = false;
   bool ed = false;
+  bool rsaPss = false;
   u8[] serverName = u8[0]();
 
   if (!r.empty()) {
@@ -134,7 +146,9 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
       } else if (kind == 13) {
         Reader algs = body2.sub16();
         while (!algs.empty()) {
-          if (algs.u16() == sigEd25519()) { ed = true; }
+          i32 alg = algs.u16();
+          if (alg == sigEd25519()) { ed = true; }
+          if (alg == sigRsaPssSha256()) { rsaPss = true; }
         }
       } else if (kind == 0) {
         // server_name: a list of names, each a type byte and a length-prefixed string.
@@ -149,7 +163,7 @@ export ClientHello parseClientHello(u8[] body, i32 preferredSuite) {
     }
   }
 
-  return ClientHello(random, sessionId, keyShare, chosen, tls13, ed, serverName);
+  return ClientHello(random, sessionId, keyShare, chosen, tls13, ed, rsaPss, serverName);
 }
 
 /** Wrap a message body in its four-byte handshake header. */
@@ -239,10 +253,18 @@ export u8[] certificateVerifyContent(u8[] transcriptHash, bool isServer) {
   return w.take();
 }
 
-/** A CertificateVerify carrying an ed25519 signature. */
-export u8[] certificateVerify(u8[] signature) {
+/**
+ * A CertificateVerify carrying `signature`, made under `scheme`.
+ *
+ * The scheme was hardcoded to ed25519 for as long as this server had only an ed25519 certificate.
+ * It is a parameter now because the scheme and the certificate's key type have to agree, and a
+ * mismatch is not something the peer forgives: it verifies the signature *with the certificate's
+ * key* under the algorithm this field names, so naming the wrong one fails the handshake rather than
+ * producing a weaker one.
+ */
+export u8[] certificateVerify(i32 scheme, u8[] signature) {
   Writer body = Writer.create();
-  body.u16(sigEd25519());               // ed25519
+  body.u16(scheme);
   body.vec16(signature);
   return handshakeMessage(hsCertificateVerify(), body.take());
 }
