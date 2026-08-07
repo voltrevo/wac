@@ -119,15 +119,16 @@ a timestamp of zero, so every C tor that handshook with us read the epoch and wa
 was twenty thousand days out — and then bootstrapped anyway, because the recommendation for that check
 is `warn`. A wrong value that still works is exactly what a suite with no C tor in it cannot see.
 
-What is still by hand: everything a bootstrapping client does not exercise — the onion-service rows
-against C tor, streams both ways, and our client inside a chutney of real tors. Those rows can still
-rot without anything going red.
+**The streams row is now in the suite too.** A C tor's SocksPort, a three-hop circuit through our
+relays, our exit opening the connection, and 6900 bytes back byte-identical:
 
-The streams row has had one attempt at automation and it did not land — see *An attempt at the streams
-row* in design 0002. The attempt is worth knowing about before the next one: tor's own log shows an
-exit answering `BEGIN` with `CONNECTED` and then ending the stream with zero bytes carried, and it is
-not established whether that exit was ours. **This row's evidence is a hand run from a date, and one
-observation now sits beside it that nobody has explained.**
+    relayd: [2]  stream 28926 open to 127.0.0.1:18802 on handle 4
+
+That row's load-bearing assertion is the relay's own line rather than the body — see design 0002 for
+why, and it is the best lesson this table has produced.
+
+What is still by hand: the onion-service rows against C tor, and our client inside a chutney of real
+tors. Those rows can still rot without anything going red.
 
 ## Regressions this table is meant to catch
 

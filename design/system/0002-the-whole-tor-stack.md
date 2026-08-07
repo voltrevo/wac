@@ -2209,3 +2209,34 @@ whose passing condition I cannot explain is worse than not having it.
 **What the next attempt should establish first**, before asserting anything: whether a relay of ours
 logs `open to <host>:<port>` at all during that fetch. That single line separates "our exit carried
 it" from "the bytes arrived some other way", and everything else follows from knowing which.
+
+### The streams row, and a test that measured nothing
+
+The doc said the next attempt should establish one thing first — whether a relay of ours logs
+`open to <host>:<port>` during the fetch — before asserting anything. It did, and the answer explained
+everything.
+
+**It did not.** curl returned 6900 bytes byte-identical, exit code zero, and no relay of ours had
+opened a stream. tor's own log contained no SOCKS connection at all: its last activity was internal
+directory tunnels, minutes before curl ran.
+
+`NO_PROXY` is `localhost,127.0.0.1` in this container. curl honours it, so it **ignored
+`--socks5-hostname` entirely** and connected straight to the test's own HTTP server on loopback. The
+body was identical because it was the same server; nothing else was involved. `--noproxy ""` and a
+cleared environment, and the same run says:
+
+    relayd: [2]  stream 28926 open to 127.0.0.1:18802 on handle 4
+
+That is `src/network.wac`'s founding complaint happening to me — *"four consecutive runs produced
+confident numbers about the relays while actually measuring … a proxy error page. None of them said
+so."* The proxy configuration this sandbox needs in order to reach anything is also configured to get
+out of the way for loopback, which is where every test network here lives.
+
+**The lesson is about which assertion is load-bearing.** The body being right was necessary and proved
+nothing: it is satisfied identically by the thing under test working and by the thing under test being
+bypassed. The relay's own line is satisfied by only one of those, so it goes first, and the body check
+after it. A test whose strongest-looking assertion is also its most easily satisfied one is worse than
+no test, because it reports success in exactly the case you most need told about.
+
+The previous slot removed this test rather than commit it, on the grounds that its passing condition
+was unexplained. That was right, and the explanation was one `env | grep` away.

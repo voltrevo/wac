@@ -210,3 +210,92 @@ Deno.test({
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test({
+  name: "a C tor carries a stream through our relays, both directions",
+  ignore: !haveTor,
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  // `INTEROP.md` marks streams **live** in both directions on a run somebody did by hand. This is
+  // that run, in the suite — and it exercises more than the stream: a SOCKS request makes tor build
+  // a real three-hop circuit through our relays, CREATE2 at the guard and EXTEND2 twice, then
+  // RELAY_BEGIN at the exit, which is one of ours opening a TCP connection and carrying bytes back.
+  //
+  // ## The assertion that has to come first, and why
+  //
+  // The first attempt at this test asserted the body and passed while measuring nothing. `NO_PROXY`
+  // is set to `localhost,127.0.0.1` in this container, curl honours it, and it therefore **ignored
+  // `--socks5-hostname` entirely** and connected straight to the test's own HTTP server. Byte-identical
+  // body, exit code zero, and not one Tor cell involved — which is exactly the failure
+  // `src/network.wac`'s header describes: a confident number measured against a proxy setting.
+  //
+  // So the load-bearing assertion is that **a relay of ours says it opened the stream**. The body
+  // being right is necessary and proves nothing on its own; that line is what distinguishes "our exit
+  // carried it" from "the bytes arrived some other way". `--noproxy ""` and a cleared environment are
+  // what make the request actually go where it says.
+  const dir = await Deno.makeTempDir({ prefix: "wac-ctor-stream-" });
+  const running: Running[] = [];
+  let target: Deno.HttpServer | null = null;
+  try {
+    // Long enough to span several relay cells, so the exit has to carry a sequence rather than get
+    // lucky with a body that fits in one.
+    const BODY = "wac relay carried this\n".repeat(300);
+    const targetPort = 18800 + Math.floor(Math.random() * 400);
+    target = Deno.serve({ hostname: "127.0.0.1", port: targetPort, onListen: () => {} }, () =>
+      new Response(BODY, { headers: { "content-type": "text/plain" } }));
+    const socksPort = targetPort + 1000;
+
+    // `TestingTorNetwork` sets `ClientRejectInternalAddresses 0`, which is what makes a loopback
+    // target reachable through a circuit at all — on a real network a client refuses one, correctly.
+    const tor = await startTor(dir, running, [`SocksPort ${socksPort}`], "Bootstrapped 100%");
+
+    const got = await new Deno.Command("curl", {
+      args: ["--silent", "--show-error", "--max-time", "60", "--noproxy", "",
+             "--socks5-hostname", `127.0.0.1:${socksPort}`,
+             `http://127.0.0.1:${targetPort}/`],
+      env: { no_proxy: "", NO_PROXY: "", http_proxy: "", HTTP_PROXY: "" },
+      stdout: "piped", stderr: "piped",
+    }).output();
+    const body = new TextDecoder().decode(got.stdout);
+    const err = new TextDecoder().decode(got.stderr);
+
+    tor.refresh();
+    if (got.code !== 0) {
+      throw new Error(`curl through tor failed: ${err}\n--- tor.log ---\n${tor.log()}`);
+    }
+
+    // First: did it go through us at all? The relays are the first three entries in `running`; the
+    // fourth is tor itself, and asking tor whether the bytes went through our relays is asking the
+    // wrong process.
+    const relays = running.slice(0, 3);
+    await until(
+      `a relay of ours to report opening the stream to 127.0.0.1:${targetPort}`,
+      () => relays.some((r) => r.said().includes(`open to 127.0.0.1:${targetPort}`)),
+      15000,
+    ).catch(() => {
+      throw new Error(
+        "no relay of ours opened the stream, so whatever curl fetched did not come through them:\n" +
+          relays.map((r, i) => `relay${i + 1}:\n${r.said().slice(-1500)}`).join("\n"),
+      );
+    });
+
+    // Then: byte-identical, not merely non-empty. A stream that dropped or reordered a cell in the
+    // middle would still pass a length check.
+    if (body !== BODY) {
+      throw new Error(
+        `the body came back wrong: ${body.length} bytes, wanted ${BODY.length}\n` +
+          `--- tor.log ---\n${tor.log()}`,
+      );
+    }
+  } finally {
+    if (target !== null) await target.shutdown();
+    for (const r of running) {
+      try {
+        r.child.kill("SIGKILL");
+        await r.child.status;
+      } catch { /* already gone */ }
+    }
+    await Deno.remove(dir, { recursive: true });
+  }
+});
