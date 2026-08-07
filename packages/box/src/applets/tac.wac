@@ -5,6 +5,7 @@ import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, operandCount, readInput } from "../lib/input.wac";
 import { joinLines, splitLines } from "../lib/lines.wac";
+import { slice } from "../../../bytes/src/slice.wac";
 
 export i32 tac(Core core, Cli cli, Args a) {
   if (refuseFlags(core, a)) { return 1; }
@@ -22,7 +23,14 @@ export i32 tac(Core core, Cli cli, Args a) {
     i32 n = lines.len();
     u8[][] out = u8[][n](fill: u8[0]());
     for (i32 i = 0; i < n; i++) { out[i] = lines[n - 1 - i]; }
-    cli.write(joinLines(out, n));
+    u8[] text = joinLines(out, n);
+    // **A file with no final newline keeps none**, and that last line comes *first* here — so the
+    // missing newline moves to the front of the output, where GNU also leaves it off the end. This
+    // added one and nothing noticed, because every fixture ended in a newline.
+    i32 keep = text.len();
+    bool ended = in.bytes.len() > 0 && in.bytes[in.bytes.len() - 1] == 10;
+    if (!ended && keep > 0 && text[keep - 1] == 10) { keep = keep - 1; }
+    cli.write(slice(text, 0, keep));
   }
   return 0;
 }

@@ -279,7 +279,9 @@ i32 magnitude(string v) {
 bool takesValue(string name, i32 letter) {
   if (name == "head" || name == "tail") { return letter == 'n' || letter == 'c'; }
   if (name == "shuf" || name == "strings") { return letter == 'n'; }
-  if (name == "cut") { return letter == 'd' || letter == 'f'; }
+  // `-b` and `-c` take a list too, and were missing here — so `cut -c2-4` parsed as the four flags
+  // `c`, `2`, `-`, `4` and was refused for the wrong reason entirely.
+  if (name == "cut") { return letter == 'd' || letter == 'f' || letter == 'b' || letter == 'c'; }
   if (name == "fold") { return letter == 'w'; }
   if (name == "split") { return letter == 'l'; }
   return false;
