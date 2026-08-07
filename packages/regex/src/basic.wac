@@ -44,21 +44,21 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Program } from "./program.wac";
-import { compileFlags } from "./compile.wac";
-import { bufferAnchor, copyBracket, writeAny } from "./posix.wac";
+import { Compiled, compileFlags } from "./compile.wac";
+import { Rewritten, bracketReason, bufferAnchor, copyBracket, writeAny } from "./posix.wac";
 
 /** Compile a basic regular expression. Null when it will not compile. */
-export Program? compileBasic(u8[] pattern) {
-  u8[]? js = toExtended(pattern);
-  if (js is null) { return null; }
-  return compileFlags(js!, false, true);
+export Compiled compileBasic(u8[] pattern) {
+  Rewritten r = toExtended(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, false, true);
 }
 
 /** As `compileBasic`, with the `i` flag. */
-export Program? compileBasicIgnoreCase(u8[] pattern) {
-  u8[]? js = toExtended(pattern);
-  if (js is null) { return null; }
-  return compileFlags(js!, true, true);
+export Compiled compileBasicIgnoreCase(u8[] pattern) {
+  Rewritten r = toExtended(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, true, true);
 }
 
 /**
@@ -67,7 +67,7 @@ export Program? compileBasicIgnoreCase(u8[] pattern) {
  * Exported because it is the whole of the difference between the two dialects, and a caller comparing
  * against `grep -E` should be able to see what its pattern became.
  */
-export u8[]? toExtended(u8[] pattern) {
+export Rewritten toExtended(u8[] pattern) {
   Buf out = Buf.create();
   i32 i = 0;
   // Where the last quantifiable unit began in `out`, so a *second* quantifier can be made to apply to
@@ -102,7 +102,7 @@ export u8[]? toExtended(u8[] pattern) {
       unitStart = out.len;
       lastWasQuantifier = false;
       i32 next = copyBracket(out, pattern, i);
-      if (next < 0) { return null; }
+      if (next < 0) { return Rewritten(null, bracketReason(next)); }
       i = next;
       quantifiable = true;
       continue;
@@ -211,7 +211,7 @@ export u8[]? toExtended(u8[] pattern) {
     quantifiable = c != '^' && c != '$';
     i++;
   }
-  return out.take();
+  return Rewritten(out.take(), "");
 }
 
 /**

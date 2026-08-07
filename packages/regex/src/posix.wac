@@ -33,30 +33,43 @@
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Program } from "./program.wac";
-import { compileFlags } from "./compile.wac";
+import { Compiled, compileFlags } from "./compile.wac";
 
 /** Compile a POSIX **extended** regular expression — `grep -E`. Null when it will not compile. */
-export Program? compileExtended(u8[] pattern) {
-  u8[]? js = toJs(pattern);
-  if (js is null) { return null; }
-  return compileFlags(js!, false, true);
+export Compiled compileExtended(u8[] pattern) {
+  Rewritten r = toJs(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, false, true);
 }
 
 /** As `compileExtended`, with the `i` flag. */
-export Program? compileExtendedIgnoreCase(u8[] pattern) {
-  u8[]? js = toJs(pattern);
-  if (js is null) { return null; }
-  return compileFlags(js!, true, true);
+export Compiled compileExtendedIgnoreCase(u8[] pattern) {
+  Rewritten r = toJs(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, true, true);
 }
 
 /**
- * A POSIX pattern with every bracket expression rewritten into this engine's dialect. Null if one of
- * them is malformed — an unterminated `[`, or a class name that is not one of the twelve.
+ * A POSIX pattern with every bracket expression rewritten into this engine's dialect, or the reason one
+ * of them could not be — an unterminated `[`, or a class name that is not one of the twelve.
  *
  * Everything outside a bracket is copied byte for byte, including escapes: the operators are the same in
  * extended POSIX and here, and `basic.wac` has already done that translation by the time this is called.
  */
-export u8[]? toJs(u8[] pattern) {
+/** A rewritten pattern, or why it could not be — the two bracket mistakes GNU words differently. */
+export struct Rewritten {
+  u8[]? pattern;
+  string why;
+}
+
+/** GNU's own sentence for a bracket that `copyBracket` refused: -1 unmatched, -2 a class name. */
+export string bracketReason(i32 code) {
+  if (code == -2) { return "Invalid character class name"; }
+  if (code == -3) { return "Invalid range end"; }
+  return "Unmatched [, [^, [:, [., or [=";
+}
+
+export Rewritten toJs(u8[] pattern) {
   Buf out = Buf.create();
   i32 i = 0;
   while (i < pattern.len()) {
@@ -81,15 +94,17 @@ export u8[]? toJs(u8[] pattern) {
       continue;
     }
     i32 next = copyBracket(out, pattern, i);
-    if (next < 0) { return null; }
+    if (next < 0) { return Rewritten(null, bracketReason(next)); }
     i = next;
   }
-  return out.take();
+  return Rewritten(out.take(), "");
 }
 
 /**
  * Copy the bracket expression starting at `at` into `out`, as a class this engine accepts. Returns the
- * index just past its `]`, or -1 if it is malformed.
+ * index just past its `]`; -1 if it is unterminated, -2 if a class name is not one of the twelve, -3 for
+ * a range whose ends are the wrong way round.
+ * `bracketReason` turns those into the sentences GNU uses for them.
  *
  * Exported because `basic.wac` needs exactly this and nothing else of the file: a basic pattern's
  * brackets are POSIX brackets too, and having two copies of the rule would be having two dialects again.
@@ -115,7 +130,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
       i32 end = closerAt(p, i + 2, mark);
       if (end < 0) { return -1; }
       if (mark == ':') {
-        if (!writeClass(out, string.fromBytes(sliceOf(p, i + 2, end)))) { return -1; }
+        if (!writeClass(out, string.fromBytes(sliceOf(p, i + 2, end)))) { return -2; }
       } else {
         // A collating element and an equivalence class both name **one** character in the C locale, and
         // `[.ch.]` is a mistake here rather than a two-character element — there is no locale in this
@@ -133,7 +148,7 @@ export i32 copyBracket(Buf out, u8[] p, i32 at) {
     // rule every implementation shares and none of them writes down.
     if (after < p.len() && p[after] == '-' && after + 1 < p.len() && p[after + 1] != ']') {
       i32 hi = p[after + 1];
-      if (hi < lo) { return -1; }
+      if (hi < lo) { return -3; }
       writeMember(out, lo);
       out.push('-');
       writeMember(out, hi);

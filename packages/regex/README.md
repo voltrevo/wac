@@ -104,8 +104,7 @@ group containing `?=a` would silently match the wrong thing:
 
 - lookahead and lookbehind, backreferences, named groups, and every flag but `i`. GNU `grep` accepts
   `\(ab\)\1` and this refuses it, which is the one place a `grep` here still exits 2 where GNU
-  exits 1 — a refusal rather than a wrong answer, and the message says the pattern is bad when what
-  is bad is this engine;
+  exits 1 — a refusal rather than a wrong answer, and it says which side is unfinished (below);
 - a quantified assertion (`^?`, `\b+`), which is a syntax error in JavaScript too;
 - `[\D]`, `[\W]`, `[\S]` — a negated shorthand inside a positive class needs set subtraction.
 
@@ -141,6 +140,26 @@ lookahead, which this engine does not have, so there was nothing to rewrite them
 `test/basic.test.ts` compares both dialects against `/bin/grep` over **every byte** for the twelve
 class names, because a class is a claim about all of them and `[:punct:]` cannot be checked by
 reading.
+
+### A refusal says whose problem it is
+
+`compileFlags` returns a `Compiled` — a program, or the reason there is none. It used to return only
+null, so every refusal reached a caller as `grep: bad pattern`, and `\(ab\)\1` is not a bad pattern:
+GNU runs it. Telling someone their pattern is wrong when the gap is this engine's sends them to fix
+something that was already right, which is the same failure `packages/box`'s flag refusals exist to
+avoid, one layer down.
+
+Two sentences, by the same rule as those:
+
+```
+$ grep '[z-a]'        grep: Invalid range end                  <- GNU refuses too, so GNU's words
+$ grep '[[:foo:]]'    grep: Invalid character class name
+$ grep 'a\'           grep: Trailing backslash
+$ grep '\(ab\)\1'     grep: backreferences are not implemented  <- GNU accepts it; the gap is ours
+```
+
+The first four are checked *against `/bin/grep`'s own stderr* rather than against a copy of it, and
+the test requires that any pattern GNU accepts be refused with a sentence naming this engine.
 
 ## Not here yet
 

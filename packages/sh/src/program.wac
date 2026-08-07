@@ -29,6 +29,7 @@ import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../platform/src/st
 // the number. Three other copies existed, and the correct one was already in `fmt`. wac-mono 0072.
 import { atoi, itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { search, slotCount } from "../../regex/src/regex.wac";
+import { Compiled } from "../../regex/src/compile.wac";
 import { compileExtended, compileExtendedIgnoreCase } from "../../regex/src/posix.wac";
 import { compileBasic, compileBasicIgnoreCase } from "../../regex/src/basic.wac";
 import { Program, BUDGET, NO_MATCH } from "../../regex/src/program.wac";
@@ -1266,11 +1267,15 @@ i32 grep(Fs fs, Cli cli, string cwd, Vec<string> argv, Feed fed, Sink sink, Sink
   if (sawOption(o, "x")) {
     pattern = extended ? "^(" + pattern + ")$" : "^\\(" + pattern + "\\)$";
   }
-  Program? prog = extended
+  Compiled got = extended
     ? (sawOption(o, "i") ? compileExtendedIgnoreCase(pattern.toBytes()) : compileExtended(pattern.toBytes()))
     : (sawOption(o, "i") ? compileBasicIgnoreCase(pattern.toBytes()) : compileBasic(pattern.toBytes()));
+  Program? prog = got.program;
   if (prog is null) {
-    errs.bytes(("grep: " + o.operands.get(0) + ": invalid regular expression\n").toBytes());
+    // GNU says what is wrong with the pattern rather than naming the pattern, and where the gap is
+    // this engine's rather than the pattern's, `compile.wac` says *that* — "backreferences are not
+    // implemented" for `\(ab\)\1`, which GNU runs.
+    errs.bytes(("grep: " + got.why + "\n").toBytes());
     errs.flush();
     sink.flush();
     return 2;

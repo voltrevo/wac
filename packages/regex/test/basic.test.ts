@@ -14,6 +14,8 @@ import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/regex/test/probe.wac") as unknown as {
   execBasic(pattern: Uint8Array, input: Uint8Array, at: number): Int32Array;
+  whyBasic(pattern: Uint8Array): string;
+  whyExtended(pattern: Uint8Array): string;
   execExtended(pattern: Uint8Array, input: Uint8Array, at: number): Int32Array;
   basicAsExtended(pattern: Uint8Array): Uint8Array;
 };
@@ -194,4 +196,46 @@ Deno.test("GNU's backslash anchors are anchors, in both dialects", async () => {
     }
   }
   assertEquals(checked > 300, true, `only ${checked} pairs were compared`);
+});
+
+/**
+ * What a refusal *says*, which is a separate question from whether it refuses.
+ *
+ * A refused pattern used to come back as "bad pattern", and `grep '\(ab\)\1'` is not a bad pattern —
+ * GNU runs it. Telling a caller their pattern is wrong when the gap is this engine's sends them to fix
+ * something already right, which is the failure `packages/box`'s flag refusals exist to avoid, one layer
+ * down. So: where GNU refuses too, its words; where GNU accepts, a sentence that names *us*.
+ */
+Deno.test("a refusal says whose problem it is, in GNU's words where GNU has any", async () => {
+  // Ours, and what GNU says on stderr for the same pattern — empty when GNU accepts it.
+  const cases: { pattern: string; extended?: boolean; want: string }[] = [
+    { pattern: "[z-a]", want: "Invalid range end" },
+    { pattern: "[[:foo:]]", want: "Invalid character class name" },
+    { pattern: "[[:alpha:]", want: "Unmatched [, [^, [:, [., or [=" },
+    { pattern: "[a", want: "Unmatched [, [^, [:, [., or [=" },
+    { pattern: "a\\", want: "Trailing backslash" },
+    { pattern: "\\(a", want: "Unmatched ( or \\(" },
+    { pattern: "a\\)", want: "Unmatched ) or \\)" },
+    // The other kind: GNU compiles these and this engine cannot run them.
+    { pattern: "\\(ab\\)\\1", want: "backreferences are not implemented" },
+  ];
+
+  for (const c of cases) {
+    const got = c.extended ? mod.whyExtended(b(c.pattern)) : mod.whyBasic(b(c.pattern));
+    assertEquals(got, c.want, `the reason for ${JSON.stringify(c.pattern)}`);
+
+    // And the half that keeps this honest: where GNU refuses, it must be refusing for the same reason,
+    // in the same words. A message copied from memory drifts from the tool it is copied from.
+    const r = new Deno.Command("/bin/grep", {
+      args: ["-e", c.pattern], stdin: "null", stdout: "null", stderr: "piped",
+      env: { LC_ALL: "C" }, clearEnv: true,
+    }).outputSync();
+    const theirs = dec.decode(r.stderr).trim().replace(/^\/bin\/grep: /, "");
+    if (theirs !== "") {
+      assertEquals(got, theirs, `GNU's own sentence for ${JSON.stringify(c.pattern)}`);
+    } else {
+      // GNU had none, so this is a gap of ours and must say so rather than blame the pattern.
+      assertEquals(got.includes("not implemented"), true, `${JSON.stringify(c.pattern)}: GNU accepts it, so the refusal must name us — got ${JSON.stringify(got)}`);
+    }
+  }
 });

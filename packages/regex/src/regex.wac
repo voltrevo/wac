@@ -11,7 +11,7 @@ import { compile as compilePattern, compileFlags } from "./compile.wac";
 export Program? compile(u8[] pattern) { return compilePattern(pattern); }
 
 /** As `compile`, with the `i` flag. ASCII only — see the README. */
-export Program? compileIgnoreCase(u8[] pattern) { return compileFlags(pattern, true, false); }
+export Program? compileIgnoreCase(u8[] pattern) { return compileFlags(pattern, true, false).program; }
 
 /** Capture slots for a program: two per group, plus two for the whole match. */
 export i32 slotCount(Program p) { return (p.groups + 1) * 2; }

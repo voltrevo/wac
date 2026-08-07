@@ -28,6 +28,15 @@ struct C {
   i32 classes;
   i32 ranges;
   bool failed;
+  /**
+   * Why, in the words a caller should see, or "" when nothing has failed.
+   *
+   * A compile used to answer only null, so `grep '\(ab\)\1'` said "bad pattern" — telling a caller
+   * their pattern is wrong when it is a perfectly good POSIX pattern this engine does not implement.
+   * The same two sentences `packages/box`'s flags use, for the same reason: where GNU refuses too, its
+   * words; where GNU accepts and this does not, "not implemented".
+   */
+  string why;
   // Case-insensitive matching, done at *compile* time by expanding each literal and each class
   // range to cover both cases. The machine is untouched: adding a fold to OP_CHAR would put a
   // table lookup on the hot path of every match, and would have to answer for a byte that is half
@@ -151,6 +160,11 @@ struct C {
   }
   void bump(this) { this.pos++; }
   void fail(this) { this.failed = true; }
+  /** Fail, and say why. The first reason is kept: it is the one nearest what the caller wrote. */
+  void refuse(this, string why) {
+    if (!this.failed) { this.why = why; }
+    this.failed = true;
+  }
 
   i32 newClass(this, bool negated) {
     if (this.classes >= this.classStart.len()) {
@@ -250,7 +264,7 @@ void parseClass(C c) {
   // anything — so `[]]` is the empty class followed by a literal `]` and never matches at all.
   while (true) {
     i32 ch = c.peek();
-    if (ch < 0) { c.fail(); return; }
+    if (ch < 0) { c.refuse("Unmatched [, [^, [:, [., or [="); return; }
     if (ch == ']') { c.bump(); break; }
 
     i32 lo = -1;
@@ -263,7 +277,7 @@ void parseClass(C c) {
         // A shorthand inside a class contributes its ranges and cannot be an endpoint. A
         // negated one inside a positive class would need set subtraction, which this does not
         // do — `[\D]` is rejected rather than quietly wrong.
-        if (e == 'D' || e == 'W' || e == 'S') { c.fail(); return; }
+        if (e == 'D' || e == 'W' || e == 'S') { c.refuse("a negated shorthand inside a class is not implemented"); return; }
         addShorthand(c, index, e);
         continue;
       }
@@ -290,7 +304,7 @@ void parseClass(C c) {
         c.bump();
         hi = hiCh;
       }
-      if (hi < lo) { c.fail(); return; }
+      if (hi < lo) { c.refuse("Invalid range end"); return; }
       c.addFolded(index, lo, hi);
     } else {
       c.addFolded(index, lo, lo);
@@ -311,7 +325,7 @@ void parseAtom(C c) {
     } else if (c.peek() == '?') {
       // Lookaround and named groups are not implemented, and are rejected rather than
       // mis-parsed as something else.
-      c.fail();
+      c.refuse("lookaround and named groups are not implemented");
       return;
     } else {
       c.groups++;
@@ -320,7 +334,7 @@ void parseAtom(C c) {
     if (slot >= 0) { c.emit(OP_SAVE(), slot * 2, 0); }
     parseAlternation(c);
     if (c.failed) { return; }
-    if (c.peek() != ')') { c.fail(); return; }
+    if (c.peek() != ')') { c.refuse("Unmatched ( or \\("); return; }
     c.bump();
     if (slot >= 0) { c.emit(OP_SAVE(), slot * 2 + 1, 0); }
   } else if (ch == '[') {
@@ -337,7 +351,7 @@ void parseAtom(C c) {
   } else if (ch == '\\') {
     c.bump();
     i32 e = c.peek();
-    if (e < 0) { c.fail(); return; }
+    if (e < 0) { c.refuse("Trailing backslash"); return; }
     c.bump();
     if (isShorthand(e)) {
       bool negated = e == 'D' || e == 'W' || e == 'S';
@@ -349,7 +363,9 @@ void parseAtom(C c) {
     } else if (c.posix && (e == '<' || e == '>')) {
       c.emit(OP_WORDB(), e == '<' ? 2 : 3, 0);
     } else if (isDigit(e) && e != '0') {
-      c.fail();                                // a backreference; not implemented
+      // GNU has these and this engine does not: a backtracking matcher can carry a backreference and a
+      // machine that walks its program once cannot. "Bad pattern" blamed the caller for GNU's syntax.
+      c.refuse("backreferences are not implemented");
     } else {
       i32 named = escapeByte(e);
       emitLiteral(c, named >= 0 ? named : e);
@@ -690,18 +706,28 @@ void parseAlternation(C c) {
   for (i32 i = 0; i < nJmps; i++) { c.code[jmps[i] * 3 + 1] = end; }
 }
 
-/** Compile `pattern`, or null if it is not one this engine accepts. */
-export Program? compile(u8[] pattern) { return compileFlags(pattern, false, false); }
+/** A compiled pattern, or the reason there is none — never both. */
+export struct Compiled {
+  Program? program;
+  /** Empty when `program` is there; otherwise a sentence already worded for whoever typed the pattern. */
+  string why;
+}
+
+/** Compile `pattern`, or null if it is not one this engine accepts. `compileFlags` says why. */
+export Program? compile(u8[] pattern) { return compileFlags(pattern, false, false).program; }
 
 /** As `compile`, with `ignoreCase` for the `i` flag and `posix` for `\<` and `\>`. */
-export Program? compileFlags(u8[] pattern, bool ignoreCase, bool posix) {
+export Compiled compileFlags(u8[] pattern, bool ignoreCase, bool posix) {
   C c = C(i32[0](), 0, 0, pattern, 0, 0, i32[0](), i32[0](), i32[0](), i32[0](), bool[0](), 0, 0,
-          false, ignoreCase, posix);
+          false, "", ignoreCase, posix);
   c.emit(OP_SAVE(), 0, 0);
   parseAlternation(c);
-  if (c.failed || c.pos < c.src.len()) { return null; }
+  // Input left over is a `)` nobody opened: the parser stops at one rather than failing, so this is
+  // where that becomes a refusal and where it gets its sentence.
+  if (!c.failed && c.pos < c.src.len()) { c.refuse("Unmatched ) or \\)"); }
+  if (c.failed) { return Compiled(null, c.why == "" ? "bad pattern" : c.why); }
   c.emit(OP_SAVE(), 1, 0);
   c.emit(OP_MATCH(), 0, 0);
-  return Program(c.code, c.len, c.groups, c.loops, c.classLo, c.classHi, c.classStart,
-                 c.classCount, c.classNeg, c.classes);
+  return Compiled(Program(c.code, c.len, c.groups, c.loops, c.classLo, c.classHi, c.classStart,
+                          c.classCount, c.classNeg, c.classes), "");
 }
