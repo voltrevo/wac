@@ -210,3 +210,83 @@ Deno.test("rung 3: every primitive against every literal kind, the reference dec
       `this slice is meant to catch every literal-return mismatch`);
   }
 });
+
+/**
+ * The same grid one level up: a returned **name** rather than a returned literal.
+ *
+ * `return s` where `s` is a parameter needs a scope — the first symbol table in this package — and
+ * the grid is the same idea as the literal one, with the reference deciding every cell. It is a
+ * stronger test than the literal grid because a name has no intrinsic type: getting this right means
+ * the declaration was found and read, not that a token was recognised.
+ */
+Deno.test("rung 3: a returned parameter, every declared type against every parameter type", () => {
+  const usable = PRIMITIVES.filter((t) => t !== "u8" && t !== "u16"); // not legal as a return type
+  let rejected = 0;
+  let caught = 0;
+  for (const ret of usable) {
+    for (const par of PRIMITIVES) {
+      const src = `export ${ret} f(${par} p) { return p; }`;
+      const theirs = reference(src);
+      const mine = ours(src);
+      if (theirs.length === 0) {
+        if (mine.length !== 0) {
+          throw new Error(`${ret} f(${par} p) is accepted, and we reported ${mine.join(", ")}`);
+        }
+        continue;
+      }
+      rejected++;
+      for (const at of mine) {
+        if (!theirs.some((e) => e.at === at)) {
+          throw new Error(`${ret} f(${par} p): we report ${at}, the reference reports ` +
+            theirs.map((e) => e.at).join(", "));
+        }
+      }
+      if (mine.length > 0) caught++;
+    }
+  }
+  if (rejected === 0) throw new Error("no cell was rejected — the grid is not being evaluated");
+  if (caught !== rejected) {
+    throw new Error(`the reference rejects ${rejected} of these and we catch ${caught}`);
+  }
+});
+
+Deno.test("rung 3: a name this slice cannot resolve is silence, not a guess", () => {
+  // Three shapes where the honest answer is nothing, and all three would be easy to get wrong in the
+  // direction that matters — a false diagnostic at a position the reference has no diagnostic for.
+  const QUIET = [
+    // A name from outside the function. There is no cross-module resolution here yet.
+    "export i32 fwd() { return later; }",
+    // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
+    // the name is poisoned rather than resolved to whichever declaration was seen last.
+    'export i32 sh(i32 a) { if (true) { string a = "x"; } return a; }',
+    // Anything that needs an expression typer.
+    "export i32 call(i32 a) { return other(a); }",
+    "export i32 arith(i32 a, i32 b) { return a + b; }",
+  ];
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`we report ${mine.join(", ")} for ${JSON.stringify(src)}, where this slice ` +
+        "cannot know the answer");
+    }
+  }
+});
+
+Deno.test("rung 3: a returned local, and a name used before its declaration", () => {
+  // Locals are declared in a pass of their own before the body is walked, so a `return` above the
+  // declaration still resolves. Both directions are checked because declaring-as-you-walk passes the
+  // first and silently fails the second.
+  const later = 'export i32 g(bool c) { if (c) { return v; } string v = "x"; return 0; }';
+  const theirs = reference(later);
+  const mine = ours(later);
+  if (theirs.length === 0) throw new Error(`the reference accepts ${JSON.stringify(later)}`);
+  if (mine.length === 0) {
+    throw new Error("a name declared after its use was not resolved — the declaration pass is not " +
+      "running before the check pass");
+  }
+  for (const at of mine) {
+    if (!theirs.some((e) => e.at === at)) {
+      throw new Error(`we report ${at}, the reference reports ${theirs.map((e) => e.at).join(", ")}`);
+    }
+  }
+});

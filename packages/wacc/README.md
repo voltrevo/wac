@@ -176,6 +176,23 @@ The grid is regenerated on every suite run rather than tabulated here, because a
 test is a second implementation of the language's assignability and drifts the first time the
 reference changes its mind.
 
+It also types a returned **name**, against the function's parameters and locals — the first symbol
+table in the package. That needed a second rule rather than a wider one:
+
+- a returned **name** must have the declared type *exactly*: `i64` from an `i32` function is an
+  error, and so is `f32` from `f64`;
+- a returned **literal** is polymorphic over a family, and any of `i32 i64 u32 u64` accepts an
+  integer literal.
+
+Modelling only the family caught 58 of the 72 rejections in the (return type × parameter type) grid,
+and the fourteen it missed were all *within* a family. Both grids run on every suite invocation.
+
+A name declared twice in one function is **poisoned** to unknown rather than resolved. wac scopes by
+block and this slice does not track blocks, so a local shadowing a parameter would otherwise make a
+lookup confidently wrong — and a confident wrong answer is the one thing a subset checker may never
+give. Declarations are collected in a pass of their own before the body is walked, so a `return`
+above a declaration still resolves it.
+
 Next: more of rung 3.
 
 ### What rung 3's oracle looks like, measured
