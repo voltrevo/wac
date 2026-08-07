@@ -2150,3 +2150,33 @@ load-bearing rather than decorative.
 
 Still to do: presenting the RSA certificate, which is the TLS server offering `rsa_pss_rsae_sha256`
 in CertificateVerify and `relayd` generating an RSA link certificate instead of an Ed25519 one.
+
+### The certificate now says nothing
+
+`relayd` presents an RSA link certificate. `openssl s_client` against it:
+
+    Signature Algorithm: sha256WithRSAEncryption
+    Public Key Algorithm: rsaEncryption
+        Public-Key: (1024 bit)
+
+which is what a real relay presents, where the same command said `ED25519` two slots ago. C tor still
+bootstraps through it and no longer logs `expecting an rsa key` or `Unhandled OpenSSL errors` — both
+now assertions in `ctor_live.test.ts`, on strings that were in its log before the change and are not
+in it after.
+
+The key is **separate from the identity and short-lived**, as tor's link key is. Reusing the identity
+key would have meant the long-lived private key doing a signature on every connection, which is a
+worse property than the fingerprint this closes. 1024-bit, which is tor's size and also the only size
+that works: issue 0099 records that a 2048-bit private-key operation does not finish in any time a
+peer would wait, and this key signs a CertificateVerify per connection.
+
+**Three commits for one field**, and the shape is worth keeping. `rsaSignPss` was the primitive and
+its differential was the first time anything checked our PSS *signing* rather than our verifying;
+`tlsServerInitRsa` was the scheme, proved by OpenSSL generating the key and the certificate and its
+own client reading the body; and this is the caller. None of it was hard. What was hard was noticing,
+and the only thing that noticed was a C tor in the suite.
+
+**What remains different, and it is small.** tor's link certificate is *signed by the identity key*;
+ours is self-signed. Nothing on this path checks that — the ed25519 chain in the CERTS cell binds the
+TLS certificate by digest, which is what tor verifies for a modern handshake — but it is a difference
+and it is written here rather than left to be rediscovered.
