@@ -7,9 +7,30 @@
 
 import { Program, NO_MATCH, BUDGET } from "../src/program.wac";
 import { compile, compileIgnoreCase, search, slotCount } from "../src/regex.wac";
+import { compileBasic, toExtended } from "../src/basic.wac";
 
 /** 1 = matched, 0 = no match, -1 = pattern rejected, -2 = step budget exhausted. */
 export i32[] exec(u8[] pattern, u8[] input, i32 at) { return execFlags(pattern, input, at, false); }
+
+/**
+ * A **basic** regular expression, matched. Same status convention as `exec`.
+ *
+ * Separate from `exec` because the two dialects read the same bytes differently, and the whole point of
+ * `test/basic.test.ts` is that the one this returns is `grep`'s reading.
+ */
+export i32[] execBasic(u8[] pattern, u8[] input, i32 at) {
+  Program? prog = compileBasic(pattern);
+  if (prog is null) { return i32[1](fill: -1); }
+  Program p = prog!;
+  i32[] caps = i32[slotCount(p)](fill: -1);
+  i32 found = search(p, input, at, caps, 1000000);
+  if (found == BUDGET()) { return i32[1](fill: -2); }
+  i32[] out = i32[1](fill: found == NO_MATCH() ? 0 : 1);
+  return out;
+}
+
+/** What a basic pattern becomes, so a failing case can be read rather than guessed at. */
+export u8[] basicAsExtended(u8[] pattern) { return toExtended(pattern); }
 
 /** As `exec`, with the `i` flag. */
 export i32[] execFlags(u8[] pattern, u8[] input, i32 at, bool ignoreCase) {

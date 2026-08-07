@@ -44,6 +44,20 @@ Checked against **GNU grep 3.11** on nineteen basic patterns and six extended, p
 and pinned in `packages/sh/test/differential.test.ts` (17 scripts) and `packages/box/test/box.test.ts`
 (16 cases).
 
+Then tested where it belongs. A translation exercised only through two callers is tested for the cases
+those callers happen to reach, so `packages/regex/test/basic.test.ts` compares it against `/bin/grep`
+directly — 780 hand-listed pattern/subject pairs and 3,600 generated ones. That found three more rules the
+hand cases had missed, every one of which compiled and matched and was wrong:
+
+- **A quantifier with nothing to repeat is a literal**, and that is true of `\+` and `\?` and `\{n\}`
+  as well as of `*`. Translating a leading `\+` to a bare `+` made the engine reject the pattern, turning
+  "no match" into "invalid".
+- **A `]` first in a bracket expression is a member** — POSIX's rule and explicitly *not* this engine's,
+  which `compile.wac` says in as many words. `[]a]` was reaching it as an empty class.
+- **A quantifier may be quantified**: GNU reads `a*\+` as one or more of "zero or more a". Written
+  straight through, `a\{2\}\?` becomes `a{2}?` — which in the engine's dialect is a *lazy* `{2}`, a
+  different pattern entirely. It is wrapped as `(?:a{2})?` now.
+
 ## The other thing this found
 
 **The `grep` in an interactive shell here is not GNU grep.** It is a shell function that dispatches to
