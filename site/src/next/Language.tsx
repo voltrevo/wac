@@ -60,6 +60,15 @@ export default function Language() {
             {m({ children: "do" })}-{m({ children: "while" })}, {m({ children: "switch" })}, and a
             ternary.
           </P>
+          <P>
+            Conversions are never implicit, and there are four of them, because &ldquo;cast&rdquo;
+            in C means four different things at once: {m({ children: "as" })} is lossless and the
+            only one the checker will let you write when it might not be,{" "}
+            {m({ children: "as!" })} is checked at run time and traps,{" "}
+            {m({ children: "as~" })} truncates on purpose, and {m({ children: "as@" })}{" "}
+            reinterprets the bits. <Lead>Which one you meant is in the source</Lead> rather than in
+            the reader&rsquo;s head.
+          </P>
           <InlineDemo initialCode={EX_MATH} />
         </Sub>
 
@@ -158,6 +167,23 @@ export default function Language() {
           sentence cannot quietly stop being true. A {m({ children: ".wac" })} file may import a{" "}
           {m({ children: ".wapy" })} file and the reverse, in any mixture.
         </P>
+        <P>
+          <Lead>It is not Python.</Lead> It does not accept Python, and copying Python into a{" "}
+          {m({ children: ".wapy" })} file is an explicit anti-goal. It borrows Python&rsquo;s
+          shapes — {m({ children: "def" })}, {m({ children: "class" })},{" "}
+          {m({ children: "and" })}/{m({ children: "or" })}/{m({ children: "not" })},{" "}
+          {m({ children: "self" })} — and keeps wac&rsquo;s types, its semantics and its errors.
+          It has its own lexer and parser producing the same syntax tree, so a diagnostic names the
+          line its author actually wrote.
+        </P>
+        <P>
+          What stops a second surface becoming a permanent tax is a round trip:{" "}
+          {m({ children: "wac → wapy → wac" })} must give back the <em>same syntax tree</em>, over{" "}
+          {m({ children: "spec/tour.wac" })} and all 155 wac-mono sources. Trees rather than text,
+          so the printer&rsquo;s canonicalisations are allowed and a change in meaning is not — and
+          a feature added to one surface and forgotten in the other turns the suite red instead of
+          drifting.
+        </P>
         <Sub id="wapy-live" title="Editable, and running here">
           <InlineDemo initialCode={EX_WAPY_LIVE} surface="wapy" />
         </Sub>
@@ -199,6 +225,23 @@ export default function Language() {
           <Lead>No widening multiply and no add-with-carry</Lead>, so arbitrary-precision arithmetic
           — and therefore BLS12-381 — works in 32-bit limbs. And <Lead>nothing runs when a trap
           unwinds</Lead>, so there is no way to release anything on the way out.
+        </P>
+        <P>
+          <Lead>And there is no byte swap.</Lead> Wasm loads are little-endian and most wire
+          protocols are big-endian — TLS, SSH, Tor, and SHA-1 and SHA-2&rsquo;s message schedule —
+          so even with linear memory a big-endian word is a load plus a hand-rolled six-operation
+          swap. That one inverted a conclusion in our own design document: SHA-256 looked like the
+          obvious motivating example for linear memory and turned out to be among the weakest,
+          because the swap eats the gain, while a little-endian format like ChaCha20 or Zstandard
+          would gain a lot.
+        </P>
+        <P>
+          Every entry is marked <em>verified</em>, <em>believed</em> or <em>speculative</em>, and
+          the distinction is load-bearing rather than decorative. Integer rotate sat on the list as
+          a missing instruction until somebody checked:{" "}
+          <Lead>{m({ children: "i32.rotl" })} has existed since 2017, and it was wac that had no
+          way to spell it.</Lead> A list of things another project should fix is worth exactly what
+          its worst entry is worth.
         </P>
         <P>
           Each of those is an issue in the repository with a measurement attached rather than a

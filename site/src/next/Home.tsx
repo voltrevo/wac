@@ -190,7 +190,7 @@ export default function Home() {
             {m({ children: "diff" })}, {m({ children: "tar" })}, {m({ children: "nc" })} — with
             pipelines, loops, variables, history, and redirection into a filesystem that survives a
             reload. The shell agrees with GNU bash on <Lead>652 differential scripts</Lead>, on
-            standard output and exit status.
+            standard output and exit status. <A href="#/run">Two more running here →</A>
           </span>
         </P>
       </Section>
@@ -207,8 +207,8 @@ export default function Home() {
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
             The collector owns the heap, so there is no allocator to write and no linear memory in
-            the artifact. The compiler is TypeScript with no LLVM, no binaryen and nothing to
-            install. <A href="#/language">The rest of the language →</A>
+            the artifact. The compiler is <Lead>~16,000 lines of TypeScript</Lead> with no LLVM, no
+            binaryen and nothing to install. <A href="#/language">The rest of the language →</A>
           </span>
         </P>
       </Section>
@@ -244,6 +244,11 @@ export default function Home() {
           everything written in it moves with it. None of this has been reviewed by anyone, and
           anonymity is a separate question from correctness that it does not answer yet.
         </Caveat>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            <A href="#/stack/tor">What is in it, and what checked each piece →</A>
+          </span>
+        </P>
       </Section>
 
       {/* ── Ethereum ──────────────────────────────────────────────────────── */}
@@ -283,6 +288,11 @@ export default function Home() {
           followed mainnet. Being a full node is not the target: a light client that follows
           consensus, and local execution backed by state proofs.
         </Caveat>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            <A href="#/stack/ethereum">The packages under that, and their vectors →</A>
+          </span>
+        </P>
       </Section>
 
       {/* ── Everything ────────────────────────────────────────────────────── */}

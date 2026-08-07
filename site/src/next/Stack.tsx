@@ -134,10 +134,22 @@ export default function Stack() {
         <P>
           Reading {m({ children: "main" })}&rsquo;s parameters tells you this program reads the
           clock, prints, and touches the filesystem. Nothing else is reachable, because there is
-          nowhere else to reach. Behind {m({ children: "readFile(…).wait()" })} the host is doing
+          nowhere else to reach. That is a property of the binary rather than a promise about it:{" "}
+          <Lead>a module that takes no function parameter imports nothing at all</Lead> — not
+          &ldquo;nothing it uses&rdquo;, an empty import section — and a module that takes one
+          imports exactly one dispatcher, per signature rather than per parameter. A spec test
+          compiles both and reads {m({ children: "WebAssembly.Module.imports" })} to say so. Behind {m({ children: "readFile(…).wait()" })} the host is doing
           asynchronous work on another thread while this one is parked — asynchronous work called
           synchronously, with none of the colouring that usually spreads through everything it
           touches.
+        </P>
+        <P>
+          What the world leaves out is as deliberate as what it offers. {m({ children: "cwd" })} is
+          readable and there is <Lead>no {m({ children: "chdir" })}</Lead>: a mutable working
+          directory is ambient state that changes what every relative path in a program means, from
+          anywhere, which is the shape this world exists to avoid. A program that moves around keeps
+          its own idea of where it is and passes whole paths — which is exactly what the shell does,
+          and why its {m({ children: "cd" })} is its own.
         </P>
         <Sub id="grants" title="Granted at build, not at run">
           <P>
@@ -147,6 +159,12 @@ export default function Stack() {
             {m({ children: "head -1" })}:
           </P>
           <Code label="the first line of the artifact" code={EX_SHEBANG} lang="ts" />
+          <P>
+            And a child gets what its parent chose <em>intersected with what the parent itself
+            has</em>, enforced by the host rather than trusted. So a program can hand out one
+            capability of the several it holds, and <Lead>can never hand out one it lacks</Lead> —
+            authority only narrows.
+          </P>
         </Sub>
       </Section>
 
@@ -173,6 +191,10 @@ export default function Stack() {
           and you can point yours at it:
         </P>
         <Code label="a real client, our server" code={EX_SSH} lang="ts" />
+        <P>
+          Ask it for a pty and it refuses, which is what a real sshd does when none is available —
+          a refusal a client already knows how to handle, rather than half a terminal it does not.
+        </P>
         <Sub id="applets" title="Sixty programs it did not have to contain">
           <P>
             The shell used to carry its own small {m({ children: "cat" })}, {m({ children: "wc" })}
@@ -193,10 +215,19 @@ export default function Stack() {
             The applet needs no change and cannot tell.
           </P>
           <P>
-            What that is <em>not</em> is isolation: same wasm instance, same authority. The thing
-            with a real boundary is {m({ children: "spawn" })}, which the shell tries first and
-            which a browser cannot do yet — <A href="#/roadmap/native-host">the fourth host</A> is
-            partly about fixing that.
+            What that is <em>not</em> is isolation: same wasm instance, same authority — so it is
+            the <em>fallback</em>. The shell spawns them: a worker can create a worker, and a
+            browser bundle is its own program, so {m({ children: "sort" })} is this program again
+            with {m({ children: "sort" })} as its first argument — its own instance, its own
+            grants, its own {m({ children: "SharedArrayBuffer" })}. Which is why pipeline stages
+            run at once and {m({ children: "yes | head -1" })} terminates the way it does in bash.
+          </P>
+          <P>
+            Telling the two routes apart took the one place they differ, because an applet cannot:
+            a <em>called</em> applet&rsquo;s output is captured and capped at 8 MiB, so{" "}
+            {m({ children: "seq 1 1500000 | wc -c" })} truncates, and a spawned one&rsquo;s queue
+            drains as the next stage reads it. <Lead>The spawned answer is the one GNU gives</Lead>,
+            which is how a real Chromium says which route ran.
           </P>
         </Sub>
       </Section>
@@ -218,6 +249,12 @@ export default function Stack() {
           bandwidth-weighted per position, distinct /16s, mutual families excluded, an exit whose
           policy carries the port, through a pinned guard set. There is a SOCKS5 proxy on top, and
           it reaches onion services.
+        </P>
+        <P>
+          Almost none of the cryptography under that was new. Tor needs Curve25519, SHA-256, HMAC,
+          HKDF, AES-128-CTR and Ed25519, and the TLS work had already built every one of them; the{" "}
+          <Lead>only primitive this whole stack added was SHA-1</Lead>, which Tor still specifies
+          for the running digest that authenticates a circuit&rsquo;s relay cells.
         </P>
         <Code label="tor/src/ntor.wac · the handshake, abridged" code={EX_NTOR} />
         <P>
@@ -257,6 +294,24 @@ export default function Stack() {
             one and passed. And a BEGIN cell on a rendezvous circuit has an empty address.{" "}
             <Lead>The first two fell to differentials against tor&rsquo;s own values; the last two
             needed a live service.</Lead>
+          </P>
+          <P>
+            It hosts one too, which is the mirror of every piece above and not a symmetry: the
+            client proves nothing about itself and the service proves everything, so every cell it
+            sends carries a signature or a MAC the client&rsquo;s equivalent does not. Publication
+            works end to end — our directory and our relay accept a{" "}
+            {m({ children: "POST /tor/hs/3/publish" })}, check it the way tor&rsquo;s own{" "}
+            {m({ children: "desc_decode_plaintext_v3" })} does, file it under the blinded key from
+            its certificate, and replace what they hold only for a strictly newer revision. The
+            descriptor decodes whole under tor&rsquo;s{" "}
+            {m({ children: "hs_desc_decode_descriptor" })}, and key blinding matches in both
+            directions, so the blinded secret a service signs with is byte-identical to
+            tor&rsquo;s.
+          </P>
+          <P>
+            Which is why the transcript on the front page is the one that counts:{" "}
+            <Lead>an unmodified {m({ children: "curl" })} fetched a page from a service we
+            host</Lead>, with the introduction point and the rendezvous point our relays as well.
           </P>
         </Sub>
         <Sub id="tor-both" title="And it runs the other side">
@@ -338,6 +393,15 @@ export default function Stack() {
             steps, which is the trap: the storage proof must be checked under the root the account
             proof yielded, or a caller can be handed a perfectly valid proof of a different
             account&rsquo;s storage.
+          </P>
+          <P>
+            {m({ children: "packages/ens" })} turns the name a person types into the node a contract
+            is asked about — EIP-137&rsquo;s namehash, the DNS wire encoding and both calls&rsquo;
+            calldata, every case against {m({ children: "npm:ethers" })}. The honest half is that{" "}
+            <Lead>ENSIP-15 normalisation is not implemented</Lead>, so a name is hashed as given: the
+            corpus generator refuses to admit a name unless {m({ children: "ethers" })} says it is
+            already normalised, which keeps the tests true and leaves the gap where a reader can see
+            it.
           </P>
         </Sub>
       </Section>

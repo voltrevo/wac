@@ -13,12 +13,12 @@ export const MONO_REPO = "https://github.com/voltrevo/wac-mono";
 
 export type Route = "home" | "language" | "run" | "stack" | "checked" | "roadmap" | "playground";
 
-export const PAGES: { route: Route; href: string; label: string; blurb: string }[] = [
-  { route: "language", href: "#/language", label: "the language", blurb: "How it reads, both surfaces, the boundary with JavaScript, and where WebAssembly itself runs out." },
-  { route: "run", href: "#/run", label: "run it here", blurb: "A shell, a hasher and a Mandelbrot set — three whole wac applications, in this tab, unmodified." },
-  { route: "stack", href: "#/stack", label: "the stack", blurb: "TLS, SSH, Tor, a shell, an Ethereum light client — what each one is, and what says so." },
-  { route: "checked", href: "#/checked", label: "how it is checked", blurb: "Six kinds of evidence, ordered by weight — starting with a foreign implementation on the other end." },
-  { route: "roadmap", href: "#/roadmap", label: "where this is going", blurb: "A system that runs the same in a browser and on bare metal, a host with no JavaScript, packages." },
+export const PAGES: { route: Route; href: string; label: string }[] = [
+  { route: "language", href: "#/language", label: "the language" },
+  { route: "run", href: "#/run", label: "run it here" },
+  { route: "stack", href: "#/stack", label: "the stack" },
+  { route: "checked", href: "#/checked", label: "how it is checked" },
+  { route: "roadmap", href: "#/roadmap", label: "where this is going" },
 ];
 
 // ── Text primitives ─────────────────────────────────────────────────────────

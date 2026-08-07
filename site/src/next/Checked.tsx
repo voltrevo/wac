@@ -52,7 +52,8 @@ export default function Checked() {
             [<span style={{ fontFamily: font.mono }}>consensus-spec-tests</span>, <span>2,233 SSZ vectors, including all 1,131 <em>invalid</em> ones</span>],
             [<span style={{ fontFamily: font.mono }}>ethereum/tests</span>, "RLP driven in both directions against the published bytes"],
             [<span style={{ fontFamily: font.mono }}>npm:ethers, anvil</span>, "contract ABI encoding and decoding, and a state proof taken from a real client"],
-            [<span style={{ fontFamily: font.mono }}>@noble/curves, Python</span>, "each stage of the BLS12-381 tower, gated separately"],
+            [<span style={{ fontFamily: font.mono }}>@noble/curves, Python</span>, <span>each stage of the BLS12-381 tower, gated separately — a field in the wrong Montgomery representation passes every self-check it has and fails every real vector</span>],
+            [<span style={{ fontFamily: font.mono }}>Deno&rsquo;s filesystem</span>, <span>our in-memory one: the same script of writes, listings, renames and removals against both, transcript for transcript</span>],
           ]}
         />
         <P>
@@ -168,6 +169,52 @@ export default function Checked() {
           all in TypeScript is a package whose author avoided their own language — and partly
           coverage: a test written in wac exercises the compiler on the way past, which is how
           several emitter bugs were found by code that was trying to test something else.
+        </P>
+      </Section>
+
+      <Section id="no-oracle" kicker="when there is none" title="The case where nobody else has the answer">
+        <P>
+          {m({ children: "keccak256" })} is the hash Ethereum is built on, and it is <em>not</em>{" "}
+          SHA3-256: the original padding predates the standard, so this machine&rsquo;s OpenSSL and
+          node ship SHA-3 and both SHAKEs and no keccak256 at all. There was nothing to run it
+          against.
+        </P>
+        <P>
+          So the claim is narrowed to what the evidence supports rather than widened to fill the
+          gap. {m({ children: "sha3_256" })} and both SHAKEs <em>are</em> checked against{" "}
+          {m({ children: "node:crypto" })}, which pins the permutation, the rate handling and the
+          squeeze — everything the two share.{" "}
+          <Lead>What that cannot pin is the one byte they differ by</Lead>, so the domain byte is
+          isolated deliberately: the empty message, where it is the only thing the permutation sees,
+          against a constant every Ethereum client agrees on. Then two more lengths, including a
+          partial block with the padding well inside it.
+        </P>
+        <P>
+          Written down that way because the alternative is the failure this whole page is about — a
+          test that agrees with its own implementation and reads, from the outside, exactly like one
+          that agreed with somebody else&rsquo;s.
+        </P>
+      </Section>
+
+      <Section id="unfalsifiable" kicker="when the vectors cannot tell" title="Checks the suite cannot make">
+        <P>
+          Published vectors are the strongest evidence here and they still have a blind spot: they
+          contain the cases somebody thought to write. The light client&rsquo;s do, and the gap is
+          exact. Every update in them is signed by almost the whole committee, so{" "}
+          <Lead>{m({ children: "≥ 2/3" })} and {m({ children: "≥ 1/3" })} accept the same set</Lead>,
+          and a safety threshold of half the maximum behaves identically to one of zero. Weaken
+          either and all nineteen steps still pass.
+        </P>
+        <P>
+          They are also the security boundary of the protocol. So the supermajority rule is a named
+          function with a test of its own, on the boundary rather than near it: with 32 members two
+          thirds is 21.33, so 22 is the first supermajority and <em>21 is not</em> — 21 × 3 = 63,
+          which is less than 2 × 32.
+        </P>
+        <P>
+          The general form is worth saying plainly, because it is what the rest of this page assumes:{" "}
+          <Lead>a passing suite is evidence about the cases it contains and about nothing
+          else.</Lead>
         </P>
       </Section>
 
