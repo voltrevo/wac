@@ -180,6 +180,17 @@ Deno.test({
     if (log.includes("skewed time")) {
       throw new Error(`tor thinks our clock is wrong — check the NETINFO timestamp:\n${log}`);
     }
+
+    // The second finding, and the same shape. Our link certificate was Ed25519 where every real
+    // relay's is RSA, so tor asked it for an RSA key, got none, and left `expecting an rsa key` on
+    // OpenSSL's error queue three times per handshake. The message was noise; what it pointed at was
+    // a relay identifiable as ours from the first flight, by a field anyone on the path can read.
+    if (log.includes("expecting an rsa key")) {
+      throw new Error(`tor cannot read our link certificate's key as RSA:\n${log}`);
+    }
+    if (log.includes("Unhandled OpenSSL errors")) {
+      throw new Error(`we left OpenSSL errors on tor's queue:\n${log}`);
+    }
   } finally {
     for (const r of running) {
       try {

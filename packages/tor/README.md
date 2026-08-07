@@ -768,24 +768,6 @@ names, and a test that runs it. Every mechanism it needs now exists.
 
 ## What is not here
 
-**Our relay's TLS certificate is Ed25519, and every real relay's is RSA.** So a relay of ours is
-trivially distinguishable from a relay of theirs by anyone who looks at the certificate — no traffic
-analysis, no timing, just the public key type in the first flight. tor builds its link certificate
-from `crypto_pk_generate_key`, an RSA key; ours is `selfSignedEd25519`, and `openssl s_client` against
-a running `relayd` says `Public Key Algorithm: ED25519` in as many words.
-
-It works, which is why it survived: the ed25519 certificate chain in the CERTS cell is what binds a
-modern link handshake, and the TLS certificate underneath it is bound by digest rather than by key
-type. C tor completes the handshake and bootstraps. What it also does is log
-`TLS error: expecting an rsa key` three times on the way through, because `tor_x509_cert_new` asks
-every certificate it wraps for an RSA key in order to digest it and leaves the failure on OpenSSL's
-error queue. That noise is the symptom; the fingerprint is the thing.
-
-Fixing it means presenting an RSA link certificate, which means our TLS **server** signing
-CertificateVerify with RSA-PSS. We have PSS *verification* (`packages/tls/src/x509.wac`) and raw RSA
-signing (`rsaSignRawPkcs1`); the missing piece is EMSA-PSS encoding on the signing side, pinnable
-against OpenSSL like everything else here. That is the work, and it is not done.
-
 **The real network.** Directory authorities are reached by IP and this sandbox's proxy
 allowlist is by domain, so they answer 403; torproject.org is blocked outright. Everything
 here is verified offline or against a locally built tor.
