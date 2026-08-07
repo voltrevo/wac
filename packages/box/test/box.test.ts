@@ -2188,10 +2188,16 @@ Deno.test("nc relays both directions at once", async () => {
   try {
     await buildApp(BOX, built, { net: true });
 
-    const port = freePort();
+    // **Bound before the number is handed out.** This asked `freePort` for a number, let it go, and
+    // then listened on it — the exact probe-close-hand-over shape `harness/port.ts` exists to describe,
+    // with an extra window because the listen happens later still. Several agents share this machine and
+    // it lost a gate run to `AddrInUse` from somebody else's server. The listener here is *ours* and is
+    // never released, so binding `port: 0` first and reading the number back has no window at all.
+    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const port = (listener.addr as Deno.NetAddr).port;
     const seen: string[] = [];
     const peer = (async () => {
-      const l = Deno.listen({ hostname: "127.0.0.1", port });
+      const l = listener;
       try {
         const c = await l.accept();
         await c.write(new TextEncoder().encode("peer speaks first\n"));
