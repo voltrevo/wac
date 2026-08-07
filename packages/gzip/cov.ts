@@ -45,7 +45,11 @@ const gz = await instrument("packages/gzip/src/gzip.wac");
 // capability takes straight back. Declared as the bytes it is, rather than `unknown`, because the two
 // readers below promise a `Uint8Array` and nothing was checking that promise: `deno test` never imports
 // this file, so its type errors were invisible until `deno task check` looked at every file. wac-mono 0011.
-const gzRead = gz.mod.Read as { Data(b: Uint8Array): Uint8Array; End(): Uint8Array };
+const gzRead = gz.mod.Read as {
+  Data(b: Uint8Array): Uint8Array;
+  End(): Uint8Array;
+  Failed(why: string): Uint8Array;
+};
 const gzipStored = gz.mod.gzipStored as (d: Uint8Array) => Uint8Array;
 const gzipFixed = gz.mod.gzipFixed as (d: Uint8Array) => Uint8Array;
 const gzipDynamic = gz.mod.gzipDynamic as (d: Uint8Array) => Uint8Array;
@@ -72,7 +76,11 @@ for (const n of [0, 1, 2, 3, 258, 65535, 65536, 131071]) {
 
 const inf = await instrument("packages/gzip/src/inflate.wac");
 /** `Read`'s variant constructors, from each instrumented module — a wac enum crosses as a class. */
-const infRead = inf.mod.Read as { Data(b: Uint8Array): Uint8Array; End(): Uint8Array };
+const infRead = inf.mod.Read as {
+  Data(b: Uint8Array): Uint8Array;
+  End(): Uint8Array;
+  Failed(why: string): Uint8Array;
+};
 const gunzipBytes = inf.mod.gunzipBytes as (gz: Uint8Array) => Uint8Array;
 const inflate = inf.mod.inflate as (d: Uint8Array) => Uint8Array;
 
@@ -253,7 +261,7 @@ for (const n of [0, 1, 2, 255, 256, 4096]) {
 const UNREACHABLE: { file: string; line: number; snippet: string; why: string }[] = [
   {
     file: "packages/gzip/src/inflate.wac",
-    line: 129,
+    line: 136,
     snippet: "while (left > 0 && this.bitCount >= 8) {",
     why: "copyBytes is only ever called straight after alignByte and two readBits(16). " +
       "alignByte leaves a multiple of 8 bits, fill only ever adds whole bytes, and skip " +
@@ -264,13 +272,26 @@ const UNREACHABLE: { file: string; line: number; snippet: string; why: string }[
   },
   {
     file: "packages/gzip/src/inflate.wac",
-    line: 574,
+    line: 583,
     snippet: "if (di >= 30) { trap; }",
     why: "Both distance decoders are built with at most 30 symbols — the fixed one with " +
       "exactly 30, the dynamic one with hdist, already bounded at 30 — so decode cannot " +
       "return 30. A stream using distance code 30 or 31 traps inside decode for want of a " +
       "matching code. Kept as defence: it stops being dead if the fixed distance table is " +
       "widened to the 32 patterns 5 bits allow.",
+  },
+  {
+    file: "packages/gzip/src/inflate.wac",
+    line: 786,
+    snippet: "return br.broken == \"\" ? 0 : 1;",
+    why: "The non-zero half — a member that decoded *and* a source that broke. Listed here as an " +
+      "argument rather than a construction, which is a weaker claim than the entries above: fill " +
+      "only reaches the source once `data` is spent, and it then sets `drained`, so after `broken` " +
+      "is set at most the 32 bits already in `bitBuf` remain. Every path to this line still has an " +
+      "eight-byte trailer to read, which cannot come from those bits, so the read traps and the " +
+      "line is never reached. If that holds, the comment above it promises a caller something this " +
+      "path cannot deliver — see wac-mono 0099, which is the question of whether the reader should " +
+      "keep enough to finish a member after a failed refill, not a thing to quietly change here.",
   },
 ];
 
@@ -312,20 +333,27 @@ let feed: Uint8Array[] = [];
 let feedAt = 0;
 let sinkAccepts = true;
 
+// Whether running out of feed means "the file ended" or "the disk did". Both stop the decode; which
+// one it was is the whole of `broken`, and until now the driver only ever said `End`.
+let feedFails = false;
+
 function covRead(): Uint8Array {
-  return feedAt < feed.length ? infRead.Data(feed[feedAt++]) : infRead.End();
+  if (feedAt < feed.length) return infRead.Data(feed[feedAt++]);
+  return feedFails ? infRead.Failed("the disk gave out") : infRead.End();
 }
 
 function covWrite(): boolean {
   return sinkAccepts;
 }
 
-function stream(gz: Uint8Array, chunk: number, accepts = true): void {
+function stream(gz: Uint8Array, chunk: number, accepts = true, fails = false): void {
   feed = [];
   for (let i = 0; i < gz.length; i += chunk) feed.push(gz.slice(i, i + chunk));
   feedAt = 0;
   sinkAccepts = accepts;
+  feedFails = fails;
   ignoringTraps(() => gunzipStream(covRead, covWrite));
+  feedFails = false;
 }
 
 for (const { data } of buildCorpus(12, 20260801)) {
@@ -434,24 +462,57 @@ const gzipStream = gz.mod.gzipStream as (
 let zfeed: Uint8Array[] = [];
 let zfeedAt = 0;
 
+let zfeedFails = false;
+
 function zcovRead(): Uint8Array {
-  return zfeedAt < zfeed.length ? gzRead.Data(zfeed[zfeedAt++]) : gzRead.End();
+  if (zfeedAt < zfeed.length) return gzRead.Data(zfeed[zfeedAt++]);
+  return zfeedFails ? gzRead.Failed("the disk gave out") : gzRead.End();
 }
 
 function zcovWrite(): boolean {
   return true;
 }
 
-function compressStream(data: Uint8Array, chunk: number): void {
+function compressStream(data: Uint8Array, chunk: number, fails = false): void {
   zfeed = [];
   for (let i = 0; i < data.length; i += chunk) zfeed.push(data.slice(i, i + chunk));
   zfeedAt = 0;
+  zfeedFails = fails;
   ignoringTraps(() => gzipStream(zcovRead, zcovWrite));
+  zfeedFails = false;
 }
 
 for (const { data } of buildCorpus(10, 20260802)) {
   for (const chunk of [1, 4096, 1 << 20]) compressStream(data, chunk);
 }
+// ── A source that fails rather than ending ────────────────────────────────────
+//
+// Five of this package's uncovered branches were one thing: the `Failed(why)` arm of every read, and the
+// `broken` flag it sets. A driver that only ever says `End` cannot reach any of them, and the distinction
+// they carry is the one that matters most — "this is your data compressed" against "this is the *first
+// part* of your data compressed", which is a wrong answer that looks like a right one.
+//
+// Both sides, and both moments: a source that dies mid-member, where the read traps, and one that dies
+// after a complete member, where it does not and only the return code says so.
+{
+  const whole = gzipBest(new TextEncoder().encode("a source that stops answering\n".repeat(400)));
+  for (const chunk of [1, 64, 4096]) {
+    stream(whole, chunk, true, true);                        // complete, then the next read fails
+    stream(whole.slice(0, whole.length - 40), chunk, true, true);   // fails mid-member
+    stream(whole.slice(0, 12), chunk, true, true);            // fails inside the header
+  }
+  // A *stored* member cut mid-block, which is a different copy loop from the Huffman one above: the
+  // bytes are copied straight out of the reader's buffer, so its refill is the one that fails.
+  const stored = gzipStored(new TextEncoder().encode("y".repeat(9000)));
+  for (const cut of [30, 200, 4000, stored.length - 20]) {
+    for (const chunk of [1, 64, 4096]) stream(stored.slice(0, cut), chunk, true, true);
+  }
+  for (const chunk of [1, 4096]) {
+    compressStream(new TextEncoder().encode("x".repeat(5000)), chunk, true);
+  }
+  compressStream(new Uint8Array(0), 1, true);
+}
+
 // The empty input, which still has to emit a final block.
 compressStream(new Uint8Array(0), 1 << 20);
 
