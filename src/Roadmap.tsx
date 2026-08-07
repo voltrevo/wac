@@ -254,7 +254,7 @@ export default function Roadmap() {
         <h2 style={s.h2} id="not-this">What is deliberately not on this list</h2>
         <p style={{ ...s.p, marginBottom: 0 }}>
           A package manager with a website. A standard library that grows by accretion. Anything that
-          requires a maintainer&rsquo;s permission. The compiler is ~6,000 lines of dependency-free
+          requires a maintainer&rsquo;s permission. The compiler is dependency-free
           TypeScript and the point of every direction above is to keep the number of things you have
           to trust small enough to read — which is a claim that gets harder to hold, not easier, as
           the list gets longer.

@@ -226,6 +226,40 @@ Deno.test("site: every heading has an id, so the contents can list it", async ()
   if (total < 25) throw new Error(`only ${total} headings found — did the scan resolve?`);
 });
 
+// ── A size claim that can go stale ─────────────────────────────────────────
+
+Deno.test("site: the compiler size the site claims is the size it is", async () => {
+  // "~6,000 lines" sat on the front page for months while the compiler grew to 16,000. It is a
+  // flattering direction to be wrong in, which is why nobody noticed — a smaller compiler sounds
+  // better. The number is measurable, so measure it.
+  const dir = new URL("../atoms/wac/", import.meta.url).pathname;
+  let actual = 0;
+  for await (const e of Deno.readDir(dir)) {
+    if (!e.isFile || !e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) continue;
+    // The wapy surface and the CLI are not what "the compiler" means in that sentence.
+    if (e.name.startsWith("wapy") || e.name.startsWith("wacx")) continue;
+    actual += (await Deno.readTextFile(dir + e.name)).split("\n").length;
+  }
+
+  const claims: { where: string; k: number }[] = [];
+  for (const file of ["../index.html", "../src/Landing.tsx", "../src/next/Home.tsx"]) {
+    const text = await Deno.readTextFile(new URL(file, import.meta.url));
+    for (const m of text.matchAll(/~(\d{1,3}),?(\d{3})?k? lines|~(\d{1,3})k\b/g)) {
+      const k = m[1] !== undefined ? (m[2] !== undefined ? Number(m[1]) : Number(m[1])) : Number(m[3]);
+      claims.push({ where: file.replace("../", ""), k });
+    }
+  }
+  if (claims.length < 3) throw new Error(`only ${claims.length} size claims found — has the wording changed?`);
+
+  const wrong = claims.filter(({ k }) => Math.abs(k * 1000 - actual) / actual > 0.15);
+  if (wrong.length) {
+    throw new Error(
+      `the compiler is ${actual.toLocaleString()} lines; these say otherwise:\n  ` +
+        wrong.map(({ where, k }) => `${where}: ~${k}k`).join("\n  "),
+    );
+  }
+});
+
 // ── Running, not just compiling ─────────────────────────────────────────────
 //
 // Compiling was not enough. The panel's runner held its own copy of the marshalling accessor

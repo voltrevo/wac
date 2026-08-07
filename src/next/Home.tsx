@@ -92,7 +92,7 @@ export default function Home() {
       <Section id="try" kicker="the language" title="Edit it, and press run">
         <P>
           This compiles here — not on a server, and not ahead of time. Every demo on this site is
-          the same ~6,000-line pipeline the command line uses, running on this page.
+          the same pipeline the command line uses — ~16,000 lines of dependency-free TypeScript — running on this page.
         </P>
         <InlineDemo initialCode={EX_FRONT} />
         <div style={{ height: space.block }} />

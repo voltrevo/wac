@@ -103,7 +103,7 @@ export default function Landing() {
           // shows the packages' own figure, which is the smaller half.
           ["tests", `~${Math.round(TOTALS.testsAll / 100) * 100}`],
           ["programs", String(TOTALS.programs)],
-          ["compiler", "~6k TS"],
+          ["compiler", "~16k TS"],
           ["ts in packages", "0"],
         ].map(([label, value]) => (
           <div key={label} style={{ background: "#181825", padding: "12px 14px" }}>
@@ -122,7 +122,7 @@ export default function Landing() {
         <h2 style={s.h2}>This compiles in your browser</h2>
         <p style={s.p}>
           Edit it and press run. The compiler is pure TypeScript with no dependencies — no LLVM, no
-          binaryen, no toolchain — so the same ~6,000 lines that build a Tor relay on a command line
+          binaryen, no toolchain — so the same ~16,000 lines that build a Tor relay on a command line
           are the ones answering here.
         </p>
         <InlineDemo initialCode={EX_FRONT} />
@@ -169,7 +169,7 @@ export default function Landing() {
           The entire compiler — lexer, parser, resolver, type checker, WasmGC emitter, and binary
           builder — is pure TypeScript with no native code, no LLVM, no binaryen, no wasm toolchain.
           It runs in the browser and in Deno or Node. The compiler, runtime and bindgen total
-          ~6,000 lines.
+          ~16,000 lines: 14,780 from lexer to emitter, and 1,286 more for the runtime and bindgen.
         </p>
       </div>
     </Page>
