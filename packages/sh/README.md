@@ -167,7 +167,9 @@ were: a fallback. They are still weaker than `box`'s — this `sort` is an inser
 checks that `box`'s pass the same differential scripts against bash — which `deno task corpus:through`
 now does. The answer was **563 of 632** the first time it ran, and is **588** after `cat`'s nine flags,
 `seq`'s refusals, `grep -q` and a lone `-` meaning standard input were put right in `packages/box`.
-Everything left is `tr` — 44 scripts, all of them wac-mono 0098. wac-mono 0103 has the breakdown; the
+Everything left is the deletion itself, and 0103 has the measured plan: 361 of the 649 scripts need no
+external program, 171 need `printf` — which is a **builtin** now, where bash has it and where the deletion
+cannot reach it — and about 117 name one of the other eleven. wac-mono 0103 has the breakdown; the
 paragraph had no number in it until something measured, and a plan whose precondition nobody checks is a
 plan nobody can start.
 

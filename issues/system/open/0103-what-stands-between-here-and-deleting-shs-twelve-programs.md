@@ -44,11 +44,39 @@ the same 632 scripts the originals are held to, and the README's own reason for 
 "swapping the implementation under a passing suite without measuring it first is how a green suite starts
 lying".
 
-## What is left
+## What is left, measured
 
-**The deletion itself.** The measurement is done and says the replacement is ready; removing the twelve
-from `packages/sh` and having it run the applets it is handed is the remaining work, and it is a change
-to `packages/sh`'s seam rather than to any applet. Worth its own tick.
+The deletion is a bigger change than "delete twelve functions", and the numbers say where the work is.
+Of the 649 scripts:
+
+| | scripts | |
+| --- | ---: | --- |
+| need no external program at all | 361 | shell language: quoting, expansion, control flow, builtins |
+| need `printf` | 171 | **now a builtin**, see below |
+| need one of the other eleven | ~117 | `tr` 71, `seq` 59, `cat` 48, `grep` 39, and the tail |
+
+**`printf` is done and was the trap.** It was one of the twelve, and in bash it is a *builtin* — a script
+that writes `printf` gets the shell's, not `/usr/bin/printf`. `packages/box` has **no `printf` at all**,
+so deleting the twelve with it among them would have removed a builtin bash has and a quarter of the
+corpus uses, and `corpus:through` would not have noticed because it runs box's shell *and* box has no
+printf to be missing from. It now lives in `packages/sh/src/printf.wac` and is dispatched beside `echo`
+and `test`, where the deletion cannot reach it.
+
+**What actually blocks the rest.** `packages/sh/test/differential.test.ts` builds `packages/sh/src/sh.wac`
+and runs all 649 through it. Delete the eleven and 117 of those scripts test a shell with no commands.
+The suite cannot simply build `packages/box`'s shell instead: `box` depends on `sh`, so `sh`'s tests
+depending on `box` is a cycle. So the deletion needs one of:
+
+1. the 117 scripts move to a corpus that runs through `packages/box/src/bin/sh.wac` — which is what
+   `corpus:through` already does, so this is mostly bookkeeping about which suite owns which script; or
+2. `packages/sh`'s differential keeps the language cases and `packages/box`'s suite owns the ones that
+   name a program, which is the same split said the other way round.
+
+Either way `packages/sh/src/{sealed,imaged}.wac` and `packages/ssh/src/sshd.wac` need applets from
+somewhere, and `ssh` does not depend on `box` today — it can, with no cycle, and that is the edge the
+deletion adds.
+
+None of that is hard; it is just not one sitting, and doing half of it leaves a shell with no commands.
 
 ## Done when
 
