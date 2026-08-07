@@ -376,7 +376,7 @@ export default function CaseStudies() {
         </div>
         <p style={s.p}>
           That comment is also entry five of{" "}
-          <a href="#wasm-gaps" style={{ color: "#2dd4bf" }}>what WebAssembly is missing</a>: wasm
+          <a href="#/language/wasm-gaps" style={{ color: "#2dd4bf" }}>what WebAssembly is missing</a>: wasm
           has no widening multiply, so the whole field is built in half-width limbs to stay inside
           an {tp("i64")} accumulator.
         </p>
