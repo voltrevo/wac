@@ -2102,3 +2102,34 @@ asserted its command and its length and never looked at the four bytes in questi
 That is the whole case for this file in one bug: **a wrong value that still works is invisible to a
 suite where both ends are ours.** The same shape as D1 and the same shape as the symmetric-oracle
 problem — our code agreeing with itself proves the least interesting thing.
+
+### The certificate that says what we are
+
+The C tor test's second finding, one slot after the first, and it is a better one.
+
+tor logs `TLS error: expecting an rsa key` three times while handshaking with our relay, and
+bootstraps anyway. Chasing where it comes from: `tor_x509_cert_new` asks *every* certificate it wraps
+for an RSA key so it can digest it, `tor_tls_cert_get_key` returns NULL for anything else — its own
+comment says "Watch out! This returns NULL if the cert's key is not RSA" — and the OpenSSL error it
+left behind is reported by the next `check_no_tls_errors()`. So the message is tor being noisy about a
+key type it handles correctly. Harmless.
+
+The reason it is there is not harmless. **tor's link certificate is RSA and ours is Ed25519.** Three
+independent confirmations: tor builds its link key with `crypto_pk_generate_key`; tor complains at
+runtime that our certificate is not RSA; and `openssl s_client` against a running `relayd` reports
+`Public Key Algorithm: ED25519`.
+
+A relay of ours is therefore distinguishable from every real relay by the *first thing it sends*. Not
+by traffic analysis or timing — by a field in the certificate, visible to anyone on the path, before a
+single Tor cell is exchanged. For a package whose point is to be a Tor implementation rather than a
+Tor-shaped one, that is a real difference and it had never been written down.
+
+It survived because it works. The ed25519 chain in the CERTS cell is what binds a modern link
+handshake, and the TLS certificate under it is bound by *digest*, not by key type — so nothing in the
+protocol objects, and no test where both ends are ours could have an opinion. The same shape as the
+NETINFO zero: correct enough to pass, wrong enough to be visible from outside.
+
+**What it costs to fix.** An RSA link certificate means our TLS server signing CertificateVerify with
+RSA-PSS. We have PSS verification and raw RSA signing; EMSA-PSS encoding on the signing side is the
+missing piece, and it is pinnable against OpenSSL like the rest. That is the next piece of work rather
+than a decision anyone needs to make.
