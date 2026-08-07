@@ -85,6 +85,7 @@ export function Footer() {
       <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>Language Spec</a>
       <a href={GITHUB} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>GitHub</a>
       <a href={MONO} target="_blank" rel="noopener" style={{ color: "#9ca3af", textDecoration: "none" }}>wac-mono</a>
+      <a href="next/" style={{ color: "#2dd4bf", textDecoration: "none" }}>a rewrite of this site →</a>
       <span style={{ marginLeft: "auto", color: "#4a4a5a" }}>
         Snippets are real source from those repositories, abridged only by removing lines.
       </span>
