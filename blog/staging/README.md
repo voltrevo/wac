@@ -26,9 +26,13 @@ Findings about **our** code are unaffected: our bugs are ours to publish, and th
 about them. So is a documentation bug in someone else's code — a comment that misdescribes what the
 code does is an ordinary issue for their tracker and fair material here.
 
-Where the line falls, what to do when you are unsure, and what to do when you have found one:
-`~/notes/living/tor/reporting-a-weakness-in-someone-elses-code.md`. If you are unsure, it is a
-weakness.
+If you have found one it goes to **`~/notes/security/`** — not a repo, because `~/notes` is not a git
+repository and nothing copies it into one. `README.md` there has the lifecycle and a template,
+`INDEX.md` is the page the operator checks, and `/home/claude/CLAUDE.md` has the short version of the
+rule. Where the line falls, with worked examples:
+`~/notes/living/tor/reporting-a-weakness-in-someone-elses-code.md`.
+
+If you are unsure, it is a weakness. File it and keep writing about everything else.
 
 ## Cadence
 
