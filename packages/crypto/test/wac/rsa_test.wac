@@ -26,7 +26,7 @@ import { T } from "../../../wactest/src/assert.wac";
 import { sha256 } from "../../src/sha256.wac";
 import { Big } from "../../../bignum/src/big.wac";
 import { itoa64 } from "../../../wactest/src/itoa64.wac";
-import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecoverPkcs1,
+import { rsaVerifyPkcs1, rsaVerifyPss, rsaSignPkcs1, rsaSignRawPkcs1, rsaRecoverPkcs1, rsaSignPss,
          modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
 
 const i32 KEYGEN = 0;
@@ -35,6 +35,7 @@ const i32 SIGN_PSS = 2;
 const i32 PRIVATE = 3;
 const i32 VERIFY_PKCS1 = 4;
 const i32 RECOVER_RAW = 5;
+const i32 VERIFY_PSS = 6;
 
 u8[] slice(u8[] src, i32 from, i32 to) {
   u8[] o = u8[to - from]();
@@ -364,4 +365,66 @@ u8[] copyOf(u8[] src) {
   u8[] o = u8[src.len()]();
   for (i32 i = 0; i < src.len(); i++) { o[i] = src[i]; }
   return o;
+}
+
+/**
+ * The direction PSS had never been checked in: **we** sign and node verifies.
+ *
+ * Every PSS case above has node signing and us verifying, which establishes that our verifier reads
+ * their encoding and says nothing whatever about ours producing one. That gap is not hypothetical for
+ * this algorithm — the encoding has a masked block, a salt recovered from the signature itself, and a
+ * final step that clears bits the modulus has no room for. A signer can get any of those wrong and
+ * still produce something *our own verifier* accepts, because the two would be wrong together.
+ *
+ * TLS 1.3 needs exactly this: `rsa_pss_rsae_sha256` in CertificateVerify, which is the only way a
+ * server presenting an RSA certificate can complete a handshake.
+ */
+export string test_our_pss_signatures_verify_elsewhere(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] sizeArg = u8[2]();
+  sizeArg[0] = 8;
+  sizeArg[1] = 0;
+  Key k = Key.of(ref(KEYGEN, sizeArg, u8[0]()));
+  u8[] d = ref(PRIVATE, u8[0](), u8[0]());
+  u8[] msg = "a signature nobody here produced the verifier for".toBytes();
+
+  i32[] salts = i32[](0, 20, 32);
+  for (i32 s = 0; s < salts.len(); s++) {
+    u8[] salt = u8[salts[s]]();
+    for (i32 i = 0; i < salt.len(); i++) { salt[i] = (i * 47 + 13) & 0xFF; }
+    u8[] sig = rsaSignPss(k.n, d, msg, 32, salt);
+    t.eqI32(sig.len(), k.n.len(), "a signature the width of the modulus");
+
+    u8[] arg = u8[2 + sig.len()]();
+    arg[0] = 32;                                     // SHA-256
+    arg[1] = salts[s];
+    for (i32 i = 0; i < sig.len(); i++) { arg[2 + i] = sig[i]; }
+    t.eqI32(ref(VERIFY_PSS, arg, msg)[0], 1,
+            "node verifies our PSS with a " + itoa64(salts[s] as i64) + "-byte salt");
+
+    // And our own verifier agrees, which is the weaker claim and worth stating as such: it would hold
+    // even if both halves were wrong in the same way.
+    t.isTrue(rsaVerifyPss(k.n, k.e, msg, sig, 32, salts[s]), "and so does ours");
+  }
+
+  // The salt reaches the signature: two different salts must give two different signatures, or the
+  // parameter is being ignored and every signature over one message is the same bytes.
+  u8[] saltA = u8[32](fill: 1);
+  u8[] saltB = u8[32](fill: 2);
+  u8[] sigA = rsaSignPss(k.n, d, msg, 32, saltA);
+  u8[] sigB = rsaSignPss(k.n, d, msg, 32, saltB);
+  bool differ = false;
+  for (i32 i = 0; i < sigA.len(); i++) { if (sigA[i] != sigB[i]) { differ = true; } }
+  t.isTrue(differ, "the salt is actually used");
+
+  // A key with no room for the encoding is an error rather than a short signature. 32-byte hash plus
+  // a 32-byte salt plus two needs 66 bytes; a 512-bit modulus has 64.
+  u8[] small = u8[2]();
+  small[0] = 2;
+  small[1] = 0;
+  Key tiny = Key.of(ref(KEYGEN, small, u8[0]()));
+  u8[] tinyD = ref(PRIVATE, u8[0](), u8[0]());
+  t.eqI32(rsaSignPss(tiny.n, tinyD, msg, 32, u8[32]()).len(), 0,
+          "a 512-bit key cannot hold a 32-byte hash and a 32-byte salt");
+  return t.report();
 }
