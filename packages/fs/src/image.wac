@@ -235,8 +235,24 @@ export bool save(Core core, Cli cli, string who, string path, Fs fs) {
   for (i32 i = 0; i < w.skipped.len(); i++) {
     core.warn(who + ": not saved: " + w.skipped[i]);
   }
-  if (cli.writeFile(path, w.bytes).wait().fault != 0) {
-    core.warn(who + ": " + path + ": the session could not be saved");
+
+  // **Beside the target, then moved into place.** Writing over the image directly leaves it half written
+  // if the program stops mid-write, and a half-written image is refused on the next boot — so a process
+  // killed at the wrong moment costs the *whole* session rather than the part it had not saved. It
+  // happened: `packages/ssh/test/server.test.ts` killed a server just after a client disconnected and the
+  // next server said "too short to be an image".
+  //
+  // `platform.wac` says of `rename` that it exists so "an application can write beside the target and
+  // move it into place", which is this, and which this did not do.
+  string beside = path + ".new";
+  if (cli.writeFile(beside, w.bytes).wait().fault != 0) {
+    core.warn(who + ": " + beside + ": the session could not be saved");
+    return false;
+  }
+  if (cli.rename(beside, path).wait().fault != 0) {
+    // The bytes are all there under the other name, so say which — throwing them away to keep the
+    // directory tidy would be losing the session to avoid mentioning it.
+    core.warn(who + ": " + path + ": the session was written to " + beside + " and could not be moved");
     return false;
   }
   return true;

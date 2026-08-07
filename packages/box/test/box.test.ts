@@ -801,9 +801,30 @@ Deno.test("the applets that read several files read all of them", async () => {
     // in the command coming back as an answer. And the sign was dropped, so `tail -n +2` gave the last
     // two lines rather than everything from the second: a different answer, not a missing one.
     const lc = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
-    const sysBoth = (cmd: string, args: string[]) => {
-      const r = new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped", env: lc, clearEnv: true })
-        .outputSync();
+    /** A real tool, with optional standard input, so `-` and the flag-only forms can be compared. */
+    const sysBoth = async (cmd: string, args: string[], stdin = "") => {
+      const child = new Deno.Command(cmd, {
+        args,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+        env: lc,
+        clearEnv: true,
+      }).spawn();
+      // A tool that exits without reading — `seq` with no operand, `cat -Q` — breaks the pipe, which is
+      // it behaving correctly rather than a failure to report.
+      const w = child.stdin.getWriter();
+      try {
+        await w.write(new TextEncoder().encode(stdin));
+        await w.close();
+      } catch {
+        try {
+          await w.close();
+        } catch {
+          // Already gone.
+        }
+      }
+      const r = await child.output();
       const d = new TextDecoder();
       return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
     };
@@ -826,7 +847,7 @@ Deno.test("the applets that read several files read all of them", async () => {
       ]
     ) {
       const args = [...argv, counted];
-      const real = sysBoth(argv[0], args.slice(1));
+      const real = await sysBoth(argv[0], args.slice(1));
       const got = await runner.run(args);
       assertEquals(got.out, real.out, `box ${args.join(" ")}: output`);
       assertEquals(got.code, real.code, `box ${args.join(" ")}: status`);
@@ -839,6 +860,47 @@ Deno.test("the applets that read several files read all of them", async () => {
       if (real.err !== "") assertEquals(got.err, named, `box ${args.join(" ")}: message`);
     }
     // No cleanup needed: the only `split` here is one that refuses, so it writes nothing.
+
+    // **What `packages/sh`'s corpus found**, measured by `deno task corpus:through` (wac-mono 0103).
+    // Each of these was a flag accepted and ignored, or an operand read as a filename that never is —
+    // the shape where the caller asks for something, gets no error, and reads output that is wrong in
+    // exactly the way they asked it not to be.
+    const dashFile = `${dir}/dash.txt`;
+    await Deno.writeTextFile(dashFile, "a\n\n\n\nb\tc\n");
+    for (
+      const argv of [
+        // `cat`'s nine flags did nothing at all, and `-Q` — not a flag GNU has — was accepted.
+        ["cat", "-n"], ["cat", "-b"], ["cat", "-s"], ["cat", "-ns"], ["cat", "-bs"],
+        ["cat", "-E"], ["cat", "-T"], ["cat", "-A"], ["cat", "-e"], ["cat", "-t"], ["cat", "-v"],
+        ["cat", "-Q"], ["cat", "-u"],
+        // A lone `-` is standard input everywhere in coreutils, and was read as a filename.
+        ["cat", "-"], ["sort", "-"], ["uniq", "-"], ["wc", "-"], ["wc", "-c", "-"], ["nl", "-"],
+        ["tac", "-"], ["head", "-1", "-"], ["tail", "-1", "-"],
+        // …and is *not* standard input in util-linux's `rev`, which says so in its own words.
+        ["rev", "-"],
+        // `seq`'s refusals: a usage error exits 1 in GNU, and a word is not a number.
+        ["seq"], ["seq", "abc"], ["seq", "1", "2", "3", "4"], ["seq", "1", "2", "x"],
+        ["seq", "3"], ["seq", "2", "5"], ["seq", "1", "2", "9"], ["seq", "5", "1"],
+        // `grep -q` printed every matching line, which is the opposite of what it asks for.
+        ["grep", "-q", "a", dashFile], ["grep", "-q", "zzz", dashFile],
+        ["grep", "-qc", "a", dashFile],
+      ]
+    ) {
+      // `-` and the flag-only forms read standard input, so every case gets the same bytes on it.
+      const stdin = "a\n\n\n\nb\tc\n";
+      const args = argv[0] === "cat" && argv.length === 2 ? [...argv, dashFile] : argv;
+      const real = await sysBoth(args[0], args.slice(1), stdin);
+      const got = await runner.run(args, { stdin });
+      assertEquals(got.out, real.out, `box ${args.join(" ")}: output`);
+      assertEquals(got.code, real.code, `box ${args.join(" ")}: status`);
+      if (real.err !== "") {
+        // A tool found on `PATH` is exec'd with the resolved path as argv[0] and puts *that* wherever it
+        // names itself — at the start of a diagnostic and inside `Try '/usr/bin/cat --help'`. Both are
+        // the harness's doing rather than a difference in the message.
+        const named = real.err.replaceAll(new RegExp(`/\\S*/${args[0]}\\b`, "g"), args[0]);
+        assertEquals(got.err, named, `box ${args.join(" ")}: message`);
+      }
+    }
 
     // `fsdump` reads a filesystem image, which is a format of ours — so there is no counterpart here
     // either, and the oracle is again the shape. `packages/fs/test/image.test.ts` is where the format is

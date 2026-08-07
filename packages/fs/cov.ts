@@ -215,7 +215,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 429,
+    line: 445,
     proven: false,
     snippet: "if (r.bad) { return -1; }",
     why:
@@ -223,7 +223,7 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 434,
+    line: 450,
     proven: false,
     snippet: "if (r.bad) { return -1; }",
     why:
@@ -287,9 +287,17 @@ const NOT_COVERED: { file: string; line: number; snippet: string; proven: boolea
   },
   {
     file: "packages/fs/src/image.wac",
-    line: 238,
+    line: 248,
     proven: false,
-    snippet: "if (cli.writeFile(path, w.bytes).wait().fault != 0) {",
+    snippet: "if (cli.writeFile(beside, w.bytes).wait().fault != 0) {",
+    why:
+      "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
+  },
+  {
+    file: "packages/fs/src/image.wac",
+    line: 252,
+    proven: false,
+    snippet: "if (cli.rename(beside, path).wait().fault != 0) {",
     why:
       "`boot` and `save` take a `Core` and a `Cli`, which only a built program has. Both are driven end to end by `packages/sh/test/imaged.test.ts` and `packages/ssh/test/server.test.ts` — a missing image, a damaged one, a path that is a directory, a save that succeeds and a save that cannot — against real files on a real disk. `packages/sh/test/wac/probe.wac` fabricates a whole `Cli` and could be copied here; thirty fake capability functions is a copy, and the copy would be a worse oracle than the real files those two tests already use.",
   }

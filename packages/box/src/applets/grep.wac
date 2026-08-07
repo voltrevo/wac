@@ -12,7 +12,7 @@ import { compile, compileIgnoreCase, search, slotCount } from "../../../regex/sr
 import { Program, BUDGET, NO_MATCH } from "../../../regex/src/program.wac";
 
 export i32 grep(Core core, Cli cli, Args a) {
-  if (a.rest.len() < 1) { core.warn("usage: " + a.name + " [-ivnc] <pattern> [file]"); return 2; }
+  if (a.rest.len() < 1) { core.warn("usage: " + a.name + " [-cinqv] <pattern> [file]"); return 2; }
   Program? prog = has(a, 'i')
     ? compileIgnoreCase(a.rest[0].toBytes())
     : compile(a.rest[0].toBytes());
@@ -23,6 +23,12 @@ export i32 grep(Core core, Cli cli, Args a) {
   bool invert = has(a, 'v');
   bool number = has(a, 'n');
   bool countOnly = has(a, 'c');
+  // **`-q` was accepted and ignored**, so `grep -q x` printed every matching line and read the whole
+  // input. Two things wrong at once: the output the caller asked to be silent, and the reading — GNU
+  // stops at the first match, which is the only thing that makes `seq 1 100000 | grep -q 5` finish
+  // rather than counting to a hundred thousand. `packages/sh`'s grep has always done both; measuring
+  // this package against its corpus is what found the difference (wac-mono 0103).
+  bool quiet = has(a, 'q');
   i32 matches = 0;
   Sink out = Sink.create(cli);
 
@@ -58,6 +64,8 @@ export i32 grep(Core core, Cli cli, Args a) {
       if (hit == invert) { continue; }
       matches++;
       here++;
+      // The status is the whole answer, so there is nothing left to read once there is one.
+      if (quiet) { out.flush(); return 0; }
       if (countOnly) { continue; }
       string text = string.fromBytes(l.bytes);
       // Buffered: a pattern that matches most of a large file is one host call per line otherwise, and

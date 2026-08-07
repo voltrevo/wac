@@ -51,31 +51,24 @@ const env = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: 
  * because `grep -q` answering on the first match is the only thing that makes it finish — and
  * `packages/box`'s `grep -q` reads the whole input, so measuring through it ran until something killed
  * it. A run that hangs reports nothing at all; one that says "this never finished" reports the defect.
+ *
+ * Through `timeout(1)` rather than a `setTimeout` and `child.kill`, which is what this did first and
+ * which did not work: the child was killed and `output()` went on accumulating whatever had already been
+ * written down a pipe nobody was draining. The system's own bound stops the process *and* closes the
+ * pipe, which is the part that matters.
  */
-async function run(cmd: string, script: string): Promise<{ out: string; code: number; hung: boolean }> {
-  const child = new Deno.Command(cmd, {
-    args: ["-c", script],
+function run(cmd: string, script: string): { out: string; code: number; hung: boolean } {
+  const r = new Deno.Command("timeout", {
+    args: ["10", cmd, "-c", script],
     cwd: dir,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
     env,
     clearEnv: true,
-  }).spawn();
-  const timer = setTimeout(() => {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // Already gone between the check and the signal.
-    }
-  }, 10_000);
-  const r = await child.output();
-  clearTimeout(timer);
-  // A killed process has no code of its own; `signal` is set instead. Both are checked because which
-  // of the two a runtime reports is a runtime's business, and a `hung` that is always false would make
-  // this whole bound decorative.
-  const hung = r.signal !== null && r.signal !== undefined;
-  return { out: new TextDecoder().decode(r.stdout), code: r.code, hung };
+  }).outputSync();
+  // `timeout` exits 124 when it had to kill, which is a status no shell here returns for itself.
+  return { out: new TextDecoder().decode(r.stdout), code: r.code, hung: r.code === 124 };
 }
 
 /** Which program a script is really about, for grouping. First match wins, which is close enough. */
@@ -90,9 +83,11 @@ function about(script: string): string {
 
 const differ: string[] = [];
 const hung: string[] = [];
+const trace = Deno.args.includes("--trace");
 for (const script of cases) {
-  const theirs = await run("bash", script);
-  const ours = await run(shell, script);
+  if (trace) console.error(`... ${JSON.stringify(script).slice(0, 70)}`);
+  const theirs = run("bash", script);
+  const ours = run(shell, script);
   if (ours.hung && !theirs.hung) {
     hung.push(script);
     differ.push(script);
@@ -121,8 +116,8 @@ for (const [p, n] of [...byProgram].sort((a, b) => b[1] - a[1])) console.log(`  
 
 if (Deno.args.includes("--verbose")) {
   for (const script of differ) {
-    const theirs = await run("bash", script);
-    const ours = await run(shell, script);
+    const theirs = run("bash", script);
+    const ours = run(shell, script);
     const cut = (s: string) => JSON.stringify(s.length > 70 ? `${s.slice(0, 70)}…` : s);
     console.log(`\n${JSON.stringify(script)}\n  theirs(${theirs.code}) ${cut(theirs.out)}\n  ours(${ours.code})   ${cut(ours.out)}`);
   }

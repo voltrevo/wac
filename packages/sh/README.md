@@ -165,9 +165,11 @@ handed over. Both of those are now false, and they have become what the seam alw
 were: a fallback. They are still weaker than `box`'s — this `sort` is an insertion sort and refuses
 `-n` and `-u`, which `box`'s implements — so the sensible end state is to delete them once something
 checks that `box`'s pass the same differential scripts against bash — which `deno task corpus:through`
-now does, and the answer today is **563 of 632**, with the 69 concentrated in `tr` (44), `cat` (17) and
-`seq` (6). wac-mono 0103 has the breakdown and the next step; the paragraph had no number in it until
-something measured, and a plan whose precondition nobody checks is a plan nobody can start.
+now does. The answer was **563 of 632** the first time it ran, and is **588** after `cat`'s nine flags,
+`seq`'s refusals, `grep -q` and a lone `-` meaning standard input were put right in `packages/box`.
+Everything left is `tr` — 44 scripts, all of them wac-mono 0098. wac-mono 0103 has the breakdown; the
+paragraph had no number in it until something measured, and a plan whose precondition nobody checks is a
+plan nobody can start.
 
 `grep` was on that list until it was used by hand. It matched **substrings**, and the comment above it
 said so — "`packages/regex` is the obvious next step and is not wired" — which helped nobody: `grep '^h'`
