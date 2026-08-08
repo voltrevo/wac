@@ -47,6 +47,14 @@ const CASES = [
   "base64 bin.txt", "base64 hi.txt", "cat hi.txt", "sha256sum hi.txt", "sha256sum empty.txt",
   "head -1 hi.txt", "tail -1 hi.txt", "tac hi.txt", "sort hi.txt", "cut -c1-2 hi.txt",
   "tr a-z A-Z < hi.txt", "nl hi.txt", "fold -w3 hi.txt", "uniq hi.txt",
+  // **`grep` and a binary file.** Input containing a NUL is binary — `\377\376` is not, which is the
+  // narrower rule than "not valid text" — and GNU then prints no matching lines, says "binary file
+  // matches" on stderr, and still counts normally for `-c`. In a binary file a NUL ends a line too,
+  // which only shows through `-c` and is measured rather than reasoned about.
+  "grep c bin.txt", "grep -a c bin.txt", "grep -I c bin.txt", "grep -c . bin.txt",
+  "grep -q c bin.txt; echo st=$?", "grep z bin.txt; echo st=$?",
+  "grep c clean.txt bin.txt", "grep -I c bin.txt clean.txt", "grep . hi.txt",
+  "grep -n c bin.txt", "grep -c . nulsplit.bin", "grep -ac . nulsplit.bin",
   "split -l 10 long.txt part; ls part*; rm -f part*",
   "shuf -n 0 long.txt", "strings -n 2 bin.txt",
 ];
@@ -82,6 +90,8 @@ Deno.test({
       // Not `writeTextFile`: these are the bytes a text encoder would not survive, which is the point.
       await Deno.writeFile(`${dir}/hi.txt`, Uint8Array.from([0x80, 0x81, 0xff, 0x0a, 0x61, 0xff, 0x62, 0x0a]));
       await Deno.writeFile(`${dir}/ctrl.txt`, Uint8Array.from([0x01, 0x02, 0x0a, 0x01, 0x61, 0x0a]));
+      await Deno.writeFile(`${dir}/nulsplit.bin`, Uint8Array.from([0x61, 0x00, 0x62, 0x0a]));
+      await w("clean.txt", "clean c\n");
 
       const run = async (cmd: string, script: string) => {
         const r = await new Deno.Command(cmd, {

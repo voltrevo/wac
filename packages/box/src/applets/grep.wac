@@ -57,6 +57,15 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
   // rather than counting to a hundred thousand. `packages/sh`'s grep has always done both; measuring
   // this package against its corpus is what found the difference (wac-mono 0103).
   bool quiet = has(a, 'q');
+  /**
+   * `-a` treats binary input as text; `-I` skips it altogether.
+   *
+   * **Input containing a NUL byte is binary**, and that is the whole rule — `\377\376` is not, which is
+   * worth knowing because "binary" sounds like "not valid text" and is narrower than that. GNU decides
+   * per *file*, not per line: a NUL on the last line suppresses a match on the first.
+   */
+  bool asText = has(a, 'a');
+  bool skipBinary = has(a, 'I');
   i32 matches = 0;
   Sink out = Sink.create(cli);
 
@@ -80,8 +89,21 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
     Lines s = Lines.create();
     // The feed the opener chose — see `lib/input.wac`; not the process's own input.
     Feed fed = in.fed;
+    // **The whole input, because binariness is a fact about the file.** GNU reads a buffer at a time and
+    // decides from what it has; a NUL on the last line still suppresses a match on the first, which is
+    // only true because both were in one buffer. Reading it whole gets the same answer for any file that
+    // fits, and gets it for the same reason rather than by accident — the cost is that `grep` no longer
+    // streams, which for a *matcher* is the right trade: it has to have seen the file to say "binary".
+    u8[] whole = fed.rest();
+    bool binary = !asText && hasNul(whole);
+    if (binary && skipBinary) { continue; }
+    // **In a binary file a NUL ends a line too.** `printf 'a\0b\n' | grep -c .` is 2 in GNU and one
+    // in any implementation that splits on newlines alone — measured, and it only shows through `-c`,
+    // because the lines themselves are never printed. Rewriting the byte is the whole of it: what the
+    // splitter sees is what GNU's does.
+    Feed held = Feed.of(cli, binary ? nulAsNewline(whole) : whole);
     while (true) {
-      Line l = nextLine(s, fed);
+      Line l = nextLine(s, held);
       if (!l.ok) { break; }
       n++;
     i32 found = search(p, l.bytes, 0, caps, 1000000);
@@ -104,12 +126,36 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
       string text = string.fromBytes(l.bytes);
       // Buffered: a pattern that matches most of a large file is one host call per line otherwise, and
       // each is a park and a wake. Issue 0039.
+      // A binary file's matching *lines* are not printed — the message below stands in for them — while
+      // `-c`, `-l` and `-q` are unaffected, because a count is not a line of the file.
+      if (binary) { continue; }
       if (!out.line(where + (number ? itoa(n) + ":" + text : text))) { break; }
     }
     // `-c` prints a count for each file, with the name in front when there is more than one.
     if (countOnly) { out.line(where + itoa(here)); }
+    // GNU's sentence, on standard error, once per file that matched. `(standard input)` is the name it
+    // uses when there is no operand, and it uses it here even though nothing else in this applet does.
+    if (binary && here > 0 && !countOnly && !quiet) {
+      out.flush();
+      core.warn(a.name + ": " + (in.label == "" ? "(standard input)" : in.label) + ": binary file matches");
+    }
   }
   out.flush();
   if (unreadable) { return 2; }
   return matches > 0 ? 0 : 1;
+}
+
+/** Whether any byte is NUL, which is GNU's whole definition of a binary file. */
+bool hasNul(u8[] data) {
+  for (i32 i = 0; i < data.len(); i++) {
+    if (data[i] == 0) { return true; }
+  }
+  return false;
+}
+
+/** A copy with every NUL turned into a newline, which is how GNU splits a binary file into lines. */
+u8[] nulAsNewline(u8[] data) {
+  u8[] out = u8[data.len()]();
+  for (i32 i = 0; i < data.len(); i++) { out[i] = data[i] == 0 ? 10 : data[i]; }
+  return out;
 }
