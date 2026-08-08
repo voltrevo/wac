@@ -377,6 +377,20 @@ const CASES: [string, Call[]][] = [
   // An array of strings, so the element type is itself a reference.
   ['export i32 f() { string[] xs = string[]("ab", "cde"); return xs[1].len() + xs.len(); }',
     [{ name: "f", args: [] }]],
+
+  // ── String equality, which is a generated helper rather than an instruction ─
+  ['export bool f() { return "abc" == "abc"; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "abc" == "abd"; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "abc" == "ab"; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "" == ""; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "abc" != "abd"; }', [{ name: "f", args: [] }]],
+  ['export bool f(bool c) { string a = c ? "yes" : "no"; return a == "yes"; }',
+    [{ name: "f", args: [1] }, { name: "f", args: [0] }]],
+  // A difference in the last byte only, which a length check alone would miss.
+  ['export bool f() { return "abcd" == "abce"; }', [{ name: "f", args: [] }]],
+  // Multi-byte, where equality is over bytes and not characters.
+  ['export bool f() { return "é" == "é"; }', [{ name: "f", args: [] }]],
+  ['const string G = "wac"; export bool f() { return G == "wac"; }', [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

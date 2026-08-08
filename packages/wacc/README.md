@@ -1183,6 +1183,31 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The emitter writes a function nobody wrote
+
+`a == b` on two strings compares **contents**, and wasm has no instruction for that. The reference
+generates a helper — its modules contain a `__str_cmp` nobody wrote — and now so does this one:
+`str_eq(string, string) -> bool`, a length check and a loop over bytes, emitted instruction by
+instruction and registered under a name with a space in it, which no wac identifier can contain.
+
+The mechanism is the point rather than the helper. A synthesized function is **a function like any
+other**: registered before emittability settles, so a call to it is an ordinary call and the
+renumbering counts it. `!=` is the same call with an `i32.eqz` after it — one instruction rather than
+a second helper.
+
+It also corrected an assumption I had been about to build on. `s.toBytes()` looked like it should be a
+no-op, because `string` and `u8[]` have the same storage type — and the reference's bytes say
+`call 8`. They are *distinct* array types with the same shape, so the conversion copies. Measuring
+cost three minutes; the feature built on the guess would have cost the slot.
+
+Two failures on the way, both about **when a type gets registered**:
+
+- `T[]()` names no size and means none, and `array.new_default` still wants to be told the length is
+  zero.
+- A module whose strings arrive only as **parameters** has no string literal anywhere, so the token
+  scan never fired, `i8[]` was never registered, the helper was not emitted — and `a == b` compiled
+  to *nothing at all*. A type is named by its uses as much as by its literals.
+
 ### A string is an array, and representation is not identity
 
 A string turned out to be much less than I had budgeted for. The reference's own bytes say it: the

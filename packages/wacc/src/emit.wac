@@ -583,6 +583,18 @@ export u8[] emitModule(u8[] src) {
 
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
+  // **A helper is a function like any other**, registered before emittability is settled so a call to
+  // it is an ordinary call and the renumbering counts it. Named with a space, which no wac identifier
+  // can contain, so it cannot collide with anything the source declares.
+  // Only when the module has strings at all: the helper names the `i8[]` type, and registering that
+  // while the type section is being written is the "index out of bounds" this rung has hit four times.
+  bool needsStrings = env.arrayCount > 0 && hasStringType(env);
+  if (needsStrings) {
+    string[] eqParams = string[2]();
+    eqParams[0] = "string";
+    eqParams[1] = "string";
+    env.addFunc(" str_eq", "bool", eqParams);
+  }
   settleEmittable(env, src, lexed, prog);
 
   B types = B.create();
@@ -659,9 +671,10 @@ export u8[] emitModule(u8[] src) {
     }
   }
 
-  funcs.u32leb(count);
+  i32 helpers = needsStrings ? 1 : 0;
+  funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
-  code.u32leb(count);
+  code.u32leb(count + helpers);
 
   i32 declTypes = env.arrayCount + env.structCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
@@ -671,7 +684,7 @@ export u8[] emitModule(u8[] src) {
   // reference emits exactly one for the same reason.
   types.u32leb(1);
   types.byte(78);   // rec
-  types.u32leb(count + declTypes);
+  types.u32leb(count + declTypes + helpers);
   for (i32 i = 0; i < env.arrayCount; i++) {
     types.byte(94);   // array
     // A **storage type** is a value type or one of the two packed widths — and a value type can be a
@@ -725,6 +738,9 @@ export u8[] emitModule(u8[] src) {
       else: { }
     }
   }
+
+  // The helper, last, so every index the source could name is already assigned.
+  if (needsStrings) { emitStringEquals(types, funcs, code, env, index, declTypes); }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -1181,6 +1197,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.byte(11);
         return;
       }
+      string ot0 = operandType(src, lexed, env, left, right);
+      if (ot0 == "string" && (k == kEq() || k == kNe())) {
+        i32 eq = env.funcAt(" str_eq");
+        if (eq < 0 || env.funcIndex[eq] < 0) { return; }
+        emitExpr(fb, src, lexed, env, left);
+        emitExpr(fb, src, lexed, env, right);
+        fb.byte(16);
+        fb.u32leb(env.funcIndex[eq]);
+        // `!=` is the same comparison, negated — which is one instruction rather than a second helper.
+        if (k == kNe()) { fb.byte(69); }
+        return;
+      }
       string ot = operandType(src, lexed, env, left, right);
       // When **both** operands are literals there is no type to take from them, and the slot is the
       // only thing that knows: `0.0 / 0.0` in an `f64` return is an `f64` division. Without this the
@@ -1258,7 +1286,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.u32leb(ti);
         return;
       }
-      if (!(size is null)) { emitAt(fb, src, lexed, env, size!, "i32"); }
+      // `T[]()` names no size and means none: the length is zero, and `array.new_default` still
+      // wants to be told so.
+      if (size is null) { fb.byte(65); fb.i32leb(0); }
+      else { emitAt(fb, src, lexed, env, size!, "i32"); }
       fb.byte(251);
       fb.u32leb(7);        // array.new_default
       fb.u32leb(ti);
@@ -2027,8 +2058,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // files' worth. Concatenation and comparison are generated helper *functions* in the reference,
       // not instructions, and this slice has none, so it says so.
       string ot2 = operandType(src, lexed, env, left, right);
+      i32 bk = lexed.tokens[op * tokenStride()];
+      // String equality has a helper now; everything else on a reference still does not.
+      if (ot2 == "string" && (bk == kEq() || bk == kNe())) { return ""; }
       if (isArrayType(ot2) || ot2 == "string" || env.isStructName(ot2)) {
-        return "an operator on a reference — concatenation or comparison needs a helper";
+        return "an operator on a reference — concatenation needs a helper";
       }
       return "";
     }
@@ -2240,6 +2274,16 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
   // now been caught doing four times.
   for (i32 t = 0; t < lexed.tokenCount; t++) {
     if (lexed.tokens[t * tokenStride()] == kString()) {
+      env.arrayType("i8[]");
+      break;
+    }
+  }
+  // **And a `string` used only as a type.** A module whose strings arrive as parameters has no string
+  // *literal* anywhere, so the scan above never fires — and then the equality helper, which names
+  // `i8[]`, is not emitted and `a == b` compiles to nothing at all. The type name is a plain
+  // identifier, so this reads the text rather than a token kind.
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (tokenTextOf(src, lexed, t) == "string") {
       env.arrayType("i8[]");
       break;
     }
@@ -2609,4 +2653,89 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
     i = i + 2;
   }
   return true;
+}
+
+/**
+ * `bool str_eq(string a, string b)`, written instruction by instruction.
+ *
+ * The first function this emitter **synthesizes**: nothing in the source declares it, and `a == b` on
+ * two strings compiles to a call to it. wac's `==` on strings compares *contents*, and wasm has no
+ * instruction for that — the reference generates the same helper, which is why its modules contain a
+ * `__str_cmp` nobody wrote.
+ *
+ * The shape is a length check, then a loop comparing bytes:
+ *
+ *     if (a.len != b.len) return false
+ *     i = 0
+ *     while (i < a.len) { if (a[i] != b[i]) return false; i = i + 1 }
+ *     return true
+ *
+ * Two parameters and one local, and the local is why the body is written after the header rather than
+ * before: the count has to be known, which is the same reason a section is built apart and spliced.
+ */
+void emitStringEquals(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
+  i32 at = env.arrayType("i8[]");
+
+  types.byte(96);
+  types.u32leb(2);
+  types.byte(99);
+  types.u32leb(at);
+  types.byte(99);
+  types.u32leb(at);
+  types.u32leb(1);
+  types.byte(127);   // -> i32, which is what a bool is
+
+  funcs.u32leb(index + declTypes);
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(1);
+  b.byte(127);       // one i32 local: the cursor
+
+  // Lengths differ -> false.
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(32); b.u32leb(1); b.byte(251); b.u32leb(15);
+  b.byte(71);        // i32.ne
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(0);
+  b.byte(15);
+  b.byte(11);
+
+  b.byte(65); b.i32leb(0);
+  b.byte(33); b.u32leb(2);
+
+  b.byte(2); b.byte(64);   // block
+  b.byte(3); b.byte(64);   // loop
+  // Past the end -> true.
+  b.byte(32); b.u32leb(2);
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(72);        // i32.lt_s
+  b.byte(69);        // i32.eqz
+  b.byte(13); b.u32leb(1);
+  // A byte differs -> false.
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(2); b.byte(251); b.u32leb(12); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2); b.byte(251); b.u32leb(12); b.u32leb(at);
+  b.byte(71);        // i32.ne
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(0);
+  b.byte(15);
+  b.byte(11);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(2);
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+
+  b.byte(65); b.i32leb(1);
+  b.byte(11);        // end
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/** Whether the module declared the `i8[]` type, which is what a string is represented by. */
+bool hasStringType(Env env) {
+  for (i32 i = 0; i < env.arrayCount; i++) {
+    if (env.arrayTypes[i] == "i8[]") { return true; }
+  }
+  return false;
 }
