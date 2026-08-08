@@ -1183,6 +1183,32 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Constants with identity get a global — 14 of 39, then 16
+
+An array constant has identity: one array shared by every use is not the same program as one array per
+use, so it cannot be inlined the way a scalar can. It gets a **global**, which is where the reference
+puts one too.
+
+The constraint that shapes it is that a global's initialiser must be a **constant expression** in
+wasm's sense, which is far narrower than wac's: the four `const` instructions and — because this is a
+GC module — `array.new_fixed`, `array.new_default`, `array.new` and `struct.new` over more of the
+same. `3 * 4` is not one. That is exactly why scalars are inlined and arrays are not, and the two
+halves of the rule fall out of the same fact rather than being a choice.
+
+**The bug worth recording is that the reporter and the emitter ran different pipelines.** `emitBlocked`
+answers "why was this file not emitted whole", and it did not call `assignGlobals` — so it reported on
+globals that, in its own copy of the state, had never been assigned. Every constant looked like it had
+failed the constant-expression test when it had never been asked. A diagnostic that does not run the
+thing it describes will describe something else, confidently.
+
+Then a second copy of the same lie: the message *"a constant with identity"* survived in a branch my
+edit had missed, so the corpus kept reporting a decision that had been changed. Two places asserting
+what a third one decides, which is the argument for having one.
+
+Also: **a module-level constant names a type**, and the array-type pre-pass did not walk them. Third
+time that pass has been found one declaration short — after struct fields and method signatures. The
+rule is *every place a type can be named*, and the list keeps being longer than it looks.
+
 ### The number was measuring the harness: 10 of 39, not 10 of 336
 
 "297 of 336 files blocked on an import" is not a fact about the emitter. **Only 39 corpus files

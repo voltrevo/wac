@@ -277,6 +277,8 @@ export struct Env {
    * there is a global section to put them in.
    */
   string[] constNames;
+  /** The global index of a constant that needs one, or -1 for an inlined scalar. */
+  i32[] constGlobal;
   string[] constTypes;
   /** Nullable because an `Expr` has no default value — this emitter's own checker says so. */
   Expr?[] constInits;
@@ -552,9 +554,10 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
 
   collectDeclarations(env, src, lexed, prog);
+  assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
 
   B types = B.create();
@@ -598,6 +601,14 @@ export u8[] emitModule(u8[] src) {
           if (isArrayType(pt)) { env.arrayType(pt); }
         }
         collectArrayTypes(env, src, lexed, body);
+      }
+      // A **module-level constant** names a type as surely as a field or a parameter does, and its
+      // initialiser can name another. Third time this pre-pass has been found one declaration short:
+      // the rule is *every place a type can be named*, and the list is longer than it looks.
+      case ConstDecl(nameTok, type, init, exported): {
+        string ct = typeOfTyName(src, lexed, type);
+        if (isArrayType(ct)) { env.arrayType(ct); }
+        collectArrayTypesOfExpr(env, src, lexed, init);
       }
       // A struct's **fields** name types too, and an array among them has to be registered before the
       // section is written — otherwise `writeValType` hands out an index while writing it, past the
@@ -700,8 +711,27 @@ export u8[] emitModule(u8[] src) {
   out.byte(0);
   out.byte(0);
   out.byte(0);
+  B globals = B.create();
+  i32 globalCount = 0;
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (env.constGlobal[i] >= 0) { globalCount = globalCount + 1; }
+  }
+  globals.u32leb(globalCount);
+  for (i32 g = 0; g < globalCount; g++) {
+    for (i32 i = 0; i < env.constCount; i++) {
+      if (env.constGlobal[i] != g) { continue; }
+      writeValType(globals, env, env.constTypes[i]);
+      globals.byte(0);   // immutable, which is what a `const` is
+      if (!(env.constInits[i] is null)) {
+        emitExprAt(globals, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
+      }
+      globals.byte(11);  // end of the initialiser expression
+    }
+  }
+
   section(out, 1, types);
   section(out, 3, funcs);
+  if (globalCount > 0) { section(out, 6, globals); }
   section(out, 7, exports);
   section(out, 10, code);
 
@@ -1052,6 +1082,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // is why this is asked second.
       i32 ci = env.constAt(nm);
       if (ci < 0) { return; }
+      // A constant with identity lives in a global and is *read*; a scalar has none and is
+      // substituted. One array shared by every use is the whole difference between the two.
+      if (env.constGlobal[ci] >= 0) {
+        fb.byte(35);   // global.get
+        fb.u32leb(env.constGlobal[ci]);
+        return;
+      }
       if (env.constInits[ci] is null) { return; }
       emitExprAt(fb, src, lexed, env, env.constInits[ci]!, env.constTypes[ci]);
     }
@@ -1889,7 +1926,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // constant would be allocated afresh at each use, which is a different program — declined until
       // there is a global to hold one.
       string ct = env.constTypes[ci];
-      if (isArrayType(ct) || env.isStructName(ct)) { return "a constant with identity"; }
+      // A constant with identity is read from a global, which it has only if its initialiser is a
+      // constant expression — wasm's sense of that, which is far narrower than wac's.
+      if (isArrayType(ct) || env.isStructName(ct)) {
+        return env.constGlobal[ci] >= 0 ? "" : "a constant whose value is not a constant expression";
+      }
       if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
       return unsupportedValue(src, lexed, env, env.constInits[ci]!);
     }
@@ -2027,9 +2068,10 @@ export string emitBlocked(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
   collectDeclarations(env, src, lexed, prog);
+  assignGlobals(env, src, lexed);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -2048,7 +2090,12 @@ export string emitBlocked(u8[] src) {
       case Import(pathTok, prefixTok, items): { return "an import"; }
       case ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(src, lexed, type);
-        if (isArrayType(ct) || env.isStructName(ct)) { return "a constant with identity"; }
+        if (isArrayType(ct) || env.isStructName(ct)) {
+          i32 ci = env.constAt(tokenTextOf(src, lexed, nameTok));
+          if (ci < 0 || env.constGlobal[ci] < 0) {
+            return "a constant whose value is not a constant expression";
+          }
+        }
       }
     }
     if (env.blocked != "") { return env.blocked; }
@@ -2093,6 +2140,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case ConstDecl(nameTok, type, init, exported): {
         if (env.constCount >= env.constNames.len()) { continue; }
         env.constNames[env.constCount] = tokenTextOf(src, lexed, nameTok);
+        env.constGlobal[env.constCount] = -1;
         env.constTypes[env.constCount] = typeOfTyName(src, lexed, type);
         env.constInits[env.constCount] = init;
         env.constCount = env.constCount + 1;
@@ -2213,10 +2261,11 @@ export string emitNames(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
                 bool[512](), i32[512](), 0);
   collectDeclarations(env, src, lexed, prog);
+  assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
   string out = "";
   for (i32 emitted = 0; emitted < env.funcCount; emitted++) {
@@ -2226,4 +2275,87 @@ export string emitNames(u8[] src) {
     }
   }
   return out;
+}
+
+/**
+ * Whether an expression is a **constant expression** in wasm's sense, which is much narrower than in
+ * wac's.
+ *
+ * A global's initialiser runs before any function does, so it may only be built from instructions
+ * that need no stack beyond their own operands and no locals at all: the four `const`s, and — because
+ * this is a GC module — `array.new_fixed`, `array.new_default`, `array.new` and `struct.new` over
+ * more of the same. `3 * 4` is *not* one, which is why scalars are inlined instead of given globals.
+ */
+bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return true; }
+    case FloatLit(tok): { return true; }
+    case BoolLit(value): { return true; }
+    case ArrNew(elem, size, fill, elements): {
+      if (typeOfTyName(src, lexed, elem) == "") { return false; }
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
+      }
+      if (!(fill is null)) {
+        if (!isConstExpr(src, lexed, env, fill!)) { return false; }
+      }
+      if (!(size is null)) {
+        if (!isConstExpr(src, lexed, env, size!)) { return false; }
+      }
+      return true;
+    }
+    case Construct(ctype, args, named): {
+      if (named.len() > 0) { return false; }
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (!env.isStructName(tokenTextOf(src, lexed, tok))) { return false; }
+        }
+        else: { return false; }
+      }
+      for (i32 i = 0; i < args.len(); i++) {
+        if (!isConstExpr(src, lexed, env, args[i])) { return false; }
+      }
+      return true;
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * Give a global to every constant that has identity and can have one.
+ *
+ * Identity is the test, not size: a scalar is substituted because two copies of `7` are the same
+ * seven, and an array is not because two arrays are two arrays. A constant that wants a global and
+ * whose initialiser is not a constant expression gets neither — it is declined by name, which is the
+ * only honest answer when the language allows something the format does not.
+ */
+void assignGlobals(Env env, u8[] src, Lexed lexed) {
+  i32 next = 0;
+  for (i32 i = 0; i < env.constCount; i++) {
+    string t = env.constTypes[i];
+    if (!isArrayType(t) && !env.isStructName(t)) { continue; }
+    if (env.constInits[i] is null) { continue; }
+    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
+    env.constGlobal[i] = next;
+    next = next + 1;
+  }
+}
+
+/** Every array type an expression constructs, which a constant's initialiser can do at module level. */
+void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
+  match (e.kind) {
+    case ArrNew(elem, size, fill, elements): {
+      string t = typeOfTyName(src, lexed, elem);
+      if (t != "") { env.arrayType(t + "[]"); }
+      for (i32 i = 0; i < elements.len(); i++) {
+        collectArrayTypesOfExpr(env, src, lexed, elements[i]);
+      }
+      if (!(fill is null)) { collectArrayTypesOfExpr(env, src, lexed, fill!); }
+      if (!(size is null)) { collectArrayTypesOfExpr(env, src, lexed, size!); }
+    }
+    case Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
+    }
+    else: { }
+  }
 }

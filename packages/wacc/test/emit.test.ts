@@ -313,6 +313,27 @@ const CASES: [string, Call[]][] = [
   // Two constants, and one used inside a loop where it is substituted every time round.
   ["const i32 A = 2; const i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
     [{ name: "f", args: [] }]],
+
+  // ── Constants with identity, which live in a global ────────────────────────
+  ["const i32[] T = i32[](4, 5, 6); export i32 f() { return T[1] + T.len(); }",
+    [{ name: "f", args: [] }]],
+  ["const u8[] B = u8[](1, 2, 250); export i32 f(i32 i) { return B[i]; }",
+    [{ name: "f", args: [0] }, { name: "f", args: [2] }]],
+  ["const i64[] W = i64[2](fill: 4294967296); export i64 f() { return W[0] + W[1]; }",
+    [{ name: "f", args: [] }]],
+  ["const i32[] Z = i32[4](); export i32 f() { return Z[3] + Z.len(); }", [{ name: "f", args: [] }]],
+  // One array, not one per use: read twice in the same expression and once from a loop.
+  ["const i32[] T = i32[](1, 2, 3); export i32 f() { i32 t = 0; for (i32 i = 0; i < T.len(); i++) { t = t + T[i]; } return t + T[0]; }",
+    [{ name: "f", args: [] }]],
+  // A struct constant, whose initialiser is `struct.new` — also a constant expression.
+  ["struct P { i32 x; i32 y; } const P O = P(3, 4); export i32 f() { return O.x * O.y; }",
+    [{ name: "f", args: [] }]],
+  // Two of them, so the global indices have to be distinct and stable.
+  ["const i32[] A = i32[](1, 2); const i32[] B = i32[](30, 40); export i32 f() { return A[1] + B[1]; }",
+    [{ name: "f", args: [] }]],
+  // A scalar beside an array, so the inlined and the global paths coexist.
+  ["const i32 K = 5; const i32[] T = i32[](7, 8); export i32 f() { return K + T[0]; }",
+    [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {
