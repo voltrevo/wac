@@ -241,6 +241,30 @@ const CASES: [string, Call[]][] = [
     [{ name: "f", args: [1] }, { name: "f", args: [2] }, { name: "f", args: [7] }]],
   ["export i32 f(i32 a) { i32 r = 0; switch (a) { case 1: { r = 10; break; } case 2: { r = 20; break; } default: { r = -1; } } return r; }",
     [{ name: "f", args: [1] }, { name: "f", args: [2] }, { name: "f", args: [9] }]],
+
+  // ── Arrays: the first wasm GC type ─────────────────────────────────────────
+  ["export i32 f() { i32[] a = i32[3](); a[0] = 7; return a[0] + a.len(); }", [{ name: "f", args: [] }]],
+  ["export i32 f() { i32[] a = i32[4](fill: 9); return a[2] + a.len(); }", [{ name: "f", args: [] }]],
+  ["export i32 f() { i32[] a = i32[](4, 5, 6); return a[1] * a.len(); }", [{ name: "f", args: [] }]],
+  // An array cannot cross the JS boundary as an argument — it is a reference — so the array is built
+  // inside and the index is what comes in.
+  ["i32 at(i32[] a, i32 i) { return a[i]; } export i32 f(i32 i) { return at(i32[](7, 8, 9), i); }",
+    [{ name: "f", args: [0] }, { name: "f", args: [2] }]],
+  ["export i32 f() { i32[] a = i32[5](); i32 t = 0; for (i32 i = 0; i < a.len(); i++) { a[i] = i * i; } for (i32 i = 0; i < a.len(); i++) { t = t + a[i]; } return t; }",
+    [{ name: "f", args: [] }]],
+  // A packed element: the getter has to zero-extend, which is the half a signed one gets wrong.
+  ["export i32 f() { u8[] b = u8[3](); b[0] = 200; return b[0]; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { i8[] b = i8[3](); b[0] = 200; return b[0]; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { u8[] b = u8[](1, 2, 250); return b[2] + b.len(); }", [{ name: "f", args: [] }]],
+  // Wider elements, so the array type's storage type is not always i32.
+  ["export i64 f() { i64[] a = i64[2](); a[1] = 4294967296; return a[1]; }", [{ name: "f", args: [] }]],
+  ["export f64 f() { f64[] a = f64[2](fill: 1.5); return a[0] + a[1]; }", [{ name: "f", args: [] }]],
+  // Two array types in one module, so the indices have to be distinct and stable.
+  ["export i32 f() { i32[] a = i32[2](fill: 3); u8[] b = u8[2](fill: 4); return a[0] + b[0]; }",
+    [{ name: "f", args: [] }]],
+  // An array through a call, which puts a reference type in a signature.
+  ["i32 first(i32[] xs) { return xs[0]; } export i32 f() { return first(i32[](11, 22)); }",
+    [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

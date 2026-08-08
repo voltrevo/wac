@@ -148,6 +148,44 @@ i32 valType(string t) {
   return 127;
 }
 
+/** Whether a wac type is an array, which is a *reference* and so two bytes rather than one. */
+bool isArrayType(string t) {
+  u8[] a = t.toBytes();
+  if (a.len() < 3) { return false; }
+  return a[a.len() - 2] == 91 && a[a.len() - 1] == 93;
+}
+
+/** A wac type's element, for an array. */
+string elemOf(string t) {
+  u8[] a = t.toBytes();
+  u8[] out = u8[a.len() - 2]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * A value type, written rather than returned.
+ *
+ * An array is `0x64 <typeidx>` — a non-null reference to a declared type — so a value type is not one
+ * byte and cannot be. Every place that wrote `types.byte(valType(t))` had to become a call here,
+ * which is the shape a GC type forces on an emitter that started with scalars.
+ */
+void writeValType(B out, Env env, string t) {
+  if (isArrayType(t)) {
+    out.byte(100);   // ref
+    out.u32leb(env.arrayType(t));
+    return;
+  }
+  out.byte(valType(t));
+}
+
+/** The storage type inside an array type, where a packed element is narrower than a value type. */
+i32 storageType(string elem) {
+  if (elem == "i8" || elem == "u8") { return 120; }
+  if (elem == "i16" || elem == "u16") { return 119; }
+  return valType(elem);
+}
+
 /** Whether a wac type is one of the unsigned integers, which decides `_s` from `_u`. */
 bool isUnsigned(string t) { return t == "u32" || t == "u64"; }
 
@@ -196,6 +234,16 @@ export struct Env {
   i32 depth;
   i32 breakAt;
   i32 continueAt;
+  /**
+   * Every distinct array type the module uses, and the wasm type index each was given.
+   *
+   * A wasm array is a *declared* type — `i32[]` is not a value type but a reference to an entry in
+   * the type section — so the set has to be known before the section is written, and every use has
+   * to name the same index. That is the first thing in this emitter that is not local to one
+   * function.
+   */
+  string[] arrayTypes;
+  i32 arrayCount;
   string[] funcs;
   /** Each function's return type, so a call has one without re-reading the declaration. */
   string[] funcReturns;
@@ -242,6 +290,17 @@ export struct Env {
     return this.localCount - 1;
   }
 
+  /** The wasm type index for an array type, adding it if this is the first sighting. */
+  i32 arrayType(this, string t) {
+    for (i32 i = 0; i < this.arrayCount; i++) {
+      if (this.arrayTypes[i] == t) { return i; }
+    }
+    if (this.arrayCount >= this.arrayTypes.len()) { return 0; }
+    this.arrayTypes[this.arrayCount] = t;
+    this.arrayCount = this.arrayCount + 1;
+    return this.arrayCount - 1;
+  }
+
   void addLocal(this, string name, string ty) {
     if (this.localCount >= this.locals.len()) { return; }
     this.locals[this.localCount] = name;
@@ -257,6 +316,30 @@ bool emittable(Decl d) {
       return typeParams.len() == 0;
     }
     else: { return false; }
+  }
+}
+
+/** Every array type a body mentions, whether as a local's type or as something it constructs. */
+void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      case Var(type, nameTok, init, isConst): {
+        string t = typeOfTyName(src, lexed, type);
+        if (isArrayType(t)) { env.arrayType(t); }
+      }
+      case Block(inner): { collectArrayTypes(env, src, lexed, inner); }
+      case If(cond, then, els): {
+        collectArrayTypes(env, src, lexed, then);
+        collectArrayTypes(env, src, lexed, els);
+      }
+      case While(cond, inner): { collectArrayTypes(env, src, lexed, inner); }
+      case DoWhile(inner, cond): { collectArrayTypes(env, src, lexed, inner); }
+      case For(init, cond, update, inner): { collectArrayTypes(env, src, lexed, inner); }
+      case Switch(subject, cases): {
+        for (i32 c = 0; c < cases.len(); c++) { collectArrayTypes(env, src, lexed, cases[c].body); }
+      }
+      else: { }
+    }
   }
 }
 
@@ -311,7 +394,7 @@ export u8[] emitModule(u8[] src) {
 
   // Function names first, over the whole file: a call names one declared elsewhere and often further
   // down, which is the same argument the checker makes for collecting signatures before bodies.
-  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[64](), string[64](), 0);
+  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[16](), 0, string[64](), string[64](), 0);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
@@ -342,10 +425,36 @@ export u8[] emitModule(u8[] src) {
       else: { }
     }
   }
-  types.u32leb(count);
+  // **A pre-pass for the array types.** Their entries come first in the type section, so every
+  // function type index is offset by however many there are — and the set is only complete once every
+  // signature and every local has been looked at. Walking the declarations twice is the cost of a
+  // type that has to be declared before it is used.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    if (!emittable(prog.decls[d])) { continue; }
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        string rt = typeOfTyName(src, lexed, returnType);
+        if (isArrayType(rt)) { env.arrayType(rt); }
+        for (i32 i = 0; i < params.len(); i++) {
+          string pt = typeOfTyName(src, lexed, params[i].type);
+          if (isArrayType(pt)) { env.arrayType(pt); }
+        }
+        collectArrayTypes(env, src, lexed, body);
+      }
+      else: { }
+    }
+  }
+
   funcs.u32leb(count);
   exports.u32leb(exportCount);
   code.u32leb(count);
+
+  types.u32leb(count + env.arrayCount);
+  for (i32 i = 0; i < env.arrayCount; i++) {
+    types.byte(94);   // array
+    types.byte(storageType(elemOf(env.arrayTypes[i])));
+    types.byte(1);    // mutable, which every wac array is
+  }
 
   i32 index = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -357,14 +466,14 @@ export u8[] emitModule(u8[] src) {
         types.byte(96);
         types.u32leb(params.len());
         for (i32 i = 0; i < params.len(); i++) {
-          types.byte(valType(typeOfTyName(src, lexed, params[i].type)));
+          writeValType(types, env, typeOfTyName(src, lexed, params[i].type));
         }
         string ret = typeOfTyName(src, lexed, returnType);
         bool returnsValue = ret != "void";
         types.u32leb(returnsValue ? 1 : 0);
-        if (returnsValue) { types.byte(valType(ret)); }
+        if (returnsValue) { writeValType(types, env, ret); }
 
-        funcs.u32leb(index);
+        funcs.u32leb(index + env.arrayCount);
         if (exported) {
           exports.name(tokenTextOf(src, lexed, nameTok));
           exports.byte(0);
@@ -395,7 +504,7 @@ export u8[] emitModule(u8[] src) {
         fb.u32leb(extra);
         for (i32 i = env.paramCount; i < env.localCount; i++) {
           fb.u32leb(1);
-          fb.byte(valType(env.localTypes[i]));
+          writeValType(fb, env, env.localTypes[i]);
         }
         fb.bytes(insns);
         // Every wac function that returns a value returns on all paths — the checker says so — so the
@@ -446,6 +555,14 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
     case Prim(tok): { return tokenTextOf(src, lexed, tok); }
     case Named(tok, typeArgs): { return tokenTextOf(src, lexed, tok); }
+    // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
+    // out, every array type came back as the empty string — the type section had no array entry, the
+    // local was declared an `i32`, and the module asked for an array of whatever was on the stack.
+    // A "" that means *unknown* propagates silently, which is the cost of using it for two things.
+    case Arr(elem): {
+      string inner = typeOfTyName(src, lexed, elem);
+      return inner == "" ? "" : inner + "[]";
+    }
     else: { return ""; }
   }
 }
@@ -473,6 +590,17 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     case Assign(target, op, rhs): {
       match (target.kind) {
+        case LIndex(base, index): {
+          // The array and the index are pushed before the value, which is the order `array.set`
+          // wants and the reverse of how the statement reads.
+          string bt = typeOfLv(src, lexed, env, base);
+          emitLvalue(fb, src, lexed, env, base);
+          emitExprAt(fb, src, lexed, env, index, "i32");
+          emitExprAt(fb, src, lexed, env, rhs, elemOf(bt));
+          fb.byte(251);
+          fb.u32leb(14);   // array.set
+          fb.u32leb(env.arrayType(bt));
+        }
         case LIdent(tok): {
           string name = tokenTextOf(src, lexed, tok);
           i32 at = env.localAt(name);
@@ -690,12 +818,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // A literal is emitted at the type its **context** wants, which is the same fact the checker
       // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
       // `1` says nothing about that.
-      i32 v = parseInt(tokenTextOf(src, lexed, tok));
-      if (valType(want) == 126) { fb.byte(66); fb.i32leb(v); return; }
+      i64 v = parseInt(tokenTextOf(src, lexed, tok));
+      if (valType(want) == 126) { fb.byte(66); fb.i64leb(v); return; }
       if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
-      if (want == "f64") { fb.byte(68); fb.f64bits(v as f64); return; }
+      if (want == "f64") { fb.byte(68); fb.f64bits(v as~ f64); return; }
       fb.byte(65);
-      fb.i32leb(v);
+      fb.i32leb(v as@ i32);
     }
     case FloatLit(tok): {
       f64 v = parseFloat(tokenTextOf(src, lexed, tok));
@@ -778,9 +906,62 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         case Named(tok, typeArgs): {
           i32 at = env.funcAt(tokenTextOf(src, lexed, tok));
           if (at < 0) { return; }
+          string ft = env.funcReturns[at];
           for (i32 i = 0; i < args.len(); i++) { emitExpr(fb, src, lexed, env, args[i]); }
           fb.byte(16);   // call
           fb.u32leb(at);
+        }
+        else: { }
+      }
+    }
+    /**
+     * An array, in whichever of the three shapes it was written.
+     *
+     * `T[n]()` fills with the element's zero, `T[n](fill: v)` with a value, and `T[](a, b, c)` lists
+     * its elements. wasm has a distinct instruction for each — `new_default`, `new`, `new_fixed` —
+     * which is unusually generous of the format and means none of them has to be built out of the
+     * others.
+     */
+    case ArrNew(elem, size, fill, elements): {
+      string et = typeOfTyName(src, lexed, elem);
+      i32 ti = env.arrayType(et + "[]");
+      if (elements.len() > 0) {
+        for (i32 i = 0; i < elements.len(); i++) {
+          emitExprAt(fb, src, lexed, env, elements[i], et);
+        }
+        fb.byte(251);
+        fb.u32leb(8);      // array.new_fixed
+        fb.u32leb(ti);
+        fb.u32leb(elements.len());
+        return;
+      }
+      if (!(fill is null)) {
+        emitExprAt(fb, src, lexed, env, fill!, et);
+        if (!(size is null)) { emitExprAt(fb, src, lexed, env, size!, "i32"); }
+        fb.byte(251);
+        fb.u32leb(6);      // array.new — the value, then the count
+        fb.u32leb(ti);
+        return;
+      }
+      if (!(size is null)) { emitExprAt(fb, src, lexed, env, size!, "i32"); }
+      fb.byte(251);
+      fb.u32leb(7);        // array.new_default
+      fb.u32leb(ti);
+    }
+    case Index(arr, index): {
+      string at2 = typeOfE(src, lexed, env, arr);
+      emitExpr(fb, src, lexed, env, arr);
+      emitExprAt(fb, src, lexed, env, index, "i32");
+      emitArrayGet(fb, env, at2);
+    }
+    case Call(callee, args): {
+      // `a.len()` is the only method this slice knows, and it is an instruction rather than a call.
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          if (tokenTextOf(src, lexed, nameTok) != "len") { return; }
+          emitExpr(fb, src, lexed, env, obj);
+          fb.byte(251);
+          fb.u32leb(15);   // array.len
         }
         else: { }
       }
@@ -816,6 +997,24 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case BoolLit(value): { return "bool"; }
     case Ident(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
     case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
+    case ArrNew(elem, size, fill, elements): { return typeOfTyName(src, lexed, elem) + "[]"; }
+    case Index(arr, index): {
+      string a = typeOfE(src, lexed, env, arr);
+      if (!isArrayType(a)) { return ""; }
+      string e = elemOf(a);
+      // A packed element is an `i32` where it is used — the getter zero- or sign-extends it — which
+      // is the checker's rule about packed types arrived at from the emitter's side.
+      if (e == "u8" || e == "i8" || e == "u16" || e == "i16") { return "i32"; }
+      return e;
+    }
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          return tokenTextOf(src, lexed, nameTok) == "len" ? "i32" : "";
+        }
+        else: { return ""; }
+      }
+    }
     case Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
       if (k == kBang()) { return "bool"; }
@@ -925,13 +1124,19 @@ void emitBinary(B fb, i32 k, string t) {
   if (k == kGe()) { fb.byte(u ? 79 : 78); }
 }
 
-/** A decimal integer literal's value. */
-i32 parseInt(string s) {
+/**
+ * A decimal integer literal's value, at `i64`.
+ *
+ * Accumulated wide even when the target is narrow, because the literal's *text* says nothing about
+ * which it is: `4294967296` in an `i64` slot is a real value and parsing into an `i32` made it zero.
+ * The narrowing happens at the point the constant is written, where the target is known.
+ */
+i64 parseInt(string s) {
   u8[] a = s.toBytes();
-  i32 v = 0;
+  i64 v = 0;
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] < 48 || a[i] > 57) { break; }
-    v = v * 10 + (a[i] - 48);
+    v = v * 10 + (a[i] - 48) as i64;
   }
   return v;
 }
@@ -1078,4 +1283,53 @@ void emitI64Const(B fb, i64 v) {
 void emitI32Const(B fb, i64 v) {
   fb.byte(65);
   fb.i32leb(v as@ i32);
+}
+
+/**
+ * Reading an element, where a **packed** one needs a sign.
+ *
+ * `array.get` has three spellings: the plain one for a value type, and `_s`/`_u` for a storage type
+ * narrower than a value. A `u8[]` element arrives zero-extended and an `i8[]` one sign-extended, and
+ * the checker's own rule — that a packed element is an `i32` at the point of use — is this, seen from
+ * the other end of the compiler.
+ */
+void emitArrayGet(B fb, Env env, string arrayType) {
+  if (!isArrayType(arrayType)) { return; }
+  string e = elemOf(arrayType);
+  fb.byte(251);
+  if (e == "u8" || e == "u16") { fb.u32leb(13); }        // array.get_u
+  else if (e == "i8" || e == "i16") { fb.u32leb(12); }   // array.get_s
+  else { fb.u32leb(11); }                                // array.get
+  fb.u32leb(env.arrayType(arrayType));
+}
+
+/** An lvalue's wac type, which a write through an index needs to know which array it is. */
+string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
+    case LIndex(base, index): {
+      string b = typeOfLv(src, lexed, env, base);
+      return isArrayType(b) ? elemOf(b) : "";
+    }
+    else: { return ""; }
+  }
+}
+
+/** An lvalue as a *value*, which is what pushing an array before `array.set` needs. */
+void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): {
+      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
+      if (at < 0) { return; }
+      fb.byte(32);
+      fb.u32leb(at);
+    }
+    case LIndex(base, index): {
+      string bt = typeOfLv(src, lexed, env, base);
+      emitLvalue(fb, src, lexed, env, base);
+      emitExprAt(fb, src, lexed, env, index, "i32");
+      emitArrayGet(fb, env, bt);
+    }
+    else: { }
+  }
 }

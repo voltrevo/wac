@@ -1183,6 +1183,41 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 4 gains arrays, the first GC type
+
+**86 programs, 128 calls, every answer agreeing.** Construction in all three spellings, indexed read
+and write, `.len()`, packed elements, wide elements, and an array crossing a call.
+
+An array is the first thing here that is **not a value type**. It is a *declared* type: `i32[]` is a
+reference to an entry in the type section, written `0x64 <typeidx>`, so a value type stopped being one
+byte and every place that wrote one had to become a call that writes a sequence. And because the entry
+has to exist before anything names it, the module now takes a **pre-pass** over every signature and
+every local to collect the set — the first thing in this emitter that is not local to one function.
+
+The encodings were measured rather than recalled, by compiling three programs with the reference and
+reading its bytes: `array.new_default` is `fb 07`, `new` is `fb 06`, `new_fixed` is `fb 08 <t> <n>`,
+`get` is `fb 0b` with `_s`/`_u` at `0c`/`0d`, `set` is `fb 0e`, `len` is `fb 0f`. wasm having a
+distinct instruction for each construction shape is unusually generous and means none has to be built
+out of the others.
+
+**A packed element needs the unsigned getter**, which is the checker's own rule — that a packed
+element is an `i32` at the point of use — arrived at from the other end of the compiler. `u8[]` reads
+zero-extended and `i8[]` sign-extended, and the two differ exactly on the values a test has to bother
+to include.
+
+Two bugs, both of the same kind: **something that returns `""` for "unknown" and also for "I have no
+arm for this"**.
+
+- `typeOfTyName` had no `Arr` case, so every array type came back empty. The type section had no array
+  entry, the local was declared an `i32`, and the module asked for an array of whatever was on the
+  stack — *"requested new array is too large"*, three layers from the cause.
+- Integer literals were parsed into an `i32`, so `4294967296` in an `i64` slot became zero. The text
+  of a literal says nothing about its width, so it is parsed wide and narrowed where the target is
+  known.
+
+Neither was findable by reading the code that failed. Both were one measurement away — dump the bytes,
+compare with the reference's — which is the habit this rung is built on and the reason it is cheap.
+
 ### Rung 4: the divergence closed, and a loop that hung instead of failing
 
 **74 programs, 115 calls, every answer agreeing.** The saturating cast is no longer a divergence, and
