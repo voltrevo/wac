@@ -415,6 +415,15 @@ export struct Env {
     return -1;
   }
 
+  /** How many fields a struct has, which decides whether a bare `P()` is a default construction. */
+  i32 fieldCountOf(const this, string owner) {
+    i32 n = 0;
+    for (i32 f = 0; f < this.fieldCount; f++) {
+      if (this.fieldOwners[f] == owner) { n = n + 1; }
+    }
+    return n;
+  }
+
   /** The `i`th field's type, for a positional construction. */
   string fieldTypeAt(const this, string owner, i32 i) {
     i32 n = 0;
@@ -1162,6 +1171,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
           if (env.isStructName(cname)) {
+            // `Line()` with no arguments is every field's default, which wasm has an instruction for.
+            // Pushing nothing and calling `struct.new` asks for two operands that were never there.
+            if (args.len() == 0 && env.fieldCountOf(cname) > 0) {
+              fb.byte(251);
+              fb.u32leb(1);   // struct.new_default
+              fb.u32leb(env.structType(cname));
+              return;
+            }
             for (i32 i = 0; i < args.len(); i++) {
               emitExprAt(fb, src, lexed, env, args[i], env.fieldTypeAt(cname, i));
             }
@@ -1225,6 +1242,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
+          // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
+          string sowner = staticOwner(src, lexed, env, obj);
+          if (sowner != "") {
+            i32 sa = env.funcAt(sowner + "." + mname);
+            if (sa < 0 || env.funcIndex[sa] < 0) { return; }
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(sa, i));
+            }
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[sa]);
+            return;
+          }
           string ot = typeOfE(src, lexed, env, obj);
           // `a.len()` is an instruction rather than a call, which is the one method wasm has itself.
           if (isArrayType(ot) && mname == "len") {
@@ -1318,6 +1347,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
+          string sown = staticOwner(src, lexed, env, obj);
+          if (sown != "") {
+            i32 si = env.funcAt(sown + "." + mn);
+            return si < 0 ? "" : env.funcReturns[si];
+          }
           string ot = typeOfE(src, lexed, env, obj);
           if (isArrayType(ot) && mn == "len") { return "i32"; }
           i32 mi = env.funcAt(ot + "." + mn);
@@ -1869,7 +1903,7 @@ string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
   // A literal has no type of its own and takes the slot's, which is the one thing that is *meant* to
   // come back empty here.
   if (isLiteral(e)) { return ""; }
-  if (typeOfE(src, lexed, env, e) == "") { return "an expression whose type this slice cannot work out"; }
+  if (typeOfE(src, lexed, env, e) == "") { return "untyped " + kindOfExpr(e); }
   return "";
 }
 
@@ -1906,6 +1940,13 @@ bool isLiteral(Expr e) {
       if (!isLiteral(left) || !isLiteral(right)) { return false; }
       return isFloatLiteral(left) == isFloatLiteral(right);
     }
+    // `cond ? 1 : 2` has no type of its own for the same reason `1` does not: both branches are
+    // literals and the slot is what settles them. The condition is not part of the question — it is
+    // always a boolean and never the value.
+    case Ternary(cond, then, els): {
+      if (!isLiteral(then) || !isLiteral(els)) { return false; }
+      return isFloatLiteral(then) == isFloatLiteral(els);
+    }
     else: { return false; }
   }
 }
@@ -1921,7 +1962,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }
       i32 ci = env.constAt(nm);
-      if (ci < 0) { return "a name that is neither a local nor a constant"; }
+      if (ci < 0) { return "unresolved name " + nm; }
       // A constant is inlined, so whatever its initialiser needs, the *use site* needs. An array
       // constant would be allocated afresh at each use, which is a different program — declined until
       // there is a global to hold one.
@@ -1987,6 +2028,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         case Named(tok, typeArgs): {
           if (typeArgs.len() > 0) { return "a generic"; }
           string n = tokenTextOf(src, lexed, tok);
+          if (env.isStructName(n)) {
+            i32 want = env.fieldCountOf(n);
+            if (args.len() != 0 && args.len() != want) { return "a construction with the wrong count"; }
+          }
           if (!env.isStructName(n)) {
             i32 fa = env.funcAt(n);
             if (fa < 0) { return "a call to something unknown"; }
@@ -2004,10 +2049,24 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case Call(callee, args): {
       match (callee.kind) {
         case Member(obj, nameTok): {
+          string mn = tokenTextOf(src, lexed, nameTok);
+          // A **static** call names its owner with a type rather than a value: `Big.create(…)`. The
+          // receiver is not an expression at all, so asking whether it is one calls a perfectly good
+          // struct name unresolved — which is what three corpus files were saying.
+          string owner = staticOwner(src, lexed, env, obj);
+          if (owner != "") {
+            i32 sa = env.funcAt(owner + "." + mn);
+            if (sa < 0) { return "a static this slice has not got"; }
+            if (!env.funcOk[sa]) { return "a static this slice cannot emit"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a = unsupportedValue(src, lexed, env, args[i]);
+              if (a != "") { return a; }
+            }
+            return "";
+          }
           string o = unsupportedExpr(src, lexed, env, obj);
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
-          string mn = tokenTextOf(src, lexed, nameTok);
           if (isArrayType(ot) && mn == "len") { return ""; }
           i32 ma = env.funcAt(ot + "." + mn);
           if (ma < 0) { return "a method this slice has not got"; }
@@ -2049,6 +2108,18 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   }
   env.paramCount = env.localCount;
   collectLocals(env, src, lexed, body);
+  // **Two locals of one name.** wasm has a single flat frame per function and the language has block
+  // scopes, so `for (i32 k = …)` in one block and `i64 k = …` in another are two different locals
+  // with one name — and a name-to-index lookup cannot tell them apart. Searching from the end gives
+  // the *later* one to the earlier block, which is an `i32.const` going into an `i64` slot and a
+  // module that does not validate. Declined until there is a scope stack to resolve them properly.
+  string dup = duplicateLocal(env);
+  if (dup != "") {
+    if (env.blocked == "") { env.blocked = "two types for the local " + dup; }
+    env.localCount = savedCount;
+    env.paramCount = savedParams;
+    return false;
+  }
   string why = unsupportedIn(src, lexed, env, body);
   if (why != "" && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
@@ -2358,4 +2429,69 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     }
     else: { }
   }
+}
+
+/** A one-word name for an expression kind, so a decline says *what* rather than merely *that*. */
+string kindOfExpr(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return "int literal"; }
+    case FloatLit(tok): { return "float literal"; }
+    case StrLit(tok): { return "string literal"; }
+    case BoolLit(value): { return "bool literal"; }
+    case NullLit: { return "null"; }
+    case Ident(tok): { return "name"; }
+    case Unary(op, operand): { return "unary"; }
+    case Binary(op, left, right): { return "binary"; }
+    case Cast(op, operand, target): { return "cast"; }
+    case Ternary(cond, then, els): { return "ternary"; }
+    case Index(arr, index): { return "index"; }
+    case Member(obj, nameTok): { return "member"; }
+    case Call(callee, args): { return "call"; }
+    case Construct(ctype, args, named): { return "construct"; }
+    case ArrNew(elem, size, fill, elements): { return "array"; }
+    case Unwrap(operand): { return "unwrap"; }
+    case Is(left, target, other, negated): { return "is"; }
+    case Incr(target, op, prefix): { return "incr"; }
+    case MatchExpr(subject, arms): { return "match"; }
+  }
+}
+
+/**
+ * The struct a receiver names, when the receiver is a **type** rather than a value.
+ *
+ * `Big.create(…)` and `b.create(…)` are the same syntax and differ only in this, which is the fork
+ * the checker makes too — and the scope is consulted first for the same reason: a local called `Big`
+ * is a value, and shadowing wins.
+ */
+string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenTextOf(src, lexed, tok);
+      if (env.localAt(n) >= 0 || env.constAt(n) >= 0) { return ""; }
+      return env.isStructName(n) ? n : "";
+    }
+    else: { return ""; }
+  }
+}
+
+/**
+ * A name declared twice at **different types**, or `""`.
+ *
+ * Two `for (i32 i = …)` loops in sequence declare `i` twice and are perfectly safe: both slots are
+ * `i32`, so whichever the lookup returns is well-typed. Declining those refused six corpus files and
+ * a test of this emitter's own. It is the *type* that cannot be shared, not the name.
+ *
+ * What this still does not catch is two same-typed locals of one name whose live ranges **overlap** —
+ * a nested shadow. That is a semantic error rather than a validation one, so it survives the module
+ * check; it wants a scope stack, which this slice has not got, and is named here rather than fixed.
+ */
+string duplicateLocal(Env env) {
+  for (i32 i = 0; i < env.localCount; i++) {
+    for (i32 j = i + 1; j < env.localCount; j++) {
+      if (env.locals[i] == env.locals[j] && env.localTypes[i] != env.localTypes[j]) {
+        return env.locals[i];
+      }
+    }
+  }
+  return "";
 }

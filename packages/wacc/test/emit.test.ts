@@ -334,6 +334,27 @@ const CASES: [string, Call[]][] = [
   // A scalar beside an array, so the inlined and the global paths coexist.
   ["const i32 K = 5; const i32[] T = i32[](7, 8); export i32 f() { return K + T[0]; }",
     [{ name: "f", args: [] }]],
+
+  // ── A ternary of two literals, which takes the slot's type ─────────────────
+  ["export i32 f(bool c) { return c ? 1 : 2; }", [{ name: "f", args: [1] }, { name: "f", args: [0] }]],
+  ["export i64 f(bool c) { return c ? 4294967296 : 1; }", [{ name: "f", args: [1] }, { name: "f", args: [0] }]],
+  ["export f64 f(bool c) { return c ? 1.5 : 2.5; }", [{ name: "f", args: [1] }]],
+  ["export i64 f(bool c) { i64 x = c ? 1 : 2; return x + 4294967296; }", [{ name: "f", args: [1] }]],
+  // Nested, so the inner one has to take the outer's slot too.
+  ["export i64 f(bool a, bool b) { return a ? (b ? 1 : 2) : 3; }",
+    [{ name: "f", args: [1, 1] }, { name: "f", args: [1, 0] }, { name: "f", args: [0, 0] }]],
+
+  // ── Static method calls, where the receiver names a type ───────────────────
+  ["struct P { i32 x; P make(i32 v) { return P(v); } } export i32 f(i32 v) { return P.make(v).x; }",
+    [{ name: "f", args: [9] }]],
+  ["struct P { i32 x; i32 zero() { return 0; } } export i32 f() { return P.zero(); }",
+    [{ name: "f", args: [] }]],
+  // A static and an instance method of the same name on the same struct are different functions.
+  ["struct P { i32 x; i32 get(const this) { return this.x; } P of(i32 v) { return P(v); } } export i32 f(i32 v) { return P.of(v).get(); }",
+    [{ name: "f", args: [4] }]],
+  // A local shadowing the struct's name makes the receiver a value again.
+  ["struct P { i32 x; i32 get(const this) { return this.x; } } export i32 f() { P P2 = P(6); return P2.get(); }",
+    [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

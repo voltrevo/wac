@@ -1183,6 +1183,37 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Ternaries, statics, and one flat frame — 16 of 39 to 22
+
+Three features and one limitation, all of them found by making the decline messages **specific**. The
+walk had been saying "an expression whose type this slice cannot work out" five times; saying
+*"untyped ternary"* instead named the bug in one word. A category is not a diagnosis, and the cost of
+the vaguer message was a slot.
+
+- **A ternary of two literals takes the slot's type**, exactly as a single literal does. `c ? 1 : 2`
+  in an `i64` slot is two `i64` constants; the condition is never the value and is not part of the
+  question.
+- **A static call names its owner with a type rather than a value.** `Big.create(…)` and
+  `b.create(…)` are the same syntax, and asking whether the receiver is an expression called three
+  perfectly good struct names unresolved. The scope is consulted first, so a local of that name still
+  wins — the same fork the checker makes.
+- **`P()` with no arguments is `struct.new_default`.** Pushing nothing and calling `struct.new` asks
+  for operands that were never there.
+
+**And the limitation, which is real and now named.** wasm has one flat frame per function; the
+language has block scopes. `for (i32 k = …)` in one block and `i64 k = …` in another are two locals
+with one name, and a name-to-index lookup cannot tell them apart — the later one wins and an
+`i32.const` goes into an `i64` slot.
+
+The first guard declined *any* repeated name, which refused six corpus files and a test of this
+emitter's own: two sequential `for (i32 i …)` loops are safe, because both slots are `i32` and
+whichever the lookup returns is well-typed. **It is the type that cannot be shared, not the name.**
+What remains uncaught is two same-typed locals whose live ranges overlap — a nested shadow, which is a
+semantic error rather than a validation one and wants a scope stack this slice has not got.
+
+The invariant caught all of this: asserting "approved implies valid" turned two new features into two
+red tests within a minute of writing them, which is what it was for.
+
 ### Constants with identity get a global — 14 of 39, then 16
 
 An array constant has identity: one array shared by every use is not the same program as one array per
