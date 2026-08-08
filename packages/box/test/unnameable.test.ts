@@ -194,3 +194,77 @@ Deno.test("`ls` of the name it just listed does not call it missing", async () =
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ── The other side of the same name ──────────────────────────────────────────
+//
+// Everything above is about a **host** mount, where the name is real and Deno cannot express it. In
+// the system's *own* filesystem — memory, or an image — there is no such limit: a name is a byte array
+// all the way down, which is what design/0001 D1 means by a VFS that is not the host's.
+//
+// Nothing held that. `packages/fs`'s round-trip property test builds its names from a fixed list of
+// TypeScript strings, so every name it has ever round-tripped is valid UTF-8 — the harness cannot ask
+// the question, because a JavaScript string that names such a file does not exist. The route that can
+// is a *shell*, whose `$'…'` produces bytes, which is what this uses.
+
+const sealedShell = await Deno.makeTempFile({ prefix: "wacsh-bytes-" });
+const imagedShell = await Deno.makeTempFile({ prefix: "wacimg-bytes-" });
+globalThis.addEventListener("unload", () => {
+  for (const path of [sealedShell, imagedShell]) {
+    try {
+      Deno.removeSync(path);
+    } catch {
+      // Already gone.
+    }
+  }
+});
+await buildApp("packages/box/src/bin/sealedsh.wac", sealedShell, {});
+await buildApp("packages/box/src/bin/imaged.wac", imagedShell, { read: true, write: true });
+
+function byteSh(cmd: string, extra: string[], script: string): { code: number; out: string; err: string } {
+  const r = new Deno.Command("timeout", {
+    args: ["20", cmd, ...extra, "-c", script],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).outputSync();
+  const d = new TextDecoder();
+  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+}
+
+/** `n\xff` — the same shape of name, in the shell's own byte syntax. */
+/**
+ * `n\xff` — the same shape of name, in the shell's own byte syntax.
+ *
+ * **Written as the four characters `\xff`, not as the character U+00FF.** The first version of
+ * this line held U+00FF, so the shell was handed `c3 bf` and faithfully made a file called that —
+ * and the test reported a shell bug that did not exist. A test about bytes has to be written in
+ * bytes.
+ */
+const BYTE_NAME = String.raw`$'n\xff'`;
+
+Deno.test("a name that is not valid UTF-8 is an ordinary file in the system's own filesystem", () => {
+  // Listed as the bytes it is — `6e ff` — rather than as a replacement character, and readable by the
+  // same name that made it. Through `hex`, because the test harness cannot hold the name either.
+  const r = byteSh(sealedShell, [], `echo inside > ${BYTE_NAME}; ls | hex; cat ${BYTE_NAME}`);
+  assertEquals(r.code, 0, r.err);
+  assertEquals(r.out.includes("6eff0a"), true, `the name was not the bytes: ${r.out}`);
+  assertEquals(r.out.trim().endsWith("inside"), true, `it could not be read back: ${r.out}`);
+});
+
+Deno.test("and it survives an image, which is where a length-prefixed format would lose it", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-bytes-image-" });
+  try {
+    const image = `${dir}/bytes.wacimg`;
+    const made = byteSh(imagedShell, [image], `echo kept > ${BYTE_NAME}; ls | hex`);
+    assertEquals(made.code, 0, made.err);
+    assertEquals(made.out.includes("6eff0a"), true, made.out);
+
+    // A second process, so the name went through the format and came back rather than staying in
+    // memory. This is the case `packages/fs`'s property test cannot build.
+    const back = byteSh(imagedShell, [image], `ls | hex; cat ${BYTE_NAME}`);
+    assertEquals(back.out.includes("6eff0a"), true, `the name did not survive the image: ${back.out}`);
+    assertEquals(back.out.trim().endsWith("kept"), true, `the contents did not: ${back.out}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

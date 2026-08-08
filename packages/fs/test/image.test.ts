@@ -116,6 +116,16 @@ function build(seed: number): { fs: FsHandle; mounts: string[] } {
       if (next(3) === 0) fs.chown(path, ["root", "claude", "nobody"][next(3)]);
     }
   }
+  // **Every name here is valid UTF-8, and that is a limit of the harness rather than a choice.** A
+  // name is bytes — design/0001 D1, and wac-mono 0065 — but a name reaches this test as a JavaScript
+  // string, and the string that would hold a lone `0xff` does not exist. So the case the format most
+  // needs to survive cannot be built from here.
+  //
+  // It is covered instead by `packages/box/test/unnameable.test.ts`, which goes through a *shell*:
+  // `$'…'` produces bytes, and the file it makes is written to an image and read back in a second
+  // process. Said here because the obvious reading of this list is that byte-names were considered
+  // and left out.
+
   // An empty file and an empty directory: the two zero-length cases a length-prefixed format gets wrong.
   fs.writeFile("/empty", new Uint8Array(0));
   fs.mkdir("/emptydir", false);
