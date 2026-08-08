@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Cli, Core } from "../src/platform.wac";
+import { Cli, Core, Pending } from "../src/platform.wac";
 
 export i32 main(Core core, Cli cli) {
   // Stage 1. Both streams, because a host that wired `warn` to standard output would look right in a
@@ -36,8 +36,45 @@ export i32 main(Core core, Cli cli) {
     core.log("wacland: stage 2 arg " + itoa(i) + " " + string.fromBytes(cli.arg(i).wait()));
   }
 
+  // Stage 3. **Two requests in flight, completing out of the order they were asked for.**
+  //
+  // 0087's first criterion, and the one a host cannot fake: a runtime that resolved every ticket as it
+  // was submitted would pass every type check here and make every program that overlaps requests
+  // silently sequential. The long sleep is asked for *first*, so a host that answers in submission
+  // order gets index 0 and fails.
+  Pending<i64> slow = core.sleepMillis(120);
+  Pending<i64> quick = core.sleepMillis(10);
+  i32 first = core.waitAny(i32[](slow.id, quick.id), -1);
+  core.log("wacland: stage 3 first " + itoa(first));
+  // And each resolves its *own* value, which is what says the two tickets are separate rather than one
+  // completion arriving twice.
+  core.log("wacland: stage 3 quick " + itoa64(quick.wait()));
+  core.log("wacland: stage 3 slow " + itoa64(slow.wait()));
+
+  // Stage 4. A deadline with nothing ready, which must come back rather than hang.
+  Pending<i64> never = core.sleepMillis(10000);
+  i32 late = core.waitAny(i32[](never.id), 30);
+  core.log("wacland: stage 4 timeout " + itoa(late));
+  // Cancelling says "discard the answer", not "stop trying" — so the sleep is still running and this
+  // program is about to end anyway. Said here because the difference is the whole of what `cancel` is.
+  never.cancel();
+
   core.log("wacland: reached the end of what is implemented");
   return 0;
+}
+
+/** An i64 as text. Separate from `itoa` because wac has no overloading and this needs both. */
+string itoa64(i64 v) {
+  if (v == 0 as i64) { return "0"; }
+  string out = "";
+  i64 x = v;
+  bool negative = x < 0 as i64;
+  if (negative) { x = 0 as i64 - x; }
+  while (x > 0 as i64) {
+    out = string.fromCodepoint('0' + (x % 10 as i64) as! i32) + out;
+    x = x / 10 as i64;
+  }
+  return negative ? "-" + out : out;
 }
 
 /** Decimal, without pulling `fmt` in for a conformance program that must build everywhere. */

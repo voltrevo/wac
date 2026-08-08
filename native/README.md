@@ -43,22 +43,27 @@ assumption that the interface and the transport are separable has survived its f
 
 ## What is implemented
 
-`core.log` and `core.warn`, which return nothing, and the machinery around them: loading, dispatch,
-string marshalling, and building the capability structs.
+The machinery — loading, dispatch, marshalling, the capability structs built from the manifest's field
+order — and **the ticket table** (`tickets.rs`), with the capabilities that need no operating system
+beyond a clock and a thread: `argCount`, `arg`, `write`, `writeErr`, `nowMillis`, `monotonicNanos`,
+`sleepMillis`, `randomBytes`, `exitCode` and `waitAny`.
 
-**Everything that returns a `Pending<T>` traps with its own name** — `Cli.argCount is not implemented in
-the native runtime yet` — because a ticket table is the next piece and half of one would be worse than
-none. A runtime that answered a plausible zero would make every program that used the capability wrong
-in a way nothing could see, which is design/0001 D6.
+**Two of 0087's three criteria are met**, and `example/wacland.wac` is what demonstrates them:
 
-So none of 0087's three criteria is met yet. All three need the ticket table:
+1. ✅ two requests completing out of order, each resolving its own value — two sleeps, the longer one
+   submitted first, and `waitAny` answers the *second*;
+2. ✅ a `waitAny` with neither ready returning on its timeout;
+3. ❌ a spawned child, waited for alongside one of the parent's own tickets. `spawn` is not
+   implemented.
 
-1. two requests completing out of order, each resolving its own value;
-2. a `waitAny` with neither ready returning on its timeout;
-3. a spawned child, waited for alongside one of the parent's own tickets.
+The first one is not decoration. A host that resolved every ticket as it was submitted would pass every
+type check and make every program that overlaps requests silently sequential; gutting the sleep in this
+runtime makes the test say `native settled the two sleeps in submission order`, which is the failure
+0087 predicted.
 
-D12 (a scheduler seam in the ticket table) and D13 (the deadline visible to the scheduler) belong in
-that piece rather than after it.
+**The filesystem, the network and `spawn` are not implemented and trap by name.** A runtime that
+answered an empty file or a closed socket would make every program that used it wrong in a way nothing
+could see, which is design/0001 D6.
 
 ## Where this lives
 

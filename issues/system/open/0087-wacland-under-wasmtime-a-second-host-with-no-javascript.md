@@ -204,3 +204,39 @@ Release build 68s cold and 1.4s warm; the binary is 12.6 MB with the feature set
 (`cranelift`, `runtime`, `gc`, `gc-drc` — default features off). The test builds through cargo and
 **skips loudly** if cargo is absent, with the Deno half still asserting, so a machine without the
 toolchain gets a warning rather than a red suite or a silent pass.
+
+## Progress — 2026-08-08 (second tick), agent-a
+
+**The ticket table, and two of the three criteria.** Items 3 and 4 of the six. `native/src/tickets.rs`.
+
+- ✅ **two requests completing out of order, each resolving its own value.** `example/wacland.wac`
+  stage 3: two sleeps, the *longer* one submitted first, and `waitAny` answers index 1. Verified it can
+  fail — gutting the sleep so every ticket settles at once makes the test say `native settled the two
+  sleeps in submission order`, which is the failure this issue predicted.
+- ✅ **a `waitAny` with neither ready returning on its timeout.** Stage 4, answering -1.
+- ❌ **spawn.** Not implemented; item 5, and the last criterion.
+
+**D12's seam is in rather than retrofitted.** When several tickets are ready, `waitAny` returns the
+**first in the caller's own list**, not the first to finish. That is a policy in one place, and it makes
+a program's behaviour independent of how the threads were scheduled — which is what a deterministic
+mode needs somewhere to put. **D13**: the deadline lives in the table's `wait_timeout` rather than
+inside a worker's `Atomics.wait`, so the runtime can see it. The clock is still the real one; advancing
+it is not implemented, but it is no longer invisible.
+
+The ring of slots has no counterpart, as predicted, and one consequence is worth recording: **there is
+no ceiling on outstanding tickets here.** The JavaScript ring has four slots and `packages/relayd` can
+exceed them (0091); a `HashMap` has no slots to run out of.
+
+### Two bugs the second host found in the first hour
+
+Both were mine, and both were found by running one program on both hosts rather than by reading:
+
+- **`resolve` has to block.** `Pending.wait` is `return this.resolve(this.id)` and nothing else, so all
+  of the waiting a program does happens in the host. A `resolve` that took an already-present outcome
+  worked for every capability that finishes instantly and failed the moment one did not.
+- **`sleepMillis` resolves to the monotonic nanoseconds at which it settled**, not to the millis asked
+  for — `platform.wac` says "so `.wait()` is a sleep that tells you how far it overshot". Answering the
+  argument back looked right in isolation and disagreed with Deno by three orders of magnitude.
+
+Neither is a bug in the interface, which is the point worth taking: the contract was written down and
+the second host is what made me read it.

@@ -5,16 +5,19 @@
 // host and one that is not** (D9). Two JavaScript hosts satisfy the words and prove nothing: they share
 // the transport, the worker model and the event loop. This is the first test in the repo that does not.
 //
-// The program is `example/wacland.wac`, whose stages are 0087's "done when" in the order a host acquires
-// them. The native runtime has stage 1; the Deno host has 1 and 2. So the comparison here is over the
-// **prefix both hosts claim to implement**, and the test asserts three separate things:
+// The program is `example/wacland.wac`, whose stages are 0087's "done when" in the order a host
+// acquires them: output, arguments, two requests completing out of order, and a `waitAny` that comes
+// back on its deadline. Both hosts reach the end, so the comparison is the whole run.
 //
-//   1. the native runtime produces stage 1 byte-for-byte as Deno does — including which stream each
-//      line went to, which is the half a terminal cannot show you;
-//   2. it **refuses** stage 2 by name rather than answering something plausible (design/0001 D6); and
-//   3. Deno gets *further*, which is what stops this from being a test that passes because both hosts
-//      do nothing. A prefix comparison with no evidence that the prefix is short is the shape of a
-//      harness that reports "all agree" while comparing nothing.
+// **What is compared and what is not.** Two of the lines carry monotonic nanoseconds, which are a
+// measurement rather than an answer — two hosts that agreed on those would be suspicious rather than
+// correct, since one of them takes longer to start. So the transcripts are compared with those numbers
+// masked, and the *relationships* between them are asserted separately on each host: the quick sleep
+// settles before the slow one, and the gap is about what was asked for.
+//
+// The canary is that the masking is not doing the work: a run with every number masked and no other
+// assertion would report agreement between two hosts that printed nothing. So the test also pins the
+// exact line count, the stage-3 ordering, and that stage 4 timed out.
 //
 // ## When cargo is not there
 //
@@ -79,45 +82,70 @@ globalThis.addEventListener("unload", () => {
   }
 });
 
+/** The two lines carrying monotonic nanoseconds, with the number replaced by its name. */
+function masked(out: string): string {
+  return out.replace(/(stage 3 (?:quick|slow) )\d+/g, "$1<nanos>");
+}
+
+/** What one host said about stage 3, as numbers. */
+function stage3(out: string): { first: number; quick: number; slow: number } {
+  const find = (re: RegExp) => Number(re.exec(out)?.[1] ?? NaN);
+  return {
+    first: find(/stage 3 first (-?\d+)/),
+    quick: find(/stage 3 quick (\d+)/),
+    slow: find(/stage 3 slow (\d+)/),
+  };
+}
+
+/** Everything the conformance program must have done, whichever host ran it. */
+function assertConformant(r: Run, host: string): void {
+  const lines = r.out.split("\n").filter((l) => l.length > 0);
+  assertEquals(r.code, 0, `${host} exited ${r.code}: ${r.err}`);
+  // The line count, so that masking a number cannot hide a stage that never ran.
+  assertEquals(lines.length, 9, `${host}: ${r.out}`);
+  assertEquals(lines[0], "wacland: stage 1 output");
+  assertEquals(r.err.trim(), "wacland: stage 1 warn", `${host} put the warning on the wrong stream`);
+  assertEquals(lines.includes("wacland: stage 2 argCount 2"), true, r.out);
+  assertEquals(lines.includes("wacland: stage 2 arg 1 two"), true, r.out);
+
+  const s3 = stage3(r.out);
+  // 0087's first criterion. The *long* sleep is submitted first, so a host that answered in
+  // submission order — or that resolved every ticket as it was made — says 0 here.
+  assertEquals(s3.first, 1, `${host} settled the two sleeps in submission order`);
+  assertEquals(s3.quick < s3.slow, true, `${host}: quick ${s3.quick} did not settle before ${s3.slow}`);
+  // Both are monotonic nanoseconds from the host's own origin, so only the *gap* is comparable. 120
+  // and 10 were asked for; anything between 50 and 500 ms of separation says the two sleeps really
+  // slept for different lengths rather than both returning at once.
+  const gapMs = (s3.slow - s3.quick) / 1e6;
+  assertEquals(gapMs > 50 && gapMs < 500, true, `${host}: the sleeps were ${gapMs}ms apart`);
+
+  // 0087's second criterion: a deadline with nothing ready comes back rather than hanging, and -1 is
+  // what `platform.wac` says "nothing settled" is spelled.
+  assertEquals(lines.includes("wacland: stage 4 timeout -1"), true, r.out);
+  assertEquals(lines[lines.length - 1], "wacland: reached the end of what is implemented");
+}
+
 Deno.test("the same program says the same thing on a JavaScript host and one that is not", async () => {
   const denoProgram = `${tmp}/wacland-deno`;
   await buildApp(ENTRY, denoProgram, {});
   const js = await runIt(denoProgram, ["one", "two"]);
 
-  // The Deno half, asserted on its own so that a skipped native half still tests something.
-  const jsLines = js.out.split("\n").filter((l) => l.length > 0);
-  assertEquals(jsLines[0], "wacland: stage 1 output", js.err);
-  assertEquals(js.err.trim(), "wacland: stage 1 warn");
-  assertEquals(jsLines.includes("wacland: stage 2 argCount 2"), true, js.out);
-  assertEquals(jsLines[jsLines.length - 1], "wacland: reached the end of what is implemented");
+  // The Deno half on its own, so that a skipped native half still tests something.
+  assertConformant(js, "deno");
 
   const native = await nativeBinary();
   if (native === null) return;
 
   await buildNative(ENTRY, `${tmp}/wacland`, {});
   const rs = await runIt(native, [`${tmp}/wacland.json`, "one", "two"]);
+  assertConformant(rs, "native");
 
-  // 1. Stage 1, byte for byte, on both streams.
-  assertEquals(rs.out, "wacland: stage 1 output\n", rs.err);
-  assertEquals(rs.err.split("\n")[0], "wacland: stage 1 warn");
-  assertEquals(rs.out, js.out.split("wacland: stage 2")[0], "the two hosts disagree about stage 1");
-
-  // 2. And stage 2 is refused by name rather than answered.
-  assertEquals(rs.code !== 0, true, "the native host should stop at what it has not got");
-  assertEquals(
-    rs.err.includes("Cli.argCount is not implemented in the native runtime yet"),
-    true,
-    rs.err,
-  );
-
-  // 3. The canary. If the native host silently did nothing and Deno silently did nothing, every
-  // assertion above would hold. This is the one that says the prefix was short *because the native
-  // host stops*, not because there was nothing to compare.
-  assertEquals(
-    js.out.length > rs.out.length,
-    true,
-    "Deno got no further than the native host — one of them is not running the program",
-  );
+  // And the transcripts are the same, once the two measurements are masked.
+  assertEquals(masked(rs.out), masked(js.out), "the two hosts disagree");
+  assertEquals(rs.err, js.err, "the two hosts disagree about the error stream");
+  // The canary for the masking itself: it must not have eaten the whole line.
+  assertEquals(masked(rs.out).includes("stage 3 quick <nanos>"), true, masked(rs.out));
+  assertEquals(masked(rs.out).includes("<nanos><nanos>"), false, "the mask is too greedy");
 });
 
 Deno.test("the manifest carries the field order rather than the runtime holding a copy", async () => {

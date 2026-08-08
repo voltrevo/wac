@@ -14,33 +14,81 @@
 //!
 //! The `SharedArrayBuffer`, the `Atomics.wait`, the ring of slots and the responder have no counterpart
 //! here, exactly as 0087 predicted: they exist to park a *worker* while an asynchronous host runs, and
-//! native code blocks the calling thread.
+//! native code blocks the calling thread. See `tickets.rs`, which is what replaced them.
 //!
 //! ## What is here, and what is not
 //!
-//! Here: loading a module, the callback dispatch table, the string marshalling, and building the `Core`
-//! and `Cli` a program is called with — from the manifest's field order rather than from a copy of it.
+//! Here: loading, dispatch, marshalling, the capability structs built from the manifest's field order,
+//! the ticket table, and the capabilities that need no operating system beyond a clock and a thread —
+//! `argCount`, `arg`, `write`, `writeErr`, `nowMillis`, `monotonicNanos`, `sleepMillis`, `randomBytes`,
+//! `exitCode` and `waitAny`.
 //!
-//! Not here, and it says so rather than answering plausibly: **every capability that returns a
-//! `Pending<T>` traps**, because a ticket table is the next piece and half of one would be worse than
-//! none. `core.log` and `core.warn` return nothing and work. Run a program that needs more and it stops
-//! with the name of what it wanted, which is the only honest answer a runtime can give.
+//! Not here, and it says so rather than answering plausibly: **the filesystem, the network and
+//! `spawn`**. Every one of those is a registered, callable funcref whose arm refuses by name. A
+//! runtime that answered an empty file or a closed socket would make every program that used it wrong
+//! in a way nothing could see, which is design/0001 D6.
 
 mod manifest;
+mod tickets;
 
 use manifest::{Manifest, SUPPORTED_VERSION};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tickets::{Outcome, Tickets};
 use wasmtime::{Caller, Config, Engine, Extern, ExternType, Linker, Module, Store, Val};
+
+/// Which `Pending<T>` a capability answers with.
+///
+/// One per shape the runtime can complete. A capability whose kind is not here cannot be implemented
+/// without adding one, which is the point: the compiler names the gap.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Kind {
+    I32,
+    I64,
+    Bytes,
+}
+
+/// The three shared functions and the constructor that make one `Pending<T>`.
+///
+/// Created once per kind, never per call. The JavaScript host has the same rule for a harder reason —
+/// bindgen registers each distinct function identity in a fixed table and never frees a slot — and the
+/// rule is worth keeping here anyway: a ticket carries an id, and the functions that read it are the
+/// same three every time.
+#[derive(Clone)]
+struct PendingHooks {
+    ctor: String,
+    resolve: Val,
+    settled: Val,
+    drop: Val,
+}
 
 /// What a registered funcref does when the guest calls it.
 ///
 /// A plain enum rather than a boxed closure: the dispatcher is one function that matches, so a
 /// capability that is not implemented is a *variant* rather than a closure that happens to trap, and
-/// the exhaustiveness check names every one that is missing when a new capability is added.
+/// the exhaustiveness check names every one that is missing when a capability is added.
 #[derive(Clone, Debug)]
 enum Cap {
     Log,
     Warn,
+    Write,
+    WriteErr,
+    ArgCount,
+    Arg,
+    NowMillis,
+    MonotonicNanos,
+    SleepMillis,
+    RandomBytes,
+    ExitCode,
+    WaitAny,
+    /// `Pending<T>.resolve`: collect the outcome, once.
+    Resolve(Kind),
+    /// `Pending<T>.settled`, shared by every kind because the question does not depend on `T`.
+    Settled,
+    /// `Pending<T>.drop` and `cancel`, likewise.
+    Discard,
     /// Registered, callable, and refuses — carrying the wac name so the message says what was wanted.
     NotImplemented(String),
 }
@@ -50,12 +98,23 @@ struct Host {
     caps: Vec<Vec<Cap>>,
     /// argv as bytes, since a program's arguments are bytes (wac-mono 0065).
     args: Vec<Vec<u8>>,
+    tickets: Arc<Tickets>,
+    pendings: HashMap<Kind, PendingHooks>,
+    /// Monotonic zero, so `monotonicNanos` measures from this program's start rather than the epoch.
+    started: std::time::Instant,
     exit: i32,
 }
 
 impl Host {
     fn new(signatures: usize, args: Vec<Vec<u8>>) -> Self {
-        Host { caps: vec![Vec::new(); signatures], args, exit: 0 }
+        Host {
+            caps: vec![Vec::new(); signatures],
+            args,
+            tickets: Arc::new(Tickets::default()),
+            pendings: HashMap::new(),
+            started: std::time::Instant::now(),
+            exit: 0,
+        }
     }
 
     /// Register `cap` under signature `sig` and answer its slot.
@@ -69,31 +128,17 @@ impl Host {
     }
 }
 
-/// Read a wac string reference into bytes, through the module's own staging buffer.
-///
-/// Every marshalled value crosses at offset 0 of `$bind$mem`, grown by `$bind$mem_ensure`. Growing
-/// detaches nothing here — unlike JavaScript, where the `ArrayBuffer` has to be re-read — but the
-/// order still matters: ensure, then copy, then read.
-fn read_string(caller: &mut Caller<'_, Host>, s: &Val) -> Result<Vec<u8>, wasmtime::Error> {
-    let str_len = export_func(caller, "$bind$str_len")?;
-    let str_to_mem = export_func(caller, "$bind$str_to_mem")?;
-    let mem_ensure = export_func(caller, "$bind$mem_ensure")?;
-    let mem = match caller.get_export("$bind$mem") {
-        Some(Extern::Memory(m)) => m,
-        _ => return Err(wasmtime::Error::msg("the module has no $bind$mem")),
-    };
+// ── Marshalling ───────────────────────────────────────────────────────────────
+//
+// Every value crosses at offset 0 of `$bind$mem`, a staging buffer grown by `$bind$mem_ensure`. That
+// is the whole layout contract: four helpers for strings, four more for arrays, and no knowledge here
+// of how a wac value is actually laid out.
 
-    let out = call_dyn(caller, &str_len, std::slice::from_ref(s))?;
-    let n = match out.first() {
-        Some(Val::I32(n)) => *n as usize,
-        _ => return Err(wasmtime::Error::msg("$bind$str_len did not answer an i32")),
-    };
-    call_dyn(caller, &mem_ensure, &[Val::I32(n as i32)])?;
-    call_dyn(caller, &str_to_mem, std::slice::from_ref(s))?;
-
-    let mut bytes = vec![0u8; n];
-    mem.read(&mut *caller, 0, &mut bytes)?;
-    Ok(bytes)
+fn export_func(caller: &mut Caller<'_, Host>, name: &str) -> Result<wasmtime::Func, wasmtime::Error> {
+    match caller.get_export(name) {
+        Some(Extern::Func(f)) => Ok(f),
+        _ => Err(wasmtime::Error::msg(format!("the module has no {name}"))),
+    }
 }
 
 /// Call an export whose arity is read from its own type rather than assumed.
@@ -112,12 +157,79 @@ fn call_dyn(
     Ok(results)
 }
 
-fn export_func(caller: &mut Caller<'_, Host>, name: &str) -> Result<wasmtime::Func, wasmtime::Error> {
-    match caller.get_export(name) {
-        Some(Extern::Func(f)) => Ok(f),
-        _ => Err(wasmtime::Error::msg(format!("the module has no {name}"))),
+fn staging(caller: &mut Caller<'_, Host>) -> Result<wasmtime::Memory, wasmtime::Error> {
+    match caller.get_export("$bind$mem") {
+        Some(Extern::Memory(m)) => Ok(m),
+        _ => Err(wasmtime::Error::msg("the module has no $bind$mem")),
     }
 }
+
+/// Copy `bytes` into the staging buffer, growing it first.
+fn to_staging(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<(), wasmtime::Error> {
+    let ensure = export_func(caller, "$bind$mem_ensure")?;
+    let have = call_dyn(caller, &ensure, &[Val::I32(bytes.len() as i32)])?;
+    if let Some(Val::I32(n)) = have.first() {
+        if (*n as usize) < bytes.len() {
+            return Err(wasmtime::Error::msg(format!(
+                "could not grow the transfer buffer to {} bytes",
+                bytes.len()
+            )));
+        }
+    }
+    let mem = staging(caller)?;
+    mem.write(&mut *caller, 0, bytes)?;
+    Ok(())
+}
+
+/// Read a reference the module can copy into the staging buffer: a string, a `u8[]` or an `i32[]`.
+fn from_staging(
+    caller: &mut Caller<'_, Host>,
+    value: &Val,
+    len_export: &str,
+    to_mem_export: &str,
+    width: usize,
+) -> Result<Vec<u8>, wasmtime::Error> {
+    let len_fn = export_func(caller, len_export)?;
+    let to_mem = export_func(caller, to_mem_export)?;
+    let out = call_dyn(caller, &len_fn, std::slice::from_ref(value))?;
+    let n = match out.first() {
+        Some(Val::I32(n)) => (*n as usize) * width,
+        _ => return Err(wasmtime::Error::msg(format!("{len_export} did not answer an i32"))),
+    };
+    let ensure = export_func(caller, "$bind$mem_ensure")?;
+    call_dyn(caller, &ensure, &[Val::I32(n as i32)])?;
+    call_dyn(caller, &to_mem, std::slice::from_ref(value))?;
+    let mem = staging(caller)?;
+    let mut bytes = vec![0u8; n];
+    mem.read(&mut *caller, 0, &mut bytes)?;
+    Ok(bytes)
+}
+
+fn read_string(caller: &mut Caller<'_, Host>, s: &Val) -> Result<Vec<u8>, wasmtime::Error> {
+    from_staging(caller, s, "$bind$str_len", "$bind$str_to_mem", 1)
+}
+
+fn read_u8_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<u8>, wasmtime::Error> {
+    from_staging(caller, a, "$bind$arr_u8_len", "$bind$arr_u8_to_mem", 1)
+}
+
+/// An `i32[]` as numbers. The staging buffer is bytes, and wasm is little-endian everywhere.
+fn read_i32_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<i32>, wasmtime::Error> {
+    let bytes = from_staging(caller, a, "$bind$arr_i32_len", "$bind$arr_i32_to_mem", 4)?;
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+fn make_u8_array(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
+    to_staging(caller, bytes)?;
+    let from_mem = export_func(caller, "$bind$arr_u8_from_mem")?;
+    let out = call_dyn(caller, &from_mem, &[Val::I32(bytes.len() as i32)])?;
+    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("$bind$arr_u8_from_mem answered nothing"))
+}
+
+// ── Running ───────────────────────────────────────────────────────────────────
 
 fn main() -> Result<(), wasmtime::Error> {
     let argv: Vec<String> = std::env::args().collect();
@@ -138,8 +250,7 @@ fn main() -> Result<(), wasmtime::Error> {
         )));
     }
     let wasm_path = manifest_path.parent().unwrap_or(Path::new(".")).join(&m.wasm);
-    let program_args: Vec<Vec<u8>> =
-        argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
+    let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
     let code = run(&m, &wasm_path, program_args)?;
     std::process::exit(code);
@@ -183,6 +294,18 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
 
     let instance = linker.instantiate(&mut store, &module)?;
 
+    // The `Pending<T>` hooks first: a capability cannot answer one until the three shared functions
+    // exist, and they are registered once for the whole run.
+    for (kind, wac_name) in [
+        (Kind::I32, "Pending<i32>"),
+        (Kind::I64, "Pending<i64>"),
+        (Kind::Bytes, "Pending<u8[]>"),
+    ] {
+        if let Some(hooks) = pending_hooks(&mut store, &instance, m, kind, wac_name)? {
+            store.data_mut().pendings.insert(kind, hooks);
+        }
+    }
+
     let core = build(&mut store, &instance, m, "Core")?;
     let cli = build(&mut store, &instance, m, "Cli")?;
 
@@ -197,6 +320,62 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
     };
     let host_exit = store.data().exit;
     Ok(if status != 0 { status } else { host_exit })
+}
+
+/// Register `resolve`, `settled` and `drop` for one `Pending<T>`, or None if the program has no such
+/// `Pending` — which is ordinary: a program that never reads a file has no `Pending<FileResult>`.
+fn pending_hooks(
+    store: &mut Store<Host>,
+    instance: &wasmtime::Instance,
+    m: &Manifest,
+    kind: Kind,
+    wac_name: &str,
+) -> Result<Option<PendingHooks>, wasmtime::Error> {
+    let Some(spec) = m.find_struct(wac_name) else { return Ok(None) };
+    let Some(ctor) = spec.constructor() else { return Ok(None) };
+    let mut hooks = [Val::I32(0), Val::I32(0), Val::I32(0)];
+    for (i, (field, cap)) in [
+        ("resolve", Cap::Resolve(kind)),
+        ("settled", Cap::Settled),
+        ("drop", Cap::Discard),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let f = spec
+            .fields
+            .iter()
+            .find(|f| f.name == field)
+            .ok_or_else(|| wasmtime::Error::msg(format!("{wac_name} has no {field}")))?;
+        hooks[i] = funcref_for(store, instance, m, &f.ty, cap)?;
+    }
+    Ok(Some(PendingHooks {
+        ctor: ctor.export_name.clone(),
+        resolve: hooks[0].clone(),
+        settled: hooks[1].clone(),
+        drop: hooks[2].clone(),
+    }))
+}
+
+/// Register `cap` under the signature spelled `ty` and answer the funcref to pass into wasm.
+fn funcref_for(
+    store: &mut Store<Host>,
+    instance: &wasmtime::Instance,
+    m: &Manifest,
+    ty: &str,
+    cap: Cap,
+) -> Result<Val, wasmtime::Error> {
+    let sig = m
+        .callback_index(ty)
+        .ok_or_else(|| wasmtime::Error::msg(format!("no callback signature for {ty}")))?;
+    let limit = m.callbacks[sig].slots;
+    let slot = store.data_mut().register(sig, cap, limit).map_err(wasmtime::Error::msg)?;
+    let helper = instance
+        .get_func(&mut *store, &m.callbacks[sig].helper)
+        .ok_or_else(|| wasmtime::Error::msg(format!("no {}", m.callbacks[sig].helper)))?;
+    let mut fr = [Val::I32(0)];
+    helper.call(&mut *store, &[Val::I32(slot as i32)], &mut fr)?;
+    Ok(fr[0].clone())
 }
 
 /// Build one capability struct — `Core` or `Cli` — from the manifest's field order.
@@ -217,21 +396,8 @@ fn build(
 
     let mut caps: Vec<Val> = Vec::with_capacity(spec.fields.len());
     for field in &spec.fields {
-        let sig = m.callback_index(&field.ty).ok_or_else(|| {
-            wasmtime::Error::msg(format!("{name}.{}: no callback signature for {}", field.name, field.ty))
-        })?;
         let cap = capability_for(name, &field.name);
-        let limit = m.callbacks[sig].slots;
-        let slot = store
-            .data_mut()
-            .register(sig, cap, limit)
-            .map_err(wasmtime::Error::msg)?;
-        let helper = instance
-            .get_func(&mut *store, &m.callbacks[sig].helper)
-            .ok_or_else(|| wasmtime::Error::msg(format!("no {}", m.callbacks[sig].helper)))?;
-        let mut fr = [Val::I32(0)];
-        helper.call(&mut *store, &[Val::I32(slot as i32)], &mut fr)?;
-        caps.push(fr[0].clone());
+        caps.push(funcref_for(store, instance, m, &field.ty, cap)?);
     }
 
     let ctor = instance
@@ -250,15 +416,27 @@ fn capability_for(owner: &str, field: &str) -> Cap {
     match (owner, field) {
         ("Core", "log") => Cap::Log,
         ("Core", "warn") => Cap::Warn,
+        ("Core", "nowMillis") => Cap::NowMillis,
+        ("Core", "monotonicNanos") => Cap::MonotonicNanos,
+        ("Core", "sleepMillis") => Cap::SleepMillis,
+        ("Core", "randomBytes") => Cap::RandomBytes,
+        ("Core", "waitAny") => Cap::WaitAny,
+        ("Cli", "argCount") => Cap::ArgCount,
+        ("Cli", "arg") => Cap::Arg,
+        ("Cli", "write") => Cap::Write,
+        ("Cli", "writeErr") => Cap::WriteErr,
+        ("Cli", "exitCode") => Cap::ExitCode,
         _ => Cap::NotImplemented(format!("{owner}.{field}")),
     }
 }
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
 
 fn dispatch(
     caller: &mut Caller<'_, Host>,
     sig: usize,
     params: &[Val],
-    _results: &mut [Val],
+    results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
     let slot = match params.first() {
         Some(Val::I32(n)) => *n as usize,
@@ -271,35 +449,211 @@ fn dispatch(
         .and_then(|s| s.get(slot))
         .cloned()
         .ok_or_else(|| wasmtime::Error::msg(format!("no function in slot {slot} of signature {sig}")))?;
+    let arg = |i: usize| -> Val { params.get(i).cloned().unwrap_or(Val::I32(0)) };
 
     match cap {
         Cap::Log => {
             let bytes = read_string(caller, &params[1])?;
             print_bytes(&bytes, false);
-            Ok(())
         }
         Cap::Warn => {
             let bytes = read_string(caller, &params[1])?;
             print_bytes(&bytes, true);
-            Ok(())
+        }
+        Cap::Write | Cap::WriteErr => {
+            let bytes = read_u8_array(caller, &params[1])?;
+            let to_stderr = matches!(cap, Cap::WriteErr);
+            // The answer is whether the write landed, which is what the wac side reads to notice a
+            // closed pipe. `write_all` failing is the only way it can be false here.
+            let ok = write_raw(&bytes, to_stderr);
+            results[0] = Val::I32(if ok { 1 } else { 0 });
+        }
+        Cap::ArgCount => {
+            let n = caller.data().args.len() as i32;
+            return settle_now(caller, Kind::I32, Outcome::I32(n), results);
+        }
+        Cap::Arg => {
+            let i = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let bytes = caller.data().args.get(i as usize).cloned().unwrap_or_default();
+            return settle_now(caller, Kind::Bytes, Outcome::Bytes(bytes), results);
+        }
+        Cap::NowMillis => {
+            let ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            return settle_now(caller, Kind::I64, Outcome::I64(ms), results);
+        }
+        Cap::MonotonicNanos => {
+            let ns = caller.data().started.elapsed().as_nanos() as i64;
+            return settle_now(caller, Kind::I64, Outcome::I64(ns), results);
+        }
+        Cap::SleepMillis => {
+            // **The first capability that genuinely takes time**, and the reason 0087's first
+            // criterion is testable: two sleeps of different lengths complete out of the order they
+            // were asked for, on the runtime's own threads, with nothing waiting in between.
+            let ms = match arg(1) {
+                Val::I32(n) => n.max(0) as u64,
+                _ => 0,
+            };
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            // **It resolves to the monotonic nanoseconds at which it settled, not to the millis asked
+            // for** — `platform.wac`: "so `.wait()` is a sleep that tells you how far it overshot".
+            // Answering the argument back looked right in isolation and disagreed with the Deno host
+            // by three orders of magnitude, which is what running one program on both is for.
+            let origin = caller.data().started;
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(ms));
+                table.complete(id, Outcome::I64(origin.elapsed().as_nanos() as i64));
+            });
+            return pending_for(caller, Kind::I64, id, results);
+        }
+        Cap::RandomBytes => {
+            let n = match arg(1) {
+                Val::I32(n) => n.max(0) as usize,
+                _ => 0,
+            };
+            return settle_now(caller, Kind::Bytes, Outcome::Bytes(random_bytes(n)?), results);
+        }
+        Cap::ExitCode => {
+            let code = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            caller.data_mut().exit = code;
+            return settle_now(caller, Kind::I32, Outcome::I32(code), results);
+        }
+        Cap::WaitAny => {
+            let ids = read_i32_array(caller, &params[1])?;
+            let millis = match arg(2) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let table = caller.data().tickets.clone();
+            results[0] = Val::I32(table.wait_any(&ids, millis));
+        }
+        Cap::Resolve(kind) => {
+            let id = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let outcome = caller.data().tickets.take(id).ok_or_else(|| {
+                // A ticket resolves once. Asking twice, or asking for one that was cancelled, is a
+                // program error rather than a value this can invent.
+                wasmtime::Error::msg(format!("ticket {id} has no outcome to collect"))
+            })?;
+            results[0] = match (kind, outcome) {
+                (Kind::I32, Outcome::I32(v)) => Val::I32(v),
+                (Kind::I64, Outcome::I64(v)) => Val::I64(v),
+                (Kind::Bytes, Outcome::Bytes(v)) => make_u8_array(caller, &v)?,
+                (k, o) => {
+                    return Err(wasmtime::Error::msg(format!(
+                        "ticket {id} settled as {o:?}, which is not a {k:?}"
+                    )))
+                }
+            };
+        }
+        Cap::Settled => {
+            let id = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let done = caller.data().tickets.is_done(id);
+            results[0] = Val::I32(if done { 1 } else { 0 });
+        }
+        Cap::Discard => {
+            let id = match arg(1) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            caller.data().tickets.discard(id);
         }
         // The whole of D6 in one arm: a runtime that answered zero here would make every program
         // that used the capability wrong in a way nothing could see.
-        Cap::NotImplemented(name) => Err(wasmtime::Error::msg(format!(
-            "{name} is not implemented in the native runtime yet"
-        ))),
+        Cap::NotImplemented(name) => {
+            return Err(wasmtime::Error::msg(format!(
+                "{name} is not implemented in the native runtime yet"
+            )))
+        }
     }
+    Ok(())
+}
+
+/// A `Pending<T>` for a ticket that is already settled.
+///
+/// Work a host does instantly still gets a ticket, because the *shape* is what the program sees: a
+/// caller may hold it, ask `isDone`, put it in a `waitAny` list, or never collect it at all. Answering
+/// the value directly would be a different type.
+fn settle_now(
+    caller: &mut Caller<'_, Host>,
+    kind: Kind,
+    outcome: Outcome,
+    results: &mut [Val],
+) -> Result<(), wasmtime::Error> {
+    let id = caller.data().tickets.submit();
+    caller.data().tickets.complete(id, outcome);
+    pending_for(caller, kind, id, results)
+}
+
+/// Build the `Pending<T>` that names ticket `id`.
+fn pending_for(
+    caller: &mut Caller<'_, Host>,
+    kind: Kind,
+    id: i32,
+    results: &mut [Val],
+) -> Result<(), wasmtime::Error> {
+    let hooks = caller.data().pendings.get(&kind).cloned().ok_or_else(|| {
+        wasmtime::Error::msg(format!("this program has no Pending<{kind:?}> to answer with"))
+    })?;
+    let ctor = export_func(caller, &hooks.ctor)?;
+    let built = call_dyn(
+        caller,
+        &ctor,
+        &[Val::I32(id), hooks.resolve.clone(), hooks.settled.clone(), hooks.drop.clone()],
+    )?;
+    results[0] = built.into_iter().next().unwrap_or(Val::I32(0));
+    Ok(())
+}
+
+/// Bytes from the operating system's own generator.
+///
+/// `/dev/urandom` rather than a crate: it is the kernel's CSPRNG on the platform this targets, and a
+/// runtime that seeded its own would be inventing entropy. A read that fails is an error rather than
+/// a shorter answer — the failure a caller must not be able to miss is silently weak randomness.
+fn random_bytes(n: usize) -> Result<Vec<u8>, wasmtime::Error> {
+    use std::io::Read;
+    let mut out = vec![0u8; n];
+    if n > 0 {
+        let mut f = std::fs::File::open("/dev/urandom")
+            .map_err(|e| wasmtime::Error::msg(format!("randomBytes: /dev/urandom: {e}")))?;
+        f.read_exact(&mut out)
+            .map_err(|e| wasmtime::Error::msg(format!("randomBytes: /dev/urandom: {e}")))?;
+    }
+    Ok(out)
 }
 
 /// A line, with the newline `log` and `warn` add. Bytes rather than a `String`: a wac string is bytes,
 /// and re-encoding it through UTF-8 validation would change what a program printed.
 fn print_bytes(bytes: &[u8], to_stderr: bool) {
-    use std::io::Write;
     let mut line = bytes.to_vec();
     line.push(b'\n');
-    if to_stderr {
-        let _ = std::io::stderr().write_all(&line);
+    write_raw(&line, to_stderr);
+}
+
+/// Exactly the bytes given, which is what `write` means. Answers whether they landed.
+fn write_raw(bytes: &[u8], to_stderr: bool) -> bool {
+    use std::io::Write;
+    let ok = if to_stderr {
+        std::io::stderr().write_all(bytes).is_ok()
     } else {
-        let _ = std::io::stdout().write_all(&line);
-    }
+        std::io::stdout().write_all(bytes).is_ok()
+    };
+    // Unbuffered as far as the program is concerned: a shell that writes a prompt and then waits must
+    // not have the prompt sitting in this process's buffer.
+    let _ = if to_stderr { std::io::stderr().flush() } else { std::io::stdout().flush() };
+    ok
 }
