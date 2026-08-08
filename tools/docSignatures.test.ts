@@ -58,6 +58,10 @@ const FOREIGN = new Set([
   "get_time_period_length", "MAX",
   // Placeholders in prose: `x(…)` is any capability, `chooser()` any of several
   "x", "chooser", "feed", "cliFeed", "transform", "page",
+  // The language's own surface. These exist, but no package declares them — they are builtins the
+  // compiler knows about, so there is nothing for this check to resolve them against.
+  "f64.toBits", "f64.fromBits", "f32.toBits", "f32.fromBits",
+  "string.fromCodepoint", "string.fromBytes", "toBytes",
   // Named because they do NOT exist: an API that was removed, or one that was never built
   "inputError", "torFetch", "XList",
   // Written by a *reader*, in an example of what their own program exports — `page` is an

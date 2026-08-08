@@ -539,8 +539,8 @@ All three report at the **root of the path**, and that was measured rather than 
 is actually const is the obvious choice and is off by one against every compound target — nested
 paths, array elements and `const this` all confirm the root.
 
-**Spec coverage: 26 of 83**, from 20 — the largest jump so far, and the reason is that the corpus's
-untouched cases were clustered in one family rather than scattered.
+**Spec coverage: 26 of 83**, from 20 — the largest jump up to this point, and the reason is that the
+corpus's untouched cases were clustered in one family rather than scattered.
 
 ### Method calls, and a statement nothing walked
 
@@ -623,8 +623,47 @@ Losslessness is also decided **before** the operator is looked at: `x as@ i64` f
 needed"*, not *"no raw conversion"*. The reference complains that the conversion needs no help before
 it complains about which help was offered.
 
-Next: more of rung 3 — `switch` and `match` subjects, generics properly, and the remaining scattered
-type-mismatch cases.
+### Four families that were invisible rather than wrong
+
+**Spec coverage: 55 of 83**, from 31 — the largest jump of rung 3, and none of it came from a rule
+being wrong. Each family was one nothing had ever *looked* at.
+
+The tell was the same each time: a rule that had been implemented and tested still missed corpus
+cases, so the gap was not in the rule but in where it ran.
+
+- **Statics do not inherit.** A static call on `Sub` is an error even when `Base` declares `make` — instance
+  methods inherit and statics do not, so a static lookup uses `ownMethodAt` rather than `methodAt`.
+- **Constness follows the receiver through fields.** Calling a mutating method on `this.inner`
+  inside a `const this` method is refused. The first version only looked at receivers that were plain names, so every deep
+  receiver came back non-const. `constExpr` now walks member, index and unwrap.
+- **A parameter list, read for its own sake.** `f(i32 a, i32 a)` needs no type information at all —
+  and was missed because every rule before it was about a *use*, and a walk never visits a signature.
+- **A scope wider than a function.** A file's `const` declarations are in scope in every body, so
+  `clearScope` keeps them and `globalCount` marks where a function's own names begin. Without that,
+  `const P S = P(1); S.v = 9;` had nothing to look up.
+- **Array elements carry the array's element type.** `i8[](1.5)`, `i32[](, 1)` and `E[2](fill: 5)`
+  are the initialiser rule at a position that had no rule. A packed element is an `i32` here, the way
+  `bytes[i] = 5` is: the width is the array's business.
+- **The builtin surface on primitive types** — the biggest of them, 14 cases. `f64.toBits`,
+  `string.fromCodepoint` and their siblings are declared nowhere, because they are the language's
+  own. A receiver that is a type name but not a struct fell through every branch and was silently
+  skipped, so a call to an `f64` static that does not exist, and `string.fromBytes` handed an
+  integer, both passed unremarked.
+
+The builtin arguments are compared **exactly, not by assignability**: `f32.toBits` handed an `f64` is refused
+even though an `f32` widens to an `f64` everywhere else, because reinterpretation is about a width
+rather than a value. A literal is the one exception and takes the parameter's type, as an initialiser
+does.
+
+**A false alarm in my own test.** `f64[2](fill: 1)` went into the QUIET list on the assumption that an
+integer literal fills a float array. It does not — an int literal widens to `i64` but not to `f64`,
+exactly as `f64 x = 1` is a mismatch. The checker was right and the test was wrong, which is the good
+direction for a disagreement to run and worth writing down: the QUIET list is an assertion about the
+reference, not a place to record what I expect.
+
+Next: more of rung 3 — `switch` and `match` subjects, generics properly (`Box<Base>` from `Box<Sub>`
+is the one variance case in the corpus), `override` agreeing with a parent, and the remaining
+scattered type-mismatch cases.
 
 ### What rung 3's oracle looks like, measured
 

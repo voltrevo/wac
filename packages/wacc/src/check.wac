@@ -39,7 +39,7 @@ import {
   kAs, kAsBang, kAsTilde, kAsAt,
 } from "./kinds.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Program, Stmt, StmtKind,
+  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt, StmtKind,
   Ty, TyKind,
 } from "./ast.wac";
 
@@ -93,6 +93,14 @@ export i32 errNoMethod() { return 14; }
 export i32 errNonConstThroughConst() { return 15; }
 /** A cast written with an operator the conversion does not take. */
 export i32 errWrongCastOp() { return 16; }
+/** Two parameters of one function with the same name. */
+export i32 errDuplicateParam() { return 17; }
+/** An array element or fill that cannot be the array's element type. */
+export i32 errArrayElement() { return 18; }
+/** A builtin called with the wrong number of arguments. */
+export i32 errBuiltinArity() { return 19; }
+/** A builtin argument of the wrong type. */
+export i32 errBuiltinArg() { return 20; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -276,6 +284,8 @@ export struct C {
   /** Whether each name was declared `const`. */
   bool[] nameConsts;
   i32 nameCount;
+  /** How many of `names` are module-level and outlive a function. */
+  i32 globalCount;
   /**
    * Every function in the file, and the primitives of its parameters.
    *
@@ -337,7 +347,7 @@ export struct C {
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
+    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0, 0,
              string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), bool[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
@@ -462,6 +472,21 @@ export struct C {
     this.methodStatics[this.methodCount] = isStatic;
     this.methodConsts[this.methodCount] = isConst;
     this.methodCount = this.methodCount + 1;
+  }
+
+  /**
+   * Which entry holds `owner.name` **without** inheritance, or -1.
+   *
+   * Static methods are not inherited: `Sub.make()` is an error even when `Base` declares `make` and
+   * `Sub` extends it — the reference says *"struct 'Sub' has no static method 'make'"*. That is the
+   * opposite of instance methods, which are, and it is why the two lookups are separate rather than
+   * one with a flag.
+   */
+  i32 ownMethodAt(this, string owner, string name) {
+    for (i32 i = 0; i < this.methodCount; i++) {
+      if (this.methodOwners[i] == owner && this.methodNames[i] == name) { return i; }
+    }
+    return -1;
   }
 
   /** Which entry holds `owner.name`, following the inheritance chain, or -1. */
@@ -597,8 +622,14 @@ export struct C {
     return -1;
   }
 
-  /** Forget every name, for the next function. */
-  void clearScope(this) { this.nameCount = 0; }
+  /**
+   * Forget every name, for the next function — except the module-level ones.
+   *
+   * A file's `const` declarations are in scope everywhere in it, so they are declared once before any
+   * body is walked and survive the clear. `globalCount` is where the per-function names start; a
+   * function's own names are the ones above it.
+   */
+  void clearScope(this) { this.nameCount = this.globalCount; }
 
   void report(this, i32 code, i32 line, i32 col) {
     if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
@@ -965,6 +996,20 @@ void checkExpr(C c, Expr e) {
       c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }
+    // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
+    // type, which is the same question as an initialiser with the type coming from the `[]`.
+    case ArrNew(elem, size, fill, elements): {
+      if (!(size is null)) { checkExpr(c, size!); }
+      string want = typeOfTy(c, elem);
+      for (i32 i = 0; i < elements.len(); i++) { checkExpr(c, elements[i]); }
+      if (!(fill is null)) { checkExpr(c, fill!); }
+      if (want == typeNone()) { return; }
+      // A packed element is an `i32` at this position, the way `bytes[i] = 5` is: the width is the
+      // array's business, not the element expression's.
+      if (isPackedName(want)) { want = "i32"; }
+      for (i32 i = 0; i < elements.len(); i++) { checkElement(c, want, elements[i]); }
+      if (!(fill is null)) { checkElement(c, want, fill!); }
+    }
     // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
     // right answer — meant never looking inside it.
     case Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
@@ -997,7 +1042,7 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, callee);
       for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
       match (callee.kind) {
-        case Member(obj, nameTok): { checkMethodCall(c, e, obj, tokenText(c, nameTok)); }
+        case Member(obj, nameTok): { checkMethodCall(c, e, obj, tokenText(c, nameTok), args); }
         else: { }
       }
     }
@@ -1141,6 +1186,92 @@ bool constPath(C c, Lvalue lv) {
   }
 }
 
+/** One array element or fill against the element type. */
+void checkElement(C c, string want, Expr e) {
+  i32 lit = litKindOf(e);
+  if (lit != litNone()) {
+    if (!acceptsLiteral(want, lit)) { c.report(errArrayElement(), e.line, e.col); }
+    return;
+  }
+  string got = typeOfExpr(c, e);
+  if (!assignable(want, got)) { c.report(errArrayElement(), e.line, e.col); }
+}
+
+/**
+ * Whether an expression names something const, following field access.
+ *
+ * `this.inner.mutate()` inside a `const this` method is refused, and the constness has to travel
+ * through the field access to see it — a receiver that is a plain name was all the first version
+ * looked at, so every deep receiver came back non-const. Three spec cases are this shape.
+ *
+ * What it deliberately does not do is follow an *assignment*: `Counter c = this; c.mutate();` is also
+ * refused by the reference, and knowing that needs to track where `c` came from, which is flow
+ * analysis rather than a walk. That case stays uncaught, and uncaught is the safe direction.
+ */
+bool constExpr(C c, Expr e) {
+  match (e.kind) {
+    case Ident(tok): { return c.isConstName(tokenText(c, tok)); }
+    case Member(obj, nameTok): { return constExpr(c, obj); }
+    case Index(arr, index): { return constExpr(c, arr); }
+    case Unwrap(operand): { return constExpr(c, operand); }
+    else: { return false; }
+  }
+}
+
+/**
+ * The builtin statics on the primitive types, and the one instance method with an arity worth checking.
+ *
+ * `f64.toBits`, `string.fromCodepoint` and their siblings are not declared anywhere. They are the
+ * language's own surface, so no signature in the file describes them and the receiver is a type name
+ * that is not a struct — which is exactly why they were invisible to every rule up to here, and why
+ * they were the largest uncaught cluster once the struct rules were done. Eight spec cases.
+ *
+ * The surface, measured rather than guessed: each float pairs with the unsigned integer of its own
+ * width, `toBits` takes the float and gives the bits and `fromBits` is the reverse; `string.fromBytes`
+ * takes `u8[]`, `string.fromCodepoint` takes `i32`. Any other name on those three types has no static
+ * method at all, rather than a wrong signature. Arity is reported at the call and an argument's type
+ * at the argument, so the two are different positions and are kept as different codes.
+ *
+ * An argument is compared *exactly*, not by assignability — `f32.toBits(someF64)` is refused even
+ * though an `f32` widens to an `f64`, because reinterpretation is about a width and not a value. A
+ * literal is the one exception, and takes the parameter's type the way an initialiser does.
+ *
+ * Returns whether the receiver was a builtin, which is what stops the struct rules from also looking.
+ */
+bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
+  string want = "";
+  if (recv == "f64" || recv == "f32") {
+    if (name != "toBits" && name != "fromBits") {
+      c.report(errNoStaticMethod(), call.line, call.col);
+      return true;
+    }
+    if (name == "toBits") { want = recv; }
+    else if (recv == "f64") { want = "u64"; }
+    else { want = "u32"; }
+  } else if (recv == "string") {
+    if (name == "fromBytes") { want = "u8[]"; }
+    else if (name == "fromCodepoint") { want = "i32"; }
+    else {
+      c.report(errNoStaticMethod(), call.line, call.col);
+      return true;
+    }
+  } else {
+    return false;
+  }
+  if (args.len() != 1) {
+    c.report(errBuiltinArity(), call.line, call.col);
+    return true;
+  }
+  i32 lit = litKindOf(args[0]);
+  if (lit != litNone()) {
+    if (!acceptsLiteral(want, lit)) { c.report(errBuiltinArg(), args[0].line, args[0].col); }
+    return true;
+  }
+  string got = typeOfExpr(c, args[0]);
+  if (got != typeNone() && got != want) { c.report(errBuiltinArg(), args[0].line, args[0].col); }
+  return true;
+}
+
 /**
  * A method call: does the struct have it, and may this receiver call it?
  *
@@ -1150,24 +1281,37 @@ bool constPath(C c, Lvalue lv) {
  *
  * Reported at the call, which is the receiver's own position and where the reference puts all three.
  */
-void checkMethodCall(C c, Expr call, Expr obj, string name) {
+void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   string recv = "";
   bool isStatic = false;
-  bool recvConst = false;
   match (obj.kind) {
     case Ident(tok): {
       string n = tokenText(c, tok);
       string ty = c.typeOfName(n);
       if (ty != typeNone()) {
         recv = ty;
-        recvConst = c.isConstName(n);
       } else if (c.isStruct(n)) {
         recv = n;
         isStatic = true;
+      } else if (checkBuiltinCall(c, call, n, name, args)) {
+        // A primitive type name as the receiver — a builtin static. A local of that name would have
+        // been found above, which is what keeps a variable called `string` a variable.
+        return;
       }
     }
-    else: { recv = typeOfExpr(c, obj); }
+    else: {
+      recv = typeOfExpr(c, obj);
+      // A string literal has no type of its own — like every literal it takes one from context —
+      // but as a receiver it is a `string` and nothing else, so `"hi".toBytes()` has a surface.
+      if (recv == typeNone() && litKindOf(obj) == litString()) { recv = "string"; }
+    }
   }
+  // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
+  if (recv == "string" && name == "toBytes") {
+    if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  bool recvConst = !isStatic && constExpr(c, obj);
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
   // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an
@@ -1178,7 +1322,8 @@ void checkMethodCall(C c, Expr call, Expr obj, string name) {
   // that name. `packages/sh` has four of them. A name that is a field is not a missing method.
   if (c.hasField(recv, name)) { return; }
 
-  i32 at = c.methodAt(recv, name);
+  // Statics are looked up on the struct itself; instance methods inherit.
+  i32 at = isStatic ? c.ownMethodAt(recv, name) : c.methodAt(recv, name);
   if (at < 0) {
     c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
     return;
@@ -1246,6 +1391,25 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // Not lossless, so `as!` and `as~` are both fine. `as@` additionally needs a raw form to exist,
   // and *that* complaint is about the operator, so it is reported there.
   if (k == kAsAt() && !rawCast(from, to)) { c.report(errWrongCastOp(), e.line, e.col); }
+}
+
+/**
+ * Two parameters of one function or method sharing a name.
+ *
+ * Reported at the second, which is the one that could be renamed. Nothing else here looks at a
+ * declaration for its own sake — every other rule is about a use — so this is the first check that
+ * reads a signature rather than following a walk.
+ */
+void checkParams(C c, Param[] params) {
+  for (i32 i = 0; i < params.len(); i++) {
+    string a = tokenText(c, params[i].nameTok);
+    for (i32 j = 0; j < i; j++) {
+      if (tokenText(c, params[j].nameTok) == a) {
+        c.report(errDuplicateParam(), params[i].type.line, params[i].type.col);
+        break;
+      }
+    }
+  }
 }
 
 /** Every name a statement declares, however deeply nested. */
@@ -1425,6 +1589,20 @@ void checkStmt(C c, Stmt s, Ty want) {
 /** Check one program, and return `(code, line, col)` triples in source order. */
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount);
+  // Module-level `const` declarations, which are in scope in every body and outlive `clearScope`.
+  // A write to one is *"cannot assign to constant 'S'"*, which is the const-variable rule reaching a
+  // scope it did not have — and reaching it through fields too: `S.v = 9` on a `const P S` is refused
+  // the way a `const P p` parameter is.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), true);
+      }
+      else: { }
+    }
+  }
+  c.globalCount = c.nameCount;
+
   // Signatures first, over the whole file: a call names something declared elsewhere, and often
   // further down. The same argument as collecting locals before walking a body, one scope up.
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -1479,6 +1657,7 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
           if (methods[mi].hasThis) {
             c.declareConst("this", owner, methods[mi].thisConst);
           }
+          checkParams(c, methods[mi].params);
           for (i32 i = 0; i < methods[mi].params.len(); i++) {
             c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
                            typeOfTy(c, methods[mi].params[i].type),
@@ -1506,6 +1685,7 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // forward reference as unknown for no reason — the reference has the whole function in hand
         // and so does this.
         c.clearScope();
+        checkParams(c, params);
         for (i32 i = 0; i < params.len(); i++) {
           c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
                          params[i].isConst);
