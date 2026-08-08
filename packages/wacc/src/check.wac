@@ -179,6 +179,12 @@ export bool returnsAValue(string n) { return n != "" && n != "void"; }
  * `test/typecheck.test.ts` re-derives it from the reference on every run rather than trusting it.
  */
 bool losslessCast(string from, string to) {
+  // A `bool` widens to every numeric type and needs no help doing it — `x as! i32` on a bool is
+  // *"lossy cast not needed"*. The other direction is lossy, and takes `as!` or `as~` but not `as@`:
+  // there is no raw conversion to a bool, because the bit pattern is not the question.
+  if (from == "bool") {
+    return to == "i32" || to == "i64" || to == "u32" || to == "u64" || to == "f32" || to == "f64";
+  }
   if (from == "i32") { return to == "i64" || to == "f64"; }
   if (from == "u32") { return to == "i64" || to == "u64" || to == "f64"; }
   if (from == "f32") { return to == "f64"; }
@@ -342,13 +348,27 @@ string withoutNull(string n) {
  * message, so this answers `true` for it and stays quiet. Saying nothing about a program the
  * reference rejects is a subset checker doing its job; saying the wrong thing about it is not.
  */
-export bool assignable(string want, string got) {
+export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
   if (withoutNull(want) == got) { return true; }
   // `T?` into a `T` is rejected, and now under a family of its own — see `nullableIntoNonNull`.
   if (endsWith(got, "?")) { return true; }
+  // A child goes into a parent's slot without a cast; the other direction is the downcast that needs
+  // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
+  // missed because nothing in the spec corpus assigns a child to a parent.
+  if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
+  // `anyref` holds any **reference**: a struct, an array, a string, a nullable one of those. Not a
+  // primitive — `anyref r = someI32` is a mismatch — so this is not simply "accepts everything".
+  if (want == "anyref") { return isReferenceType(c, got); }
   return false;
+}
+
+/** Whether a type is held by reference, which is what `anyref` accepts and primitives are not. */
+bool isReferenceType(C c, string t) {
+  string core = withoutNull(t);
+  string at = core == "" ? t : core;
+  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at);
 }
 
 /**
@@ -1071,10 +1091,14 @@ export string typeOfExpr(C c, Expr e) {
  * `alwaysLeaves` does not.
  */
 bool alwaysLeaves(Stmt[] body) {
-  // Only the last statement can settle it: anything before it either leaves — making the rest
-  // unreachable, which the reference reports separately and this slice does not — or falls through.
-  if (body.len() == 0) { return false; }
-  return leaves(body[body.len() - 1]);
+  // **Any** statement, not the last one. An earlier `return` settles it just as well: everything
+  // after it is unreachable, so the function still always leaves. Reading only the last statement
+  // said otherwise for `{ return 1; i32 dead = 2; }`, which the reference accepts — a false alarm,
+  // and the kind that only a corpus of *accepted* programs can find.
+  for (i32 i = 0; i < body.len(); i++) {
+    if (leaves(body[i])) { return true; }
+  }
+  return false;
 }
 
 /** Whether one statement always leaves the function. */
@@ -1237,7 +1261,7 @@ void checkExpr(C c, Expr e) {
     case Unary(op, operand): { checkExpr(c, operand); }
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
-    case Incr(target, op, prefix): { checkIncr(c, target, op); }
+    case Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
     // A `match` used for its value. Its arms hold expressions rather than statements, so nothing that
     // walked the statement form reached them — found by the grid, not by a rule looking wrong.
     case MatchExpr(subject, arms): {
@@ -1326,15 +1350,20 @@ void checkExpr(C c, Expr e) {
  *
  * Two rules, and they land in different places: the write is refused at the **operand**, which is
  * where every other const complaint goes, and a type that cannot be incremented is refused at the
- * **operator**. Unsigned types are fine despite the wording of the reference's message — only the
- * floats are refused, which is measured rather than read off the text.
+ * **node's own position**. Those are the same column for `++x` and differ for `x++`, and the node's
+ * position differs again between the two forms — a statement `x++;` starts at the `x`, while the
+ * expression `return x++` is positioned at the operator. Passing the position in rather than deriving
+ * it from the operator token is what lets one function serve both.
+ *
+ * Unsigned types are fine despite the wording of the reference's message — only the floats are
+ * refused, which is measured rather than read off the text.
  */
-void checkIncr(C c, Lvalue target, i32 op) {
+void checkIncr(C c, Lvalue target, i32 line, i32 col) {
   checkWrite(c, target);
   checkLvalueExprs(c, target);
   string t = typeOfLvalue(c, target);
   if (t == "f32" || t == "f64") {
-    c.report(errIncrType(), tokenLine(c, op), tokenCol(c, op));
+    c.report(errIncrType(), line, col);
   }
 }
 
@@ -1430,7 +1459,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     string got = typeOfExpr(c, args[i]);
     if (nullableIntoNonNull(want, got)) {
       c.report(errNullableToNonNull(), args[i].line, args[i].col);
-    } else if (!assignable(want, got)) {
+    } else if (!assignable(c, want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
     }
   }
@@ -1459,7 +1488,7 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named) {
       }
       continue;
     }
-    if (!assignable(want, typeOfExpr(c, args[i]))) {
+    if (!assignable(c, want, typeOfExpr(c, args[i]))) {
       c.report(errFieldMismatch(), args[i].line, args[i].col);
     }
   }
@@ -1547,7 +1576,7 @@ void checkElement(C c, string want, Expr e) {
     return;
   }
   string got = typeOfExpr(c, e);
-  if (!assignable(want, got)) { c.report(errArrayElement(), e.line, e.col); }
+  if (!assignable(c, want, got)) { c.report(errArrayElement(), e.line, e.col); }
 }
 
 /**
@@ -1964,7 +1993,7 @@ void checkStmt(C c, Stmt s, Ty want) {
      * would report the literal cases that rule deliberately skips.
      */
     // `n++` writes as much as `n = n + 1` does.
-    case IncrStmt(target, op): { checkIncr(c, target, op); }
+    case IncrStmt(target, op): { checkIncr(c, target, s.line, s.col); }
     // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
     // expressions that were part of something else: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
@@ -1992,7 +2021,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       string gotTo = typeOfExpr(c, rhs);
       if (nullableIntoNonNull(wantTo, gotTo)) {
         c.report(errNullableToNonNull(), rhs.line, rhs.col);
-      } else if (!assignable(wantTo, gotTo)) {
+      } else if (!assignable(c, wantTo, gotTo)) {
         c.report(errInitTypeMismatch(), rhs.line, rhs.col);
       }
     }
@@ -2011,7 +2040,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       string gotVar = typeOfExpr(c, init);
       if (nullableIntoNonNull(wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
-      } else if (!assignable(wantVar, gotVar)) {
+      } else if (!assignable(c, wantVar, gotVar)) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
       checkExpr(c, init);
@@ -2033,7 +2062,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       string got = typeOfExpr(c, e);
       if (nullableIntoNonNull(expected, got)) {
         c.report(errNullableToNonNull(), e.line, e.col);
-      } else if (!assignable(expected, got)) {
+      } else if (!assignable(c, expected, got)) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
       checkExpr(c, e);

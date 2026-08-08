@@ -23,6 +23,7 @@ import { wacResolve } from "wac/wacResolve.ts";
 import { wacTypeCheck } from "wac/wacTypeCheck.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 import { specRejections } from "./specCorpus.ts";
+import { referenceCases } from "./referenceCorpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
@@ -1670,5 +1671,73 @@ Deno.test("rung 3: generic instantiations, and substitution at their members", (
     if (mine.length !== 0) {
       throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
     }
+  }
+});
+
+/**
+ * The reference's own test suite, as a second corpus.
+ *
+ * The spec corpus is a sample of the language chosen to *explain* it. This is what the reference is
+ * actually held to, and the halves do different jobs:
+ *
+ * - **88 `ok` programs are a false-alarm corpus.** Every one type-checks cleanly, so a diagnostic
+ *   from us is a bug in us — with a named program to look at, rather than a file somewhere under
+ *   `packages/`. The whole-repo silence guard is the same idea over code that happens to exist; this
+ *   is the same idea over code somebody wrote *because* it was interesting.
+ * - **124 `fail` programs are a recall corpus**, denser per family than the spec's.
+ *
+ * It found eight false alarms on the first run, in four families that the spec corpus and the repo
+ * guard had both missed for slots on end. Recall against it is deliberately *not* asserted as a
+ * floor: it is printed, like the spec's, because a subset checker that must never lose ground on 124
+ * programs is a checker nobody can refactor.
+ */
+Deno.test("rung 3: the reference's own tests — never a false alarm, never a contradiction", () => {
+  const { cases, skipped } = referenceCases();
+  if (skipped !== 0) throw new Error(`${skipped} case(s) the extractor could not read`);
+  if (cases.length < 200) throw new Error(`only ${cases.length} cases extracted, expected ~212`);
+
+  const alarms: string[] = [];
+  const contradictions: string[] = [];
+  let accepted = 0;
+  let rejected = 0;
+  let caught = 0;
+  for (const c of cases) {
+    let theirs: { at: string; message: string }[];
+    try {
+      theirs = reference(c.src);
+    } catch {
+      continue; // a program this slice's parser cannot read is not this test's business
+    }
+    const mine = ours(c.src);
+    if (c.kind === "ok") {
+      // The label is the reference test's claim; this trusts the reference itself over the label.
+      if (theirs.length !== 0) continue;
+      accepted++;
+      if (mine.length !== 0) {
+        alarms.push(`${mine.join(",")} in ${JSON.stringify(c.src.replace(/\s+/g, " ").slice(0, 90))}`);
+      }
+      continue;
+    }
+    if (theirs.length === 0) continue;
+    rejected++;
+    if (mine.length === 0) continue;
+    caught++;
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        contradictions.push(`we say ${at}, the reference says ${theirs.map((e) => e.at).join(",")} ` +
+          `in ${JSON.stringify(c.src.replace(/\s+/g, " ").slice(0, 90))}`);
+        break;
+      }
+    }
+  }
+  console.log(`    rung 3 against the reference's tests: ${accepted} accepted programs, ` +
+    `${alarms.length} false alarms; ${rejected} rejected, ${caught} caught, ` +
+    `${contradictions.length} contradicted`);
+  if (alarms.length !== 0) {
+    throw new Error(`we report diagnostics in ${alarms.length} program(s) the reference accepts:\n  ` +
+      alarms.join("\n  "));
+  }
+  if (contradictions.length !== 0) {
+    throw new Error(`${contradictions.length} contradiction(s):\n  ` + contradictions.join("\n  "));
   }
 });
