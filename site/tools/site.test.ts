@@ -455,3 +455,52 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
     throw new Error(`the site says ${said} tagged claims; spec/ has ${tags.size}`);
   }
 });
+
+// ── No page may carry a URL that is only right from one directory ───────────
+
+Deno.test("site: no runtime URL on the staging site is relative to its own directory", async () => {
+  // The staging site is served at `/next/` and links to the demo pages, which live at the deploy
+  // root. Written as `../shell.html` those are correct there and wrong everywhere else — including
+  // at the root, which is where this site is going. Nothing else can see that: it typechecks, it
+  // builds, and a screenshot of the page it breaks looks like a screenshot of a page.
+  //
+  // The one that matters most is `coi-serviceworker.js`. It is what supplies the cross-origin
+  // isolation `SharedArrayBuffer` needs, so losing it does not break a link — it turns every demo
+  // on the site into an error message about headers.
+  //
+  // Module specifiers are exempt: `../snippets` is resolved by the bundler at build time and has
+  // nothing to do with where a page is served. What is checked is strings that name a *file a
+  // browser will fetch*.
+  const dir = new URL("../src/next/", import.meta.url).pathname;
+  const offenders: string[] = [];
+  for await (const e of Deno.readDir(dir)) {
+    if (!e.name.endsWith(".tsx") && !e.name.endsWith(".ts")) continue;
+    // Comments are stripped first: this file's own explanation of the rule quotes the shape it
+    // forbids, and a checker that cannot tell code from prose about code will fire on the prose.
+    const text = (await Deno.readTextFile(dir + e.name))
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+    for (const m of text.matchAll(/["'`](\.\.\/[^"'`]*\.(?:html|json|svg|png|css|wasm))["'`]/g)) {
+      offenders.push(`src/next/${e.name}: ${m[1]}`);
+    }
+  }
+  // The entry document is checked too, and it is allowed exactly one form of `../`: while it lives
+  // in `next/`, the assets it names really are one directory up. That stops being true the moment
+  // it moves, so the count is pinned rather than the pattern permitted.
+  const html = await Deno.readTextFile(new URL("../next/index.html", import.meta.url).pathname);
+  const ups = [...html.matchAll(/(?:src|href)="(\.\.\/[^"]+)"/g)].map((m) => m[1]);
+
+  if (offenders.length) {
+    throw new Error(
+      `${offenders.length} URL(s) that only resolve from the directory they were written in:\n  ` +
+        offenders.join("\n  "),
+    );
+  }
+  if (ups.length !== 2) {
+    throw new Error(
+      `next/index.html names ${ups.length} parent-relative assets, expected the 2 it has while it ` +
+        `lives in next/ (${ups.join(", ")}). If it has moved to the root, these should be bare ` +
+        `names and this check should be the same one the pages use.`,
+    );
+  }
+});

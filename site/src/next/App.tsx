@@ -13,9 +13,20 @@ import type { Route } from "./ui";
 
 const ROUTES: Record<string, Route> = { "": "home", language: "language", run: "run", stack: "stack", checked: "checked", roadmap: "roadmap", playground: "playground" };
 
+/**
+ * Where the site this replaces sent people, for links written before it did.
+ *
+ * `#/built` was the package inventory and `#/showcase` the case studies, and both of those are
+ * `#/stack` now. Without these an old link resolves to nothing and lands on the front page —
+ * silently, because an unknown route falls back rather than failing, which is the shape this
+ * repo's own route test exists to catch one layer up. A reader who followed a link about Tor and
+ * arrived at a heading about a language cannot tell that anything went wrong.
+ */
+const MOVED: Record<string, Route> = { built: "stack", showcase: "stack" };
+
 function parse(): { route: Route; anchor: string | null } {
   const [first, second] = window.location.hash.replace(/^#\/?/, "").split("/");
-  return { route: ROUTES[first] ?? "home", anchor: second || null };
+  return { route: ROUTES[first] ?? MOVED[first] ?? "home", anchor: second || null };
 }
 
 export default function App() {

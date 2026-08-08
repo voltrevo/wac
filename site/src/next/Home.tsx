@@ -16,7 +16,7 @@ import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
 import { BUILT, TOTALS } from "../data/built";
 import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Table } from "./ui";
-import { c, font, space } from "./tokens";
+import { ASSETS, c, font, space } from "./tokens";
 
 /**
  * The commands the terminal shows, and what they print.
@@ -74,7 +74,7 @@ function useDemosBuilt(): boolean {
     // `r.ok` is not the test: a dev server answers a missing path with `index.html`, so the fetch
     // succeeds and the iframe renders the whole site inside itself. Only JSON that parses means the
     // demos are really there.
-    fetch("../demos.json")
+    fetch(`${ASSETS}demos.json`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("no demos"))))
       .then(() => { if (live) setBuilt(true); })
       .catch(() => {});
@@ -144,7 +144,7 @@ export default function Home() {
           {demosBuilt
             ? (
               <iframe
-                src="../shell.html"
+                src={`${ASSETS}shell.html`}
                 title="A shell written in wac, running in this page"
                 style={{ display: "block", width: "100%", height: 340, border: 0, background: "#06070a" }}
               />
@@ -166,7 +166,7 @@ export default function Home() {
                 </pre>
                 <div style={{ color: c.faint, marginTop: 12, fontSize: 12 }}>
                   not built in this checkout — tools/syncDemos.ts builds it from wac-mono, and CI
-                  runs that on every deploy. <A href="../shell.html">open it directly</A>
+                  runs that on every deploy. <A href={`${ASSETS}shell.html`}>open it directly</A>
                 </div>
               </div>
             )}

@@ -14,13 +14,13 @@ import InlineDemo from "../editor/InlineDemo";
 import { EX_ENUM } from "../snippets";
 import { TOTALS } from "../data/built";
 import { A, Code, Lead, m, P, Page, Section, Table } from "./ui";
-import { c, font, space } from "./tokens";
+import { ASSETS, c, font, space } from "./tokens";
 
 const MONO_SRC = "https://github.com/voltrevo/wac-mono/blob/master/packages";
 
 const DEMOS: { file: string; title: string; what: string; src: string; key: string }[] = [
   {
-    file: "../shell.html",
+    file: `${ASSETS}shell.html`,
     key: "shell",
     title: "A shell, in a tab",
     src: `${MONO_SRC}/box/example/term.wac`,
@@ -28,7 +28,7 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
       `packages/sh with a keyboard in front of it, and all ${TOTALS.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.`,
   },
   {
-    file: "../hash.html",
+    file: `${ASSETS}hash.html`,
     key: "hash",
     title: "Hash and compress, as you type",
     src: `${MONO_SRC}/box/example/hash.wac`,
@@ -36,7 +36,7 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
       "SHA-256 and DEFLATE keeping up with your keystrokes — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open.",
   },
   {
-    file: "../pixels.html",
+    file: `${ASSETS}pixels.html`,
     key: "pixels",
     title: "A Mandelbrot set, recomputed on every zoom",
     src: `${MONO_SRC}/platform/example/pixels.wac`,
@@ -50,7 +50,7 @@ function useSizes(): Record<string, string> {
   const [sizes, setSizes] = useState<Record<string, string>>({});
   useEffect(() => {
     let live = true;
-    fetch("../demos.json")
+    fetch(`${ASSETS}demos.json`)
       .then((r) => (r.ok ? r.json() : {}))
       .then((v) => { if (live) setSizes(v as Record<string, string>); })
       .catch(() => {});

@@ -56,3 +56,18 @@ export const space = {
   block: 28,
   tight: 12,
 };
+
+/**
+ * Where the built demo pages live, as a URL prefix.
+ *
+ * They are written beside the site rather than into it — `tools/syncDemos.ts` puts them at the
+ * deploy root — so a page has to name them by path, and the paths were written `../shell.html`
+ * from a site served at `/next/`. Correct from there and wrong from anywhere else, which is a
+ * thing no build, typecheck or screenshot can see: it only shows up as a dead iframe on the
+ * deployed page, and the iframe is the shell.
+ *
+ * `import.meta.env.BASE_URL` is what Vite was configured with, which CI sets to the repository
+ * name because this deploys to a project page. So this is right at `/`, at `/wac/`, and at
+ * `/wac/next/` alike, and stays right when the site moves.
+ */
+export const ASSETS: string = import.meta.env.BASE_URL;
