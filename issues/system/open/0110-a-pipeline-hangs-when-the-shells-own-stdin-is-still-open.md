@@ -1,6 +1,6 @@
 # 0110 — a pipeline hangs when the shell's own standard input is still open
 
-- **Status:** open
+- **Status:** open — the spawning half is fixed; the in-process half needs `pushChild`
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
@@ -50,3 +50,30 @@ The fix probably wants to be "a stage that is not the first reads the pipe, and 
 shell's input **lazily** rather than up front" — but that is a guess from reading, and the fix should
 start by making a test that fails, which means a harness that gives the shell a standard input that stays
 open. `Deno.Command` with `stdin: "piped"` and no write is exactly that.
+
+## 2026-08-08: fixed where a shell can spawn, and the other half named
+
+**`streamPipeline` said `n == 1`.** Only a lone command could inherit the real descriptor; a pipeline of
+two or more had the shell forward its own input to the first stage instead, and forwarding means reading
+to the end. It is `i == 0` now — the *first* stage inherits, whatever the length, and every later stage
+reads the pipe from the one before it. The race the old comment worried about is not one: only stage 0
+inherits, and when it does the shell sends nothing, because the bytes are not the shell's to send.
+
+`packages/sh/test/spawn.test.ts` has the case, and the harness is the point: `stdin: "piped"` and never
+written to is a standard input that stays open, which no other test in this repo gives a shell.
+
+**What is left is the in-process route**, which a browser and `bin/sealedsh.wac` take because they cannot
+spawn:
+
+```
+$ sealedsh -c 'seq 1 3'     # with an input that stays open: hangs
+```
+
+`runExternal` hands an applet `sh.restOfStdin()`, and `boxRun` passes those bytes to `cli.pushChild`,
+which is a **value**. So the shell must have read the whole input before it can start an applet that may
+not read a byte of it. Being lazy needs `pushChild` to be able to say *"leave the input alone, let the
+child read the real one"* — a platform change with three hosts behind it (Deno, Node, the browser), and
+the shell then telling it which stage may inherit.
+
+That is a tick of its own and it is where this issue continues. A shell that can spawn — which is every
+one on a real machine — is fixed.

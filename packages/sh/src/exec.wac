@@ -555,13 +555,20 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       sh.status = 1;
       return true;
     }
-    // **A single stage may read the real descriptor.** With no pipe to feed it and nothing the shell is
-    // holding, a child gets the process's own standard input: streaming rather than buffered, and
-    // *shared*, which is what makes `cat; cat` print one line between them as bash does (issue 0042).
-    // A pipeline of two or more never inherits — the loop below `send`s to every stage, and a stage
-    // reading the descriptor as well would race the shell for the same bytes.
-    bool inheritIn = n == 1 && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
-    inherited = inheritIn;
+    // **The first stage may read the real descriptor**, and only the first: with no pipe to feed it and
+    // nothing the shell is holding, it gets the process's own standard input — streaming rather than
+    // buffered, and *shared*, which is what makes `cat; cat` print one line between them as bash does
+    // (issue 0042). Every later stage reads the pipe from the one before it.
+    //
+    // **This used to be `n == 1`, and a pipeline of two or more hung.** The shell forwarded its own
+    // input to the first stage instead, and forwarding means reading to the end — which at a terminal
+    // never comes. `wacsh -c 'seq 1 3 | cat'` typed at a prompt never returned, and `seq` does not read
+    // standard input at all: nothing was waiting for those bytes but the shell (wac-mono 0110).
+    //
+    // The race the old comment worried about is not one. Only stage 0 inherits, so there is no second
+    // reader — and when it does, the shell sends nothing, because the bytes are not the shell's to send.
+    bool inheritIn = i == 0 && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
+    if (i == 0) { inherited = inheritIn; }
     Child kid = spawnStage(sh, argv, inheritIn);
     if (kid.unavailable()) {
       // No `spawn` in this world. Nothing has been started — this is the first stage, since every
