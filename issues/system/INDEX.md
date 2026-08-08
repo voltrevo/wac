@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0115](open/0115-yes-head-1-throws-the-childs-output-is-not-being-read-under-load.md) | `yes \| head -1` kills the shell with "the child's output is not being read" under load | bug | wrong answer |
 | [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |
 | [0108](open/0108-a-sessions-writes-can-be-lost-if-the-server-stops-straight-after.md) | a session's writes can be lost if the server is stopped straight after | bug | wrong answer |
 | [0107](open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) | a C tor fetching from our onion service times out intermittently — likely the same fault as 0106 | bug | hangs |
