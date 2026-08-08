@@ -17,6 +17,36 @@
 const BOX = Deno.args[0];
 const enc = new TextEncoder(), dec = new TextDecoder();
 
+if (BOX === undefined) {
+  console.error("usage: deno task flags:ignored <box-binary>");
+  console.error("  deno task app:build packages/box/src/box.wac --allow-read --allow-write -o /tmp/box");
+  Deno.exit(2);
+}
+
+/**
+ * Prove the binary answers before judging anything it says.
+ *
+ * **Run with no argument this reported "109 refused with a message — honest" and exited 0.** Every probe
+ * had failed, because `BOX` was `undefined` and `sh -c` ran nothing; a flag whose probe produces no
+ * output is indistinguishable from one the applet refused, so a sweep that measured *nothing* read as a
+ * clean bill of health. That is the failure this repo keeps finding in its own measurements, in the tool
+ * written to find it in the applets.
+ *
+ * A usage check alone would not have been enough: a path that exists and is not a box — an old build, a
+ * shell script, a directory — fails the same way and says the same thing. So this asks it something with
+ * a known answer.
+ */
+async function proveItAnswers(): Promise<void> {
+  const r = await runWith(BOX!, ["echo", "canary"], "", ".");
+  if (r.out.trim() !== "canary") {
+    console.error(`${BOX} did not answer \`box echo canary\` — it said ${JSON.stringify(r.out)}`);
+    console.error("  Every flag would be reported as refused, which is what an unmeasured sweep looks");
+    console.error("  like. Build one: deno task app:build packages/box/src/box.wac -o /tmp/box");
+    Deno.exit(2);
+  }
+}
+await proveItAnswers();
+
 async function help(tool: string): Promise<string[]> {
   const p = ["/usr/bin/" + tool, "/bin/" + tool].find((q) => { try { Deno.statSync(q); return true; } catch { return false; } });
   if (p === undefined) return [];
