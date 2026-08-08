@@ -1183,6 +1183,38 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The sweep the last slot argued for, and eleven cast bugs
+
+Last slot ended on an argument rather than a number: a hand-written corpus tests what its author
+thought to write down, every literal in all 222 differential calls was plain decimal, and that is how
+`0xff` compiled to **0** for as long as the emitter existed. The answer one rung down was a generated
+sweep, so rung 4 now has one — `test/generateEmit.ts` builds 2,938 programs over the cross product of
+type against operation against literal shape, and `test/emitSweep.test.ts` runs what both compilers
+emit and asserts every answer agrees.
+
+The first run compared 2,587 of them and **31 disagreed, every one a cast.** Casts were not untested;
+they were tested with values that fit, which is exactly the bias the sweep exists to remove. Underneath
+were rules I had assumed rather than measured, and the reference disagreed with all of them:
+
+| what I emitted | what the reference does |
+|---|---|
+| all four casts saturate | **`as@` wraps** — it is the only one that does |
+| float→int uses `i32.trunc_f64_s` | it **saturates**, via the `0xfc` prefix — no cast in wac traps |
+| `as~` and `as@` both truncate a float | **`as~` rounds**, `as@` truncates |
+| a same-width sign change clamps both ends | **one clamp**, and which end depends on the direction |
+| every source is clamped at the target's minimum | an **unsigned source** can never be below it |
+| widening is a widening | widening is **still a sign change**: `(i32) -1 as~ u64` is 0 |
+
+The middle two rows cost a round. Fixing the first three took 31 mismatches to 9, and the next three
+"fixes" took 9 to **20** — worse, and worse in a way that named itself: `0 as! u32` returned `-1`. The
+same-width branch was comparing against `upperBound("u32")` = 4294967295, written as an `i32` constant
+of -1 and compared signed, so every value was above its "maximum". A bound the source's width cannot
+represent is not a bound to compare against; it is a comparison that can never be false.
+
+2,587 compared, **0 mismatched**, and the sweep carries the canary the rung-3 one does — a harness that
+compares nothing reports that everything agrees, so a run with fewer than a thousand comparisons is a
+failure rather than a pass.
+
 ### One method, and a literal that was quietly wrong — 26 of 39 to 31
 
 Naming the decline finished the "method" category in one step: all six files wanted **`copyFrom`**, and

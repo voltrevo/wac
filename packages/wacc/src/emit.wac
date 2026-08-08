@@ -20,7 +20,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString,
+  kShlEq, kShrEq, kShrUEq, kString, kAsAt,
 } from "./kinds.wac";
 
 /**
@@ -1144,7 +1144,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(src, lexed, target);
       emitExprAt(fb, src, lexed, env, operand, from == "" ? to : from);
-      emitConversion(fb, env, from == "" ? to : from, to);
+      emitConversion(fb, env, from == "" ? to : from, to, tokenKindOf(lexed, op));
     }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
@@ -1646,18 +1646,47 @@ i64 parseInt(string s) {
  * whole reason this emitter needed a type model — the conversion is a no-op and the *arithmetic* is
  * not.
  */
-void emitConversion(B fb, Env env, string from, string to) {
+void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (from == to) { return; }
+  // A sign change at the same width is **not** a no-op unless the spelling is raw: `-1 as~ u32` is 0.
+  // This test used to come first and swallowed every one of them.
+  if (valType(from) == valType(to) && !isFloat(from) && isUnsigned(from) != isUnsigned(to) &&
+      op != kAsAt() && op != 0) {
+    emitSaturate(fb, env, from, to);
+    return;
+  }
   if (valType(from) == valType(to) && !isFloat(from)) { return; }   // i32/u32, i64/u64
   if (valType(from) == 127 && valType(to) == 126) {
+    // **Widening is still a sign change.** `(i32) -1 as~ u64` is 0, not `u64` max: the negative is
+    // clamped in the *source's* width first and only then extended. Extending it signed and calling
+    // the result unsigned was the last cell in the sweep, and the only one it took two rounds to see.
+    if (isUnsigned(to) && !isUnsigned(from)) {
+      i32 tmp = env.scratch(from);
+      fb.byte(34); fb.u32leb(tmp);
+      fb.byte(65); fb.i32leb(0);
+      fb.byte(72);          // i32.lt_s
+      fb.byte(4); fb.byte(wasmI32());
+      fb.byte(65); fb.i32leb(0);
+      fb.byte(5);
+      fb.byte(32); fb.u32leb(tmp);
+      fb.byte(11);
+      fb.byte(173);         // i64.extend_i32_u, now that it cannot be negative
+      return;
+    }
     fb.byte(isUnsigned(from) ? 173 : 172);   // i64.extend_i32_u / _s
     return;
   }
+  // **`as@` wraps where the others saturate.** Raw is a claim about the bit pattern, so the value is
+  // truncated and nothing is clamped — `(i64) 0xdeadbeef as@ i32` is a negative `i32`, not `i32` max.
+  if (valType(from) == 126 && valType(to) == 127 && op == kAsAt()) {
+    fb.byte(167);   // i32.wrap_i64
+    return;
+  }
   if (valType(from) == 126 && valType(to) == 127) {
-    // **Saturating**, which is what wac's `as~` means between integer widths: `(2^32 + 7) as~ i32` is
-    // `i32` max rather than 7. wasm has no saturating narrow, so the value is spilled to a scratch
-    // local and clamped against each bound in turn — the operand read three times, which is the whole
-    // reason a scratch local had to exist.
+    emitSaturate(fb, env, from, to);
+    return;
+  }
+  if (false) {
     i32 tmp = env.scratch(from);
     fb.byte(34);              // local.tee — keeps the value while storing it
     fb.u32leb(tmp);
@@ -1693,10 +1722,19 @@ void emitConversion(B fb, Env env, string from, string to) {
     return;
   }
   if (isFloat(from) && !isFloat(to)) {
-    // **Rounded, not truncated.** `3.9 as~ i32` is 4 in wac, and wasm's `trunc` family goes the other
-    // way, so the value is put through `nearest` first. Measured — the spelling `as~` reads like C's
-    // truncation and is not it, which no amount of looking at the emitter would have said.
-    fb.byte(from == "f32" ? 144 : 158);   // f32.nearest / f64.nearest
+    // **`as~` rounds; `as@` truncates.** Two spellings and two different answers — `1.5 as~ i32` is 2
+    // and `1.5 as@ i32` is 1 — which one instruction covered wrongly for both until the sweep put a
+    // `.5` through it.
+    if (op != kAsAt()) { fb.byte(from == "f32" ? 144 : 158); }   // f32.nearest / f64.nearest
+    // And **saturating**, not trapping: `1e10 as~ i32` is `i32` max and `-2.25 as~ u32` is 0, where
+    // the plain `trunc` family raises. That is the `trunc_sat` block, behind the `0xfc` prefix.
+    fb.byte(252);
+    i32 base = valType(to) == 126 ? 4 : 0;
+    i32 wide = from == "f32" ? 0 : 2;
+    fb.u32leb(base + wide + (isUnsigned(to) ? 1 : 0));
+    return;
+  }
+  if (false) {
     if (valType(to) == 126) {
       if (from == "f32") { fb.byte(imm(174, 175, isUnsigned(to))); }
       else { fb.byte(imm(176, 177, isUnsigned(to))); }
@@ -1754,12 +1792,15 @@ f64 parseFloat(string s) {
 /** The largest value the target type holds, as the `i64` the comparison needs. */
 i64 upperBound(string t) {
   if (t == "u32") { return 4294967295; }
+  if (t == "i64") { return 9223372036854775807; }
+  if (t == "u64") { return -1; }   // 0xffff…, which is what an unsigned compare wants
   return 2147483647;
 }
 
 /** The smallest, which is zero for an unsigned target. */
 i64 lowerBound(string t) {
-  if (t == "u32") { return 0; }
+  if (t == "u32" || t == "u64") { return 0; }
+  if (t == "i64") { return -9223372036854775808; }
   return -2147483648;
 }
 
@@ -2521,7 +2562,7 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   emitExprAt(fb, src, lexed, env, e, want);
   if (want == "" || got == "" || got == want) { return; }
   if (valType(got) == valType(want) && !isFloat(got)) { return; }
-  emitConversion(fb, env, got, want);
+  emitConversion(fb, env, got, want, 0);
 }
 
 /**
@@ -2947,4 +2988,83 @@ bool isStringTypeName(u8[] src, Lexed lexed, Env env, Expr obj) {
     }
     else: { return false; }
   }
+}
+
+/** A token's kind, which the cast rules need because the operator decides the conversion. */
+i32 tokenKindOf(Lexed lexed, i32 t) { return lexed.tokens[t * tokenStride()]; }
+
+/**
+ * Clamp a value into the target's range, then narrow.
+ *
+ * The two comparisons use the **source's** signedness and the **target's** bounds, which is the pair
+ * that was wrong: a `u64` source compared with `i64.lt_s` made every small value look negative and
+ * pinned it to the target's minimum. `0 as! i32` came out as `i32` min.
+ */
+void emitSaturate(B fb, Env env, string from, string to) {
+  i32 tmp = env.scratch(from);
+  bool wide = valType(from) == 126;
+
+  // **A sign change at the same width needs one clamp, not two**, and which one depends on the
+  // direction. Going signed to unsigned, only a negative is out of range — every non-negative fits.
+  // Going the other way, only a value above the signed maximum is. Trying to use the target's *other*
+  // bound is meaningless: it is not representable in the source's signedness, and comparing against
+  // it produced `0 as! u32 == u32 max`.
+  if (valType(from) == valType(to)) {
+    fb.byte(34);
+    fb.u32leb(tmp);
+    if (isUnsigned(to)) {
+      emitBound(fb, wide, 0);
+      fb.byte(wide ? 83 : 72);        // lt_s — is it negative
+      fb.byte(4); fb.byte(wide ? 126 : wasmI32());
+      emitBound(fb, wide, 0);
+      fb.byte(5);
+      fb.byte(32); fb.u32leb(tmp);
+      fb.byte(11);
+      return;
+    }
+    emitBound(fb, wide, upperBound(to));
+    fb.byte(wide ? 86 : 75);          // gt_u — is it above the signed maximum
+    fb.byte(4); fb.byte(wide ? 126 : wasmI32());
+    emitBound(fb, wide, upperBound(to));
+    fb.byte(5);
+    fb.byte(32); fb.u32leb(tmp);
+    fb.byte(11);
+    return;
+  }
+
+  // Narrowing: both of the target's bounds fit in the source's width, so both are compared — with the
+  // source's signedness, and with the lower one skipped for an unsigned source, which can never be
+  // below it.
+  bool u = isUnsigned(from);
+  fb.byte(34);
+  fb.u32leb(tmp);
+  emitBound(fb, wide, upperBound(to));
+  fb.byte(wide ? (u ? 86 : 85) : (u ? 75 : 74));
+  fb.byte(4);
+  fb.byte(wasmI32());
+  emitI32Const(fb, upperBound(to));
+  fb.byte(5);
+  if (u) {
+    fb.byte(32); fb.u32leb(tmp);
+    if (wide) { fb.byte(167); }
+    fb.byte(11);
+    return;
+  }
+  fb.byte(32); fb.u32leb(tmp);
+  emitBound(fb, wide, lowerBound(to));
+  fb.byte(wide ? 83 : 72);
+  fb.byte(4);
+  fb.byte(wasmI32());
+  emitI32Const(fb, lowerBound(to));
+  fb.byte(5);
+  fb.byte(32); fb.u32leb(tmp);
+  if (wide) { fb.byte(167); }
+  fb.byte(11);
+  fb.byte(11);
+}
+
+/** A bound at the source's width, so the comparison's two operands agree. */
+void emitBound(B fb, bool wide, i64 v) {
+  if (wide) { fb.byte(66); fb.i64leb(v); }
+  else { fb.byte(65); fb.i32leb(v as@ i32); }
 }
