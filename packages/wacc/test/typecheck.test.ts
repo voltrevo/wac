@@ -2109,3 +2109,73 @@ Deno.test("rung 3: the cast law across all three worlds", () => {
     }
   }
 });
+
+/**
+ * The three that finished the reference corpus, and what each needed that the checker did not have.
+ *
+ * None of them was a rule nobody had thought of. Each was blocked on a *fact the checker did not
+ * record*, which is a different kind of gap and took a table rather than a branch:
+ *
+ * - a `case` arm had no **position**, because a `Case` is not a `Stmt`;
+ * - a method call had no **type**, because nothing recorded what a method returns;
+ * - a static method had no **signature**, because nothing recorded its parameters.
+ *
+ * The middle one is the interesting one. `this.getInner().mutate()` reads like a way to launder
+ * constness — hand the field out through an accessor and call the mutating method on what comes
+ * back — and the language refuses it. What decides is the **receiver**, not the return type: a method
+ * called on something const returns something const.
+ */
+Deno.test("rung 3: a case's position, a method's return, and a static as a value", () => {
+  const INNER = "struct Inner { i32 val; void mutate(this) { this.val = 1; } } ";
+  const CAUGHT = [
+    // A case value is an i32 like the subject, and the complaint names the `case` keyword.
+    "export void f(i32 x) { switch (x) { case true: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case true: { } default: { } } }",
+    // Constness survives an accessor.
+    INNER + "struct O { Inner inner; Inner get(const this) { return this.inner; } " +
+      "void t(const this) { this.get().mutate(); } }",
+    // A static named without being called is a funcref, so this is an ordinary mismatch.
+    "struct S { S make() { return S(); } } export void f() { i32 x = S.make; }",
+    // A method call is typed now, so its result is checked where it lands.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } export string f(C c) { return c.get(); }",
+    "struct C { i32 n; i32 get(const this) { return this.n; } } export void f(C c) { bool b = c.get(); }",
+  ];
+  const QUIET = [
+    // A case value that is an integer, in every width the subject could be.
+    "export void f(i32 x) { switch (x) { case 1: { } default: { } } }",
+    "export void f(i32 x) { switch (x) { case 1: { } case 2: { } } }",
+    // The same accessor chain through a receiver that is not const.
+    INNER + "struct O2 { Inner inner; Inner get(this) { return this.inner; } " +
+      "void t(this) { this.get().mutate(); } }",
+    // A const method called on a const receiver is fine; it is the *mutating* one that is not.
+    INNER + "struct O3 { Inner inner; Inner get(const this) { return this.inner; } " +
+      "i32 t(const this) { return this.get().val; } }",
+    // A static assigned to a funcref of its own signature.
+    "struct S { S make() { return S(); } } export void f() { fn[S()] g = S.make; }",
+    "struct S { i32 n; i32 twice(i32 a) { return a + a; } } export void f() { fn[i32(i32)] g = S.twice; }",
+    // A method call whose result is used at its own type.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } export i32 f(C c) { return c.get(); }",
+    // A generic's method, read in the instantiation's world.
+    "struct Box<T> { T v; T get(const this) { return this.v; } } export i32 f(Box<i32> b) { return b.get(); }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

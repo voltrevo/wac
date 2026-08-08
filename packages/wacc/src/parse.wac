@@ -1550,15 +1550,17 @@ Stmt parseSwitchStmt(P p) {
   p.expect(kLbrace());
   CaseList cases = CaseList.create();
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+    i32 caseLine = p.lineAt(0);
+    i32 caseCol = p.colAt(0);
     if (p.at1(kCase())) {
       p.advance();
       Expr v = parseExpr(p);
       p.expect(kColon());
-      cases.push(Case(v, parseSwitchBody(p)));
+      cases.push(Case(v, parseSwitchBody(p), caseLine, caseCol));
     } else if (p.at1(kDefault())) {
       p.advance();
       p.expect(kColon());
-      cases.push(Case(null, parseSwitchBody(p)));
+      cases.push(Case(null, parseSwitchBody(p), caseLine, caseCol));
     } else {
       p.fail(perrExpected());
       p.advance();
