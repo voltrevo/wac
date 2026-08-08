@@ -599,6 +599,19 @@ export struct C {
    * accepts `continue` inside one, which is measured rather than inferred from its message.
    */
   i32 loopDepth;
+  /**
+   * What the expression **about to be walked** is required to be, or unknown.
+   *
+   * The one piece of information that flows *down* the tree rather than up. Every other rule here
+   * reads an expression and asks what it is; a bare `Box(1.0)` cannot be asked that, because its type
+   * arguments are inferred from wherever it is going. Carried on the state rather than threaded
+   * through `checkExpr`, which forty call sites would otherwise have to pass along.
+   *
+   * Read and **cleared** at the top of `checkExpr`, so it reaches exactly one expression: the one the
+   * context set it for. A sub-expression of that one is in a position of its own, and `Box(1).get()`
+   * is the case that proves it — the receiver inherits nothing from the `return` it sits under.
+   */
+  string expected;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
@@ -613,7 +626,7 @@ export struct C {
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
              string[capacity](), 0, 0,
-             0,
+             0, "",
              i32[capacity * 3](), 0);
   }
 
@@ -1492,6 +1505,8 @@ bool breaksOutOf(Stmt s) {
  * everybody writes.
  */
 void checkExpr(C c, Expr e) {
+  string want = c.expected;
+  c.expected = typeNone();
   match (e.kind) {
     case Binary(op, left, right): {
       checkExpr(c, left);
@@ -1653,9 +1668,17 @@ void checkExpr(C c, Expr e) {
           if (st2 != typeNone() && !isIntegerName(st2)) { c.report(errIndex(), sz.line, sz.col); }
         }
       }
-      string want = typeOfTy(c, elem);
-      for (i32 i = 0; i < elements.len(); i++) { checkExpr(c, elements[i]); }
-      if (!(fill is null)) { checkExpr(c, fill!); }
+      string elemWant = typeOfTy(c, elem);
+      // An element's slot is the element type, which is what lets a bare generic infer inside one.
+      for (i32 i = 0; i < elements.len(); i++) {
+        c.expected = elemWant;
+        checkExpr(c, elements[i]);
+      }
+      if (!(fill is null)) {
+        c.expected = elemWant;
+        checkExpr(c, fill!);
+      }
+      string want = elemWant;
       if (want == typeNone()) { return; }
       // `E[2]()` with nothing to fill it asks every element for a default, and an enum has none.
       if (elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
@@ -1705,14 +1728,45 @@ void checkExpr(C c, Expr e) {
     // `Named` type for both and the resolver decides which later. A `case Call` never matches a
     // plain named call, which is why the first version of this reported nothing at all.
     case Construct(ctype, args, named): {
-      for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+      // Each argument is walked with the slot it is going into, which is what lets a generic
+      // construction nested in one — `g(Box(1.0))` — infer from the parameter.
+      match (ctype.kind) {
+        case Named(ctok, ctargs): {
+          string cname = tokenText(c, ctok);
+          for (i32 i = 0; i < args.len(); i++) {
+            c.expected = argumentSlot(c, cname, ctargs.len() > 0 ? typeOfTy(c, ctype) : cname, i);
+            checkExpr(c, args[i]);
+          }
+        }
+        else: {
+          for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+        }
+      }
       match (ctype.kind) {
         case Named(tok, typeArgs): {
           string name = tokenText(c, tok);
           if (c.isStruct(name)) {
-            // The *spelled* type, so `Box<i32>(…)` carries its argument into the field check while a
-            // bare `Box(…)` does not. `checkConstruct` resolves the template itself.
-            checkConstruct(c, typeArgs.len() > 0 ? typeOfTy(c, ctype) : name, args, named, e);
+            // A **bare generic** takes its type arguments from wherever it is going. With a target
+            // whose template is this one, the construction *is* that type and its arguments are
+            // checked against the substituted fields; with no target at all there is nothing to infer
+            // from, and the reference calls the bare name undefined — which it is, since a template
+            // is not a type. `Box(1.0)` assigned to a `Box<f64>` is ordinary and `Box(1).get()` is
+            // not, and the only difference between them is the slot.
+            string spelled = typeArgs.len() > 0 ? typeOfTy(c, ctype) : name;
+            if (typeArgs.len() == 0 && c.isGeneric(name)) {
+              // The target's **nullability is not part of the question**: a `MapEntry<K, V>?` slot
+              // takes a `MapEntry<K, V>`, and the construction produces the non-null one. Comparing
+              // the spelled target directly missed that and reported a working line in `packages/std`.
+              string wantCore = withoutNull(want);
+              string wantBase = wantCore == "" ? want : wantCore;
+              if (templateOf(wantBase) == name) {
+                spelled = wantBase;
+              } else {
+                c.report(errNotCallable(), e.line, e.col);
+                return;
+              }
+            }
+            checkConstruct(c, spelled, args, named, e);
             // Two questions a construction asks that the field types do not. With arguments, the
             // count has to match — parents included, since a child is constructed with the whole
             // chain's fields. With none, it is a *default* construction, and the struct has to have
@@ -2381,6 +2435,22 @@ string receiverType(C c, Expr obj) {
 }
 
 /**
+ * What the `i`th argument of a call or construction is required to be, or unknown.
+ *
+ * A struct's `i`th field or a function's `i`th parameter — the two shapes share the syntax, so this
+ * asks which one the name is, exactly as the checking rules do one level up.
+ */
+string argumentSlot(C c, string name, string spelled, i32 i) {
+  if (c.isStruct(name)) {
+    if (c.isGeneric(name) && spelled == name) { return typeNone(); }
+    return substituteType(c, spelled, c.constructFieldAt(spelled, i));
+  }
+  i32 at = c.funcAt(name);
+  if (at < 0 || i >= c.funcParamCount[at]) { return typeNone(); }
+  return c.funcParamTypes[c.funcParamAt[at] + i];
+}
+
+/**
  * The object of a member access or a method call, which is not quite an ordinary expression.
  *
  * `P.mk()` and `f64.toBits(x)` put a **type name** in receiver position, and a type name is not a
@@ -2853,6 +2923,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
     case ExprStmt(expr): { checkExpr(c, expr); }
     case Assign(target, op, rhs): {
+      c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
       // Every assignment writes, compound or not — `n += 1` on a const is refused exactly as `n = 1`
       // is, so this comes before the plain-`=` gate below.
@@ -2917,6 +2988,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       } else if (!assignable(c, wantVar, gotVar)) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
+      c.expected = wantVar;
       checkExpr(c, init);
     }
     case Return(value): {
@@ -2949,6 +3021,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       } else if (!assignable(c, expected, got)) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
+      c.expected = expected;
       checkExpr(c, e);
     }
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no

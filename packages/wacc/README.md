@@ -1134,6 +1134,34 @@ expression distinguishes them. That is the one thing the reference does that thi
 at all — every rule here reads an expression and asks what it *is*, and inference asks what it is
 *required to be*, which is the other direction through the same tree.
 
+### Inference: the one thing that flows down the tree
+
+**Spec coverage: 82 of 83.** Reference 124 of 124. Sweep 99%, no false alarms anywhere.
+
+Every rule in this checker reads an expression and asks what it **is**. A bare `Box(1.0)` cannot be
+asked that: its type arguments come from wherever it is going. So the checker now carries one piece of
+information in the other direction — what the expression about to be walked is *required to be* — set
+by each context that has a slot, and **read and cleared** at the top of the walk so it reaches exactly
+one expression.
+
+The clearing is the part that does the work. `Box(1).get()` sits under a `return i32`, and the
+receiver must inherit nothing from it: with no slot of its own, a bare template is not a type, and the
+reference calls it undefined. Both remaining cases were the same fact from opposite sides —
+`Box(1.0)` assigned to a `Box<f64>` is ordinary and `Box(1).get()` is not, and the only difference is
+the slot.
+
+Carried on the checker's state rather than threaded through `checkExpr`, which forty call sites would
+otherwise have to pass along and forty chances to forget. The cost is that every context with a slot
+has to set it, and a context that forgets *false-alarms* rather than going quiet — which is the wrong
+direction, so each one was found by a guard rather than by reasoning: a nullable slot
+(`MapEntry<K, V>?` takes a `MapEntry<K, V>` — the target's nullability is not part of the question)
+by the repo, and an array element by the test written immediately after.
+
+**One case left**, and it is inference of a different kind: a generic *function*'s type arguments,
+inferred by matching its declared parameter against the argument's actual type. A call to an
+`unbox`-shaped function on a `Box<f64>` binds `T` to `f64` and returns one. Construction inference reads the slot; function
+inference reads the argument — the same direction, a different source.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,

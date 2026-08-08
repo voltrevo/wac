@@ -2324,3 +2324,64 @@ Deno.test("rung 3: a literal's value, and a local that aliases something const",
     }
   }
 });
+
+/**
+ * Target-type inference: the one piece of information that flows **down** the tree.
+ *
+ * Every other rule here reads an expression and asks what it is. A bare `Box(1.0)` cannot be asked
+ * that — its type arguments come from wherever it is going — so the checker carries what the
+ * expression *is required to be*, set by each context and read once.
+ *
+ * Read and **cleared** at the top of the walk, so it reaches exactly one expression. `Box(1).get()` is
+ * the case that proves the clearing matters: the receiver sits under a `return i32`, inherits nothing
+ * from it, and is therefore a bare template with no target — which the reference calls undefined,
+ * because a template is not a type.
+ */
+Deno.test("rung 3: a bare generic takes its arguments from the slot it goes into", () => {
+  const B = "struct Box<T> { T v; i32 get(const this) { return 1; } } ";
+  const CAUGHT = [
+    // No slot to infer from: a receiver, and a bare statement.
+    B + "export i32 f() { return Box(1).get(); }",
+    B + "export void f() { Box(1.0); }",
+    B + "export void f() { i32 n = Box(1.0).get(); }",
+    // A slot that says what the argument must be — inference feeding the argument check.
+    B + "export void f() { Box<i32> b = Box(1.0); }",
+  ];
+  const QUIET = [
+    // Every slot the reference accepts one in.
+    B + "export void f() { Box<f64> b = Box(1.0); }",
+    B + "export Box<f64> f() { return Box(1.0); }",
+    B + "void g(Box<f64> b) { } export void f() { g(Box(1.0)); }",
+    B + "struct Q { Box<f64> b; } export void f() { Q q = Q(Box(1.0)); }",
+    B + "export void f(Box<f64> b) { b = Box(1.0); }",
+    B + "export void f() { Box<f64>[] a = Box<f64>[](Box(1.0)); }",
+    // A nullable slot takes the non-null construction — the target's nullability is not part of the
+    // question, and comparing the spelled target directly reported a working line in `packages/std`.
+    B + "struct Q { Box<f64>? b; } export void f() { Q q = Q(Box(1.0)); }",
+    // The type arguments written out, which needs no inference at all.
+    B + "export void f() { Box<f64> b = Box<f64>(1.0); }",
+    // Inside a generic's own methods the bare name means the instantiation being compiled, and the
+    // return type is the slot that says so.
+    "struct Vec<T> { T[] xs; Vec<T> empty() { return Vec(T[]()); } }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-52))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-52))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-52))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
