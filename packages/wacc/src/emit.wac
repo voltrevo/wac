@@ -458,6 +458,22 @@ export struct Env {
    * Reused per type rather than allocated per site: the value is dead the moment the sequence that
    * spilled it ends, and one scratch of each width is all any of them needs.
    */
+  /**
+   * A scratch local for a named role, so two roles cannot share one slot.
+   *
+   * The plain `scratch` is keyed by type alone, which is right while the only thing spilling is a
+   * cast. A compound assignment spills its target *across* the right-hand side, and a cast in there
+   * would take the same `i32` slot — so the base and the index of `a[i] += (x as~ i32)` are asked
+   * for by name.
+   */
+  i32 scratchNamed(this, string tag, string ty) {
+    string key = " scratch " + tag + " " + ty;
+    i32 at = this.localAt(key);
+    if (at >= 0) { return at; }
+    this.addLocal(key, ty);
+    return this.localCount - 1;
+  }
+
   i32 scratch(this, string ty) {
     string key = " scratch " + ty;
     i32 at = this.localAt(key);
@@ -1578,17 +1594,69 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           string ot3 = typeOfLv(src, lexed, env, base);
           if (!env.isStructName(ot3)) { return; }
           string fname = tokenTextOf(src, lexed, nameTok);
+          i32 slot = env.enumOf(ot3) != "" || env.isEnumName(ot3)
+            ? enumSlot(env, ot3, fname) : env.fieldIndex(ot3, fname);
+          string fty = env.enumOf(ot3) != "" || env.isEnumName(ot3)
+            ? env.fieldTypeAt(env.canonType(ot3), slot) : env.fieldType(ot3, fname);
+          i32 kf = lexed.tokens[op * tokenStride()];
+          // **`p.x += 1` is a read, an operator and a write**, and this arm had none of the first two:
+          // it emitted the assignment and dropped the operator, so the field was *replaced* by the
+          // right-hand side. It validated, so nothing caught it — the field ended up an `i32` either
+          // way — and no differential case had ever compounded into anything but a local.
+          if (kf != kAssign()) {
+            i32 b = env.scratchNamed("cmpbase", ot3);
+            emitLvalue(fb, src, lexed, env, base);
+            fb.byte(34);            // local.tee, so the base is evaluated once
+            fb.u32leb(b);
+            fb.byte(32);
+            fb.u32leb(b);
+            fb.byte(251);
+            fb.u32leb(2);           // struct.get — the current value
+            fb.u32leb(env.structType(ot3));
+            fb.u32leb(slot);
+            emitExprAt(fb, src, lexed, env, rhs, fty);
+            emitCompound(fb, env, kf, fty);
+            fb.byte(251);
+            fb.u32leb(5);
+            fb.u32leb(env.structType(ot3));
+            fb.u32leb(slot);
+            return;
+          }
           emitLvalue(fb, src, lexed, env, base);
-          emitExprAt(fb, src, lexed, env, rhs, env.fieldType(ot3, fname));
+          emitExprAt(fb, src, lexed, env, rhs, fty);
           fb.byte(251);
           fb.u32leb(5);   // struct.set
           fb.u32leb(env.structType(ot3));
-          fb.u32leb(env.fieldIndex(ot3, fname));
+          fb.u32leb(slot);
         }
         case LIndex(base, index): {
           // The array and the index are pushed before the value, which is the order `array.set`
           // wants and the reverse of how the statement reads.
           string bt = typeOfLv(src, lexed, env, base);
+          i32 ki = lexed.tokens[op * tokenStride()];
+          // The same read-apply-write as a field, and the same bug: `a[i] += 1` was `a[i] = 1`. Both
+          // operands are spilled first so that `a` and `i` are evaluated once and in source order.
+          if (ki != kAssign()) {
+            i32 ab = env.scratchNamed("cmparr", bt);
+            i32 ix = env.scratchNamed("cmpidx", "i32");
+            emitLvalue(fb, src, lexed, env, base);
+            fb.byte(33);
+            fb.u32leb(ab);
+            emitAt(fb, src, lexed, env, index, "i32");
+            fb.byte(33);
+            fb.u32leb(ix);
+            fb.byte(32); fb.u32leb(ab);
+            fb.byte(32); fb.u32leb(ix);
+            fb.byte(32); fb.u32leb(ab);
+            fb.byte(32); fb.u32leb(ix);
+            emitArrayGet(fb, env, bt);
+            emitAt(fb, src, lexed, env, rhs, elemOf(bt));
+            emitCompound(fb, env, ki, elemOf(bt));
+            fb.byte(251);
+            fb.u32leb(14);   // array.set
+            fb.u32leb(env.arrayType(bt));
+            return;
+          }
           emitLvalue(fb, src, lexed, env, base);
           emitAt(fb, src, lexed, env, index, "i32");
           emitAt(fb, src, lexed, env, rhs, elemOf(bt));
@@ -1609,7 +1677,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           }
           string at2 = env.localTypes[at];
           emitExprAt(fb, src, lexed, env, rhs, at2);
-          if (k != kAssign()) { emitCompound(fb, k, at2); }
+          if (k != kAssign()) { emitCompound(fb, env, k, at2); }
           fb.byte(33);
           fb.u32leb(at);
         }
@@ -1791,7 +1859,16 @@ void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, St
 }
 
 /** The operator of a compound assignment, which is the binary one with the `=` taken off. */
-void emitCompound(B fb, i32 k, string t) {
+void emitCompound(B fb, Env env, i32 k, string t) {
+  // `s += x` is a concatenation, which is a call rather than an instruction — the same helper the
+  // expression form uses, so the two spellings cannot drift apart.
+  if (t == "string" && k == kPlusEq()) {
+    i32 cc = env.funcAt(" str_concat");
+    if (cc < 0 || env.funcIndex[cc] < 0) { return; }
+    fb.byte(16);
+    fb.u32leb(env.funcIndex[cc]);
+    return;
+  }
   // **All eleven**, by name. Four of them were written as raw numbers 58 to 61, which covered the
   // arithmetic and silently ignored the bitwise ones — `result ^= x` emitted its two operands and no
   // operator, leaving a value on the stack that wasm noticed at the end of the function.
@@ -2865,8 +2942,12 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       string lv = unsupportedLvalue(src, lexed, env, target);
       if (lv != "") { return lv; }
       string tt2 = typeOfLv(src, lexed, env, target);
-      if (lexed.tokens[op * tokenStride()] != kAssign() &&
-          (isArrayType(tt2) || tt2 == "string" || env.isStructName(tt2))) {
+      i32 ka = lexed.tokens[op * tokenStride()];
+      if (ka != kAssign() && tt2 == "string" && ka != kPlusEq()) {
+        return "a compound assignment to a string that is not +=";
+      }
+      if (ka != kAssign() && tt2 != "string" &&
+          (isArrayType(tt2) || env.isStructName(tt2))) {
         return "a compound assignment to a reference";
       }
       return unsupportedValue(src, lexed, env, rhs);
@@ -3164,8 +3245,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           i32 fa = env.funcAt(n);
-          if (fa < 0) { return "a call to something unknown"; }
-          if (!env.funcOk[fa]) { return "a call to something this slice cannot emit"; }
+          // **Named, not categorised.** "a call to something unknown" was the corpus's largest
+          // category at 66 files and said nothing about any of them; the name turns a category into
+          // a diagnosis, which is the difference between a slot of guessing and one of fixing.
+          if (fa < 0) { return "a call to " + tokenTextOf(src, lexed, tok); }
+          if (!env.funcOk[fa]) { return "a call to " + tokenTextOf(src, lexed, tok) + ", declined"; }
           for (i32 i = 0; i < args.len(); i++) {
             string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(fa, i));
             if (a != "") { return a; }
@@ -3199,7 +3283,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
             if (sa < 0) { return "no static " + owner + "." + mn; }
-            if (!env.funcOk[sa]) { return "a static this slice cannot emit"; }
+            if (!env.funcOk[sa]) { return "a static " + owner + "." + mn + ", declined"; }
             for (i32 i = 0; i < args.len(); i++) {
               string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(sa, i));
               if (a != "") { return a; }
@@ -3224,7 +3308,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
           i32 ma = env.funcAt(ot + "." + mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
-          if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
+          if (!env.funcOk[ma]) { return "a method " + ot + "." + mn + ", declined"; }
           for (i32 i = 0; i < args.len(); i++) {
             // A method is registered with its declared parameters; the receiver is pushed at the
             // call site and is not one of them.

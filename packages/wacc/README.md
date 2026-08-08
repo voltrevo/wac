@@ -1183,6 +1183,40 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### `p.x += 5` was `p.x = 5`
+
+The corpus's largest decline was *"a call to something unknown"* at 66 files, which named none of
+them. Making it say *"a call to `ref`"*, *"a call to `b64decode`"* turned one category into eight
+diagnoses in a minute — the lesson this package keeps relearning, and cheap every time.
+
+What the second-largest one hid was worse. *"A compound assignment to a reference"* was declining
+`s += "x"`, and lifting it revealed that compound assignment into a **field** or an **element** had
+been emitting the wrong thing all along:
+
+```wac
+struct P { i32 x; }
+export i32 f() { P p = P(1); p.x += 5; return p.x; }   // the reference says 6; this said 5
+```
+
+The `LField` and `LIndex` arms took the operator token and never looked at it: they emitted the
+right-hand side and stored it, so `+=` was `=`. It **validated** — the field is an `i32` whichever
+happens — and no hand-written differential case had ever compounded into anything but a local, which
+is the same bias that let `0xff` compile to 0 for as long as it did. The generated sweep has the
+cross product now: three lvalue forms × eight operators × six types, plus the string cases, and the
+answers agree.
+
+Both arms are read-apply-write now, with the base (and the index) spilled first so `a[i] += f()`
+evaluates `a` and `i` once and in source order. Those spills ask for their slots **by name** rather
+than by type: the plain scratch is keyed by type alone, which is right while the only thing spilling
+is a cast, and `a[i] += (x as~ i32)` would otherwise have the cast and the index sharing one `i32`.
+
+`s += x` is now the concatenation helper, which is the same call the expression form makes, so the
+two spellings cannot drift.
+
+The corpus count did not move — the 35 files that were declined for this now stop at the *next*
+thing, `f64.toBits` — and that is worth saying plainly, because the fix was worth more than the
+number it did not change.
+
 ### Names scoped to their file, and the two bugs only a big module could have — 93 to 108
 
 Linking put every file's declarations in one pool, and a pool cannot hold two meanings for one name:

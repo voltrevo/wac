@@ -257,5 +257,42 @@ export function generateEmit(): Cell[] {
     add(`null ${t} ternary`,
       `export i32 f() { ${arr}? a = null; return a is null ? 5 : a!.len(); }`);
   }
+
+  // Compound assignment, over the three things that can be on the left of it.
+  //
+  // A local was the only one any hand-written case had ever compounded into, and the other two were
+  // *wrong*: `p.x += 5` emitted `p.x = 5`, dropping the operator entirely. It validated — the field
+  // is an `i32` either way — so only running it could tell.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    const ops = t.startsWith("f") ? ["+=", "-=", "*=", "/="] : ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="];
+    for (const op of ops) {
+      add(`compound local ${t} ${op}`,
+        `export ${t} f() { ${t} n = ${v}; n ${op} ${w}; return n; }`);
+      add(`compound field ${t} ${op}`,
+        `struct P { ${t} x; }\nexport ${t} f() { P p = P(${v}); p.x ${op} ${w}; return p.x; }`);
+      add(`compound element ${t} ${op}`,
+        `export ${t} f() { ${t}[] a = ${t}[](${v}, ${v}); a[1] ${op} ${w}; return a[1]; }`);
+      add(`compound element ${t} ${op} computed index`,
+        `export ${t} f() { ${t}[] a = ${t}[](${v}, ${v}); i32 i = 1; a[i] ${op} ${w}; ` +
+        `return a[i] + a[0]; }`);
+      add(`compound field ${t} ${op} twice`,
+        `struct P { ${t} x; ${t} y; }\nexport ${t} f() { P p = P(${v}, ${w}); p.x ${op} ${w}; ` +
+        `p.y ${op} p.x; return p.y; }`);
+    }
+  }
+  // A string is the one reference that can be compounded, and `+=` is the only operator for it.
+  for (const a of ['""', '"a"', '"hello"']) {
+    add("compound local string",
+      `export i32 f() { string s = ${a}; s += "tail"; return s.len(); }`);
+    add("compound field string",
+      `struct P { string s; }\nexport i32 f() { P p = P(${a}); p.s += "tail"; return p.s.len(); }`);
+    add("compound element string",
+      `export i32 f() { string[] xs = string[](${a}, ${a}); xs[0] += "tail"; ` +
+      `return xs[0].len() + xs[1].len(); }`);
+    add("compound string in a loop",
+      `export i32 f() { string s = ${a}; for (i32 i = 0; i < 3; i++) { s += "ab"; } return s.len(); }`);
+  }
   return out;
 }
