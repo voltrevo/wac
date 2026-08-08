@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0116](open/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md) | a spawned pipeline stage gets the host's filesystem, so a sealed session cannot spawn | missing feature | wrong answer |
 | [0115](open/0115-yes-head-1-throws-the-childs-output-is-not-being-read-under-load.md) | `yes \| head -1` kills the shell with "the child's output is not being read" under load | bug | wrong answer |
 | [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |
 | [0108](open/0108-a-sessions-writes-can-be-lost-if-the-server-stops-straight-after.md) | a session's writes can be lost if the server is stopped straight after | bug | wrong answer |
