@@ -16,7 +16,7 @@ All commands run from the repo root.
 
 ## The oracle is bash
 
-`test/differential.test.ts` runs 652 scripts through GNU bash and through this, and requires the
+`test/differential.test.ts` runs 817 scripts through GNU bash and through this, and requires the
 same standard output *and* the same exit status. For a shell that is the only test worth much:
 the behaviour is defined by what the real one does, and nearly every rule has a case where the
 obvious implementation is subtly wrong.
@@ -147,31 +147,30 @@ a function its own argv, standard input and working directory and keeps what it 
 of those has no isolation from the shell, and it is now the fallback rather than the only route:
 [0030](../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
 
-Then a **table of programs written in wac**, when nothing else answered:
+There used to be a **table of programs written in wac** underneath that, when nothing else answered:
+`cat wc head tail rev sort uniq grep tr seq nl printf`, twelve of them. They existed because, when they
+were written, nothing could be started and nothing could be handed over. Both of those stopped being
+true, and [0103](../../issues/closed/0103-what-stands-between-here-and-deleting-shs-twelve-programs.md)
+deleted them.
 
-```
-cat wc head tail rev sort uniq grep tr seq nl printf
-```
+**The deletion was the point rather than the tidy-up.** Two implementations of one program do not
+merely duplicate a bug — one hides the other's. `packages/box`'s shell could not run its own applets
+inside a command substitution, because `Shell.fork` copied variables and functions but not `external`,
+and nothing noticed for as long as this package carried its own `tr` for the fallback to answer with.
+Writing the comparison before each deletion also found four bugs in the applets that were about to
+inherit the work: an unreadable operand ending the run instead of being skipped, three tools inventing
+their own wording for "cannot open", and `sort` and `grep` exiting 1 where GNU exits 2.
 
-`cat` takes all nine of GNU's flags (`-A -b -e -E -n -s -t -T -u -v`), and `seq` takes all three of
-GNU's forms including the increment in the middle — both of which were *filenames and ignored
-arguments* until they were compared: `cat -n f` answered "cat: -n: No such file or directory" and
-`seq 1 2 9` printed `1 2`. What is still missing is announced as missing: `seq` counts in whole
-decimals, so `seq 1.5 3` says fractions are not implemented rather than truncating to something
-plausible, and `-f`, `-s` and `-w` say the same.
+`printf` is the exception and is a **builtin** now, where bash has it and where the deletion could not
+reach it: 171 of the corpus scripts use one and `packages/box` has none. `echo`, `test`, `ls`, `chmod`
+and `chown` are builtins for the same reason — a builtin is what the shell must answer itself.
 
-Those twelve exist because, when they were written, nothing could be started and nothing could be
-handed over. Both of those are now false, and they have become what the seam always said they
-were: a fallback. They are still weaker than `box`'s — this `sort` is an insertion sort and refuses
-`-n` and `-u`, which `box`'s implements — so the sensible end state is to delete them once something
-checks that `box`'s pass the same differential scripts against bash — which `deno task corpus:through`
-now does. The answer was **563 of 632** the first time it ran, and is **588** after `cat`'s nine flags,
-`seq`'s refusals, `grep -q` and a lone `-` meaning standard input were put right in `packages/box`.
-Everything left is the deletion itself, and 0103 has the measured plan: 361 of the 649 scripts need no
-external program, 171 need `printf` — which is a **builtin** now, where bash has it and where the deletion
-cannot reach it — and about 117 name one of the other eleven. wac-mono 0103 has the breakdown; the
-paragraph had no number in it until something measured, and a plan whose precondition nobody checks is a
-plan nobody can start.
+What made it safe to do at all was `deno task corpus:through`, which runs this package's own corpus
+through some *other* shell against bash: it read 563 of 632 the first time and 649 of 649 before the
+last program went. The precondition was measured rather than assumed, and the paragraph that used to
+sit here had no number in it. The corpus is a module now — `test/corpus.ts` — because two suites read
+it and own different halves: the scripts that are about the shell *language* stay here, and the ones
+naming an external program run in `packages/box`, against a shell that has them.
 
 `grep` was on that list until it was used by hand. It matched **substrings**, and the comment above it
 said so — "`packages/regex` is the obvious next step and is not wired" — which helped nobody: `grep '^h'`
@@ -188,9 +187,7 @@ And then the *dialect* was wrong, which reading `packages/regex` end to end turn
 are literals and their backslashed forms are the operators; both greps here compiled extended, so
 `grep 'a|b'` matched a-or-b where GNU matches three characters. Seven spellings, all silently wrong, in
 the tool most likely to be handed a pattern. `packages/regex/src/basic.wac` is the translation and `-E`
-selects extended; seventeen more scripts pin both dialects. wac-mono 0104. Kept for now
-because 652 of those scripts currently agree with bash *through these*, and swapping the
-implementation under a passing suite without measuring it first is how a green suite starts lying.
+selects extended; seventeen more scripts pin both dialects. wac-mono 0104.
 
 **They read their operands**, which for nine of the twelve they did not: `wc`, `head`, `tail`,
 `sort`, `uniq`, `rev`, `nl` and `grep` ignored every file named on the command line and read standard

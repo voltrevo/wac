@@ -12,7 +12,7 @@ what is here now is most of a small Tor network and the tools to stand one up:
 | **relay** — certificates, the responder link handshake, CREATE2/EXTEND2, being a hop | `src/relaycert.wac`, `src/relaylink.wac`, `src/relaycircuit.wac`, `src/relayd.wac` | live: a C tor bootstraps through it and carries bytes |
 | **directory authority** — votes, consensus generation, the HTTP port | `src/vote.wac`, `src/consensusgen.wac`, `src/dird.wac` | live: a C tor bootstraps from it |
 | **onion-service client** — addresses, blinding, the HSDir ring, descriptors, hs-ntor | `src/onionaddr.wac` … `src/hsntor.wac`, `src/hsconnect.wac` | live against a real service |
-| **onion-service hosting** | `src/hsservice.wac`, `src/hsserviced.wac`, `src/introrelay.wac`, `src/rendrelay.wac` | our client fetches a page from it; no C tor has — [`INTEROP.md`](INTEROP.md) |
+| **onion-service hosting** | `src/hsservice.wac`, `src/hsserviced.wac`, `src/introrelay.wac`, `src/rendrelay.wac` | our client fetches a page from it, and so does a C tor — reproduced by hand, not yet reliable enough to automate ([0107](../../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md)) — [`INTEROP.md`](INTEROP.md) |
 | **a whole test network** | `src/network.wac` | wac all the way down: authorities, relays and the run, from a description |
 
 [`INTEROP.md`](INTEROP.md) is the same claim laid out by component **and direction**, with *pinned*,

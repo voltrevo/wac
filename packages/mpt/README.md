@@ -88,10 +88,13 @@ an invented zero, and the caller decides what that means in its own terms.
 
 ## Not implemented
 
-**A real endpoint's proof, recorded as a vector.** Issue 0086 asks for one and this does not have it: the
-anchor here is Ethereum's published *roots* plus an independently built trie, not a live `eth_getProof`. The
-difference that would catch is a misunderstanding of how a real response is *shaped* — the order of nodes, an
-account proof and a storage proof arriving together — rather than of the trie itself.
+**Nothing about the shape of a live answer is left unanchored** — this used to say a real endpoint's proof
+was missing, and `test/vendor/getproof.json` is one: `eth_getProof` from anvil v1.7.1, whose tries are
+`alloy-trie` in Rust and share nothing with this repo or with `test/trie.ts`. Three cases — an account with
+storage where a requested slot was never written, an account that does not exist, and a funded account that
+has never written a slot — so inclusion and absence are both covered against a client nobody here wrote.
+`test/getproof.test.ts` drives it, and `tools/vendor-getproof.ts` regenerates it by building the state it
+asks about rather than describing one somebody happened to have.
 
 **Building or updating a trie.** A verifier needs no writer. `test/trie.ts` builds one, insert-only, and it
 is a test oracle rather than part of the package.

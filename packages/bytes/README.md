@@ -56,10 +56,53 @@ up in `deno task bench`:
 Bytes are `u8`, so a byte with the high bit set reads back as 128–255 rather than
 negative. That distinction is why `i8[]` is the wrong type for byte data.
 
+## `slice`, `clamped` and `equal` — the other half of the package
+
+`src/slice.wac`. Not part of `Buf`, and here for the same reason `Buf` is: nine packages had each
+written a private `u8[] slice(u8[], i32, i32)`, and they had drifted into **three different answers
+for a range that is not valid**. The same call with the same arguments trapped in `ens`, returned
+empty in `x509` and returned a short array in `ssz`, with nothing at the call site to say which
+(wac-mono 0093).
+
+Both meanings exist, each with a name:
+
+| | |
+|---|---|
+| `slice(s, from, to)` | requires `0 <= from <= to <= s.len()`, and **traps** otherwise |
+| `clamped(s, from, to)` | takes any two integers and answers with whatever part exists |
+| `equal(a, b)` | length then bytes; empty equals empty |
+
+`slice` checks *before* the read rather than trapping during it. The naive copies trapped by
+accident, which is not the same thing: a caller could not tell a stated precondition from an
+overlooked one, and an inverted range died on a negative allocation rather than on its own range.
+
+Which one a call site gets was decided by reading its callers, not by rewriting them — a caller that
+already validates its range takes `slice`, and the trap is an assertion on the check above it;
+`tls/x509` and `tor/hsdesc` take `clamped`, because a certificate and a hidden-service descriptor are
+attacker-supplied and refusing beats aborting. **No behaviour changed anywhere**: each site kept its
+own semantics and gained a name for them.
+
+`equal` replaced thirty-eight copies, spelled `same` in twenty-four files and `sameBytes` in sixteen,
+and two of those had drifted too. One had dropped the length check, so a shorter first argument
+answered *true* for a prefix; one answered false for two empty arrays, which is not equality. Both
+were harmless where they stood and would have been inherited by the next caller. A caller that means
+"present and equal" writes `a.len() > 0 && equal(...)`, where a reader can see it.
+
+Thirty-four of those thirty-eight were in test `.wac` files, which is where a helper is least looked
+at and most pasted from.
+
 ## Coverage
 
 `deno task coverage:bytes` reports branch coverage, driven by `cov.ts` in this
-package. Currently 100% — `buf.wac`.
+package. `buf.wac` is at 97.7%.
+
+**`slice.wac` reads 0.0%, and that is a gap in the measurement rather than in the testing.**
+`cov.ts` never calls it — it was written when this package was only `Buf` and nothing added the new
+file to it — so all eighteen of its points are compiled into the run and never driven. The code is
+tested: `test/bounds.wac` and `test/bounds.test.ts` cover both meanings and every refusal, the
+latter host-side because a trap ends the module and no wac test can assert one. But a probe that
+silently measures nothing is exactly the shape this repo keeps finding (`crypto`'s `sha1.wac` read
+0.0% the same way), so the number is written down here rather than left to be discovered.
 
 Coverage needs an exercise, and an exercise only measures the code it drives, so each
 package supplies its own; `harness/wacCoverage.ts` is the shared half. The repo-level
