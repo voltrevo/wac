@@ -265,6 +265,39 @@ const CASES: [string, Call[]][] = [
   // An array through a call, which puts a reference type in a signature.
   ["i32 first(i32[] xs) { return xs[0]; } export i32 f() { return first(i32[](11, 22)); }",
     [{ name: "f", args: [] }]],
+
+  // ── Structs: the second GC type ────────────────────────────────────────────
+  ["struct P { i32 x; i32 y; } export i32 f() { P p = P(3, 4); return p.x + p.y; }",
+    [{ name: "f", args: [] }]],
+  ["struct P { i32 x; i32 y; } export i32 f() { P p = P(3, 4); p.x = 9; return p.x * p.y; }",
+    [{ name: "f", args: [] }]],
+  // A method: the receiver is the first parameter, which is the whole of what a method is here.
+  ["struct P { i32 x; i32 dbl(const this) { return this.x * 2; } } export i32 f() { P p = P(5); return p.dbl(); }",
+    [{ name: "f", args: [] }]],
+  ["struct P { i32 x; i32 plus(const this, i32 n) { return this.x + n; } } export i32 f(i32 n) { P p = P(5); return p.plus(n); }",
+    [{ name: "f", args: [7] }]],
+  // A method that writes through `this`, so the receiver is not merely read.
+  ["struct C { i32 n; void bump(this) { this.n = this.n + 1; } i32 get(const this) { return this.n; } } export i32 f() { C c = C(0); c.bump(); c.bump(); return c.get(); }",
+    [{ name: "f", args: [] }]],
+  // Fields of every width, so the struct's field types are not all i32.
+  ["struct S { i64 a; f64 b; } export f64 f() { S s = S(4294967296, 1.5); return (s.a as~ f64) + s.b; }",
+    [{ name: "f", args: [] }]],
+  // A struct holding an array, and an array of a wider type beside it.
+  ["struct S { i32[] xs; } export i32 f() { S s = S(i32[](7, 8)); return s.xs[1] + s.xs.len(); }",
+    [{ name: "f", args: [] }]],
+  // A struct crossing a call, and one nested in another.
+  ["struct P { i32 x; } i32 take(P p) { return p.x; } export i32 f() { return take(P(11)); }",
+    [{ name: "f", args: [] }]],
+  ["struct Inner { i32 v; } struct Outer { Inner i; } export i32 f() { Outer o = Outer(Inner(6)); return o.i.v; }",
+    [{ name: "f", args: [] }]],
+  ["struct Inner { i32 v; } struct Outer { Inner i; } export i32 f() { Outer o = Outer(Inner(6)); o.i.v = 9; return o.i.v; }",
+    [{ name: "f", args: [] }]],
+  // Two structs, so the type indices have to be distinct and follow the arrays.
+  ["struct A { i32 a; } struct B { i32 b; } export i32 f() { A x = A(2); B y = B(3); return x.a * y.b; }",
+    [{ name: "f", args: [] }]],
+  // A struct in a loop, mutated each time round.
+  ["struct C { i32 n; } export i32 f(i32 k) { C c = C(0); for (i32 i = 0; i < k; i++) { c.n = c.n + i; } return c.n; }",
+    [{ name: "f", args: [5] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

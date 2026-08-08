@@ -176,6 +176,11 @@ void writeValType(B out, Env env, string t) {
     out.u32leb(env.arrayType(t));
     return;
   }
+  if (env.isStructName(t)) {
+    out.byte(100);
+    out.u32leb(env.structType(t));
+    return;
+  }
   out.byte(valType(t));
 }
 
@@ -244,9 +249,35 @@ export struct Env {
    */
   string[] arrayTypes;
   i32 arrayCount;
+  /**
+   * The structs, in the order their type indices were handed out, and their fields flat beside them.
+   *
+   * A struct is the second declared type and shares the index space with the arrays, so both are
+   * collected before the type section is written. The fields are flat — name, type, and which struct
+   * owns them — for the same reason every table in this package is: wac has no growable array of
+   * arrays, and the index is the answer.
+   */
+  string[] structNames;
+  i32 structCount;
+  string[] fieldOwners;
+  string[] fieldNames;
+  string[] fieldTypes;
+  i32 fieldCount;
   string[] funcs;
   /** Each function's return type, so a call has one without re-reading the declaration. */
   string[] funcReturns;
+  /**
+   * Each function's parameter types, flat.
+   *
+   * Needed for the same reason a field's type is: an argument that is a **literal** takes the type of
+   * the slot it fills, and `g(4294967296)` is an `i64` constant or a zero depending on whether that
+   * slot is known. Recorded rather than looked up, because a call site has a name and not a
+   * declaration.
+   */
+  string[] funcParamTypes;
+  i32[] funcParamAt;
+  i32[] funcParamCount;
+  i32 funcParamTotal;
   i32 funcCount;
 
   /** A local's wac type, or `""` when the name is not one. */
@@ -290,7 +321,13 @@ export struct Env {
     return this.localCount - 1;
   }
 
-  /** The wasm type index for an array type, adding it if this is the first sighting. */
+  /**
+   * The wasm type index for an array type, adding it if this is the first sighting.
+   *
+   * Arrays occupy the first block of indices and structs the second, so a struct declared later
+   * cannot renumber an array. Both are known before the section is written, which is what makes a
+   * fixed split possible at all.
+   */
   i32 arrayType(this, string t) {
     for (i32 i = 0; i < this.arrayCount; i++) {
       if (this.arrayTypes[i] == t) { return i; }
@@ -299,6 +336,72 @@ export struct Env {
     this.arrayTypes[this.arrayCount] = t;
     this.arrayCount = this.arrayCount + 1;
     return this.arrayCount - 1;
+  }
+
+  /** A struct's type index, which follows the arrays. */
+  i32 structType(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return this.arrayCount + i; }
+    }
+    return -1;
+  }
+
+  bool isStructName(const this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  /** Which of a struct's fields this is, in declaration order, or -1. */
+  i32 fieldIndex(const this, string owner, string field) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] != owner) { continue; }
+      if (this.fieldNames[i] == field) { return n; }
+      n = n + 1;
+    }
+    return -1;
+  }
+
+  /** The `i`th field's type, for a positional construction. */
+  string fieldTypeAt(const this, string owner, i32 i) {
+    i32 n = 0;
+    for (i32 f = 0; f < this.fieldCount; f++) {
+      if (this.fieldOwners[f] != owner) { continue; }
+      if (n == i) { return this.fieldTypes[f]; }
+      n = n + 1;
+    }
+    return "";
+  }
+
+  /** A function's `i`th parameter type, so an argument knows what slot it fills. */
+  string paramTypeAt(const this, i32 at, i32 i) {
+    if (at < 0 || i >= this.funcParamCount[at]) { return ""; }
+    return this.funcParamTypes[this.funcParamAt[at] + i];
+  }
+
+  /** Record a function, with its parameters, in the order the calls will index them. */
+  void addFunc(this, string name, string ret, string[] ptypes) {
+    if (this.funcCount >= this.funcs.len()) { return; }
+    this.funcs[this.funcCount] = name;
+    this.funcReturns[this.funcCount] = ret;
+    this.funcParamAt[this.funcCount] = this.funcParamTotal;
+    this.funcParamCount[this.funcCount] = ptypes.len();
+    for (i32 i = 0; i < ptypes.len(); i++) {
+      if (this.funcParamTotal >= this.funcParamTypes.len()) { break; }
+      this.funcParamTypes[this.funcParamTotal] = ptypes[i];
+      this.funcParamTotal = this.funcParamTotal + 1;
+    }
+    this.funcCount = this.funcCount + 1;
+  }
+
+  /** A field's wac type, which decides how it is read and what it produces. */
+  string fieldType(const this, string owner, string field) {
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] == owner && this.fieldNames[i] == field) { return this.fieldTypes[i]; }
+    }
+    return "";
   }
 
   void addLocal(this, string name, string ty) {
@@ -392,17 +495,54 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
+  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[16](), 0, string[16](), 0, string[64](), string[64](), string[64](), 0, string[64](), string[64](), string[64](), i32[64](), i32[64](), 0, 0);
+
+  // Structs first of all: their fields are what a construction and every access are about, and a
+  // method's receiver type is one of them.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string sname = tokenTextOf(src, lexed, nameTok);
+        if (env.structCount < env.structNames.len()) {
+          env.structNames[env.structCount] = sname;
+          env.structCount = env.structCount + 1;
+        }
+        for (i32 i = 0; i < fields.len(); i++) {
+          if (env.fieldCount >= env.fieldNames.len()) { break; }
+          env.fieldOwners[env.fieldCount] = sname;
+          env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
+          env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
+          env.fieldCount = env.fieldCount + 1;
+        }
+      }
+      else: { }
+    }
+  }
+
   // Function names first, over the whole file: a call names one declared elsewhere and often further
   // down, which is the same argument the checker makes for collecting signatures before bodies.
-  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[16](), 0, string[64](), string[64](), 0);
   for (i32 d = 0; d < prog.decls.len(); d++) {
-    if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        if (env.funcCount < env.funcs.len()) {
-          env.funcs[env.funcCount] = tokenTextOf(src, lexed, nameTok);
-          env.funcReturns[env.funcCount] = typeOfTyName(src, lexed, returnType);
-          env.funcCount = env.funcCount + 1;
+        if (typeParams.len() > 0) { continue; }
+        string[] pts = string[params.len()]();
+        for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(src, lexed, params[i].type); }
+        env.addFunc(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, returnType), pts);
+      }
+      // A method is a function with the receiver as its first parameter — which is what the call site
+      // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
+      // function of the same name is a different entry.
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string owner = tokenTextOf(src, lexed, nameTok);
+        for (i32 i = 0; i < methods.len(); i++) {
+          string[] mpts = string[methods[i].params.len()]();
+          for (i32 j = 0; j < methods[i].params.len(); j++) {
+            mpts[j] = typeOfTyName(src, lexed, methods[i].params[j].type);
+          }
+          env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
+                      typeOfTyName(src, lexed, methods[i].returnType), mpts);
         }
       }
       else: { }
@@ -416,11 +556,15 @@ export u8[] emitModule(u8[] src) {
   i32 count = 0;
   i32 exportCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
-    if (!emittable(prog.decls[d])) { continue; }
-    count = count + 1;
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        count = count + 1;
         if (exported) { exportCount = exportCount + 1; }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        count = count + methods.len();
       }
       else: { }
     }
@@ -430,9 +574,9 @@ export u8[] emitModule(u8[] src) {
   // signature and every local has been looked at. Walking the declarations twice is the cost of a
   // type that has to be declared before it is used.
   for (i32 d = 0; d < prog.decls.len(); d++) {
-    if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(src, lexed, returnType);
         if (isArrayType(rt)) { env.arrayType(rt); }
         for (i32 i = 0; i < params.len(); i++) {
@@ -440,6 +584,26 @@ export u8[] emitModule(u8[] src) {
           if (isArrayType(pt)) { env.arrayType(pt); }
         }
         collectArrayTypes(env, src, lexed, body);
+      }
+      // A struct's **fields** name types too, and an array among them has to be registered before the
+      // section is written — otherwise `writeValType` hands out an index while writing it, past the
+      // count already emitted, and the module refers to a type that is not there. The symptom is
+      // *"invalid array index"*, which names the consequence and not the cause.
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 i = 0; i < fields.len(); i++) {
+          string ft2 = typeOfTyName(src, lexed, fields[i].type);
+          if (isArrayType(ft2)) { env.arrayType(ft2); }
+        }
+        for (i32 m = 0; m < methods.len(); m++) {
+          string mrt = typeOfTyName(src, lexed, methods[m].returnType);
+          if (isArrayType(mrt)) { env.arrayType(mrt); }
+          for (i32 i = 0; i < methods[m].params.len(); i++) {
+            string mpt = typeOfTyName(src, lexed, methods[m].params[i].type);
+            if (isArrayType(mpt)) { env.arrayType(mpt); }
+          }
+          collectArrayTypes(env, src, lexed, methods[m].body);
+        }
       }
       else: { }
     }
@@ -449,71 +613,45 @@ export u8[] emitModule(u8[] src) {
   exports.u32leb(exportCount);
   code.u32leb(count);
 
-  types.u32leb(count + env.arrayCount);
+  i32 declTypes = env.arrayCount + env.structCount;
+  types.u32leb(count + declTypes);
   for (i32 i = 0; i < env.arrayCount; i++) {
     types.byte(94);   // array
     types.byte(storageType(elemOf(env.arrayTypes[i])));
     types.byte(1);    // mutable, which every wac array is
   }
+  for (i32 i = 0; i < env.structCount; i++) {
+    types.byte(95);   // struct
+    i32 n = 0;
+    for (i32 f = 0; f < env.fieldCount; f++) {
+      if (env.fieldOwners[f] == env.structNames[i]) { n = n + 1; }
+    }
+    types.u32leb(n);
+    for (i32 f = 0; f < env.fieldCount; f++) {
+      if (env.fieldOwners[f] != env.structNames[i]) { continue; }
+      writeValType(types, env, env.fieldTypes[f]);
+      types.byte(1);   // mutable
+    }
+  }
 
   i32 index = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
-    if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string owner = tokenTextOf(src, lexed, nameTok);
+        for (i32 m = 0; m < methods.len(); m++) {
+          emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                       "", methods[m].returnType, methods[m].params, methods[m].body,
+                       methods[m].hasThis ? owner : "", index, declTypes);
+          index = index + 1;
+        }
+      }
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        // One type per function, never deduplicated. The reference pools them, and a canonical form
-        // resolves types by structure precisely so that difference is not a mismatch.
-        types.byte(96);
-        types.u32leb(params.len());
-        for (i32 i = 0; i < params.len(); i++) {
-          writeValType(types, env, typeOfTyName(src, lexed, params[i].type));
-        }
-        string ret = typeOfTyName(src, lexed, returnType);
-        bool returnsValue = ret != "void";
-        types.u32leb(returnsValue ? 1 : 0);
-        if (returnsValue) { writeValType(types, env, ret); }
-
-        funcs.u32leb(index + env.arrayCount);
-        if (exported) {
-          exports.name(tokenTextOf(src, lexed, nameTok));
-          exports.byte(0);
-          exports.u32leb(index);
-        }
-
-        env.localCount = 0;
-        for (i32 i = 0; i < params.len(); i++) {
-          env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
-                       typeOfTyName(src, lexed, params[i].type));
-        }
-        env.paramCount = params.len();
-        collectLocals(env, src, lexed, body);
-
-        // **The body first, then the declaration that precedes it.** A scratch local is allocated
-        // while emitting — a saturating cast needs one and nothing before the cast knows that — so
-        // the count is not final until the last instruction is written. Same shape as a section,
-        // whose length is only knowable once its contents are: build it apart, then write the header
-        // and splice it in.
-        B insns = B.create();
-        emitBody(insns, src, lexed, env, body);
-
-        B fb = B.create();
-        // One entry per local rather than runs of a repeated type. Both are legal, the runs form is
-        // shorter, and a canonical module form flattens the difference — which is the same argument
-        // that keeps this emitter from pooling function types.
-        i32 extra = env.localCount - env.paramCount;
-        fb.u32leb(extra);
-        for (i32 i = env.paramCount; i < env.localCount; i++) {
-          fb.u32leb(1);
-          writeValType(fb, env, env.localTypes[i]);
-        }
-        fb.bytes(insns);
-        // Every wac function that returns a value returns on all paths — the checker says so — so the
-        // fall-through is unreachable rather than missing. Saying it explicitly is what makes the
-        // block well-typed without inventing a value for a path nothing takes.
-        if (returnsValue) { fb.byte(0); }
-        fb.byte(11);    // `end`
-        code.u32leb(fb.len);
-        code.bytes(fb);
+        if (typeParams.len() > 0) { continue; }
+        emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                     exported ? tokenTextOf(src, lexed, nameTok) : "",
+                     returnType, params, body, "", index, declTypes);
         index = index + 1;
       }
       else: { }
@@ -590,6 +728,17 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     case Assign(target, op, rhs): {
       match (target.kind) {
+        case LField(base, nameTok): {
+          string ot3 = typeOfLv(src, lexed, env, base);
+          if (!env.isStructName(ot3)) { return; }
+          string fname = tokenTextOf(src, lexed, nameTok);
+          emitLvalue(fb, src, lexed, env, base);
+          emitExprAt(fb, src, lexed, env, rhs, env.fieldType(ot3, fname));
+          fb.byte(251);
+          fb.u32leb(5);   // struct.set
+          fb.u32leb(env.structType(ot3));
+          fb.u32leb(env.fieldIndex(ot3, fname));
+        }
         case LIndex(base, index): {
           // The array and the index are pushed before the value, which is the order `array.set`
           // wants and the reverse of how the statement reads.
@@ -904,10 +1053,23 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          i32 at = env.funcAt(tokenTextOf(src, lexed, tok));
+          string cname = tokenTextOf(src, lexed, tok);
+          // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
+          // name is a struct — the same fork the checker makes, one compiler apart.
+          if (env.isStructName(cname)) {
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], env.fieldTypeAt(cname, i));
+            }
+            fb.byte(251);
+            fb.u32leb(0);   // struct.new — fields in declaration order
+            fb.u32leb(env.structType(cname));
+            return;
+          }
+          i32 at = env.funcAt(cname);
           if (at < 0) { return; }
-          string ft = env.funcReturns[at];
-          for (i32 i = 0; i < args.len(); i++) { emitExpr(fb, src, lexed, env, args[i]); }
+          for (i32 i = 0; i < args.len(); i++) {
+            emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
+          }
           fb.byte(16);   // call
           fb.u32leb(at);
         }
@@ -955,16 +1117,39 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitArrayGet(fb, env, at2);
     }
     case Call(callee, args): {
-      // `a.len()` is the only method this slice knows, and it is an instruction rather than a call.
       match (callee.kind) {
         case Member(obj, nameTok): {
-          if (tokenTextOf(src, lexed, nameTok) != "len") { return; }
+          string mname = tokenTextOf(src, lexed, nameTok);
+          string ot = typeOfE(src, lexed, env, obj);
+          // `a.len()` is an instruction rather than a call, which is the one method wasm has itself.
+          if (isArrayType(ot) && mname == "len") {
+            emitExpr(fb, src, lexed, env, obj);
+            fb.byte(251);
+            fb.u32leb(15);   // array.len
+            return;
+          }
+          // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
+          // first parameter, which is the whole of what a method is here.
+          i32 at = env.funcAt(ot + "." + mname);
+          if (at < 0) { return; }
           emitExpr(fb, src, lexed, env, obj);
-          fb.byte(251);
-          fb.u32leb(15);   // array.len
+          for (i32 i = 0; i < args.len(); i++) {
+            emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
+          }
+          fb.byte(16);
+          fb.u32leb(at);
         }
         else: { }
       }
+    }
+    case Member(obj, nameTok): {
+      string ot2 = typeOfE(src, lexed, env, obj);
+      if (!env.isStructName(ot2)) { return; }
+      emitExpr(fb, src, lexed, env, obj);
+      fb.byte(251);
+      fb.u32leb(2);   // struct.get
+      fb.u32leb(env.structType(ot2));
+      fb.u32leb(env.fieldIndex(ot2, tokenTextOf(src, lexed, nameTok)));
     }
     case Ternary(cond, then, els): {
       emitExpr(fb, src, lexed, env, cond);
@@ -998,6 +1183,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Ident(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
     case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
     case ArrNew(elem, size, fill, elements): { return typeOfTyName(src, lexed, elem) + "[]"; }
+    case Member(obj, nameTok): {
+      string o = typeOfE(src, lexed, env, obj);
+      return env.isStructName(o) ? env.fieldType(o, tokenTextOf(src, lexed, nameTok)) : "";
+    }
     case Index(arr, index): {
       string a = typeOfE(src, lexed, env, arr);
       if (!isArrayType(a)) { return ""; }
@@ -1010,7 +1199,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Call(callee, args): {
       match (callee.kind) {
         case Member(obj, nameTok): {
-          return tokenTextOf(src, lexed, nameTok) == "len" ? "i32" : "";
+          string mn = tokenTextOf(src, lexed, nameTok);
+          string ot = typeOfE(src, lexed, env, obj);
+          if (isArrayType(ot) && mn == "len") { return "i32"; }
+          i32 mi = env.funcAt(ot + "." + mn);
+          return mi < 0 ? "" : env.funcReturns[mi];
         }
         else: { return ""; }
       }
@@ -1038,7 +1231,9 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          i32 at = env.funcAt(tokenTextOf(src, lexed, tok));
+          string n2 = tokenTextOf(src, lexed, tok);
+          if (env.isStructName(n2)) { return n2; }
+          i32 at = env.funcAt(n2);
           return at < 0 ? "" : env.funcReturns[at];
         }
         else: { return ""; }
@@ -1311,6 +1506,10 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       string b = typeOfLv(src, lexed, env, base);
       return isArrayType(b) ? elemOf(b) : "";
     }
+    case LField(base, nameTok): {
+      string b = typeOfLv(src, lexed, env, base);
+      return env.isStructName(b) ? env.fieldType(b, tokenTextOf(src, lexed, nameTok)) : "";
+    }
     else: { return ""; }
   }
 }
@@ -1330,6 +1529,82 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
       emitExprAt(fb, src, lexed, env, index, "i32");
       emitArrayGet(fb, env, bt);
     }
+    case LField(base, nameTok): {
+      string bt2 = typeOfLv(src, lexed, env, base);
+      if (!env.isStructName(bt2)) { return; }
+      emitLvalue(fb, src, lexed, env, base);
+      fb.byte(251);
+      fb.u32leb(2);
+      fb.u32leb(env.structType(bt2));
+      fb.u32leb(env.fieldIndex(bt2, tokenTextOf(src, lexed, nameTok)));
+    }
     else: { }
   }
+}
+
+/**
+ * One function: its type, its index, its export if it has one, and its body.
+ *
+ * Methods and plain functions differ in exactly one thing — a method has a **receiver**, which is a
+ * parameter before all the others and is called `this` inside. Everything else about them is the
+ * same, which is why they share this rather than being two nearly identical loops.
+ *
+ * `exportName` is empty for a function nobody exports, and every method: wac exports a struct's
+ * methods through the struct, and this slice has no way to hand one across the boundary.
+ */
+void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
+                  string exportName, Ty returnType, Param[] params, Stmt[] body, string receiver,
+                  i32 index, i32 declTypes) {
+  // One type per function, never deduplicated. The reference pools them, and a canonical form
+  // resolves types by structure precisely so that difference is not a mismatch.
+  types.byte(96);
+  types.u32leb(params.len() + (receiver == "" ? 0 : 1));
+  if (receiver != "") { writeValType(types, env, receiver); }
+  for (i32 i = 0; i < params.len(); i++) {
+    writeValType(types, env, typeOfTyName(src, lexed, params[i].type));
+  }
+  string ret = typeOfTyName(src, lexed, returnType);
+  bool returnsValue = ret != "void";
+  types.u32leb(returnsValue ? 1 : 0);
+  if (returnsValue) { writeValType(types, env, ret); }
+
+  funcs.u32leb(index + declTypes);
+  if (exportName != "") {
+    exports.name(exportName);
+    exports.byte(0);
+    exports.u32leb(index);
+  }
+
+  env.localCount = 0;
+  if (receiver != "") { env.addLocal("this", receiver); }
+  for (i32 i = 0; i < params.len(); i++) {
+    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
+                 typeOfTyName(src, lexed, params[i].type));
+  }
+  env.paramCount = env.localCount;
+  collectLocals(env, src, lexed, body);
+
+  // **The body first, then the declaration that precedes it.** A scratch local is allocated while
+  // emitting — a saturating cast needs one and nothing before the cast knows that — so the count is
+  // not final until the last instruction is written. Same shape as a section, whose length is only
+  // knowable once its contents are: build it apart, then write the header and splice it in.
+  B insns = B.create();
+  emitBody(insns, src, lexed, env, body);
+
+  B fb = B.create();
+  // One entry per local rather than runs of a repeated type. Both are legal, the runs form is
+  // shorter, and a canonical module form flattens the difference.
+  i32 extra = env.localCount - env.paramCount;
+  fb.u32leb(extra);
+  for (i32 i = env.paramCount; i < env.localCount; i++) {
+    fb.u32leb(1);
+    writeValType(fb, env, env.localTypes[i]);
+  }
+  fb.bytes(insns);
+  // Every wac function that returns a value returns on all paths — the checker says so — so the
+  // fall-through is unreachable rather than missing.
+  if (returnsValue) { fb.byte(0); }
+  fb.byte(11);    // `end`
+  code.u32leb(fb.len);
+  code.bytes(fb);
 }

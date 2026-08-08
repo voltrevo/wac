@@ -1183,6 +1183,35 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 4 gains structs, and a method turns out to be a function
+
+**98 programs, 140 calls, every answer agreeing.** Construction, field read and write, methods with a
+receiver, nesting, structs through calls, and a struct holding an array.
+
+**A method is a function whose first parameter is the receiver** — that is the whole of it. The
+reference's own bytes say so: a method call on `p` is `local.get p; call 1`, and the callee's type is
+`(ref $P) -> i32`. So methods and plain functions now share one emitter, differing in a single
+argument, and `this` is a local like any other. The thing that looked like it needed a mechanism
+needed a parameter.
+
+The encodings, measured as before: a struct type is `5f <n> <type> <mut>…`, `struct.new` is
+`fb 00 <t>` with the fields pushed in declaration order, `get` is `fb 02 <t> <field>` and `set` is
+`fb 05`. Structs share the type index space with the arrays, taking the block after them, which is
+possible only because both sets are complete before the section is written.
+
+**Which is where the bug was.** A struct *field* of array type was not collected in the pre-pass, so
+`writeValType` handed out an index while the section was being written — past the count already
+emitted. The module then referred to a type that was not there, and wasm said *"invalid array index:
+0"*, which names the consequence and not the cause. Every place a type can be *named* has to be
+visited before the section is written, and a field is one of them: the pre-pass now walks struct
+fields, method signatures and method bodies as well as functions.
+
+One thing removed rather than left: `paramTypeAt` was briefly a stub returning `""`. It compiled and
+every test passed, because the only thing it costs is an `i64` literal argument emitted at `i32`
+width — a hole that no case happened to have. Function parameter types are now recorded, for the same
+reason field types are: a literal takes the type of the slot it fills, and a call site has a name
+rather than a declaration.
+
 ### Rung 4 gains arrays, the first GC type
 
 **86 programs, 128 calls, every answer agreeing.** Construction in all three spellings, indexed read
