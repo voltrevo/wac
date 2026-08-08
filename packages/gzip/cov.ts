@@ -280,19 +280,6 @@ const UNREACHABLE: { file: string; line: number; snippet: string; why: string }[
       "matching code. Kept as defence: it stops being dead if the fixed distance table is " +
       "widened to the 32 patterns 5 bits allow.",
   },
-  {
-    file: "packages/gzip/src/inflate.wac",
-    line: 786,
-    snippet: "return br.broken == \"\" ? 0 : 1;",
-    why: "The non-zero half — a member that decoded *and* a source that broke. Listed here as an " +
-      "argument rather than a construction, which is a weaker claim than the entries above: fill " +
-      "only reaches the source once `data` is spent, and it then sets `drained`, so after `broken` " +
-      "is set at most the 32 bits already in `bitBuf` remain. Every path to this line still has an " +
-      "eight-byte trailer to read, which cannot come from those bits, so the read traps and the " +
-      "line is never reached. If that holds, the comment above it promises a caller something this " +
-      "path cannot deliver — see wac-mono 0102, which is the question of whether the reader should " +
-      "keep enough to finish a member after a failed refill, not a thing to quietly change here.",
-  },
 ];
 
 /** Every (file, line) with at least one branch point that never ran. */

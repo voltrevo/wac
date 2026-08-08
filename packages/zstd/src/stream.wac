@@ -68,6 +68,12 @@ export struct Pull {
         case End: { this.ended = true; }
         // A read that failed is not an end of input: reporting it as one is how a truncated download
         // becomes a valid short file. `packages/gzip` learnt this the same way (0006).
+        //
+        // **It traps, and a caller cannot tell it from a corrupt frame.** That is the same limit
+        // `gunzipStream` has and it is stated in both places rather than in neither: there is no
+        // channel out of a decoder past a trap, and `why` is dropped here for want of one. wac-mono
+        // 0102 is where the two are decided together — this file has no `broken` field to put it in,
+        // and adding one would only move the same problem.
         case Failed(why): { trap; }
       }
     }

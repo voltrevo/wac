@@ -781,7 +781,16 @@ export i32 gunzipStream(fn[Read()] read, fn[bool(u8[])] write) {
 
   if (crc32Finish(out.crc) != wantCrc) { trap; }
   if (out.total() != wantSize) { trap; }
-  // The member decoded and checked out. If the *source* broke along the way, that is a separate
-  // fact — one that a caller which just wrote the output somewhere needs before it reports success.
-  return br.broken == "" ? 0 : 1;
+  // **A source failure and a corrupt archive are indistinguishable from here**, and this used to claim
+  // otherwise: it ended `return br.broken == "" ? 0 : 1`, over a comment about telling a caller that
+  // its output is only the first part of its data. The `1` is unreachable. wac-mono 0102 has the
+  // argument and it holds — after a failed read the reader is drained with at most 32 bits, and every
+  // path to here still needs an eight-byte trailer, so the read traps before this line.
+  //
+  // What it would take is not a line: the two places that run out of input — `skip`, and `copyBytes`'s
+  // loop — trap, and a decoder cannot report anything past a trap. Not trapping means threading a
+  // status back through every symbol read, and a decoder that keeps going after a failed read with a
+  // status nobody checked is how silent corruption is written. So the promise is withdrawn rather than
+  // half-kept, and `0102` records the shape a real fix has.
+  return 0;
 }
