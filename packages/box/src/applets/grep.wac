@@ -66,6 +66,16 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
    */
   bool asText = has(a, 'a');
   bool skipBinary = has(a, 'I');
+  /**
+   * `-l` lists the files that matched; `-L` the ones that did not.
+   *
+   * They **win over `-c` and `-n`** — `grep -lc x f` prints the name, not a count — and the status is
+   * still about *matching* rather than about what was listed: `grep -L x a b` where neither matched
+   * lists both and exits 1. Measured, because "it printed something, so 0" is the obvious wrong rule.
+   */
+  bool listHits = has(a, 'l');
+  bool listMisses = has(a, 'L');
+  bool listing = listHits || listMisses;
   i32 matches = 0;
   Sink out = Sink.create(cli);
 
@@ -128,14 +138,21 @@ export i32 grep(Core core, Cli cli, Fs fs, Args a) {
       // each is a park and a wake. Issue 0039.
       // A binary file's matching *lines* are not printed — the message below stands in for them — while
       // `-c`, `-l` and `-q` are unaffected, because a count is not a line of the file.
-      if (binary) { continue; }
+      if (binary || listing) { continue; }
       if (!out.line(where + (number ? itoa(n) + ":" + text : text))) { break; }
     }
-    // `-c` prints a count for each file, with the name in front when there is more than one.
-    if (countOnly) { out.line(where + itoa(here)); }
+    string named = in.label == "" ? "(standard input)" : in.label;
+    if (listHits) {
+      if (here > 0) { out.line(named); }
+    } else if (listMisses) {
+      if (here == 0) { out.line(named); }
+    } else if (countOnly) {
+      // `-c` prints a count for each file, with the name in front when there is more than one.
+      out.line(where + itoa(here));
+    }
     // GNU's sentence, on standard error, once per file that matched. `(standard input)` is the name it
     // uses when there is no operand, and it uses it here even though nothing else in this applet does.
-    if (binary && here > 0 && !countOnly && !quiet) {
+    if (binary && here > 0 && !countOnly && !quiet && !listing) {
       out.flush();
       core.warn(a.name + ": " + (in.label == "" ? "(standard input)" : in.label) + ": binary file matches");
     }

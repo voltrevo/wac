@@ -82,7 +82,7 @@ export string implementedFlags(string name) {
   if (name == "base32" || name == "base64") { return "dw"; }
   if (name == "cat") { return "AETbenstv"; }
   if (name == "cut") { return "bcdf"; }
-  if (name == "grep") { return "EIacinqvx"; }
+  if (name == "grep") { return "EILacilnqvx"; }
   if (name == "head") { return "cn"; }
   if (name == "tail") { return "cn"; }
   if (name == "sort") { return "nru"; }

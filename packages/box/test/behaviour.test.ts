@@ -55,6 +55,12 @@ const CASES = [
   "grep -q c bin.txt; echo st=$?", "grep z bin.txt; echo st=$?",
   "grep c clean.txt bin.txt", "grep -I c bin.txt clean.txt", "grep . hi.txt",
   "grep -n c bin.txt", "grep -c . nulsplit.bin", "grep -ac . nulsplit.bin",
+  // `-l` lists what matched and `-L` what did not; both win over `-c` and `-n`, and the *status* is
+  // still about matching rather than about what was listed — `grep -L zzz a b` lists both and exits 1.
+  "grep -l a words.txt dup.txt", "grep -L a words.txt dup.txt",
+  "grep -l zzz words.txt; echo st=$?", "grep -L zzz words.txt dup.txt; echo st=$?",
+  "grep -lc a words.txt", "grep -ln a words.txt", "grep -l c bin.txt",
+  "grep -l a < words.txt", "grep -L zzz < words.txt; echo st=$?",
   "split -l 10 long.txt part; ls part*; rm -f part*",
   "shuf -n 0 long.txt", "strings -n 2 bin.txt",
 ];
