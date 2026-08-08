@@ -409,3 +409,34 @@ scheduler's rather than the machine's load.
 
 Everything else agrees exactly, including `inside` (a program run inside another with a world of its
 own), `twin` (a program that runs itself) and `roundtrip` (the host filesystem end to end).
+
+## Progress — 2026-08-08 (eighth tick), agent-a — **the network, and the arrival test in full**
+
+`connect`, `listen`, `accept`, `recv`, `send` and `closeSocket` over real TCP, behind the net grant.
+Item 6 is finished, and with it every item in this issue.
+
+`example/greet.wac` answers identically on both hosts, peer address and loopback check included. And
+then the thing the network was for:
+
+**`packages/ssh`'s `sshd` runs under wasmtime, and a real OpenSSH client logs into it.** The arrival
+test's last two words — *users and system services* — are met in
+`packages/platform/test/arrival_users.test.ts`: the JavaScript host writes an image with `/etc/passwd`,
+two homes, two `authorized_keys` and two private files with owners and modes; the host with no
+JavaScript in it serves that same file; `ssh(1)` logs in as ada and as grace; each lands in their own
+home with their own `$USER`; each reads their own secret; and ada gets `Permission denied` on grace's.
+
+That is design/0001 step 4's own criterion — "two keys land in two homes and neither can read the
+other's private file" — met **across hosts**, with the world written by one and enforced by the other.
+The enforcement is `packages/fs` reading a mode and an owner *stored in the image*: the image is one
+file owned by whoever ran the process, so the operating system could not do it even if it tried.
+
+### Design notes from the socket work
+
+- **One shared handle table.** `accept` and `connect` finish on a thread, and a socket they produced has
+  to be namable by a handle the guest is given — so the table is the one thing about a store that
+  crosses a thread. Everything else stays put, because a `Val` is not `Send`.
+- **A closed slot is never reused**, so a handle held past a close names nothing rather than naming
+  somebody else's connection. `deno.ts` says the same of its own table, in the same words.
+- **`recv` decides which of a child's two streams before it starts a reader.** The first version started
+  one on standard output and then started a second when it noticed the handle was the error stream,
+  leaving a thread parked on a stream nobody would collect.

@@ -46,11 +46,15 @@ carry live processes or connections.
 the same image in two substantially different hosts and demonstrate the same users, files, installed
 programs, shell behaviour and system services in both, with no implicit access to either host.
 
-> **Passed for files, installed programs and shell behaviour on 2026-08-08**, in
-> `packages/platform/test/arrival.test.ts`: an image written under Deno is the same system under
+> **Passed on 2026-08-08.** All five: files, installed programs and shell behaviour in
+> `packages/platform/test/arrival.test.ts` — an image written under Deno is the same system under
 > wasmtime and back again, all 817 of the shell's differential corpus agree across the two, and a
-> session that changes nothing writes a byte-identical image on either host. **Users and system
-> services are still outstanding** — both need `packages/ssh`, and the native host has no sockets yet.
+> session that changes nothing writes a byte-identical image on either host — and **users and system
+> services** in `arrival_users.test.ts`: `packages/ssh`'s `sshd` under wasmtime serves the image the
+> JavaScript host wrote, a real OpenSSH client logs in as each of two users, each lands in their own
+> home, and neither can read the other's private file. The mode and the owner come out of the image;
+> the whole thing is one file owned by whoever ran the process, so the operating system could not
+> enforce it even if it tried.
 
 Read "substantially different" as **one JavaScript host and one that is not** — D9. Two JavaScript
 hosts satisfy the words and prove nothing, since they share the transport, the worker model and the
