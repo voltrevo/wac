@@ -1814,3 +1814,115 @@ Deno.test("rung 3: a name nothing declares, and every way wac has of declaring o
     }
   }
 });
+
+/**
+ * The families the reference's own tests said were missing, and the QUIET halves that shaped them.
+ *
+ * Three of these rules were written twice. The first version asked the *negative* question — is this
+ * not a reference, is this not nullable, is this not an array — and a negative question is answered
+ * "yes" by every type the checker cannot see. `v is null` on an enum, on a funcref, on a generic
+ * instantiation: 27 files, none of them wrong. Asking the positive question instead — is this a type
+ * I can name as a primitive — only ever fires on something known, which is the direction to be wrong
+ * in for a subset checker.
+ */
+Deno.test("rung 3: operators, members, indexing and the questions they ask", () => {
+  const CAUGHT = [
+    // Declaration positions that cannot hold a type.
+    "struct Bad { void x; }",
+    "void bad(void x) { }",
+    "struct S { i8 x; } export void f() { }",
+    // A return that disagrees with the function's voidness, both directions.
+    "export void bad() { return 1; }",
+    "i32 bad() { return; }",
+    // The three unary demands, and integers where "numeric" is not enough.
+    "export bool bad(i32 x) { return !x; }",
+    "export void bad(bool b) { bool r = -b; }",
+    "export f64 bad(f64 x) { return ~x; }",
+    "export f64 bad(f64 a, f64 b) { return a & b; }",
+    "export i32 bad(i32 x, f64 n) { return x << n; }",
+    "export f64 bad(f64 x) { return x << 1; }",
+    // A compound assignment, reported at the target.
+    "export void bad(i32 x) { x += 1.5; }",
+    // A field that is not there, on a struct and on something with no fields at all.
+    "struct P { i32 x; } export void bad(P p) { i32 y = p.z; }",
+    "struct P { i32 x; } export void bad(P p) { p.z = 1; }",
+    "export void bad(i32 x) { i32 y = x.something; }",
+    "export void bad(i32 x) { x.y = 1; }",
+    // Reaching through a nullable without unwrapping.
+    "struct P { i32 x; } export i32 bad(P? p) { return p.x; }",
+    "struct P { i32 x; } export void bad(P? p) { p.x = 1; }",
+    "struct P { i32 x; void inc(this) { this.x++; } } export void bad(P? p) { p.inc(); }",
+    // Indexing: the operand as an expression, the bracket as an lvalue.
+    "export void bad(i32 x) { i32 y = x[0]; }",
+    "export void bad(i32 x) { x[0] = 1; }",
+    "export void bad(i32[] a) { i32 x = a[true]; }",
+    "export void bad(i32[] a) { a[true] = 0; }",
+    "export void bad() { i32[] a = i32[true](); }",
+    // Ternary, switch, named construction, redundant cast.
+    "export i32 bad(i32 x) { return x ? 1 : 2; }",
+    "export void bad(bool c) { i32 x = c ? 1 : true; }",
+    "export void bad(bool x) { switch (x) { default: { } } }",
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point { x: 1, y: 2, z: 3 }; }",
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point { x: 1 }; }",
+    "export i32 bad(i32 x) { return x as i32; }",
+    // `is` and `!` on something the question does not fit.
+    "export bool bad(i32 x) { return x is null; }",
+    "export bool bad(i32 a, i32 b) { return a is b; }",
+    "struct P { i32 x; } export P bad(P p) { return p!; }",
+  ];
+  const QUIET = [
+    // Every reference kind `is null` is a fair question about — the negative form reported all of
+    // these, and an enum, a funcref and a generic instantiation are exactly what it could not see.
+    "struct P { i32 x; } export bool ok(P? p) { return p is null; }",
+    "enum E { A, B } export bool ok(E? e) { return e is null; }",
+    "export bool ok(i32[]? a) { return a is null; }",
+    "export bool ok(fn[void()]? f) { return f is null; }",
+    "struct Box<T> { T v; } export bool ok(Box<i32>? b) { return b is null; }",
+    "struct P { i32 x; } export bool ok(P a, P b) { return a is b; }",
+    // Unwrapping something that is nullable, including the kinds above.
+    "struct P { i32 x; } export P ok(P? p) { return p!; }",
+    "enum E { A, B } export E ok(E? e) { return e!; }",
+    // A method is not a missing field, and neither is a field of a parent.
+    "struct P { i32 x; i32 m(const this) { return 1; } } export i32 ok(P p) { return p.m(); }",
+    "struct B { i32 b; } struct C : B { f64 c; } export i32 ok(C q) { return q.b; }",
+    // Arrays and strings index; integers of every width are indices.
+    "export i32 ok(i32[] a) { return a[0]; }",
+    "export i32 ok(i32[] a, u32 i) { return a[i]; }",
+    "export i32 ok(string s) { return s[0]; }",
+    // The operators, given what they want.
+    "export i32 ok(i32 a, i32 b) { return a & b; }",
+    "export i64 ok(i64 a, i32 b) { return a << b; }",
+    "export f64 ok(f64 a, f64 b) { return a + b; }",
+    "export void ok(i32 x) { x += 1; }",
+    "export void ok(f64 x) { x += 1.5; }",
+    // A ternary whose branches agree, and one whose literal takes the other's type.
+    "export void ok(bool c) { i32 x = c ? 1 : 2; }",
+    "export void ok(bool c, i32 n) { i32 x = c ? n : 0; }",
+    // A complete named construction, and a switch on what a switch takes.
+    "struct Point { i32 x; i32 y; } export void ok() { Point p = Point { x: 1, y: 2 }; }",
+    "export void ok(i32 x) { switch (x) { case 1: { } default: { } } }",
+    // A void function returning nothing, and a value function returning one.
+    "export void ok() { return; }",
+    "export i32 ok2() { return 1; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

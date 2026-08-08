@@ -862,6 +862,46 @@ One test lost its premise here, which is worth recording because a QUIET list ca
 a name from outside the function was unknowable. It has not been unknowable since the checker gained
 a module scope: the reference calls it *"undefined variable 'later'"* and now so do we, at its column.
 
+### Ten families, and a question asked the wrong way round
+
+**Reference recall: 106 of 124**, from 72, with no false alarms in either corpus or the repo. Spec
+coverage unchanged at 77 of 83 — these are families the spec never sampled, which is the whole reason
+for having a second corpus.
+
+Most of them are unremarkable once measured: `void` is not a type a parameter or a field can have; a
+`return` disagreeing with the function's own voidness, both directions; the unary operators wanting
+three different things (`!` a bool, `-` a number, `~` an integer); a field the owner does not have; a
+member reached through a nullable; indexing something that is not an array. Four are worth keeping:
+
+- **The bitwise operators want integers, which is narrower than numeric.** `a & b` on two `f64`s is
+  refused although the two *agree*, so the same-type rule never saw it — the same shape as the bool
+  case, one operator family along.
+- **A compound assignment is the operator's rule and the assignment's at once**, but reported at the
+  **target**. Literals count here, unlike in a binary expression, because there is no other side for
+  a literal to take its type from: the target settles it.
+- **A method is not a missing field.** Which meant the `Call` case had to walk the *object* rather
+  than the callee — walking the callee reads a method call on `p` as a field access to the
+  method's name and calls it missing, one line before checking it as the method it is.
+- **`x[0]` names the operand as an expression and the bracket as an lvalue**, and the bad-index
+  complaint names the index as an expression and the bracket as an lvalue. An lvalue is one node with
+  one position and the reference uses it for both. Same split as `++`, and it cost a contradiction
+  each time before being measured.
+
+**The lesson of the slot is a question asked the wrong way round.** Three rules were written first as
+*negatives* — is this **not** a reference, is this **not** nullable, is this **not** an array — and a
+negative question is answered "yes" by every type the checker cannot see. `v is null` on an enum, on
+a funcref, on a generic instantiation: **27 files**, none of them doing anything wrong. Asking the
+positive question instead — *is this a type I can name as a primitive* — only ever fires on something
+known.
+
+That is the same principle as "unknown is silence", which this checker has followed from its first
+rule, but it does not look like it when written as a negation. A negation of an incomplete predicate
+is a *complete* predicate about the wrong thing, and the tell is that the false alarms all land on
+the parts of the language the checker models least.
+
+The QUIET half of that test is now one line per reference kind — enum, funcref, array, generic
+instantiation, nullable struct — which is the list that was missing rather than an example of it.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,
