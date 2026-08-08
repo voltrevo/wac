@@ -117,11 +117,20 @@ Deno.test("a spawned applet's error output stays out of the pipe", async () => {
   );
 });
 
-Deno.test("...and a redirection of standard error still refuses rather than approximating", async () => {
-  // `2>` is not supported and says so. Worth pinning beside the streams work: now that a child
-  // really has two of them, the temptation to half-implement this is new.
-  const r = await sh("cat nosuchfile 2>/dev/null");
-  assertEquals(r.err.includes("redirecting fd 2"), true, r.err);
+Deno.test("...and a redirection of standard error takes it, through a spawned applet", async () => {
+  // `2>` refused until 2026-08-08, and this pinned the refusal — "worth pinning beside the streams
+  // work, now that a child really has two of them". The streams are what made implementing it
+  // possible: an applet's complaint arrives on its own handle, so there are two buffers to place.
+  //
+  // Here rather than only in `packages/sh`'s corpus because the *spawned* path is this package's:
+  // `cat` is an applet in another process, and its error stream crosses the bridge before anything
+  // can route it.
+  const dropped = await sh("cat nosuchfile 2>/dev/null; echo st=$?");
+  assertEquals(dropped.err, "", `the complaint should have gone nowhere: ${dropped.err}`);
+  assertEquals(dropped.out, "st=1\n", dropped.err);
+
+  const kept = await sh("cat nosuchfile 2>&1 | wc -l");
+  assertEquals(kept.out.trim(), "1", `the complaint should have gone down the pipe: ${kept.err}`);
 });
 
 // **Tagged flaky against wac-mono 0082**, where it is the one member nobody has reproduced since it was
