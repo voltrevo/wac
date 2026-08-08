@@ -101,6 +101,8 @@ export i32 errArrayElement() { return 18; }
 export i32 errBuiltinArity() { return 19; }
 /** A builtin argument of the wrong type. */
 export i32 errBuiltinArg() { return 20; }
+/** A name used where nothing declares it. */
+export i32 errUndefinedName() { return 35; }
 /** A method that hides a parent's without saying `override`. */
 export i32 errOverrideMissing() { return 21; }
 /** `override` on a method no parent declares. */
@@ -568,6 +570,20 @@ export struct C {
   }
 
   /** The type a name was declared with, or `typeNone` for one this slice never saw. */
+  /**
+   * Whether the name is bound at all, which is a different question from what its type is.
+   *
+   * A match binding is declared with an *unknown* type, so `typeOfName` answers the same for it as
+   * for a name that was never declared. The undefined-variable rule needs the distinction and nothing
+   * else does, which is why this is separate rather than a change to the other.
+   */
+  bool isDeclaredName(const this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return true; }
+    }
+    return false;
+  }
+
   string typeOfName(this, string name) {
     for (i32 i = 0; i < this.nameCount; i++) {
       if (this.names[i] == name) { return this.types[i]; }
@@ -1258,6 +1274,14 @@ void checkExpr(C c, Expr e) {
       if (a == typeNone() || b == typeNone() || a == b) { return; }
       c.report(errOperandMismatch(), e.line, e.col);
     }
+    // A name that nothing declares. The most-missed family in the reference's own tests, and the last
+    // rule here to need a *complete* picture of scope rather than a fact about one construct: every
+    // binder the language has must be known, because anything missed is a false alarm on working
+    // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
+    // functions, structs, enums, imports and the primitive type names are looked up where they live.
+    case Ident(tok): {
+      if (!nameExists(c, tokenText(c, tok))) { c.report(errUndefinedName(), e.line, e.col); }
+    }
     case Unary(op, operand): { checkExpr(c, operand); }
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
@@ -1268,7 +1292,17 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, subject);
       // An expression arm carries a value and no body — one `Arm` type serves both forms, as the
       // reference has it — so the value is the whole of what there is to walk here.
+      //
+      // The bindings are declared *here* rather than in `declareStmt`, because that walks statements
+      // and this is an expression: a `match` used for its value can sit inside an initialiser or a
+      // return, where the declaration pass never goes. Three files said so — `case Some(v): v * 3`
+      // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
+      // value is walked immediately afterwards, and leaving them in scope for the rest of the
+      // function is over-permissive in the silent direction, which is the one to err in.
       for (i32 i = 0; i < arms.len(); i++) {
+        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+        }
         if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
       }
     }
@@ -1418,6 +1452,21 @@ void checkLvalueExprs(C c, Lvalue lv) {
   }
 }
 
+/**
+ * Whether anything in the file binds this name.
+ *
+ * Every binder wac has, in one place, because the undefined-name rule is only as good as this list:
+ * a name it does not know about is a false diagnostic on working code rather than a missed case.
+ * Locals, parameters, `this`, match bindings and imports live in the name table; functions, structs
+ * and enums have tables of their own; and the primitive type names are bound by the language rather
+ * than by anything in the file — `string.fromBytes(b)` puts one in expression position.
+ */
+bool nameExists(C c, string n) {
+  if (c.isDeclaredName(n)) { return true; }
+  if (c.funcAt(n) >= 0 || c.isStruct(n) || c.isEnum(n)) { return true; }
+  return isPrimitiveName(n) || n == "string" || n == "bool" || n == "anyref";
+}
+
 /** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
 bool notBool(C c, Expr e) {
   i32 lit = litKindOf(e);
@@ -1506,12 +1555,20 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named) {
 void checkWrite(C c, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): {
+      // A write to a name nothing declares. Reached here rather than by the expression rule, because
+      // an assignment's target is an `Lvalue` and not an `Expr` — the same rule, one node kind along,
+      // which is the fourth time that distinction has hidden a case.
+      if (!nameExists(c, tokenText(c, tok))) {
+        c.report(errUndefinedName(), lv.line, lv.col);
+        return;
+      }
       if (c.isConstName(tokenText(c, tok))) {
         c.report(errConstVariable(), lv.line, lv.col);
       }
     }
     case LField(base, nameTok): {
       Lvalue root = rootOf(lv);
+      if (undefinedRoot(c, root)) { c.report(errUndefinedName(), root.line, root.col); return; }
       string owner = typeOfLvalue(c, base);
       if (owner != typeNone() && c.isConstField(owner, tokenText(c, nameTok))) {
         c.report(errConstField(), root.line, root.col);
@@ -1522,6 +1579,11 @@ void checkWrite(C c, Lvalue lv) {
       if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
     }
     case LIndex(base, index): {
+      Lvalue idxRoot = rootOf(lv);
+      if (undefinedRoot(c, idxRoot)) {
+        c.report(errUndefinedName(), idxRoot.line, idxRoot.col);
+        return;
+      }
       // A string is not an array with a store: indexing one reads a byte and there is nowhere to put
       // one back. Reported at the index itself rather than at the root, which is where every other
       // complaint in this function goes — the immutability is the string's, not the path's.
@@ -1533,6 +1595,14 @@ void checkWrite(C c, Lvalue lv) {
       if (constPath(c, base)) { c.report(errConstReference(), r.line, r.col); }
     }
     case LUnwrap(base): { checkWrite(c, base); }
+  }
+}
+
+/** Whether the root of a write path is a name nothing declares. */
+bool undefinedRoot(C c, Lvalue root) {
+  match (root.kind) {
+    case LIdent(tok): { return !nameExists(c, tokenText(c, tok)); }
+    else: { return false; }
   }
 }
 
@@ -2125,6 +2195,20 @@ void checkStmt(C c, Stmt s, Ty want) {
 /** Check one program, and return `(code, line, col)` triples in source order. */
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount);
+  // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
+  // imported is in scope for the whole file, so these sit with the module-level constants.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          c.declare(tokenText(c, items[i].aliasTok), typeNone());
+        }
+        if (prefixTok >= 0) { c.declare(tokenText(c, prefixTok), typeNone()); }
+      }
+      else: { }
+    }
+  }
+
   // Module-level `const` declarations, which are in scope in every body and outlive `clearScope`.
   // A write to one is *"cannot assign to constant 'S'"*, which is the const-variable rule reaching a
   // scope it did not have — and reaching it through fields too: `S.v = 9` on a `const P S` is refused

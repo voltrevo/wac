@@ -795,10 +795,72 @@ invariance case and nothing else: fields, `T[]` under a suffix, multi-parameter 
 constructor arguments, and a missing method on an instantiation, each against the reference's exact
 position.
 
-**What is left, all seven:** a bare field name used as a variable; two deep-const cases, one of
+**What is left, all six:** two deep-const cases, one of
 which needs flow analysis (`Counter c = this; c.mutate();`); an `f32` literal out of range, which
 needs the literal's value and not just its text; the two generic cases above, which are inference
 rather than generics; narrowing after `is` in a condition; and a field access on an enum variant.
+
+### A second corpus, and the eight bugs it found in an afternoon
+
+The spec corpus is a sample of the language chosen to *explain* it. The reference's own test file is
+what the reference is actually **held to** — 88 `ok` programs and 124 `fail` ones — and the halves do
+different jobs:
+
+- **The `ok` half is a false-alarm corpus.** Every one type-checks cleanly, so a diagnostic from us is
+  a bug in us, with a named program to look at rather than a file somewhere under `packages/`. The
+  whole-repo silence guard is the same idea over code that happens to exist; this is the same idea
+  over code somebody wrote *because* it was interesting.
+- **The `fail` half is a recall corpus**, denser per family than the spec's.
+
+It found **eight false alarms on the first run**, in four families that the spec corpus and the repo
+guard had both missed for slots on end:
+
+- **`alwaysLeaves` read only the last statement of a body**, so `{ return 1; i32 dead = 2; }` looked
+  like it fell through. Any statement settles it: everything after a `return` is unreachable and the
+  function still always leaves. Four slots of missing-return work never noticed, because no accepted
+  program in the spec corpus has dead code after a return.
+- **A `bool` casts losslessly to every numeric type**, and the other direction is lossy and takes
+  `as!` or `as~` but not `as@`. The cast grid measured numeric pairs only, so the whole `bool` row was
+  *absent* rather than wrong — a grid is only as complete as its axes.
+- **A child goes into a parent's slot without a cast.** Upcasting by assignment is the same fact as
+  upcasting by cast, one syntax along, and nothing in the spec corpus assigns a child to a parent.
+- **`anyref` holds any reference** — struct, array, string, nullable — but not a primitive, so it is
+  not simply "accepts everything".
+
+And one contradiction: **`++` reports at the node's own position**, which differs between the two
+forms. A statement `x++;` starts at the `x`; the expression `return x++` is positioned at the
+operator. Passing the position in rather than deriving it from the operator token lets one function
+serve both.
+
+Recall against it is **printed, not asserted as a floor**. A subset checker that may never lose ground
+on 124 programs is one nobody can refactor — and this slot proved the point, since making generic
+function signatures honest deliberately gave a case back.
+
+### A name nothing declares, which is a rule about the whole file
+
+**Spec coverage: 77 of 83. Reference recall: 72 of 124**, from 59, with no false alarms in either
+corpus or the repo.
+
+`undefined variable` was the most-missed family in the reference's tests at thirteen, and it is the
+last rule here that needs a **complete** picture of scope rather than a fact about one construct.
+Every other rule can be wrong by staying quiet. This one is wrong by *speaking*: any binder the
+language has that the checker does not know about is a false diagnostic on working code. So the
+interesting half of its test is the QUIET list — one entry per way wac has of introducing a name,
+which is what the rule is actually made of.
+
+Two of them were found by the guards rather than by thinking:
+
+- **A match used as an expression binds names too**, and the declaration pass walks statements. So
+  `case Some(v): v * 3` reported `v` as undefined in three files. The bindings are now declared where
+  they are used, which works because an arm's value is walked immediately afterwards.
+- **An assignment's target is an `Lvalue`, not an `Expr`**, so `undeclared = 5;` went unreported by a
+  rule that handles `i32 x = undeclared;`. The same rule, one node kind along — the fourth time that
+  distinction has hidden a case.
+
+One test lost its premise here, which is worth recording because a QUIET list can age out silently.
+`return later;` sat in "a name this slice cannot resolve is silence, not a guess" on the grounds that
+a name from outside the function was unknowable. It has not been unknowable since the checker gained
+a module scope: the reference calls it *"undefined variable 'later'"* and now so do we, at its column.
 
 ### What rung 3's oracle looks like, measured
 

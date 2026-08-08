@@ -263,11 +263,14 @@ Deno.test("rung 3: a returned parameter, every declared type against every param
 });
 
 Deno.test("rung 3: a name this slice cannot resolve is silence, not a guess", () => {
-  // Three shapes where the honest answer is nothing, and all three would be easy to get wrong in the
-  // direction that matters — a false diagnostic at a position the reference has no diagnostic for.
+  // Shapes where the honest answer is nothing, and each would be easy to get wrong in the direction
+  // that matters — a false diagnostic at a position the reference has no diagnostic for.
+  //
+  // `return later;` used to be the first entry here, on the grounds that a name from outside the
+  // function was unknowable. It is not, and has not been since the checker gained a module scope:
+  // the reference calls it *"undefined variable 'later'"* and so do we, at its column. The premise
+  // aged out rather than the rule being wrong, which is a thing a QUIET list can do quietly.
   const QUIET = [
-    // A name from outside the function. There is no cross-module resolution here yet.
-    "export i32 fwd() { return later; }",
     // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
     // the name is poisoned rather than resolved to whichever declaration was seen last.
     'export i32 sh(i32 a) { if (true) { string a = "x"; } return a; }',
@@ -1739,5 +1742,72 @@ Deno.test("rung 3: the reference's own tests — never a false alarm, never a co
   }
   if (contradictions.length !== 0) {
     throw new Error(`${contradictions.length} contradiction(s):\n  ` + contradictions.join("\n  "));
+  }
+});
+
+/**
+ * A name that nothing declares — the most-missed family in the reference's own tests, at thirteen.
+ *
+ * It is the last rule here that needs a **complete** picture of scope rather than a fact about one
+ * construct. Every other rule can be wrong by staying quiet; this one is wrong by speaking, because
+ * any binder the language has that the checker does not know about is a false alarm on working code.
+ * So the QUIET list below is the interesting half: it is one entry per way wac has of introducing a
+ * name, and it is what the rule is actually made of.
+ *
+ * Three of them were found by the repo guard rather than by thinking: `case Some(v): v * 3` binds `v`
+ * in a match used as an *expression*, and the declaration pass walks statements.
+ */
+Deno.test("rung 3: a name nothing declares, and every way wac has of declaring one", () => {
+  const CAUGHT = [
+    "export void bad() { i32 x = y; }",
+    "export void bad() { undeclared = 5; }",
+    "export void bad() { bool y = !undefined_var; }",
+    "export void bad() { i32 x = undefined_var + 1; }",
+    "export i32 bad() { return undefined_var as i32; }",
+    "export bool bad() { return undefined_var is null; }",
+    "export void bad(bool c) { i32 x = c ? undefined_var : 1; }",
+    "export void bad() { i32 y = undefined_var[0]; }",
+    "export void bad() { i32 y = undefined_var!; }",
+    "export void bad() { i32 y = undefined_var.field; }",
+    "struct Foo { i32 count; i32 getCount(const this) { return count; } }",
+  ];
+  const QUIET = [
+    // Every binder, one per line. A gap in any of these is a false alarm rather than a missed case.
+    "export i32 local() { i32 v = 1; return v; }",
+    "export i32 param(i32 v) { return v; }",
+    "const i32 G = 1; export i32 global() { return G; }",
+    "struct P { i32 x; i32 m(const this) { return this.x; } }",
+    "export i32 fwd() { i32 later = 1; return later; }",
+    "export i32 loopVar() { for (i32 i = 0; i < 2; i++) { } return 0; }",
+    "enum E { A(i32 v), B } export i32 armStmt(E e) { match (e) { case A(v): { return v; } case B: { return 0; } } }",
+    // The match *expression* form, whose bindings the declaration pass never reaches.
+    "enum E { A(i32 v), B } export i32 armExpr(E e) { return match (e) { case A(v): v * 3, case B: -1 }; }",
+    // Names that are not variables: a function used as a value, a struct and an enum as receivers,
+    // and the primitive type names, which appear in expression position for the builtin statics.
+    "i32 g(i32 a) { return a; } export i32 callIt() { return g(1); }",
+    "struct P { i32 x; P mk() { return P(1); } } export i32 stat() { return P.mk().x; }",
+    "enum E { A, B } export E variant() { return E.A; }",
+    "export string prim() { return string.fromCodepoint(65); }",
+    "export u64 prim2(f64 x) { return f64.toBits(x); }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
   }
 });
