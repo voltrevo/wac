@@ -154,6 +154,10 @@ struct Frame {
 }
 
 /// The three queues and the status of one spawned child, as the *parent* holds them.
+///
+/// Clonable because a child is named by two handles — its output and its error stream — and every
+/// field is an `Arc`, so the clone is the same child rather than a copy of one.
+#[derive(Clone)]
 struct ChildProc {
     /// What the parent sends becomes the child's standard input.
     stdin: Arc<Stream>,
@@ -162,14 +166,64 @@ struct ChildProc {
     exit: Arc<Exit>,
 }
 
-/// What a handle names. A child has two — one for each of its output streams — because a program has
-/// two streams and merging them is a bug `platform.wac` names by example.
-#[derive(Clone, Copy)]
+/// A socket, as this runtime holds it.
+///
+/// `Arc<TcpStream>` rather than a mutex: `&TcpStream` implements both `Read` and `Write`, so a
+/// `recv` parked on one thread and a `send` on another are the kernel's problem rather than this
+/// runtime's — which is what `example/writeread.wac` exists to ask about.
+#[derive(Clone)]
+enum Sock {
+    Listening(Arc<std::net::TcpListener>),
+    Open(Arc<std::net::TcpStream>),
+}
+
+/// What a handle names.
+///
+/// A child has two — one for each of its output streams — because a program has two streams and
+/// merging them is a bug `platform.wac` names by example.
 enum Handle {
     /// The child's ordinary handle: `send` feeds it, `recv` reads its standard output.
-    Main(usize),
+    Main(ChildProc),
     /// The `errHandle`: `recv` reads its error stream, and nothing is sent to it.
-    Err(usize),
+    Err(ChildProc),
+    /// A socket. `send` writes it, `recv` reads it, `accept` takes from a listening one.
+    Net(Sock),
+}
+
+/// Everything a handle can name, shared with the threads that make them.
+///
+/// **Behind an `Arc<Mutex<…>>` because `accept` and `connect` finish on a thread**, and a socket they
+/// produced has to be namable by a handle the guest is given. Nothing else about a `Store` crosses a
+/// thread — a `Val` is not `Send` — and this is the one table that must.
+///
+/// A closed slot becomes `None` and is **never reused**: a handle held past a close names nothing
+/// rather than naming somebody else's connection, which `deno.ts` says of its own table in the same
+/// words and for the same reason.
+#[derive(Default)]
+struct Handles {
+    slots: Vec<Option<Handle>>,
+}
+
+impl Handles {
+    fn push(&mut self, what: Handle) -> i32 {
+        self.slots.push(Some(what));
+        (self.slots.len() - 1) as i32
+    }
+
+    fn get(&self, h: i32) -> Option<&Handle> {
+        if h < 0 {
+            return None;
+        }
+        self.slots.get(h as usize)?.as_ref()
+    }
+
+    fn close(&mut self, h: i32) {
+        if h >= 0 {
+            if let Some(slot) = self.slots.get_mut(h as usize) {
+                *slot = None;
+            }
+        }
+    }
 }
 
 /// The streams a program has when it *is* a child, rather than the process's own.
@@ -196,8 +250,7 @@ struct Host {
     output: Option<std::fs::File>,
     output_error: String,
     /// Children this program spawned, and the handles that name their streams.
-    children: Vec<ChildProc>,
-    handles: Vec<Handle>,
+    handles: Arc<std::sync::Mutex<Handles>>,
     /// Where this program's relative paths resolve from, when its parent said. Empty means the
     /// process's own directory.
     ///
@@ -229,8 +282,7 @@ impl Host {
             input: None,
             output: None,
             output_error: String::new(),
-            children: Vec::new(),
-            handles: Vec::new(),
+            handles: Arc::new(std::sync::Mutex::new(Handles::default())),
             as_child: None,
             cwd: Vec::new(),
             world: None,
@@ -769,8 +821,8 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            if let Some(i) = child_of(caller, h) {
-                let exit = caller.data().children[i].exit.clone();
+            if let Some(c) = child_of(caller, h) {
+                let exit = c.exit.clone();
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
                 std::thread::spawn(move || table.complete(id, Outcome::I32(exit.wait())));
@@ -983,50 +1035,138 @@ fn dispatch(
                 results,
             );
         }
-        Cap::Connect | Cap::Listen | Cap::Accept => {
-            // **"Not granted" outranks "not implemented"**, and the order is not cosmetic. A program
-            // built without `--allow-net` would be refused on *every* host; telling it that this
-            // particular runtime has no sockets is a fact about the runtime that is both irrelevant
-            // to it and misleading, and `example/probe.wac` reads the difference — it looks for the
-            // words "not granted" and reports `denied` rather than `failed`. The Deno host says
-            // "network access not granted to this application", so this says the same thing.
-            let why = if caller.data().grants.net {
-                "networking is not implemented in the native runtime yet"
-            } else {
-                "network access not granted to this application"
+        // ── The network ──────────────────────────────────────────────────────
+        //
+        // **The grant check comes first**, and the order is not cosmetic. A program built without
+        // `--allow-net` would be refused on *every* host; telling it something about this runtime
+        // instead is both irrelevant and misleading, and `example/probe.wac` reads the difference —
+        // it looks for the words "not granted" and reports `denied` rather than `failed`. The Deno
+        // host says "network access not granted to this application", so this says the same thing.
+        Cap::Connect => {
+            if !caller.data().grants.net {
+                return settle_now(caller, Kind::Socket, denied_net(), results);
+            }
+            let port = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
             };
-            return settle_now(
-                caller,
-                Kind::Socket,
-                Outcome::Socket(-1, why.into(), String::new(), 0),
-                results,
-            );
+            let host = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            let table_handles = caller.data().handles.clone();
+            std::thread::spawn(move || {
+                let outcome = match std::net::TcpStream::connect((host.as_str(), port as u16)) {
+                    Ok(s) => {
+                        // The port this dialled *from*, which is what `Socket.port` is for on a
+                        // connected socket — `platform.wac` distinguishes it from the peer's.
+                        let local = s.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                        let slot = table_handles.lock().unwrap().push(Handle::Net(Sock::Open(Arc::new(s))));
+                        Outcome::Socket(slot, String::new(), String::new(), local)
+                    }
+                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                };
+                table.complete(id, outcome);
+            });
+            return pending_for(caller, Kind::Socket, id, results);
+        }
+        Cap::Listen => {
+            if !caller.data().grants.net {
+                return settle_now(caller, Kind::Socket, denied_net(), results);
+            }
+            let port = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let addr = String::from_utf8_lossy(&read_string(caller, &params[1])?).into_owned();
+            // The empty string is **every interface**, which is what `platform.wac` says and what a
+            // daemon nobody can reach is not. `0.0.0.0` spells the same thing explicitly.
+            let bind = if addr.is_empty() { "0.0.0.0".to_string() } else { addr };
+            let outcome = match std::net::TcpListener::bind((bind.as_str(), port as u16)) {
+                Ok(l) => {
+                    // The port the kernel actually chose, which is the whole reason `listen` answers
+                    // one: a server that asked for 0 could otherwise never learn where it is.
+                    let bound = l.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                    let handle = keep(caller, Handle::Net(Sock::Listening(Arc::new(l))));
+                    Outcome::Socket(handle, String::new(), String::new(), bound)
+                }
+                Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+            };
+            return settle_now(caller, Kind::Socket, outcome, results);
+        }
+        Cap::Accept => {
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let Some(Sock::Listening(listener)) = socket_at(caller, h) else {
+                if !caller.data().grants.net {
+                    return settle_now(caller, Kind::Socket, denied_net(), results);
+                }
+                return settle_now(
+                    caller,
+                    Kind::Socket,
+                    Outcome::Socket(-1, "not a listening socket".into(), String::new(), 0),
+                    results,
+                );
+            };
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            let table_handles = caller.data().handles.clone();
+            std::thread::spawn(move || {
+                let outcome = match listener.accept() {
+                    Ok((s, peer)) => {
+                        // The address only, without the port: `platform.wac` says the port a client
+                        // dialled *from* is of no use to anyone and would invite string parsing at
+                        // every call site.
+                        let who = peer.ip().to_string();
+                        let local = s.local_addr().map(|a| a.port() as i32).unwrap_or(0);
+                        let slot = table_handles.lock().unwrap().push(Handle::Net(Sock::Open(Arc::new(s))));
+                        Outcome::Socket(slot, String::new(), who, local)
+                    }
+                    Err(e) => Outcome::Socket(-1, e.to_string(), String::new(), 0),
+                };
+                table.complete(id, outcome);
+            });
+            return pending_for(caller, Kind::Socket, id, results);
         }
         Cap::Recv => {
             let h = match arg(1) {
                 Val::I32(n) => n,
                 _ => -1,
             };
-            let Some(stream) = readable(caller, h) else {
-                // Not a child's handle, so it could only have been a socket. `Read.Failed` rather
-                // than `Read.End`, which would tell a reader the peer had finished rather than that
-                // there was never a peer — and the same ranking as `connect` above.
-                let why: &[u8] = if caller.data().grants.net {
-                    b"networking is not implemented in the native runtime yet"
-                } else {
-                    b"network access not granted to this application"
-                };
-                return settle_now(caller, Kind::Read, Outcome::Str(why.to_vec()), results);
-            };
-            // On a thread: a child that has not written yet must not stop its parent from reading
-            // another child, which is exactly what a pipeline does.
+            // On a thread either way: a child or a peer that has not written yet must not stop this
+            // program from reading another, which is exactly what a pipeline and a relay both do.
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
-            std::thread::spawn(move || {
-                let bytes = stream.read();
-                table.complete(id, Outcome::Bytes(bytes));
-            });
-            return pending_for(caller, Kind::Read, id, results);
+            // Which of the child's two streams is decided *before* anything starts: the first
+            // version started a reader on standard output and then started a second on the error
+            // stream when it noticed the handle was the wrong one, leaving a thread parked on a
+            // stream nobody would collect.
+            if let Some(stream) = child_stream(caller, h) {
+                std::thread::spawn(move || table.complete(id, Outcome::Bytes(stream.read())));
+                return pending_for(caller, Kind::Read, id, results);
+            }
+            if let Some(Sock::Open(s)) = socket_at(caller, h) {
+                std::thread::spawn(move || {
+                    use std::io::Read;
+                    let mut buf = [0u8; 65536];
+                    let outcome = match (&*s).read(&mut buf) {
+                        Ok(n) => Outcome::Bytes(buf[..n].to_vec()),
+                        Err(e) => Outcome::Str(e.to_string().into_bytes()),
+                    };
+                    table.complete(id, outcome);
+                });
+                return pending_for(caller, Kind::Read, id, results);
+            }
+            caller.data().tickets.discard(id);
+            // Neither, so there is nothing at the other end. `Read.Failed` rather than `Read.End`,
+            // which would tell a reader the peer had finished rather than that there was never one.
+            let why: &[u8] = if caller.data().grants.net {
+                b"no such handle"
+            } else {
+                b"network access not granted to this application"
+            };
+            return settle_now(caller, Kind::Read, Outcome::Str(why.to_vec()), results);
         }
         Cap::Send => {
             let h = match arg(1) {
@@ -1034,11 +1174,20 @@ fn dispatch(
                 _ => -1,
             };
             let bytes = read_u8_array(caller, &params[2])?;
-            let landed = match writable(caller, h) {
-                Some(stream) => stream.write(&bytes),
-                // False is "it did not land", which is what a caller checks and what is true of a
-                // socket in a runtime with no sockets.
-                None => false,
+            // Only a child's *main* handle takes bytes: there is nothing to write to its error
+            // stream, and answering false for that is truer than pretending.
+            let to_child = matches!(caller.data().handles.lock().unwrap().get(h), Some(Handle::Main(_)));
+            let landed = if to_child {
+                match child_of(caller, h) {
+                    Some(c) => c.stdin.write(&bytes),
+                    None => false,
+                }
+            } else if let Some(Sock::Open(s)) = socket_at(caller, h) {
+                use std::io::Write;
+                (&*s).write_all(&bytes).is_ok()
+            } else {
+                // False is "it did not land", which is what a caller checks.
+                false
             };
             return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
         }
@@ -1050,12 +1199,17 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
-            if let Some(i) = child_of(caller, h) {
-                let c = &caller.data().children[i];
+            if let Some(c) = child_of(caller, h) {
                 c.stdin.finish();
                 c.stdout.finish();
                 c.stderr.finish();
             }
+            if let Some(Sock::Open(s)) = socket_at(caller, h) {
+                // Both directions, which is what closing a socket means: a peer blocked on a read
+                // must find out rather than wait for a process that has finished with it.
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+            caller.data().handles.lock().unwrap().close(h);
         }
 
         // ── The filesystem ───────────────────────────────────────────────────
@@ -1283,8 +1437,8 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => -1,
             };
-            if let Some(i) = child_of(caller, h) {
-                caller.data().children[i].stdin.finish();
+            if let Some(c) = child_of(caller, h) {
+                c.stdin.finish();
             }
         }
         Cap::WaitAny => {
@@ -1501,6 +1655,11 @@ fn denied_read() -> Outcome {
     Outcome::FileResult(false, Vec::new(), "this program was not granted reading".into(), FAULT_NOT_GRANTED)
 }
 
+/// The network, refused because the build did not ask for it.
+fn denied_net() -> Outcome {
+    Outcome::Socket(-1, "network access not granted to this application".into(), String::new(), 0)
+}
+
 fn denied_write_change() -> Outcome {
     Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted writing".into())
 }
@@ -1629,38 +1788,37 @@ fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::
 
 // ── Children ──────────────────────────────────────────────────────────────────
 
-/// Which child a handle belongs to, or None if it is not one of ours.
-fn child_of(caller: &Caller<'_, Host>, handle: i32) -> Option<usize> {
-    if handle < 0 {
-        return None;
-    }
-    match caller.data().handles.get(handle as usize) {
-        Some(Handle::Main(i)) | Some(Handle::Err(i)) => Some(*i),
-        None => None,
+/// The child a handle belongs to, or None if it names something else.
+fn child_of(caller: &Caller<'_, Host>, handle: i32) -> Option<ChildProc> {
+    let table = caller.data().handles.lock().unwrap();
+    match table.get(handle)? {
+        Handle::Main(c) | Handle::Err(c) => Some(c.clone()),
+        Handle::Net(_) => None,
     }
 }
 
 /// The stream `recv` reads for this handle: a child's standard output, or its error stream.
-fn readable(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
-    if handle < 0 {
-        return None;
-    }
-    match caller.data().handles.get(handle as usize)? {
-        Handle::Main(i) => Some(caller.data().children[*i].stdout.clone()),
-        Handle::Err(i) => Some(caller.data().children[*i].stderr.clone()),
+fn child_stream(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
+    let table = caller.data().handles.lock().unwrap();
+    match table.get(handle)? {
+        Handle::Main(c) => Some(c.stdout.clone()),
+        Handle::Err(c) => Some(c.stderr.clone()),
+        Handle::Net(_) => None,
     }
 }
 
-/// The stream `send` writes for this handle. **Only the main one**: there is nothing to write to a
-/// child's error stream, and answering false for it is truer than pretending.
-fn writable(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
-    if handle < 0 {
-        return None;
+/// The socket a handle names.
+fn socket_at(caller: &Caller<'_, Host>, handle: i32) -> Option<Sock> {
+    let table = caller.data().handles.lock().unwrap();
+    match table.get(handle)? {
+        Handle::Net(s) => Some(s.clone()),
+        _ => None,
     }
-    match caller.data().handles.get(handle as usize)? {
-        Handle::Main(i) => Some(caller.data().children[*i].stdin.clone()),
-        Handle::Err(_) => None,
-    }
+}
+
+/// Put something in the handle table and answer its handle.
+fn keep(caller: &Caller<'_, Host>, what: Handle) -> i32 {
+    caller.data().handles.lock().unwrap().push(what)
 }
 
 /// Start another instance of this module on its own thread.
@@ -1709,13 +1867,8 @@ fn spawn_instance(
         stderr: stderr.clone(),
         exit: exit.clone(),
     };
-    let host = caller.data_mut();
-    let index = host.children.len();
-    host.children.push(child);
-    host.handles.push(Handle::Main(index));
-    let handle = (host.handles.len() - 1) as i32;
-    host.handles.push(Handle::Err(index));
-    let err_handle = (host.handles.len() - 1) as i32;
+    let handle = keep(caller, Handle::Main(child.clone()));
+    let err_handle = keep(caller, Handle::Err(child));
 
     let streams = AsChild { stdin, stdout, stderr };
     std::thread::spawn(move || {

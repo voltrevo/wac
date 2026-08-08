@@ -88,14 +88,14 @@ the parent's store does, and the type system says so: a `Val` is not `Send`. Gra
 with the parent's rather than trusted, so this is a **confinement** primitive here in a way it cannot
 be in a JavaScript host, where a Deno worker inherits the process's permissions.
 
-**The network is not implemented, and says so in a value rather than by trapping.**
-`Child.handle == -2` means "this world has no `spawn` at all" — `platform.wac` says so in those words,
-because without it "a world that cannot spawn made every spawnable name *fail* rather than fall
-through". `Socket` has the same shape with a negative handle and a reason. So a shell falls back to its
-in-process applets here, which is what lets `wacsh` run over the real filesystem at all.
+**The network works**, over `std::net` behind the net grant — and with it `packages/ssh`'s `sshd` runs
+here, and a real OpenSSH client logs in. That is what completes design/0001's arrival test: the
+JavaScript host writes an image with two users, this host serves it, and each key lands in its own home
+with the other's private file refused.
 
-Where the interface has a value for "not here", answering it is *more* honest than a trap, not less:
-the trap is the thing a caller cannot act on. A runtime that
+Where the interface has a value for "not here", this answers it rather than trapping — `Child.handle
+== -2` means "this world has no `spawn` at all", and a negative `Socket` handle carries its reason. The
+trap is the thing a caller cannot act on. Nothing traps now. A runtime that
 answered an empty file or a closed socket would make every program that used it wrong in a way nothing
 could see, which is design/0001 D6.
 
