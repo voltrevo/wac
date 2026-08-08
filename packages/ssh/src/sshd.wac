@@ -171,9 +171,28 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
   // untouched function fail to compile, because two packages declare a `Writer` and the emitter picked
   // whichever registered first.
   //
-  // Not `externalSpawnable`: `sshd` is not a multi-call binary, so a spawn would start another server
-  // rather than an applet. They run in process, which is what the shell does anyway when it cannot
-  // spawn — and `pushChild` now lets the first of them read the real input rather than a copy (0110).
+  // **Not `externalSpawnable`, and the reason is the seal rather than the entry point.**
+  //
+  // The old comment here said `sshd` is not a multi-call binary, so a spawn would start another
+  // server. That was true and it was fixable in three lines — `boxApplet` first, as `sealedsh` does —
+  // so it was tried, and the result is the reason this line is a `//` and not an assignment:
+  //
+  //     echo inimage > /f; cat /f        ->  cat: /f: No such file or directory
+  //     cat /etc/hostname                ->  13f160bf57e5
+  //
+  // A spawned stage is a **fresh instance**, and `boxApplet` gives a fresh instance `Fs.onHost` — the
+  // host's filesystem, which is what `box` run as a program should have. So a stage of a *sealed*
+  // session could not see the image it was sealed in and could see the machine it was running on.
+  // That is precisely what design/0001 exists to prevent, and it fails silently: the pipeline works,
+  // the answers are wrong, and nothing says so.
+  //
+  // So a session whose filesystem is the system's own cannot spawn its stages. `sealedsh` and
+  // `imaged` are the same and say so more briefly. `packages/box/src/bin/sh.wac` spawns freely
+  // because its world *is* the host's, which is the whole difference.
+  //
+  // The cost is design/0001 step 3's criterion: `ps` here shows the session and itself and never the
+  // pipeline, because the stages ran one at a time. Paying it is right — a `ps` that showed more by
+  // reading the wrong disk would be worse than one that shows less.
   sh.external = boxRun;
   sh.externalNames = boxNames;
   // **A session starts in its own home, as its own user.** `fs.user` was set when the key was matched;
