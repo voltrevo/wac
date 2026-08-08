@@ -690,3 +690,24 @@ an idle machine, and nearly all of that was the state table.
 
 That is worth knowing before budgeting a sweep, and it may be worth teaching the tool: a mutant that
 kills by timeout is still killed, and a run could say so early rather than waiting for the bound.
+
+## 2026-08-08 (agent-a) — `tty` swept, `sh` measured only in how long it takes
+
+**`packages/tty`: 12/12 killed, no survivors.** The whole package, `--operators`, on the first sweep it
+has ever had. That is what a differential against the kernel's own line discipline buys — every rule in
+that module is compared byte for byte against a pty, so a mutant that changes one changes an answer.
+
+**`packages/sh`: not measured.** 132 mutants, and after four minutes the run had not finished
+*compiling* them to find the equivalent ones — 0 of 132 run when it was stopped. The tool said so
+plainly rather than leaving a prefix that reads like a score, which is what the `CUT SHORT` line exists
+for and is why this entry can be honest about it.
+
+That is worth recording as a fact about the sweep rather than about the package: for a 5,000-line
+package the *setup* dominates, because equivalence-checking builds a variant per mutant before anything
+runs. A `sh` sweep wants a tick of its own, or `--sample=N` to bound it. Nobody should start one
+expecting it to fit beside other work.
+
+**And the sweep was not the only thing running.** Two real disagreements with bash turned up by hand
+while it churned, both in this package and neither of them mutation-shaped: a `while` loop's exit status
+was 0 rather than its body's last command, and `cd`'s diagnostics were lower-cased where bash takes them
+from `strerror`. Both fixed, both now in the corpus.

@@ -934,6 +934,25 @@ esac`,
   `! false && echo and`,
   `! test -f /nosuchfile; echo $?`,
   `! ! true; echo $?`,
+
+  // ── what a loop's exit status is ───────────────────────────────────────────
+  //
+  // The last command in the *body*, not the condition that ended it and not 0 — `while` and `until`
+  // evaluate their condition once more than their body, so whatever it answers is the last thing to
+  // touch `$?`, and a shell that sets 0 on the way out throws the body's answer away. `for` was always
+  // right, which is what made this hard to see: the two shapes disagreed with each other.
+  `i=0; while [ $i = 0 ]; do i=1; false; done; echo $?`,
+  `i=0; while [ $i = 0 ]; do i=1; true; done; echo $?`,
+  `while false; do false; done; echo $?`,
+  `until true; do false; done; echo $?`,
+  `i=0; until [ $i = 1 ]; do i=1; false; done; echo $?`,
+  `while true; do false; break; done; echo $?`,
+  `i=0; while [ $i -lt 2 ]; do i=$((i+1)); [ $i = 9 ]; done; echo $?`,
+  `i=0; while [ $i = 0 ]; do i=1; false; done && echo yes || echo no`,
+  `f() { i=0; while [ $i = 0 ]; do i=1; false; done; }; f; echo $?`,
+  `i=0; while [ $i = 0 ]; do i=1; j=0; while [ $j = 0 ]; do j=1; false; done; done; echo $?`,
+  `for i in 1; do false; done; echo $?`,
+  `for i in; do false; done; echo $?`,
 ];
 
 /**

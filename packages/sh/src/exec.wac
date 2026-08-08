@@ -495,8 +495,8 @@ void runAndOr(Shell sh, AndOr list) {
 void runPipeline(Shell sh, Pipeline pipeline) {
   runStages(sh, pipeline);
   // `! cmd` inverts the *pipeline's* status, after everything it did — including a refusal, which is
-  // why this is here rather than beside each `return` above: `! false` is 0 and `! true` is 1, and
-  // anything non-zero inverts to exactly 0 rather than to its complement.
+  // why it is here rather than beside each `return` in `runStages`: `! false` is 0 and `! true` is 1,
+  // and anything non-zero inverts to exactly 0 rather than to its complement.
   if (pipeline.negated) { sh.status = sh.status == 0 ? 1 : 0; }
 }
 
@@ -1054,13 +1054,22 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
   i32 limit = 100000;
   sh.loops = sh.loops + 1;
   sh.status = 0;
+  // **A loop's status is the last command in its *body***, not the condition that ended it and not 0.
+  // `while [ $i = 0 ]; do i=1; false; done` is 1 in bash and was 0 here: the condition is evaluated
+  // once more than the body, so whatever it answers is the last thing to touch `$?` — and setting 0 on
+  // the way out looked like the fix for that and threw the body's answer away instead. A body that
+  // never ran leaves 0, which is what this starts at.
+  i32 body = 0;
   for (i32 i = 0; i < limit; i++) {
     if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
     runList(sh, c.cond);
     if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
     bool go = untilForm ? sh.status != 0 : sh.status == 0;
-    if (!go) { sh.status = 0; sh.loops = sh.loops - 1; return; }
+    if (!go) { sh.status = body; sh.loops = sh.loops - 1; return; }
     runList(sh, c.body);
+    body = sh.status;
+    // A `break` leaves 0 rather than the body's status, which is `break`'s own — bash agrees, and it
+    // falls out here because the builtin succeeded.
     if (caughtBreak(sh)) { sh.loops = sh.loops - 1; return; }
   }
   sh.loops = sh.loops - 1;
@@ -1506,9 +1515,20 @@ Output cd(Shell sh, Vec<string> argv) {
   if (want == "-" && back == "") { return Output.fail("cd: OLDPWD not set\n".toBytes(), 1); }
   string target = want == "-" ? back : sh.resolve(want);
 
+  // **The reasons are `strerror`'s, capitalised**, because that is where bash's come from: `cd nosuch`
+  // says `No such file or directory` and this said `no such file or directory`. Nothing compared them —
+  // every `cd` case in the corpus goes somewhere that exists.
+  //
+  // **Permission is not checked, and that is a gap rather than a rule.** bash refuses a directory it
+  // cannot enter with `Permission denied`; this enters it and the failure surfaces at the first
+  // operation inside. Checking would take a `chdir` the capability world does not have — and the two
+  // things available are both wrong: `readDir` refuses a `--x` directory that is perfectly enterable,
+  // and the mode is only knowable on a memory backing, which would make `cd` answer differently
+  // depending on where the filesystem is. Consistent and incomplete beats inconsistent, which is the
+  // same argument `README.md` makes about `wc`'s widths.
   Stat st = sh.fs.stat(target);
-  if (!st.exists) { return Output.fail(("cd: " + want + ": no such file or directory\n").toBytes(), 1); }
-  if (!st.isDir) { return Output.fail(("cd: " + want + ": not a directory\n").toBytes(), 1); }
+  if (!st.exists) { return Output.fail(("cd: " + want + ": No such file or directory\n").toBytes(), 1); }
+  if (!st.isDir) { return Output.fail(("cd: " + want + ": Not a directory\n").toBytes(), 1); }
 
   sh.cwd = target;
   sh.setVar("OLDPWD", previous);

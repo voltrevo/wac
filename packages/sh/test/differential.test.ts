@@ -709,6 +709,45 @@ Deno.test({
   },
 });
 
+/**
+ * `cd`'s diagnostics, which are the shell's own and still come from `strerror`.
+ *
+ * Compared with bash's prefix removed, and that is the whole reason this is not in the list above:
+ * a *builtin* failing is bash saying `bash: line 1: cd: …` where a program failing is the program
+ * saying its own name. Ours says `cd: …` with no shell in front, which is a deliberate difference —
+ * there is no line number to give — so the comparable part is everything after the prefix.
+ *
+ * The reasons themselves were lower-cased here until 2026-08-08 (`no such file or directory`), and
+ * nothing noticed because every `cd` in the corpus goes somewhere that exists.
+ *
+ * **Permission is not compared, because it is not implemented**: bash refuses a directory it cannot
+ * enter and this enters it. `cd` in `exec.wac` says why — there is no `chdir` in the capability world,
+ * and both available substitutes are wrong in a different direction.
+ */
+Deno.test({
+  name: "`cd` fails in strerror's words, as bash's does",
+  ignore: !haveBash,
+  fn: () => {
+    const strip = (t: string) => t.replace(/^\S*bash: line \d+: /gm, "").trim();
+    for (const script of ["cd /nosuchdir", "cd /etc/passwd", "cd /nosuchdir; echo st=$?"]) {
+      const run = (cmd: string) =>
+        new Deno.Command(cmd, {
+          args: ["-c", script],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+          env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+          clearEnv: true,
+        }).outputSync();
+      const theirs = run("bash");
+      const ours = run(wacshBinary);
+      const dec = new TextDecoder();
+      assertEquals(dec.decode(ours.stderr).trim(), strip(dec.decode(theirs.stderr)), `${script}: stderr`);
+      assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);
+    }
+  },
+});
+
 Deno.test({
   name: "mkdir and rm say what GNU says when they fail",
   ignore: !haveBash,
