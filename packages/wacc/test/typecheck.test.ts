@@ -809,3 +809,56 @@ Deno.test("rung 3: member access, and fields inherited from a parent", () => {
     }
   }
 });
+
+/**
+ * Method bodies, which were not walked at all.
+ *
+ * Every rule this checker has stopped at the edge of a struct: `checkProgram` descended into `Func`
+ * declarations and nothing else, so a method's returns, initialisers, operands and conditions went
+ * entirely unchecked. That is a bigger hole than any single rule, and it was invisible because every
+ * hand-written case in this file is a free function.
+ *
+ * `this` is an ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the
+ * struct's own name — and `this.x` then resolves through the field table that already existed. A
+ * method without `this` is static, and `this` means nothing in it.
+ *
+ * Missing return is reported at the **return type**. A `Method` carries no position of its own, and
+ * the return type is the first thing it has that does, which is also where the reference puts it.
+ */
+Deno.test("rung 3: method bodies, and this", () => {
+  const CAUGHT = [
+    "struct P { i32 x; string bad(this) { return this.x; } }",
+    "struct P { i32 x; void v(this, string s) { i32 n = s; } }",
+    "struct P { i32 x; i32 sh(this, bool c) { if (c) { return 1; } } }",
+    "struct P { i32 x; string s; void w(this) { i32 n = this.s; } }",
+    "struct P { i32 x; bool cmp(this, P other) { return this == other; } }",
+  ];
+  const QUIET = [
+    "struct P { i32 x; i32 ok(this) { return this.x; } }",
+    "struct P { i32 x; i32 st() { return 1; } }",
+    "struct P { i32 x; void nov(this) { } }",
+    "struct P { i32 x; i32 arg(this, i32 n) { return n; } }",
+    // `this` in a static method is not the struct — it is nothing, and must not resolve.
+    "struct P { i32 x; i32 stat(i32 this2) { return this2; } }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

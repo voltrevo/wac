@@ -429,8 +429,28 @@ buy nothing.
 Spec coverage holds at 18 — the corpus's rejections do not include field-type shapes — so this is
 recall on real code again.
 
-Next: more of rung 3 — the nullable-to-non-null family, `this` inside methods (method bodies are not
-walked at all yet), and generics.
+### Method bodies, which were not walked at all
+
+`checkProgram` descended into `Func` declarations and nothing else, so a method's returns,
+initialisers, operands and conditions went **entirely unchecked**. That is a bigger hole than any
+single rule, and it stayed invisible because every hand-written case in the test file is a free
+function — the whole-repo corpus could not see it either, since a rule that reports nothing is exactly
+what that guard is looking for.
+
+`this` is an ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the
+struct's own name — and `this.x` resolves through the field table that already existed. A method
+without `this` is static, and `this` means nothing in it.
+
+Missing return is reported at the **return type**: a `Method` carries no position of its own, unlike a
+`Decl`, and the return type is the first thing it has that does. That is where the reference puts it
+too.
+
+Spec coverage holds at 18, for the fourth slot running. The corpus is 83 rejections drawn from what
+the *spec* chose to document, and it has stopped being the thing that measures progress here — worth
+saying, because a counter that does not move is easy to read as a checker that is not growing.
+
+Next: more of rung 3 — the nullable-to-non-null family, generics, and assignment statements, which are
+checked nowhere: `x = expr` has the same shape as an initialiser and none of the rules reach it.
 
 ### What rung 3's oracle looks like, measured
 
