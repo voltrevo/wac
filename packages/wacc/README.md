@@ -1183,6 +1183,31 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### An import says which name — 118 to 173
+
+Two slots ago a name a file reached that two of its imports declared was declined, because "the
+import list says which files, not which names came from which". That was wrong, and it was wrong in
+the reading rather than in the data: `import { p } from "./a.wac"` says *exactly* which name comes
+from which file, and the parser had the items all along.
+
+Resolving through the named import — this file's own declaration, then **the import that names it**,
+then a file it imports, then anyone — cleared 44 files at a stroke, and it is the language's own rule
+instead of an approximation of it.
+
+Then the eleven behind it: `import { decode as b64decode }`, where the caller writes a name **no file
+declares**. The alias and the declared name travel together through the link, separated by a space no
+identifier can contain — the same trick the synthesized helpers' names use.
+
+| | before | after |
+|---|---|---|
+| whole files | 118 | **173** |
+| invalid | 0 | 0 |
+| blocked by a shared name | 43 | 0 |
+
+What is left is mostly not about names any more: a constant whose initialiser is not a constant
+expression (59), generics (26), a capability import (22, and it needs a host to import *from*), and
+block scoping (14).
+
 ### Function references, and a type that is the right shape and the wrong type
 
 The largest feature the emitter lacked: `ref.func` to obtain one, `call_ref` to invoke it, and a

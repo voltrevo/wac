@@ -576,6 +576,14 @@ export struct Env {
    */
   i32[] importFrom;
   i32[] importTo;
+  /**
+   * The name each edge brings in, and the name the other file declares it under.
+   *
+   * The two differ under `import { decode as b64decode }`: the caller writes `b64decode` and no file
+   * declares one. Nineteen corpus files are that import.
+   */
+  string[] importNames;
+  string[] importDecls;
   i32 importCount;
   string[] declNames;
   i32[] declFiles;
@@ -827,7 +835,7 @@ export struct Env {
                string[16384](), string[16384](), string[16384](), 0,
                string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
                bool[4096](), i32[4096](), 0,
-               i32[512](), 0, i32[4096](), i32[4096](), 0,
+               i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false);
   }
@@ -879,10 +887,20 @@ export struct Env {
     for (i32 i = 0; i < this.declCount; i++) {
       if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
     }
-    // Then a file this one imports — **and only if exactly one of them has it.** A file that
-    // imports two files declaring `encode` is a question this cannot answer: the import list says
-    // which files, not which names came from which, and picking the first is how a call reached a
-    // `pemBlock` with a different signature and pushed a literal where a reference belonged.
+    // Then **the import that names it**. `import { p } from "./a.wac"` says where `p` comes from,
+    // exactly, and using it is the difference between resolving a name and guessing at it — this is
+    // the language's own rule rather than an approximation of it.
+    for (i32 e = 0; e < this.importCount; e++) {
+      if (this.importFrom[e] != f || this.importNames[e] != name) { continue; }
+      for (i32 i = 0; i < this.declCount; i++) {
+        if (this.declNames[i] == this.importDecls[e] && this.declFiles[i] == this.importTo[e]) {
+          return this.declKeys[i];
+        }
+      }
+    }
+    // Then a file this one imports, whatever it named — a type reached through another type is not
+    // in anybody's import list, and **only if exactly one of them has it**, since the file-level
+    // answer is a guess whenever two of them do.
     string imported = "";
     i32 importedCandidates = 0;
     for (i32 i = 0; i < this.declCount; i++) {
@@ -1110,13 +1128,15 @@ i32 countLines(string s) {
   return n;
 }
 
-string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges) {
+string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges,
+                 string[] names) {
   string[] queue = string[256]();
   string[] seen = string[256]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
   string[] fromPath = string[1024]();
   string[] toPath = string[1024]();
+  string[] edgeName = string[1024]();
   i32 en = 0;
   i32 qn = 1;
   i32 sn = 0;
@@ -1156,9 +1176,22 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
           qn = qn + 1;
           // The edge is recorded by *path*, and turned into file indices once every file has one:
           // an import often names a file this walk has not reached yet.
+          // One edge per *name*, plus one for the file itself, so a type reached through another
+          // file's declaration still resolves.
           if (en < fromPath.len()) {
             fromPath[en] = path;
             toPath[en] = target;
+            edgeName[en] = "";
+            en = en + 1;
+          }
+          for (i32 it = 0; it < items.len(); it++) {
+            if (en >= fromPath.len()) { continue; }
+            fromPath[en] = path;
+            toPath[en] = target;
+            // The alias and the declared name travel together, separated by a space that no
+            // identifier can contain — the same trick the synthesized helpers' names use.
+            edgeName[en] = tokenTextOf(b, lexed, items[it].aliasTok) + " " +
+                           tokenTextOf(b, lexed, items[it].nameTok);
             en = en + 1;
           }
         }
@@ -1180,6 +1213,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     if (ec * 2 + 2 >= edges.len()) { continue; }
     edges[ec * 2 + 1] = a;
     edges[ec * 2 + 2] = b;
+    if (ec < names.len()) { names[ec] = edgeName[e]; }
     edges[0] = ec + 1;
   }
   return out;
@@ -1200,7 +1234,7 @@ i32 declCountOf(string source) {
  * none of which an `i32` calculation needs, and each of which is a section that can be added when
  * something needs it rather than because a real module usually has one.
  */
-export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]()); }
+export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1](), string[1]()); }
 
 /**
  * One module from many files: the entry, everything it imports, and nothing else.
@@ -1212,9 +1246,10 @@ export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]
 export u8[] emitLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   if (blob == "") { return bareModule(); }
-  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
+  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -1235,7 +1270,7 @@ u8[] bareModule() {
  * way. The count is the only thing that has to survive the join — an imported file's `export` means
  * "visible to the file that imported me", not "visible to JavaScript".
  */
-u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
+u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -1253,6 +1288,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     if (env.importCount >= env.importFrom.len()) { continue; }
     env.importFrom[env.importCount] = edges[e * 2 + 1];
     env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
   collectDeclarations(env, src, lexed, prog);
@@ -3827,18 +3866,19 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
  * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
  */
-export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1]()); }
+export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1](), string[1]()); }
 
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
 export string blockedLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   if (blob == "") { return "an import of a file that was not supplied"; }
-  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
+  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
 }
 
-string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
+string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -3854,6 +3894,10 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     if (env.importCount >= env.importFrom.len()) { continue; }
     env.importFrom[env.importCount] = edges[e * 2 + 1];
     env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
   collectDeclarations(env, src, lexed, prog);
@@ -4150,7 +4194,8 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
 export string namesLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   return blob == "" ? "" : emitNames(blob.toBytes());
 }
 
