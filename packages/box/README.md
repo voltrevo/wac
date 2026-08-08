@@ -23,7 +23,7 @@ cat README.md | ./box sort -u | ./box wc -l
 ```
 base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
 fold fsdump get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
-nc rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
+nc ps rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
 strings tac tail
 tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
 ```

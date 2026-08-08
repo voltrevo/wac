@@ -48,6 +48,7 @@ export i32 main(Core core, Cli cli) {
   // `/dev` and `/proc`, generated on read: `/dev/null`, `/dev/zero`, `/dev/urandom` and
   // `/proc/self/cmdline`. A sealed session has a real CSPRNG this way without a grant for one.
   Vec<string> argv = Vec.create();
+  argv.push("sealedsh");
   for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
   mountSystem(fs, core.randomBytes, argv);
 

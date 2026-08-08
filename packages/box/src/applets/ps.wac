@@ -1,0 +1,113 @@
+// What is running, read out of `/proc`.
+//
+// [design/0001](../../../../design/0001-a-self-contained-system.md) step 3. The process table lives in
+// `packages/fs`'s `proc.wac` and is rendered by the `/proc` mount; this applet has **no channel to it**
+// beyond the filesystem every other applet already has, which is the point. `ps` on a real system reads
+// `/proc` and nothing else, so a `ps` here that was handed the table directly would work in a build
+// where `/proc` was broken, and the first thing anybody types to check the table would be the one thing
+// that could not tell them the truth.
+//
+// ## Why the columns are not `ps`'s
+//
+// Real `ps` prints `PID TTY TIME CMD`. Two of those four are facts this system has not got: nothing has
+// a controlling terminal it could name, and no process here has accumulated CPU time that anything
+// measures. Printing `?` and `00:00:00` in those columns would be plausible and empty — design/0001 D6 —
+// so the columns are the ones with values behind them, and a caller who wanted `ps`'s exactly finds them
+// different rather than fictional.
+//
+// So there is no differential test against the host's `ps` here, and there should not be: the rows
+// describe processes the host has never heard of. What *is* compared against the host is the format of
+// the `/proc` files underneath — `packages/fs`'s tests read the real `/proc/self/comm` and `status`.
+
+import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+
+/** `n` right-aligned in `w` columns, as every `ps` prints a pid. */
+string pad(string s, i32 w) {
+  string out = s;
+  while (out.len() < w) { out = " " + out; }
+  return out;
+}
+
+/** The value of `key` in a `/proc/<pid>/status` body, or "". */
+string field(string body, string key) {
+  u8[] b = body.toBytes();
+  i32 start = 0;
+  while (start < b.len()) {
+    i32 end = start;
+    while (end < b.len() && b[end] != '\n') { end = end + 1; }
+    string line = body.slice(start, end);
+    i32 colon = 0;
+    while (colon < line.len() && line.toBytes()[colon] != ':') { colon = colon + 1; }
+    if (line.slice(0, colon) == key) {
+      // The value is separated by a tab, which `status` writes and this skips rather than trims: a
+      // value that legitimately begins with a space would otherwise come back short.
+      i32 at = colon + 1;
+      while (at < line.len() && line.toBytes()[at] == '\t') { at = at + 1; }
+      return line.slice(at, line.len());
+    }
+    start = end + 1;
+  }
+  return "";
+}
+
+/** Whether every byte is a digit, which is what makes a `/proc` entry a process. */
+bool allDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return false; }
+  }
+  return true;
+}
+
+export i32 ps(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() > 0) {
+    // Real `ps` takes a pid list and a great many option syntaxes. None is implemented, and saying so
+    // beats the two worse answers: ignoring the argument, or listing everything as though it had been
+    // asked for.
+    core.warn(a.name + ": selecting processes is not implemented; ps lists all of them");
+    return 1;
+  }
+  string[]? listing = fs.readDir("/proc");
+  if (listing is null) {
+    core.warn(a.name + ": /proc: no such file or directory");
+    return 1;
+  }
+  string[] names = listing!;
+  core.log("  PID  PPID S CMD");
+  for (i32 i = 0; i < names.len(); i++) {
+    // `self` is a name for a pid already in this listing, so following it would print one row twice.
+    if (!allDigits(names[i])) { continue; }
+    FileResult f = fs.readFile("/proc/" + names[i] + "/status");
+    // A process that exited between the listing and the read is gone rather than an error — the same
+    // race real `ps` has, and the same answer it gives.
+    if (!f.ok) { continue; }
+    string body = string.fromBytes(f.bytes);
+    FileResult c = fs.readFile("/proc/" + names[i] + "/cmdline");
+    string cmd = field(body, "Name");
+    if (c.ok) {
+      // `cmdline` is NUL-separated with a trailing NUL; the words joined by spaces is what `ps` shows,
+      // and it is lossy in exactly the way `ps`'s is — an argument containing a space reads as two.
+      string joined = "";
+      string all = string.fromBytes(c.bytes);
+      i32 start = 0;
+      for (i32 j = 0; j < all.len(); j++) {
+        if (all.toBytes()[j] == 0) {
+          if (joined.len() > 0) { joined = joined + " "; }
+          joined = joined + all.slice(start, j);
+          start = j + 1;
+        }
+      }
+      if (joined.len() > 0) { cmd = joined; }
+    }
+    // The state letter, which is the first character of `status`'s `State` line — `R (running)`.
+    string state = field(body, "State");
+    core.log(pad(names[i], 5) + " " + pad(field(body, "PPid"), 5) + " "
+      + (state.len() > 0 ? state.slice(0, 1) : "?") + " " + cmd);
+  }
+  return 0;
+}

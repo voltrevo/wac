@@ -57,8 +57,12 @@ Deno.test("a mount is visible from the directory it is mounted in", async () => 
   assertEquals((await sh("ls /")).out, "dev\nproc\ntmp\n");
   assertEquals((await sh("mkdir /home; ls /")).out, "dev\nhome\nproc\ntmp\n", "sorted in with the real ones");
   // Only directly in it: `/proc/self` is under `/proc`, not under `/`.
-  assertEquals((await sh("ls /proc")).out, "self\n");
-  assertEquals((await sh("ls /proc/self")).out, "cmdline\n");
+  //
+  // The pids are the process table — design/0001 step 3. `1` is the session, `2` is the `ls` doing the
+  // looking, and `self` is a name for whichever is asking. A listing that changed as the table did is
+  // the point of it; what makes this assertable is that the pids are allocated in order and never reused.
+  assertEquals((await sh("ls /proc")).out, "1\n2\nself\n");
+  assertEquals((await sh("ls /proc/self")).out, "cmdline\ncomm\nstatus\n");
   assertEquals((await sh("ls /dev")).out, "null\nrandom\nurandom\nzero\n");
 });
 
@@ -121,7 +125,15 @@ Deno.test("design/0001 step 6's own criterion, in a session with no grants at al
   // NUL-separated, as Linux's is — a caller joining with spaces would produce something that reads the
   // same and parses differently.
   assertEquals(cmdline.out.includes("\0"), true, JSON.stringify(cmdline.out));
-  assertEquals(cmdline.out.split("\0")[0], "-c", JSON.stringify(cmdline.out));
+  // **`self` is the process doing the reading, which is `cat` — not the shell that started it.**
+  //
+  // This asserted `-c` until the process table existed, because `/proc/self` was the *program's* argv
+  // and there was nothing else it could be. It was wrong, and bash says so: `bash -c 'cat
+  // /proc/self/cmdline'` prints `cat\0/proc/self/cmdline\0`, which is now byte-for-byte what this
+  // prints. A test written from what the code did rather than from what the system does will agree
+  // with the code forever.
+  const theirs = new Deno.Command("bash", { args: ["-c", "cat /proc/self/cmdline"] }).outputSync();
+  assertEquals(cmdline.out, new TextDecoder().decode(theirs.stdout), "bash disagrees");
 
   // …and `head -c 16 /dev/urandom` works. The design writes `| hex`, which is a `packages/box` applet
   // and not one of this shell's twelve programs; `wc -c` asks the same question of the same bytes.

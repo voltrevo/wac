@@ -1236,7 +1236,27 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   // `triedStdin`, so this said "inherit" and the child read the process's empty input instead of the
   // two lines the shell had left. wac-mono 0066.
   bool mayInherit = !hasInput && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
+
+  // **The process table, for the length of this command** — design/0001 step 3.
+  //
+  // `dispatch` is the one seam every command goes through with its argv known and its status not yet
+  // decided, which is exactly the span a row describes. The parent is whatever `/proc/self` currently
+  // says, so a function calling a command nests without this needing to know how deep it is, and a
+  // shell that never entered itself has parent 0.
+  //
+  // **A builtin gets a row too**, where bash's `ps` would not show one. The rule this table keeps is
+  // "an argv and an exit status", which `cd` has; imitating bash's split would mean a list of names to
+  // maintain, and the difference is unobservable while commands run one at a time. `&` is what would
+  // make it visible, and is not implemented.
+  i32 parent = sh.fs.procs.self;
+  i32 pid = sh.fs.procs.start(parent, argv, sh.fs.now);
+  sh.fs.procs.self = pid;
   Output result = dispatch(sh, argv, mayInherit);
+  sh.fs.procs.self = parent;
+  // Reaped straight away: nothing can `wait` for a stage yet, so a row left behind would be a leak
+  // rather than a status somebody is coming for. `jobs` is what gives these somewhere to wait.
+  sh.fs.procs.exited(pid, result.status);
+  sh.fs.procs.reap(pid);
   if (hasInput) {
     sh.stdinBytes = savedIn;
     sh.stdinPos = savedPos;

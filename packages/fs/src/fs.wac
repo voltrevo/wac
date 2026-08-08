@@ -33,7 +33,9 @@ import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
   FAULT_IS_DIR, FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "./path.wac";
+import { PROC_RUN, Proc, Procs } from "./proc.wac";
 
 /** Where a mount's bytes actually live. */
 export enum Backing {
@@ -129,12 +131,16 @@ export struct Fs {
   /** Milliseconds, from whoever built this: wac has no clock of its own. */
   i64 now;
   /**
-   * What `/proc/self/cmdline` answers, NUL-separated as Linux's is.
+   * What is running, which `/proc` reports — design/0001 step 3, and see `proc.wac`.
    *
-   * Empty until somebody sets it. A filesystem cannot know its own program's arguments — argv belongs to
-   * whoever built it — so this is handed in rather than discovered, the same way `now` is.
+   * Empty until somebody starts something. A filesystem cannot know its own program's arguments — argv
+   * belongs to whoever built it — so this is filled in rather than discovered, the same way `now` is.
+   *
+   * It replaced a `cmdline` string held here for `/proc/self/cmdline`. That string and a process table
+   * are the same fact written twice, and the table is the one that can also answer who the parent is
+   * and whether it is still running.
    */
-  string cmdline;
+  Procs procs;
   /** Where a relative path starts from — see `setCwd`. */
   string cwd;
 
@@ -144,7 +150,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now, "", "/");
+    return Fs(mounts, nodes, "root", now, Procs.create(), "/");
   }
 
   /**
@@ -160,7 +166,7 @@ export struct Fs {
     // **The host's own directory**, because that is what a relative path means to a program standing on
     // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
     // file. A memory filesystem starts at its own root, where there is nowhere else to be.
-    return Fs(mounts, nodes, "root", now, "", cli.cwd().wait());
+    return Fs(mounts, nodes, "root", now, Procs.create(), cli.cwd().wait());
   }
 
   /**
@@ -231,8 +237,18 @@ export struct Fs {
   /** A path as this filesystem understands it: absolute, and with no `.` or `..` left in it. */
   string at(const this, string path) { return resolvePath(this.cwd, path); }
 
-  /** What `/proc/self/cmdline` will answer. NUL-separated, as Linux's is. */
-  void setCmdline(this, string cmdline) { this.cmdline = cmdline; }
+  /**
+   * Record that this program is running, and make it `/proc/self`. Answers its pid.
+   *
+   * This replaced `setCmdline`, which took the NUL-separated line `/proc/self/cmdline` answers. The
+   * words are what a caller has, and a line cannot be split back into words that contained spaces —
+   * so the join belongs on the way *out*, where `Proc.cmdline` does it.
+   */
+  i32 enter(this, Vec<string> argv) {
+    i32 pid = this.procs.start(0, argv, this.now);
+    this.procs.self = pid;
+    return pid;
+  }
 
   /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
   void mountMemory(this, string at) {
@@ -400,7 +416,7 @@ export struct Fs {
         // `/dev/null` accepts anything and keeps none of it, which is the whole of what it is for.
         // Every other synthesised file is read-only, and says so rather than appearing to have taken
         // the bytes — a write that vanishes silently is the failure `> /dev/zero` would otherwise be.
-        if (synthKind(m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
+        if (synthKind(this, m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
         return Change.of(FAULT_DENIED(), "read-only file system");
       }
       else: {}
@@ -715,21 +731,21 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
 }
 
 /**
- * Mount `/dev` and `/proc`, and record the command line, in one call.
+ * Mount `/dev` and `/proc`, and enter this program in the process table, in one call.
  *
  * Three programs want exactly this and a fourth will; spelling it out in each is how the three drift.
- * `argv` is joined with NULs because that is what `/proc/self/cmdline` is — a caller that joins with
- * spaces has produced something that reads the same and parses differently.
+ * The pid is answered rather than discarded because a caller that starts children wants to be their
+ * parent, and `/proc/self` is only the *current* process.
+ *
+ * **`argv[0]` is this program's own name**, as it is in `/proc/<pid>/cmdline` on every system this
+ * imitates. Nothing can discover it — a wac program's arguments start at its first real one, which is
+ * `packages/box`'s `Args.name` problem in another place — so each entry point states what it is. Pass
+ * the arguments alone and `ps` shows a shell called `-c`.
  */
-export void mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv) {
+export i32 mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv) {
   fs.mountSynth("/dev", randomBytes);
   fs.mountSynth("/proc", randomBytes);
-  Buf line = Buf.create();
-  for (i32 i = 0; i < argv.len(); i++) {
-    line.pushAll(argv.get(i).toBytes());
-    line.push(0);
-  }
-  fs.setCmdline(string.fromBytes(line.take()));
+  return fs.enter(argv);
 }
 
 // ── Synthesised files ─────────────────────────────────────────────────────────
@@ -749,11 +765,45 @@ i32 SYNTH_NULL() { return 1; }
 i32 SYNTH_ZERO() { return 2; }
 i32 SYNTH_RANDOM() { return 3; }
 i32 SYNTH_CMDLINE() { return 4; }
-/** A directory in a synthesised tree: the mount point itself, and `/proc/self`. */
+/** A directory in a synthesised tree: the mount point itself, and `/proc/<pid>`. */
 i32 SYNTH_DIR() { return 5; }
+/** `/proc/<pid>/comm`: argv[0] and a newline, as Linux's is. */
+i32 SYNTH_COMM() { return 6; }
+/** `/proc/<pid>/status`: the four lines whose values this system actually has. */
+i32 SYNTH_STATUS() { return 7; }
+
+/**
+ * The pid a `/proc` path is about, or -1 for a path that is not about one.
+ *
+ * `self` is a name for a pid rather than a directory of its own, exactly as it is on Linux, so
+ * everything below is written once against a number. A pid that has left the table is -1 too, which is
+ * what makes `cat /proc/<gone>/comm` a "no such file" rather than an empty answer.
+ */
+i32 procPid(Fs fs, string rest) {
+  i32 cut = 1;
+  while (cut < rest.len() && rest.toBytes()[cut] != '/') { cut = cut + 1; }
+  string name = rest.slice(1, cut);
+  if (name == "self") { return fs.procs.has(fs.procs.self) ? fs.procs.self : -1; }
+  if (name.len() == 0) { return -1; }
+  u8[] b = name.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    // Strictly digits: `atoi` would read `12x` as 12, and `/proc/12x` is not a process.
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+  }
+  i32 pid = 0;
+  for (i32 i = 0; i < b.len(); i++) { pid = pid * 10 + (b[i] - '0'); }
+  return fs.procs.has(pid) ? pid : -1;
+}
+
+/** What is left of a `/proc/<pid>` path after the pid: `""`, or `/cmdline`. */
+string procRest(string rest) {
+  i32 cut = 1;
+  while (cut < rest.len() && rest.toBytes()[cut] != '/') { cut = cut + 1; }
+  return rest.slice(cut, rest.len());
+}
 
 /** Which synthesised file a path names, or `SYNTH_NONE`. */
-i32 synthKind(Mount m, string path) {
+i32 synthKind(Fs fs, Mount m, string path) {
   string rest = path.slice(m.at.len(), path.len());
   if (rest == "" || rest == "/") { return SYNTH_DIR(); }
   if (m.at == "/dev") {
@@ -763,11 +813,35 @@ i32 synthKind(Mount m, string path) {
     return SYNTH_NONE();
   }
   if (m.at == "/proc") {
-    if (rest == "/self") { return SYNTH_DIR(); }
-    if (rest == "/self/cmdline") { return SYNTH_CMDLINE(); }
+    if (procPid(fs, rest) < 0) { return SYNTH_NONE(); }
+    string tail = procRest(rest);
+    if (tail == "" || tail == "/") { return SYNTH_DIR(); }
+    if (tail == "/cmdline") { return SYNTH_CMDLINE(); }
+    if (tail == "/comm") { return SYNTH_COMM(); }
+    if (tail == "/status") { return SYNTH_STATUS(); }
     return SYNTH_NONE();
   }
   return SYNTH_NONE();
+}
+
+/**
+ * `/proc/<pid>/status`, with the keys whose values this system has and no others.
+ *
+ * Linux's has around fifty lines — signal masks, memory, capabilities, namespaces. Filling those with
+ * zeroes would be the "plausible rows" design/0001 D6 names: a reader cannot tell an invented `VmRSS: 0
+ * kB` from a measured one, and a process here has no address space of its own to measure. So this is
+ * four real lines in Linux's exact `Key:\tvalue` shape, and a program that wants more finds it missing
+ * rather than wrong.
+ *
+ * `State` is Linux's letter and word: `R (running)`, and `Z (zombie)` for a row that has exited and has
+ * not been reaped — which is what it is.
+ */
+string procStatus(Proc p) {
+  string state = p.state == PROC_RUN() ? "R (running)" : "Z (zombie)";
+  return "Name:\t" + p.comm() + "\n"
+    + "State:\t" + state + "\n"
+    + "Pid:\t" + itoa(p.pid) + "\n"
+    + "PPid:\t" + itoa(p.ppid) + "\n";
 }
 
 /**
@@ -777,14 +851,14 @@ i32 synthKind(Mount m, string path) {
  * carry it: a caller that gets `FAULT_OTHER` with no sentence learns nothing it can act on.
  */
 FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomBytes, i32 n) {
-  i32 kind = synthKind(m, path);
+  i32 kind = synthKind(fs, m, path);
   if (kind == SYNTH_NONE()) {
     return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
   }
   if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER()); }
   if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[0](), "", FAULT_NONE()); }
-  if (kind == SYNTH_CMDLINE()) {
-    u8[] all = fs.cmdline.toBytes();
+  if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
+    u8[] all = procBytes(fs, m, path, kind);
     if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
     u8[] cut = u8[n]();
     cut.copyFrom(all, 0, 0, n);
@@ -798,23 +872,53 @@ FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomB
   return FileResult.of(true, randomBytes(n).wait(), "", FAULT_NONE());
 }
 
+/**
+ * The bytes of a `/proc/<pid>` file.
+ *
+ * Separate from `synthRead` because `stat` needs the length and the only truthful way to get it is to
+ * render the thing: a `/proc` file has no stored size, and computing one a second way is how the two
+ * come to disagree. Linux answers 0 for these — it does not know either — which this deliberately does
+ * not copy, because a size of 0 on a file `cat` then reads bytes from is the sort of detail that makes
+ * a reader distrust everything around it.
+ */
+u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
+  i32 pid = procPid(fs, path.slice(m.at.len(), path.len()));
+  Proc? found = fs.procs.find(pid);
+  if (found is null) { return u8[0](); }
+  Proc p = found!;
+  if (kind == SYNTH_CMDLINE()) { return p.cmdline().toBytes(); }
+  if (kind == SYNTH_COMM()) { return (p.comm() + "\n").toBytes(); }
+  return procStatus(p).toBytes();
+}
+
 Stat synthStat(Fs fs, Mount m, string path) {
-  i32 kind = synthKind(m, path);
+  i32 kind = synthKind(fs, m, path);
   if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
   if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, FAULT_NONE()); }
   // Size zero for the endless two, which is what Linux reports for them as well: a character device has
-  // no length, and zero is how that is spelled. `/proc/self/cmdline` has a real one.
-  i64 size = kind == SYNTH_CMDLINE() ? fs.cmdline.toBytes().len() as i64 : 0 as i64;
+  // no length, and zero is how that is spelled. The `/proc` files have real ones.
+  i64 size = 0 as i64;
+  if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
+    size = procBytes(fs, m, path, kind).len() as i64;
+  }
   return Stat.of(true, true, false, size, fs.now, false, FAULT_NONE());
 }
 
 string[]? synthDir(Fs fs, Mount m, string path) {
-  i32 kind = synthKind(m, path);
+  i32 kind = synthKind(fs, m, path);
   if (kind != SYNTH_DIR()) { return null; }
   string rest = path.slice(m.at.len(), path.len());
   if (m.at == "/dev") { return string[]("null", "random", "urandom", "zero"); }
-  if (rest == "/self") { return string[]("cmdline"); }
-  return string[]("self");
+  if (rest != "" && rest != "/") { return string[]("cmdline", "comm", "status"); }
+  // `/proc` itself: every pid, and `self`. Linux lists a great deal more here — `uptime`, `meminfo`,
+  // `mounts` — and each of those is a fact this system would have to have to answer, so the ones it
+  // has not got are absent rather than empty.
+  i32[] pids = fs.procs.pids();
+  string[] names = string[pids.len() + 1](fill: "");
+  for (i32 i = 0; i < pids.len(); i++) { names[i] = itoa(pids[i]); }
+  names[pids.len()] = "self";
+  sortNames(names);
+  return names;
 }
 
 /**

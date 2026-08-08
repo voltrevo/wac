@@ -52,6 +52,7 @@ export i32 main(Core core, Cli cli) {
   string path = string.fromBytes(cli.arg(0).wait());
 
   Vec<string> argv = Vec.create();
+  argv.push("imaged");
   for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
   Booted booted = boot(core, cli, path, argv);
   if (!booted.ok) {

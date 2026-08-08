@@ -1,0 +1,220 @@
+// The process table: pids, parents, states and exit statuses that belong to the system.
+//
+// [design/0001](../../../design/0001-a-self-contained-system.md) step 3. The design's criterion is that
+// `ps` in the ssh demo shows the pipeline you are running and `kill` ends one, and the reason it is the
+// keystone is that four separate things wait on it: `ps`, `kill`, `jobs` and `&`, a `^C` that has
+// somewhere to go, and `/proc/<pid>`.
+//
+// ## Why the table is the system's rather than the host's
+//
+// The processes it describes already exist — a spawned worker in Deno, a `pushChild` frame in a browser
+// — so the obvious place for the table is the host, which owns them. That is the wrong place twice.
+//
+// The first reason is the arrival test: the table would be JavaScript, and a second host with no
+// JavaScript would have to reimplement it and agree with it. Every fact this holds is a fact about the
+// *system*, not about the runtime it happens to be executing on, so a system that carries its own
+// answers can move between hosts and keep them.
+//
+// The second is more immediate, and settles it: **in a sealed session the processes are not host
+// processes at all.** `packages/box`'s applets are function calls inside the shell's own program when
+// nothing can spawn — `sealedsh` runs a whole pipeline without the host learning that anything happened.
+// A host-side table would show one process, called `sealedsh`, for a session running twenty commands.
+// So the table has to be kept by whoever *knows*, and that is the shell.
+//
+// The consequence is worth stating plainly, because it is what makes this cheap: a process here is
+// **anything with an argv and an exit status**, whether the host ran it in a worker or the shell called
+// a function. `ps` cannot tell the difference and should not be able to.
+//
+// ## Why it lives in `packages/fs`
+//
+// It is not a filesystem, and neither is `/etc/passwd` — which `passwd.wac` reads, next door, for the
+// same reason. `/proc` is how this is read, `Fs` is what a session already threads everywhere, and a
+// package of its own would be one import to hold one table that only `/proc` renders.
+//
+// ## What is not here
+//
+// **Signal delivery.** `signal` records a request on the row; nothing polls it yet, so `kill` can say
+// what it did to a table and not that it ended anything. In-process, delivery has to be cooperative —
+// a function call cannot be interrupted from outside in wasm — which means the running program checks,
+// and giving it something to check is the next step rather than this one. `SIGKILL` against an
+// in-process row cannot be honoured at all, and had better say so rather than mark the row dead and
+// leave the code running.
+
+import { Vec } from "../../std/src/vec.wac";
+
+/** Running: started, and no status yet. */
+export i32 PROC_RUN() { return 0; }
+/**
+ * Exited, with a status nobody has collected.
+ *
+ * This is a zombie in the Linux sense and is kept for the same reason: the exit status belongs to the
+ * parent, so the row outlives the process until `reap` takes it. A table that dropped rows on exit
+ * could not answer `$?` for a child that finished before its parent asked.
+ */
+export i32 PROC_DONE() { return 1; }
+
+export i32 SIGINT() { return 2; }
+export i32 SIGKILL() { return 9; }
+export i32 SIGTERM() { return 15; }
+
+/** One process. */
+export struct Proc {
+  i32 pid;
+  /** 0 for the first process, which has no parent inside this system. */
+  i32 ppid;
+  /**
+   * The whole command, argv[0] first.
+   *
+   * Held as the words rather than as a line, because `/proc/<pid>/cmdline` is NUL-separated and a line
+   * cannot be split back into words that contained spaces. `cmdline()` renders it.
+   */
+  Vec<string> argv;
+  i32 state;
+  /** Meaningless while `state` is `PROC_RUN`. */
+  i32 exitCode;
+  /** Milliseconds, from whoever built the table: wac has no clock of its own. */
+  i64 started;
+  /**
+   * A signal delivered and not yet collected, or 0.
+   *
+   * One slot rather than a set: nothing here queues signals, and a second `kill` before the first is
+   * noticed overwrites rather than accumulating. Linux does the same for the non-realtime ones.
+   */
+  i32 pending;
+
+  Proc of(i32 pid, i32 ppid, Vec<string> argv, i64 started) {
+    return Proc(pid, ppid, argv, PROC_RUN(), 0, started, 0);
+  }
+
+  bool isRunning(const this) { return this.state == PROC_RUN(); }
+
+  /** argv[0], or the empty string for a process with no words — which nothing here creates. */
+  string comm(const this) {
+    if (this.argv.len() == 0) { return ""; }
+    return this.argv.get(0);
+  }
+
+  /**
+   * `/proc/<pid>/cmdline`'s bytes: every word NUL-terminated, including the last.
+   *
+   * Linux's trailing NUL is real and load-bearing — `cat /proc/self/cmdline | xxd` on the host ends in
+   * one, and a reader that splits on NUL and drops the empty tail gets the argv back either way. It is
+   * copied because the format is what makes this file comparable against the host's, which is the only
+   * oracle `/proc` has.
+   */
+  string cmdline(const this) {
+    string out = "";
+    for (i32 i = 0; i < this.argv.len(); i++) { out = out + this.argv.get(i) + "\0"; }
+    return out;
+  }
+}
+
+/**
+ * Every process this system knows about.
+ *
+ * Pids are allocated from 1 and never reused, which is not what Linux does — it wraps at
+ * `/proc/sys/kernel/pid_max` — and is the right trade here: reuse exists to keep pids small enough to
+ * type, and nothing in a session that lives for one ssh connection will run out of i32.
+ */
+export struct Procs {
+  Vec<Proc> rows;
+  i32 nextPid;
+  /**
+   * Which row `/proc/self` names.
+   *
+   * A single value rather than a per-caller one, because every program in a sealed session shares this
+   * program: when the shell calls `wc` as a function, "self" is whatever the shell most recently said
+   * it was. `enter`/`leave` in `sh` keep it honest; a spawned worker has a table of its own.
+   */
+  i32 self;
+
+  /** An empty table. Nothing is running, including whoever asked. */
+  Procs create() { return Procs(Vec.create(), 1, 0); }
+
+  /** Start a process under `ppid`, and answer its pid. */
+  i32 start(this, i32 ppid, Vec<string> argv, i64 now) {
+    i32 pid = this.nextPid;
+    this.nextPid = pid + 1;
+    this.rows.push(Proc.of(pid, ppid, argv, now));
+    return pid;
+  }
+
+  /** The row for `pid`, or null. */
+  Proc? find(const this, i32 pid) {
+    for (i32 i = 0; i < this.rows.len(); i++) {
+      Proc p = this.rows.get(i);
+      if (p.pid == pid) { return p; }
+    }
+    return null;
+  }
+
+  bool has(const this, i32 pid) { return this.find(pid) is Proc; }
+
+  /**
+   * Record that `pid` finished with `code`.
+   *
+   * A pid that is not here, or that has already exited, is left alone and answered false rather than
+   * trapping: a shell that loses track of a stage should report a wrong `ps` rather than end the
+   * session, and the caller can tell the difference.
+   */
+  bool exited(this, i32 pid, i32 code) {
+    Proc? found = this.find(pid);
+    if (found is null) { return false; }
+    Proc p = found!;
+    if (p.state != PROC_RUN()) { return false; }
+    p.state = PROC_DONE();
+    p.exitCode = code;
+    return true;
+  }
+
+  /**
+   * Take the exit status of a finished process, and forget it.
+   *
+   * -1 for a pid that is not here or is still running, which a caller that has just been told it
+   * finished cannot see: `has` distinguishes them if it matters.
+   */
+  i32 reap(this, i32 pid) {
+    for (i32 i = 0; i < this.rows.len(); i++) {
+      Proc p = this.rows.get(i);
+      if (p.pid == pid && p.state == PROC_DONE()) {
+        this.rows.remove(i);
+        return p.exitCode;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Deliver a signal to a running process. False if there is no such process running.
+   *
+   * This *records* the signal; it does not stop anything. See the header — nothing polls `pending`
+   * yet, so the only truthful thing a caller can say is what it wrote down.
+   */
+  bool signal(this, i32 pid, i32 sig) {
+    Proc? found = this.find(pid);
+    if (found is null) { return false; }
+    Proc p = found!;
+    if (p.state != PROC_RUN()) { return false; }
+    p.pending = sig;
+    return true;
+  }
+
+  /** The signal waiting for `pid`, or 0. Clears it, so a second call answers 0. */
+  i32 takeSignal(this, i32 pid) {
+    Proc? found = this.find(pid);
+    if (found is null) { return 0; }
+    Proc p = found!;
+    i32 sig = p.pending;
+    p.pending = 0;
+    return sig;
+  }
+
+  /** Every pid, in the order started — which is ascending, since pids are never reused. */
+  i32[] pids(const this) {
+    i32[] out = i32[this.rows.len()](fill: 0);
+    for (i32 i = 0; i < this.rows.len(); i++) { out[i] = this.rows.get(i).pid; }
+    return out;
+  }
+
+  i32 len(const this) { return this.rows.len(); }
+}

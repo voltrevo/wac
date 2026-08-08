@@ -97,6 +97,7 @@ export string implementedFlags(string name) {
   if (name == "rm") { return "Rfr"; }
   if (name == "nl") { return ""; }
   if (name == "paste") { return ""; }
+  if (name == "ps") { return ""; }
   if (name == "tac") { return ""; }
   if (name == "du") { return ""; }
   if (name == "stat") { return ""; }
@@ -139,7 +140,7 @@ export bool flagsChecked(string name) {
       || name == "tr" || name == "fold" || name == "split" || name == "shuf" || name == "strings"
       || name == "mkdir" || name == "rm" || name == "nl" || name == "tac" || name == "du"
       || name == "stat" || name == "basename" || name == "dirname" || name == "sha256sum"
-      || name == "sha512sum" || name == "rev" || name == "seq" || name == "tar" || name == "cut" || name == "paste";
+      || name == "sha512sum" || name == "rev" || name == "seq" || name == "tar" || name == "cut" || name == "paste" || name == "ps";
 }
 
 /**
