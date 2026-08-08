@@ -860,6 +860,36 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
       else: { }
     }
   }
+  // Methods, which until now were not walked at all: every rule here stopped at the edge of a
+  // struct, so a method's returns, initialisers and operands went entirely unchecked. `this` is an
+  // ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the struct's own
+  // name — and every rule then reaches `this.x` through the field table that already existed.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        string owner = tokenText(c, nameTok);
+        for (i32 mi = 0; mi < methods.len(); mi++) {
+          c.clearScope();
+          // A method without `this` is static, and `this` means nothing in it.
+          if (methods[mi].hasThis) { c.declare("this", owner); }
+          for (i32 i = 0; i < methods[mi].params.len(); i++) {
+            c.declare(tokenText(c, methods[mi].params[i].nameTok),
+                      typeOfTy(c, methods[mi].params[i].type));
+          }
+          declareAll(c, methods[mi].body);
+          checkAll(c, methods[mi].body, methods[mi].returnType);
+          // At the **return type**, where the reference puts it. A `Method` carries no position of
+          // its own — unlike a `Decl`, which is why the top-level version reports at the declaration
+          // — and the return type is the first thing a method has that does.
+          if (returnsAValue(typeOfTy(c, methods[mi].returnType)) &&
+              !alwaysLeaves(methods[mi].body)) {
+            c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
+          }
+        }
+      }
+      else: { }
+    }
+  }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
