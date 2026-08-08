@@ -4,7 +4,7 @@
 // where `cli.write` goes, so the fetch itself is unchanged and does not know. Switching
 // back to standard output at the end is what closes the file.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Captured, Change, Cli, Core } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
@@ -17,12 +17,30 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
     return 2;
   }
   string out = a.rest[2];
-  Change opened = cli.openOutput(out).wait();
-  if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + opened.message); return 1; }
+  // **Only the host can be written to by redirection.** `openOutput` moves this process's standard
+  // output into a file, which is a capability the host has and a memory image does not — so anywhere
+  // else the body is collected and written with one call. Same split as `split`, `lib/safe.wac` and
+  // `lib/input.wac`'s reading side (wac-mono 0109).
+  bool streaming = fs.isHostPath(out);
+  if (streaming) {
+    Change opened = cli.openOutput(out).wait();
+    if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + opened.message); return 1; }
+  } else {
+    // Collected through the same push/pop the shell uses to run an applet in process: `fetch` writes
+    // with `cli.write` and neither knows nor needs to know where that goes.
+    cli.pushChild(string[](a.name), u8[0](), "", false).wait();
+  }
 
   i32 code = fetch(core, cli, a.name, a.rest[0], a.rest[1], a.num == 0 ? 80 : a.num, false);
 
-  cli.openOutput("").wait();
+  if (streaming) { cli.openOutput("").wait(); }
+  else {
+    Captured got = cli.popChild().wait();
+    if (code == 0) {
+      Change wrote = fs.writeFile(out, got.out);
+      if (!wrote.ok()) { core.warn(a.name + ": " + out + ": " + wrote.message); return 1; }
+    }
+  }
   if (code == 0) { core.warn(a.name + ": saved " + out); }
   return code;
 }

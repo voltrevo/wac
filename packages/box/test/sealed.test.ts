@@ -195,6 +195,14 @@ Deno.test("an applet runs when the shell cannot spawn and its own input stays op
     assertEquals(piped.code, 0, "a pipeline finished");
     assertEquals(piped.out, "1\n2\n3\n");
 
+    // `split` writes *several* files, and it wrote them by redirecting standard output — a capability
+    // the host has and a memory image does not, so in a sealed session every piece was refused for want
+    // of a grant it should never have needed. It collects and writes each piece now, which is the same
+    // choice `lib/input.wac` makes for reading.
+    const pieces = await open("seq 1 10 > n; split -l 4 n part; ls; cat partac");
+    assertEquals(pieces.code, 0, "split finished");
+    assertEquals(pieces.out, "dev\nn\npart" + "aa\npartab\npartac\nproc\ntmp\n9\n10\n");
+
     // And one that writes and reads a file, so the filesystem is in the loop as well.
     const both = await open(`printf 'b\\na\\n' > f; sort f`);
     assertEquals(both.code, 0);
