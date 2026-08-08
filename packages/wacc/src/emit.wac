@@ -259,6 +259,8 @@ export struct Env {
    */
   /** The first construct that stopped a function being emitted, for the caller to report. */
   string blocked;
+  /** The return type of the function being emitted, for the `return` statements inside it. */
+  string returnType;
   string[] structNames;
   i32 structCount;
   string[] fieldOwners;
@@ -515,7 +517,7 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
 
   collectDeclarations(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
@@ -726,8 +728,8 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           // wants and the reverse of how the statement reads.
           string bt = typeOfLv(src, lexed, env, base);
           emitLvalue(fb, src, lexed, env, base);
-          emitExprAt(fb, src, lexed, env, index, "i32");
-          emitExprAt(fb, src, lexed, env, rhs, elemOf(bt));
+          emitAt(fb, src, lexed, env, index, "i32");
+          emitAt(fb, src, lexed, env, rhs, elemOf(bt));
           fb.byte(251);
           fb.u32leb(14);   // array.set
           fb.u32leb(env.arrayType(bt));
@@ -753,7 +755,10 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       }
     }
     case Return(value): {
-      if (!(value is null)) { emitExpr(fb, src, lexed, env, value!); }
+      // The **function's** return type, which a `return` is the one statement that needs and the only
+      // one that had no way to know: `return 1;` in an `i64` function is an `i64` constant, and
+      // emitting it at the literal's own guess made seven corpus files invalid at once.
+      if (!(value is null)) { emitExprAt(fb, src, lexed, env, value!, env.returnType); }
       fb.byte(15);   // return
     }
     case If(cond, then, els): {
@@ -866,9 +871,14 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     case Block(inner): { emitBody(fb, src, lexed, env, inner); }
     case ExprStmt(e) : {
-      // A call for its effect. Nothing here produces a value that is then discarded, because the only
-      // expression statement this slice emits is a call to a `void` function.
+      // A call for its effect — and if it *does* return something, the value has to go somewhere.
+      // wasm's stack is not a suggestion: a function that leaves one is ill-typed at its end, which
+      // is what *"expected 0 elements on the stack"* was saying about six corpus files.
       emitExpr(fb, src, lexed, env, e);
+      // `""` is *unknown* and `"void"` is *nothing* — two different answers that both mean "no value
+      // to drop", and treating the second as a value dropped one that was never pushed.
+      string st = typeOfE(src, lexed, env, e);
+      if (st != "" && st != "void") { fb.byte(26); }   // drop
     }
     else: { }
   }
@@ -1029,7 +1039,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       string ot = operandType(src, lexed, env, left, right);
       emitExprAt(fb, src, lexed, env, left, ot);
-      emitExprAt(fb, src, lexed, env, right, ot);
+      // **A shift's amount is not the shift's type.** wac lets `wide >> narrow`, and wasm's
+      // `i64.shr_s` wants both sides `i64` — so a right operand that is genuinely a different width
+      // is converted rather than assumed. `emitExprAt` only steers *literals*; a typed local ignores
+      // it and arrives as itself.
+      emitAt(fb, src, lexed, env, right, ot);
       emitBinary(fb, k, ot);
     }
     case Construct(ctype, args, named): {
@@ -1081,13 +1095,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       if (!(fill is null)) {
         emitExprAt(fb, src, lexed, env, fill!, et);
-        if (!(size is null)) { emitExprAt(fb, src, lexed, env, size!, "i32"); }
+        if (!(size is null)) { emitAt(fb, src, lexed, env, size!, "i32"); }
         fb.byte(251);
         fb.u32leb(6);      // array.new — the value, then the count
         fb.u32leb(ti);
         return;
       }
-      if (!(size is null)) { emitExprAt(fb, src, lexed, env, size!, "i32"); }
+      if (!(size is null)) { emitAt(fb, src, lexed, env, size!, "i32"); }
       fb.byte(251);
       fb.u32leb(7);        // array.new_default
       fb.u32leb(ti);
@@ -1095,7 +1109,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Index(arr, index): {
       string at2 = typeOfE(src, lexed, env, arr);
       emitExpr(fb, src, lexed, env, arr);
-      emitExprAt(fb, src, lexed, env, index, "i32");
+      emitAt(fb, src, lexed, env, index, "i32");
       emitArrayGet(fb, env, at2);
     }
     case Call(callee, args): {
@@ -1508,7 +1522,7 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
     case LIndex(base, index): {
       string bt = typeOfLv(src, lexed, env, base);
       emitLvalue(fb, src, lexed, env, base);
-      emitExprAt(fb, src, lexed, env, index, "i32");
+      emitAt(fb, src, lexed, env, index, "i32");
       emitArrayGet(fb, env, bt);
     }
     case LField(base, nameTok): {
@@ -1557,6 +1571,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
     exports.u32leb(index);
   }
 
+  env.returnType = ret;
   env.localCount = 0;
   if (receiver != "") { env.addLocal("this", receiver); }
   for (i32 i = 0; i < params.len(); i++) {
@@ -1617,17 +1632,17 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case Var(type, nameTok, init, isConst): {
       string t = typeOfTyName(src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
-      return unsupportedExpr(src, lexed, env, init);
+      return unsupportedValue(src, lexed, env, init);
     }
     case Assign(target, op, rhs): {
       string lv = unsupportedLvalue(src, lexed, env, target);
       if (lv != "") { return lv; }
-      return unsupportedExpr(src, lexed, env, rhs);
+      return unsupportedValue(src, lexed, env, rhs);
     }
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
     case Return(value): {
       if (value is null) { return ""; }
-      return unsupportedExpr(src, lexed, env, value!);
+      return unsupportedValue(src, lexed, env, value!);
     }
     case ExprStmt(e): { return unsupportedExpr(src, lexed, env, e); }
     case If(cond, then, els): {
@@ -1697,6 +1712,48 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   }
 }
 
+/**
+ * An expression in a position that **consumes a value**, which is the stricter question.
+ *
+ * Structure is not enough. Every remaining broken module in the corpus was a function whose shape the
+ * walk approved and whose *types* the emitter then guessed: a literal emitted at `i32` where an `i64`
+ * was wanted, an operand pair whose shared type came back empty. If this emitter cannot say what an
+ * expression **is**, it cannot emit it correctly, and saying so is the only honest answer.
+ *
+ * Separate from `unsupportedExpr` because a call in statement position legitimately has no type — a
+ * `void` function returns nothing, and demanding one there would decline every effectful call.
+ */
+string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
+  string r = unsupportedExpr(src, lexed, env, e);
+  if (r != "") { return r; }
+  // A literal has no type of its own and takes the slot's, which is the one thing that is *meant* to
+  // come back empty here.
+  if (isLiteral(e)) { return ""; }
+  if (typeOfE(src, lexed, env, e) == "") { return "an expression whose type this slice cannot work out"; }
+  return "";
+}
+
+/**
+ * Whether an expression takes its type from **context** rather than having one of its own.
+ *
+ * A literal, obviously — and also arithmetic over literals, which is the same fact one level up:
+ * `0 - 100000` in an `i32` slot is an `i32` subtraction and in an `i64` slot an `i64` one, and
+ * neither operand says which. Calling it untyped and declining it refused a working function, which
+ * is how this arm found out it had to exist.
+ */
+bool isLiteral(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return true; }
+    case FloatLit(tok): { return true; }
+    case BoolLit(value): { return true; }
+    case StrLit(tok): { return true; }
+    case NullLit: { return true; }
+    case Unary(op, operand): { return isLiteral(operand); }
+    case Binary(op, left, right): { return isLiteral(left) && isLiteral(right); }
+    else: { return false; }
+  }
+}
+
 string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
     case IntLit(tok): { return ""; }
@@ -1709,9 +1766,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     case Binary(op, left, right): {
-      string l = unsupportedExpr(src, lexed, env, left);
+      string l = unsupportedValue(src, lexed, env, left);
       if (l != "") { return l; }
-      return unsupportedExpr(src, lexed, env, right);
+      return unsupportedValue(src, lexed, env, right);
     }
     case Cast(op, operand, target): {
       string t = typeOfTyName(src, lexed, target);
@@ -1721,17 +1778,17 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return unsupportedExpr(src, lexed, env, operand);
     }
     case Ternary(cond, then, els): {
-      string c = unsupportedExpr(src, lexed, env, cond);
+      string c = unsupportedValue(src, lexed, env, cond);
       if (c != "") { return c; }
-      string t = unsupportedExpr(src, lexed, env, then);
+      string t = unsupportedValue(src, lexed, env, then);
       if (t != "") { return t; }
-      return unsupportedExpr(src, lexed, env, els);
+      return unsupportedValue(src, lexed, env, els);
     }
     case Index(arr, index): {
-      string a = unsupportedExpr(src, lexed, env, arr);
+      string a = unsupportedValue(src, lexed, env, arr);
       if (a != "") { return a; }
       if (!isArrayType(typeOfE(src, lexed, env, arr))) { return "index of an unknown type"; }
-      return unsupportedExpr(src, lexed, env, index);
+      return unsupportedValue(src, lexed, env, index);
     }
     case Member(obj, nameTok): {
       string o = unsupportedExpr(src, lexed, env, obj);
@@ -1741,15 +1798,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(src, lexed, elem) == "") { return "array of an unspelled type"; }
       if (!(size is null)) {
-        string sz = unsupportedExpr(src, lexed, env, size!);
+        string sz = unsupportedValue(src, lexed, env, size!);
         if (sz != "") { return sz; }
       }
       if (!(fill is null)) {
-        string fl = unsupportedExpr(src, lexed, env, fill!);
+        string fl = unsupportedValue(src, lexed, env, fill!);
         if (fl != "") { return fl; }
       }
       for (i32 i = 0; i < elements.len(); i++) {
-        string el = unsupportedExpr(src, lexed, env, elements[i]);
+        string el = unsupportedValue(src, lexed, env, elements[i]);
         if (el != "") { return el; }
       }
       return "";
@@ -1769,7 +1826,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         else: { return "a construction kind"; }
       }
       for (i32 i = 0; i < args.len(); i++) {
-        string a = unsupportedExpr(src, lexed, env, args[i]);
+        string a = unsupportedValue(src, lexed, env, args[i]);
         if (a != "") { return a; }
       }
       return "";
@@ -1786,7 +1843,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ma < 0) { return "a method this slice has not got"; }
           if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
           for (i32 i = 0; i < args.len(); i++) {
-            string a = unsupportedExpr(src, lexed, env, args[i]);
+            string a = unsupportedValue(src, lexed, env, args[i]);
             if (a != "") { return a; }
           }
           return "";
@@ -1840,7 +1897,7 @@ export string emitBlocked(u8[] src) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "",
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
                 string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
   collectDeclarations(env, src, lexed, prog);
@@ -1981,4 +2038,20 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
     env.funcIndex[i] = next;
     next = next + 1;
   }
+}
+
+/**
+ * An expression that must arrive as a particular type, converted if it does not.
+ *
+ * `emitExprAt` steers a *literal*, which has no type of its own. A typed expression ignores it and
+ * arrives as itself — which is right almost everywhere and wrong exactly where an instruction demands
+ * a width: an array index is an `i32` whatever the language allowed, and a shift's two operands must
+ * agree even when wac let them differ.
+ */
+void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  string got = typeOfE(src, lexed, env, e);
+  emitExprAt(fb, src, lexed, env, e, want);
+  if (want == "" || got == "" || got == want) { return; }
+  if (valType(got) == valType(want) && !isFloat(got)) { return; }
+  emitConversion(fb, env, got, want);
 }

@@ -1183,6 +1183,37 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Making the walk honest: 43 invalid to 28
+
+The walk approves a function and the emitter then produces it; when the module does not validate, the
+walk lied. Five of those lies, and every one is the same shape — **a value arriving at the wrong
+width, because something did not know what type was wanted**:
+
+- **A `return` had no idea what the function returns.** `return 1;` in an `i64` function emitted an
+  `i32` constant. Seven files at once, and the fix is one field: the return type belongs to the
+  function being emitted, and a `return` is the one statement that needs it.
+- **If the emitter cannot say what an expression *is*, it cannot emit it.** So a position that
+  consumes a value now demands a known type, and declines otherwise. Structure was never enough:
+  every remaining broken module had a shape the walk approved and types it then guessed.
+- **An operand is not always the instruction's type.** wac allows `wide >> narrow` and wasm's
+  `i64.shr_s` wants both sides `i64`; an array index is an `i32` whatever the language allowed. The
+  literal-steering `emitExprAt` cannot help — a *typed* expression ignores it and arrives as itself —
+  so those positions now convert.
+- **A value left by an expression statement has to go somewhere.** wasm's stack is not a suggestion,
+  and *"expected 0 elements on the stack"* was six files saying so.
+
+Two corrections on the way, both about **one empty string meaning two things**:
+
+- `""` is *unknown* and `"void"` is *nothing*. Treating the second as a value dropped one that was
+  never pushed — and the symptom was the error I had just fixed, arriving from the opposite direction.
+- Arithmetic over literals has no type of its own either. `0 - 100000` is an `i32` subtraction in an
+  `i32` slot and an `i64` one elsewhere, and calling it untyped declined a working function. A literal
+  is polymorphic over a family; so is a tree of them.
+
+**336 files: 9 whole, 299 partial, 28 invalid**, and the block list is unchanged in shape — 274
+imports, then a long tail. The 28 are a handful of type-inference gaps left to chase, and they are now
+a *list of specific instructions* rather than a fog.
+
 ### Rung 4 meets the repository, and a number appears
 
 **336 corpus files: 7 emitted whole, 286 partial, 43 invalid.** The README named this oracle before
