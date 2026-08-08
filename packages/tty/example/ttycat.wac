@@ -1,0 +1,41 @@
+// A terminal and a `cat` behind it, so the line discipline can be compared with the kernel's.
+//
+//   printf 'ab\x7fc\n' | ttycat        ->  ab\b \bc\r\nac\r\n
+//   printf 'ab\x7fc\n' | script -qec cat /dev/null   ->  the same bytes
+//
+// This is the *oracle harness* rather than a program anybody wants: `packages/tty` has no terminal to
+// attach to in a test, so the test attaches one. What a pty does with a keystroke is echo it and, when a
+// line is finished, hand it to the program on the other side — whose output comes back through the same
+// pty with `ONLCR` turning each `\n` into a `\r\n`. That is exactly what this does, in eleven lines, and
+// `test/line.test.ts` feeds the same bytes to both and compares.
+//
+// The program on the other side is `cat` because `cat` is the one that adds nothing of its own.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Line, Typed } from "../src/line.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+
+export i32 main(Core core, Cli cli) {
+  u8[] typed = cli.readStdin().wait();
+  Line l = Line.create();
+  Buf out = Buf.create();
+  for (i32 i = 0; i < typed.len(); i++) {
+    Typed t = l.feed(typed[i]);
+    out.pushAll(t.echo);
+    // The program's own output, back through the same terminal: every `\n` it writes becomes `\r\n`,
+    // which is `ONLCR` and is why a program's output on a terminal is not the bytes it wrote.
+    if (t.hasLine) {
+      for (i32 j = 0; j < t.line.len(); j++) {
+        if (t.line[j] == 10) { out.push(13); }
+        out.push(t.line[j]);
+      }
+    }
+    // An interrupt kills `cat`, and the pty stops being read: whatever was typed after it is lost. The
+    // test does not compare that case byte for byte, because which bytes survive is a race between two
+    // processes; it asserts the interrupt itself instead.
+    if (t.interrupt) { break; }
+    if (t.eof) { break; }
+  }
+  cli.write(out.take());
+  return 0;
+}
