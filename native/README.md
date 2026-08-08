@@ -82,7 +82,14 @@ behind a **grant check**: without `--allow-read` a program finds `FAULT_NOT_GRAN
 `platform.wac` keeps separate from the operating system's own `FAULT_DENIED` so that a caller can tell
 "this build cannot" from "this file will not".
 
-**The network and `spawn` are not implemented and trap by name.** A runtime that
+**The network and `spawn` are not implemented, and say so in a value rather than by trapping.**
+`Child.handle == -2` means "this world has no `spawn` at all" — `platform.wac` says so in those words,
+because without it "a world that cannot spawn made every spawnable name *fail* rather than fall
+through". `Socket` has the same shape with a negative handle and a reason. So a shell falls back to its
+in-process applets here, which is what lets `wacsh` run over the real filesystem at all.
+
+Where the interface has a value for "not here", answering it is *more* honest than a trap, not less:
+the trap is the thing a caller cannot act on. A runtime that
 answered an empty file or a closed socket would make every program that used it wrong in a way nothing
 could see, which is design/0001 D6.
 

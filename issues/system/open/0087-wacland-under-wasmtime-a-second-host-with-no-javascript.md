@@ -313,3 +313,32 @@ reason is the design working: everything a session does to files goes through `p
 `writeFile` and nothing else. That is now said in the test's own header, because the file otherwise
 reads as covering far more than it does. The native host's directory and metadata capabilities are
 exercised by nothing at all yet.
+
+## Progress — 2026-08-08 (fifth tick), agent-a — a hunt, and two findings
+
+The previous tick's canary said the native filesystem capabilities were exercised by nothing. This was
+that hunt: `packages/box/src/bin/sh.wac` — `wacsh`, the shell over the **real** filesystem — run on
+both hosts against GNU coreutils. `packages/platform/test/native_hostfs.test.ts`.
+
+**Finding one: every path was resolved against the wrong directory.** `pushChild` says that between it
+and `popChild` "every path is taken relative to `cwd`". The native host answered the frame's directory
+from `cli.cwd()` and then resolved paths against the *process's*. So `cat f` worked and `cd sub; cat f`
+said "No such file or directory" — every applet that reads a named file, broken the moment a script did
+the most ordinary thing a script does, and invisible to every test that did not change directory. One
+fix in one place (`resolve`), and `cd` is now in every case of the new test rather than in one labelled
+"with cd".
+
+**Finding two: "not implemented" was the wrong answer for `spawn` and the network.** They trapped. But
+`Child.handle == -2` **means "this world has no `spawn` at all"** — `platform.wac` says so in those
+words, and says why: without it "a world that cannot spawn made every spawnable name *fail* rather than
+fall through", which hid `packages/box`'s own `wc` behind a `WACPATH` lookup that could never work.
+`Socket` has the same shape with a negative handle and a reason.
+
+So where the interface has a value for "not here", answering it is *more* honest than a trap, not less
+— the trap is the thing a caller cannot act on. `spawn`, `spawnSelf`, `connect`, `listen`, `accept`,
+`recv`, `send` and `closeSocket` now answer rather than trapping, and `wacsh` falls back to its
+in-process applets on both hosts exactly as the design says it should. That is what made this tick's
+test possible at all.
+
+The trap stays for capabilities whose type has no such value — that list is now empty, which is the
+right end state: everything unimplemented says so in a value a program can read.

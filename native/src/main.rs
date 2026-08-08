@@ -56,6 +56,9 @@ enum Kind {
     FileResult,
     Stat,
     Names,
+    Socket,
+    Child,
+    Read,
 }
 
 /// The three shared functions and the constructor that make one `Pending<T>`.
@@ -97,6 +100,14 @@ enum Cap {
     Env,
     PushChild,
     PopChild,
+    Connect,
+    Listen,
+    Accept,
+    Recv,
+    Send,
+    CloseSocket,
+    Spawn,
+    SpawnSelf,
     ReadFile,
     WriteFile,
     Stat,
@@ -379,6 +390,9 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
         (Kind::FileResult, "Pending<FileResult>"),
         (Kind::Stat, "Pending<Stat>"),
         (Kind::Names, "Pending<string[]?>"),
+        (Kind::Socket, "Pending<Socket>"),
+        (Kind::Child, "Pending<Child>"),
+        (Kind::Read, "Pending<Read>"),
     ] {
         if let Some(hooks) = pending_hooks(&mut store, &instance, m, kind, wac_name)? {
             store.data_mut().pendings.insert(kind, hooks);
@@ -511,6 +525,14 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "env") => Cap::Env,
         ("Cli", "pushChild") => Cap::PushChild,
         ("Cli", "popChild") => Cap::PopChild,
+        ("Cli", "connect") => Cap::Connect,
+        ("Cli", "listen") => Cap::Listen,
+        ("Cli", "accept") => Cap::Accept,
+        ("Cli", "recv") => Cap::Recv,
+        ("Cli", "send") => Cap::Send,
+        ("Cli", "closeSocket") => Cap::CloseSocket,
+        ("Cli", "spawn") => Cap::Spawn,
+        ("Cli", "spawnSelf") => Cap::SpawnSelf,
         ("Cli", "readFile") => Cap::ReadFile,
         ("Cli", "writeFile") => Cap::WriteFile,
         ("Cli", "stat") => Cap::Stat,
@@ -745,6 +767,46 @@ fn dispatch(
             };
             return settle_now(caller, Kind::Captured, Outcome::Captured(out, err), results);
         }
+        // ── The network and `spawn`: not implemented, and *said in the type* ─────
+        //
+        // These do not trap, and the difference from every other gap in this runtime is the point.
+        // `Child.handle == -2` **means "this world has no `spawn` at all"** — `platform.wac` says so
+        // in those words, and says why: without it "a world that cannot spawn made every spawnable
+        // name *fail* rather than fall through", which hid `packages/box`'s own `wc` behind a
+        // `WACPATH` lookup that could never work. A missing capability is not a broken program.
+        //
+        // So where the interface has a value for "not here", answering it is more honest than a trap,
+        // not less: the trap is what a caller cannot act on. `Socket` has the same shape with a
+        // negative handle and a reason, and a shell falls back to its in-process applets on both.
+        Cap::Spawn | Cap::SpawnSelf => {
+            return settle_now(caller, Kind::Child, Outcome::Child(-2, -2, String::new()), results);
+        }
+        Cap::Connect | Cap::Listen | Cap::Accept => {
+            return settle_now(
+                caller,
+                Kind::Socket,
+                Outcome::Socket(-1, "networking is not implemented in the native runtime yet".into(), String::new(), 0),
+                results,
+            );
+        }
+        Cap::Recv => {
+            // `Read.Failed` rather than `Read.End`, which would tell a reader the peer had finished
+            // rather than that there was never a peer.
+            return settle_now(
+                caller,
+                Kind::Read,
+                Outcome::Str(b"networking is not implemented in the native runtime yet".to_vec()),
+                results,
+            );
+        }
+        Cap::Send => {
+            // False is "it did not land", which is what a caller checks and what is true here.
+            return settle_now(caller, Kind::Bool, Outcome::Bool(false), results);
+        }
+        Cap::CloseSocket => {
+            // Nothing to close, and closing what was never opened is not an error anywhere.
+        }
+
         // ── The filesystem ───────────────────────────────────────────────────
         //
         // Every one of these is `std::fs` behind a grant check, and the grant check is the whole
@@ -760,10 +822,11 @@ fn dispatch(
             if !caller.data().grants.read {
                 return settle_now(caller, Kind::FileResult, denied_read(), results);
             }
+            let here = resolve(caller, &path);
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             std::thread::spawn(move || {
-                let outcome = match std::fs::read(os_path(&path)) {
+                let outcome = match std::fs::read(here) {
                     Ok(bytes) => Outcome::FileResult(true, bytes, String::new(), FAULT_NONE),
                     Err(e) => Outcome::FileResult(false, Vec::new(), e.to_string(), fault_of(&e)),
                 };
@@ -777,10 +840,11 @@ fn dispatch(
             if !caller.data().grants.write {
                 return settle_now(caller, Kind::Change, denied_write_change(), results);
             }
+            let here = resolve(caller, &path);
             let id = caller.data().tickets.submit();
             let table = caller.data().tickets.clone();
             std::thread::spawn(move || {
-                let outcome = match std::fs::write(os_path(&path), &data) {
+                let outcome = match std::fs::write(here, &data) {
                     Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
                     Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
                 };
@@ -800,11 +864,12 @@ fn dispatch(
             }
             // `linkStat` does not follow a symbolic link, which is the whole difference between the
             // two and the reason `Stat` carries `isSymlink` at all.
+            let here = resolve(caller, &path);
             let follow = matches!(cap, Cap::Stat);
             let md = if follow {
-                std::fs::metadata(os_path(&path))
+                std::fs::metadata(&here)
             } else {
-                std::fs::symlink_metadata(os_path(&path))
+                std::fs::symlink_metadata(&here)
             };
             let outcome = match md {
                 Ok(m) => {
@@ -838,7 +903,8 @@ fn dispatch(
             if !caller.data().grants.read {
                 return settle_now(caller, Kind::Names, Outcome::Names(None), results);
             }
-            let outcome = match std::fs::read_dir(os_path(&path)) {
+            let here = resolve(caller, &path);
+            let outcome = match std::fs::read_dir(here) {
                 Ok(entries) => {
                     let mut names: Vec<Vec<u8>> = entries
                         .filter_map(|e| e.ok())
@@ -860,10 +926,11 @@ fn dispatch(
             if !caller.data().grants.write {
                 return settle_now(caller, Kind::Change, denied_write_change(), results);
             }
+            let here = resolve(caller, &path);
             let made = if parents {
-                std::fs::create_dir_all(os_path(&path))
+                std::fs::create_dir_all(&here)
             } else {
-                std::fs::create_dir(os_path(&path))
+                std::fs::create_dir(&here)
             };
             let outcome = match made {
                 Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
@@ -880,7 +947,7 @@ fn dispatch(
             if !caller.data().grants.write {
                 return settle_now(caller, Kind::Change, denied_write_change(), results);
             }
-            let p = os_path(&path);
+            let p = resolve(caller, &path);
             let is_dir = std::fs::symlink_metadata(&p).map(|m| m.is_dir()).unwrap_or(false);
             let gone = if is_dir {
                 if recursive { std::fs::remove_dir_all(&p) } else { std::fs::remove_dir(&p) }
@@ -902,7 +969,9 @@ fn dispatch(
             if !caller.data().grants.write {
                 return settle_now(caller, Kind::Change, denied_write_change(), results);
             }
-            let outcome = match std::fs::rename(os_path(&from), os_path(&to)) {
+            let from_p = resolve(caller, &from);
+            let to_p = resolve(caller, &to);
+            let outcome = match std::fs::rename(from_p, to_p) {
                 Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
@@ -939,7 +1008,8 @@ fn dispatch(
                     results,
                 );
             }
-            let change = match std::fs::File::create(os_path(&path)) {
+            let here = resolve(caller, &path);
+            let change = match std::fs::File::create(here) {
                 Ok(f) => {
                     caller.data_mut().output = Some(f);
                     Outcome::Change(FAULT_NONE, String::new())
@@ -997,6 +1067,13 @@ fn dispatch(
                 }
                 (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
                 (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
+                (Kind::Socket, Outcome::Socket(h, e, peer, port)) => {
+                    make_socket(caller, h, &e, &peer, port)?
+                }
+                (Kind::Child, Outcome::Child(h, eh, e)) => make_child(caller, h, eh, &e)?,
+                (Kind::Read, Outcome::Str(why)) => {
+                    make_read_failed(caller, &String::from_utf8_lossy(&why))?
+                }
                 (k, o) => {
                     return Err(wasmtime::Error::msg(format!(
                         "ticket {id} settled as {o:?}, which is not a {k:?}"
@@ -1230,6 +1307,33 @@ fn os_path(bytes: &[u8]) -> std::path::PathBuf {
     std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
 }
 
+/// A path, resolved against the innermost `pushChild` frame's directory.
+///
+/// **This is the frame's whole second job** and it is easy to miss: `platform.wac` says of `pushChild`
+/// that between it and `popChild` "every path is taken relative to `cwd`", and answering the frame's
+/// directory from `cli.cwd()` alone is not that — it tells a program where it is and then resolves its
+/// paths somewhere else.
+///
+/// The failure it caused is worth recording because it was invisible in the obvious tests. `cat f`
+/// worked and `cd sub; cat f` said "No such file or directory", because the shell hands a *relative*
+/// path down and expects the capability to resolve it — so every applet reading a named file broke the
+/// moment a script changed directory, and every test that did not `cd` passed. It was found by running
+/// the shell over the real filesystem against GNU coreutils, which is the only thing that looks at
+/// this surface at all.
+///
+/// An absolute path is left alone: `join` already does that, and saying so here is cheaper than
+/// remembering it.
+fn resolve(caller: &mut Caller<'_, Host>, path: &[u8]) -> std::path::PathBuf {
+    let p = os_path(path);
+    if p.is_absolute() {
+        return p;
+    }
+    match caller.data().frames.last() {
+        Some(f) if !f.cwd.is_empty() => os_path(&f.cwd).join(p),
+        _ => p,
+    }
+}
+
 fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
@@ -1243,7 +1347,34 @@ fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::
     if !caller.data().grants.read {
         return Err(Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted reading".into()));
     }
-    std::fs::File::open(os_path(path)).map_err(|e| Outcome::Change(fault_of(&e), e.to_string()))
+    let here = resolve(caller, path);
+    std::fs::File::open(here).map_err(|e| Outcome::Change(fault_of(&e), e.to_string()))
+}
+
+fn make_socket(
+    caller: &mut Caller<'_, Host>,
+    handle: i32,
+    error: &str,
+    peer: &str,
+    port: i32,
+) -> Result<Val, wasmtime::Error> {
+    let e = make_string(caller, error.as_bytes())?;
+    let p = make_string(caller, peer.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_Socket_of")?;
+    let built = call_dyn(caller, &f, &[Val::I32(handle), e, p, Val::I32(port)])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Socket.of answered nothing"))
+}
+
+fn make_child(
+    caller: &mut Caller<'_, Host>,
+    handle: i32,
+    err_handle: i32,
+    error: &str,
+) -> Result<Val, wasmtime::Error> {
+    let e = make_string(caller, error.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_Child_of")?;
+    let built = call_dyn(caller, &f, &[Val::I32(handle), Val::I32(err_handle), e])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Child.of answered nothing"))
 }
 
 fn make_change(caller: &mut Caller<'_, Host>, fault: i32, message: &str) -> Result<Val, wasmtime::Error> {
