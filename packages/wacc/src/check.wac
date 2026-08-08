@@ -930,6 +930,14 @@ void checkExpr(C c, Expr e) {
       c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }
+    // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
+    // right answer — meant never looking inside it.
+    case Cast(op, operand, target): { checkExpr(c, operand); }
+    case Unwrap(operand): { checkExpr(c, operand); }
+    case Is(left, target, other, negated): {
+      checkExpr(c, left);
+      if (!(other is null)) { checkExpr(c, other!); }
+    }
     case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
     case Index(arr, index): { checkExpr(c, arr); checkExpr(c, index); }
     case Member(obj, nameTok): { checkExpr(c, obj); }
@@ -1307,7 +1315,13 @@ void checkStmt(C c, Stmt s, Ty want) {
     case While(cond, body): { checkCond(c, cond); checkAll(c, body, want); }
     case DoWhile(body, cond): { checkCond(c, cond); checkAll(c, body, want); }
     case For(init, cond, update, body): {
+      // The init and update are statements, and were declared but never checked — a `for` whose
+      // initialiser is wrong said nothing. The reachability grid found it: `For` passed on its body
+      // and failed on its init, which is exactly the shape of a walk that descends one field and not
+      // its siblings.
+      if (!(init is null)) { checkStmt(c, init!, want); }
       if (!(cond is null)) { checkCond(c, cond!); }
+      if (!(update is null)) { checkStmt(c, update!, want); }
       checkAll(c, body, want);
     }
     case Switch(subject, cases): {

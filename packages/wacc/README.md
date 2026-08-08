@@ -567,6 +567,32 @@ the language and had no rule applied to it at all. It surfaced as the const-rece
 broken when it was merely unreached, which is the second time this week a rule has looked wrong and
 been unvisited instead.
 
+### Is every node kind actually walked?
+
+Twice in two slots a rule looked broken and was merely unreached: method bodies were not descended
+into, and a bare expression statement had no arm. Both cost a slot, both looked like a wrong rule, and
+both had the same tell — one case of a family failing while its siblings passed.
+
+No rule test can find that, because a rule test puts its subject where the walk already goes.
+`test/reach.test.ts` asks the other question: for every node kind, bury a **known-bad construct**
+inside it and check the diagnostic still comes out. The planted fault is the same everywhere, so a
+failing cell means *this kind is not walked* and never *that rule is wrong*.
+
+It found two on its first run. A `for`'s **init and update** were declared but never checked, so a
+`for` with a wrong initialiser said nothing — `For` passed on its body and failed on its init, which
+is the shape of a walk that descends one field and not its siblings. And a **cast's operand** was
+never entered, because typing a cast as its target — the right answer — meant never looking inside it.
+
+**Then the grid failed its own test.** Planting the method-bodies bug again left it green: it varies
+where a statement sits within a body and where an expression sits within a statement, and never
+*which body*. That is the dimension the bug lived in. A third grid covers the containers — free
+function, exported, instance method, `const this`, static, and a method of a child struct — and both
+historical bugs now fail by name.
+
+The lesson is the one the grid nearly missed: **a dimension you did not think to vary is invisible no
+matter how finely you vary the others.** Written after a bug, a test tends to cover the shape of that
+bug rather than the space it came from.
+
 Next: more of rung 3 — the cast-operator family (`lossy cast not needed`), `switch` and `match`
 subjects, and generics properly.
 
