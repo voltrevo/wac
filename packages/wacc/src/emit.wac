@@ -185,9 +185,15 @@ string elemOf(string t) {
 string repType(string t) { return t == "string" ? "i8[]" : t; }
 
 void writeValType(B out, Env env, string t) {
+  // **The heap type after `0x63` is signed.** A reference type is `0x63` followed by an *s33* — the
+  // encoding that lets a negative value mean `func`, `extern`, `eq` and the rest, and a non-negative
+  // one mean a type index. Written as an unsigned LEB it is identical for the first sixty-four
+  // indices and wrong for every one after, because 64 sets the sign bit of a one-byte LEB: index 65
+  // came back as heap type **-63**. Nothing here had sixty-four types until linking, so this was
+  // right for as long as a module was one file.
   if (t == "string") {
     out.byte(99);
-    out.u32leb(env.arrayType("i8[]"));
+    out.i32leb(env.arrayType("i8[]"));
     return;
   }
   // **Nullable** references, `0x63`, not the non-null `0x64`. A non-null reference has no default
@@ -196,15 +202,40 @@ void writeValType(B out, Env env, string t) {
   // locals are nullable too, which is the measurement that settled it.
   if (isArrayType(t)) {
     out.byte(99);
-    out.u32leb(env.arrayType(t));
+    out.i32leb(env.arrayType(t));
     return;
   }
   if (env.isStructName(t)) {
     out.byte(99);
-    out.u32leb(env.structType(t));
+    out.i32leb(env.structType(t));
     return;
   }
   out.byte(valType(t));
+}
+
+/** The key a name token means — its own file's declaration, or whichever file has one. */
+string nameKeyOf(Env env, u8[] src, Lexed lexed, i32 tok) {
+  return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
+}
+
+/** A non-negative number as text, for building a key no source can spell. */
+string numText(i32 n) {
+  if (n == 0) { return "0"; }
+  string out = "";
+  i32 v = n;
+  for (i32 guard = 0; guard < 12; guard++) {
+    if (v == 0) { return out; }
+    i32 d = v % 10;
+    out = string.fromCodepoint(48 + d) + out;
+    v = v / 10;
+  }
+  return out;
+}
+
+/** The line a token is on, which is what says which linked file it came from. */
+i32 tokenLine(Lexed lexed, i32 t) {
+  if (t < 0) { return 1; }
+  return lexed.tokens[t * tokenStride() + 3];
 }
 
 /** The storage type inside an array type, where a packed element is narrower than a value type. */
@@ -347,13 +378,34 @@ export struct Env {
    * language with no unions makes anyway, and nothing here is measuring bytes yet.
    */
   /**
-   * The first top-level name two linked files both declare, or `""`.
+   * Where each linked file begins, as a line number, and every top-level name with the file that
+   * declared it.
    *
-   * Linking by concatenation puts every file's declarations in one pool, and a pool cannot hold two
-   * meanings for one name: a call would resolve to whichever was registered first, silently, in a
-   * module that validates. So the whole module is declined rather than half of it emitted.
+   * Linking by concatenation put every file's declarations in one pool, and a pool cannot hold two
+   * meanings for one name — `sha256.wac` and `sha512.wac` both declare a `K`. What distinguishes
+   * them is **where they are**: the blob is the files end to end, so a line number names a file
+   * exactly, and every token carries its line. A name declared in the second file is registered
+   * under a key of its own, and a reference resolves to the declaration in its *own* file before it
+   * resolves to anyone else's — which is the language's rule (a file sees its own names, then what
+   * it imported) arrived at from the only direction available here.
    */
-  string clash;
+  i32[] fileFirstLine;
+  i32 fileCount;
+  /**
+   * Which file imports which, as (from, to) pairs.
+   *
+   * Needed because "this file's declaration, then anybody's" is not the language's rule and is not
+   * even a safe approximation of it: with three files declaring `P`, a file that imported one of
+   * them got whichever had registered first, and two structs that used to be one type are now two.
+   * The wasm error for that is *"expected (ref null 1), got (ref null 7)"*, which names neither file.
+   */
+  i32[] importFrom;
+  i32[] importTo;
+  i32 importCount;
+  string[] declNames;
+  i32[] declFiles;
+  string[] declKeys;
+  i32 declCount;
   string[] variantNames;
   string[] variantOwners;
   i32[] variantTags;
@@ -361,6 +413,17 @@ export struct Env {
   i32[] variantSlot;
   i32[] variantArity;
   i32 variantCount;
+  /**
+   * Whether any table filled up.
+   *
+   * These are fixed arrays, and a table that stops writing while its count keeps rising renumbers
+   * everything after it — a call to function #400 reaching #399. Linking made that reachable for the
+   * first time: one file never had five hundred functions, and a closure of forty does. So it is
+   * recorded and the module is declined by name, rather than emitted with the indices off by one.
+   */
+  bool full;
+  /** Whether any name had to be guessed at — see `keyAt`. A module with one is not emitted. */
+  bool ambiguous;
 
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
@@ -414,7 +477,10 @@ export struct Env {
     for (i32 i = 0; i < this.arrayCount; i++) {
       if (this.arrayTypes[i] == t) { return i; }
     }
-    if (this.arrayCount >= this.arrayTypes.len()) { return 0; }
+    if (this.arrayCount >= this.arrayTypes.len()) {
+      this.full = true;
+      return 0;
+    }
     // **The element first, transitively.** `u8[][]`'s element is `u8[]`, which is a declared type of
     // its own and has to exist before anything refers to it. Registering only the outer one meant the
     // inner was created while the section was being *written* — an index past the count already
@@ -496,13 +562,21 @@ export struct Env {
 
   /** Record a function, with its parameters, in the order the calls will index them. */
   void addFunc(this, string name, string ret, string[] ptypes) {
-    if (this.funcCount >= this.funcs.len()) { return; }
+    if (this.funcCount >= this.funcs.len()) {
+      this.full = true;
+      return;
+    }
     this.funcs[this.funcCount] = name;
     this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = ptypes.len();
     for (i32 i = 0; i < ptypes.len(); i++) {
-      if (this.funcParamTotal >= this.funcParamTypes.len()) { break; }
+      if (this.funcParamTotal >= this.funcParamTypes.len()) {
+        // A parameter this table has no room for makes `paramTypeAt` answer `""` for it, and an
+        // unknown slot type is how a literal argument becomes an `i32.const` in a reference slot.
+        this.full = true;
+        break;
+      }
       this.funcParamTypes[this.funcParamTotal] = ptypes[i];
       this.funcParamTotal = this.funcParamTotal + 1;
     }
@@ -518,6 +592,102 @@ export struct Env {
       if (this.fieldOwners[i] == owner && this.fieldNames[i] == field) { return this.fieldTypes[i]; }
     }
     return "";
+  }
+
+  /**
+   * An empty environment, with the capacities in one place rather than in three call sites.
+   *
+   * They were three identical lists of forty-three arguments, which is how the last two fields added
+   * here cost three edits each and one of them was found by a type error rather than by reading.
+   */
+  Env create() {
+    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, "", "",
+               string[512](), i32[512](), string[512](), Expr?[512](), 0,
+               string[1024](), 0,
+               string[16384](), string[16384](), string[16384](), 0,
+               string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
+               bool[4096](), i32[4096](), 0,
+               i32[512](), 0, i32[4096](), i32[4096](), 0,
+               string[8192](), i32[8192](), string[8192](), 0,
+               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false);
+  }
+
+  /** Which linked file a line belongs to; 0 when nothing was linked. */
+  i32 fileOf(const this, i32 line) {
+    i32 at = 0;
+    for (i32 i = 0; i < this.fileCount; i++) {
+      if (this.fileFirstLine[i] <= line) { at = i; }
+    }
+    return at;
+  }
+
+  /**
+   * Register a top-level name, and answer with the key everything else will use for it.
+   *
+   * The first declaration of a name keeps the name itself, so a single-file module — and every
+   * reference in every file that imported this one — is unchanged. A second file declaring the same
+   * name gets a key nothing else can spell.
+   */
+  string declare(this, string name, i32 line) {
+    i32 f = this.fileOf(line);
+    bool taken = false;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] == name) { taken = true; }
+    }
+    string key = name;
+    if (taken) { key = name + "@" + numText(f); }
+    if (this.declCount >= this.declNames.len()) { this.full = true; }
+    if (this.declCount < this.declNames.len()) {
+      this.declNames[this.declCount] = name;
+      this.declFiles[this.declCount] = f;
+      this.declKeys[this.declCount] = key;
+      this.declCount = this.declCount + 1;
+    }
+    return key;
+  }
+
+  /**
+   * The key a name means when it is *used* at this line: this file's declaration, or anyone's.
+   *
+   * The fallback is deliberately permissive — a file here can see a name it never imported — which
+   * is the same trade linking by concatenation already made, and safe in the same direction: this
+   * emitter accepts more than the language does and the checker one rung down says no.
+   */
+  string keyAt(this, string name, i32 line) {
+    i32 f = this.fileOf(line);
+    // This file's own declaration first — shadowing, as the language has it.
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
+    }
+    // Then a file this one imports — **and only if exactly one of them has it.** A file that
+    // imports two files declaring `encode` is a question this cannot answer: the import list says
+    // which files, not which names came from which, and picking the first is how a call reached a
+    // `pemBlock` with a different signature and pushed a literal where a reference belonged.
+    string imported = "";
+    i32 importedCandidates = 0;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] != name) { continue; }
+      for (i32 e = 0; e < this.importCount; e++) {
+        if (this.importFrom[e] != f || this.importTo[e] != this.declFiles[i]) { continue; }
+        if (imported != this.declKeys[i]) { importedCandidates = importedCandidates + 1; }
+        imported = this.declKeys[i];
+      }
+    }
+    if (importedCandidates > 1) { this.ambiguous = true; }
+    if (imported != "") { return imported; }
+    // And then anyone — but **only when there is one candidate**. Reaching a name a file neither
+    // declares nor imports is the permissive part of linking, and it is safe exactly while the
+    // answer is unambiguous. With two files declaring `P`, picking either is a guess, and the guess
+    // shows up as *"expected (ref null 1), got (ref null 7)"* in a third file that mentions neither.
+    string found = "";
+    i32 candidates = 0;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] != name) { continue; }
+      if (found != this.declKeys[i]) { candidates = candidates + 1; }
+      found = this.declKeys[i];
+    }
+    if (candidates > 1) { this.ambiguous = true; }
+    return found == "" ? name : found;
   }
 
   /** The enum a variant belongs to, or `""` — which is also the question "is this a variant". */
@@ -557,7 +727,10 @@ export struct Env {
   }
 
   void addLocal(this, string name, string ty) {
-    if (this.localCount >= this.locals.len()) { return; }
+    if (this.localCount >= this.locals.len()) {
+      this.full = true;
+      return;
+    }
     this.locals[this.localCount] = name;
     this.localTypes[this.localCount] = ty;
     this.localCount = this.localCount + 1;
@@ -579,7 +752,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       case Var(type, nameTok, init, isConst): {
-        string t = typeOfTyName(src, lexed, type);
+        string t = typeOfTyName(env, src, lexed, type);
         if (isArrayType(t)) { env.arrayType(t); }
       }
       case Block(inner): { collectArrayTypes(env, src, lexed, inner); }
@@ -616,7 +789,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       case Var(type, nameTok, init, isConst): {
-        env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, type));
+        env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
       }
       case Block(inner): { collectLocals(env, src, lexed, inner); }
       case If(cond, then, els): {
@@ -629,7 +802,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         if (!(init is null)) {
           match (init!.kind) {
             case Var(type, nameTok, ini, isConst): {
-              env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, type));
+              env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(env, src, lexed, type));
             }
             else: { }
           }
@@ -707,9 +880,24 @@ string sourceOf(string[] paths, string[] sources, string path) {
  * `""` means a file was named that the caller did not supply — the one failure this cannot paper
  * over, since the missing declarations would otherwise look merely undefined.
  */
-string linkFiles(string[] paths, string[] sources, string entry) {
+/** How many newlines a source has, which is what its span in the linked blob costs. */
+i32 countLines(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 10) { n = n + 1; }
+  }
+  return n;
+}
+
+string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges) {
   string[] queue = string[256]();
   string[] seen = string[256]();
+  // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
+  // as they are read and turned into indices once every file has one.
+  string[] fromPath = string[1024]();
+  string[] toPath = string[1024]();
+  i32 en = 0;
   i32 qn = 1;
   i32 sn = 0;
   queue[0] = entry;
@@ -726,7 +914,9 @@ string linkFiles(string[] paths, string[] sources, string entry) {
     sn = sn + 1;
     string body = sourceOf(paths, sources, path);
     if (body == "") { return ""; }
-    // A newline between files, so a file that ends mid-line cannot join itself to the next one.
+    // A newline between files, so a file that ends mid-line cannot join itself to the next one —
+    // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
+    if (starts.len() > sn) { starts[sn] = countLines(out) + 1; }
     out = out + body + "\n";
     u8[] b = body.toBytes();
     Lexed lexed = lex(b);
@@ -741,12 +931,36 @@ string linkFiles(string[] paths, string[] sources, string entry) {
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
           if (qn >= queue.len()) { return ""; }
-          queue[qn] = resolveImport(path, quoted.slice(1, quoted.len() - 1));
+          string target = resolveImport(path, quoted.slice(1, quoted.len() - 1));
+          queue[qn] = target;
           qn = qn + 1;
+          // The edge is recorded by *path*, and turned into file indices once every file has one:
+          // an import often names a file this walk has not reached yet.
+          if (en < fromPath.len()) {
+            fromPath[en] = path;
+            toPath[en] = target;
+            en = en + 1;
+          }
         }
         else: { }
       }
     }
+  }
+  // Paths to indices, now that `seen` is complete.
+  edges[0] = 0;
+  for (i32 e = 0; e < en; e++) {
+    i32 a = -1;
+    i32 b = -1;
+    for (i32 i = 0; i < sn; i++) {
+      if (seen[i] == fromPath[e]) { a = i; }
+      if (seen[i] == toPath[e]) { b = i; }
+    }
+    if (a < 0 || b < 0) { continue; }
+    i32 ec = edges[0];
+    if (ec * 2 + 2 >= edges.len()) { continue; }
+    edges[ec * 2 + 1] = a;
+    edges[ec * 2 + 2] = b;
+    edges[0] = ec + 1;
   }
   return out;
 }
@@ -766,7 +980,7 @@ i32 declCountOf(string source) {
  * none of which an `i32` calculation needs, and each of which is a section that can be added when
  * something needs it rather than because a real module usually has one.
  */
-export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1); }
+export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]()); }
 
 /**
  * One module from many files: the entry, everything it imports, and nothing else.
@@ -776,9 +990,11 @@ export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1); }
  * caller did not supply is a bare module rather than a wrong one.
  */
 export u8[] emitLinked(string[] paths, string[] sources, string entry) {
-  string blob = linkFiles(paths, sources, entry);
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges);
   if (blob == "") { return bareModule(); }
-  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)));
+  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -799,13 +1015,26 @@ u8[] bareModule() {
  * way. The count is the only thing that has to survive the join — an imported file's `export` means
  * "visible to the file that imported me", not "visible to JavaScript".
  */
-u8[] emitModuleOf(u8[] src, i32 entryDecls) {
+u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0, "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+  Env env = Env.create();
 
+  // The file table first: every key handed out below is derived from it, and a registration made
+  // before it is loaded would be scoped to file 0 whatever line it is on.
+  for (i32 i = 0; i < starts.len(); i++) {
+    if (starts[i] == 0) { continue; }
+    env.fileFirstLine[env.fileCount] = starts[i];
+    env.fileCount = env.fileCount + 1;
+  }
+  for (i32 e = 0; e < edges[0]; e++) {
+    if (env.importCount >= env.importFrom.len()) { continue; }
+    env.importFrom[env.importCount] = edges[e * 2 + 1];
+    env.importTo[env.importCount] = edges[e * 2 + 2];
+    env.importCount = env.importCount + 1;
+  }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   // **A helper is a function like any other**, registered before emittability is settled so a call to
@@ -835,8 +1064,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
     one2[0] = "u8[]";
     env.addFunc(" str_from_bytes", "string", one2);
   }
-  if (env.clash != "") { return bareModule(); }
+  if (env.full) { return bareModule(); }
   settleEmittable(env, src, lexed, prog);
+  // Settling walked every function, so an ambiguous name has been reached by now if there is one.
+  if (env.ambiguous || env.full) { return bareModule(); }
 
   B types = B.create();
   B funcs = B.create();
@@ -872,10 +1103,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string rt = typeOfTyName(src, lexed, returnType);
+        string rt = typeOfTyName(env, src, lexed, returnType);
         if (isArrayType(rt)) { env.arrayType(rt); }
         for (i32 i = 0; i < params.len(); i++) {
-          string pt = typeOfTyName(src, lexed, params[i].type);
+          string pt = typeOfTyName(env, src, lexed, params[i].type);
           if (isArrayType(pt)) { env.arrayType(pt); }
         }
         collectArrayTypes(env, src, lexed, body);
@@ -884,7 +1115,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
       // initialiser can name another. Third time this pre-pass has been found one declaration short:
       // the rule is *every place a type can be named*, and the list is longer than it looks.
       case ConstDecl(nameTok, type, init, exported): {
-        string ct = typeOfTyName(src, lexed, type);
+        string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct)) { env.arrayType(ct); }
         collectArrayTypesOfExpr(env, src, lexed, init);
       }
@@ -899,7 +1130,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
         if (typeParams.len() > 0) { continue; }
         for (i32 v = 0; v < variants.len(); v++) {
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
-            string vt = typeOfTyName(src, lexed, variants[v].fields[i].type);
+            string vt = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
             if (isArrayType(vt)) { env.arrayType(vt); }
           }
         }
@@ -907,14 +1138,14 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < fields.len(); i++) {
-          string ft2 = typeOfTyName(src, lexed, fields[i].type);
+          string ft2 = typeOfTyName(env, src, lexed, fields[i].type);
           if (isArrayType(ft2)) { env.arrayType(ft2); }
         }
         for (i32 m = 0; m < methods.len(); m++) {
-          string mrt = typeOfTyName(src, lexed, methods[m].returnType);
+          string mrt = typeOfTyName(env, src, lexed, methods[m].returnType);
           if (isArrayType(mrt)) { env.arrayType(mrt); }
           for (i32 i = 0; i < methods[m].params.len(); i++) {
-            string mpt = typeOfTyName(src, lexed, methods[m].params[i].type);
+            string mpt = typeOfTyName(env, src, lexed, methods[m].params[i].type);
             if (isArrayType(mpt)) { env.arrayType(mpt); }
           }
           collectArrayTypes(env, src, lexed, methods[m].body);
@@ -969,7 +1200,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string owner = tokenTextOf(src, lexed, nameTok);
+        string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
           if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
           emitAt = emitAt + 1;
@@ -1051,18 +1282,22 @@ string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
 }
 
 /** A declared type's name, enough to tell `void` from a value. */
-string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
+string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
     case Prim(tok): {
       return tokenTextOf(src, lexed, tok);
     }
-    case Named(tok, typeArgs): { return tokenTextOf(src, lexed, tok); }
+    // **The key, not the name.** Two linked files may each declare a `K`, and what tells them
+    // apart is the line this one is written on.
+    case Named(tok, typeArgs): {
+      return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
+    }
     // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
     // out, every array type came back as the empty string — the type section had no array entry, the
     // local was declared an `i32`, and the module asked for an array of whatever was on the stack.
     // A "" that means *unknown* propagates silently, which is the cost of using it for two things.
     case Arr(elem): {
-      string inner = typeOfTyName(src, lexed, elem);
+      string inner = typeOfTyName(env, src, lexed, elem);
       return inner == "" ? "" : inner + "[]";
     }
     // **`T?` is `T`**, which is free here for the reason `array.new_default` forced two slots ago:
@@ -1072,7 +1307,7 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
     case Nullable(inner): {
       match (inner.kind) {
         case Prim(tok): { return ""; }
-        else: { return typeOfTyName(src, lexed, inner); }
+        else: { return typeOfTyName(env, src, lexed, inner); }
       }
     }
     else: { return ""; }
@@ -1089,9 +1324,9 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
 string variantOfMember(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
   match (obj.kind) {
     case Ident(tok): {
-      string on = tokenTextOf(src, lexed, tok);
+      string on = nameKeyOf(env, src, lexed, tok);
       if (!env.isEnumName(on)) { return ""; }
-      string vn = tokenTextOf(src, lexed, nameTok);
+      string vn = nameKeyOf(env, src, lexed, nameTok);
       if (env.enumOf(vn) != on) { return ""; }
       return vn;
     }
@@ -1244,7 +1479,7 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   fb.u32leb(subj);
   i32 opened = 0;
   for (i32 a = 0; a < arms.len(); a++) {
-    string vn = arms[a].variantTok < 0 ? "" : tokenTextOf(src, lexed, arms[a].variantTok);
+    string vn = arms[a].variantTok < 0 ? "" : nameKeyOf(env, src, lexed, arms[a].variantTok);
     if (vn != "") {
       emitTagOf(fb, env, subj, en);
       fb.byte(65);
@@ -1293,7 +1528,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   fb.u32leb(subj);
   i32 opened = 0;
   for (i32 a = 0; a < arms.len(); a++) {
-    string vn = arms[a].variantTok < 0 ? "" : tokenTextOf(src, lexed, arms[a].variantTok);
+    string vn = arms[a].variantTok < 0 ? "" : nameKeyOf(env, src, lexed, arms[a].variantTok);
     bool last = a == arms.len() - 1;
     if (vn != "" && !last) {
       emitTagOf(fb, env, subj, en);
@@ -1333,7 +1568,7 @@ void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
 void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
-      emitExprAt(fb, src, lexed, env, init, typeOfTyName(src, lexed, type));
+      emitExprAt(fb, src, lexed, env, init, typeOfTyName(env, src, lexed, type));
       fb.byte(33);   // local.set
       fb.u32leb(env.localAt(tokenTextOf(src, lexed, nameTok)));
     }
@@ -1628,13 +1863,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     case Cast(op, operand, target): {
       string from = typeOfE(src, lexed, env, operand);
-      string to = typeOfTyName(src, lexed, target);
+      string to = typeOfTyName(env, src, lexed, target);
       emitExprAt(fb, src, lexed, env, operand, from == "" ? to : from);
       emitConversion(fb, env, from == "" ? to : from, to, tokenKindOf(lexed, op));
     }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       i32 at = env.localAt(nm);
+      if (at < 0) { nm = nameKeyOf(env, src, lexed, tok); }
       if (at >= 0) {
         fb.byte(32);
         fb.u32leb(at);
@@ -1741,7 +1977,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          string cname = tokenTextOf(src, lexed, tok);
+          string cname = nameKeyOf(env, src, lexed, tok);
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
           if (env.isStructName(cname)) {
@@ -1781,7 +2017,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
      * others.
      */
     case ArrNew(elem, size, fill, elements): {
-      string et = typeOfTyName(src, lexed, elem);
+      string et = typeOfTyName(env, src, lexed, elem);
       i32 ti = env.arrayType(et + "[]");
       if (elements.len() > 0) {
         for (i32 i = 0; i < elements.len(); i++) {
@@ -1939,7 +2175,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       if (target is null) { return; }
-      i32 vi = env.variantAt(typeOfTyName(src, lexed, target!));
+      i32 vi = env.variantAt(typeOfTyName(env, src, lexed, target!));
       if (vi < 0) { return; }
       string en = env.variantOwners[vi];
       // The scratch local, not a fresh one: the value is dead the moment its tag has been read, so
@@ -2013,11 +2249,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       string lt = env.localType(nm);
       if (lt != "") { return lt; }
-      i32 ci = env.constAt(nm);
+      i32 ci = env.constAt(nameKeyOf(env, src, lexed, tok));
       return ci < 0 ? "" : env.constTypes[ci];
     }
-    case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
-    case ArrNew(elem, size, fill, elements): { return typeOfTyName(src, lexed, elem) + "[]"; }
+    case Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
+    case ArrNew(elem, size, fill, elements): { return typeOfTyName(env, src, lexed, elem) + "[]"; }
     case Member(obj, nameTok): {
       // A variant construction's type is the **variant**, not the enum: `Shape.Circle(2.0)` is a
       // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
@@ -2101,7 +2337,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          string n2 = tokenTextOf(src, lexed, tok);
+          string n2 = nameKeyOf(env, src, lexed, tok);
           if (env.isStructName(n2)) { return n2; }
           i32 at = env.funcAt(n2);
           return at < 0 ? "" : env.funcReturns[at];
@@ -2489,9 +2725,9 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   types.u32leb(params.len() + (receiver == "" ? 0 : 1));
   if (receiver != "") { writeValType(types, env, receiver); }
   for (i32 i = 0; i < params.len(); i++) {
-    writeValType(types, env, typeOfTyName(src, lexed, params[i].type));
+    writeValType(types, env, typeOfTyName(env, src, lexed, params[i].type));
   }
-  string ret = typeOfTyName(src, lexed, returnType);
+  string ret = typeOfTyName(env, src, lexed, returnType);
   bool returnsValue = ret != "void";
   types.u32leb(returnsValue ? 1 : 0);
   if (returnsValue) { writeValType(types, env, ret); }
@@ -2508,7 +2744,7 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   if (receiver != "") { env.addLocal("this", receiver); }
   for (i32 i = 0; i < params.len(); i++) {
     env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
-                 typeOfTyName(src, lexed, params[i].type));
+                 typeOfTyName(env, src, lexed, params[i].type));
   }
   env.paramCount = env.localCount;
   collectLocals(env, src, lexed, body);
@@ -2571,7 +2807,7 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   if (!env.isEnumName(en)) { return "a match on something that is not an enum"; }
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0) { continue; }
-    string vn = tokenTextOf(src, lexed, arms[a].variantTok);
+    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
     if (env.enumOf(vn) != en) { return "an arm naming a variant of another enum"; }
   }
   return "";
@@ -2587,7 +2823,7 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
 i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
   i32 saved = env.localCount;
   if (arm.variantTok < 0) { return saved; }
-  string vn = tokenTextOf(src, lexed, arm.variantTok);
+  string vn = nameKeyOf(env, src, lexed, arm.variantTok);
   i32 vi = env.variantAt(vn);
   if (vi < 0) { return saved; }
   string en = env.variantOwners[vi];
@@ -2607,7 +2843,7 @@ i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
 string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
-      string t = typeOfTyName(src, lexed, type);
+      string t = typeOfTyName(env, src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
       string r0 = unsupportedValueAt(src, lexed, env, init, t);
       if (r0 != "") { return r0; }
@@ -2863,7 +3099,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return "";
     }
     case Cast(op, operand, target): {
-      string t = typeOfTyName(src, lexed, target);
+      string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
                    t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool";
       if (!known) { return "cast to an unsupported type"; }
@@ -2897,7 +3133,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return env.isStructName(ot3) ? "" : "member of an unknown type";
     }
     case ArrNew(elem, size, fill, elements): {
-      if (typeOfTyName(src, lexed, elem) == "") { return "array of an unspelled type"; }
+      if (typeOfTyName(env, src, lexed, elem) == "") { return "array of an unspelled type"; }
       if (!(size is null)) {
         string sz = unsupportedValue(src, lexed, env, size!);
         if (sz != "") { return sz; }
@@ -2917,7 +3153,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
           if (typeArgs.len() > 0) { return "a generic"; }
-          string n = tokenTextOf(src, lexed, tok);
+          string n = nameKeyOf(env, src, lexed, tok);
           if (env.isStructName(n)) {
             i32 want = env.fieldCountOf(n);
             if (args.len() != 0 && args.len() != want) { return "a construction with the wrong count"; }
@@ -2990,8 +3226,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
           for (i32 i = 0; i < args.len(); i++) {
-            // A method's parameters start after the receiver, which is its first parameter here.
-            string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ma, i + 1));
+            // A method is registered with its declared parameters; the receiver is pushed at the
+            // call site and is not one of them.
+            string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ma, i));
             if (a != "") { return a; }
           }
           return "";
@@ -3017,7 +3254,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         return isArrayType(it2) || env.isStructName(it2) ? "" : "an identity test on a value";
       }
       if (target is null) { return "is null"; }
-      if (env.variantAt(typeOfTyName(src, lexed, target!)) < 0) { return "a type test"; }
+      if (env.variantAt(typeOfTyName(env, src, lexed, target!)) < 0) { return "a type test"; }
       string il = unsupportedValue(src, lexed, env, left);
       if (il != "") { return il; }
       return env.isEnumName(env.canonType(typeOfE(src, lexed, env, left))) ? ""
@@ -3060,7 +3297,7 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
   env.localCount = 0;
   if (receiver != "") { env.addLocal("this", receiver); }
   for (i32 i = 0; i < params.len(); i++) {
-    string pt = typeOfTyName(src, lexed, params[i].type);
+    string pt = typeOfTyName(env, src, lexed, params[i].type);
     env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), pt);
   }
   env.paramCount = env.localCount;
@@ -3093,39 +3330,51 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
  * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
  */
-export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1); }
+export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1]()); }
 
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
 export string blockedLinked(string[] paths, string[] sources, string entry) {
-  string blob = linkFiles(paths, sources, entry);
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges);
   if (blob == "") { return "an import of a file that was not supplied"; }
-  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)));
+  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
 }
 
-string emitBlockedOf(u8[] src, i32 entryDecls) {
+string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
-                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0,
-                "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+  Env env = Env.create();
+  // The file table first: every key handed out below is derived from it, and a registration made
+  // before it is loaded would be scoped to file 0 whatever line it is on.
+  for (i32 i = 0; i < starts.len(); i++) {
+    if (starts[i] == 0) { continue; }
+    env.fileFirstLine[env.fileCount] = starts[i];
+    env.fileCount = env.fileCount + 1;
+  }
+  for (i32 e = 0; e < edges[0]; e++) {
+    if (env.importCount >= env.importFrom.len()) { continue; }
+    env.importFrom[env.importCount] = edges[e * 2 + 1];
+    env.importTo[env.importCount] = edges[e * 2 + 2];
+    env.importCount = env.importCount + 1;
+  }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
-  if (env.clash != "") { return "two files declaring " + env.clash; }
+  if (env.full) { return "more declarations than this emitter has room for"; }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { return "a generic function"; }
-        canEmit(src, lexed, env, params, body, "", typeOfTyName(src, lexed, returnType));
+        canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { return "a generic struct"; }
-        string owner = tokenTextOf(src, lexed, nameTok);
+        string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
           canEmit(src, lexed, env, methods[m].params, methods[m].body,
                   methods[m].hasThis ? owner : "",
-                  typeOfTyName(src, lexed, methods[m].returnType));
+                  typeOfTyName(env, src, lexed, methods[m].returnType));
         }
       }
       // An enum itself emits nothing — it is a type, and its declaration is what registered it. What
@@ -3147,7 +3396,7 @@ string emitBlockedOf(u8[] src, i32 entryDecls) {
         if (prefixTok >= 0) { return "an import from a capability"; }
       }
       case ConstDecl(nameTok, type, init, exported): {
-        string ct = typeOfTyName(src, lexed, type);
+        string ct = typeOfTyName(env, src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {
           i32 ci = env.constAt(tokenTextOf(src, lexed, nameTok));
           if (ci < 0 || env.constGlobal[ci] < 0) {
@@ -3158,6 +3407,10 @@ string emitBlockedOf(u8[] src, i32 entryDecls) {
     }
     if (env.blocked != "") { return env.blocked; }
   }
+  // Asked last, because it is discovered by the walk above rather than before it: a name only turns
+  // out to be a guess when something reaches for it.
+  if (env.ambiguous) { return "a name more than one file declares"; }
+  if (env.full) { return "more declarations than this emitter has room for"; }
   return env.blocked;
 }
 
@@ -3196,17 +3449,24 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string sname = tokenTextOf(src, lexed, nameTok);
-        if (env.isStructName(sname) && env.clash == "") { env.clash = sname; }
+        string sname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
+        if (env.structCount >= env.structNames.len()) { env.full = true; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = sname;
           env.structCount = env.structCount + 1;
         }
         for (i32 i = 0; i < fields.len(); i++) {
-          if (env.fieldCount >= env.fieldNames.len()) { break; }
+          // **A field this table has no room for is not a field it can do without.** `struct.new`
+          // takes every field, so a truncated struct is a construction with the wrong arity — and
+          // the byte stream desynchronises from there, which wasm reports as a nonsense heap type in
+          // a function much further down.
+          if (env.fieldCount >= env.fieldNames.len()) {
+            env.full = true;
+            break;
+          }
           env.fieldOwners[env.fieldCount] = sname;
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
-          env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
+          env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
       }
@@ -3216,12 +3476,13 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       // another variant's payload, without either being reachable by accident.
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string ename = tokenTextOf(src, lexed, nameTok);
-        if (env.isStructName(ename) && env.clash == "") { env.clash = ename; }
+        string ename = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
+        if (env.structCount >= env.structNames.len()) { env.full = true; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = ename;
           env.structCount = env.structCount + 1;
         }
+        if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
         if (env.fieldCount < env.fieldNames.len()) {
           env.fieldOwners[env.fieldCount] = ename;
           env.fieldNames[env.fieldCount] = " tag";
@@ -3230,7 +3491,9 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         }
         i32 slot = 1;
         for (i32 v = 0; v < variants.len(); v++) {
-          string vname = tokenTextOf(src, lexed, variants[v].nameTok);
+          string vname = env.declare(tokenTextOf(src, lexed, variants[v].nameTok),
+                                     tokenLine(lexed, variants[v].nameTok));
+          if (env.variantCount >= env.variantNames.len()) { env.full = true; }
           if (env.variantCount < env.variantNames.len()) {
             env.variantNames[env.variantCount] = vname;
             env.variantOwners[env.variantCount] = ename;
@@ -3240,11 +3503,14 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
             env.variantCount = env.variantCount + 1;
           }
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
-            if (env.fieldCount >= env.fieldNames.len()) { break; }
+            if (env.fieldCount >= env.fieldNames.len()) {
+              env.full = true;
+              break;
+            }
             env.fieldOwners[env.fieldCount] = ename;
             env.fieldNames[env.fieldCount] = vname + "." +
               tokenTextOf(src, lexed, variants[v].fields[i].nameTok);
-            env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, variants[v].fields[i].type);
+            env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
             env.fieldCount = env.fieldCount + 1;
           }
           slot = slot + variants[v].fields.len();
@@ -3257,12 +3523,14 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
-        if (env.constCount >= env.constNames.len()) { continue; }
-        string cname = tokenTextOf(src, lexed, nameTok);
-        if (env.constAt(cname) >= 0 && env.clash == "") { env.clash = cname; }
-        env.constNames[env.constCount] = tokenTextOf(src, lexed, nameTok);
+        if (env.constCount >= env.constNames.len()) {
+          env.full = true;
+          continue;
+        }
+        string cname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
+        env.constNames[env.constCount] = cname;
         env.constGlobal[env.constCount] = -1;
-        env.constTypes[env.constCount] = typeOfTyName(src, lexed, type);
+        env.constTypes[env.constCount] = typeOfTyName(env, src, lexed, type);
         env.constInits[env.constCount] = init;
         env.constCount = env.constCount + 1;
       }
@@ -3277,24 +3545,23 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
-        for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(src, lexed, params[i].type); }
-        string fname = tokenTextOf(src, lexed, nameTok);
-        if (env.funcAt(fname) >= 0 && env.clash == "") { env.clash = fname; }
-        env.addFunc(fname, typeOfTyName(src, lexed, returnType), pts);
+        for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(env, src, lexed, params[i].type); }
+        string fname = env.declare(tokenTextOf(src, lexed, nameTok), tokenLine(lexed, nameTok));
+        env.addFunc(fname, typeOfTyName(env, src, lexed, returnType), pts);
       }
       // A method is a function with the receiver as its first parameter — which is what the call site
       // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
       // function of the same name is a different entry.
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        string owner = tokenTextOf(src, lexed, nameTok);
+        string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 i = 0; i < methods.len(); i++) {
           string[] mpts = string[methods[i].params.len()]();
           for (i32 j = 0; j < methods[i].params.len(); j++) {
-            mpts[j] = typeOfTyName(src, lexed, methods[i].params[j].type);
+            mpts[j] = typeOfTyName(env, src, lexed, methods[i].params[j].type);
           }
           env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
-                      typeOfTyName(src, lexed, methods[i].returnType), mpts);
+                      typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
         }
       }
       else: { }
@@ -3325,7 +3592,7 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
           if (typeParams.len() > 0) { continue; }
           if (env.funcOk[at] &&
               !canEmit(src, lexed, env, params, body, "",
-                       typeOfTyName(src, lexed, returnType))) {
+                       typeOfTyName(env, src, lexed, returnType))) {
             env.funcOk[at] = false;
             changed = true;
           }
@@ -3333,12 +3600,12 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
         }
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() > 0) { continue; }
-          string owner = tokenTextOf(src, lexed, nameTok);
+          string owner = nameKeyOf(env, src, lexed, nameTok);
           for (i32 m = 0; m < methods.len(); m++) {
             if (env.funcOk[at] &&
                 !canEmit(src, lexed, env, methods[m].params, methods[m].body,
                          methods[m].hasThis ? owner : "",
-                         typeOfTyName(src, lexed, methods[m].returnType))) {
+                         typeOfTyName(env, src, lexed, methods[m].returnType))) {
               env.funcOk[at] = false;
               changed = true;
             }
@@ -3382,15 +3649,19 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
  * builds and nobody else can see. Without this, diagnosing a corpus failure means guessing which
  * function of two hundred it was; with it, the index is a name.
  */
+/** The emitted functions of a linked program, in order — the same answer for a file set. */
+export string namesLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges);
+  return blob == "" ? "" : emitNames(blob.toBytes());
+}
+
 export string emitNames(u8[] src) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
-                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
-                bool[512](), i32[512](), 0,
-                "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+  Env env = Env.create();
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
@@ -3422,7 +3693,7 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     // `const string` can live in a global like any other array constant.
     case StrLit(tok): { return true; }
     case ArrNew(elem, size, fill, elements): {
-      if (typeOfTyName(src, lexed, elem) == "") { return false; }
+      if (typeOfTyName(env, src, lexed, elem) == "") { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
         if (!isConstExpr(src, lexed, env, elements[i])) { return false; }
       }
@@ -3475,7 +3746,7 @@ void assignGlobals(Env env, u8[] src, Lexed lexed) {
 void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
     case ArrNew(elem, size, fill, elements): {
-      string t = typeOfTyName(src, lexed, elem);
+      string t = typeOfTyName(env, src, lexed, elem);
       if (t != "") { env.arrayType(t + "[]"); }
       for (i32 i = 0; i < elements.len(); i++) {
         collectArrayTypesOfExpr(env, src, lexed, elements[i]);
@@ -3525,8 +3796,10 @@ string kindOfExpr(Expr e) {
 string staticOwner(u8[] src, Lexed lexed, Env env, Expr obj) {
   match (obj.kind) {
     case Ident(tok): {
-      string n = tokenTextOf(src, lexed, tok);
-      if (env.localAt(n) >= 0 || env.constAt(n) >= 0) { return ""; }
+      string raw = tokenTextOf(src, lexed, tok);
+      if (env.localAt(raw) >= 0) { return ""; }
+      string n = nameKeyOf(env, src, lexed, tok);
+      if (env.constAt(n) >= 0) { return ""; }
       return env.isStructName(n) ? n : "";
     }
     else: { return ""; }
