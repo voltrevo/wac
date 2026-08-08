@@ -53,6 +53,8 @@ export i32 errMissingReturn() { return 2; }
 export i32 errInitTypeMismatch() { return 3; }
 /** Two operands of an arithmetic operator that are not the same type. */
 export i32 errOperandMismatch() { return 4; }
+/** An argument that cannot be the parameter it is passed to. */
+export i32 errArgumentMismatch() { return 5; }
 
 /**
  * The primitive types, as ids. `primNone` is "this slice does not know".
@@ -119,12 +121,29 @@ export struct C {
   string[] names;
   i32[] prims;
   i32 nameCount;
+  /**
+   * Every function in the file, and the primitives of its parameters.
+   *
+   * The first table here that outlives one function: locals are cleared per declaration, and this is
+   * not — a call names something declared elsewhere in the file, and often further down it. Flat
+   * storage because wac has no map and no growable array of structs: `funcParamAt` and
+   * `funcParamCount` index into one shared `funcParamPrims`, which is the same shape `lex.wac` uses
+   * for tokens and for the same reason.
+   */
+  string[] funcNames;
+  i32[] funcParamAt;
+  i32[] funcParamCount;
+  i32[] funcParamPrims;
+  i32 funcCount;
+  i32 funcParamTotal;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), i32[capacity](), 0, i32[capacity * 3](), 0);
+    return C(src, toks, string[capacity](), i32[capacity](), 0,
+             string[capacity](), i32[capacity](), i32[capacity](), i32[capacity](), 0, 0,
+             i32[capacity * 3](), 0);
   }
 
   /**
@@ -153,6 +172,38 @@ export struct C {
       if (this.names[i] == name) { return this.prims[i]; }
     }
     return primNone();
+  }
+
+  /**
+   * Record a function's signature.
+   *
+   * A second declaration of the same name is skipped rather than poisoned. Unlike a local, two
+   * functions with one name are a program that does not compile at all — the reference says so with
+   * its own diagnostic — so there is no ambiguity to be conservative about, only a program this
+   * slice will not reach.
+   */
+  void declareFunc(this, string name, i32[] paramPrims, i32 count) {
+    for (i32 i = 0; i < this.funcCount; i++) {
+      if (this.funcNames[i] == name) { return; }
+    }
+    if (this.funcCount >= this.funcNames.len()) { return; }
+    if (this.funcParamTotal + count > this.funcParamPrims.len()) { return; }
+    this.funcNames[this.funcCount] = name;
+    this.funcParamAt[this.funcCount] = this.funcParamTotal;
+    this.funcParamCount[this.funcCount] = count;
+    for (i32 i = 0; i < count; i++) {
+      this.funcParamPrims[this.funcParamTotal + i] = paramPrims[i];
+    }
+    this.funcParamTotal = this.funcParamTotal + count;
+    this.funcCount = this.funcCount + 1;
+  }
+
+  /** Which entry holds this function, or -1. */
+  i32 funcAt(this, string name) {
+    for (i32 i = 0; i < this.funcCount; i++) {
+      if (this.funcNames[i] == name) { return i; }
+    }
+    return -1;
   }
 
   /** Forget every name, for the next function. */
@@ -390,10 +441,56 @@ void checkExpr(C c, Expr e) {
     case Unary(op, operand): { checkExpr(c, operand); }
     case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
     case Index(arr, index): { checkExpr(c, arr); checkExpr(c, index); }
+    // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
+    // construction — `Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a
+    // `Named` type for both and the resolver decides which later. A `case Call` never matches a
+    // plain named call, which is why the first version of this reported nothing at all.
+    case Construct(ctype, args, named): {
+      for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+      match (ctype.kind) {
+        case Named(tok, typeArgs): { checkCall(c, tokenText(c, tok), args); }
+        else: { }
+      }
+    }
+    // A real `Call` is a method or a funcref — `x.f()`, `fn(1)` — whose callee needs a receiver or a
+    // value type resolved first. Its arguments are still walked; the call itself is silence.
     case Call(callee, args): {
+      checkExpr(c, callee);
       for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
     }
     else: { }
+  }
+}
+
+/**
+ * The arguments of a call against the parameters of what it calls.
+ *
+ * Only a plain named function declared in this file. A name that is not one — a struct being
+ * constructed, an imported function, a generic — simply is not in the table, and `funcAt` answering
+ * -1 is the silence that keeps this a subset.
+ *
+ * An arity mismatch is left alone too. The reference answers it with its own message — *"expected 2
+ * argument(s), got 1"* — and pairing arguments with parameters positionally when the counts differ
+ * would report the wrong ones anyway.
+ */
+void checkCall(C c, string name, Expr[] args) {
+  i32 at = c.funcAt(name);
+  if (at < 0) { return; }
+  if (c.funcParamCount[at] != args.len()) { return; }
+  for (i32 i = 0; i < args.len(); i++) {
+    i32 want = c.funcParamPrims[c.funcParamAt[at] + i];
+    if (want == primNone()) { continue; }
+    i32 lit = litKindOf(args[i]);
+    if (lit != litNone()) {
+      if (!acceptsLiteral(want, lit)) {
+        c.report(errArgumentMismatch(), args[i].line, args[i].col);
+      }
+      continue;
+    }
+    i32 got = primOfExpr(c, args[i]);
+    if (got != primNone() && got != want) {
+      c.report(errArgumentMismatch(), args[i].line, args[i].col);
+    }
   }
 }
 
@@ -489,6 +586,18 @@ void checkStmt(C c, Stmt s, Ty want) {
 /** Check one program, and return `(code, line, col)` triples in source order. */
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount);
+  // Signatures first, over the whole file: a call names something declared elsewhere, and often
+  // further down. The same argument as collecting locals before walking a body, one scope up.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        i32[] prims = i32[params.len()]();
+        for (i32 i = 0; i < params.len(); i++) { prims[i] = primOfType(c, params[i].type); }
+        c.declareFunc(tokenText(c, nameTok), prims, params.len());
+      }
+      else: { }
+    }
+  }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {

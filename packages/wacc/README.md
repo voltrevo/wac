@@ -274,8 +274,26 @@ because the literal takes the other side's type.
 `Binary.op` is a token **index**, not a kind. Comparing it against `kPlus()` compares an index to a
 kind and is quietly always false — the first version compiled, ran, and reported nothing.
 
-Next: more of rung 3 — call arguments against parameters, and the comparison and logical operators,
-each needing its own reading of what the reference actually answers.
+### Calls, and a table that outlives a function
+
+A call's arguments against the parameters of what it calls — the first table here that is not cleared
+per declaration, because a call names something declared elsewhere in the file and often further down.
+Signatures are collected in a pass of their own, the same argument as collecting locals before walking
+a body, one scope up.
+
+**`g(a)` is a `Construct`, not a `Call`.** The parser cannot tell a call from a struct construction —
+`Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a `Named` type for both
+and the resolver decides later. A checker matching `case Call` reports nothing at all, which is what
+the first version did. A real `Call` is a method or a funcref, whose callee needs a receiver or a
+value type resolved first, and is silence.
+
+Arity is left to the reference, which answers it with its own message. Pairing arguments with
+parameters positionally when the counts differ would report the wrong ones anyway.
+
+**Spec coverage: 15 of 83**, from 14.
+
+Next: more of rung 3 — the comparison and logical operators, each needing its own reading of what the
+reference actually answers, and the struct and generic families, which need types beyond primitives.
 
 ### What rung 3's oracle looks like, measured
 

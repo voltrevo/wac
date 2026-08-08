@@ -512,3 +512,51 @@ Deno.test("rung 3: arithmetic operands, and the operators deliberately left alon
     }
   }
 });
+
+/**
+ * A call's arguments against the parameters of what it calls.
+ *
+ * The first table in this checker that outlives one function: a call names something declared
+ * elsewhere in the file, often further down, so signatures are collected in a pass of their own — the
+ * same argument as collecting locals before walking a body, one scope up.
+ *
+ * `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct construction —
+ * `Point(1, 2)` and `g(a)` are the same syntax — so both are `Construct` with a `Named` type and the
+ * resolver decides later. A checker matching `case Call` reports nothing at all, which is what the
+ * first version of this did.
+ *
+ * Arity is left to the reference, which answers it with its own message; pairing arguments with
+ * parameters positionally when the counts differ would report the wrong ones anyway.
+ */
+Deno.test("rung 3: a call's arguments against its parameters", () => {
+  const CASES = [
+    "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
+    'i32 g(i32 x) { return x; } export i32 sl() { return g("s"); }',
+    "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
+    // Accepted, and each is a way this could be wrong in the other direction.
+    "i32 g(i32 x) { return x; } export i32 ok(i32 a) { return g(a); }",
+    "i32 g(i32 x) { return x; } export i32 lit() { return g(1); }",
+    "i64 g(i64 x) { return x; } export i64 wide() { return g(1); }",
+    // Arity: the reference complains, we deliberately do not.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
+    // A struct construction is the same syntax and must not be read as a call.
+    "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src).filter((e) => e.message.startsWith("type mismatch"));
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      if (mine.length !== 0) {
+        throw new Error(`the reference has no type complaint about ${JSON.stringify(src)} and we ` +
+          `report ${mine.join(", ")}`);
+      }
+      continue;
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+});
