@@ -998,9 +998,11 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       sh.loops = sh.loops + 1;
       Vec<string> items = Vec.create();
       for (i32 i = 0; i < cmd.words.len(); i++) { expandInto(sh, cmd.words.get(i), items); }
-      // A `for` over nothing runs its body zero times and succeeds, which is why the status is
-      // set before the loop rather than left as whatever ran last.
-      sh.status = 0;
+      // A `for` over nothing runs its body zero times and succeeds — but **setting the status before
+      // the loop is visible from inside it**: `$?` on the body's first line is then 0 rather than what
+      // the command before the loop answered. bash reads `for x in 1 2; do echo $?; break; done` after
+      // a failure as 1, and this said 0. So the zero is only for the empty case.
+      if (items.len() == 0) { sh.status = 0; }
       for (i32 i = 0; i < items.len() && !sh.exiting && !sh.returning; i++) {
         sh.setVar(cmd.varName, items.get(i));
         runList(sh, cmd.clauses.get(0).body);

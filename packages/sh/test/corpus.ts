@@ -999,6 +999,18 @@ esac`,
   "[ ! ]; echo st=$?",
   "test; echo st=$?",
   "[ a b c d e ]; echo st=$?",
+
+  // ── what `$?` is on a loop body's first line ───────────────────────────────
+  //
+  // A `for` over nothing succeeds, and this set the status to 0 *before* the loop — which is visible
+  // from inside it: `false; for v in 1 2; do echo $?; break; done` printed 0 where bash prints 1. The
+  // zero belongs to the empty case alone. Found by the generator, in a script nobody would write.
+  "false; for v in 1 2; do echo $?; break; done",
+  "true; for v in 1 2; do echo $?; break; done",
+  "for v in; do echo no; done; echo st=$?",
+  "false; for v in; do echo no; done; echo st=$?",
+  "for v in 1 2 3; do echo $?; done",
+  "for v0 in 1 2; do c=0; while [ $c -lt 2 ]; do c=$((c+1)); false; done; done; for v in 1 2; do echo $?; break; done",
   `[ /etc/passwd -nt /nosuchfile ]; echo $?`,
   `[ /nosuchfile -ot /etc/passwd ]; echo $?`,
 

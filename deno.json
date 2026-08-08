@@ -49,7 +49,8 @@
     "test:changed": "deno run -A tools/testChanged.ts",
     "validate": "deno run -A tools/validate.ts",
     "verify:fmt": "deno run -A packages/fmt/tools/sweep.ts",
-    "map": "deno run --allow-read --allow-write tools/map.ts"
+    "map": "deno run --allow-read --allow-write tools/map.ts",
+    "shell:fuzz": "deno run -A tools/shellFuzz.ts"
   },
   "exclude": [
     ".cache"
