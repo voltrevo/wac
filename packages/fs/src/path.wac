@@ -5,8 +5,11 @@
 // from anywhere. So the shell keeps its own idea of where it is and turns every path into a whole
 // one before it crosses the boundary.
 //
-// These live in their own file because both `exec.wac` and `program.wac` need them and `exec.wac`
-// already imports `program.wac` — putting them in either would be a cycle or a copy.
+// **They live in `packages/fs` rather than in the shell**, because the filesystem needs them too: an
+// applet handed a relative operand — `cat f` after `cd d` — is asking `Fs` about a path that means
+// nothing without a working directory, and `Fs` is where that question is answered now. `packages/sh`
+// imports them from here; it depends on this package already, and a second copy of "what does `..`
+// mean" is the kind of duplicate that agrees for a year and then does not.
 
 /**
  * Collapse `.`, `..` and repeated slashes in an absolute path.

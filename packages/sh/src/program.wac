@@ -19,7 +19,7 @@
 // concurrently, which needs more than one thread. Noted in the README rather than hidden.
 
 import { Vec } from "../../std/src/vec.wac";
-import { resolvePath } from "./path.wac";
+import { resolvePath } from "../../fs/src/path.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Cli, faultWords, FileResult } from "../../platform/src/platform.wac";
 import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../platform/src/stream.wac";

@@ -203,6 +203,19 @@ Deno.test("an applet runs when the shell cannot spawn and its own input stays op
     assertEquals(pieces.code, 0, "split finished");
     assertEquals(pieces.out, "dev\nn\npart" + "aa\npartab\npartac\nproc\ntmp\n9\n10\n");
 
+    // **A relative operand after `cd`.** Resolution used to happen on the host, inside `pushChild`'s
+    // frame; an applet asks the filesystem now, so the filesystem had to be told where the shell is
+    // standing — without it `cat f` after `cd d` looked under the mount root and found nothing.
+    const relative = await open("mkdir d; cd d; echo hi > f; cat f; ls; cd ..; cat d/f");
+    assertEquals(relative.code, 0, "a relative operand after cd");
+    assertEquals(relative.out, "hi\nf\nhi\n");
+
+    // `find .` is the same question with the one name that is not a name: `.` means nothing at all
+    // without a working directory, so it was the case that could not work by accident.
+    const dot = await open("echo x > f; find .");
+    assertEquals(dot.code, 0);
+    assertEquals(dot.out.includes("./f"), true, dot.out);
+
     // And one that writes and reads a file, so the filesystem is in the loop as well.
     const both = await open(`printf 'b\\na\\n' > f; sort f`);
     assertEquals(both.code, 0);

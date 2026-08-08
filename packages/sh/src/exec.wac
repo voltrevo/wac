@@ -33,7 +33,7 @@ import { Sink } from "../../platform/src/stream.wac";
 import { printf } from "./printf.wac";
 // Not through `program.wac`: wac has no re-export, and the one implementation lives in `fmt`.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
-import { resolvePath } from "./path.wac";
+import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
 

@@ -65,6 +65,10 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // bytes and the shell never had to read any. Without it a shell that cannot spawn had to drain its own
   // input before starting an applet that might never read one, and at a terminal that never finished
   // (wac-mono 0110).
+  // **Where the applet stands.** `pushChild`'s `cwd` is the host's answer to a relative path, and an
+  // applet asks this filesystem now — so the filesystem has to be told too, or `cat f` after `cd d`
+  // looks under the mount root (wac-mono 0109).
+  fs.setCwd(cwd);
   cli.pushChild(args, stdin, cwd, inheritIn).wait();
   i32 code = dispatch(core, cli, fs, a, name);
   Captured got = cli.popChild().wait();

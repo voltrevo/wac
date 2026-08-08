@@ -33,6 +33,7 @@ import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
   FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
+import { resolvePath } from "./path.wac";
 
 /** Where a mount's bytes actually live. */
 export enum Backing {
@@ -134,6 +135,8 @@ export struct Fs {
    * whoever built it — so this is handed in rather than discovered, the same way `now` is.
    */
   string cmdline;
+  /** Where a relative path starts from — see `setCwd`. */
+  string cwd;
 
   /** An empty filesystem with one memory mount at the root. */
   Fs inMemory(i64 now) {
@@ -141,7 +144,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now, "");
+    return Fs(mounts, nodes, "root", now, "", "/");
   }
 
   /**
@@ -154,7 +157,10 @@ export struct Fs {
     Vec<Mount> mounts = Vec.create();
     Vec<Inode> nodes = Vec.create();
     mounts.push(Mount("", Backing.Host(cli), -1));
-    return Fs(mounts, nodes, "root", now, "");
+    // **The host's own directory**, because that is what a relative path means to a program standing on
+    // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
+    // file. A memory filesystem starts at its own root, where there is nowhere else to be.
+    return Fs(mounts, nodes, "root", now, "", cli.cwd().wait());
   }
 
   /**
@@ -203,6 +209,7 @@ export struct Fs {
    * the caller may use afterwards, and only the caller knows what it is going to do with it.
    */
   bool isHostPath(const this, string path) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return false; }
     match (this.mounts.get(mi).backing) {
@@ -210,6 +217,19 @@ export struct Fs {
       else: { return false; }
     }
   }
+
+  /**
+   * Where a relative path starts from.
+   *
+   * An applet handed `f` after the shell did `cd d` is asking about `/d/f`, and until this existed it
+   * was asking about `/f` — because resolution used to happen on the *host*, inside `pushChild`'s frame,
+   * and applets ask this filesystem now rather than the host (wac-mono 0109). Every entry point below
+   * resolves through `at`, so a caller may pass either kind of path and does not have to know which.
+   */
+  void setCwd(this, string where) { this.cwd = where; }
+
+  /** A path as this filesystem understands it: absolute, and with no `.` or `..` left in it. */
+  string at(const this, string path) { return resolvePath(this.cwd, path); }
 
   /** What `/proc/self/cmdline` will answer. NUL-separated, as Linux's is. */
   void setCmdline(this, string cmdline) { this.cmdline = cmdline; }
@@ -249,6 +269,7 @@ export struct Fs {
 
   /** The whole file, or why not. */
   FileResult readFile(this, string path) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
     Mount m = this.mounts.get(mi);
@@ -285,6 +306,7 @@ export struct Fs {
    * reading and truncating, which costs nothing extra for the sizes a `-c` is written with.
    */
   FileResult readSome(this, string path, i32 n) {
+    path = this.at(path);
     if (n < 0) { return FileResult.of(false, u8[0](), "a negative length", FAULT_OTHER()); }
     i32 mi = this.mountOf(path);
     if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
@@ -302,6 +324,7 @@ export struct Fs {
 
   /** What a path is, if it is anything. */
   Stat stat(this, string path) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     // Absence rather than a fault, as below: a path under no mount is nothing, and that is an answer.
     if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
@@ -329,6 +352,7 @@ export struct Fs {
    * `ls` can tell that from an empty one.
    */
   string[]? readDir(this, string path) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return null; }
     Mount m = this.mounts.get(mi);
@@ -356,6 +380,7 @@ export struct Fs {
 
   /** Create or replace a file, making no parents: the same contract `writeFile` has. */
   Change writeFile(this, string path, u8[] data) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
@@ -410,6 +435,7 @@ export struct Fs {
    * flag exists to avoid.
    */
   Change mkdir(this, string path, bool parents) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
@@ -480,6 +506,7 @@ export struct Fs {
    * something in it — which is what makes `rm -f` able to ignore only the second.
    */
   Change remove(this, string path, bool recursive) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
@@ -518,6 +545,7 @@ export struct Fs {
    * this refuses rather than pretending, because a mode silently not applied is worse than an error.
    */
   Change chmod(this, string path, i32 mode) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
@@ -539,6 +567,7 @@ export struct Fs {
 
   /** The same for the owner, and refused on a host mount for the same reason. */
   Change chown(this, string path, string owner) {
+    path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
@@ -560,6 +589,8 @@ export struct Fs {
 
   /** Move a name, replacing what is there — as the hosts do, and as `mv` expects. */
   Change rename(this, string from, string to) {
+    from = this.at(from);
+    to = this.at(to);
     i32 fromIndex = this.mountOf(from);
     i32 toIndex = this.mountOf(to);
     if (fromIndex < 0 || toIndex < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
