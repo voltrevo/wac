@@ -82,7 +82,13 @@ behind a **grant check**: without `--allow-read` a program finds `FAULT_NOT_GRAN
 `platform.wac` keeps separate from the operating system's own `FAULT_DENIED` so that a caller can tell
 "this build cannot" from "this file will not".
 
-**The network and `spawn` are not implemented, and say so in a value rather than by trapping.**
+**`spawnSelf` works**, and with it all three of 0087's criteria. A child is a fresh `Store` on a fresh
+thread, built from the engine, the module and the manifest — the only things that cross. Nothing from
+the parent's store does, and the type system says so: a `Val` is not `Send`. Grants are intersected
+with the parent's rather than trusted, so this is a **confinement** primitive here in a way it cannot
+be in a JavaScript host, where a Deno worker inherits the process's permissions.
+
+**The network is not implemented, and says so in a value rather than by trapping.**
 `Child.handle == -2` means "this world has no `spawn` at all" — `platform.wac` says so in those words,
 because without it "a world that cannot spawn made every spawnable name *fail* rather than fall
 through". `Socket` has the same shape with a negative handle and a reason. So a shell falls back to its

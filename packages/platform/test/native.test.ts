@@ -6,8 +6,9 @@
 // the transport, the worker model and the event loop. This is the first test in the repo that does not.
 //
 // The program is `example/wacland.wac`, whose stages are 0087's "done when" in the order a host
-// acquires them: output, arguments, two requests completing out of order, and a `waitAny` that comes
-// back on its deadline. Both hosts reach the end, so the comparison is the whole run.
+// acquires them: output, arguments, two requests completing out of order, a `waitAny` that comes back
+// on its deadline, and a spawned child waited for alongside a ticket of another kind. Both hosts reach
+// the end, so the comparison is the whole run.
 //
 // **What is compared and what is not.** Two of the lines carry monotonic nanoseconds, which are a
 // measurement rather than an answer — two hosts that agreed on those would be suspicious rather than
@@ -102,7 +103,7 @@ function assertConformant(r: Run, host: string): void {
   const lines = r.out.split("\n").filter((l) => l.length > 0);
   assertEquals(r.code, 0, `${host} exited ${r.code}: ${r.err}`);
   // The line count, so that masking a number cannot hide a stage that never ran.
-  assertEquals(lines.length, 9, `${host}: ${r.out}`);
+  assertEquals(lines.length, 12, `${host}: ${r.out}`);
   assertEquals(lines[0], "wacland: stage 1 output");
   assertEquals(r.err.trim(), "wacland: stage 1 warn", `${host} put the warning on the wrong stream`);
   assertEquals(lines.includes("wacland: stage 2 argCount 2"), true, r.out);
@@ -122,6 +123,14 @@ function assertConformant(r: Run, host: string): void {
   // 0087's second criterion: a deadline with nothing ready comes back rather than hanging, and -1 is
   // what `platform.wac` says "nothing settled" is spelled.
   assertEquals(lines.includes("wacland: stage 4 timeout -1"), true, r.out);
+
+  // 0087's third criterion, and the one it calls the point: a child spawned, its bytes read back, and
+  // its exit waited for *alongside* a ticket of a completely different kind. A readiness table that
+  // only handles one sort of event fails here and nowhere else.
+  assertEquals(lines.includes("wacland: stage 5 first 0"), true, `${host} did not wait over both: ${r.out}`);
+  assertEquals(lines.includes("wacland: stage 5 heard wacland: I am the child"), true, r.out);
+  assertEquals(lines.includes("wacland: stage 5 status 7"), true, `${host}: the child's own status`);
+
   assertEquals(lines[lines.length - 1], "wacland: reached the end of what is implemented");
 }
 

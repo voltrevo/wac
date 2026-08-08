@@ -342,3 +342,42 @@ test possible at all.
 
 The trap stays for capabilities whose type has no such value — that list is now empty, which is the
 right end state: everything unimplemented says so in a value a program can read.
+
+## Progress — 2026-08-08 (sixth tick), agent-a — **all three criteria met**
+
+`spawnSelf` lands, and with it the last of the six items and the last of the three "done when" clauses.
+
+- ✅ two requests completing out of order, each resolving its own value;
+- ✅ a `waitAny` with neither ready returning on its timeout;
+- ✅ **a spawned child, waited for alongside one of the program's own tickets** —
+  `example/wacland.wac` stage 5: another instance of the module on its own thread, its bytes read back
+  through `recv`, and `waitAny` over its exit *and* a sleep. Both hosts answer identically.
+
+A child is a fresh `Store` on a fresh thread, built from an `Arc<World>` — the engine, the module and
+the manifest, which are the only things that cross. **Nothing from the parent's store does, and the
+type system says so**: a `Val` is not `Send`. Grants are intersected with the parent's rather than
+trusted, so this is a confinement primitive here in the way 0087 says it cannot be in the JavaScript
+hosts, where a Deno worker inherits the process's permissions (wac-mono 0015).
+
+`spawn(source, …)` — a program from its *source text*, which is a worker bundle in the JavaScript
+hosts — has no meaning here and answers **-1 with a reason** rather than -2: this world *can* spawn,
+and a caller reading -2 would give up on `spawnSelf` too.
+
+### Three bugs, and all three were the same shape
+
+Each was two sources of the same thing ranked wrongly, and each showed as **silence rather than an
+error** — the child ran, exited 0, and said nothing:
+
+1. **A child's directory was a `pushChild` frame.** A frame also *captures output*, so everything the
+   child printed went into a buffer nobody would pop. A child's `cwd` is its own field now.
+2. **`readChunk` preferred the parent's queue over an explicit `openInput`.** `openInput` redirects
+   *this process's* standard input to a file, so a spawned `cat f` that had opened the file went on
+   reading a queue its parent had already finished.
+3. **`recv` completed its ticket as `Bytes` where `Read` was wanted**, and empty had to mean `End`
+   rather than `Data([])` — "nothing this time" and "there will never be more" are different answers.
+
+### What is left
+
+The **network**. That is the whole of what stands between here and the arrival test's last two words:
+`Fs.user` is set by `packages/ssh`'s server, so logging in as two users on both hosts needs sockets.
+Item 6's remaining half.

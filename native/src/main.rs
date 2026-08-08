@@ -29,6 +29,7 @@
 //! in a way nothing could see, which is design/0001 D6.
 
 mod manifest;
+mod streams;
 mod tickets;
 
 use manifest::{Manifest, SUPPORTED_VERSION};
@@ -36,6 +37,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use streams::{Exit, Stream};
 use tickets::{Outcome, Tickets};
 use wasmtime::{Caller, Config, Engine, Extern, ExternType, Linker, Module, Store, Val};
 
@@ -151,6 +153,32 @@ struct Frame {
     err: Vec<u8>,
 }
 
+/// The three queues and the status of one spawned child, as the *parent* holds them.
+struct ChildProc {
+    /// What the parent sends becomes the child's standard input.
+    stdin: Arc<Stream>,
+    stdout: Arc<Stream>,
+    stderr: Arc<Stream>,
+    exit: Arc<Exit>,
+}
+
+/// What a handle names. A child has two — one for each of its output streams — because a program has
+/// two streams and merging them is a bug `platform.wac` names by example.
+#[derive(Clone, Copy)]
+enum Handle {
+    /// The child's ordinary handle: `send` feeds it, `recv` reads its standard output.
+    Main(usize),
+    /// The `errHandle`: `recv` reads its error stream, and nothing is sent to it.
+    Err(usize),
+}
+
+/// The streams a program has when it *is* a child, rather than the process's own.
+struct AsChild {
+    stdin: Arc<Stream>,
+    stdout: Arc<Stream>,
+    stderr: Arc<Stream>,
+}
+
 struct Host {
     /// `caps[signature][slot]`, matching the module's per-signature funcref tables.
     caps: Vec<Vec<Cap>>,
@@ -167,6 +195,21 @@ struct Host {
     /// Where `write` goes when `openOutput` has named a file, and the reason it could not be opened.
     output: Option<std::fs::File>,
     output_error: String,
+    /// Children this program spawned, and the handles that name their streams.
+    children: Vec<ChildProc>,
+    handles: Vec<Handle>,
+    /// Where this program's relative paths resolve from, when its parent said. Empty means the
+    /// process's own directory.
+    ///
+    /// **Not a `Frame`**, which is what the first version used and which was wrong in a way that took
+    /// a while to see: a frame also *captures output*, so a child given a directory had everything it
+    /// printed collected into a buffer nobody would ever pop. It ran, exited 0, and said nothing.
+    cwd: Vec<u8>,
+    /// Set when this program is itself a spawned child: its output goes to its parent's queues and
+    /// its input comes from one, rather than from the process's own streams.
+    as_child: Option<AsChild>,
+    /// Everything a child thread needs to make another instance of this same module.
+    world: Option<Arc<World>>,
     /// `pushChild` frames, innermost last. A stack, so a program that runs a program that runs a
     /// program is fine.
     frames: Vec<Frame>,
@@ -186,6 +229,11 @@ impl Host {
             input: None,
             output: None,
             output_error: String::new(),
+            children: Vec::new(),
+            handles: Vec::new(),
+            as_child: None,
+            cwd: Vec::new(),
+            world: None,
             frames: Vec::new(),
             started: std::time::Instant::now(),
             exit: 0,
@@ -323,7 +371,7 @@ fn main() -> Result<(), wasmtime::Error> {
     let manifest_path = Path::new(&argv[1]);
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
-    let m: Manifest = serde_json::from_str(&text)
+    let m: Arc<Manifest> = serde_json::from_str::<Manifest>(&text).map(Arc::new)
         .map_err(|e| wasmtime::Error::msg(format!("{}: {e}", argv[1])))?;
     if m.version != SUPPORTED_VERSION {
         return Err(wasmtime::Error::msg(format!(
@@ -334,11 +382,22 @@ fn main() -> Result<(), wasmtime::Error> {
     let wasm_path = manifest_path.parent().unwrap_or(Path::new(".")).join(&m.wasm);
     let program_args: Vec<Vec<u8>> = argv[2..].iter().map(|a| a.as_bytes().to_vec()).collect();
 
-    let code = run(&m, &wasm_path, program_args)?;
+    let code = run(m, &wasm_path, program_args)?;
     std::process::exit(code);
 }
 
-fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
+/// Everything a second instance of this same program needs.
+///
+/// Held behind an `Arc` because a spawned child builds its own `Store` **on its own thread**, and the
+/// engine, the module and the manifest are the only things that cross. Nothing from the parent's store
+/// does: a `Val` is not `Send` and must not be, which is the language enforcing what `spawn` is for.
+struct World {
+    engine: Engine,
+    module: Module,
+    manifest: Arc<Manifest>,
+}
+
+fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
     // proposals that carry them are not optional here.
@@ -346,12 +405,71 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
     config.wasm_gc(true);
     let engine = Engine::new(&config)?;
     let module = Module::from_file(&engine, wasm_path)?;
-    let mut store = Store::new(&engine, Host::new(m.callbacks.len(), args, m.grants.clone()));
+    let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
+    let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
+    host.world = Some(world);
+    let mut store = Store::new(&engine, host);
 
-    // One dispatcher per signature, with the signature taken from the module rather than rebuilt from
-    // the manifest: the module is the thing that has to be satisfied, and a type assembled from the
-    // manifest would be a second opinion about it.
-    let mut linker = Linker::new(&engine);
+    let linker = wire(&engine, &module, &m)?;
+
+    enter(&mut store, &module, &linker, &m)
+}
+
+/// Instantiate, build the capability structs, and call `main`. The half a child repeats.
+fn enter(
+    store: &mut Store<Host>,
+    module: &Module,
+    linker: &Linker<Host>,
+    m: &Manifest,
+) -> Result<i32, wasmtime::Error> {
+    let instance = linker.instantiate(&mut *store, module)?;
+
+    // The `Pending<T>` hooks first: a capability cannot answer one until the three shared functions
+    // exist, and they are registered once for the whole run.
+    for (kind, wac_name) in [
+        (Kind::I32, "Pending<i32>"),
+        (Kind::I64, "Pending<i64>"),
+        (Kind::Bytes, "Pending<u8[]>"),
+        (Kind::Str, "Pending<string>"),
+        (Kind::BytesOpt, "Pending<u8[]?>"),
+        (Kind::Bool, "Pending<bool>"),
+        (Kind::Captured, "Pending<Captured>"),
+        (Kind::Change, "Pending<Change>"),
+        (Kind::FileResult, "Pending<FileResult>"),
+        (Kind::Stat, "Pending<Stat>"),
+        (Kind::Names, "Pending<string[]?>"),
+        (Kind::Socket, "Pending<Socket>"),
+        (Kind::Child, "Pending<Child>"),
+        (Kind::Read, "Pending<Read>"),
+    ] {
+        if let Some(hooks) = pending_hooks(&mut *store, &instance, m, kind, wac_name)? {
+            store.data_mut().pendings.insert(kind, hooks);
+        }
+    }
+
+    let core = build(&mut *store, &instance, m, "Core")?;
+    let cli = build(&mut *store, &instance, m, "Cli")?;
+
+    let main = instance
+        .get_func(&mut *store, "main")
+        .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
+    let mut out = [Val::I32(0)];
+    main.call(&mut *store, &[core, cli], &mut out)?;
+    let status = match out[0] {
+        Val::I32(n) => n,
+        _ => 0,
+    };
+    let host_exit = store.data().exit;
+    Ok(if status != 0 { status } else { host_exit })
+}
+
+/// Every dispatcher import the module asks for, wired to `dispatch`.
+///
+/// One per funcref *signature*, with the signature taken from the module rather than rebuilt from the
+/// manifest: the module is the thing that has to be satisfied, and a type assembled from the manifest
+/// would be a second opinion about it.
+fn wire(engine: &Engine, module: &Module, m: &Manifest) -> Result<Linker<Host>, wasmtime::Error> {
+    let mut linker = Linker::new(engine);
     for imp in module.imports() {
         if imp.module() != "wac" {
             return Err(wasmtime::Error::msg(format!(
@@ -373,46 +491,43 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
             dispatch(&mut caller, sig, params, results)
         })?;
     }
+    Ok(linker)
+}
 
-    let instance = linker.instantiate(&mut store, &module)?;
-
-    // The `Pending<T>` hooks first: a capability cannot answer one until the three shared functions
-    // exist, and they are registered once for the whole run.
-    for (kind, wac_name) in [
-        (Kind::I32, "Pending<i32>"),
-        (Kind::I64, "Pending<i64>"),
-        (Kind::Bytes, "Pending<u8[]>"),
-        (Kind::Str, "Pending<string>"),
-        (Kind::BytesOpt, "Pending<u8[]?>"),
-        (Kind::Bool, "Pending<bool>"),
-        (Kind::Captured, "Pending<Captured>"),
-        (Kind::Change, "Pending<Change>"),
-        (Kind::FileResult, "Pending<FileResult>"),
-        (Kind::Stat, "Pending<Stat>"),
-        (Kind::Names, "Pending<string[]?>"),
-        (Kind::Socket, "Pending<Socket>"),
-        (Kind::Child, "Pending<Child>"),
-        (Kind::Read, "Pending<Read>"),
-    ] {
-        if let Some(hooks) = pending_hooks(&mut store, &instance, m, kind, wac_name)? {
-            store.data_mut().pendings.insert(kind, hooks);
+/// Run a spawned child to completion on this thread, and answer its status.
+///
+/// **The confinement is the runtime's here, not only the language's.** `children.ts` is careful to say
+/// that in the JavaScript hosts "the isolation is the language's, not the runtime's": a Deno worker
+/// inherits the process's permissions, so a wac child is confined only because wac has no ambient
+/// anything. Here the child gets a `Host` built with the grants its parent chose and a fresh `Store`,
+/// and there is no route from one store to another — a `Val` is not `Send`, which is the type system
+/// saying the same thing. wac-mono 0015.
+fn run_child(world: Arc<World>, argv: Vec<Vec<u8>>, grants: manifest::Grants, cwd: Vec<u8>, streams: AsChild) -> i32 {
+    let m = world.manifest.clone();
+    let mut host = Host::new(m.callbacks.len(), argv, grants);
+    host.world = Some(world.clone());
+    let stdout = streams.stdout.clone();
+    let stderr = streams.stderr.clone();
+    host.as_child = Some(streams);
+    // A child's relative paths resolve from where its parent said, which is the same rule `pushChild`
+    // keeps for an in-process one — and the thing `spawn` got wrong in the JavaScript hosts, where a
+    // spawned program inherited the *host's* directory instead of the shell's.
+    host.cwd = cwd;
+    let mut store = Store::new(&world.engine, host);
+    let code = match wire(&world.engine, &world.module, &m)
+        .and_then(|linker| enter(&mut store, &world.module, &linker, &m))
+    {
+        Ok(code) => code,
+        Err(e) => {
+            // The child's own error stream, so a parent that reads it sees what went wrong rather
+            // than a status with no sentence attached.
+            let _ = stderr.write(format!("{e}\n").as_bytes());
+            1
         }
-    }
-
-    let core = build(&mut store, &instance, m, "Core")?;
-    let cli = build(&mut store, &instance, m, "Cli")?;
-
-    let main = instance
-        .get_func(&mut store, "main")
-        .ok_or_else(|| wasmtime::Error::msg(format!("{}: no exported `main`", m.entry)))?;
-    let mut out = [Val::I32(0)];
-    main.call(&mut store, &[core, cli], &mut out)?;
-    let status = match out[0] {
-        Val::I32(n) => n,
-        _ => 0,
     };
-    let host_exit = store.data().exit;
-    Ok(if status != 0 { status } else { host_exit })
+    stdout.finish();
+    stderr.finish();
+    code
 }
 
 /// Register `resolve`, `settled` and `drop` for one `Pending<T>`, or None if the program has no such
@@ -647,18 +762,29 @@ fn dispatch(
             return settle_now(caller, Kind::Bytes, Outcome::Bytes(random_bytes(n)?), results);
         }
         Cap::ExitCode => {
-            let code = match arg(1) {
+            // Two meanings on one capability, and the handle says which: a child's handle asks for
+            // *its* status, anything else sets this program's own. `platform.wac` gives them one
+            // name, so the runtime has to tell them apart by what it was handed.
+            let h = match arg(1) {
                 Val::I32(n) => n,
                 _ => 0,
             };
-            caller.data_mut().exit = code;
-            return settle_now(caller, Kind::I32, Outcome::I32(code), results);
+            if let Some(i) = child_of(caller, h) {
+                let exit = caller.data().children[i].exit.clone();
+                let id = caller.data().tickets.submit();
+                let table = caller.data().tickets.clone();
+                std::thread::spawn(move || table.complete(id, Outcome::I32(exit.wait())));
+                return pending_for(caller, Kind::I32, id, results);
+            }
+            caller.data_mut().exit = h;
+            return settle_now(caller, Kind::I32, Outcome::I32(h), results);
         }
         Cap::Cwd => {
             // The *process's* directory, which is the one thing here that is a fact about the host
             // rather than a capability over it. A sealed session immediately replaces it with its own.
             let dir = match caller.data().frames.last() {
                 Some(f) if !f.cwd.is_empty() => f.cwd.clone(),
+                _ if !caller.data().cwd.is_empty() => caller.data().cwd.clone(),
                 _ => std::env::current_dir()
                     .map(|p| p.as_os_str().as_encoded_bytes().to_vec())
                     .unwrap_or_else(|_| b"/".to_vec()),
@@ -673,6 +799,32 @@ fn dispatch(
                     f.stdin_at = f.stdin.len();
                     return settle_now(caller, Kind::Bytes, Outcome::Bytes(rest), results);
                 }
+            }
+            // The same ranking as `readChunk`: a file this program redirected its input to beats the
+            // queue its parent feeds.
+            if caller.data().input.is_some() {
+                use std::io::Read;
+                let mut all = Vec::new();
+                let _ = caller.data_mut().input.as_mut().unwrap().read_to_end(&mut all);
+                return settle_now(caller, Kind::Bytes, Outcome::Bytes(all), results);
+            }
+            // A spawned child: everything its parent sends, until the feed ends.
+            if let Some(streams) = caller.data().as_child.as_ref() {
+                let stdin = streams.stdin.clone();
+                let id = caller.data().tickets.submit();
+                let table = caller.data().tickets.clone();
+                std::thread::spawn(move || {
+                    let mut all = Vec::new();
+                    loop {
+                        let chunk = stdin.read();
+                        if chunk.is_empty() {
+                            break;
+                        }
+                        all.extend_from_slice(&chunk);
+                    }
+                    table.complete(id, Outcome::Bytes(all));
+                });
+                return pending_for(caller, Kind::Bytes, id, results);
             }
             // Everything, which is what this capability means — `readChunk` is the bounded one. On a
             // thread, because a pipe with nothing in it yet must not stop the program from doing
@@ -703,6 +855,35 @@ fn dispatch(
                 }
             };
             if let Some(bytes) = framed {
+                results[0] = if bytes.is_empty() {
+                    make_read_end(caller)?
+                } else {
+                    make_read_data(caller, &bytes)?
+                };
+                return Ok(());
+            }
+            // **An explicit `openInput` wins over the parent's queue**, and the order is the whole
+            // of the bug it fixes: `openInput` *redirects this process's standard input to a file*,
+            // so a spawned `cat f` that had opened the file went on reading the queue its parent had
+            // already finished, and printed nothing. It ran, exited 0, and said nothing — which is
+            // the shape this runtime keeps producing when two sources of input are ranked wrongly.
+            if caller.data().input.is_some() {
+                let mut buf = [0u8; 65536];
+                let n = {
+                    use std::io::Read;
+                    caller.data_mut().input.as_mut().unwrap().read(&mut buf)
+                };
+                results[0] = match n {
+                    Ok(0) => make_read_end(caller)?,
+                    Ok(n) => make_read_data(caller, &buf[..n])?,
+                    Err(e) => make_read_failed(caller, &e.to_string())?,
+                };
+                return Ok(());
+            }
+            // A spawned child reads what its parent sends.
+            if let Some(streams) = caller.data().as_child.as_ref() {
+                let stdin = streams.stdin.clone();
+                let bytes = stdin.read();
                 results[0] = if bytes.is_empty() {
                     make_read_end(caller)?
                 } else {
@@ -778,8 +959,29 @@ fn dispatch(
         // So where the interface has a value for "not here", answering it is more honest than a trap,
         // not less: the trap is what a caller cannot act on. `Socket` has the same shape with a
         // negative handle and a reason, and a shell falls back to its in-process applets on both.
-        Cap::Spawn | Cap::SpawnSelf => {
-            return settle_now(caller, Kind::Child, Outcome::Child(-2, -2, String::new()), results);
+        Cap::SpawnSelf => {
+            // `spawnSelf(argv, grants, cwd, inheritInput)` — another instance of *this* module, which
+            // is how `packages/box` runs an applet as a real program: `main` dispatches on argv[0].
+            let argv = read_bytes_array(caller, &params[1])?;
+            let want = match arg(2) {
+                Val::I32(n) => n,
+                _ => 0,
+            };
+            let cwd = read_string(caller, &params[3])?;
+            let inherit = matches!(arg(4), Val::I32(n) if n != 0);
+            return spawn_instance(caller, argv, want, cwd, inherit, results);
+        }
+        Cap::Spawn => {
+            // `spawn(source, …)` hands over a *program's source*, which in the JavaScript hosts is a
+            // worker bundle. There is no such thing here — a second instance comes from this module —
+            // so this is -1 with a reason rather than -2: **this world can spawn**, and a caller that
+            // reads -2 would give up on `spawnSelf` too, which works.
+            return settle_now(
+                caller,
+                Kind::Child,
+                Outcome::Child(-1, -1, "spawning a program from its source is not implemented in the native runtime; spawnSelf works".into()),
+                results,
+            );
         }
         Cap::Connect | Cap::Listen | Cap::Accept => {
             return settle_now(
@@ -790,21 +992,59 @@ fn dispatch(
             );
         }
         Cap::Recv => {
-            // `Read.Failed` rather than `Read.End`, which would tell a reader the peer had finished
-            // rather than that there was never a peer.
-            return settle_now(
-                caller,
-                Kind::Read,
-                Outcome::Str(b"networking is not implemented in the native runtime yet".to_vec()),
-                results,
-            );
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let Some(stream) = readable(caller, h) else {
+                // Not a child's handle, so it could only have been a socket. `Read.Failed` rather
+                // than `Read.End`, which would tell a reader the peer had finished rather than that
+                // there was never a peer.
+                return settle_now(
+                    caller,
+                    Kind::Read,
+                    Outcome::Str(b"networking is not implemented in the native runtime yet".to_vec()),
+                    results,
+                );
+            };
+            // On a thread: a child that has not written yet must not stop its parent from reading
+            // another child, which is exactly what a pipeline does.
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                let bytes = stream.read();
+                table.complete(id, Outcome::Bytes(bytes));
+            });
+            return pending_for(caller, Kind::Read, id, results);
         }
         Cap::Send => {
-            // False is "it did not land", which is what a caller checks and what is true here.
-            return settle_now(caller, Kind::Bool, Outcome::Bool(false), results);
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            let bytes = read_u8_array(caller, &params[2])?;
+            let landed = match writable(caller, h) {
+                Some(stream) => stream.write(&bytes),
+                // False is "it did not land", which is what a caller checks and what is true of a
+                // socket in a runtime with no sockets.
+                None => false,
+            };
+            return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
         }
         Cap::CloseSocket => {
-            // Nothing to close, and closing what was never opened is not an error anywhere.
+            // **Stops the child outright**, which is what `closeSocket` means and what `closeFeed`
+            // deliberately does not: `head -1` ending `seq` is the ordinary case. Every queue is
+            // finished, so the child's next write answers false and it is written to notice.
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            if let Some(i) = child_of(caller, h) {
+                let c = &caller.data().children[i];
+                c.stdin.finish();
+                c.stdout.finish();
+                c.stderr.finish();
+            }
         }
 
         // ── The filesystem ───────────────────────────────────────────────────
@@ -1026,9 +1266,15 @@ fn dispatch(
             return settle_now(caller, Kind::Str, Outcome::Str(why.into_bytes()), results);
         }
         Cap::CloseFeed => {
-            // Ends a *spawned worker's* input, and nothing here spawns yet. A no-op rather than a
-            // refusal because the shape it belongs to does not exist: refusing would report a fault
-            // about a child that was never made.
+            // Ends a child's input **without stopping it**: a program that reads to the end before
+            // answering — `wc` is the obvious one — needs the end while it is still running.
+            let h = match arg(1) {
+                Val::I32(n) => n,
+                _ => -1,
+            };
+            if let Some(i) = child_of(caller, h) {
+                caller.data().children[i].stdin.finish();
+            }
         }
         Cap::WaitAny => {
             let ids = read_i32_array(caller, &params[1])?;
@@ -1071,6 +1317,17 @@ fn dispatch(
                     make_socket(caller, h, &e, &peer, port)?
                 }
                 (Kind::Child, Outcome::Child(h, eh, e)) => make_child(caller, h, eh, &e)?,
+                // A `Read` has three cases and the outcome says which: bytes are `Data`, no bytes are
+                // `End`, and a string is `Failed`. Empty-is-the-end is the queue's own rule — see
+                // `streams.rs` — and collapsing it into `Data([])` would tell a reader there was
+                // nothing *this time* rather than that there will never be more.
+                (Kind::Read, Outcome::Bytes(bytes)) => {
+                    if bytes.is_empty() {
+                        make_read_end(caller)?
+                    } else {
+                        make_read_data(caller, &bytes)?
+                    }
+                }
                 (Kind::Read, Outcome::Str(why)) => {
                     make_read_failed(caller, &String::from_utf8_lossy(&why))?
                 }
@@ -1198,6 +1455,13 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
     if let Some(f) = caller.data_mut().frames.last_mut() {
         if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
         return true;
+    }
+    // A spawned child writes to its parent's queues, never to the terminal. **Before** the redirected
+    // output below, because a child that was told to write to a file was told so by its own
+    // `openOutput` and this is about where its streams go when it was not.
+    if let Some(streams) = caller.data().as_child.as_ref() {
+        let to = if to_stderr { streams.stderr.clone() } else { streams.stdout.clone() };
+        return to.write(bytes);
     }
     if !to_stderr {
         // A redirected output is only standard output's: the error stream is where a program says
@@ -1330,6 +1594,7 @@ fn resolve(caller: &mut Caller<'_, Host>, path: &[u8]) -> std::path::PathBuf {
     }
     match caller.data().frames.last() {
         Some(f) if !f.cwd.is_empty() => os_path(&f.cwd).join(p),
+        _ if !caller.data().cwd.is_empty() => os_path(&caller.data().cwd).join(p),
         _ => p,
     }
 }
@@ -1349,6 +1614,129 @@ fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::
     }
     let here = resolve(caller, path);
     std::fs::File::open(here).map_err(|e| Outcome::Change(fault_of(&e), e.to_string()))
+}
+
+// ── Children ──────────────────────────────────────────────────────────────────
+
+/// Which child a handle belongs to, or None if it is not one of ours.
+fn child_of(caller: &Caller<'_, Host>, handle: i32) -> Option<usize> {
+    if handle < 0 {
+        return None;
+    }
+    match caller.data().handles.get(handle as usize) {
+        Some(Handle::Main(i)) | Some(Handle::Err(i)) => Some(*i),
+        None => None,
+    }
+}
+
+/// The stream `recv` reads for this handle: a child's standard output, or its error stream.
+fn readable(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
+    if handle < 0 {
+        return None;
+    }
+    match caller.data().handles.get(handle as usize)? {
+        Handle::Main(i) => Some(caller.data().children[*i].stdout.clone()),
+        Handle::Err(i) => Some(caller.data().children[*i].stderr.clone()),
+    }
+}
+
+/// The stream `send` writes for this handle. **Only the main one**: there is nothing to write to a
+/// child's error stream, and answering false for it is truer than pretending.
+fn writable(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
+    if handle < 0 {
+        return None;
+    }
+    match caller.data().handles.get(handle as usize)? {
+        Handle::Main(i) => Some(caller.data().children[*i].stdin.clone()),
+        Handle::Err(_) => None,
+    }
+}
+
+/// Start another instance of this module on its own thread.
+fn spawn_instance(
+    caller: &mut Caller<'_, Host>,
+    argv: Vec<Vec<u8>>,
+    want: i32,
+    cwd: Vec<u8>,
+    inherit_input: bool,
+    results: &mut [Val],
+) -> Result<(), wasmtime::Error> {
+    let Some(world) = caller.data().world.clone() else {
+        return settle_now(
+            caller,
+            Kind::Child,
+            Outcome::Child(-2, -2, String::new()),
+            results,
+        );
+    };
+
+    // **A ceiling of the parent's own, intersected here rather than trusted.** `platform.wac`: "a
+    // parent built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error,
+    // and the child simply finds the capability denied."
+    let mine = &caller.data().grants;
+    let grants = manifest::Grants {
+        read: mine.read && (want & GRANT_READ) != 0,
+        write: mine.write && (want & GRANT_WRITE) != 0,
+        env: mine.env && (want & GRANT_ENV) != 0,
+        net: mine.net && (want & GRANT_NET) != 0,
+    };
+
+    let stdin = Arc::new(Stream::default());
+    let stdout = Arc::new(Stream::default());
+    let stderr = Arc::new(Stream::default());
+    let exit = Arc::new(Exit::default());
+    if inherit_input {
+        // The child reads the *process's* input rather than what its parent sends, so nothing will
+        // arrive on this queue and a reader must not wait for it. Ending it here is what stops a
+        // `readChunk` in the child from blocking for ever — the same shape as wac-mono 0110.
+        stdin.finish();
+    }
+
+    let child = ChildProc {
+        stdin: stdin.clone(),
+        stdout: stdout.clone(),
+        stderr: stderr.clone(),
+        exit: exit.clone(),
+    };
+    let host = caller.data_mut();
+    let index = host.children.len();
+    host.children.push(child);
+    host.handles.push(Handle::Main(index));
+    let handle = (host.handles.len() - 1) as i32;
+    host.handles.push(Handle::Err(index));
+    let err_handle = (host.handles.len() - 1) as i32;
+
+    let streams = AsChild { stdin, stdout, stderr };
+    std::thread::spawn(move || {
+        let code = run_child(world, argv, grants, cwd, streams);
+        exit.set(code);
+    });
+
+    settle_now(caller, Kind::Child, Outcome::Child(handle, err_handle, String::new()), results)
+}
+
+/// `GRANT_*`, matching `platform.wac`.
+const GRANT_READ: i32 = 1;
+const GRANT_WRITE: i32 = 2;
+const GRANT_NET: i32 = 4;
+const GRANT_ENV: i32 = 8;
+
+/// A `u8[][]` as a list of byte strings, element by element.
+fn read_bytes_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8>>, wasmtime::Error> {
+    let len_fn = export_func(caller, "$bind$arr_u8Arr_len")?;
+    let get = export_func(caller, "$bind$arr_u8Arr_get")?;
+    let out = call_dyn(caller, &len_fn, std::slice::from_ref(a))?;
+    let n = match out.first() {
+        Some(Val::I32(n)) => *n,
+        _ => return Err(wasmtime::Error::msg("$bind$arr_u8Arr_len did not answer an i32")),
+    };
+    let mut items = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        let got = call_dyn(caller, &get, &[a.clone(), Val::I32(i)])?;
+        let inner = got.into_iter().next().unwrap_or(Val::I32(0));
+        items.push(read_u8_array(caller, &inner)?);
+    }
+    Ok(items)
 }
 
 fn make_socket(
