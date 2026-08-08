@@ -481,6 +481,19 @@ Deno.test("rung 3: a variable's initialiser against its declared type", () => {
  */
 Deno.test("rung 3: arithmetic operands, and the operators deliberately left alone", () => {
   const CASES = [
+    // Bitwise, which answers the same diagnostic as arithmetic.
+    "export void x1(i32 p, i64 q) { i32 r = p & q; }",
+    "export void x2(i32 p, f64 q) { i32 r = p | q; }",
+    // Comparisons, which answer it too — but not when an operand is a reference type, where the
+    // reference says `'==' not allowed on reference type` instead. A different family under one code
+    // is what this exclusion avoids.
+    "export void x3(i32 p, f64 q) { bool r = p < q; }",
+    "export void x4(i32 p, i64 q) { bool r = p >= q; }",
+    "export void x5(i32 p, string q) { bool r = p == q; }",
+    // `&&` and `||` never answer a mismatch: `1 && 2` is "requires bool operands", about each
+    // operand on its own rather than about the pair.
+    "export void x6(i32 p, i32 q) { bool r = p && q; }",
+    "export void x7(bool p, bool q) { bool r = p || q; }",
     "export f64 bad(i32 x, f64 y) { return x + y; }",
     "export void b2(i32 x, i64 y) { i32 r = x - y; }",
     "export void b3(f64 x, i32 y) { f64 r = x * y; }",

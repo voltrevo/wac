@@ -292,8 +292,26 @@ parameters positionally when the counts differ would report the wrong ones anywa
 
 **Spec coverage: 15 of 83**, from 14.
 
-Next: more of rung 3 — the comparison and logical operators, each needing its own reading of what the
-reference actually answers, and the struct and generic families, which need types beyond primitives.
+The operator sets were read off the reference rather than assumed, and there are three:
+
+- **`+ - * / %` and `& | ^`** answer `type mismatch in 'op': A and B` whenever the operands differ.
+  One rule, no exceptions among primitives.
+- **`< <= > >= == !=`** answer the same, *except* when an operand is a reference type, where it is
+  `'op' not allowed on reference type`. `string` is the only reference type this slice can name, so
+  comparisons involving one are left alone — a different family reported under one code is what that
+  avoids.
+- **`&& ||`** never answer a mismatch. `1 && 2` is `'&&' requires bool operands`, which is about each
+  operand on its own rather than about the pair.
+
+Shifts are in none of them: they deliberately accept mixed widths, and the friction log records a
+compiler bug from assuming otherwise.
+
+Widening to the second and third sets did not move spec coverage — the corpus's operand cases are all
+arithmetic — so this buys recall on real code rather than a number. Worth saying plainly, since a
+slice that moves no counter is easy to mistake for one that did nothing.
+
+Next: more of rung 3 — the struct and generic families, which need types beyond primitives, and the
+`&&`/`||` and reference-type diagnostics, which are their own families rather than more of this one.
 
 ### What rung 3's oracle looks like, measured
 

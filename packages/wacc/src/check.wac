@@ -33,7 +33,10 @@
 // and column, so this is `e.line, e.col` and not arithmetic.
 
 import { lex, tokenStride } from "./lex.wac";
-import { kPlus, kMinus, kStar, kSlash, kPercent } from "./kinds.wac";
+import {
+  kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
+  kLt, kLe, kGt, kGe, kEq, kNe,
+} from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
@@ -412,11 +415,19 @@ bool breaksOutOf(Stmt s) {
 /**
  * The operands of `+ - * / %`, which must be the same type.
  *
- * **Only those five.** The grid says shifts deliberately accept mixed widths — `i64 << i32` is legal
- * and the friction log records a compiler bug from assuming otherwise — and `&& || & | ^` and the
- * comparisons each answer a *differently worded* diagnostic when their operands disagree, which a
- * comparison by code would merge with this one. Narrow and certain beats wide and guessed: this
- * slice reports a subset, and the operators left out cost recall rather than correctness.
+ * Three sets, and which set an operator is in was read off the reference rather than assumed:
+ *
+ *   - **`+ - * / %` and `& | ^`** answer `type mismatch in 'op': A and B` whenever the operands
+ *     differ. One rule, no exceptions among primitives.
+ *   - **`< <= > >= == !=`** answer the same — *except* when an operand is a reference type, where it
+ *     is `'op' not allowed on reference type` instead. `string` is the only reference type this slice
+ *     can name, so a comparison involving one is left alone: a different diagnostic reported under
+ *     this code would merge two families a caller can tell apart.
+ *   - **`&& ||`** never answer a mismatch at all. `1 && 2` is `'&&' requires bool operands`, which is
+ *     about each operand on its own rather than about the pair, so it is not this check.
+ *
+ * Shifts are in none of them: they deliberately accept mixed widths — `i64 << i32` is legal, and the
+ * friction log records a compiler bug from assuming otherwise.
  *
  * A literal operand is skipped rather than typed. `x + 1` is legal for any numeric `x` because the
  * literal takes the other side's type, so demanding they agree would report exactly the code
@@ -428,15 +439,19 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, left);
       checkExpr(c, right);
       i32 k = tokenKind(c, op);
-      if (k != kPlus() && k != kMinus() && k != kStar() && k != kSlash() && k != kPercent()) {
-        return;
-      }
+      bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
+                      k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
+      bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
+                        k == kEq() || k == kNe();
+      if (!sameType && !comparison) { return; }
+      // A literal operand takes the other side's type, so `x + 1` is legal for any numeric `x` and
+      // demanding they agree would report the code everybody writes.
       if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) { return; }
       i32 a = primOfExpr(c, left);
       i32 b = primOfExpr(c, right);
-      if (a != primNone() && b != primNone() && a != b) {
-        c.report(errOperandMismatch(), e.line, e.col);
-      }
+      if (a == primNone() || b == primNone() || a == b) { return; }
+      if (comparison && (a == primString() || b == primString())) { return; }
+      c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }
     case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
