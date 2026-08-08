@@ -236,6 +236,15 @@ export default function Checked() {
           partial block with the padding well inside it.
         </P>
         <P>
+          And then the other direction, which is the half that catches the actual failure mode: the
+          same file asserts keccak256 <em>disagrees</em> with both SHA3-256 and a SHAKE256 truncated
+          to 32 bytes, at six message lengths chosen around the sponge&rsquo;s rate — 0, 1, 135, 136,
+          137, 272. <Lead>One wrong padding byte gives a hash that is the right length, avalanches,
+          is perfectly self-consistent, and is silently the other algorithm.</Lead> Agreement with
+          the three constants says which of the two this is; disagreement says it is not the
+          neighbour it would be mistaken for.
+        </P>
+        <P>
           Written down that way because the alternative is the failure this whole page is about — a
           test that agrees with its own implementation and reads, from the outside, exactly like one
           that agreed with somebody else&rsquo;s.
