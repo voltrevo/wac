@@ -754,3 +754,58 @@ Deno.test("rung 3: arrays and nullables", () => {
     }
   }
 });
+
+/**
+ * Member access, typed from the struct's field declarations.
+ *
+ * The largest widening of what an expression can be typed from since names arrived: `p.x` has a type
+ * now, so every rule already built reaches field reads without knowing anything about fields. The
+ * receiver is typed by the same function, so `a.b.c` works by recursion for as long as every step is
+ * nameable.
+ *
+ * Inheritance is one hop per lookup up the `parentTok` chain, bounded by the number of structs so a
+ * cycle — which the reference rejects separately — terminates rather than hangs.
+ *
+ * A field the chain does not have is **unknown**, not an error: *"struct 'P' has no field 'nope'"* is
+ * the reference's own diagnostic and a family this slice does not own.
+ */
+Deno.test("rung 3: member access, and fields inherited from a parent", () => {
+  const D = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  const CAUGHT = [
+    "export string a(P p) { return p.x; }",
+    "export void c(P p) { string t = p.x; }",
+    "export f64 d(C q) { return q.b; }",
+    "export void f(P p) { i32 n = p.s; }",
+    "export void g(P p, i32 n) { i32 r = p.s + n; }",
+  ];
+  const QUIET = [
+    "export i32 b(P p) { return p.x; }",
+    "export i32 e2(C q) { return q.b; }",
+    "export f64 h(C q) { return q.c; }",
+    "export string i(P p) { return p.s; }",
+    // An unknown field is the reference's own diagnostic and not this rule's.
+    "export i32 j(P p) { return p.nope; }",
+  ];
+  for (const t of CAUGHT) {
+    const src = D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(t)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const t of QUIET) {
+    const mine = ours(D + t);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(t)} is not this rule's to report, and we said ` +
+        mine.join(", "));
+    }
+  }
+});
