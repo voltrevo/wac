@@ -124,6 +124,13 @@ and the shell against bash. The VFS is an opportunity here rather than a threat:
 against a host mount *and* against an image, and any divergence between those two is a VFS bug with a
 reference answer.
 
+> Landed 2026-08-08, and it had not existed until then: `deno task corpus:backings` runs all 817 of
+> `packages/sh`'s corpus through **three** backings — memory, an image, and a host mount — and
+> `packages/box/test/backings.test.ts` runs the gate's share. All 817 agree. The test that matters most
+> is the third one, which checks the image *persists across processes* and the memory session does not:
+> three identical things would agree perfectly, and a differential that cannot tell its subjects apart
+> reports nothing while looking busy.
+
 **D8 — POSIX is a personality over a native core, and the dependency runs one way** (#38). Wacland
 should not treat POSIX or Unix abstractions as fundamental merely because they are familiar. The native
 foundations are the ones this repo already reaches for — explicit capabilities, structured process

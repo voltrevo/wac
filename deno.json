@@ -12,6 +12,7 @@
     "bindgen": "deno run -A tools/emitgen.ts",
     "corpus:through": "deno run -A tools/corpusThrough.ts",
     "corpus:hosts": "deno run -A tools/corpusHosts.ts",
+    "corpus:backings": "deno run -A tools/corpusBackings.ts",
     "flags:ignored": "deno run -A tools/ignoredFlags.ts",
     "coverage": "deno run -A tools/coverage.ts",
     "coverage:all": "deno run -A tools/coverageAll.ts",
