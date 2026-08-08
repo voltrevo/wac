@@ -10,7 +10,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { checkProgram } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked } from "./emit.wac";
+import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -83,4 +83,9 @@ export u8[] emitFiles(string[] paths, string[] sources, string entry) {
 /** Why a linked module was not emitted in full, or `""`. */
 export string blockedFiles(string[] paths, string[] sources, string entry) {
   return blockedLinked(paths, sources, entry);
+}
+
+/** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
+export string namesFiles(string[] paths, string[] sources, string entry) {
+  return namesLinked(paths, sources, entry);
 }

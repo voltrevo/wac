@@ -1183,6 +1183,53 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Names scoped to their file, and the two bugs only a big module could have — 93 to 108
+
+Linking put every file's declarations in one pool, and a pool cannot hold two meanings for one name:
+`sha256.wac` and `sha512.wac` both declare a `K`, three files declare an `itoa64`, three declare a
+`pemBlock` **with three different signatures**. The last slot declined those modules whole. Now a
+name is scoped to the file that declared it.
+
+The mechanism is a line number. The blob is the files end to end, so a line names a file exactly, and
+every token carries its line — so a declaration registers under a key (`K` for the first, `K@3` for
+the next), and a use resolves through `keyAt`: its own file, then a file it imports, then anyone.
+
+The **third step is where the bugs were**, and both took the same form — a guess that looked like an
+answer:
+
+- *Then anyone* is wrong when more than one file has the name. Two structs that used to be one type
+  are now two, and a third file that mentions neither gets `expected (ref null 1), got (ref null 7)`.
+- *Then a file it imports* is wrong the same way when **two** of its imports declare the name. The
+  import list says which files, not which names came from which. `routerdesc.wac` reached a
+  `pemBlock` belonging to another file and pushed a literal where a reference belonged.
+
+Both are now counted rather than picked: more than one candidate and the module is declined —
+`a name more than one file declares`. What a *single* candidate buys is real: two files each with
+their own `h`, each call reaching its own, is a case in `linkEmit.test.ts` now rather than a decline.
+
+**And two bugs that had been there all along, which only a module this size could show.** The corpus
+went to 15 invalid when the clash declines stopped hiding these files, and the invariant — *a
+function the walk approves produces a module that validates* — is what turned both up:
+
+- **A heap type is signed.** A reference type is `0x63` followed by an *s33*, and this emitter wrote
+  a `u32`. The two encodings are identical for the first sixty-four type indices and differ for every
+  one after, because 64 sets the sign bit of a one-byte LEB: type index 65 came back as heap type
+  **-63**. No single corpus file has sixty-four types. Linked, most of them do.
+- **A table that fills up renumbers everything after it.** Six places stopped writing and kept
+  counting — fields, parameters, variants, constants — which is a `struct.new` with the wrong arity
+  and a byte stream that desynchronises into a nonsense heap type several functions later. Each now
+  says so, and the module is declined by name rather than emitted with the indices off by one.
+
+| | before | after |
+|---|---|---|
+| whole files | 93 | **108** |
+| invalid modules | 0 | 0 |
+| blocked by a shared name | 109 | 0 |
+
+The three 43-argument `Env` constructions are one `Env.create()` now. They were three identical
+lists, which is how the last two fields cost three edits each and one of them was caught by a type
+error rather than by reading.
+
 ### Null, and a question the walk could not ask — 70 to 93
 
 `T?` is `T` here. Every reference this emitter writes is the nullable `0x63`, a decision forced two

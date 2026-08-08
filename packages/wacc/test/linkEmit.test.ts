@@ -52,6 +52,17 @@ const cases: [string, Record<string, string>][] = [
     "/main.wac": `import { greet } from "./lib.wac";\nexport i32 f() { return (greet() + "!").len(); }`,
     "/lib.wac": `export string greet() { return "hello"; }`,
   }],
+  // Two files, one name, and each file means its own. This is what file-scoped names buy: `sha256`
+  // and `sha512` both declare a `K`, three files declare an `itoa64`, and before this the whole
+  // module was declined rather than a call reaching the wrong one.
+  ["a name both files declare", {
+    "/main.wac": `import { g } from "./lib.wac";\nexport i32 f() { return h() * 10 + g(); }\ni32 h() { return 1; }`,
+    "/lib.wac": `export i32 g() { return h(); }\ni32 h() { return 2; }`,
+  }],
+  ["a struct both files declare", {
+    "/main.wac": `import { g } from "./lib.wac";\nstruct P { i32 a; }\nexport i32 f() { P p = P(3); return p.a * 10 + g(); }`,
+    "/lib.wac": `struct P { i32 b; i32 c; }\nexport i32 g() { P p = P(4, 5); return p.c; }`,
+  }],
   ["three deep", {
     "/main.wac": `import { b } from "./b.wac";\nexport i32 f() { return b(); }`,
     "/b.wac": `import { c } from "./c.wac";\nexport i32 b() { return c() * 2; }`,
@@ -104,17 +115,20 @@ Deno.test("rung 4: the two ways linking fails say which one it was", () => {
   if (missing !== "an import of a file that was not supplied") {
     throw new Error(`a missing import was reported as ${JSON.stringify(missing)}`);
   }
-  // Two files declaring one name is the cost of linking by concatenation: the pool cannot hold two
-  // meanings for a name, and picking the first silently is how a call reaches the wrong function.
-  const clash = blockedFiles(
-    ["/main.wac", "/lib.wac"],
+  // A name two files declare is fine — each file means its own. A name a file reaches for that
+  // **two of its imports** declare is not: the import list says which files, not which names came
+  // from which, so picking either is a guess. It is declined rather than guessed at, which is how a
+  // call stopped reaching a `pemBlock` with a different signature.
+  const ambiguous = blockedFiles(
+    ["/main.wac", "/a.wac", "/b.wac"],
     [
-      `import { g } from "./lib.wac";\nexport i32 f() { return g(); }\ni32 h() { return 1; }`,
-      `export i32 g() { return 2; }\ni32 h() { return 3; }`,
+      `import { p } from "./a.wac";\nimport { q } from "./b.wac";\nexport i32 f() { return enc(1); }`,
+      `export i32 p() { return 1; }\nexport i32 enc(i32 x) { return x; }`,
+      `export i32 q() { return 2; }\nexport i32 enc(i32 x) { return x + 1; }`,
     ],
     "/main.wac",
   );
-  if (clash !== "two files declaring h") {
-    throw new Error(`a name clash was reported as ${JSON.stringify(clash)}`);
+  if (ambiguous !== "a name more than one file declares") {
+    throw new Error(`an ambiguous name was reported as ${JSON.stringify(ambiguous)}`);
   }
 });
