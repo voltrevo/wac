@@ -445,7 +445,7 @@ i32 getNode(Reader r, Fs fs, i64 now) {
   // a reloaded filesystem indistinguishable from one built by hand.
   Map<string, i32> entries = Map.create(hashString, stringEq);
   fs.nodes.push(Inode(true, entries, Buf.create(), mode, owner, mtime));
-  i32 self = fs.nodes.len() - 1;
+  i32 here = fs.nodes.len() - 1;
   i32 count = r.u32();
   if (r.bad) { return -1; }
   for (i32 i = 0; i < count; i++) {
@@ -453,9 +453,9 @@ i32 getNode(Reader r, Fs fs, i64 now) {
     if (r.bad) { return -1; }
     i32 child = getNode(r, fs, now);
     if (r.bad) { return -1; }
-    fs.nodes.get(self).entries.set(name, child);
+    fs.nodes.get(here).entries.set(name, child);
   }
-  return self;
+  return here;
 }
 
 Loaded failed(string why) { return Loaded.of(false, Fs.inMemory(0 as i64), why); }

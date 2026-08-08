@@ -53,6 +53,7 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          byApplication, disconnect } from "./server.wac";
 import { equal } from "../../bytes/src/slice.wac";
 import { User, authorizedKeysOf, parsePasswd, userNamed } from "../../fs/src/passwd.wac";
+import { boxNames, boxRun } from "../../box/src/shrun.wac";
 
 i32 defaultPort() { return 2222; }
 i32 windowSize() { return 2 * 1024 * 1024; }
@@ -156,6 +157,17 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
   Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
   sh.capture = true;
   if (o.image != "") { sh.cwd = "/"; }
+  // **The commands are `packages/box`'s applets, over this session's filesystem.** Sixty of them
+  // rather than the handful `packages/sh` still carries, and they read the image because an applet
+  // takes an `Fs` now (wac-mono 0109). The edge itself waited on wac 0076 — adding this import made an
+  // untouched function fail to compile, because two packages declare a `Writer` and the emitter picked
+  // whichever registered first.
+  //
+  // Not `externalSpawnable`: `sshd` is not a multi-call binary, so a spawn would start another server
+  // rather than an applet. They run in process, which is what the shell does anyway when it cannot
+  // spawn — and `pushChild` now lets the first of them read the real input rather than a copy (0110).
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
   // **A session starts in its own home, as its own user.** `fs.user` was set when the key was matched;
   // the rest — `$HOME`, `$USER`, and where `cd` with no argument goes — is read from the same
   // `/etc/passwd` the key was found through, so there is one table rather than a second idea of it.

@@ -564,6 +564,12 @@ Deno.test({
     try {
       s = await startWacsshd(["-i", image], wacsshdWritableBinary);
 
+      // **The commands are `packages/box`'s applets now**, over the image: sixty of them rather than the
+      // handful `packages/sh` still carries, and they read what the session reads. The edge waited on a
+      // compiler bug (wac 0076) and on applets taking an `Fs` (wac-mono 0109).
+      const applets = await realSsh(s, "seq 1 20 > n; sort -nr n | head -3; sha256sum n | cut -c1-16; rm n");
+      if (applets.stdout !== "20\n19\n18\nb76ae83c50d61040\n") throw new Error(JSON.stringify(applets));
+
       // A session with no filesystem grants of its own: `/` is the image, not the server's disk.
       const made = await realSsh(s, "mkdir /data; echo hello > /data/notes; ls /");
       if (made.stdout !== "data\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));

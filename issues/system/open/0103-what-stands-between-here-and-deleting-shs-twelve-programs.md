@@ -168,3 +168,16 @@ twice over:
 
 Neither is a reason to stop deleting: five are gone and the remaining six are still duplicates. It does
 mean the last one cannot simply be followed by "and now sshd uses box".
+
+## 2026-08-08: both blockers are gone
+
+- **wac 0076** is fixed: a method call went to whichever `Struct$method` registered first, so adding
+  box's import to `sshd` made an untouched function fail to compile. The emitter uses the entry's own
+  index now.
+- **wac-mono 0109** is closed: applets take an `Fs`, so a session's commands read the session's
+  filesystem.
+
+`sshd` now wires `boxRun`, and `packages/ssh/test/server.test.ts` runs `seq | sort -nr | head` and
+`sha256sum` over an image through OpenSSH's own client. So the six programs left in `packages/sh` —
+`cat`, `wc`, `head`, `sort`, `grep`, `seq` — have no consumer that needs them: the shell's own
+differential is the only thing left holding them, and `corpus.ts`'s `DELETED` list is how they go.
