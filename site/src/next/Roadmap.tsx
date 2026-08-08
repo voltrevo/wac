@@ -6,6 +6,7 @@
 // without a status is a wish, and because "not started" appearing this often is the thing that
 // makes the rest of the page credible.
 
+import { TOTALS } from "../data/built";
 import { A, Caveat, Code, Lead, m, P, Page, Section, Table } from "./ui";
 import { c, font } from "./tokens";
 
@@ -75,26 +76,41 @@ export default function Roadmap() {
         <State
           rows={[
             ["a filesystem of its own, in memory or on the host", "done"],
-            ["an image format — persist and reload", "not started"],
-            ["a second host with no JavaScript in it", "not started"],
-            ["process table, users and login, line discipline", "not started"],
-            ["init, and eventually a desktop", "not started"],
+            ["an image format — persist and reload", "done"],
+            ["a second host with no JavaScript in it", "done"],
+            ["process table, users and login, a line discipline", "done"],
+            ["init — services as a file in the image", "done"],
+            ["a spawned stage inheriting the session's filesystem", "not started"],
+            ["a desktop", "not started"],
           ]}
         />
         <P>
-          The filesystem is real today: a shell mounted on an in-memory image passes 57 of the same
-          differential scripts it passes on the host&rsquo;s, and answers identically to bash on
-          both. <A href={`${DESIGN}/0001-a-self-contained-system.md`} external>design/0001</A>
+          <Lead>Most of this direction arrived.</Lead> The whole differential corpus — all{" "}
+          {TOTALS.corpus} scripts — runs against three different filesystems, memory, an image and a
+          real disk, and agrees on every one. Beside that comparison sits the test that stops it
+          being vacuous: if the image were secretly in memory too, three identical things would
+          agree perfectly, so it also checks the image outlives its own process and the sealed
+          session does not.
+        </P>
+        <P>
+          What is left is the row that keeps the strongest version of this honest. A pipeline stage
+          that is <em>spawned</em> gets a fresh instance, and a fresh instance is handed the
+          host&rsquo;s filesystem rather than the session&rsquo;s — so a sealed session is sealed
+          everywhere except through a spawn, and the browser terminal has a{" "}
+          {m({ children: "/bin" })} its own spawned programs cannot see. That is one decision about
+          what {m({ children: "spawnSelf" })} hands a child rather than a missing feature, and it is
+          the thing between here and &ldquo;the same system in a tab&rdquo;.{" "}
+          <A href={`${DESIGN}/0001-a-self-contained-system.md`} external>design/0001</A>
         </P>
       </Section>
 
       <Section id="native-host" kicker="direction two" title="A host with no JavaScript in it">
         <P>
-          There are three hosts today — browser, Node, Deno — and they are all JavaScript, so they
-          share the transport, the worker model and the event loop. That makes them poor evidence
-          for portability: a design flaw common to all three is invisible. The fourth is{" "}
-          <Lead>Rust on wasmtime</Lead>, with no JavaScript in the artifact and, deliberately, no
-          WASI reaching the program.
+          There were three hosts — browser, Node, Deno — and all three are JavaScript, so they share
+          the transport, the worker model and the event loop. That made them poor evidence for
+          portability: a design flaw common to all three is invisible from any of them. The fourth
+          is <Lead>Rust on wasmtime</Lead>, with no JavaScript in the artifact and, deliberately, no
+          WASI reaching the program — and it <Lead>exists now</Lead>.
         </P>
         <P>
           No WASI because the capability world already <em>is</em> the interface, and WASI would be

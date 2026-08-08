@@ -194,7 +194,7 @@ export default function Checked() {
 
       <Section id="spec" kicker="evidence, sixth kind" title="A specification that cannot drift">
         <P>
-          The language has a written specification, and <Lead>409 of its claims carry a tag</Lead>{" "}
+          The language has a written specification, and <Lead>366 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
           without evidence beside it reads as evidence, which is the failure mode a specification
           has, so a test walks the specification and fails with the list of any tag nothing covers.
@@ -210,7 +210,7 @@ export default function Checked() {
 
       <Section id="in-wac" kicker="evidence, seventh kind" title="Tests written in the language itself">
         <P>
-          <Lead>78 test files are written in wac</Lead>, not in the host language, and run through
+          <Lead>{TOTALS.wacTests} test files are written in wac</Lead>, not in the host language, and run through
           the same compiler as everything else. That is partly principle — a package whose tests are
           all in TypeScript is a package whose author avoided their own language — and partly
           coverage: a test written in wac exercises the compiler on the way past, which is how

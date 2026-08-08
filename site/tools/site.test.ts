@@ -422,3 +422,36 @@ Deno.test("site: the built worker chunk runs, not only the source", async () => 
     worker.terminate();
   }
 });
+
+// ── The specification's own tag count ──────────────────────────────────────
+
+Deno.test("site: the number of tagged claims the site quotes is the number there are", async () => {
+  // Same shape as the compiler-size check above, and it caught the same class of drift: the page
+  // said 409 against 366. That is the wrong direction on the page whose whole argument is that a
+  // number here came from somewhere outside the sentence containing it — and 419 is the count of
+  // tag *occurrences*, so the likeliest history is that somebody counted mentions rather than
+  // claims. A tag written twice is one claim.
+  const specDir = new URL("../spec", import.meta.url).pathname;
+  const tags = new Set<string>();
+  const walk = async (dir: string): Promise<void> => {
+    for await (const e of Deno.readDir(dir)) {
+      const path = `${dir}/${e.name}`;
+      if (e.isDirectory) await walk(path);
+      else if (e.name.endsWith(".md")) {
+        for (const m of (await Deno.readTextFile(path)).matchAll(/\[§(wac-[a-z0-9-]+)\]/g)) {
+          tags.add(m[1]);
+        }
+      }
+    }
+  };
+  await walk(specDir);
+  if (tags.size < 300) throw new Error(`only ${tags.size} tags found — did the walk resolve?`);
+
+  const page = await Deno.readTextFile(new URL("../src/next/Checked.tsx", import.meta.url).pathname);
+  const claim = page.match(/<Lead>([\d,]+) of its claims carry a tag<\/Lead>/);
+  if (claim === null) throw new Error("Checked.tsx no longer states a tag count — has the wording changed?");
+  const said = Number(claim[1].replace(/,/g, ""));
+  if (said !== tags.size) {
+    throw new Error(`the site says ${said} tagged claims; spec/ has ${tags.size}`);
+  }
+});
