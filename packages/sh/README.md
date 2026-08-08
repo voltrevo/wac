@@ -357,6 +357,11 @@ cannot be compared with it.
 whole of it: no `wait`, no `jobs`, no `%1`. Backgrounding needs something that can run two things at
 once and something that knows what is running, which is design/0001 step 3.
 
+**`test` refuses four operators it cannot answer**, and they are the ones that need something the
+capability world does not report: `-r`, `-w` and `-x` want a mode, `-ef` wants a device and an inode.
+`Stat` carries neither. They exit 2 saying "not implemented" rather than guessing, which is the same
+choice `cd` makes about permission.
+
 **`local` is not implemented**, so a variable set in a function is the shell's. `trap`, arrays,
 here-strings, process substitution, `for ((;;))` and brace expansion are also absent, and `~user` is
 left as it was written — measured against bash on 2026-08-08, alongside the ones that *are* here:

@@ -2143,6 +2143,19 @@ Output test(Shell sh, Vec<string> argv) {
     a.push(argv.get(i));
   }
 
+  // **Parentheses and the connectives, before anything else.** `[ -f x -a -d y ]`, `[ a -o b ]` and
+  // `[ \( … \) ]` are three of the four commonest shapes in a script, and every one of them was
+  // "too many arguments" here — the arity ladder below only knew 0 to 3 words. They are folded away
+  // first because they are *structure*: what is left afterwards is a form the ladder recognises.
+  //
+  // Two malformed shapes are refused in our words rather than bash's: `[ \( \) ]` and `[ \( -f f ]`
+  // are "unknown operator (" and "missing `)'" here, where bash — which has no grammar and decides by
+  // arity — says "(: unary operator expected" and "-f: binary operator expected". Both are status 2
+  // with a diagnostic, which is the part a script can act on; imitating the wording would mean
+  // imitating an error recovery rather than a rule.
+  if (a.len() > 3 || (a.len() == 3 && a.get(0) == "(")) {
+    return testExpr(sh, a, 0, a.len());
+  }
   bool result = false;
   if (a.len() == 0) { result = false; }
   else if (a.len() == 1) { result = a.get(0) != ""; }
@@ -2158,8 +2171,18 @@ Output test(Shell sh, Vec<string> argv) {
     string op = a.get(1);
     string l = a.get(0);
     string r = a.get(2);
-    if (op == "=") { result = l == r; }
+    if (op == "=" || op == "==") { result = l == r; }
     else if (op == "!=") { result = l != r; }
+    // String order, byte by byte. bash compares in the current collation and this compares bytes; under
+    // `LC_ALL=C`, which is what every test here runs with and what a script that cares should set, they
+    // are the same comparison.
+    else if (op == "<") { result = before(l, r); }
+    else if (op == ">") { result = before(r, l); }
+    // Modification times, which `Stat` has had all along — this said "not implemented" because nothing
+    // had looked. A file that cannot be stat'd is *older* than everything, which is bash's answer and
+    // not an error: `[ new -nt missing ]` is true.
+    else if (op == "-nt") { result = mtimeOf(sh, l) > mtimeOf(sh, r); }
+    else if (op == "-ot") { result = mtimeOf(sh, l) < mtimeOf(sh, r); }
     else if (op == "-eq") { result = atoiOr(l, 0) == atoiOr(r, 0); }
     else if (op == "-ne") { result = atoiOr(l, 0) != atoiOr(r, 0); }
     else if (op == "-lt") { result = atoiOr(l, 0) < atoiOr(r, 0); }
@@ -2174,6 +2197,97 @@ Output test(Shell sh, Vec<string> argv) {
     return Output.fail("test: too many arguments\n".toBytes(), 2);
   }
   return testResult(result);
+}
+
+/**
+ * `test`'s expression grammar: `!`, `-a`, `-o` and parentheses over the forms above.
+ *
+ * Recursive descent with the precedence POSIX gives: `-o` binds loosest, then `-a`, then `!`, then a
+ * primary — which is a parenthesised expression or one of the 0-to-3-word forms. That order is the
+ * whole reason this is not a fold over a flat list: `[ a -o b -a c ]` is `a -o (b -a c)`.
+ *
+ * The arity ladder in `test` stays as it is and handles what this hands it, so the two-word and
+ * three-word forms have exactly one implementation.
+ */
+Output testExpr(Shell sh, Vec<string> a, i32 from, i32 to) {
+  return testOr(sh, a, from, to);
+}
+
+Output testOr(Shell sh, Vec<string> a, i32 from, i32 to) {
+  i32 at = topLevel(a, from, to, "-o");
+  if (at < 0) { return testAnd(sh, a, from, to); }
+  Output left = testOr(sh, a, from, at);
+  if (left.status == 2) { return left; }
+  if (left.status == 0) { return testResult(true); }
+  return testOr(sh, a, at + 1, to);
+}
+
+Output testAnd(Shell sh, Vec<string> a, i32 from, i32 to) {
+  i32 at = topLevel(a, from, to, "-a");
+  if (at < 0) { return testPrimary(sh, a, from, to); }
+  Output left = testAnd(sh, a, from, at);
+  if (left.status == 2) { return left; }
+  if (left.status != 0) { return testResult(false); }
+  return testAnd(sh, a, at + 1, to);
+}
+
+Output testPrimary(Shell sh, Vec<string> a, i32 from, i32 to) {
+  i32 n = to - from;
+  if (n <= 0) { return Output.fail("test: expected an expression\n".toBytes(), 2); }
+  if (a.get(from) == "!" && n > 1) {
+    Output inner = testPrimary(sh, a, from + 1, to);
+    if (inner.status == 2) { return inner; }
+    return testResult(inner.status != 0);
+  }
+  if (a.get(from) == "(") {
+    if (a.get(to - 1) != ")") { return Output.fail("test: missing `)'\n".toBytes(), 2); }
+    return testExpr(sh, a, from + 1, to - 1);
+  }
+  // **Four or more words that are not an expression are `test`'s own error**, and handing them back to
+  // `test` would be handing them straight back here: it sends anything longer than three words to the
+  // grammar, and the grammar with nothing to fold sends it back. That was an infinite recursion and a
+  // blown stack — `[ a b c d e ]` exited 70 with "Maximum call stack size exceeded" where bash says
+  // "too many arguments". A recursion whose base case is another function's default is not a base case.
+  if (n > 3) { return Output.fail("test: too many arguments\n".toBytes(), 2); }
+  // Whatever is left is one of the plain forms, which `test` itself already knows how to answer. It is
+  // handed a fresh argv rather than indices because that is the shape it takes.
+  Vec<string> one = Vec.create();
+  one.push("test");
+  for (i32 i = from; i < to; i++) { one.push(a.get(i)); }
+  return test(sh, one);
+}
+
+/**
+ * Where `op` appears in `a[from..to)` outside any parentheses, or -1.
+ *
+ * Depth-counted, because `[ \( a -o b \) -a c ]` has an `-o` that is not this level's.
+ */
+i32 topLevel(Vec<string> a, i32 from, i32 to, string op) {
+  i32 depth = 0;
+  for (i32 i = from; i < to; i++) {
+    string w = a.get(i);
+    if (w == "(") { depth++; continue; }
+    if (w == ")") { depth--; continue; }
+    if (depth == 0 && w == op) { return i; }
+  }
+  return -1;
+}
+
+/** Whether `l` sorts before `r`, byte by byte — `test`'s `<` and `>`. */
+bool before(string l, string r) {
+  u8[] a = l.toBytes();
+  u8[] b = r.toBytes();
+  i32 n = a.len() < b.len() ? a.len() : b.len();
+  for (i32 i = 0; i < n; i++) {
+    if (a[i] != b[i]) { return a[i] < b[i]; }
+  }
+  return a.len() < b.len();
+}
+
+/** A file's modification time, or -1 for one that is not there — which is older than anything. */
+i64 mtimeOf(Shell sh, string path) {
+  Stat st = sh.fs.stat(sh.resolve(path));
+  return st.exists ? st.modifiedMillis : (0 - 1) as i64;
 }
 
 /** A `test` answer: nothing on either stream, and true is 0 because that is what a shell means by it. */
