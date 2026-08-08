@@ -181,3 +181,61 @@ mean the last one cannot simply be followed by "and now sshd uses box".
 `sha256sum` over an image through OpenSSH's own client. So the six programs left in `packages/sh` —
 `cat`, `wc`, `head`, `sort`, `grep`, `seq` — have no consumer that needs them: the shell's own
 differential is the only thing left holding them, and `corpus.ts`'s `DELETED` list is how they go.
+
+## 2026-08-08, later: the source side is done in twenty minutes, and the tests are the whole job
+
+Tried it. `program.wac` is deleted, `Output` and `optionRefusal` moved to `packages/sh/src/refusal.wac`
+— neither is a program, and `ls` is a builtin that still refuses flags — and every source consumer is
+adjusted: `sh.wac` loses its multi-call branch, `exec.wac`'s external dispatch ends in
+`Output.missing()` rather than a private fallback, `help` loses its third list, and `sealed.wac` and
+`imaged.wac` wire nothing. `packages/box/src/shrun.wac` imports `Output` from its new home. That part
+is an hour including the prose, and `packages/sh/test/differential.test.ts` — the suite this issue was
+about — passes 6/6 once four hand-written groups stop using `cat` and `seq` as incidental commands:
+
+- the interleave test uses `ls` for its invalid-UTF-8 diagnostic;
+- `STDIN_CASES` drains with `while read l; do echo "$l"; done` instead of `cat`;
+- the tilde case reads back with `ls ~/f`;
+- the GNU-wording list keeps `ls nosuchthing` and hands the rest to `packages/box`.
+
+**Then twelve other tests fail, and they are not incidental uses — they are the job.** This is what
+"none of it is hard" got wrong above, and it is a real finding rather than a snag:
+
+| file | what it is testing | why it needs commands |
+| --- | --- | --- |
+| `test/backings.test.ts` | ~40 scripts against bash over Memory/Host/image backings | the scripts *are* `cat f`, `wc -l f`, `sort f \| head -1` |
+| `test/sealed.test.ts` | a sealed shell has a filesystem and it is not the host's | reads a file to show which world it came from |
+| `test/imaged.test.ts` | what one session writes the next one reads | same |
+| `test/unnameable.test.ts` | a file whose name is not valid UTF-8 says which side is at fault | the diagnostic belongs to whatever *opens* the file |
+| `test/node_shell.test.ts` | the shell on Node answers what bash answers | host-touching scripts, which are the program ones |
+| `test/spawn.test.ts` (4) | `$WACPATH`, and 0110's still-open standard input | needs a producer that ignores its input and a stage after it |
+| `packages/fs/test/synth.test.ts` | `/dev` and `/proc` | reads them |
+
+Every one of those observes a **filesystem** through a **command**, and this package will have no
+commands. So the deletion's real precondition is not in `packages/sh` at all:
+
+**Step 0 is moving the image shells up a package.** `packages/box/src/bin/sealedsh.wac` already is
+`packages/sh/src/sealed.wac` with the sixty applets; `imaged.wac` has no counterpart and wants one
+(it is thirty lines — boot an image, wire `boxRun`, save on the way out). Then `backings`, `sealed`,
+`imaged`, `unnameable`, `node_shell` and `fs`'s `synth` move to `packages/box/test`, where the shell
+they build has commands, and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as
+shells with builtins and nothing else. `spawn.test.ts` stays, using `packages/platform/example/wc.wac`
+as the spawned program it already uses, with `seq` replaced by a `while` loop and 0110's three-stage
+case moved to `packages/box/test/shell.test.ts`.
+
+That is one sitting of its own and it is the *whole* of what is left — after it, deleting the six is
+the twenty minutes above.
+
+The work described here is parked in `agent-a`'s workspace as a git stash (`git stash list`), not
+pushed: a shell with no commands and a suite that still expects them is a red tree.
+
+## Also found while doing it
+
+`gaps.test.ts` would have gone **green while checking nothing**. It sweeps every option GNU documents
+for `wc`, `head`, `sort` and `grep` and asserts none is called "invalid option" — and a shell that no
+longer has those commands answers "command not found", which contains no such words. The sweep would
+have passed on four tools that were not there. It is `["ls"]` now, the one tool in it that is a
+builtin, with the floor on the case count lowered to match; `packages/box/test/flags.test.ts` asks the
+same question of the applets over more tools than were ever here.
+
+`break` is not implemented: `while read l; do echo "$l"; break; done` prints `break: command not
+found` and loops forever. Nothing in the corpus uses it. Filed separately as **0111**.
