@@ -120,6 +120,18 @@ export function faultOf(e: unknown): number {
     if (isInstance(e, denoErrors.NotFound)) return FAULT_NOT_FOUND;
     if (isInstance(e, denoErrors.PermissionDenied)) return FAULT_DENIED;
     if (isInstance(e, denoErrors.AlreadyExists)) return FAULT_EXISTS;
+    // **`NotCapable` is Deno's "this build was not granted that", and it was falling through.**
+    //
+    // `--allow-read` does not cover `/proc`, `/sys` or `/dev`: those need `--allow-all`, and asking
+    // without it throws `NotCapable` rather than `PermissionDenied`. With no case here the error
+    // reached `statFault` as an unknown one and a *denial arrived as absence* — `stat /proc` in a
+    // host-mounted shell said "not found" about a directory that is plainly there, which is the
+    // failure `Stat.fault` exists to prevent and the one `unnameable.test.ts` is about.
+    //
+    // `FAULT_NOT_GRANTED` rather than `FAULT_DENIED`, by this file's own distinction below: nothing
+    // about the path or its mode refused, the program was built without the capability. It is the
+    // same category `deno.ts` answers when it has no read grant at all, which is the same fact.
+    if (isInstance(e, denoErrors.NotCapable)) return FAULT_NOT_GRANTED;
   }
 
   // Node's errno codes, and Deno's too where it sets them.
@@ -262,9 +274,15 @@ export const STAT_FAULT = 20;
  *
  *   - `FAULT_NOT_REPRESENTABLE` — a name this runtime cannot express, so the file may well be there.
  *   - `FAULT_DENIED` — the operating system refused, so nothing can be said either way.
+ *   - `FAULT_NOT_GRANTED` — this build's grant does not reach that path, so nothing can be said either.
  *
- * A world with no read capability never reaches here at all: the hosts answer `FAULT_NOT_GRANTED`
- * before they try, because that is a fact about the grant rather than about the path.
+ * A world with **no** read capability never reaches here: the hosts answer `FAULT_NOT_GRANTED` before
+ * they try. This paragraph used to end there, and the third case above is the one it missed — a world
+ * with a read grant that does not *cover* the path. Deno's `--allow-read` does not reach `/proc`,
+ * `/sys` or `/dev`, which need `--allow-all`; asking throws `NotCapable`, which arrives here, was in
+ * neither branch, and became `FAULT_NONE`. So `stat /proc` in a host-mounted shell answered "not
+ * found" about a directory that is plainly there — a denial reported as absence, which is the failure
+ * `Stat.fault` exists to prevent.
  *
  * Everything else means "nothing usable at this path", which is an answer and must stay one. `ENOTDIR` is
  * the case that decides the shape: `test -e f/g` where `f` is a file is *false* in bash, not an error, and
@@ -273,5 +291,7 @@ export const STAT_FAULT = 20;
  */
 export function statFault(e: unknown, path: string): number {
   const fault = faultOfPath(e, path);
-  return fault === FAULT_NOT_REPRESENTABLE || fault === FAULT_DENIED ? fault : FAULT_NONE;
+  return fault === FAULT_NOT_REPRESENTABLE || fault === FAULT_DENIED || fault === FAULT_NOT_GRANTED
+    ? fault
+    : FAULT_NONE;
 }
