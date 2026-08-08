@@ -2912,6 +2912,12 @@ Deno.test("[§wac-buf-pop-empty-c7jw3kf] testPopEmpty() traps", async () => {
  * The opposite — "claims nothing and does not compile" — is not, because most blocks are fragments:
  * statements meant to sit in a function, or a type defined in an earlier block. Asserting *those*
  * compile would report the spec's own presentation as a bug, which is how a check gets deleted.
+ *
+ * Measured, so the next person need not: of 316 blocks, 180 do not compile alone, and of the ones that
+ * fail as *both* a module and a function body, 23 — nearly all — are syntax sketches using `{ ... }` as
+ * a placeholder, which is a documentation convention rather than a defect. The strengthening that would
+ * pay is narrower than "every block compiles": a block with **no `...` and no `// error:`** ought to,
+ * once each multi-block example declares which of its neighbours it is compiled with.
  */
 Deno.test("every block the spec marks `// error:` is still an error", async () => {
   const dir = new URL("../../spec", import.meta.url).pathname;
