@@ -622,7 +622,7 @@ Deno.test({
 
       // A session with no filesystem grants of its own: `/` is the image, not the server's disk.
       const made = await realSsh(s, "mkdir /data; echo hello > /data/notes; ls /");
-      if (made.stdout !== "data\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
+      if (made.stdout !== "bin\ndata\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
 
       // A *second connection to the same process* finds it. This is the assertion the whole thing is
       // for: without it the test passes for a server that hands each client a fresh empty filesystem.
@@ -642,7 +642,7 @@ Deno.test({
       const again = await startWacsshd(["-i", image], wacsshdWritableBinary);
       try {
         const back = await realSsh(again, "cat /data/notes; ls /");
-        if (back.stdout !== "hello\ndata\ndev\nproc\n") throw new Error(JSON.stringify(back.stdout));
+        if (back.stdout !== "hello\nbin\ndata\ndev\nproc\n") throw new Error(JSON.stringify(back.stdout));
       } finally {
         await stopWacsshd(again);
       }
@@ -706,7 +706,7 @@ Deno.test({
     const s = await startWacsshd(["-i", image]);        // the read-only binary, deliberately
     try {
       const made = await realSsh(s, "mkdir /data; ls /");
-      if (made.stdout !== "data\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
+      if (made.stdout !== "bin\ndata\ndev\nproc\n") throw new Error(JSON.stringify(made.stdout));
       await stopWacsshd(s);
       const said = await s.stderr;
       if (!said.includes("could not be saved")) throw new Error(`it said nothing: ${said}`);
