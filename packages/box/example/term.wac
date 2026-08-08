@@ -52,6 +52,8 @@
 
 import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
+import { mountSystem } from "../../fs/src/fs.wac";
+import { Vec } from "../../std/src/vec.wac";
 // `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -184,6 +186,16 @@ export i32 page(Core core, Cli cli, Page page) {
   // the page's log rather than the screen being drawn.
   Shell sh = Shell.create(core, cli);
   sh.capture = true;
+  // **The same world a session gets anywhere else**, which is design/0001's "the browser terminal
+  // should be the *same system* in a tab rather than a second port of the idea". Without this a tab
+  // had no `/dev/null`, no `/proc/self` and no `/bin` — sixty-three programs that `help` listed and
+  // the machine had no directory for. `mountSystem` is what `sealedsh` and `imaged` already call;
+  // this was the one session that built half a world.
+  // A page has no command line, so `/proc/self/cmdline` names the terminal itself rather than
+  // inventing arguments nobody passed.
+  Vec<string> argv = Vec.create();
+  argv.push("term");
+  mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
   // Every `box` applet, as a command you can type — `sort`, `sha256sum`, `gzip`, `cut`, `shuf` and
   // fifty more, the same code `box` runs on a command line. This is the *fallback* now: the shell
   // spawns them (below), and calls them only in a world that cannot.

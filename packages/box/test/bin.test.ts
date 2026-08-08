@@ -131,6 +131,51 @@ Deno.test("a build with no programs has no /bin at all", async () => {
   assertEquals(one.readDir("/bin"), ["wc"]);
 });
 
+Deno.test("every session that has programs has a /bin listing them", async () => {
+  // **The bug this is here for.** `packages/ssh`'s server wires `boxNames` into its session shell —
+  // four lines below the import that provides it — and was handed an empty program list, with a
+  // comment saying it had no applets of its own. So an ssh session had sixty-three programs, `help`
+  // listed all of them, and `ls /bin` said "No such file or directory": the one place a person looks
+  // to find out what a system can run.
+  //
+  // Checked by *source*, because the alternative is standing up a server and a client to ask a
+  // question about a wiring decision. What must hold is that a session shell wired with `boxNames` is
+  // given `boxNames` — anywhere in the repo.
+  const wires: string[] = [];
+  for await (const entry of Deno.readDir("packages")) {
+    if (!entry.isDirectory) continue;
+    for (const sub of ["src", "src/bin", "example"]) {
+      let files: Deno.DirEntry[] = [];
+      try {
+        files = [...Deno.readDirSync(`packages/${entry.name}/${sub}`)];
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        if (!f.isFile || !f.name.endsWith(".wac")) continue;
+        const path = `packages/${entry.name}/${sub}/${f.name}`;
+        const src = Deno.readTextFileSync(path);
+        if (!src.includes("externalNames = boxNames")) continue;
+        const world = /(?:mountSystem|boot)\([^)]*\)/s.exec(src)?.[0] ?? "";
+        // **Only where a system world is built at all.** `packages/box/src/bin/sh.wac` — `wacsh` — is
+        // the deliberate exception and calls neither: it is an ordinary shell over the *real*
+        // filesystem (design/0001 D3a), where `/bin`, `/dev` and `/proc` are the machine's own and
+        // mounting ours over them would hide them. The rule is not "every shell has a `/bin`"; it is
+        // that a shell which builds a world builds it consistently with the programs it wired.
+        if (world === "") continue;
+        wires.push(path);
+        assertEquals(
+          world.includes("boxNames"),
+          true,
+          `${path} wires boxNames into its shell but gives its world ${JSON.stringify(world)}`,
+        );
+      }
+    }
+  }
+  // The canary: a search that found nothing would report every session correct.
+  assertEquals(wires.length >= 2, true, `only found ${wires.length} session builders: ${wires}`);
+});
+
 Deno.test("/bin is read-only, like every other synthesised mount", async () => {
   for (const script of ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"]) {
     const r = await sh(script);

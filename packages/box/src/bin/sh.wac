@@ -30,6 +30,10 @@ export i32 main(Core core, Cli cli) {
   i32 asApplet = boxApplet(core, cli);
   if (asApplet != UNKNOWN) { return asApplet; }
 
+  // **No `mountSystem` here, and that is the decision rather than an omission.** This shell is
+  // design/0001 D3a's "ordinary shell over the real filesystem": `/bin`, `/dev` and `/proc` are the
+  // machine's own, and mounting ours over them would hide a real `/bin` behind a list of sixty-three
+  // applets. `sealedsh`, `imaged` and `sshd -i` build a *system*, and they all call it.
   Shell sh = Shell.create(core, cli);
   sh.external = boxRun;
   sh.externalNames = boxNames;   // so `help` lists them
