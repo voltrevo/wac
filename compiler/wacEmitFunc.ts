@@ -1247,8 +1247,14 @@ class FuncEmitter {
           this.emitExpr(e.constRef.init, env, e.constRef.type);
           break;
         }
-        // Named function reference
-        const fIdx = this.ctx.funcIdx.get(e.name);
+        // Named function reference, through the calling file's scope — `ctx.funcIdx` maps bare names
+        // globally and first-wins, so two files each with a private `helper` both reached whichever
+        // registered first. The call sites have asked the file scope since 123ac4c; taking a *reference*
+        // to one had not, and a funcref is the shape where the mistake travels furthest from its cause.
+        const scopedRef = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(e.name);
+        const fIdx = scopedRef?.kind === "func"
+          ? scopedRef.entry.funcIndex + this.ctx.funcBase
+          : this.ctx.funcIdx.get(e.name);
         if (fIdx !== undefined) this.emit(0xD2, ...uleb(fIdx)); // ref.func
         break;
       }
@@ -2130,8 +2136,10 @@ class FuncEmitter {
         const structEntry = resolveStructEntry(exprName, this.ctx);
         const methEntry = structEntry?.methods.get(e.name);
         if (methEntry) {
-          const fIdx = this.ctx.funcIdx.get(methEntry.mangledName)!;
-          this.emit(0xD2, ...uleb(fIdx)); // ref.func
+          // The entry's own index, not its mangled name — `Struct$method` is not unique across files,
+          // and this entry came from the right struct. Same as the call sites in `emitCall` (0076); a
+          // `ref.func` to the wrong one is worse, because the mismatch surfaces wherever it is *called*.
+          this.emit(0xD2, ...uleb(methEntry.funcIndex + this.ctx.funcBase)); // ref.func
           return;
         }
       }
@@ -2150,8 +2158,7 @@ class FuncEmitter {
       // Method reference (not called here, handled in emitCall)
       const methEntry = resolveStructEntry(sName, this.ctx, structResolvedIndex(baseT))?.methods.get(e.name);
       if (methEntry) {
-        const fIdx = this.ctx.funcIdx.get(methEntry.mangledName)!;
-        this.emit(0xD2, ...uleb(fIdx)); // ref.func
+        this.emit(0xD2, ...uleb(methEntry.funcIndex + this.ctx.funcBase)); // ref.func
         return;
       }
     }
@@ -2493,9 +2500,13 @@ class FuncEmitter {
       this.emit(0xFB, 0x00, ...uleb(tIdx)); // struct.new $t
       return;
     }
-    // Function call with named args or plain call via construct syntax
+    // Function call with named args or plain call via construct syntax, through the calling file's
+    // scope for the same reason as everywhere else: a bare name is not globally unique.
     if (e.ctype.kind === "prim") {
-      const fIdx = this.ctx.funcIdx.get(e.ctype.name);
+      const scopedC = this.ctx.result.fileScopes.get(this.ctx.currentFile)?.get(e.ctype.name);
+      const fIdx = scopedC?.kind === "func"
+        ? scopedC.entry.funcIndex + this.ctx.funcBase
+        : this.ctx.funcIdx.get(e.ctype.name);
       if (fIdx !== undefined) {
         for (const arg of e.args) this.emitExpr(arg, env);
         this.emit(0x10, ...uleb(fIdx));

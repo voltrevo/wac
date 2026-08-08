@@ -256,14 +256,25 @@ other (non-imported) files.
 Struct names follow the same rule as function names: duplicate struct names
 are only a compile error within the same file (see [naming.md](naming.md)).
 Two files that never import each other can each declare a struct with the
-same name — the mangled type identifiers and method names are kept distinct
-by the file-stem qualifier described above, so each keeps its own field
-layout and its own methods.
+same name — each keeps its own field layout and its own methods, and every
+use resolves through the file it is written in.
+
+The mangled names described above are how those definitions are *labelled*,
+not how they are found. Two files with the same stem in different directories
+— `ssh/src/writer.wac` and `tls/src/writer.wac` — produce the same mangled
+name for a same-named method, so a mangled name is not an identity either.
+Nothing about this guarantee depends on file names being unique across the
+program; the identity of a definition is the file it was written in.
 
 `[§wac-samename-struct-4jhq7wn]` This holds however the two are reached, including when the
 importing file names only *one* of them and the other arrives transitively — which is the case
 that matters in practice, because then neither file you are reading mentions the other's type.
 It also holds when the name is a struct in one module and an enum in another.
+
+`[§wac-samename-stem-3xr7ktn]` It holds for two files with the same *stem* in different
+directories, and `[§wac-funcref-scope-9qh2vtm]` for a method or a plain function taken as a
+funcref value rather than called — `fn[i32()] f = helper;` refers to the `helper` written in
+the same file as that line, whatever else in the program is called `helper`.
 
 This paragraph described the intent before it described the behaviour. The emitter resolved a
 written struct name through a global bare-name map, last-wins, so both names reached whichever

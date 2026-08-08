@@ -7750,6 +7750,56 @@ Deno.test("[§wac-samename-method-8kv2ptr] a same-named struct's method is not a
   eq(inst.call("instances", []), 3, "and an instance method on each");
 });
 
+// §wac-samename-stem-3xr7ktn — two files with the same *stem* still keep their own methods
+Deno.test("[§wac-samename-stem-3xr7ktn] a method taken as a funcref goes to its own struct", async () => {
+  // The half of 0076 that survived its own fix. Mangled names are qualified by the file *stem*,
+  // so `a.wac` and `b.wac` never collide — but `ssh/src/writer.wac` and `tls/src/writer.wac` both
+  // produce `writer$Writer$take`, and `ctx.funcIdx` answers with whichever registered first. The
+  // stem is not the file. Every place the emitter looked a function up by name had this in it; the
+  // call sites were fixed for 0076 and the `ref.func` sites were not, so a method used as a *value*
+  // still crossed packages, and failed at instantiate in a function that mentions neither file:
+  //
+  //   Compiling function #1:"writer$viaMethodRef" failed:
+  //     local.set[0] expected type (ref 6), found ref.func of type (ref 8)
+  //
+  // Directories, not names, are what make these two files different — which is the point.
+  const src = (n: number) =>
+    `export struct Writer { i32 n; Writer create() { return Writer(${n}); }
+                            i32 take(const this) { return this.n; } }
+     export i32 viaMethodRef() { fn[i32(Writer)] m = Writer.take; return m(Writer.create()); }`;
+  const m = await runMulti(new Map([
+    ["x/writer.wac", src(101)],
+    ["y/writer.wac", src(907)],
+    ["main.wac", `
+      import { viaMethodRef as fromX } from "./x/writer.wac";
+      import { viaMethodRef as fromY } from "./y/writer.wac";
+      export i32 refs() { return fromX() * 10000 + fromY(); }`],
+  ]));
+  eq(m.call("refs", []), 1010907, "each file's funcref names its own file's method");
+});
+
+// §wac-funcref-scope-9qh2vtm — a plain function taken as a funcref is the caller's own
+Deno.test("[§wac-funcref-scope-9qh2vtm] a funcref to a same-named function is the caller's", async () => {
+  // Found by asking 0076's follow-up question — what else here is resolved by name? — of the same
+  // file. `ctx.funcIdx` holds every mangled name *and* a first-wins entry under the bare short
+  // name, and taking a reference to a function went through the short name. Two files each with
+  // their own `helper` both got whichever was registered first: `refs()` answered 20, not 710.
+  // Nothing traps and nothing fails to validate, because the signatures match — the wrong function
+  // is simply called, at a call site arbitrarily far from where the reference was taken.
+  const src = (n: number) =>
+    `i32 helper() { return ${n}; }
+     export i32 viaRef() { fn[i32()] f = helper; return f(); }`;
+  const m = await runMulti(new Map([
+    ["a.wac", src(10)],
+    ["b.wac", src(700)],
+    ["main.wac", `
+      import { viaRef as refA } from "./a.wac";
+      import { viaRef as refB } from "./b.wac";
+      export i32 refs() { return refA() + refB(); }`],
+  ]));
+  eq(m.call("refs", []), 710, "each file's funcref is to its own helper");
+});
+
 Deno.test("[§wac-samename-struct-4jhq7wn] the name may even be a struct in one module and an enum in another", async () => {
   const inst = await runMulti(new Map([
     ["a.wac", `export enum Dup { A(i32 v), B }
