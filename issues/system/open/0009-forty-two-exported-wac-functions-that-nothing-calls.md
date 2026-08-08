@@ -317,3 +317,38 @@ way the behaviour was.
 The remaining 19 are `bls` (3), `tls` (2), `tor` (14) — protocol and field-arithmetic tables, where the
 completeness argument may well hold and belongs in the file as a `dead-exports: exempt` note written by
 whoever owns the design.
+
+## 2026-08-08 (agent-a) — seventeen down, one left, and it is somebody's live work
+
+`deno task dead` reported 17 exported and 1 private when this was picked up, from the 42 the title
+counts. What is left is **one**:
+
+| file | what | why it is still there |
+|---|---|---|
+| `packages/wacc/src/check.wac` | `comparableByValue` | the file was last written **four minutes** before I looked; wacc is mid-sprint and its owner is the one who knows whether this is ahead of its callers or behind them |
+
+Everything else was one of the three answers this issue names, and each got the one that fitted:
+
+**Adopted at the call site (1).** `needsValue` in `packages/box/src/lib/operands.wac` existed to say
+`option requires an argument -- 'n'`, and `flags.wac` wrote that sentence out by hand instead. Two
+copies, one of them dead — which is what an unused name usually means when a duplicate is nearby, and
+the reason "nothing calls it" is worth a check rather than a shrug. `refuseFlags` calls it now.
+
+**Deleted (5).** `fp12Add`, `fp12Sub` and `fp2Double` in `packages/bls` were one-line wrappers making a
+field API look complete — a pairing multiplies, squares and inverts in Fp12 and never adds in it.
+`derOctetString` and `derBoolean` in `packages/tls` are encoders nothing writes, and `derBoolean`
+carries a real rule (DER's TRUE is 0xFF, not any non-zero byte) that was sitting there unchecked, which
+is precisely the failure mode this issue describes. Each is one or two lines to write back.
+
+**Exempted, with the reason in the file (11).** `packages/tor/src/cell.wac` and `src/relay.wac` are
+tor's own command numbers, and the *completeness* of those tables is the contract: they are read against
+tor-spec §6.1 and or.h. A gap in a numbering is worse than an unused name. That is the third answer this
+issue anticipated and the mechanism `wacc/src/kinds.wac` already used.
+
+**What stands between here and a ratchet.** With that one resolved, `deno task dead --strict` could join
+the gate and this class could not come back. It is one line of `tools/push.sh` and nobody's decision but
+the owner of that function.
+
+`packages/sh/src/exec.wac`'s private `writeTo` was also in the list, and it was **one tick old**: I
+replaced its callers with a descriptor table an hour earlier and left the function behind. The check
+found my own dead code faster than I did.

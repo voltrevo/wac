@@ -45,6 +45,10 @@ const i32 PAYLOAD_LEN = 509;
 const i32 RELAY_HEADER_LEN = 11;
 export i32 relayDataLen() { return PAYLOAD_LEN - RELAY_HEADER_LEN; }
 
+// dead-exports: exempt — as in `cell.wac`, the numbering is tor-spec's and its completeness is what
+// makes this file checkable against §6.1. Seven have no caller: EXTEND/EXTENDED are the v0 forms this
+// replaces with EXTEND2, TRUNCATE/TRUNCATED end a circuit from the far end, DROP is padding, and
+// RESOLVE/RESOLVED are the DNS commands nothing here asks for. Each is a command a relay may send us.
 /** Relay commands, from tor-spec §6.1. */
 export i32 relayBegin() { return 1; }
 export i32 relayData() { return 2; }

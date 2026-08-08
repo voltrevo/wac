@@ -110,13 +110,10 @@ export u8[] derBitString(u8[] bits) {
   return derTlv(tagBitString(), body);
 }
 
-export u8[] derOctetString(u8[] bytes) { return derTlv(tagOctetString(), bytes); }
 export u8[] derOid(u8[] encodedOid) { return derTlv(tagOid(), encodedOid); }
-export u8[] derBoolean(bool value) {
-  u8[] body = u8[1]();
-  body[0] = value ? 0xFF : 0x00;      // DER's TRUE is 0xFF, not any non-zero byte
-  return derTlv(tagBoolean(), body);
-}
+// No `derOctetString` or `derBoolean`: nothing this package writes contains either, and an encoder
+// nothing calls is an encoder nothing checks — `derBoolean`'s "TRUE is 0xFF, not any non-zero byte" is
+// exactly the kind of rule that would sit here being wrong. Two lines each when a caller appears.
 export u8[] derSequence(u8[] body) { return derTlv(tagSequence(), body); }
 export u8[] derSet(u8[] body) { return derTlv(0x31, body); }
 export u8[] derExplicit(i32 n, u8[] body) { return derTlv(tagContext(n), body); }

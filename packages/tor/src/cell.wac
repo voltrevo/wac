@@ -28,6 +28,12 @@
 const i32 PAYLOAD_LEN = 509;
 const i32 CELL_LEN = 514;
 
+// dead-exports: exempt — these are tor's own cell-command numbers and the table's *completeness* is the
+// contract, not its use. Four of them have no caller here and each is a fact about the protocol rather
+// than a convenience: `cmdCreate`/`cmdCreated` are the TAP handshake this speaks link protocol 4 to
+// avoid, and `cmdAuthenticate` belongs to the relay-to-relay authentication this end never performs.
+// Deleting an unused one would leave a gap in a numbering that is read against tor-spec, which is the
+// one thing this file exists to be checkable against.
 /** Cell commands, from or.h. */
 export i32 cmdPadding() { return 0; }
 export i32 cmdCreate() { return 1; }

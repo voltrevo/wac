@@ -247,8 +247,9 @@ export bool fp12Equals(Fp12 a, Fp12 b) {
 }
 export bool fp12IsOne(Fp12 a) { return fp12Equals(a, fp12One()); }
 
-export Fp12 fp12Add(Fp12 a, Fp12 b) { return Fp12(fp6Add(a.c0, b.c0), fp6Add(a.c1, b.c1)); }
-export Fp12 fp12Sub(Fp12 a, Fp12 b) { return Fp12(fp6Sub(a.c0, b.c0), fp6Sub(a.c1, b.c1)); }
+// No `fp12Add` or `fp12Sub`: a pairing multiplies, squares and inverts in Fp12 and never adds in it.
+// They were here as a complete-looking field API and nothing called them, so nothing could tell whether
+// they were right — one line each to write back the day something needs them.
 
 /**
  * `c0 − c1·w`.

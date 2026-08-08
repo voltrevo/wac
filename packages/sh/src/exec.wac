@@ -1394,45 +1394,6 @@ bool sameFile(Where a, Where b) {
   return false;
 }
 
-/** Write a redirection's target. False when it failed, which is already reported. */
-bool writeTo(Shell sh, Redir r, u8[] data, bool append) {
-  string path = sh.resolve(joinWord(sh, r.target));
-  // Only standard output is captured, so `2>` has nothing of its own to write. Saying so beats
-  // writing the wrong stream to the file.
-  if (r.fd != 1) {
-    // Said, not silently skipped — but the command's own status is left alone. Overwriting it
-    // made `cmd 2>/dev/null; echo $?` report the refusal instead of what the command did, which
-    // is a second wrong answer on top of the first.
-    // "Not implemented", not "not supported": the second reads as a decision, and this is a gap. Only
-    // standard output is captured through the seam, so there is nothing of the error stream to send
-    // anywhere — the fix is the seam's, and the message should not imply otherwise.
-    //
-    // **False, because nothing was written.** This used to answer true, which told both callers the
-    // output had gone to a file — so `echo hi 2>/dev/null` printed the refusal and then swallowed
-    // `hi`, with a status of 0. The comment above said "said, not silently skipped" and the code
-    // skipped the command's output silently. A redirection this shell cannot perform must leave the
-    // output where it would have been, which is standard output.
-    sh.err(("sh: redirecting fd " + itoa(r.fd) + " is not implemented\n").toBytes());
-    return false;
-  }
-  u8[] payload = data;
-  if (append) {
-    FileResult existing = sh.fs.readFile(path);
-    if (existing.ok) {
-      Buf both = Buf.create();
-      both.pushAll(existing.bytes);
-      both.pushAll(data);
-      payload = both.take();
-    }
-  }
-  Change wrote = sh.fs.writeFile(path, payload);
-  if (!wrote.ok()) {
-    sh.err(("sh: " + path + ": " + wrote.message + "\n").toBytes());
-    sh.status = 1;
-  }
-  return true;
-}
-
 /**
  * Whether a `case` pattern matches, with quoting respected.
  *

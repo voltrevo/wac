@@ -22,6 +22,7 @@
 // what 0105 is about.
 
 import { Core } from "../../../platform/src/platform.wac";
+import { needsValue } from "./operands.wac";
 import { Args } from "./args.wac";
 
 /**
@@ -34,9 +35,12 @@ import { Args } from "./args.wac";
 export bool refuseFlags(Core core, Args a) {
   // A flag that takes a value and was given none — `head -n`, `fold -w`. The parser records it because
   // it has no `Core` to complain through; this is the first place that does.
+  //
+  // Through `needsValue`, which is where that sentence lives. It was written there and copied here, so
+  // there were two of them and only this one ran — `deno task dead` found the other by noticing that
+  // nothing called it, which is what an unused name usually means when a duplicate is nearby.
   if (a.missingValue != "") {
-    core.warn(a.name + ": option requires an argument -- '" + a.missingValue + "'");
-    core.warn("Try '" + a.name + " --help' for more information.");
+    needsValue(core, a.name, a.missingValue);
     return true;
   }
   // **No applet here implements a single long option**, so there is no table for them and no need of

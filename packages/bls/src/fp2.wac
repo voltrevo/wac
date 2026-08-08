@@ -84,7 +84,8 @@ export Fp2 fp2MulByNonresidue(Fp2 a) {
 /** `a·k` for a base-field scalar, used by the isogeny maps and the SSWU constants. */
 export Fp2 fp2MulByFp(Fp2 a, u32[] k) { return Fp2(fpMul(a.c0, k), fpMul(a.c1, k)); }
 
-export Fp2 fp2Double(Fp2 a) { return fp2Add(a, a); }
+// No `fp2Double`: `fp2Add(a, a)` is what the two call sites that wanted it write, and a name nothing
+// uses cannot be wrong in a way a test would notice.
 
 /**
  * The norm `a0² + a1²`, an element of Fp.
