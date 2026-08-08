@@ -268,3 +268,52 @@ Deno.test("and it survives an image, which is where a length-prefixed format wou
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+// ── A path the grant does not reach ──────────────────────────────────────────
+//
+// The same failure in a different disguise. `--allow-read` does **not** cover `/proc`, `/sys` or
+// `/dev` under Deno: those need `--allow-all`, and asking without it throws `NotCapable` — a class
+// newer than the `PermissionDenied` the fault table knew about. With no case for it the error fell
+// through to "unknown", `statFault` turned it into `FAULT_NONE`, and a *denial arrived as absence*:
+// `stat /proc` said "not found" about a directory that is plainly there.
+//
+// That is the failure this whole file is about, and `Stat.fault` exists to prevent it. The third test
+// here is the one that matters — `test -e` answering **no** about something it could not look at is
+// an answer a script then acts on.
+//
+// `readDir` has no fault to carry, so `ls /proc` still says "cannot access": its answer is
+// `string[]?`, and a null cannot say why. That is the same gap `Stat` had before it gained a field,
+// and closing it is a signature change across the platform rather than a mapping.
+
+Deno.test("a path the build's grant does not reach is refused, not called absent", () => {
+  // Through `wacsh` — a shell whose filesystem is the machine's — because that is the only place a
+  // real path can be outside a real grant. `/proc` exists; this build may not look at it.
+  const r = byteSh(shell, [], "stat /proc");
+  // On the error stream, where a diagnostic belongs — checking standard output alone is how the first
+  // version of this failed while the shell was saying exactly the right thing.
+  assertEquals(r.err.includes("Not granted to this application"), true, `${r.out} / ${r.err}`);
+  assertEquals(r.err.includes("not found"), false, `a denial should not read as absence: ${r.err}`);
+  // The canary: `/proc` really is there, so "not found" would have been false rather than merely
+  // unhelpful.
+  //
+  // Asked of **bash**, not of Deno. `Deno.readDirSync("/proc")` throws `NotCapable` unless the run
+  // has `--allow-all`, which the gate does not — so the first version of this canary failed for the
+  // very reason the test exists, and only under the suite rather than on its own. A canary that needs
+  // the capability under test is not independent of it.
+  const real = new Deno.Command("bash", { args: ["-c", "test -d /proc && echo yes"], stdout: "piped" })
+    .outputSync();
+  assertEquals(new TextDecoder().decode(real.stdout).trim(), "yes", "this machine has no /proc");
+});
+
+Deno.test("`test -e` refuses about a path it may not look at, rather than saying no", () => {
+  // Status 2, not 1. A shell that answered "no" would send a script down the branch for *absent*,
+  // which is the same mistake as the U+FFFD case above and just as quiet.
+  const denied = byteSh(shell, [], "test -e /proc; echo [$?]");
+  assertEquals(denied.out.trim().endsWith("[2]"), true, `${denied.out} / ${denied.err}`);
+
+  // And ordinary absence is still ordinary: status 1, no complaint. Without this the fix would read
+  // as "every failure is now a refusal", which would break `rm -f` and every "does it exist" check.
+  const absent = byteSh(shell, [], "test -e /nosuchpath; echo [$?]");
+  assertEquals(absent.out.trim(), "[1]", absent.out);
+  assertEquals(absent.err, "", `absence should be silent: ${absent.err}`);
+});
