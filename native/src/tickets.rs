@@ -70,6 +70,10 @@ pub enum Outcome {
     /// `string[]?` — **null is "not a directory", empty is "an empty one"**, and a host that
     /// collapsed them would make `ls` of a file print nothing instead of complaining.
     Names(Option<Vec<Vec<u8>>>),
+    /// `Socket{handle, error, peer, port}`.
+    Socket(i32, String, String, i32),
+    /// `Child{handle, errHandle, error}`.
+    Child(i32, i32, String),
 }
 
 struct Inner {
