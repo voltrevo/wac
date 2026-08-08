@@ -5,6 +5,11 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0122](open/0122-randombytes-above-64-kib-fails-on-deno-and-the-browser.md) | `randomBytes` above 64 KiB fails on Deno and the browser — [gh#53](https://github.com/voltrevo/wac-mono/issues/53) | bug | trap |
+| [0121](open/0121-send-to-a-closed-child-feed-reports-success-and-drops-the-data.md) | `send` to a closed child feed reports success and drops the data — [gh#52](https://github.com/voltrevo/wac-mono/issues/52) | bug | wrong answer |
+| [0120](open/0120-child-output-sinks-are-not-awaited-so-backpressure-does-not-hold.md) | child output sinks are not awaited, so backpressure does not hold — [gh#51](https://github.com/voltrevo/wac-mono/issues/51) | bug | wrong answer |
+| [0119](open/0119-ethrpc-pads-odd-length-hex-where-its-own-comment-says-it-refuses.md) | ethrpc pads odd-length hex where its own comment says it refuses — [gh#50](https://github.com/voltrevo/wac-mono/issues/50) | bug | wrong answer |
+| [0118](open/0118-tor-cell-framing-treats-the-circ-id-byte-as-a-versions-command.md) | tor cell framing treats the circ-id byte as a VERSIONS command — [gh#48](https://github.com/voltrevo/wac-mono/issues/48) | bug | wrong answer |
 | [0116](open/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md) | a spawned pipeline stage gets the host's filesystem, so a sealed session cannot spawn | missing feature | wrong answer |
 | [0115](open/0115-yes-head-1-throws-the-childs-output-is-not-being-read-under-load.md) | `yes \| head -1` kills the shell with "the child's output is not being read" under load | bug | wrong answer |
 | [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |

@@ -849,6 +849,7 @@ host/deno.ts        Deno's implementations. Note how much of it is `await`
 host/node.ts        the same table over Node's APIs
 host/entryNode.ts   the launcher and worker halves for Node
 host/entry.ts       the launcher and worker halves of a built program
+../../native/       the fourth host: Rust on wasmtime, no JavaScript at all
 build.ts            builds an application into one executable
 app.ts              build and run, in one step
 example/wc.wac      an application, entire
@@ -879,6 +880,28 @@ so a fresh closure per call dies on the seventeenth with a `RangeError` far from
 **One thing at a time.** While the application is parked in a capability, nothing else can
 enter it. Concurrency means more instances.
 
+## The fourth host, which is not JavaScript
+
+Three of the four providers are JavaScript — browser, Node, Deno — so they share the transport, the
+worker model and the event loop, and a design flaw common to all three is invisible from any of
+them. The fourth is Rust on wasmtime, in `native/` at the repository root rather than in this
+package, because a crate inside `packages/` is a directory the test walkers have to be taught to
+skip. It closed
+[0087](../../issues/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
+
+**Nothing was reimplemented.** The `SharedArrayBuffer`, the `Atomics.wait`, the sequence counters
+and the ring of slots have no counterpart there — a ticket is an entry in a table and a wait is a
+condition variable — which is the design's own D9 assumption meeting a host that shares neither the
+transport nor the concurrency model. What crosses between the hosts is an image and a set of
+answers, and a session that changes nothing writes a byte-identical image on either.
+
+Two of its properties are things the JavaScript hosts cannot offer. A child is a fresh `Store` on a
+fresh thread built from an `Arc<World>`, and **nothing from the parent's store crosses** — the type
+system says so, since a `Val` is not `Send` — so `spawn` is a confinement primitive here where a
+Deno worker inherits the whole process's permissions. And the deadline of a wait lives in the
+runtime's own table rather than inside a worker's memory, so a scheduler can see it: D12 and D13
+have a seam rather than a mode, but the seam is in rather than retrofitted.
+
 ## What is not here yet
 
 - **`spawn` on Node.** Deno only. `host/children.ts` takes `startWorld` as a parameter
@@ -901,6 +924,6 @@ enter it. Concurrency means more instances.
   transitive, and the interesting artefact turned out to be the other one, where a child is
   a wac program with grants its parent chose.
 
-Two things this section used to list are done: the browser provider (`--target browser`,
-and it now runs in one, see `test/browser_live.test.ts`) and outbound network
-(`connect`/`listen`/`accept`).
+Three things this section used to list are done: the browser provider (`--target browser`, and it
+now runs in one, see `test/browser_live.test.ts`), outbound network (`connect`/`listen`/`accept`),
+and **the fourth host** — see below.

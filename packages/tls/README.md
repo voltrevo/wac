@@ -67,6 +67,27 @@ against a real ClientHello, which offers 1216 bytes for this group. Full 1-RTT h
 close_notify, KeyUpdate, and the compatibility fields — the legacy version, the echoed
 session id, the meaningless ChangeCipherSpec — that middleboxes need to see.
 
+**A server can present an RSA certificate**, not only an Ed25519 one. TLS 1.3 removed PKCS#1
+v1.5 from signing, so an RSA certificate means `rsa_pss_rsae_sha256` in CertificateVerify and
+nothing else — `tlsServerInitRsa` is a separate entry point rather than a widened one, so nothing
+that already has an Ed25519 server has to say anything about RSA. Which scheme a connection uses
+is decided by whether it holds RSA key material rather than by a flag, because a flag can
+disagree with the certificate and this cannot.
+
+The PSS salt is derived from the server random and the transcript hash rather than passed in. It
+does not need to be secret — the verifier recovers it from the signature, so it is public by
+construction — and what it must not be is repeated under one key, which it cannot be, since the
+server random is unique per connection and a server signs CertificateVerify once. Deriving it
+also keeps the property this file is built around: the host supplies the ephemeral key and the
+server random, everything else follows, and a handshake stays reproducible against a recorded
+trace.
+
+The proof is OpenSSL on both ends that are not ours: it generates the key and the self-signed
+certificate, our server signs with them, and its `s_client` completes a 1.3 handshake and reads
+the body. A PSS signer and a PSS verifier that are both ours could be wrong together and agree.
+This is what closed `packages/tor`'s relay fingerprint, since tor's link certificate is RSA and
+ours was Ed25519 — visible to anyone on the path before a single Tor cell.
+
 The client verifies three things before it sends a byte, and refuses if any fails: a
 path from the leaf, through whatever intermediates the server sent, to a root in the
 trust store it was given, in date and covering the name asked for; the CertificateVerify
@@ -135,6 +156,14 @@ untrusted. There is no CRL or OCSP checking of any kind.
 certificate's key type at zero and path building skips it, rather than trapping — the
 system trust store here holds 121 roots and some use things this does not implement, and
 one exotic root must not take down the parse of the other 120.
+
+**An RSA server key must be 1024-bit.** Not a design decision — a 2048-bit private-key operation
+does not finish in any time a peer would wait, which is
+[0099](../../issues/open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md): more than
+3500x for a change the arithmetic says should cost about 8x, so the suspicion is `modPow` rather
+than "big numbers are slow". Nothing in `packages/tor` is blocked, since tor's link and identity
+keys are 1024-bit, and every test in the tree uses that size — which is exactly why nothing saw
+it until a server tried a real certificate.
 
 **PSS parameters are assumed, not parsed.** A certificate signed with RSASSA-PSS carries
 its hash and salt length in the algorithm parameters; this assumes SHA-256 with a
