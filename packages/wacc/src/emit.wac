@@ -267,6 +267,20 @@ export struct Env {
   string blocked;
   /** The return type of the function being emitted, for the `return` statements inside it. */
   string returnType;
+  /**
+   * Module-level constants, and the expression each one *is*.
+   *
+   * Scalars are **inlined** at every use rather than given a global, which is what the reference does
+   * and is simpler than it sounds: a constant has no identity to preserve, so substituting its
+   * initialiser is exactly equivalent. An array constant is a different matter — it has identity, and
+   * one array shared by every use is not the same as one array per use — so those stay declined until
+   * there is a global section to put them in.
+   */
+  string[] constNames;
+  string[] constTypes;
+  /** Nullable because an `Expr` has no default value — this emitter's own checker says so. */
+  Expr?[] constInits;
+  i32 constCount;
   string[] structNames;
   i32 structCount;
   string[] fieldOwners;
@@ -369,6 +383,14 @@ export struct Env {
   i32 structType(this, string name) {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return this.arrayCount + i; }
+    }
+    return -1;
+  }
+
+  /** The index of a module-level constant, or -1. */
+  i32 constAt(const this, string name) {
+    for (i32 i = 0; i < this.constCount; i++) {
+      if (this.constNames[i] == name) { return i; }
     }
     return -1;
   }
@@ -530,7 +552,7 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
 
   collectDeclarations(env, src, lexed, prog);
   settleEmittable(env, src, lexed, prog);
@@ -1019,10 +1041,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitConversion(fb, env, from == "" ? to : from, to);
     }
     case Ident(tok): {
-      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
-      if (at < 0) { return; }
-      fb.byte(32);
-      fb.u32leb(at);
+      string nm = tokenTextOf(src, lexed, tok);
+      i32 at = env.localAt(nm);
+      if (at >= 0) {
+        fb.byte(32);
+        fb.u32leb(at);
+        return;
+      }
+      // A module-level constant, substituted. A local wins a name clash because it is nearer, which
+      // is why this is asked second.
+      i32 ci = env.constAt(nm);
+      if (ci < 0) { return; }
+      if (env.constInits[ci] is null) { return; }
+      emitExprAt(fb, src, lexed, env, env.constInits[ci]!, env.constTypes[ci]);
     }
     case Unary(op, operand): {
       i32 k = lexed.tokens[op * tokenStride()];
@@ -1224,7 +1255,13 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return "bool"; }
-    case Ident(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
+    case Ident(tok): {
+      string nm = tokenTextOf(src, lexed, tok);
+      string lt = env.localType(nm);
+      if (lt != "") { return lt; }
+      i32 ci = env.constAt(nm);
+      return ci < 0 ? "" : env.constTypes[ci];
+    }
     case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
     case ArrNew(elem, size, fill, elements): { return typeOfTyName(src, lexed, elem) + "[]"; }
     case Member(obj, nameTok): {
@@ -1844,7 +1881,17 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case StrLit(tok): { return "string literal"; }
     case NullLit: { return "null"; }
     case Ident(tok): {
-      return env.localAt(tokenTextOf(src, lexed, tok)) < 0 ? "a name that is not a local" : "";
+      string nm = tokenTextOf(src, lexed, tok);
+      if (env.localAt(nm) >= 0) { return ""; }
+      i32 ci = env.constAt(nm);
+      if (ci < 0) { return "a name that is neither a local nor a constant"; }
+      // A constant is inlined, so whatever its initialiser needs, the *use site* needs. An array
+      // constant would be allocated afresh at each use, which is a different program — declined until
+      // there is a global to hold one.
+      string ct = env.constTypes[ci];
+      if (isArrayType(ct) || env.isStructName(ct)) { return "a constant with identity"; }
+      if (env.constInits[ci] is null) { return "a constant with no initialiser"; }
+      return unsupportedValue(src, lexed, env, env.constInits[ci]!);
     }
     case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
     case Binary(op, left, right): {
@@ -1980,7 +2027,7 @@ export string emitBlocked(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
   collectDeclarations(env, src, lexed, prog);
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -1999,7 +2046,10 @@ export string emitBlocked(u8[] src) {
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): { return "an enum"; }
       case Import(pathTok, prefixTok, items): { return "an import"; }
-      case ConstDecl(nameTok, type, init, exported): { return "a module-level const"; }
+      case ConstDecl(nameTok, type, init, exported): {
+        string ct = typeOfTyName(src, lexed, type);
+        if (isArrayType(ct) || env.isStructName(ct)) { return "a constant with identity"; }
+      }
     }
     if (env.blocked != "") { return env.blocked; }
   }
@@ -2033,6 +2083,19 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
+      }
+      else: { }
+    }
+  }
+
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        if (env.constCount >= env.constNames.len()) { continue; }
+        env.constNames[env.constCount] = tokenTextOf(src, lexed, nameTok);
+        env.constTypes[env.constCount] = typeOfTyName(src, lexed, type);
+        env.constInits[env.constCount] = init;
+        env.constCount = env.constCount + 1;
       }
       else: { }
     }
@@ -2150,7 +2213,7 @@ export string emitNames(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
-                string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
                 bool[512](), i32[512](), 0);
   collectDeclarations(env, src, lexed, prog);

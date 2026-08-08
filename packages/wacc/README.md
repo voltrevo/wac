@@ -1183,6 +1183,31 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The number was measuring the harness: 10 of 39, not 10 of 336
+
+"297 of 336 files blocked on an import" is not a fact about the emitter. **Only 39 corpus files
+import nothing at all**, and a file that imports cannot be compiled alone by anyone — the reference
+takes a file *map* and an entry, because compilation is whole-program. The other 297 are the harness
+asking for something impossible, and reporting them as a shortfall made a measurement look like a gap.
+
+So the honest denominator is 39, and the score was **10**. Module-level constants were the largest
+category left, and are now **14**.
+
+**A scalar constant is inlined at every use**, which is what the reference does and is simpler than it
+sounds: a constant has no identity, so substituting its initialiser is exactly equivalent. It also
+sidesteps a real constraint — a wasm global's initialiser must be a *constant expression*, and
+`const i32 K = 3 * 4 + 1;` is not one. Inlined, the arithmetic lands in a function body where
+arithmetic is ordinary.
+
+**An array constant is a different matter and stays declined.** It *has* identity: one array shared by
+every use is not the same program as one array per use, and inlining would silently make the second.
+The reference gives those a global with an `array.new_fixed` initialiser, which is where this goes
+next.
+
+One more instance of the pattern this rung keeps hitting: `Expr[16]()` does not compile, because an
+`Expr` has no default value — the rung 3 rule about non-defaultable types, met from inside the emitter
+that now enforces it. The initialisers are stored nullably.
+
 ### The walk is honest now: 28 invalid to 0, and the invariant is a rule
 
 **336 files: 10 whole, 326 partial, 0 invalid.** A function this emitter approves produces a module

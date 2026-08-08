@@ -298,6 +298,21 @@ const CASES: [string, Call[]][] = [
   // A struct in a loop, mutated each time round.
   ["struct C { i32 n; } export i32 f(i32 k) { C c = C(0); for (i32 i = 0; i < k; i++) { c.n = c.n + i; } return c.n; }",
     [{ name: "f", args: [5] }]],
+
+  // ── Module-level constants, inlined at each use ────────────────────────────
+  ["const i32 K = 7; export i32 f() { return K; }", [{ name: "f", args: [] }]],
+  ["const i32 K = 7; export i32 f(i32 n) { return K * n + K; }", [{ name: "f", args: [3] }]],
+  // Arithmetic in the initialiser, which wasm would not accept as a constant expression and which
+  // inlining makes ordinary — the substituted expression sits in a function body like any other.
+  ["const i32 K = 3 * 4 + 1; export i32 f() { return K; }", [{ name: "f", args: [] }]],
+  ["const i64 W = 4294967296; export i64 f() { return W + 1; }", [{ name: "f", args: [] }]],
+  ["const f64 P = 1.5; export f64 f() { return P * 2.0; }", [{ name: "f", args: [] }]],
+  ["const bool T = true; export bool f() { return !T; }", [{ name: "f", args: [] }]],
+  // A local of the same name is nearer and wins.
+  ["const i32 K = 7; export i32 f() { i32 K = 2; return K; }", [{ name: "f", args: [] }]],
+  // Two constants, and one used inside a loop where it is substituted every time round.
+  ["const i32 A = 2; const i32 B = 5; export i32 f() { i32 t = 0; for (i32 i = 0; i < B; i++) { t = t + A; } return t; }",
+    [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {
