@@ -78,7 +78,7 @@ async function nativeBinary(): Promise<string | null> {
     console.warn(
       `SKIPPING the native half of the arrival test: cargo did not build ${CRATE}.\n` +
         `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  The Deno half below still runs. See issues/open/0087.`,
+        `  The Deno half below still runs. See issues/closed/0087.`,
     );
     return null;
   }

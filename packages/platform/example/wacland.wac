@@ -20,7 +20,7 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Child, Cli, Core, GRANT_NONE, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, FileResult, GRANT_NONE, GRANT_READ, Pending } from "../src/platform.wac";
 import { Read } from core;
 
 export i32 main(Core core, Cli cli) {
@@ -31,6 +31,12 @@ export i32 main(Core core, Cli cli) {
   if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--child") {
     core.log("wacland: I am the child");
     return 7;
+  }
+  // The other half of being a child: report whether this world may read, which is stage 6's question.
+  if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--canread") {
+    FileResult f = cli.readFile("/etc/hostname").wait();
+    core.log("wacland: child read=" + (f.ok ? "ok" : (contains(f.error, "not granted") ? "denied" : "failed")));
+    return 0;
   }
   // Stage 1. Both streams, because a host that wired `warn` to standard output would look right in a
   // terminal and be wrong to everything that reads one of the two.
@@ -104,8 +110,62 @@ export i32 main(Core core, Cli cli) {
   core.log("wacland: stage 5 status " + itoa(over.wait()));
   tick.cancel();
 
+  // Stage 6. **A child gets what its parent granted, and no more.**
+  //
+  // The design's central claim about `spawn` — grants are "a ceiling of the parent's own, intersected
+  // by the host rather than trusted". Asked twice, because one answer proves nothing: a child refused
+  // when its parent had nothing to give is not evidence of an intersection. This program is built
+  // *with* reading, so the two answers must differ.
+  core.log("wacland: stage 6 withheld " + childSays(core, cli, GRANT_NONE));
+  core.log("wacland: stage 6 granted " + childSays(core, cli, GRANT_READ));
+
   core.log("wacland: reached the end of what is implemented");
   return 0;
+}
+
+/** Spawn a child with `grants` and answer what it said about reading. */
+string childSays(Core core, Cli cli, i32 grants) {
+  u8[][] argv = u8[][1](fill: u8[0]());
+  argv[0] = "--canread".toBytes();
+  Child kid = cli.spawnSelf(argv, grants, "", false).wait();
+  if (kid.handle < 0) { return "no child"; }
+  string said = "";
+  while (true) {
+    match (cli.recv(kid.handle).wait()) {
+      case Data(bytes): { said = said + string.fromBytes(bytes); }
+      case End: { break; }
+      case Failed(why): { break; }
+    }
+  }
+  cli.exitCode(kid.handle).wait();
+  // The child's line is `wacland: child read=X`; the answer is what follows the `=`.
+  u8[] b = said.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == '=') { return trimEnd(said.slice(i + 1, said.len())); }
+  }
+  return "silent";
+}
+
+/** Without a trailing newline, which the child's `log` added. */
+string trimEnd(string s) {
+  i32 n = s.len();
+  while (n > 0 && s.toBytes()[n - 1] == '\n') { n = n - 1; }
+  return s.slice(0, n);
+}
+
+/** Whether `haystack` contains `needle`. */
+bool contains(string haystack, string needle) {
+  u8[] h = haystack.toBytes();
+  u8[] n = needle.toBytes();
+  if (n.len() == 0) { return true; }
+  for (i32 i = 0; i + n.len() <= h.len(); i++) {
+    bool same = true;
+    for (i32 j = 0; j < n.len(); j++) {
+      if (h[i + j] != n[j]) { same = false; break; }
+    }
+    if (same) { return true; }
+  }
+  return false;
 }
 
 /** An i64 as text. Separate from `itoa` because wac has no overloading and this needs both. */

@@ -143,7 +143,7 @@ async function nativeBinary(): Promise<string | null> {
     console.warn(
       `SKIPPING the second host: cargo did not build ${CRATE}.\n` +
         `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  See issues/open/0087.`,
+        `  See issues/closed/0087.`,
     );
     return null;
   }

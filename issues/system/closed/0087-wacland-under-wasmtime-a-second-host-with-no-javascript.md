@@ -440,3 +440,42 @@ file owned by whoever ran the process, so the operating system could not do it e
 - **`recv` decides which of a child's two streams before it starts a reader.** The first version started
   one on standard output and then started a second when it noticed the handle was the error stream,
   leaving a thread parked on a stream nobody would collect.
+
+## Closed — 2026-08-08, agent-a
+
+All six items and all three criteria. The runtime is `native/`, ~1500 lines of Rust on wasmtime; the
+conformance program is `packages/platform/example/wacland.wac`, run on every host and compared.
+
+What this issue asked for and what stands against it now:
+
+1. load a wac-compiled module, no bundle — **done**; a compiled program has no imports of its own but
+   one dispatcher per funcref signature, so there was nothing to bundle;
+2. supply the capability funcrefs as host functions — **done**, with the field order read from a
+   manifest rather than held here, which is the thing a second host must not have its own opinion about;
+3. a ticket table — **done**, `native/src/tickets.rs`, with D12's policy seam and D13's visible
+   deadline built in rather than retrofitted;
+4. `waitAny(ids, timeoutMs)` — **done**, parking on a condition variable, answering the caller's index;
+5. `spawn` — **done** as `spawnSelf`: a fresh `Store` on a fresh thread with grants intersected against
+   the parent's. `spawn` from a program's *source text* has no meaning here and answers -1 with a
+   reason rather than -2, because this world can spawn;
+6. the operating system underneath, never exposed to the guest — **done**: the filesystem, the network
+   and the streams, each behind its grant.
+
+And the three "done when" clauses, in `example/wacland.wac` stages 3, 4 and 5, byte-identical on both
+hosts. Stage 6 adds the claim `spawn` is *for*: a child handed `GRANT_NONE` is denied where the same
+child handed `GRANT_READ` is not, from a parent that can read either way — checked to fail by removing
+the intersection.
+
+The prediction this issue made held: the `SharedArrayBuffer`, `Atomics.wait`, the sequence counters and
+the ring of slots have **no counterpart** in the native runtime, and none was reimplemented. D9's
+assumption that the interface and the transport are separable survived its first contact with a host
+that shares neither.
+
+**What it was for.** design/0001's arrival test passes in full —
+`packages/platform/test/arrival.test.ts` and `arrival_users.test.ts`: the same image in one JavaScript
+host and one that is not, with the same users, files, installed programs, shell behaviour and system
+services, and a real OpenSSH client logging in as two users on the host that did not write the world.
+
+**Left open elsewhere**, and deliberately not held here: a deterministic execution mode (D12 has a seam,
+not a mode), a virtual clock (D13 likewise), and `spawn` of a *different* program, which would want a
+`.wasm` path rather than a source string and is a change to the capability rather than to this host.
