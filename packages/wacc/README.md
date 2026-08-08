@@ -1183,6 +1183,48 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 4 meets the repository, and a number appears
+
+**336 corpus files: 7 emitted whole, 286 partial, 43 invalid.** The README named this oracle before
+there was anything to run it on. This is the first half of it, and it is a *measurement* rather than a
+gate — the numbers are printed, because a rung under construction that may never lose a point is a
+rung nobody can restructure.
+
+**The first run said 15 valid of 336, and the number was a lie.** Every walk in the emitter ends in
+`else: { }`, which for an expression means emitting *nothing* where a value was expected. That is not
+a gap, it is a corruption, and wasm reports it as *"not enough arguments on the stack"* — 199 of 308
+broken modules, naming a stack depth rather than a construct, and telling me nothing about what was
+missing.
+
+So the emitter asks first. `unsupportedIn` walks a function and returns **the name of the first thing
+it cannot do**; a function containing one is not emitted at all. The list of stack errors became a
+list of language features, ordered by what they would buy:
+
+    265×  an import
+      7×  a method this slice has not got
+      6×  a module-level const
+      3×  a name that is not a local
+      3×  string literal
+
+Imports are two thirds of the corpus in one line, which is the answer to "what next" and was not
+visible at all before.
+
+**Then the real bug.** Skipping a function makes the emitted module a *subset*, and call sites were
+still using the registration index — *"function index #3 is not declared"*. Those are two different
+numbers, and conflating them is the kind of mistake that only appears once something is skipped.
+
+Worse, it is not a renumbering problem alone: a call to a function that will not be emitted makes the
+**caller** unemittable too, and removing that one can remove *its* callers. The dependency is not a
+tree — mutual recursion means the honest answer is a **fixed point**: assume everything works and
+remove until nothing changes. Assuming the opposite and adding would never admit two functions that
+call each other, which is most of them.
+
+That took the invalid count from **115 to 43**. The 43 that remain are type mismatches inside
+functions the walk *approved* — `array.len` on something that is not an array, a `local.set` of the
+wrong type — which means the emitter's own type inference is wrong there rather than absent. That is
+the next thing, and it is a better problem to have: a wrong answer names itself, where a missing arm
+did not.
+
 ### Rung 4 gains structs, and a method turns out to be a function
 
 **98 programs, 140 calls, every answer agreeing.** Construction, field read and write, methods with a

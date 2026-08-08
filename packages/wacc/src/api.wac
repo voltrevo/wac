@@ -10,7 +10,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { checkProgram } from "./check.wac";
-import { emitModule } from "./emit.wac";
+import { emitModule, emitBlocked } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -57,4 +57,9 @@ export i32[] dumpTypeErrors(u8[] src) {
  */
 export u8[] emit(u8[] src) {
   return emitModule(src);
+}
+
+/** Why a module was not emitted in full — the feature that stopped it, or `""`. */
+export string blocked(u8[] src) {
+  return emitBlocked(src);
 }

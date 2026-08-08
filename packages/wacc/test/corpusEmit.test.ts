@@ -1,0 +1,53 @@
+// Rung 4 against the repository: how much of the corpus can this emitter actually compile?
+//
+// The README named this oracle before there was anything to run it on — *compile the corpus with
+// wacc and run it*. This is the first half: compile every `.wac` file in the tree and see what comes
+// out. It is a **measurement**, not yet a gate, and the numbers are printed rather than asserted,
+// because a rung under construction that may never lose a point is a rung nobody can restructure.
+//
+// What it does assert is that the harness is working — a corpus that loaded nothing, or an emitter
+// that emitted nothing, would otherwise report a comfortable zero — and the one property that is
+// meant to hold today: a file this emitter *declines* is declined by name, and the name is a language
+// feature rather than a stack error thirty instructions later.
+
+import { loadCorpus } from "./corpus.ts";
+import { wacBind } from "../../../harness/wacBind.ts";
+
+const mod = await wacBind("packages/wacc/src/api.wac");
+const emit = mod.emit as (src: Uint8Array) => Uint8Array;
+const blocked = mod.blocked as (src: Uint8Array) => string;
+const enc = new TextEncoder();
+
+Deno.test("rung 4: the repository corpus, compiled", async () => {
+  const entries = await loadCorpus("packages/wacc/test/corpusEmit.test.ts");
+  if (entries.length < 100) throw new Error(`only ${entries.length} corpus files loaded`);
+
+  let whole = 0;
+  let partial = 0;
+  let invalid = 0;
+  const reasons = new Map<string, number>();
+  for (const [, src] of entries) {
+    const bytes = Uint8Array.from(emit(enc.encode(src)) as unknown as number[]);
+    if (!WebAssembly.validate(bytes)) {
+      invalid++;
+      continue;
+    }
+    const why = blocked(enc.encode(src));
+    if (why === "") whole++;
+    else {
+      partial++;
+      reasons.set(why, (reasons.get(why) ?? 0) + 1);
+    }
+  }
+  const top = [...reasons.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([k, n]) => `${n}× ${k}`).join(", ");
+  console.log(`    rung 4 corpus: ${entries.length} files — ${whole} whole, ${partial} partial, ` +
+    `${invalid} invalid. Blocked by: ${top}`);
+
+  // The canary: a harness that compiled nothing would report that nothing is wrong.
+  if (whole === 0) throw new Error("no corpus file was emitted in full — the harness is not reaching the emitter");
+  if (partial + invalid === 0) throw new Error("every file emitted whole, which cannot be true yet");
+  // What is declined must be declined *by name*. A file that produces an invalid module was not
+  // declined at all — it was mis-emitted, which is a different and worse thing.
+  if (reasons.size === 0) throw new Error("nothing was declined by name — the emittability walk is not running");
+});

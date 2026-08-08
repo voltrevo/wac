@@ -257,6 +257,8 @@ export struct Env {
    * owns them — for the same reason every table in this package is: wac has no growable array of
    * arrays, and the index is the answer.
    */
+  /** The first construct that stopped a function being emitted, for the caller to report. */
+  string blocked;
   string[] structNames;
   i32 structCount;
   string[] fieldOwners;
@@ -278,6 +280,16 @@ export struct Env {
   i32[] funcParamAt;
   i32[] funcParamCount;
   i32 funcParamTotal;
+  /**
+   * Whether each function will be emitted, and what index it will have when it is.
+   *
+   * These are two different numbers and conflating them was a real bug: a function this emitter
+   * cannot do is *skipped*, so the emitted module is a subset, and a call site naming the
+   * registration index refers to something that is not there — *"function index #3 is not
+   * declared"*. `funcOk` is the subset and `funcIndex` is the renumbering.
+   */
+  bool[] funcOk;
+  i32[] funcIndex;
   i32 funcCount;
 
   /** A local's wac type, or `""` when the name is not one. */
@@ -377,8 +389,13 @@ export struct Env {
 
   /** A function's `i`th parameter type, so an argument knows what slot it fills. */
   string paramTypeAt(const this, i32 at, i32 i) {
-    if (at < 0 || i >= this.funcParamCount[at]) { return ""; }
-    return this.funcParamTypes[this.funcParamAt[at] + i];
+    if (at < 0 || at >= this.funcCount || i >= this.funcParamCount[at]) { return ""; }
+    i32 slot = this.funcParamAt[at] + i;
+    // A flat table that filled up stops *writing* and keeps counting, so the count can outrun what
+    // was stored. Reading past it is an out-of-bounds trap in the middle of emitting, which is how a
+    // corpus file with more parameters than this had room for showed up.
+    if (slot >= this.funcParamTotal) { return ""; }
+    return this.funcParamTypes[slot];
   }
 
   /** Record a function, with its parameters, in the order the calls will index them. */
@@ -393,6 +410,9 @@ export struct Env {
       this.funcParamTypes[this.funcParamTotal] = ptypes[i];
       this.funcParamTotal = this.funcParamTotal + 1;
     }
+    // Assumed emittable until something says otherwise, which is what the fixed point below removes.
+    this.funcOk[this.funcCount] = true;
+    this.funcIndex[this.funcCount] = -1;
     this.funcCount = this.funcCount + 1;
   }
 
@@ -495,59 +515,10 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[16](), 0, string[16](), 0, string[64](), string[64](), string[64](), 0, string[64](), string[64](), string[64](), i32[64](), i32[64](), 0, 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
 
-  // Structs first of all: their fields are what a construction and every access are about, and a
-  // method's receiver type is one of them.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() > 0) { continue; }
-        string sname = tokenTextOf(src, lexed, nameTok);
-        if (env.structCount < env.structNames.len()) {
-          env.structNames[env.structCount] = sname;
-          env.structCount = env.structCount + 1;
-        }
-        for (i32 i = 0; i < fields.len(); i++) {
-          if (env.fieldCount >= env.fieldNames.len()) { break; }
-          env.fieldOwners[env.fieldCount] = sname;
-          env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
-          env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
-          env.fieldCount = env.fieldCount + 1;
-        }
-      }
-      else: { }
-    }
-  }
-
-  // Function names first, over the whole file: a call names one declared elsewhere and often further
-  // down, which is the same argument the checker makes for collecting signatures before bodies.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      case Func(nameTok, returnType, params, body, exported, typeParams): {
-        if (typeParams.len() > 0) { continue; }
-        string[] pts = string[params.len()]();
-        for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(src, lexed, params[i].type); }
-        env.addFunc(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, returnType), pts);
-      }
-      // A method is a function with the receiver as its first parameter — which is what the call site
-      // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
-      // function of the same name is a different entry.
-      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() > 0) { continue; }
-        string owner = tokenTextOf(src, lexed, nameTok);
-        for (i32 i = 0; i < methods.len(); i++) {
-          string[] mpts = string[methods[i].params.len()]();
-          for (i32 j = 0; j < methods[i].params.len(); j++) {
-            mpts[j] = typeOfTyName(src, lexed, methods[i].params[j].type);
-          }
-          env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
-                      typeOfTyName(src, lexed, methods[i].returnType), mpts);
-        }
-      }
-      else: { }
-    }
-  }
+  collectDeclarations(env, src, lexed, prog);
+  settleEmittable(env, src, lexed, prog);
 
   B types = B.create();
   B funcs = B.create();
@@ -555,16 +526,22 @@ export u8[] emitModule(u8[] src) {
   B code = B.create();
   i32 count = 0;
   i32 exportCount = 0;
+  i32 countAt = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
+        if (env.funcIndex[countAt] < 0) { countAt = countAt + 1; continue; }
+        countAt = countAt + 1;
         count = count + 1;
         if (exported) { exportCount = exportCount + 1; }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
-        count = count + methods.len();
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+          countAt = countAt + 1;
+        }
       }
       else: { }
     }
@@ -635,12 +612,15 @@ export u8[] emitModule(u8[] src) {
   }
 
   i32 index = 0;
+  i32 emitAt = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string owner = tokenTextOf(src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
+          if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
+          emitAt = emitAt + 1;
           emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                        "", methods[m].returnType, methods[m].params, methods[m].body,
                        methods[m].hasThis ? owner : "", index, declTypes);
@@ -649,6 +629,8 @@ export u8[] emitModule(u8[] src) {
       }
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
+        if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
+        emitAt = emitAt + 1;
         emitFunction(types, funcs, exports, code, src, lexed, env, prog,
                      exported ? tokenTextOf(src, lexed, nameTok) : "",
                      returnType, params, body, "", index, declTypes);
@@ -1066,12 +1048,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             return;
           }
           i32 at = env.funcAt(cname);
-          if (at < 0) { return; }
+          if (at < 0 || env.funcIndex[at] < 0) { return; }
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
           }
           fb.byte(16);   // call
-          fb.u32leb(at);
+          fb.u32leb(env.funcIndex[at]);
         }
         else: { }
       }
@@ -1131,13 +1113,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
           i32 at = env.funcAt(ot + "." + mname);
-          if (at < 0) { return; }
+          if (at < 0 || env.funcIndex[at] < 0) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
           }
           fb.byte(16);
-          fb.u32leb(at);
+          fb.u32leb(env.funcIndex[at]);
         }
         else: { }
       }
@@ -1607,4 +1589,396 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   fb.byte(11);    // `end`
   code.u32leb(fb.len);
   code.bytes(fb);
+}
+
+/**
+ * The first construct in a function this emitter cannot do, or `""` when it can do all of them.
+ *
+ * **Why this exists.** Every walk here ends in `else: { }`, which for an *expression* means emitting
+ * nothing where a value was expected. That is not a gap, it is a corruption: the function that
+ * follows is wrong in a way wasm reports as *"not enough arguments on the stack"*, naming a stack
+ * depth rather than the construct. Across the repository it accounted for 199 of 308 broken modules
+ * and told me nothing about what was missing.
+ *
+ * So the emitter asks first. A function with something unsupported in it is **not emitted at all**,
+ * and the name of what stopped it is the answer — which turns a list of stack errors into a list of
+ * language features, ordered by how much they would buy.
+ */
+string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    string r = unsupportedStmt(src, lexed, env, body[i]);
+    if (r != "") { return r; }
+  }
+  return "";
+}
+
+string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      string t = typeOfTyName(src, lexed, type);
+      if (t == "") { return "local of an unspelled type"; }
+      return unsupportedExpr(src, lexed, env, init);
+    }
+    case Assign(target, op, rhs): {
+      string lv = unsupportedLvalue(src, lexed, env, target);
+      if (lv != "") { return lv; }
+      return unsupportedExpr(src, lexed, env, rhs);
+    }
+    case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
+    case Return(value): {
+      if (value is null) { return ""; }
+      return unsupportedExpr(src, lexed, env, value!);
+    }
+    case ExprStmt(e): { return unsupportedExpr(src, lexed, env, e); }
+    case If(cond, then, els): {
+      string c = unsupportedExpr(src, lexed, env, cond);
+      if (c != "") { return c; }
+      string t = unsupportedIn(src, lexed, env, then);
+      if (t != "") { return t; }
+      return unsupportedIn(src, lexed, env, els);
+    }
+    case While(cond, inner): {
+      string c = unsupportedExpr(src, lexed, env, cond);
+      if (c != "") { return c; }
+      return unsupportedIn(src, lexed, env, inner);
+    }
+    case DoWhile(inner, cond): {
+      string c = unsupportedExpr(src, lexed, env, cond);
+      if (c != "") { return c; }
+      return unsupportedIn(src, lexed, env, inner);
+    }
+    case For(init, cond, update, inner): {
+      if (!(init is null)) {
+        string a = unsupportedStmt(src, lexed, env, init!);
+        if (a != "") { return a; }
+      }
+      if (!(cond is null)) {
+        string b = unsupportedExpr(src, lexed, env, cond!);
+        if (b != "") { return b; }
+      }
+      if (!(update is null)) {
+        string u = unsupportedStmt(src, lexed, env, update!);
+        if (u != "") { return u; }
+      }
+      return unsupportedIn(src, lexed, env, inner);
+    }
+    case Block(inner): { return unsupportedIn(src, lexed, env, inner); }
+    case Switch(subject, cases): {
+      string sj = unsupportedExpr(src, lexed, env, subject);
+      if (sj != "") { return sj; }
+      for (i32 i = 0; i < cases.len(); i++) {
+        string b = unsupportedIn(src, lexed, env, cases[i].body);
+        if (b != "") { return b; }
+      }
+      return "";
+    }
+    case Break: { return ""; }
+    case Continue: { return ""; }
+    case Trap: { return ""; }
+    case Match(subject, arms): { return "match"; }
+  }
+}
+
+string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return ""; }
+    case LIndex(base, index): {
+      string b = unsupportedLvalue(src, lexed, env, base);
+      if (b != "") { return b; }
+      if (!isArrayType(typeOfLv(src, lexed, env, base))) { return "index of an unknown type"; }
+      return unsupportedExpr(src, lexed, env, index);
+    }
+    case LField(base, nameTok): {
+      string b = unsupportedLvalue(src, lexed, env, base);
+      if (b != "") { return b; }
+      return env.isStructName(typeOfLv(src, lexed, env, base)) ? "" : "field of an unknown type";
+    }
+    else: { return "an lvalue kind"; }
+  }
+}
+
+string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return ""; }
+    case FloatLit(tok): { return ""; }
+    case BoolLit(value): { return ""; }
+    case StrLit(tok): { return "string literal"; }
+    case NullLit: { return "null"; }
+    case Ident(tok): {
+      return env.localAt(tokenTextOf(src, lexed, tok)) < 0 ? "a name that is not a local" : "";
+    }
+    case Unary(op, operand): { return unsupportedExpr(src, lexed, env, operand); }
+    case Binary(op, left, right): {
+      string l = unsupportedExpr(src, lexed, env, left);
+      if (l != "") { return l; }
+      return unsupportedExpr(src, lexed, env, right);
+    }
+    case Cast(op, operand, target): {
+      string t = typeOfTyName(src, lexed, target);
+      bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
+                   t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool";
+      if (!known) { return "cast to an unsupported type"; }
+      return unsupportedExpr(src, lexed, env, operand);
+    }
+    case Ternary(cond, then, els): {
+      string c = unsupportedExpr(src, lexed, env, cond);
+      if (c != "") { return c; }
+      string t = unsupportedExpr(src, lexed, env, then);
+      if (t != "") { return t; }
+      return unsupportedExpr(src, lexed, env, els);
+    }
+    case Index(arr, index): {
+      string a = unsupportedExpr(src, lexed, env, arr);
+      if (a != "") { return a; }
+      if (!isArrayType(typeOfE(src, lexed, env, arr))) { return "index of an unknown type"; }
+      return unsupportedExpr(src, lexed, env, index);
+    }
+    case Member(obj, nameTok): {
+      string o = unsupportedExpr(src, lexed, env, obj);
+      if (o != "") { return o; }
+      return env.isStructName(typeOfE(src, lexed, env, obj)) ? "" : "member of an unknown type";
+    }
+    case ArrNew(elem, size, fill, elements): {
+      if (typeOfTyName(src, lexed, elem) == "") { return "array of an unspelled type"; }
+      if (!(size is null)) {
+        string sz = unsupportedExpr(src, lexed, env, size!);
+        if (sz != "") { return sz; }
+      }
+      if (!(fill is null)) {
+        string fl = unsupportedExpr(src, lexed, env, fill!);
+        if (fl != "") { return fl; }
+      }
+      for (i32 i = 0; i < elements.len(); i++) {
+        string el = unsupportedExpr(src, lexed, env, elements[i]);
+        if (el != "") { return el; }
+      }
+      return "";
+    }
+    case Construct(ctype, args, named): {
+      if (named.len() > 0) { return "named construction"; }
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (typeArgs.len() > 0) { return "a generic"; }
+          string n = tokenTextOf(src, lexed, tok);
+          if (!env.isStructName(n)) {
+            i32 fa = env.funcAt(n);
+            if (fa < 0) { return "a call to something unknown"; }
+            if (!env.funcOk[fa]) { return "a call to something this slice cannot emit"; }
+          }
+        }
+        else: { return "a construction kind"; }
+      }
+      for (i32 i = 0; i < args.len(); i++) {
+        string a = unsupportedExpr(src, lexed, env, args[i]);
+        if (a != "") { return a; }
+      }
+      return "";
+    }
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          string o = unsupportedExpr(src, lexed, env, obj);
+          if (o != "") { return o; }
+          string ot = typeOfE(src, lexed, env, obj);
+          string mn = tokenTextOf(src, lexed, nameTok);
+          if (isArrayType(ot) && mn == "len") { return ""; }
+          i32 ma = env.funcAt(ot + "." + mn);
+          if (ma < 0) { return "a method this slice has not got"; }
+          if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
+          for (i32 i = 0; i < args.len(); i++) {
+            string a = unsupportedExpr(src, lexed, env, args[i]);
+            if (a != "") { return a; }
+          }
+          return "";
+        }
+        else: { return "a call through something other than a member"; }
+      }
+    }
+    case Incr(target, op, prefix): { return "increment as an expression"; }
+    case Is(left, target, other, negated): { return "is"; }
+    case Unwrap(operand): { return "unwrap"; }
+    case MatchExpr(subject, arms): { return "match as an expression"; }
+  }
+}
+
+/**
+ * Whether a function can be emitted at all, with its parameters in scope while the question is asked.
+ *
+ * The scope matters: `unsupportedExpr` calls a bare name unsupported when it is not a local, and a
+ * parameter is only a local once it has been declared. Asking without the parameters would refuse
+ * every function that mentions one, which is every function.
+ *
+ * Records what stopped it on the way out, so a caller can report the *feature* rather than the wasm
+ * stack error that a half-emitted function eventually produces.
+ */
+bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string receiver) {
+  i32 savedCount = env.localCount;
+  i32 savedParams = env.paramCount;
+  env.localCount = 0;
+  if (receiver != "") { env.addLocal("this", receiver); }
+  for (i32 i = 0; i < params.len(); i++) {
+    string pt = typeOfTyName(src, lexed, params[i].type);
+    env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), pt);
+  }
+  env.paramCount = env.localCount;
+  collectLocals(env, src, lexed, body);
+  string why = unsupportedIn(src, lexed, env, body);
+  if (why != "" && env.blocked == "") { env.blocked = why; }
+  env.localCount = savedCount;
+  env.paramCount = savedParams;
+  return why == "";
+}
+
+/**
+ * What stopped this module, or `""` when every function in it was emitted.
+ *
+ * A second entry point rather than a second return value, because `emitModule` hands back bytes and
+ * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
+ * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
+ */
+export string emitBlocked(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "",
+                string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+  collectDeclarations(env, src, lexed, prog);
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { return "a generic function"; }
+        canEmit(src, lexed, env, params, body, "");
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { return "a generic struct"; }
+        string owner = tokenTextOf(src, lexed, nameTok);
+        for (i32 m = 0; m < methods.len(); m++) {
+          canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                  methods[m].hasThis ? owner : "");
+        }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): { return "an enum"; }
+      case Import(pathTok, prefixTok, items): { return "an import"; }
+      case ConstDecl(nameTok, type, init, exported): { return "a module-level const"; }
+    }
+    if (env.blocked != "") { return env.blocked; }
+  }
+  return env.blocked;
+}
+
+/**
+ * Everything the module knows before a single instruction is written: structs and their fields,
+ * functions and methods with their signatures, and every array type any of them names.
+ *
+ * Three passes in one place, because all three answer questions the *next* one asks — a method's
+ * receiver is a struct, an array type can be named by a field, and a call site has only a name.
+ * Extracted so `emitBlocked` can ask the same questions without emitting anything.
+ */
+void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
+  // Structs first of all: their fields are what a construction and every access are about, and a
+  // method's receiver type is one of them.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string sname = tokenTextOf(src, lexed, nameTok);
+        if (env.structCount < env.structNames.len()) {
+          env.structNames[env.structCount] = sname;
+          env.structCount = env.structCount + 1;
+        }
+        for (i32 i = 0; i < fields.len(); i++) {
+          if (env.fieldCount >= env.fieldNames.len()) { break; }
+          env.fieldOwners[env.fieldCount] = sname;
+          env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
+          env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
+          env.fieldCount = env.fieldCount + 1;
+        }
+      }
+      else: { }
+    }
+  }
+
+  // Function names first, over the whole file: a call names one declared elsewhere and often further
+  // down, which is the same argument the checker makes for collecting signatures before bodies.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string[] pts = string[params.len()]();
+        for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(src, lexed, params[i].type); }
+        env.addFunc(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, returnType), pts);
+      }
+      // A method is a function with the receiver as its first parameter — which is what the call site
+      // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
+      // function of the same name is a different entry.
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string owner = tokenTextOf(src, lexed, nameTok);
+        for (i32 i = 0; i < methods.len(); i++) {
+          string[] mpts = string[methods[i].params.len()]();
+          for (i32 j = 0; j < methods[i].params.len(); j++) {
+            mpts[j] = typeOfTyName(src, lexed, methods[i].params[j].type);
+          }
+          env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
+                      typeOfTyName(src, lexed, methods[i].returnType), mpts);
+        }
+      }
+      else: { }
+    }
+  }
+
+}
+
+/**
+ * Which functions will be emitted, to a fixed point.
+ *
+ * A function is unemittable if it *contains* something unsupported — and a call to an unemittable
+ * function is itself unsupported, so removing one can remove its callers, and removing those can
+ * remove theirs. One pass is not enough and the dependency is not a tree: mutual recursion means the
+ * only honest answer is to keep going until nothing changes.
+ *
+ * Assumes everything works and removes, rather than assuming nothing works and adding — because two
+ * functions that call each other are both fine, and the optimistic direction says so while the
+ * pessimistic one would never admit it.
+ */
+void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
+  for (i32 round = 0; round < 16; round++) {
+    bool changed = false;
+    i32 at = 0;
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          if (env.funcOk[at] && !canEmit(src, lexed, env, params, body, "")) {
+            env.funcOk[at] = false;
+            changed = true;
+          }
+          at = at + 1;
+        }
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          string owner = tokenTextOf(src, lexed, nameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcOk[at] &&
+                !canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                         methods[m].hasThis ? owner : "")) {
+              env.funcOk[at] = false;
+              changed = true;
+            }
+            at = at + 1;
+          }
+        }
+        else: { }
+      }
+    }
+    if (!changed) { break; }
+  }
+  // The renumbering, once the set has stopped moving.
+  i32 next = 0;
+  for (i32 i = 0; i < env.funcCount; i++) {
+    if (!env.funcOk[i]) { continue; }
+    env.funcIndex[i] = next;
+    next = next + 1;
+  }
 }
