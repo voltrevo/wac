@@ -77,3 +77,38 @@ the shell then telling it which stage may inherit.
 
 That is a tick of its own and it is where this issue continues. A shell that can spawn — which is every
 one on a real machine — is fixed.
+
+### What the in-process half actually needs, having read it
+
+Smaller than "a platform change" makes it sound, and worth writing down so the next person starts from
+the shape rather than from the symptom.
+
+`packages/platform/host/child.ts` is the whole of `pushChild`/`popChild`'s state, shared by all three
+hosts. Its `readChunk()` already has exactly the right escape hatch:
+
+```ts
+readChunk(): Uint8Array | null {
+  const frame = this.top;
+  if (frame === undefined) return null;   // no child — ask the host instead
+  …
+}
+```
+
+**`null` means "read the real input".** So an inheriting child is a frame whose `readChunk` and `readAll`
+answer `null` while `write` goes on capturing — three lines:
+
+- `Frame` gains `inheritInput: boolean`;
+- `readChunk()` and `readAll()` return `null` when it is set;
+- `push()` takes it.
+
+Then the parts outside that file:
+
+- `pushChild` in `platform.wac` becomes `(string[], u8[], string, bool)` — a fourth argument rather than
+  a second function beside it — and each host's decode of the payload gains the flag;
+- `Shell.external` needs to say *whether this command may inherit*, which the shell already knows: it is
+  the same `!heldInput && ownsStdin && !triedStdin` that `streamPipeline` uses, plus "this is the first
+  stage";
+- `runExternal` passes it and stops calling `restOfStdin()` when it is true.
+
+The test is the one shape that already exists: `stdin: "piped"` and never written, against
+`bin/sealedsh.wac`, which cannot spawn and therefore takes this route by construction.
