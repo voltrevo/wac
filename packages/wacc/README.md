@@ -388,9 +388,30 @@ excluded from the missing-return check by accident; now it is a name like any ot
 purpose, by `returnsAValue`. The test that caught it was `"void nothing() { }"` — the exclusion was
 right all along and had never been stated.
 
-Next: more of rung 3 — arrays and nullables, which have names (`i32[]`, `P?`) this could spell and
-does not, and the generic families, where `Box<i32>` and `Box<f64>` are the same name and must stay
-unknown until they are not.
+### Arrays and nullables, and the first rule that is not equality
+
+`i32[]` and `P?` are names built from the name inside, so the existing rules reach them: two array
+types differ exactly when their element types do, and an array is a reference type, so `==` is refused
+on one as it is on a struct.
+
+Nullables needed a **rule** rather than a name, because assignment is not symmetric. A non-null value
+goes into a nullable slot — `P? q = p;` is legal for a `P` — and the other direction is rejected under
+a different message, *"cannot assign nullable to non-null"*, which this slice does not own and stays
+quiet about. So the three comparison sites now ask `assignable(want, got)` rather than `want == got`,
+and a `T?` accepts whatever `T` accepts plus null.
+
+Spec coverage holds at 18: none of the corpus's rejections are array or nullable shapes. Recall on
+real code, not a number.
+
+**It found a false alarm in this file.** `typeOfTy` has an `Arr` arm declaring a local `string inner`
+and a `Nullable` arm binding a `Ty` also called `inner`. Match-arm bindings were not declared at all,
+so the local's type leaked across the arms and `typeOfTy(c, inner)` was reported as an argument
+mismatch against its own parameter. They are declared as *unknown* now, which silences them and —
+because a second declaration poisons — silences any local elsewhere in the function sharing the name.
+The whole-repo corpus caught it, on the file it was written in.
+
+Next: more of rung 3 — the nullable-to-non-null family, generics, and `this`/member access, which is
+the largest remaining gap in what an expression can be typed from.
 
 ### What rung 3's oracle looks like, measured
 

@@ -700,3 +700,57 @@ Deno.test("rung 3: struct types, and identity rather than equality", () => {
     }
   }
 });
+
+/**
+ * Arrays and nullables, which are names built from the name inside.
+ *
+ * `i32[]` and `P?` spell out, so the existing rules reach them: two array types differ exactly when
+ * their element types do. An element this slice cannot spell makes the whole thing unspellable rather
+ * than half-named — `Box<i32>[]` is not `[]`.
+ *
+ * Nullables needed a rule rather than a name, because assignment is not symmetric. A non-null value
+ * goes into a nullable slot (`P? q = p;` is legal for a `P`), and the other direction is rejected
+ * under a *different* message — `cannot assign nullable to non-null` — which this slice does not own
+ * and stays quiet about. A `T?` also takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are
+ * both legal.
+ */
+Deno.test("rung 3: arrays and nullables", () => {
+  const D = "struct P { i32 x; } ";
+  const CAUGHT = [
+    "export void a(i32[] x) { i64[] y = x; }",
+    "export void b(i32[] x) { i32 y = x; }",
+    "export void c(i32[] x, i32[] y) { bool r = x == y; }",
+    D + "export void d(P[] x) { bool r = x == x; }",
+  ];
+  const QUIET = [
+    "export void e2(i32[] x) { i32[] y = x; }",
+    "export void f() { i32? n = null; }",
+    "export void g() { i32? n = 5; }",
+    D + "export void h(P p) { P? q = p; }",
+    // The other direction is rejected as "cannot assign nullable to non-null", a family this slice
+    // does not own — so silence is the right answer and a pass.
+    D + "export void i(P? p) { P q = p; }",
+    "export void j(i32? a) { i32? b = a; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is not this rule's to report, and we said ` +
+        mine.join(", "));
+    }
+  }
+});

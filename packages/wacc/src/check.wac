@@ -109,6 +109,53 @@ export bool isPrimitiveName(string n) {
  */
 export bool returnsAValue(string n) { return n != "" && n != "void"; }
 
+/** Whether `s` ends with `suffix`. wac has no string method for it. */
+bool endsWith(string s, string suffix) {
+  u8[] a = s.toBytes();
+  u8[] b = suffix.toBytes();
+  if (b.len() > a.len()) { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    if (a[a.len() - b.len() + i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/** `s` without its last `n` bytes. */
+string dropLast(string s, i32 n) {
+  u8[] a = s.toBytes();
+  if (n > a.len()) { return ""; }
+  u8[] out = u8[a.len() - n]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
+  return string.fromBytes(out);
+}
+
+/** The type inside a `T?`, or `""` when it is not one. */
+string withoutNull(string n) {
+  if (!endsWith(n, "?")) { return ""; }
+  return dropLast(n, 1);
+}
+
+/**
+ * Whether a value of type `got` may be where a `want` is expected.
+ *
+ * Not equality, because the language has one widening this slice can see: a non-null value goes into
+ * a nullable slot, so `P? q = p;` is legal for a `P`. The other direction is not — `P q = p;` for a
+ * `P?` is *"cannot assign nullable to non-null"* — but that is a **different family** with its own
+ * message, so this answers `true` for it and stays quiet. Saying nothing about a program the
+ * reference rejects is a subset checker doing its job; saying the wrong thing about it is not.
+ */
+export bool assignable(string want, string got) {
+  if (want == "" || got == "") { return true; }
+  if (want == got) { return true; }
+  if (withoutNull(want) == got) { return true; }
+  // `T?` into a `T`: rejected by the reference under a family this slice does not own.
+  if (endsWith(got, "?")) { return true; }
+  return false;
+}
+
+/** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
+bool isArrayName(string n) { return endsWith(n, "[]"); }
+
 export bool comparableByValue(string n) {
   return n == "" || n == "string" || isPrimitiveName(n);
 }
@@ -306,6 +353,19 @@ export string typeOfTy(C c, Ty t) {
       if (typeArgs.len() > 0) { return typeNone(); }
       return tokenText(c, tok);
     }
+    // `i32[]` and `P?` are names too, built from the name inside. An element or inner type this
+    // slice cannot spell makes the whole thing unspellable rather than half-named: `Box<i32>[]` is
+    // not `[]`.
+    case Arr(elem): {
+      string inner = typeOfTy(c, elem);
+      if (inner == typeNone()) { return typeNone(); }
+      return inner + "[]";
+    }
+    case Nullable(inner): {
+      string base = typeOfTy(c, inner);
+      if (base == typeNone()) { return typeNone(); }
+      return base + "?";
+    }
     else: { return typeNone(); }
   }
 }
@@ -329,6 +389,12 @@ export i32 litKindOf(Expr e) {
  * disagreement fails loudly rather than sitting here as a stale table.
  */
 export bool acceptsLiteral(string want, i32 lit) {
+  // A `T?` takes a null, and takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are both
+  // legal. So the question for a nullable is the question for the type inside it, plus null.
+  if (endsWith(want, "?")) {
+    if (lit == litNull()) { return true; }
+    return acceptsLiteral(withoutNull(want), lit);
+  }
   if (lit == litInteger()) {
     return want == "i32" || want == "i64" || want == "u32" || want == "u64";
   }
@@ -499,7 +565,9 @@ void checkExpr(C c, Expr e) {
       // same struct, because the question is identity rather than equality. Checked before the
       // same-type rule, which would otherwise say nothing about `P == P`.
       if (k == kEq() || k == kNe()) {
-        if (c.isStruct(typeOfExpr(c, left)) || c.isStruct(typeOfExpr(c, right))) {
+        string lt = typeOfExpr(c, left);
+        string rt = typeOfExpr(c, right);
+        if (c.isStruct(lt) || c.isStruct(rt) || isArrayName(lt) || isArrayName(rt)) {
           c.report(errNotComparable(), e.line, e.col);
           return;
         }
@@ -577,7 +645,7 @@ void checkCall(C c, string name, Expr[] args) {
       continue;
     }
     string got = typeOfExpr(c, args[i]);
-    if (got != typeNone() && got != want) {
+    if (!assignable(want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
     }
   }
@@ -599,7 +667,20 @@ void declareStmt(C c, Stmt s) {
       for (i32 i = 0; i < cases.len(); i++) { declareAll(c, cases[i].body); }
     }
     case Match(subject, arms): {
-      for (i32 i = 0; i < arms.len(); i++) { declareAll(c, arms[i].body); }
+      for (i32 i = 0; i < arms.len(); i++) {
+        // The arm's bindings are names too, and they scope to the arm. This slice does not track
+        // that, so they are declared as *unknown* — which both silences them and, because a second
+        // declaration poisons, silences any local elsewhere in the function with the same name.
+        //
+        // Not modelling them was a false alarm rather than a gap. `typeOfTy` in this very file has an
+        // `Arr` arm declaring a local `string inner` and a `Nullable` arm binding a `Ty` called
+        // `inner`; without this, the local's type leaked across and `typeOfTy(c, inner)` was reported
+        // as an argument mismatch against its own parameter.
+        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+        }
+        declareAll(c, arms[i].body);
+      }
     }
     else: { }
   }
@@ -642,7 +723,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotVar = typeOfExpr(c, init);
-      if (gotVar != typeNone() && gotVar != wantVar) {
+      if (!assignable(wantVar, gotVar)) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
       checkExpr(c, init);
@@ -662,7 +743,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
       string got = typeOfExpr(c, e);
-      if (got != typeNone() && got != expected) {
+      if (!assignable(expected, got)) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
       checkExpr(c, e);
