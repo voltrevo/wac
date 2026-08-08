@@ -6,12 +6,12 @@ export default defineConfig({
   base: process.env.BASE_URL || "/",
   build: {
     rollupOptions: {
-      // Two sites from one build. `next/` is the rewrite, deployed beside the live one so it can
-      // be looked at before it replaces anything — the alternative was a branch, and a branch that
-      // lives for days is a merge nobody wants against a repo three agents are pushing to.
+      // One site, and a stub where it used to be built. `next/` was the rewrite, deployed beside
+      // the live one so it could be looked at before it replaced anything; it is the site now, and
+      // what is left at that path is a redirect, because the URL was shared while it was staging.
       input: {
         main: new URL("index.html", import.meta.url).pathname,
-        next: new URL("next/index.html", import.meta.url).pathname,
+        moved: new URL("next/index.html", import.meta.url).pathname,
       },
     },
   },

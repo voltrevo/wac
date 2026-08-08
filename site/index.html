@@ -3,21 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wac — a C-family language for WebAssembly GC</title>
-    <meta name="description" content="A C-family language for WebAssembly GC. Structs, generics, enums with payloads; a compiler in ~16k lines of TypeScript with no dependencies, no LLVM and nothing to install; and 32 packages written in it, including TLS 1.3, SSH, Tor at both ends and an Ethereum light client." />
+    <title>wac — a language, and the stack being rebuilt in it</title>
+    <meta name="description" content="A C-family language for WebAssembly GC, and a systems stack written in it: TLS 1.3, SSH, Tor at both ends, a shell that agrees with bash, an Ethereum light client. No C, no libc, no allocator, no dependencies. Every claim checked against the implementation it has to interoperate with." />
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <!-- Cross-origin isolation, without control of the response headers.
-         `SharedArrayBuffer` needs COOP/COEP, and GitHub Pages cannot set them — so this
-         registers a service worker that re-serves the site with those headers and reloads
-         once. That is what lets the capability demos on this site work at all: a wac
-         application runs on a worker that parks on `Atomics.wait`, which needs a SAB.
-         Vendored verbatim from gzuidhof/coi-serviceworker v0.1.7 (MIT) — a classic script
-         on purpose, because it registers itself via `document.currentScript.src`, which is
-         null in a module. -->
+    <!-- Same reason as the main site: `SharedArrayBuffer` needs COOP/COEP, GitHub Pages
+         cannot set them, so this re-serves the site with those headers and reloads once. -->
     <script src="coi-serviceworker.js"></script>
   </head>
-  <body style="margin: 0; background: #11111b;">
+  <body style="margin: 0; background: #0a0b0e;">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/next/main.tsx"></script>
   </body>
 </html>

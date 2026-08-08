@@ -13,9 +13,9 @@
 import { wacCompile } from "../atoms/wac/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
 
-// Snippets live in `src/snippets.ts` (the tour, printed by two pages while the rewrite is staged)
-// and beside the page that prints only its own. A name exists once across all of them.
-const PAGES = ["snippets.ts", "Landing.tsx", "next/Home.tsx", "Roadmap.tsx"]
+// Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
+// A name exists once across all of them.
+const PAGES = ["snippets.ts", "next/Home.tsx", "next/Language.tsx", "next/Stack.tsx"]
   .map((n) => new URL(`../src/${n}`, import.meta.url));
 
 function compile(files: Record<string, string>, entry: string) {
@@ -86,9 +86,9 @@ async function snippet(name: string): Promise<string> {
 
 Deno.test("site: the pages' runnable snippets compile", async () => {
   for (const [name, file] of [
-    // The front pages print these and invite the reader to run them, which makes them the two most
-    // embarrassing snippets on the site to have broken.
-    ["EX_FRONT", "a.wac"],
+    // The front page prints this one and invites the reader to run it, which makes it the most
+    // embarrassing snippet on the site to have broken. `EX_FRONT` was its counterpart on the page
+    // this replaced and went with it.
     ["EX_HELLO", "a.wac"],
     ["EX_SURFACE_WAC", "a.wac"],
     ["EX_SURFACE_WAPY", "a.wapy"],
@@ -149,40 +149,39 @@ Deno.test("site: the mixed-import snippets are a real program", async () => {
 // ── The routes and the pages agree ─────────────────────────────────────────
 
 Deno.test("site: every page in the nav is a route, and every route renders something", async () => {
-  // The site is five pages behind a hash router, so the way to break it is to add a page to the
-  // navigation and not to the switch — which gives a link that silently lands on the front page.
-  // `tsc -b` cannot see that, because both halves type-check perfectly well apart.
+  // Six pages behind a hash router, so the way to break it is to add one to the navigation and
+  // not to the switch — which gives a link that silently lands on the front page. `tsc -b` cannot
+  // see that, because both halves type-check perfectly well apart.
+  //
+  // This used to check two sites, the live one and the rewrite beside it. There is one now.
   const dir = new URL("../src/", import.meta.url);
-  const chrome = await Deno.readTextFile(new URL("chrome.tsx", dir));
-  const app = await Deno.readTextFile(new URL("App.tsx", dir));
+  const ui = await Deno.readTextFile(new URL("next/ui.tsx", dir));
+  const app = await Deno.readTextFile(new URL("next/App.tsx", dir));
 
-  // The staging rewrite has its own Route type and its own switch, and the same way to break it.
-  const nextUi = await Deno.readTextFile(new URL("next/ui.tsx", dir));
-  const nextApp = await Deno.readTextFile(new URL("next/App.tsx", dir));
-  const nextDeclared = [...nextUi.matchAll(/export type Route =([^;]+);/g)]
-    .flatMap((m) => [...m[1].matchAll(/"([a-z]+)"/g)].map((x) => x[1]));
-  const nextRouted = new Set([...[...nextApp.matchAll(/case "([a-z]+)":/g)].map((m) => m[1]), "home"]);
-  const nextMissing = nextDeclared.filter((r) => !nextRouted.has(r));
-  if (nextMissing.length) throw new Error(`next/ui.tsx has ${nextMissing.join(", ")}, next/App.tsx does not`);
-  if (nextDeclared.length < 4) throw new Error(`only ${nextDeclared.length} routes in the staging Route type`);
-
-  const declared = [...chrome.matchAll(/export type Route =([^;]+);/g)]
+  const declared = [...ui.matchAll(/export type Route =([^;]+);/g)]
     .flatMap((m) => [...m[1].matchAll(/"([a-z]+)"/g)].map((x) => x[1]));
   if (declared.length < 5) throw new Error(`only ${declared.length} routes in the Route type`);
-
-  const routed = new Set([
-    ...[...app.matchAll(/case "([a-z]+)":/g)].map((m) => m[1]),
-    "home", // the default arm
-  ]);
+  const routed = new Set([...[...app.matchAll(/case "([a-z]+)":/g)].map((m) => m[1]), "home"]);
   const unrouted = declared.filter((r) => !routed.has(r));
   if (unrouted.length) throw new Error(`Route has ${unrouted.join(", ")}, App.tsx does not`);
 
   // And every nav entry names one of them.
-  for (const m of chrome.matchAll(/route: "([a-z]+)", href: "#\/([a-z]*)"/g)) {
+  for (const m of ui.matchAll(/route: "([a-z]+)", href: "#\/([a-z]*)"/g)) {
     if (!declared.includes(m[1])) throw new Error(`nav names route ${m[1]}, which the Route type does not`);
     if (m[1] !== m[2]) throw new Error(`nav entry ${m[1]} points at #/${m[2]}`);
   }
+
+  // The routes the site this replaced used, which now resolve here rather than falling back to
+  // the front page in silence. A reader who followed an old link about Tor should not arrive at a
+  // heading about a language with nothing to say anything went wrong.
+  const moved = [...app.matchAll(/(\w+): "([a-z]+)"/g)]
+    .filter(([, , to]) => declared.includes(to));
+  if (!/built: "stack"/.test(app) || !/showcase: "stack"/.test(app)) {
+    throw new Error("the aliases for #/built and #/showcase are gone — old links land on the front page");
+  }
+  void moved;
 });
+
 
 // ── Headings, and the contents that reads them ─────────────────────────────
 
@@ -190,8 +189,7 @@ Deno.test("site: every heading has an id, so the contents can list it", async ()
   // `Contents` builds itself from `main h2[id], h3[id]`, which means a heading without an id is
   // simply absent from the navigation — no error, no blank space, nothing to notice. That is the
   // failure this catches, and it is the price of not hand-writing the list.
-  const files = ["Language", "Roadmap", "sections/Built", "sections/CaseStudies",
-                 "next/Home", "next/Language", "next/Stack", "next/Roadmap",
+  const files = ["next/Home", "next/Language", "next/Stack", "next/Roadmap",
                  "next/Run", "next/Checked"];
   const missing: string[] = [];
   let total = 0;
@@ -244,14 +242,17 @@ Deno.test("site: the compiler size the site claims is the size it is", async () 
   }
 
   const claims: { where: string; k: number }[] = [];
-  for (const file of ["../index.html", "../src/Landing.tsx", "../src/next/Home.tsx"]) {
+  for (const file of ["../src/next/Home.tsx", "../src/next/Language.tsx"]) {
     const text = await Deno.readTextFile(new URL(file, import.meta.url));
     for (const m of text.matchAll(/~(\d{1,3}),?(\d{3})?k? lines|~(\d{1,3})k\b/g)) {
       const k = m[1] !== undefined ? (m[2] !== undefined ? Number(m[1]) : Number(m[1])) : Number(m[3]);
       claims.push({ where: file.replace("../", ""), k });
     }
   }
-  if (claims.length < 3) throw new Error(`only ${claims.length} size claims found — has the wording changed?`);
+  // One page states it now, where three did while the old site was still here. Kept as a floor
+  // rather than removed: a check that finds nothing to check passes, and this one has already
+  // caught a wrong number twice.
+  if (claims.length < 1) throw new Error(`no size claims found — has the wording changed?`);
 
   const wrong = claims.filter(({ k }) => Math.abs(k * 1000 - actual) / actual > 0.15);
   if (wrong.length) {
@@ -458,25 +459,24 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
 
 // ── No page may carry a URL that is only right from one directory ───────────
 
-Deno.test("site: no runtime URL on the staging site is relative to its own directory", async () => {
-  // The staging site is served at `/next/` and links to the demo pages, which live at the deploy
-  // root. Written as `../shell.html` those are correct there and wrong everywhere else — including
-  // at the root, which is where this site is going. Nothing else can see that: it typechecks, it
-  // builds, and a screenshot of the page it breaks looks like a screenshot of a page.
+Deno.test("site: no runtime URL is relative to the directory it was written in", async () => {
+  // The site links to the demo pages, which live at the deploy root beside it rather than inside
+  // it, so a page has to name them by path. Written `../shell.html` those were correct while this
+  // was served at `/next/` and wrong once it moved — and nothing else can see that: it typechecks,
+  // it builds, and a screenshot of the page it breaks looks like a screenshot of a page.
   //
-  // The one that matters most is `coi-serviceworker.js`. It is what supplies the cross-origin
-  // isolation `SharedArrayBuffer` needs, so losing it does not break a link — it turns every demo
-  // on the site into an error message about headers.
+  // The one that matters most is `coi-serviceworker.js`. It supplies the cross-origin isolation
+  // `SharedArrayBuffer` needs, so losing it does not break a link — it turns every demo on the
+  // site into an error message about headers.
   //
-  // Module specifiers are exempt: `../snippets` is resolved by the bundler at build time and has
-  // nothing to do with where a page is served. What is checked is strings that name a *file a
-  // browser will fetch*.
+  // Module specifiers are exempt: `../snippets` is resolved by the bundler and has nothing to do
+  // with where a page is served. What is checked is strings naming a file a browser will fetch.
   const dir = new URL("../src/next/", import.meta.url).pathname;
   const offenders: string[] = [];
   for await (const e of Deno.readDir(dir)) {
     if (!e.name.endsWith(".tsx") && !e.name.endsWith(".ts")) continue;
-    // Comments are stripped first: this file's own explanation of the rule quotes the shape it
-    // forbids, and a checker that cannot tell code from prose about code will fire on the prose.
+    // Comments are stripped first: this file's own explanation quotes the shape it forbids, and a
+    // checker that cannot tell code from prose about code will fire on the prose.
     const text = (await Deno.readTextFile(dir + e.name))
       .replace(/\/\*[\s\S]*?\*\//g, " ")
       .replace(/^\s*\/\/.*$/gm, " ");
@@ -484,23 +484,22 @@ Deno.test("site: no runtime URL on the staging site is relative to its own direc
       offenders.push(`src/next/${e.name}: ${m[1]}`);
     }
   }
-  // The entry document is checked too, and it is allowed exactly one form of `../`: while it lives
-  // in `next/`, the assets it names really are one directory up. That stops being true the moment
-  // it moves, so the count is pinned rather than the pattern permitted.
-  const html = await Deno.readTextFile(new URL("../next/index.html", import.meta.url).pathname);
-  const ups = [...html.matchAll(/(?:src|href)="(\.\.\/[^"]+)"/g)].map((m) => m[1]);
-
+  // The entry document sits at the root now, so every asset it names is beside it.
+  const html = await Deno.readTextFile(new URL("../index.html", import.meta.url).pathname);
+  for (const m of html.matchAll(/(?:src|href)="(\.\.\/[^"]*)"/g)) {
+    offenders.push(`index.html: ${m[1]}`);
+  }
   if (offenders.length) {
     throw new Error(
       `${offenders.length} URL(s) that only resolve from the directory they were written in:\n  ` +
         offenders.join("\n  "),
     );
   }
-  if (ups.length !== 2) {
-    throw new Error(
-      `next/index.html names ${ups.length} parent-relative assets, expected the 2 it has while it ` +
-        `lives in next/ (${ups.join(", ")}). If it has moved to the root, these should be bare ` +
-        `names and this check should be the same one the pages use.`,
-    );
+
+  // And the redirect left where this site used to be still points somewhere.
+  const moved = await Deno.readTextFile(new URL("../next/index.html", import.meta.url).pathname);
+  if (!/location\.replace\("\.\.\/"/.test(moved)) {
+    throw new Error("next/index.html no longer redirects to the root — old links go nowhere");
   }
 });
+

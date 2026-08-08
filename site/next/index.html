@@ -2,16 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wac — a language, and the stack being rebuilt in it</title>
-    <meta name="description" content="A C-family language for WebAssembly GC, and a systems stack written in it: TLS 1.3, SSH, Tor at both ends, a shell that agrees with bash, an Ethereum light client. No C, no libc, no allocator, no dependencies. Every claim checked against the implementation it has to interoperate with." />
-    <link rel="icon" type="image/svg+xml" href="../logo.svg">
-    <!-- Same reason as the main site: `SharedArrayBuffer` needs COOP/COEP, GitHub Pages
-         cannot set them, so this re-serves the site with those headers and reloads once. -->
-    <script src="../coi-serviceworker.js"></script>
+    <!-- This site was built here while it replaced the one at the root, and the URL was shared
+         while that was true. It is the root now, so this exists only so that a link somebody kept
+         still arrives — including its `#/route/anchor`, which the redirect carries across because
+         a fragment is not sent to a server and has to be moved by hand. -->
+    <title>wac — moved to the root</title>
+    <meta name="robots" content="noindex" />
+    <script>
+      location.replace("../" + location.hash);
+    </script>
   </head>
-  <body style="margin: 0; background: #0a0b0e;">
-    <div id="root"></div>
-    <script type="module" src="/src/next/main.tsx"></script>
+  <body style="margin: 0; background: #0a0b0e; color: #8b95a5; font: 14px ui-monospace, monospace">
+    <p style="padding: 24px">
+      This moved to <a href="../index.html" style="color: #5eead4">the root of the site</a>.
+    </p>
   </body>
 </html>
