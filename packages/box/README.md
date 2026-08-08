@@ -1,6 +1,6 @@
 # box — a busybox, written in wac
 
-61 applets in one program, chosen by the first argument — 60 tools and `help`, which prints the list. No TypeScript: `src/` is
+62 applets in one program, chosen by the first argument — 61 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
 That number is a digit rather than a word because it kept going stale: it said fifty-nine when
