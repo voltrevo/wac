@@ -74,7 +74,15 @@ That took `cwd`, `readStdin`, `readChunk` with the `Read` enum, `env`, `pushChil
 behind it: without `env` in the manifest it answers *absent* rather than reading the real environment,
 which is not a refusal but the honest answer to "what does this world's environment say".
 
-**The host filesystem, the network and `spawn` are not implemented and trap by name.** A runtime that
+**The arrival test passes.** `packages/platform/test/arrival.test.ts`: an image written by the Deno
+host is the same system here and back again, and a session that changes nothing writes a byte-identical
+image on either host. All 817 of the shell's corpus agree across the two. That took the filesystem —
+`readFile`, `writeFile`, `stat`, `linkStat`, `readDir`, `mkdir`, `remove`, `rename` — each `std::fs`
+behind a **grant check**: without `--allow-read` a program finds `FAULT_NOT_GRANTED`, which
+`platform.wac` keeps separate from the operating system's own `FAULT_DENIED` so that a caller can tell
+"this build cannot" from "this file will not".
+
+**The network and `spawn` are not implemented and trap by name.** A runtime that
 answered an empty file or a closed socket would make every program that used it wrong in a way nothing
 could see, which is design/0001 D6.
 

@@ -53,6 +53,9 @@ enum Kind {
     Bool,
     Captured,
     Change,
+    FileResult,
+    Stat,
+    Names,
 }
 
 /// The three shared functions and the constructor that make one `Pending<T>`.
@@ -94,6 +97,14 @@ enum Cap {
     Env,
     PushChild,
     PopChild,
+    ReadFile,
+    WriteFile,
+    Stat,
+    LinkStat,
+    ReadDir,
+    Mkdir,
+    Remove,
+    Rename,
     OpenInput,
     OpenOutput,
     OutputError,
@@ -365,6 +376,9 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
         (Kind::Bool, "Pending<bool>"),
         (Kind::Captured, "Pending<Captured>"),
         (Kind::Change, "Pending<Change>"),
+        (Kind::FileResult, "Pending<FileResult>"),
+        (Kind::Stat, "Pending<Stat>"),
+        (Kind::Names, "Pending<string[]?>"),
     ] {
         if let Some(hooks) = pending_hooks(&mut store, &instance, m, kind, wac_name)? {
             store.data_mut().pendings.insert(kind, hooks);
@@ -497,6 +511,14 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "env") => Cap::Env,
         ("Cli", "pushChild") => Cap::PushChild,
         ("Cli", "popChild") => Cap::PopChild,
+        ("Cli", "readFile") => Cap::ReadFile,
+        ("Cli", "writeFile") => Cap::WriteFile,
+        ("Cli", "stat") => Cap::Stat,
+        ("Cli", "linkStat") => Cap::LinkStat,
+        ("Cli", "readDir") => Cap::ReadDir,
+        ("Cli", "mkdir") => Cap::Mkdir,
+        ("Cli", "remove") => Cap::Remove,
+        ("Cli", "rename") => Cap::Rename,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -723,6 +745,169 @@ fn dispatch(
             };
             return settle_now(caller, Kind::Captured, Outcome::Captured(out, err), results);
         }
+        // ── The filesystem ───────────────────────────────────────────────────
+        //
+        // Every one of these is `std::fs` behind a grant check, and the grant check is the whole
+        // difference between a capability and an ambient authority: a program built without
+        // `--allow-read` finds reading *denied*, not merely absent, and the fault says which
+        // (`FAULT_NOT_GRANTED`, which `platform.wac` keeps separate from the operating system's own
+        // `FAULT_DENIED` precisely so a caller can tell "this build cannot" from "this file will not").
+        //
+        // On threads, because a slow disk must not stop a program from doing what else it had in
+        // flight — which is the entire reason these return a ticket rather than a value.
+        Cap::ReadFile => {
+            let path = read_string(caller, &params[1])?;
+            if !caller.data().grants.read {
+                return settle_now(caller, Kind::FileResult, denied_read(), results);
+            }
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                let outcome = match std::fs::read(os_path(&path)) {
+                    Ok(bytes) => Outcome::FileResult(true, bytes, String::new(), FAULT_NONE),
+                    Err(e) => Outcome::FileResult(false, Vec::new(), e.to_string(), fault_of(&e)),
+                };
+                table.complete(id, outcome);
+            });
+            return pending_for(caller, Kind::FileResult, id, results);
+        }
+        Cap::WriteFile => {
+            let path = read_string(caller, &params[1])?;
+            let data = read_u8_array(caller, &params[2])?;
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                let outcome = match std::fs::write(os_path(&path), &data) {
+                    Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                    Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+                };
+                table.complete(id, outcome);
+            });
+            return pending_for(caller, Kind::Change, id, results);
+        }
+        Cap::Stat | Cap::LinkStat => {
+            let path = read_string(caller, &params[1])?;
+            if !caller.data().grants.read {
+                return settle_now(
+                    caller,
+                    Kind::Stat,
+                    Outcome::Stat(false, false, false, 0, 0, false, FAULT_NOT_GRANTED),
+                    results,
+                );
+            }
+            // `linkStat` does not follow a symbolic link, which is the whole difference between the
+            // two and the reason `Stat` carries `isSymlink` at all.
+            let follow = matches!(cap, Cap::Stat);
+            let md = if follow {
+                std::fs::metadata(os_path(&path))
+            } else {
+                std::fs::symlink_metadata(os_path(&path))
+            };
+            let outcome = match md {
+                Ok(m) => {
+                    let millis = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    Outcome::Stat(
+                        true,
+                        m.is_file(),
+                        m.is_dir(),
+                        m.len() as i64,
+                        millis,
+                        m.file_type().is_symlink(),
+                        FAULT_NONE,
+                    )
+                }
+                // **Absent is not a failure.** `exists: false` with no fault is what "there is nothing
+                // here" means; a fault would make every caller that merely asked treat it as an error.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Outcome::Stat(false, false, false, 0, 0, false, FAULT_NONE)
+                }
+                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, fault_of(&e)),
+            };
+            return settle_now(caller, Kind::Stat, outcome, results);
+        }
+        Cap::ReadDir => {
+            let path = read_string(caller, &params[1])?;
+            if !caller.data().grants.read {
+                return settle_now(caller, Kind::Names, Outcome::Names(None), results);
+            }
+            let outcome = match std::fs::read_dir(os_path(&path)) {
+                Ok(entries) => {
+                    let mut names: Vec<Vec<u8>> = entries
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name().as_encoded_bytes().to_vec())
+                        .collect();
+                    // By bytes, which is what `LC_ALL=C` means and what `packages/fs`'s `sortNames`
+                    // does: a listing whose order came from the filesystem would differ between two
+                    // hosts for a reason that has nothing to do with either.
+                    names.sort();
+                    Outcome::Names(Some(names))
+                }
+                Err(_) => Outcome::Names(None),
+            };
+            return settle_now(caller, Kind::Names, outcome, results);
+        }
+        Cap::Mkdir => {
+            let path = read_string(caller, &params[1])?;
+            let parents = matches!(arg(2), Val::I32(n) if n != 0);
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let made = if parents {
+                std::fs::create_dir_all(os_path(&path))
+            } else {
+                std::fs::create_dir(os_path(&path))
+            };
+            let outcome = match made {
+                Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    Outcome::Change(FAULT_EXISTS, e.to_string())
+                }
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, outcome, results);
+        }
+        Cap::Remove => {
+            let path = read_string(caller, &params[1])?;
+            let recursive = matches!(arg(2), Val::I32(n) if n != 0);
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let p = os_path(&path);
+            let is_dir = std::fs::symlink_metadata(&p).map(|m| m.is_dir()).unwrap_or(false);
+            let gone = if is_dir {
+                if recursive { std::fs::remove_dir_all(&p) } else { std::fs::remove_dir(&p) }
+            } else {
+                std::fs::remove_file(&p)
+            };
+            let outcome = match gone {
+                Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                // A non-empty directory without `recursive` is its own category, because `rm` and
+                // `rmdir` say different things about it and both need to tell it from a denial.
+                Err(e) if e.raw_os_error() == Some(39) => Outcome::Change(FAULT_NOT_EMPTY, e.to_string()),
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, outcome, results);
+        }
+        Cap::Rename => {
+            let from = read_string(caller, &params[1])?;
+            let to = read_string(caller, &params[2])?;
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let outcome = match std::fs::rename(os_path(&from), os_path(&to)) {
+                Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, outcome, results);
+        }
         Cap::OpenInput => {
             // `openInput("")` is standard input, which is what `packages/box` means by `-` and by an
             // absent operand. It is a *redirect of this process's* input, so the state is here.
@@ -804,6 +989,14 @@ fn dispatch(
                 (Kind::Bool, Outcome::Bool(b)) => Val::I32(if b { 1 } else { 0 }),
                 (Kind::Captured, Outcome::Captured(out, err)) => make_captured(caller, &out, &err)?,
                 (Kind::Change, Outcome::Change(fault, msg)) => make_change(caller, fault, &msg)?,
+                (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
+                    make_file_result(caller, ok, &bytes, &err, fault)?
+                }
+                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, fault)) => {
+                    make_stat(caller, e, f, d, size, m, link, fault)?
+                }
+                (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
+                (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
                 (k, o) => {
                     return Err(wasmtime::Error::msg(format!(
                         "ticket {id} settled as {o:?}, which is not a {k:?}"
@@ -947,10 +1140,86 @@ fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
     write_raw(bytes, to_stderr)
 }
 
+/// What a read answers when the program was built without the grant.
+///
+/// A `FileResult` rather than a trap, because "you may not" is an answer a program can act on and a
+/// trap is not — and `FAULT_NOT_GRANTED` rather than `FAULT_DENIED`, because the two are different
+/// facts: one is about this build, the other about this file.
+fn denied_read() -> Outcome {
+    Outcome::FileResult(false, Vec::new(), "this program was not granted reading".into(), FAULT_NOT_GRANTED)
+}
+
+fn denied_write_change() -> Outcome {
+    Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted writing".into())
+}
+
+fn make_file_result(
+    caller: &mut Caller<'_, Host>,
+    ok: bool,
+    bytes: &[u8],
+    error: &str,
+    fault: i32,
+) -> Result<Val, wasmtime::Error> {
+    // The array before the string: both use the staging buffer, and building one while holding the
+    // other would overwrite it.
+    let b = make_u8_array(caller, bytes)?;
+    let e = make_string(caller, error.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_FileResult_of")?;
+    let built = call_dyn(caller, &f, &[Val::I32(if ok { 1 } else { 0 }), b, e, Val::I32(fault)])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("FileResult.of answered nothing"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_stat(
+    caller: &mut Caller<'_, Host>,
+    exists: bool,
+    is_file: bool,
+    is_dir: bool,
+    size: i64,
+    modified: i64,
+    is_symlink: bool,
+    fault: i32,
+) -> Result<Val, wasmtime::Error> {
+    let f = export_func(caller, "$bind$sm_Stat_of")?;
+    let built = call_dyn(
+        caller,
+        &f,
+        &[
+            Val::I32(exists as i32),
+            Val::I32(is_file as i32),
+            Val::I32(is_dir as i32),
+            Val::I64(size),
+            Val::I64(modified),
+            Val::I32(is_symlink as i32),
+            Val::I32(fault),
+        ],
+    )?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Stat.of answered nothing"))
+}
+
+/// A `string[]`, built one element at a time.
+///
+/// `$bind$arr_string_new(n, fill)` wants a value to fill with, so an empty string is made first and
+/// handed in — the alternative, `new0`, exists for the empty array and cannot size one.
+fn make_string_array(caller: &mut Caller<'_, Host>, items: &[Vec<u8>]) -> Result<Val, wasmtime::Error> {
+    let empty = make_string(caller, b"")?;
+    let new = export_func(caller, "$bind$arr_string_new")?;
+    let made = call_dyn(caller, &new, &[Val::I32(items.len() as i32), empty])?;
+    let arr = made.into_iter().next().ok_or_else(|| wasmtime::Error::msg("arr_string_new answered nothing"))?;
+    let set = export_func(caller, "$bind$arr_string_set")?;
+    for (i, item) in items.iter().enumerate() {
+        let s = make_string(caller, item)?;
+        call_dyn(caller, &set, &[arr.clone(), Val::I32(i as i32), s])?;
+    }
+    Ok(arr)
+}
+
 /// Faults, matching `FAULT_*` in `platform.wac` and `host/faults.ts`.
 const FAULT_NONE: i32 = 0;
 const FAULT_NOT_FOUND: i32 = 1;
 const FAULT_DENIED: i32 = 2;
+const FAULT_EXISTS: i32 = 3;
+const FAULT_NOT_EMPTY: i32 = 4;
 const FAULT_OTHER: i32 = 5;
 /// Not an operating-system failure at all: the program was built without the capability.
 const FAULT_NOT_GRANTED: i32 = 7;

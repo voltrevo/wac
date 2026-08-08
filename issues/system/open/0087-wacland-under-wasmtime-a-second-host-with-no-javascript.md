@@ -274,3 +274,42 @@ left of the arrival test proper is *an image*: `imaged` needs the filesystem cap
 JavaScript host's first version captured only `write` and lost `Core.log`, which is where thirty of the
 applets send their output. Both hosts now route `log`, `warn`, `write` and `writeErr` through one
 function for that reason.
+
+## Progress — 2026-08-08 (fourth tick), agent-a — **the arrival test passes**
+
+**An image written by the Deno host is the same system under wasmtime, and back again.**
+`packages/platform/test/arrival.test.ts`, and it is design/0001's own criterion rather than a proxy
+for it.
+
+- a session on the JavaScript host makes `/home/ada`, writes files and an `/etc/passwd`;
+- a session on the host with no JavaScript in it opens the *same file*, lists the same names, reads the
+  same bytes, and runs `sort`, `head` and `wc` over them;
+- it writes back, and the JavaScript host reads what wasmtime wrote;
+- and a session that changes nothing produces a **byte-identical image on either host** — no ordering
+  from a directory listing, no timestamp, no allocator padding. That is what "an image moves between
+  hosts carrying its state" has to mean to be true.
+
+**All 817 of `packages/sh`'s differential corpus agree across the two hosts**, run by hand: 250 in one
+sweep and 567 in another, zero differing and none that failed to finish. `deno task corpus:hosts` is
+the sweep; the gate runs the first 25.
+
+Item 6 is done as far as the filesystem goes: `readFile`, `writeFile`, `stat`, `linkStat`, `readDir`,
+`mkdir`, `remove` and `rename`, each `std::fs` behind a **grant check**. A program built without
+`--allow-read` finds reading `FAULT_NOT_GRANTED` — which `platform.wac` keeps separate from the
+operating system's own `FAULT_DENIED` precisely so a caller can tell "this build cannot" from "this
+file will not".
+
+### What is left
+
+- **`spawn`** — the third criterion, and the only one outstanding.
+- **The network.** Which is what `users and system services` in the arrival test still waits on:
+  `Fs.user` is set by `packages/ssh`'s server, so logging in as two users on both hosts needs sockets.
+
+### A canary that did not fire, which was worth more than one that did
+
+Perturbing the native `readDir` to answer in reverse order changed **nothing** in the arrival test. The
+reason is the design working: everything a session does to files goes through `packages/fs`'s VFS
+*inside* the image, so the host capability surface the arrival test exercises is `readFile` and
+`writeFile` and nothing else. That is now said in the test's own header, because the file otherwise
+reads as covering far more than it does. The native host's directory and metadata capabilities are
+exercised by nothing at all yet.

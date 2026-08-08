@@ -63,6 +63,13 @@ pub enum Outcome {
     Captured(Vec<u8>, Vec<u8>),
     /// `Change{fault, message}` — what happened to something that changes state.
     Change(i32, String),
+    /// `FileResult{ok, bytes, error, fault}`.
+    FileResult(bool, Vec<u8>, String, i32),
+    /// `Stat{exists, isFile, isDir, size, modifiedMillis, isSymlink, fault}`.
+    Stat(bool, bool, bool, i64, i64, bool, i32),
+    /// `string[]?` — **null is "not a directory", empty is "an empty one"**, and a host that
+    /// collapsed them would make `ls` of a file print nothing instead of complaining.
+    Names(Option<Vec<Vec<u8>>>),
 }
 
 struct Inner {
