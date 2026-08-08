@@ -986,6 +986,46 @@ Requiring only one of the two was wrong in both directions — one sweep cell ea
 Also measured, and the opposite of what the first version assumed: **a self-cast is redundant in all
 four spellings**, not only the plain one.
 
+### A blanket exemption, and the half of the sweep that was thin
+
+**Sweep recall: 97% → 99%.** The sweep named three families and one of them was a rule of this
+checker's that was *too broad*.
+
+`assignable` said **any nullable source fits any slot**. It was written for the nullable-into-non-null
+family, which reports separately, and the breadth was never the point — but from the outside a blanket
+exemption is not a wrong answer anywhere, it is **no answer at all**. `P?` into an `i32` was silent,
+forty cells over, one per (nullable type, unrelated slot). That is a shape a hand-written test does
+not go looking for, because the rule reads as correct and the cases it swallows are somebody else's
+family.
+
+Two more the sweep named: a compound assignment wants something arithmetic can be done to — a number,
+or a `string`, which concatenates — because an array, a struct, an enum and a funcref all *agree with
+themselves*, so the type comparison had nothing to say about `a += b` on two of them. And a funcref
+converts to nothing but itself: there is no hierarchy of function types and nothing to check at
+runtime, so every cast spelling is refused.
+
+**Narrowing the hatch then broke a working program, and the reference corpus caught it where the sweep
+did not.** `Circle?` goes into a `Shape?` for the same reason a `Circle` goes into a `Shape`, and
+unwrapping only the source compared `Shape?` against `Circle`. The sweep had no cell for it, because
+**only 495 of its 9,554 programs were valid** — the no-false-alarm half, which is the half that
+catches a checker being *wrong* rather than merely incomplete, was barely exercised at all.
+
+So the generator gained a family of programs that are **well-formed by construction**: each wraps the
+type in a declaration that makes the use legal *whatever the type is* — a struct with a field of it,
+an array of it, a function taking and returning it, a nullable widened from it. That is still a
+generated axis rather than a curated one, which was the point of the file. Accepted grew **495 → 834**.
+
+**The first thing the new family found was not a wacc bug.** `fn[i32(i32)][2](fill: a)` is the one
+hole in a seventeen-type row: the reference's *parser* reports seven errors and its checker then says
+*"type 'null' is not an array"*, a type nothing in the program mentions. Sized array construction with
+a funcref element does not parse, while the unsized form, the parameter form, and every other element
+type do. That is [wac 0079](../../../wac/issues/open/0079-a-sized-array-of-funcrefs-does-not-parse.md).
+
+The sweep now skips programs the reference's parser rejects, and says how many. That is the boundary
+rather than a workaround: rung 3 compares type checkers, and a program that did not parse has no type
+diagnostics to compare — whatever the checker says next is about a broken tree, which is rung 2's
+oracle and not this one's.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,

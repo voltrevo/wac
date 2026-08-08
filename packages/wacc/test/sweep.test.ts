@@ -35,9 +35,19 @@ function ours(src: string): string[] {
   return at;
 }
 
-function reference(src: string): string[] {
+/**
+ * The reference's type diagnostics, or `null` when its **parser** would not read the program.
+ *
+ * Rung 3 compares type checkers, and a program the parser could not read has no type diagnostics to
+ * compare — whatever the checker then says is about a broken tree. The sweep hit exactly one such
+ * cell, `fn[i32(i32)][2](fill: a)`, which the reference answers with *"type 'null' is not an array"*
+ * — a type nothing in the program mentions. That is wac issue 0079, and skipping it here is the
+ * boundary rather than a workaround: parse divergence is rung 2's oracle, not this one's.
+ */
+function reference(src: string): string[] | null {
   const { tokens } = wacLex(src);
-  const { program } = wacParse(tokens, "/main.wac");
+  const { program, errors } = wacParse(tokens, "/main.wac");
+  if (errors !== undefined && errors.length > 0) return null;
   const programs = new Map<string, Program>([["/main.wac", program]]);
   return wacTypeCheck(wacResolve("/main.wac", programs), programs)
     .filter((e) => e.severity !== "warning")
@@ -49,13 +59,13 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
   // everything agrees, and every number it goes on to print looks reassuring. These two say the two
   // sides are being asked at all: one program the reference certainly rejects and we certainly
   // report, one it certainly accepts and we certainly do not.
-  if (reference(CANARY_REJECTED).length === 0) {
+  if ((reference(CANARY_REJECTED) ?? []).length === 0) {
     throw new Error("the canary program is no longer rejected by the reference — the sweep is blind");
   }
   if (ours(CANARY_REJECTED).length === 0) {
     throw new Error("the canary program is no longer reported by us — the sweep is blind");
   }
-  if (reference(CANARY_ACCEPTED).length !== 0 || ours(CANARY_ACCEPTED).length !== 0) {
+  if ((reference(CANARY_ACCEPTED) ?? ["x"]).length !== 0 || ours(CANARY_ACCEPTED).length !== 0) {
     throw new Error("the accepted canary is now reported by somebody — the sweep is blind");
   }
 
@@ -67,12 +77,17 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
   let accepted = 0;
   let rejected = 0;
   let caught = 0;
+  let unparsed = 0;
   for (const cell of cells) {
-    let theirs: string[];
+    let theirs: string[] | null;
     try {
       theirs = reference(cell.src);
     } catch {
-      continue; // a program the reference's own parser rejects is not this test's business
+      theirs = null;
+    }
+    if (theirs === null) {
+      unparsed++;
+      continue;
     }
     const mine = ours(cell.src);
     if (theirs.length === 0) {
@@ -97,7 +112,8 @@ Deno.test("rung 3: the generated sweep — no false alarm, no contradiction", ()
   }
   console.log(`    rung 3 generated sweep: ${cells.length} programs, ${accepted} accepted ` +
     `(${alarms.length} false alarms), ${rejected} rejected, ${caught} caught ` +
-    `(${((100 * caught) / rejected).toFixed(0)}%), ${contradictions.length} contradicted`);
+    `(${((100 * caught) / rejected).toFixed(0)}%), ${contradictions.length} contradicted, ` +
+    `${unparsed} unparsed (wac 0079)`);
 
   // Both halves have to be non-empty, or the sweep is measuring one thing and calling it two. A
   // generator that only produced valid programs would report "no contradictions" for ever.
