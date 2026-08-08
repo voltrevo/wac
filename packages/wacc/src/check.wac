@@ -428,10 +428,13 @@ bool breaksOutOf(Stmt s) {
  *
  *   - **`+ - * / %` and `& | ^`** answer `type mismatch in 'op': A and B` whenever the operands
  *     differ. One rule, no exceptions among primitives.
- *   - **`< <= > >= == !=`** answer the same — *except* when an operand is a reference type, where it
- *     is `'op' not allowed on reference type` instead. `string` is the only reference type this slice
- *     can name, so a comparison involving one is left alone: a different diagnostic reported under
- *     this code would merge two families a caller can tell apart.
+ *   - **`< <= > >= == !=`** answer the same. A mixed comparison against a `string` answers a
+ *     *different* message depending on which side it is on — `i32 < string` is `'<' not allowed on
+ *     reference type` while `string < i32` is `type mismatch in '<'` — but both sit at the operator,
+ *     which is the position this reports, so the distinction costs nothing here. An earlier version
+ *     excluded strings from comparisons on the strength of seeing the first message and not the
+ *     second, and lost recall for no reason. `string == string` is allowed and stays silent because
+ *     the two agree, not because of a rule about strings.
  *   - **`&& ||`** never answer a mismatch at all. `1 && 2` is `'&&' requires bool operands`, which is
  *     about each operand on its own rather than about the pair, so it is not this check.
  *
@@ -468,7 +471,6 @@ void checkExpr(C c, Expr e) {
       i32 a = primOfExpr(c, left);
       i32 b = primOfExpr(c, right);
       if (a == primNone() || b == primNone() || a == b) { return; }
-      if (comparison && (a == primString() || b == primString())) { return; }
       c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }

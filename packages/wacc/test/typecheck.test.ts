@@ -377,15 +377,18 @@ Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and
  * hidden in a block, an `else if`, and a `match` arm.
  */
 Deno.test("rung 3: a function that can reach its closing brace, against the reference", () => {
-  const CASES = [
-    // Wrong: the reference reports each of these.
+  // Two lists rather than one filtered on `all code paths`. A filter on message text is a second
+  // opinion about which diagnostics count — it makes a program the reference rejects for some other
+  // reason look accepted, which is how `i32 && i32` sat in the operator test as "left alone".
+  const CAUGHT = [
     "i32 bad(bool x) { if (x) { return 1; } }",
     "i32 noElse(bool x) { if (x) { return 1; } else { } }",
     "i32 brk(i32 n) { while (true) { if (n > 0) { break; } n++; } }",
     "i32 deep(i32 n) { while (true) { { break; } } }",
     "i32 elseIf(i32 n) { while (true) { if (n > 10) { n++; } else if (n > 5) { break; } } }",
     "i32 empty() { }",
-    // Right: the reference accepts each of these.
+  ];
+  const QUIET = [
     "i32 ok(bool x) { if (x) { return 1; } return 0; }",
     "i32 both(bool x) { if (x) { return 1; } else { return 2; } }",
     "i32 inf(i32 n) { while (true) { n++; } }",
@@ -394,24 +397,24 @@ Deno.test("rung 3: a function that can reach its closing brace, against the refe
     "void nothing() { }",
     "void early(bool x) { if (x) { return; } }",
   ];
-  for (const src of CASES) {
-    const theirs = reference(src).filter((e) => e.message.includes("all code paths"));
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
     const mine = ours(src);
-    if (theirs.length === 0) {
-      if (mine.length !== 0) {
-        throw new Error(`the reference accepts ${JSON.stringify(src)} and we report ` +
-          mine.join(", "));
-      }
-      continue;
-    }
     if (mine.length === 0) {
-      throw new Error(`the reference wants a return in ${JSON.stringify(src)} and we said nothing`);
+      throw new Error(`the reference wants a return in ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
     }
     for (const at of mine) {
       if (!theirs.some((e) => e.at === at)) {
         throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
           theirs.map((e) => e.at).join(", "));
       }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is accepted and we said ${mine.join(", ")}`);
     }
   }
 });
@@ -494,6 +497,11 @@ Deno.test("rung 3: same-type operands, and the operators that answer something e
     "export void x2(i32 p, f64 q) { i32 r = p | q; }",
     "export void x3(i32 p, f64 q) { bool r = p < q; }",
     "export void x4(i32 p, i64 q) { bool r = p >= q; }",
+    // A mixed comparison against a string. The reference's *message* depends on which side the
+    // string is — `i32 == string` is "not allowed on reference type", `string == i32` is a type
+    // mismatch — but both sit at the operator, so reporting there is right either way.
+    "export void x5(i32 p, string q) { bool r = p == q; }",
+    "export void x5b(string p, i32 q) { bool r = p == q; }",
   ];
   const QUIET = [
     // Accepted outright.
@@ -502,9 +510,11 @@ Deno.test("rung 3: same-type operands, and the operators that answer something e
     "export void sh(i64 a, i32 b) { i64 r = a << b; }",
     "export void sh2(i32 a, i32 b) { i32 r = a >> b; }",
     "export void x7(bool p, bool q) { bool r = p || q; }",
-    // Rejected by the reference, under a family this rule does not own: a comparison against a
-    // reference type is `'==' not allowed on reference type`, not a mismatch between the two.
-    "export void x5(i32 p, string q) { bool r = p == q; }",
+    // Two strings compared is *allowed*, and stays silent because the two agree — not because of any
+    // rule about strings. Both spellings, since an earlier version had a rule about strings and this
+    // is what it would break.
+    "export void x8(string p, string q) { bool r = p == q; }",
+    "export void x9(string p, string q) { bool r = p < q; }",
   ];
   for (const src of CAUGHT) {
     const theirs = reference(src);
@@ -545,34 +555,40 @@ Deno.test("rung 3: same-type operands, and the operators that answer something e
  * parameters positionally when the counts differ would report the wrong ones anyway.
  */
 Deno.test("rung 3: a call's arguments against its parameters", () => {
-  const CASES = [
+  const CAUGHT = [
     "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
     'i32 g(i32 x) { return x; } export i32 sl() { return g("s"); }',
     "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
-    // Accepted, and each is a way this could be wrong in the other direction.
+  ];
+  const QUIET = [
     "i32 g(i32 x) { return x; } export i32 ok(i32 a) { return g(a); }",
     "i32 g(i32 x) { return x; } export i32 lit() { return g(1); }",
     "i64 g(i64 x) { return x; } export i64 wide() { return g(1); }",
-    // Arity: the reference complains, we deliberately do not.
+    // Arity: the reference complains with its own message and we deliberately do not, which is a
+    // pass for a subset checker rather than a failure.
     "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
-    // A struct construction is the same syntax and must not be read as a call.
+    // A struct construction is the same syntax as a call and must not be read as one.
     "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }",
   ];
-  for (const src of CASES) {
-    const theirs = reference(src).filter((e) => e.message.startsWith("type mismatch"));
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
     const mine = ours(src);
-    if (theirs.length === 0) {
-      if (mine.length !== 0) {
-        throw new Error(`the reference has no type complaint about ${JSON.stringify(src)} and we ` +
-          `report ${mine.join(", ")}`);
-      }
-      continue;
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects the arguments of ${JSON.stringify(src)} and we said ` +
+        "nothing: " + theirs.map((e) => `${e.at} ${e.message}`).join("; "));
     }
     for (const at of mine) {
       if (!theirs.some((e) => e.at === at)) {
         throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
           theirs.map((e) => e.at).join(", "));
       }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is not this rule's to report, and we said ` +
+        mine.join(", "));
     }
   }
 });

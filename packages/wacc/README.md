@@ -335,8 +335,37 @@ report it" folds two obligations into one, and a subset checker has two: what a 
 caught, and what it does not own must be silent — where "the reference rejects this and we say
 nothing" is a pass. The operator test is now two lists for that reason.
 
+### The string exclusion was wrong, and no test could see it
+
+Last slot excluded `string` from the comparison rule, on the strength of seeing `'<' not allowed on
+reference type` and assuming a comparison against a string was a family this rule did not own. Asking
+about both orders shows it is not that simple, and not a problem either:
+
+    i32 == string   ->  '==' not allowed on reference type string
+    string == i32   ->  type mismatch in '==': string and i32
+    string == string -> ok
+
+The *message* depends on which side the string is; the **position is the operator in every case**, and
+position is what this reports. So the exclusion cost recall for nothing. It is gone, and two strings
+compared stay silent because they agree rather than because of any rule about strings.
+
+Worth noting how it survived: nothing failed. A rule that reports too little is invisible to every
+test that asks whether what we report is right, and the spec corpus had no case for it. Recall is only
+visible where somebody thought to look.
+
+### No test filters the oracle any more
+
+The `type mismatch in` filter that turned out to be a lie was not the only one — the missing-return
+and call-argument tests filtered on `all code paths` and `type mismatch` too. All three are now two
+lists, `CAUGHT` and `QUIET`, comparing against everything the reference says.
+
+That shape encodes the two obligations a subset checker actually has. What a rule owns must be caught,
+at the reference's position. What it does not own must be silent — and there, *"the reference rejects
+this and we say nothing"* is a pass.
+
 Next: more of rung 3 — the struct and generic families, which need types beyond primitives, and the
-reference-type diagnostics (`'==' not allowed on reference type`), which are their own family.
+reference-type diagnostics for structs (`'==' not allowed on reference type P`), which need to know a
+name is a struct at all.
 
 ### What rung 3's oracle looks like, measured
 
