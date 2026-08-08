@@ -704,7 +704,12 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   for (i32 i = 0; i < pipeline.stages.get(n - 1).simple.redirs.len(); i++) {
     Redir r = pipeline.stages.get(n - 1).simple.redirs.get(i);
     string path = sh.resolve(joinWord(sh, r.target));
-    Change opened = sh.cli.openOutput(path).wait();
+    // **Through the filesystem, not the host.** This called `cli.openOutput` until `Fs` had a
+    // streaming write, which meant `>` had two implementations: this one wrote to the machine and
+    // the sequential path wrote through `sh.fs`. They agreed only because the shells that reach this
+    // route have the host as their filesystem anyway — see wac-mono 0116, which is what makes a
+    // sealed session reach it.
+    Change opened = sh.fs.openOut(path);
     if (!opened.ok()) {
       // `reasonOf`, so the words are the ones GNU uses for the category rather than the host's
       // sentence: "No such file or directory", not "No such file or directory (os error 2): open
@@ -785,9 +790,14 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
         } else if (sh.capture && !redirected) {
           sh.outBuf.pushAll(bytes);
           outT.set(i, sh.cli.recv(outH[i]));
+        } else if (redirected) {
+          // Into the file, through the *filesystem*, as it arrives — which is the whole point: a
+          // long pipeline writes its first line before its last stage has seen the rest, and it
+          // writes it where this session's `>` means rather than where the machine's does.
+          sh.fs.writeOut(bytes);
+          outT.set(i, sh.cli.recv(outH[i]));
         } else {
-          // Straight out as it arrives, which is the whole point: a long pipeline prints its first
-          // line before its last stage has seen the rest.
+          // Straight out as it arrives, for the same reason.
           sh.cli.write(bytes);
           outT.set(i, sh.cli.recv(outH[i]));
         }
@@ -809,7 +819,7 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   // Closed before anything else, so the file is complete by the time the next command runs: a script
   // that writes `f` and then reads it must not see a half-written one. Opening `""` is how a program
   // says it has finished writing — see `openOutput` in `platform.wac`.
-  if (redirected) { sh.cli.openOutput("").wait(); }
+  if (redirected) { sh.fs.closeOut(); }
 
   // The last stage's status is the pipeline's, as in bash. A stage that was *stopped* has no status
   // worth asking for — its handle is gone, and asking is an error rather than an answer — so only the

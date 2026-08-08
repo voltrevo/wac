@@ -99,7 +99,11 @@ because a redirection must not buffer — `seq 1 2000000000 > out` used to build
 shell and trap on one wasm array (wac-mono 0070) — and `Fs` offers only `writeFile(path, bytes)`. So
 the streaming path had nowhere else to go.
 
-The fix is an `openOut`/`writeOut`/`closeOut` on `Fs`, mount-dispatched like every other operation:
-append into the inode for a memory mount, delegate to `cli.openOutput` for a host mount, refuse for a
-synthesised one except `/dev/null`. Then `>` means one thing, and this issue's fix does not need to
-remember it.
+**Done, 2026-08-08.** `Fs.openOut`/`writeOut`/`closeOut`, mount-dispatched like every other
+operation: append into the inode for a memory mount, and for a host mount delegate to
+`cli.openOutput`, which is what the shell was doing directly. `streamPipeline` uses them, so `>`
+means one thing and this issue's fix does not have to remember it. `packages/fs/test/stream.test.ts`.
+
+There is one thing to know when this issue *is* fixed: a spawned stage writes to its parent through a
+queue, and the parent relays into the file, so the file is still the parent's filesystem's. That is
+the right shape — it is the parent that knows which world the redirection belongs to.

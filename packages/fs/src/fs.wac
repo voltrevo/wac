@@ -103,6 +103,12 @@ export struct Inode {
   /** The same for the owner. */
   void setOwner(this, string owner) { this.owner = owner; }
 
+  /** Add to the end, as a streaming write does. */
+  void append(this, u8[] data, i64 now) {
+    this.data.pushAll(data);
+    this.mtime = now;
+  }
+
   /** Replace the contents, as a truncating write does. */
   void replace(this, u8[] data, i64 now) {
     this.data = Buf.create();
@@ -151,6 +157,14 @@ export struct Fs {
   Vec<string> programs;
   /** Where a relative path starts from — see `setCwd`. */
   string cwd;
+  /**
+   * The file a streaming write is going to, and which mount it is on. Empty when there is none.
+   *
+   * See `openOut` for why a filesystem has a *cursor* at all: a redirection must not buffer, and the
+   * shell had nowhere but the host to send bytes as they arrived.
+   */
+  string outPath;
+  i32 outMount;
 
   /** An empty filesystem with one memory mount at the root. */
   Fs inMemory(i64 now) {
@@ -158,7 +172,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), "/");
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), "/", "", -1);
   }
 
   /**
@@ -174,7 +188,7 @@ export struct Fs {
     // **The host's own directory**, because that is what a relative path means to a program standing on
     // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
     // file. A memory filesystem starts at its own root, where there is nowhere else to be.
-    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), cli.cwd().wait());
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), cli.cwd().wait(), "", -1);
   }
 
   /**
@@ -277,6 +291,70 @@ export struct Fs {
     // in `/bin` will ever call it. Passing the caller's own is honest; inventing a stub that
     // answered zero bytes would be a generator that exists to satisfy a type.
     this.mounts.push(Mount("/bin", Backing.Synth(randomBytes), -1));
+  }
+
+  /**
+   * Begin writing to `path`, truncating it: the streaming half of `writeFile`.
+   *
+   * **Why a filesystem needs a cursor.** A redirection must not buffer — `seq 1 2000000000 > out`
+   * built twenty gigabytes in the shell and trapped on one wasm array (wac-mono 0070) — so a shell
+   * relaying a pipeline has to write each chunk as it arrives. `writeFile(path, bytes)` cannot do
+   * that, and the only streaming write in the world was `Cli.openOutput`, which redirects *the
+   * process's* standard output. So `packages/sh` had two implementations of `>`: the sequential path
+   * wrote through this filesystem and the streaming path wrote through the host, and they disagreed
+   * about which disk a sealed session's redirection landed on. Latent, because a sealed session does
+   * not spawn (wac-mono 0116) — and a leak the day it does.
+   *
+   * One cursor per filesystem, not a handle table: a shell redirects one command at a time, and a
+   * table would be a second thing to leak. `closeOut` ends it; opening another closes the first.
+   */
+  Change openOut(this, string path) {
+    if (this.outPath != "") { this.closeOut(); }
+    string full = this.at(path);
+    i32 mi = this.mountOf(full);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    // Truncate now, through the ordinary write, so that every check `writeFile` makes — the mount is
+    // writable, the path is not a directory, the parent exists — happens once and in one place.
+    Change made = this.writeFile(full, u8[0]());
+    if (made.fault != FAULT_NONE()) { return made; }
+    this.outPath = full;
+    this.outMount = mi;
+    match (this.mounts.get(mi).backing) {
+      // A host mount streams the only way the capability offers: by redirecting this process's
+      // output, which is what the shell was doing directly before this existed.
+      case Host(cli): { return cli.openOutput(full).wait(); }
+      else: { return Change.of(FAULT_NONE(), ""); }
+    }
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** Append to whatever `openOut` opened. False when there is nothing open or the write failed. */
+  bool writeOut(this, u8[] bytes) {
+    if (this.outPath == "") { return false; }
+    match (this.mounts.get(this.outMount).backing) {
+      case Host(cli): { return cli.write(bytes); }
+      else: {
+        i32 node = this.find(this.mounts.get(this.outMount), this.outPath);
+        if (node < 0) { return false; }
+        this.nodes.get(node).append(bytes, this.now);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Finish. A file is complete when this returns, which is what lets the next command read it. */
+  Change closeOut(this) {
+    if (this.outPath == "") { return Change.of(FAULT_NONE(), ""); }
+    i32 mi = this.outMount;
+    this.outPath = "";
+    this.outMount = -1;
+    match (this.mounts.get(mi).backing) {
+      // `openOutput("")` is how a program says it has finished writing — see `platform.wac`.
+      case Host(cli): { return cli.openOutput("").wait(); }
+      else: { return Change.of(FAULT_NONE(), ""); }
+    }
+    return Change.of(FAULT_NONE(), "");
   }
 
   /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
