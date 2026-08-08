@@ -21,15 +21,33 @@ Packages have de facto owners, so the rule is about who is likely to be mid-chan
 ## There are also issues on GitHub
 
 `github.com/voltrevo/wac-mono/issues` and `github.com/voltrevo/wac/issues` have reports from
-outside this container — sixteen of them as of 2026-08-03, filed by the owner from static
-inspection of `master`. **Look there before filing here**, because they are not visible from
-`INDEX.md` and duplicating one costs the same as duplicating anything else.
+outside this container, filed by the owner. **Look there before filing here**, because they are not
+visible from `INDEX.md` and duplicating one costs the same as duplicating anything else.
 
-They **are** mirrored in, as `0031`–`0040` here and `0065`–`0068` in `wac/issues/`, so that work in
-this container is visible from `INDEX.md` like everything else. The mirror is a stub: title, kind,
-whether it has been reproduced here, and a link. **Discussion belongs on GitHub**, where the reporter
-is — a mirror that grows its own argument is the drift this warns about. Close both when it is
-fixed.
+They **are** mirrored in, so that work in this container is visible from `INDEX.md` like everything
+else. The mirror is a stub: title, kind, whether it has been reproduced here, and a link.
+**Discussion belongs on GitHub**, where the reporter is — a mirror that grows its own argument is the
+drift this warns about. Close both when it is fixed.
+
+### Swept to wac-mono #53 and wac #10 (2026-08-08)
+
+`#1`–`#30` are the original mirror, as `0031`–`0040` here and `0065`–`0068` in `wac/issues/`.
+Everything since was checked against the code on 2026-08-08, and most of it did not need a stub —
+**which is the useful half of this list**, because the alternative is somebody verifying it twice:
+
+| upstream | what happened |
+|---|---|
+| #38, #39 | directions, and they are in `design/0001` and `design/0003`. A direction does not belong here — see the table below |
+| #40, #42 | **done**: the image format, and streaming redirection routed through `Fs.openOut`/`writeOut`/`closeOut` |
+| #41 | the same gap as **0116**, filed independently. Cross-referenced there rather than mirrored |
+| #43, #44 | **done** in `packages/mpt`, and both cite the upstream number in the code |
+| #45, #46 | **done**: `packages/tor/README.md` and `design/0003` say what they now say |
+| #47 | a design reconsideration, and the claim it quotes is no longer in `design/0001` |
+| #49 | **done**: `tlsClientFeed` and `tlsServerFeed` both refuse a closed phase, each with a comment describing this exact flight |
+| #48, #50, #51, #52, #53 | open — mirrored as `0118`–`0122` |
+| wac #8, #9, #10 | the compiler's, so `wac/issues/` rather than here |
+
+When sweeping again, start at wac-mono #54 and wac #11.
 
 ## What does not belong here
 

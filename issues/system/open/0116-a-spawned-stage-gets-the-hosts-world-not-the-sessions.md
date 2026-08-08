@@ -5,6 +5,8 @@
 - **Date:** 2026-08-08
 - **Kind:** missing feature
 - **Symptom:** wrong answer
+- **Also on GitHub:** [voltrevo/wac-mono#41](https://github.com/voltrevo/wac-mono/issues/41), "Share Wacland filesystem capabilities across spawned processes" — filed independently by the
+  owner on 2026-08-06 and describing the same gap from the requirement side. Not mirrored separately: this is that issue. **Discussion belongs there**, per `issues/README.md`.
 
 ## What
 
