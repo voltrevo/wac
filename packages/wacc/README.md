@@ -902,6 +902,40 @@ the parts of the language the checker models least.
 The QUIET half of that test is now one line per reference kind — enum, funcref, array, generic
 instantiation, nullable struct — which is the list that was missing rather than an example of it.
 
+### Funcrefs, callability, and a predicate that is about the wrong thing
+
+**Reference recall: 122 of 124**, from 106. Spec unchanged at 77 of 83. No false alarms anywhere.
+
+A funcref becomes a real type the same way a generic instantiation did, and by the same decision: **a
+type is its canonical name**, so it spells itself — `fn(i32) -> i32`, the reference's own wording —
+and two of them are the same type exactly when their spellings agree. Arity at a call through one is
+then counted off the spelling, because the spelling *is* the type.
+
+**What is callable** turned out to be four questions and only the first is a function: a declared
+function, a local holding a funcref, a local holding something else — not callable at all — and a name
+that is nothing, which is the undefined-name rule reaching call position.
+
+The cast family the numeric tables could not express: between two references only `as` and `as!` mean
+anything, and which one is right depends on the direction. Upcasting is always safe and takes `as`;
+downcasting can fail and takes `as!`; `as~` and `as@` are refused outright, because truncating and
+reinterpreting are questions about a bit pattern and a reference has none to discuss. `i31ref` pairs
+with `i32` and nothing else — lossy going in, lossless coming back.
+
+**The mistake of the slot was a predicate that is about the wrong thing.** "A primitive has no
+methods" is true, and `isPrimitiveName` is not the predicate for it: `string` is in that list, and a
+string has `slice` and `len` and more. The rule reported 70 files, then 10. `isPrimitiveName` answers
+*how a type is passed*, not *what it can do*, and those coincide for every member of the list except
+the one that matters.
+
+What is left of the rule is the half that can be stated without a measurement this checker has not
+made: **a number has no methods at all**, which is a fact rather than a list. Arrays and strings keep
+their silence until somebody measures their builtin surface — which is the same trade the QUIET half
+of the test now records, one line per type whose surface is unknown.
+
+Two cases remain. `case true:` needs a position on the `Case` node, which is a parser change worth
+making deliberately rather than in passing; and a static method used as a value types as a funcref,
+which is the only remaining place a member needs to *produce* one.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,

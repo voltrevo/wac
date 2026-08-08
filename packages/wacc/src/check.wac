@@ -125,6 +125,12 @@ export i32 errSwitchSubject() { return 44; }
 export i32 errNamedField() { return 45; }
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
+/** Calling something that is not a function, or naming something that does not exist to call. */
+export i32 errNotCallable() { return 47; }
+/** A method named without calling it. */
+export i32 errMethodAsValue() { return 48; }
+/** A struct's name used where a value belongs. */
+export i32 errStructAsValue() { return 49; }
 /** A method that hides a parent's without saying `override`. */
 export i32 errOverrideMissing() { return 21; }
 /** `override` on a method no parent declares. */
@@ -971,7 +977,21 @@ export string typeOfTy(C c, Ty t) {
       if (base == typeNone()) { return typeNone(); }
       return base + "?";
     }
-    else: { return typeNone(); }
+    // A funcref spells itself the way the reference words it — `fn(i32) -> i32` — so two of them are
+    // the same type exactly when their parameters and return agree, which is what the language means
+    // by assignable here. There is no variance: `fn(bool) -> i32` does not hold a `fn(i32) -> i32`.
+    case Funcref(ret, params): {
+      string out = "fn(";
+      for (i32 i = 0; i < params.len(); i++) {
+        string pt = typeOfTy(c, params[i]);
+        if (pt == typeNone()) { return typeNone(); }
+        if (i > 0) { out = out + ", "; }
+        out = out + pt;
+      }
+      string rt = typeOfTy(c, ret);
+      if (rt == typeNone()) { return typeNone(); }
+      return out + ") -> " + rt;
+    }
   }
 }
 
@@ -1265,7 +1285,9 @@ void checkExpr(C c, Expr e) {
       // Arithmetic and bitwise operators want a number. Two booleans *agree*, so the same-type rule
       // below has nothing to say about `a + b` — this is the question of what the operands are, which
       // is the same distinction `&&` draws, one operator family further along.
-      if (arith && (typeOfExpr(c, left) == "bool" || typeOfExpr(c, right) == "bool")) {
+      string alt = typeOfExpr(c, left);
+      string art = typeOfExpr(c, right);
+      if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
         c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
       }
       // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
@@ -1319,7 +1341,14 @@ void checkExpr(C c, Expr e) {
     // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
     case Ident(tok): {
-      if (!nameExists(c, tokenText(c, tok))) { c.report(errUndefinedName(), e.line, e.col); }
+      string idn = tokenText(c, tok);
+      if (!nameExists(c, idn)) { c.report(errUndefinedName(), e.line, e.col); return; }
+      // A struct's name is not a value. It reaches expression position legitimately as the receiver
+      // of a static call, and that arrives through the `Call` and `Member` arms rather than here —
+      // so an `Ident` that names a struct and nothing else is one used where a value belongs.
+      if (!c.isDeclaredName(idn) && c.isStruct(idn) && c.funcAt(idn) < 0) {
+        c.report(errStructAsValue(), e.line, e.col);
+      }
     }
     // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
     // asked about. Both land on the `is`, which is this node's own position.
@@ -1442,7 +1471,7 @@ void checkExpr(C c, Expr e) {
       checkIndex(c, e, arr, index);
     }
     case Member(obj, nameTok): {
-      checkExpr(c, obj);
+      checkReceiver(c, obj);
       checkMember(c, e, obj, tokenText(c, nameTok));
     }
     // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
@@ -1470,7 +1499,7 @@ void checkExpr(C c, Expr e) {
               }
             }
           }
-          else { checkCall(c, name, args, e); }
+          else { checkCallee(c, name, args, named, e); }
         }
         else: { }
       }
@@ -1485,7 +1514,7 @@ void checkExpr(C c, Expr e) {
           // `p.inc()` as a field access to `inc` and call it a missing field, which is the method it
           // is about to check. The nullable rule still applies and is asked for separately, because
           // *"cannot call method on nullable"* is its own diagnostic.
-          checkExpr(c, obj);
+          checkReceiver(c, obj);
           checkThroughNullable(c, e, obj);
           checkMethodCall(c, e, obj, tokenText(c, nameTok), args);
         }
@@ -1590,6 +1619,67 @@ bool notBool(C c, Expr e) {
   if (lit != litNone()) { return lit != litBool(); }
   string t = typeOfExpr(c, e);
   return t != typeNone() && t != "bool";
+}
+
+/**
+ * What is being called, before anything about the arguments.
+ *
+ * Four answers, and only the first is a function: a **declared function**, a **local holding a
+ * funcref**, a **local holding something else** — which is not callable at all — and a name that is
+ * nothing, which is the undefined-name rule reaching call position. All three complaints land on the
+ * call, which is the only thing there is to name.
+ *
+ * A call through a funcref is checked for arity and no further: the parameter *types* are in the
+ * funcref's spelling and could be compared, but that needs the spelling taken apart again and the
+ * corpus does not distinguish it.
+ */
+void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
+  if (c.funcAt(name) >= 0) {
+    // `f { x: 1 }` — the named-argument syntax belongs to struct construction and nothing else.
+    if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    checkCall(c, name, args, call);
+    return;
+  }
+  if (c.isDeclaredName(name)) {
+    string t = c.typeOfName(name);
+    if (t == typeNone() || t == "") { return; }
+    if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    i32 arity = funcrefArity(t);
+    if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); }
+    return;
+  }
+  if (c.isEnum(name) || isPrimitiveName(name) || name == "string" || name == "bool") { return; }
+  c.report(errNotCallable(), call.line, call.col);
+}
+
+/**
+ * How many parameters a funcref type takes, or -1 when the type is not one.
+ *
+ * Counted from the spelling — `fn(i32, f64) -> void` — because the spelling *is* the type here. An
+ * empty parameter list is zero rather than one, which is the whole of the special case.
+ */
+i32 funcrefArity(string t) {
+  if (!startsWithFn(t)) { return -1; }
+  u8[] a = t.toBytes();
+  i32 depth = 0;
+  i32 n = 1;
+  bool empty = true;
+  for (i32 i = 3; i < a.len(); i++) {
+    if (a[i] == 41 && depth == 0) { break; }
+    if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+    if (a[i] != 32) { empty = false; }
+  }
+  return empty ? 0 : n;
+}
+
+/** Whether a type name is a funcref, which this spells `fn(` and nothing else does. */
+bool startsWithFn(string t) {
+  u8[] a = t.toBytes();
+  if (a.len() < 4) { return false; }
+  return a[0] == 102 && a[1] == 110 && a[2] == 40;
 }
 
 /**
@@ -1898,6 +1988,8 @@ bool hasDefault(C c, string t, i32 depth) {
   if (t == typeNone() || t == "") { return true; }
   if (depth > 16) { return false; }
   if (isNullableName(t) || isArrayName(t)) { return true; }
+  // A funcref has no zero: there is no function to point at until something points it somewhere.
+  if (startsWithFn(t)) { return false; }
   if (c.isEnum(t)) { return false; }
   if (!c.isStruct(t) || c.isGeneric(t)) { return true; }
   for (i32 i = 0; i < c.fieldCount; i++) {
@@ -2002,6 +2094,29 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
 }
 
 /**
+ * The object of a member access or a method call, which is not quite an ordinary expression.
+ *
+ * `P.mk()` and `f64.toBits(x)` put a **type name** in receiver position, and a type name is not a
+ * value — the struct-as-value rule would report every static call in the repo, which is exactly what
+ * it did. A receiver that is a bare name denoting a type is therefore not walked as an expression at
+ * all; anything else is.
+ */
+void checkReceiver(C c, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      // A local of that name shadows the type and is an ordinary value again.
+      if (!c.isDeclaredName(n) && (c.isStruct(n) || c.isEnum(n) || isPrimitiveName(n) ||
+          n == "string" || n == "bool")) {
+        return;
+      }
+    }
+    else: { }
+  }
+  checkExpr(c, obj);
+}
+
+/**
  * Reaching through a nullable without unwrapping it.
  *
  * `p.x` on a `P?` is refused even though `P` has an `x`: the value might not be there, and the
@@ -2029,7 +2144,11 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   if (isArrayName(t) || t == "string") { return; }
   if (c.isStruct(t)) {
     if (c.isGeneric(t)) { return; }
-    if (c.hasField(t, name) || c.methodAt(t, name) >= 0) { return; }
+    if (c.hasField(t, name)) { return; }
+    // A method reached as a *value*. This function is only asked about members that are not the
+    // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
+    // one that was named without being called, which the language does not allow.
+    if (c.methodAt(t, name) >= 0) { c.report(errMethodAsValue(), at.line, at.col); return; }
     c.report(errNoSuchField(), at.line, at.col);
     return;
   }
@@ -2096,6 +2215,25 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
     return;
   }
+  // `len()` is the one method an array and a string share, and it takes nothing.
+  if ((isArrayName(recv) || recv == "string") && name == "len") {
+    if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  // A method on something that has none. A primitive has no methods at all, and an array has only
+  // the builtins — so a name that is not one of those is missing rather than unknown. Reported at the
+  // **receiver**, which is where the reference puts this one: `x.toString()` names the `x`, unlike a
+  // struct's missing method, which names the call.
+  // **Numbers and booleans only.** An array's builtin surface is larger than `len` — `push`, `fill`,
+  // `copy` and more — and a string's has `slice` in it, and this has measured neither, so calling an
+  // unknown method on one missing reported 70 files and then 10. What is left is the half of the rule
+  // that can be stated without the measurement: a number has no methods at all, which is a fact
+  // rather than a list. `string` is in `isPrimitiveName` and has to be excluded by name, which is the
+  // whole trap — the predicate is about how a type is *passed*, not about what it can do.
+  if ((isPrimitiveName(recv) && recv != "string") || recv == "bool") {
+    c.report(errNoMethod(), obj.line, obj.col);
+    return;
+  }
   bool recvConst = !isStatic && constExpr(c, obj);
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
@@ -2155,15 +2293,52 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // takes `as!` — the checked spelling — and plain `as` is refused. Upcasting is silent: a `Circle`
   // is a `Shape` with nothing to check. Reported at the operator, like every other wrong-spelling
   // complaint in this family.
+  // A cast between two references, which is a different family from a numeric conversion: only `as`
+  // and `as!` mean anything, and which of the two is right is decided by the direction. Upcasting is
+  // always safe and takes `as`; downcasting can fail and takes `as!`; `as~` and `as@` are refused
+  // outright, because truncating and reinterpreting are questions about a bit pattern and a reference
+  // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
   if (c.isStruct(to)) {
     string sf = typeOfExpr(c, operand);
-    if (c.isStruct(sf) && descendsFrom(c, to, sf) && tokenKind(c, op) == kAs()) {
-      c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op));
+    if (!c.isStruct(sf)) { return; }
+    i32 rk = tokenKind(c, op);
+    bool down = descendsFrom(c, to, sf);
+    bool up = descendsFrom(c, sf, to);
+    if (rk == kAsTilde() || rk == kAsAt()) {
+      if (down || up) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+      return;
+    }
+    if (down && rk == kAs()) { c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op)); }
+    if (up && rk == kAsBang()) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+    return;
+  }
+  // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is
+  // lossless, going in is lossy, and any other source has no conversion at all whichever spelling is
+  // used. Handled here rather than in the numeric tables because it is not a primitive.
+  if (to == "i31ref") {
+    string i31from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+    if (i31from == typeNone() || i31from == "i31ref") { return; }
+    if (i31from != "i32") {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      return;
+    }
+    // `i32 -> i31ref` is the lossy direction: `as!` and `as~` carry it, `as` and `as@` do not.
+    i32 ik = tokenKind(c, op);
+    if (ik == kAs() || ik == kAsAt()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
     }
     return;
   }
   if (to == typeNone() || !isPrimitiveName(to) || isPackedName(to)) { return; }
   string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
+  // spelling that carries it, and every other one is a complaint at the operator.
+  if (from == "i31ref") {
+    if (to == "i32" && tokenKind(c, op) != kAs()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    }
+    return;
+  }
   if (from == typeNone() || !isPrimitiveName(from) || isPackedName(from)) { return; }
   i32 k = tokenKind(c, op);
   // A cast to the type it already is does nothing, and the language says so rather than allowing it

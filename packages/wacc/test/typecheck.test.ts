@@ -266,16 +266,20 @@ Deno.test("rung 3: a name this slice cannot resolve is silence, not a guess", ()
   // Shapes where the honest answer is nothing, and each would be easy to get wrong in the direction
   // that matters — a false diagnostic at a position the reference has no diagnostic for.
   //
-  // `return later;` used to be the first entry here, on the grounds that a name from outside the
-  // function was unknowable. It is not, and has not been since the checker gained a module scope:
-  // the reference calls it *"undefined variable 'later'"* and so do we, at its column. The premise
-  // aged out rather than the rule being wrong, which is a thing a QUIET list can do quietly.
+  // **Two of the four original entries have aged out**, and that is the interesting thing about this
+  // test now. `return later;` sat here on the grounds that a name from outside the function was
+  // unknowable — untrue since the checker gained a module scope. `other(a)` sat here as "needs an
+  // expression typer" — untrue since a call knows what it is calling. Both are now reported, at the
+  // reference's own columns.
+  //
+  // A QUIET list is a claim about the checker's *limits*, and limits move. Nothing warns you: the
+  // entry keeps passing, quietly asserting that a rule you have since written does not exist. What
+  // caught both was a recall corpus large enough to notice the case was missing.
   const QUIET = [
     // A local shadowing a parameter. wac scopes by block and this slice does not track blocks, so
     // the name is poisoned rather than resolved to whichever declaration was seen last.
     'export i32 sh(i32 a) { if (true) { string a = "x"; } return a; }',
-    // Anything that needs an expression typer.
-    "export i32 call(i32 a) { return other(a); }",
+    // An ordinary expression, which has no diagnostic in it at all.
     "export i32 arith(i32 a, i32 b) { return a + b; }",
   ];
   for (const src of QUIET) {
@@ -1904,6 +1908,100 @@ Deno.test("rung 3: operators, members, indexing and the questions they ask", () 
     // A void function returning nothing, and a value function returning one.
     "export void ok() { return; }",
     "export i32 ok2() { return 1; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
+
+/**
+ * Funcrefs, callability, and casts between references.
+ *
+ * A funcref becomes a real type the same way a generic instantiation did: **a type is its canonical
+ * name**, so it spells itself — `fn(i32) -> i32`, the reference's own wording — and two of them are
+ * the same type exactly when their spellings agree. There is no variance.
+ *
+ * The cast half is a family the numeric tables could not express. Between two references only `as`
+ * and `as!` mean anything, and which is right depends on the direction: upcasting is always safe and
+ * takes `as`, downcasting can fail and takes `as!`. `as~` and `as@` are refused outright, because
+ * truncating and reinterpreting are questions about a bit pattern and a reference has none to discuss.
+ */
+Deno.test("rung 3: funcrefs, what is callable, and casts between references", () => {
+  const SH = "struct Shape { f64 x; } struct Circle : Shape { f64 r; } ";
+  const CAUGHT = [
+    // A funcref is a type: two of them agree only when their spellings do, and it is not a number.
+    "export void bad(fn[i32(i32)] f) { fn[i32(bool)] g = f; }",
+    "export void bad(fn[i32(i32)] f) { i32 x = f + 1; }",
+    // Calling: through a funcref with the wrong count, through something that is not one, and a name
+    // that is nothing at all.
+    "export void bad(fn[void(i32)] f) { f(1, 2); }",
+    "export void bad(i32 x) { x(); }",
+    "export void bad() { missing(); }",
+    // Named-argument syntax belongs to struct construction and nothing else.
+    "export void bad(fn[void(i32)] f) { f { x: 1 }; }",
+    // A funcref has no zero, so a struct holding one has no default.
+    "struct S { fn[void()] cb; } export void bad() { S s = S(); }",
+    // Values that are not values: a struct's name, and a method named without being called.
+    "struct P { i32 x; } export void bad() { i32 x = P; }",
+    "struct Counter { i32 count; i32 get(const this) { return this.count; } } " +
+      "export void bad(Counter c) { i32 x = c.get; }",
+    // A number has no methods.
+    "export void bad(i32 x) { x.toString(); }",
+    // `len()` takes nothing, on an array or a string.
+    "export i32 bad(i32[] a) { return a.len(1); }",
+    "export i32 bad(string s) { return s.len(1); }",
+    // Reference casts: the wrong spelling in each direction, and the two that are never right.
+    SH + "export Shape bad(Circle c) { return c as! Shape; }",
+    SH + "export Circle bad(Shape s) { return s as Circle; }",
+    SH + "export Circle bad(Shape s) { return s as~ Circle; }",
+    SH + "export Shape bad(Circle c) { return c as@ Shape; }",
+    // `i31ref` pairs with `i32` and with nothing else.
+    "export i32 bad(i31ref r) { return r as! i32; }",
+    "export void bad(i64 x) { i31ref y = x as! i31ref; }",
+    "export void bad(bool x) { i31ref y = x as i31ref; }",
+    "export i31ref bad(i32 x) { return x as i31ref; }",
+  ];
+  const QUIET = [
+    // The same funcref, and a call through one with the right count.
+    "export void ok(fn[i32(i32)] f) { fn[i32(i32)] g = f; }",
+    "export void ok(fn[void(i32)] f) { f(1); }",
+    "export void ok(fn[void()] f) { f(); }",
+    // A declared function called normally, and a struct constructed with named arguments.
+    "i32 g(i32 a) { return a; } export i32 ok() { return g(1); }",
+    "struct P { i32 x; } export void ok() { P p = P { x: 1 }; }",
+    // A static receiver is a type name in expression position, not a struct used as a value — this
+    // is the shape that reported every static call in the repo when the rule was first written.
+    "struct P { i32 x; P mk() { return P(1); } } export i32 ok() { return P.mk().x; }",
+    "export u64 ok(f64 x) { return f64.toBits(x); }",
+    "enum E { A, B } export E ok() { return E.A; }",
+    // A method *called* is not a method used as a value.
+    "struct C { i32 n; i32 get(const this) { return this.n; } } export i32 ok(C c) { return c.get(); }",
+    // Methods on the types whose surface this has not measured: an array's and a string's.
+    "export i32 ok(i32[] a) { return a.len(); }",
+    "export i32 ok(string s) { return s.len(); }",
+    "export u8[] ok(string s) { return s.toBytes(); }",
+    // The right spelling in each cast direction.
+    SH + "export Shape ok(Circle c) { return c as Shape; }",
+    SH + "export Circle ok(Shape s) { return s as! Circle; }",
+    "export i32 ok(i31ref r) { return r as i32; }",
+    "export i31ref ok(i32 x) { return x as! i31ref; }",
   ];
   for (const src of CAUGHT) {
     const theirs = reference(src);
