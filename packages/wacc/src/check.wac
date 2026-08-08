@@ -67,43 +67,51 @@ export i32 errArgumentMismatch() { return 5; }
  * would distinguish them.
  */
 export i32 errNotBool() { return 6; }
+/** `==` or `!=` on a reference type, where the language wants `is`. */
+export i32 errNotComparable() { return 7; }
 
 /**
- * The primitive types, as ids. `primNone` is "this slice does not know".
+ * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
  *
- * Exact types rather than classes, because the language needs both and only one of them is a class.
- * A returned **name** must have the declared type exactly — `return p` where `p` is an `i64` is an
- * error from an `i32` function, and so is `f32` from `f64`. A returned **literal** is not a value of
- * some type that must match; it is polymorphic over a family, and the reference accepts an integer
- * literal from any of `i32 i64 u32 u64`.
+ * It was a small integer per primitive, which was enough while every type was a primitive and became
+ * the limit the moment structs mattered. A name costs a string compare where an id cost an integer
+ * one, and buys the whole rest of the type system for nothing: two struct types differ exactly when
+ * their names do, and "is this a reference type" is "is this name not a primitive".
  *
- * The first version of this slice modelled only the family, which is why it caught 58 of the 72
- * rejections in the parameter grid and missed exactly the fourteen within-family ones. Both rules are
- * needed and they are different rules.
+ * `""` is *unknown*, and unknown is silence. That is different from a type that exists and fits
+ * nothing — `u8` cannot be a return type at all — which is a primitive with a name like any other and
+ * is refused by `acceptsLiteral` and by never equalling anything a caller can produce.
  */
-export i32 primNone() { return 0; }
-export i32 primI32() { return 1; }
-export i32 primI64() { return 2; }
-export i32 primU32() { return 3; }
-export i32 primU64() { return 4; }
-export i32 primF32() { return 5; }
-export i32 primF64() { return 6; }
-export i32 primBool() { return 7; }
-export i32 primString() { return 8; }
+export string typeNone() { return ""; }
+
+/** Whether a name is one of the language's primitives, as opposed to a struct, enum or import. */
+export bool isPrimitiveName(string n) {
+  return n == "i32" || n == "i64" || n == "u32" || n == "u64" ||
+         n == "f32" || n == "f64" || n == "bool" || n == "string" ||
+         n == "u8" || n == "u16" || n == "i8" || n == "i16";
+}
+
 /**
- * `u8` `u16` `i8` `i16`: storage types, which WasmGC allows as array elements and nowhere else.
+ * Whether `==` and `!=` are allowed on this type.
  *
- * One id for all four because nothing distinguishes them here — none can be a return type, so the
- * answer for every literal and every name is the same refusal. Distinct from `primNone`, and the
- * distinction is the point: none means *say nothing*, packed means *nothing fits*.
- *
- * The signed pair was missing until the spec's rejection corpus was wired in, and it was the first
- * thing that corpus found: `[§wac-arr-i8-noreturn-k7fn2qp]` is `export i8 getByte() { return 0; }`,
- * which the reference rejects and this did not. The unsigned pair was here because those are the two
- * *I* thought of when deriving the grid by hand — which is the whole argument for having an oracle
- * that was not written by the same person as the code.
+ * They are not, on a reference type: the reference answers `'==' not allowed on reference type P —
+ * use 'is' for identity`, and it says so even when both sides are the same `P`, because the question
+ * is identity rather than equality. `string` is the exception the language makes — two strings
+ * compare by value — which is why this asks about the name rather than about reference-ness.
  */
-export i32 primPacked() { return 9; }
+/**
+ * Whether a function with this return type must return a value.
+ *
+ * `void` is the only type that means *no value*, and under the old id model it came back as "unknown"
+ * and so was excluded by accident. Now that a type is its name, `void` is a name like any other and
+ * has to be excluded on purpose — which is better, because the exclusion is now a statement about
+ * `void` rather than a side effect of not modelling it.
+ */
+export bool returnsAValue(string n) { return n != "" && n != "void"; }
+
+export bool comparableByValue(string n) {
+  return n == "" || n == "string" || isPrimitiveName(n);
+}
 
 /** The families a literal is polymorphic over. */
 export i32 litNone() { return 0; }
@@ -131,7 +139,7 @@ export struct C {
    * package will have. Rebuilt per function: a name means nothing outside the one that declared it.
    */
   string[] names;
-  i32[] prims;
+  string[] types;
   i32 nameCount;
   /**
    * Every function in the file, and the primitives of its parameters.
@@ -142,10 +150,13 @@ export struct C {
    * `funcParamCount` index into one shared `funcParamPrims`, which is the same shape `lex.wac` uses
    * for tokens and for the same reason.
    */
+  /** The structs declared in this file, so a name can be known to be a reference type. */
+  string[] structNames;
+  i32 structCount;
   string[] funcNames;
   i32[] funcParamAt;
   i32[] funcParamCount;
-  i32[] funcParamPrims;
+  string[] funcParamTypes;
   i32 funcCount;
   i32 funcParamTotal;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
@@ -153,8 +164,9 @@ export struct C {
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), i32[capacity](), 0,
-             string[capacity](), i32[capacity](), i32[capacity](), i32[capacity](), 0, 0,
+    return C(src, toks, string[capacity](), string[capacity](), 0,
+             string[capacity](), 0,
+             string[capacity](), i32[capacity](), i32[capacity](), string[capacity](), 0, 0,
              i32[capacity * 3](), 0);
   }
 
@@ -168,22 +180,22 @@ export struct C {
    * few names that are declared twice and keeps the checker a subset, which is the property
    * everything here depends on.
    */
-  void declare(this, string name, i32 prim) {
+  void declare(this, string name, string ty) {
     for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { this.prims[i] = primNone(); return; }
+      if (this.names[i] == name) { this.types[i] = typeNone(); return; }
     }
     if (this.nameCount >= this.names.len()) { return; }
     this.names[this.nameCount] = name;
-    this.prims[this.nameCount] = prim;
+    this.types[this.nameCount] = ty;
     this.nameCount = this.nameCount + 1;
   }
 
-  /** The primitive a name was declared with, or `primNone` for one this slice never saw. */
-  i32 primOfName(this, string name) {
+  /** The type a name was declared with, or `typeNone` for one this slice never saw. */
+  string typeOfName(this, string name) {
     for (i32 i = 0; i < this.nameCount; i++) {
-      if (this.names[i] == name) { return this.prims[i]; }
+      if (this.names[i] == name) { return this.types[i]; }
     }
-    return primNone();
+    return typeNone();
   }
 
   /**
@@ -194,20 +206,44 @@ export struct C {
    * its own diagnostic — so there is no ambiguity to be conservative about, only a program this
    * slice will not reach.
    */
-  void declareFunc(this, string name, i32[] paramPrims, i32 count) {
+  void declareFunc(this, string name, string[] paramTypes, i32 count) {
     for (i32 i = 0; i < this.funcCount; i++) {
       if (this.funcNames[i] == name) { return; }
     }
     if (this.funcCount >= this.funcNames.len()) { return; }
-    if (this.funcParamTotal + count > this.funcParamPrims.len()) { return; }
+    if (this.funcParamTotal + count > this.funcParamTypes.len()) { return; }
     this.funcNames[this.funcCount] = name;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = count;
     for (i32 i = 0; i < count; i++) {
-      this.funcParamPrims[this.funcParamTotal + i] = paramPrims[i];
+      this.funcParamTypes[this.funcParamTotal + i] = paramTypes[i];
     }
     this.funcParamTotal = this.funcParamTotal + count;
     this.funcCount = this.funcCount + 1;
+  }
+
+  /** Record a struct declared in this file. */
+  void declareStruct(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return; }
+    }
+    if (this.structCount >= this.structNames.len()) { return; }
+    this.structNames[this.structCount] = name;
+    this.structCount = this.structCount + 1;
+  }
+
+  /**
+   * Whether this name is a struct declared here.
+   *
+   * Deliberately narrower than "not a primitive". An enum, an imported type or a generic parameter is
+   * also not a primitive, and this slice has not measured what the reference says about comparing
+   * those — so they stay unknown rather than being swept in by a rule about everything else.
+   */
+  bool isStruct(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return true; }
+    }
+    return false;
   }
 
   /** Which entry holds this function, or -1. */
@@ -253,24 +289,24 @@ string tokenText(C c, i32 t) {
   return string.fromBytes(out);
 }
 
-/** The primitive a declared type names, or `primNone` for anything else. */
-export i32 primOfType(C c, Ty t) {
+/**
+ * The canonical name of a declared type, or `typeNone` for one this slice cannot name.
+ *
+ * `Prim` and `Named` are both just their token's text — `i32` and `P` are the same question once a
+ * type is a name. An array, a nullable or a funcref is unknown: they have names (`i32[]`, `P?`) that
+ * this could spell, and nothing here compares them yet, so spelling them would be inventing a
+ * capability the rules do not have.
+ */
+export string typeOfTy(C c, Ty t) {
   match (t.kind) {
-    case Prim(tok): {
-      string n = tokenText(c, tok);
-      if (n == "i32") { return primI32(); }
-      if (n == "i64") { return primI64(); }
-      if (n == "u32") { return primU32(); }
-      if (n == "u64") { return primU64(); }
-      if (n == "f32") { return primF32(); }
-      if (n == "f64") { return primF64(); }
-      if (n == "bool") { return primBool(); }
-      if (n == "string") { return primString(); }
-      if (n == "u8" || n == "u16" || n == "i8" || n == "i16") { return primPacked(); }
-      // `void` among others: a function returning void has no returned value to disagree with.
-      return primNone();
+    case Prim(tok): { return tokenText(c, tok); }
+    case Named(tok, typeArgs): {
+      // A generic instantiation is not the same type as its template, and this cannot spell the
+      // difference — `Box<i32>` and `Box<f64>` would both come back `Box`. Unknown instead.
+      if (typeArgs.len() > 0) { return typeNone(); }
+      return tokenText(c, tok);
     }
-    else: { return primNone(); }
+    else: { return typeNone(); }
   }
 }
 
@@ -287,35 +323,36 @@ export i32 litKindOf(Expr e) {
 }
 
 /**
- * Whether a declared primitive accepts a literal of this family.
+ * Whether a declared type accepts a literal of this family.
  *
  * The grid in `test/typecheck.test.ts` regenerates this from the reference on every run, so a
  * disagreement fails loudly rather than sitting here as a stale table.
  */
-export bool acceptsLiteral(i32 want, i32 lit) {
+export bool acceptsLiteral(string want, i32 lit) {
   if (lit == litInteger()) {
-    return want == primI32() || want == primI64() || want == primU32() || want == primU64();
+    return want == "i32" || want == "i64" || want == "u32" || want == "u64";
   }
-  if (lit == litFloat()) { return want == primF32() || want == primF64(); }
-  if (lit == litBool()) { return want == primBool(); }
-  if (lit == litString()) { return want == primString(); }
-  // No primitive is nullable. A `T?` is, and `primOfType` answers `primNone` for one, so a nullable
-  // declaration never reaches here — silence rather than a wrong refusal.
+  if (lit == litFloat()) { return want == "f32" || want == "f64"; }
+  if (lit == litBool()) { return want == "bool"; }
+  if (lit == litString()) { return want == "string"; }
+  // Nothing this slice can name is nullable. A `T?` is, and `typeOfTy` answers `typeNone` for one, so
+  // a nullable declaration never reaches here — silence rather than a wrong refusal. A struct is not
+  // nullable either: `P q = null;` is `expected P, got null`, which this now says.
   if (lit == litNull()) { return false; }
   return true;
 }
 
 /**
- * The primitive a non-literal expression has, or `primNone`.
+ * The type of a non-literal expression, or `typeNone`.
  *
  * Only a name, resolved against the parameters and locals of the function being checked. A call, a
  * member access or arithmetic still needs an expression typer, and silence is the honest answer for
  * all of them.
  */
-export i32 primOfExpr(C c, Expr e) {
+export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
-    case Ident(tok): { return c.primOfName(tokenText(c, tok)); }
-    else: { return primNone(); }
+    case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
+    else: { return typeNone(); }
   }
 }
 
@@ -458,6 +495,15 @@ void checkExpr(C c, Expr e) {
       // `&&` and `||` are the other rule: each operand must be a boolean on its own, which is a
       // different question from whether the two agree. Reported at the operator, where the reference
       // reports it, and a literal counts — `p && 1` is an error while `p && true` is not.
+      // `==` and `!=` on a struct: the language wants `is`, and says so even when both sides are the
+      // same struct, because the question is identity rather than equality. Checked before the
+      // same-type rule, which would otherwise say nothing about `P == P`.
+      if (k == kEq() || k == kNe()) {
+        if (c.isStruct(typeOfExpr(c, left)) || c.isStruct(typeOfExpr(c, right))) {
+          c.report(errNotComparable(), e.line, e.col);
+          return;
+        }
+      }
       if (k == kAndAnd() || k == kOrOr()) {
         if (notBool(c, left) || notBool(c, right)) {
           c.report(errNotBool(), e.line, e.col);
@@ -468,9 +514,9 @@ void checkExpr(C c, Expr e) {
       // A literal operand takes the other side's type, so `x + 1` is legal for any numeric `x` and
       // demanding they agree would report the code everybody writes.
       if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) { return; }
-      i32 a = primOfExpr(c, left);
-      i32 b = primOfExpr(c, right);
-      if (a == primNone() || b == primNone() || a == b) { return; }
+      string a = typeOfExpr(c, left);
+      string b = typeOfExpr(c, right);
+      if (a == typeNone() || b == typeNone() || a == b) { return; }
       c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }
@@ -501,8 +547,8 @@ void checkExpr(C c, Expr e) {
 bool notBool(C c, Expr e) {
   i32 lit = litKindOf(e);
   if (lit != litNone()) { return lit != litBool(); }
-  i32 prim = primOfExpr(c, e);
-  return prim != primNone() && prim != primBool();
+  string t = typeOfExpr(c, e);
+  return t != typeNone() && t != "bool";
 }
 
 /**
@@ -521,8 +567,8 @@ void checkCall(C c, string name, Expr[] args) {
   if (at < 0) { return; }
   if (c.funcParamCount[at] != args.len()) { return; }
   for (i32 i = 0; i < args.len(); i++) {
-    i32 want = c.funcParamPrims[c.funcParamAt[at] + i];
-    if (want == primNone()) { continue; }
+    string want = c.funcParamTypes[c.funcParamAt[at] + i];
+    if (want == typeNone()) { continue; }
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
       if (!acceptsLiteral(want, lit)) {
@@ -530,8 +576,8 @@ void checkCall(C c, string name, Expr[] args) {
       }
       continue;
     }
-    i32 got = primOfExpr(c, args[i]);
-    if (got != primNone() && got != want) {
+    string got = typeOfExpr(c, args[i]);
+    if (got != typeNone() && got != want) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
     }
   }
@@ -540,7 +586,7 @@ void checkCall(C c, string name, Expr[] args) {
 /** Every name a statement declares, however deeply nested. */
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): { c.declare(tokenText(c, nameTok), primOfType(c, type)); }
+    case Var(type, nameTok, init, isConst): { c.declare(tokenText(c, nameTok), typeOfTy(c, type)); }
     case Block(body): { declareAll(c, body); }
     case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
     case While(cond, body): { declareAll(c, body); }
@@ -586,8 +632,8 @@ void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
     // The same question one position over: a declared type, and something that has to fit it.
     case Var(type, nameTok, init, isConst): {
-      i32 wantVar = primOfType(c, type);
-      if (wantVar == primNone()) { return; }
+      string wantVar = typeOfTy(c, type);
+      if (wantVar == typeNone()) { return; }
       i32 litVar = litKindOf(init);
       if (litVar != litNone()) {
         if (!acceptsLiteral(wantVar, litVar)) {
@@ -595,16 +641,16 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
         return;
       }
-      i32 gotVar = primOfExpr(c, init);
-      if (gotVar != primNone() && gotVar != wantVar) {
+      string gotVar = typeOfExpr(c, init);
+      if (gotVar != typeNone() && gotVar != wantVar) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
       checkExpr(c, init);
     }
     case Return(value): {
       if (value is null) { return; }
-      i32 expected = primOfType(c, want);
-      if (expected == primNone()) { return; }
+      string expected = typeOfTy(c, want);
+      if (!returnsAValue(expected)) { return; }
       Expr e = value!;
       i32 lit = litKindOf(e);
       if (lit != litNone()) {
@@ -615,8 +661,8 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
-      i32 got = primOfExpr(c, e);
-      if (got != primNone() && got != expected) {
+      string got = typeOfExpr(c, e);
+      if (got != typeNone() && got != expected) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
       checkExpr(c, e);
@@ -652,9 +698,17 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   // further down. The same argument as collecting locals before walking a body, one scope up.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        c.declareStruct(tokenText(c, nameTok));
+      }
+      else: { }
+    }
+  }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        i32[] prims = i32[params.len()]();
-        for (i32 i = 0; i < params.len(); i++) { prims[i] = primOfType(c, params[i].type); }
+        string[] prims = string[params.len()]();
+        for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
         c.declareFunc(tokenText(c, nameTok), prims, params.len());
       }
       else: { }
@@ -669,13 +723,13 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // and so does this.
         c.clearScope();
         for (i32 i = 0; i < params.len(); i++) {
-          c.declare(tokenText(c, params[i].nameTok), primOfType(c, params[i].type));
+          c.declare(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type));
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
         // Reported at the declaration rather than at the closing brace, which is where the reference
         // puts it: the fault is the function's, not any one statement's.
-        if (primOfType(c, returnType) != primNone() && !alwaysLeaves(body)) {
+        if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(body)) {
           c.report(errMissingReturn(), prog.decls[d].line, prog.decls[d].col);
         }
       }

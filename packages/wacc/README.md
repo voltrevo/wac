@@ -363,9 +363,34 @@ That shape encodes the two obligations a subset checker actually has. What a rul
 at the reference's position. What it does not own must be silent — and there, *"the reference rejects
 this and we say nothing"* is a pass.
 
-Next: more of rung 3 — the struct and generic families, which need types beyond primitives, and the
-reference-type diagnostics for structs (`'==' not allowed on reference type P`), which need to know a
-name is a struct at all.
+### A type is its name
+
+The type model was a small integer per primitive. That was enough while every type was one, and the
+limit the moment structs mattered. **A type is now its canonical name** — `"i32"`, `"P"`, `""` for one
+this slice cannot spell — which costs a string compare where an id cost an integer one, and buys the
+rest of the type system: two struct types differ exactly when their names do, and *"is this a
+reference type"* is *"is this name not a primitive"*.
+
+The refactor alone moved coverage 16 → 17, with no new rule: `return q` from a `P` function and
+`Q q = p` are the existing rules meeting types they could not previously name.
+
+Then identity, which is new: `==` and `!=` are not allowed on a struct **even when both sides are the
+same struct**, because the question is identity rather than equality — the reference says
+`'==' not allowed on reference type P — use 'is' for identity`. `string` is the exception the language
+makes, so the rule asks about the name rather than about reference-ness. Restricted to structs
+declared in the file: an enum, an import or a generic parameter is also not a primitive, and nobody
+has measured what the reference says about those.
+
+**Spec coverage: 18 of 83**, from 16.
+
+One thing the refactor exposed rather than broke. `void` used to come back as *unknown* and so was
+excluded from the missing-return check by accident; now it is a name like any other and is excluded on
+purpose, by `returnsAValue`. The test that caught it was `"void nothing() { }"` — the exclusion was
+right all along and had never been stated.
+
+Next: more of rung 3 — arrays and nullables, which have names (`i32[]`, `P?`) this could spell and
+does not, and the generic families, where `Box<i32>` and `Box<f64>` are the same name and must stay
+unknown until they are not.
 
 ### What rung 3's oracle looks like, measured
 

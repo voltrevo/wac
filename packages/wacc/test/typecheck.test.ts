@@ -640,3 +640,63 @@ Deno.test("rung 3: operands and conditions that have to be boolean", () => {
     }
   }
 });
+
+/**
+ * Types that are not primitives.
+ *
+ * The checker's type model was a small integer per primitive, which was enough while every type was
+ * one. A type is its canonical **name** now — `"i32"`, `"P"`, `""` for unknown — which costs a string
+ * compare where an id cost an integer one and buys the rest of the type system: two struct types
+ * differ exactly when their names do.
+ *
+ * That alone made the return and initialiser rules work for structs, with no new rule. What is new is
+ * identity: `==` and `!=` are not allowed on a struct at all, *even when both sides are the same
+ * struct*, because the question is identity rather than equality. `string` is the exception the
+ * language makes, so the rule asks about the name rather than about reference-ness.
+ *
+ * Restricted to structs **declared in this file**. An enum, an imported type or a generic parameter
+ * is also not a primitive, and nobody has measured what the reference says about comparing those — so
+ * they stay unknown rather than being swept in by a rule about everything else.
+ */
+Deno.test("rung 3: struct types, and identity rather than equality", () => {
+  const D = "struct P { i32 x; } struct Q { i32 y; } ";
+  const CAUGHT = [
+    D + "export void a(P p, Q q) { bool r = p == q; }",
+    D + "export void b(P p, P q) { bool r = p == q; }",
+    D + "export void b2(P p, P q) { bool r = p != q; }",
+    D + "export P c(Q q) { return q; }",
+    D + "export void d(P p) { Q q = p; }",
+    D + "export void e2() { P p = null; }",
+  ];
+  const QUIET = [
+    D + "export void f(P p) { P q = p; }",
+    D + "export P g(P p) { return p; }",
+    // Two strings compare by value: the language's exception, and the reason this asks about the
+    // name rather than about reference-ness.
+    "export void h(string a, string b) { bool r = a == b; }",
+    // A void function has no value to return and must not be asked for one. Under the old model
+    // `void` came back as "unknown" and was excluded by accident; now it is excluded on purpose.
+    "export void i() { }",
+    "export void j(bool c) { if (c) { return; } }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
