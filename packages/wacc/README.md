@@ -449,8 +449,27 @@ Spec coverage holds at 18, for the fourth slot running. The corpus is 83 rejecti
 the *spec* chose to document, and it has stopped being the thing that measures progress here — worth
 saying, because a counter that does not move is easy to read as a checker that is not growing.
 
-Next: more of rung 3 — the nullable-to-non-null family, generics, and assignment statements, which are
-checked nowhere: `x = expr` has the same shape as an initialiser and none of the rules reach it.
+### Assignment, and the position a type is in
+
+The initialiser question with the declared type coming from the *target* rather than a `Ty` node, so
+it needed an lvalue walk — its own node family: a name, a field of one, an element of one, or an
+unwrapped nullable. `LIndex` is the one place a type gets narrower going down the tree (`i32[]` to
+`i32`) and `LUnwrap` the other (`T?` to `T`). Only plain `=`; a compound assignment is the operator's
+rule, which skips literals on purpose.
+
+**It reported 113 files on its first run**, all the same shape: `out[at] = 0` where `out` is `u8[]`.
+Storing an integer into a **packed array element** is the ordinary way every byte buffer in this
+repository is written — the `i32` truncates at the store — while `u8 x = 5;` as a local is genuinely
+an error. Those differ by *position*, not by type, and every rule here had been written from the
+return-type grid where packed accepts nothing. Packed targets are silent now, because what the
+reference accepts beyond truncation has not been measured.
+
+That is the lesson worth keeping from this slot: a rule derived in one position is not a rule about
+the type. The grids that built this checker all asked about return types, and the answer they gave is
+narrower than it looked.
+
+Next: more of rung 3 — the nullable-to-non-null family, generics, and the `is`/cast expressions, which
+are typed nowhere.
 
 ### What rung 3's oracle looks like, measured
 

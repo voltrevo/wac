@@ -35,10 +35,10 @@
 import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
-  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr,
+  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign,
 } from "./kinds.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
+  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -155,6 +155,19 @@ export bool assignable(string want, string got) {
 
 /** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
 bool isArrayName(string n) { return endsWith(n, "[]"); }
+
+/**
+ * The storage types, which WasmGC allows as array elements and nowhere else.
+ *
+ * The distinction that matters is **position**, and it took a false alarm on 113 files to see it.
+ * `u8 x = 5;` is an error — a packed type cannot be a local — while `bytes[i] = 5;` is the ordinary
+ * way every byte buffer in this repository is written, because there the `u8` is an array element and
+ * an `i32` truncates into it at the store. A rule about the type alone cannot tell those apart, and
+ * the one here was written from the return-type grid, where packed accepts nothing.
+ */
+bool isPackedName(string n) {
+  return n == "u8" || n == "u16" || n == "i8" || n == "i16";
+}
 
 export bool comparableByValue(string n) {
   return n == "" || n == "string" || isPrimitiveName(n);
@@ -468,6 +481,33 @@ export bool acceptsLiteral(string want, i32 lit) {
  * member access or arithmetic still needs an expression typer, and silence is the honest answer for
  * all of them.
  */
+/**
+ * The type an assignment target has, or `typeNone`.
+ *
+ * The same walk as `typeOfExpr` over a different node family, because an lvalue is its own tree: a
+ * name, a field of one, an element of one, or an unwrapped nullable. `LUnwrap` is `x!`, which is the
+ * `T` inside a `T?` — the one place a type gets *narrower* going down the tree.
+ */
+export string typeOfLvalue(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return c.typeOfName(tokenText(c, tok)); }
+    case LField(base, nameTok): {
+      string owner = typeOfLvalue(c, base);
+      if (owner == typeNone()) { return typeNone(); }
+      return c.fieldType(owner, tokenText(c, nameTok));
+    }
+    case LIndex(base, index): {
+      string arr = typeOfLvalue(c, base);
+      if (!isArrayName(arr)) { return typeNone(); }
+      return dropLast(arr, 2);
+    }
+    case LUnwrap(base): {
+      string inner = withoutNull(typeOfLvalue(c, base));
+      return inner == "" ? typeNone() : inner;
+    }
+  }
+}
+
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
@@ -772,6 +812,34 @@ void checkAll(C c, Stmt[] body, Ty want) {
 /** Every `return` in a statement, however deeply nested, checked against `want`. */
 void checkStmt(C c, Stmt s, Ty want) {
   match (s.kind) {
+    /**
+     * An assignment, which is the initialiser question with the declared type coming from the target
+     * rather than from a `Ty` node.
+     *
+     * Only plain `=`. A compound assignment (`n += 1`) is the operator's rule rather than this one —
+     * the reference accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two
+     * would report the literal cases that rule deliberately skips.
+     */
+    case Assign(target, op, rhs): {
+      checkExpr(c, rhs);
+      if (tokenKind(c, op) != kAssign()) { return; }
+      string wantTo = typeOfLvalue(c, target);
+      if (wantTo == typeNone()) { return; }
+      // A packed target is an array element by construction — nothing else can have that type — and
+      // an integer truncates into one at the store. What the reference accepts beyond that is not
+      // measured, so this says nothing about packed targets at all.
+      if (isPackedName(wantTo)) { return; }
+      i32 litTo = litKindOf(rhs);
+      if (litTo != litNone()) {
+        if (!acceptsLiteral(wantTo, litTo)) {
+          c.report(errInitTypeMismatch(), rhs.line, rhs.col);
+        }
+        return;
+      }
+      if (!assignable(wantTo, typeOfExpr(c, rhs))) {
+        c.report(errInitTypeMismatch(), rhs.line, rhs.col);
+      }
+    }
     // The same question one position over: a declared type, and something that has to fit it.
     case Var(type, nameTok, init, isConst): {
       string wantVar = typeOfTy(c, type);

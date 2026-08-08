@@ -862,3 +862,57 @@ Deno.test("rung 3: method bodies, and this", () => {
     }
   }
 });
+
+/**
+ * Assignment, which no rule reached.
+ *
+ * The initialiser question with the declared type coming from the *target* rather than from a `Ty`
+ * node — so it needed an lvalue walk, which is its own node family: a name, a field of one, an
+ * element of one, or an unwrapped nullable. `LIndex` is the one place a type gets narrower going
+ * down the tree (`i32[]` to `i32`), and `LUnwrap` the other (`T?` to `T`).
+ *
+ * Only plain `=`. A compound assignment is the operator's rule rather than this one — the reference
+ * accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two would report the
+ * literal cases that rule deliberately skips.
+ */
+Deno.test("rung 3: assignment, through names, fields and elements", () => {
+  const D = "struct P { i32 x; string s; } ";
+  const CAUGHT = [
+    "export void a(i32 n, string t) { n = t; }",
+    "export void c(i32 n) { n = 1.5; }",
+    "export void f(i32 n, i64 m) { n = m; }",
+    D + "export void d(P p, string t) { p.x = t; }",
+    "export void e2(i32[] a, string t) { a[0] = t; }",
+    D + "export void h(P p, i32 n) { p.s = n; }",
+  ];
+  const QUIET = [
+    "export void b(i32 n) { n = 5; }",
+    "export void i(i64 n) { n = 5; }",
+    "export void j(i32 n, i32 m) { n = m; }",
+    D + "export void k(P p) { p.x = 1; }",
+    "export void l(i32[] a) { a[0] = 1; }",
+    // Compound assignment belongs to the operator rule, which skips literals on purpose.
+    "export void g(i32 n) { n += 1; }",
+    "export void m(i32 n, i32 o) { n += o; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
