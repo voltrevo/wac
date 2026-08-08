@@ -466,3 +466,49 @@ Deno.test("rung 3: a variable's initialiser against its declared type", () => {
     }
   }
 });
+
+/**
+ * The operands of `+ - * / %`, which must be the same type.
+ *
+ * Only those five, and the restraint is the point. Shifts deliberately accept mixed widths —
+ * `i64 << i32` is legal, and the friction log records a compiler bug from assuming otherwise — while
+ * `&& || & | ^` and the comparisons answer *differently worded* diagnostics when their operands
+ * disagree, which a comparison by code would merge with this one. The operators left out cost recall
+ * rather than correctness.
+ *
+ * A literal operand is skipped rather than typed: `x + 1` is legal for any numeric `x`, because the
+ * literal takes the other side's type. Demanding they agree would report the code everybody writes.
+ */
+Deno.test("rung 3: arithmetic operands, and the operators deliberately left alone", () => {
+  const CASES = [
+    "export f64 bad(i32 x, f64 y) { return x + y; }",
+    "export void b2(i32 x, i64 y) { i32 r = x - y; }",
+    "export void b3(f64 x, i32 y) { f64 r = x * y; }",
+    // Accepted, and each is a way this could be wrong in the other direction.
+    "export i32 ok(i32 x, i32 y) { return x + y; }",
+    "export i32 lit(i32 x) { return x + 1; }",
+    "export void sh(i64 a, i32 b) { i64 r = a << b; }",
+    "export void sh2(i32 a, i32 b) { i32 r = a >> b; }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src).filter((e) => e.message.includes("type mismatch in"));
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      if (mine.length !== 0) {
+        throw new Error(`the reference has no operand complaint about ${JSON.stringify(src)} ` +
+          `and we report ${mine.join(", ")}`);
+      }
+      continue;
+    }
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects the operands of ${JSON.stringify(src)} and we said ` +
+        "nothing: " + theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+});
