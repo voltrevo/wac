@@ -79,7 +79,7 @@ export bool refuseFlags(Core core, Args a) {
  * though the applet never names it with `has`.
  */
 export string implementedFlags(string name) {
-  if (name == "base32" || name == "base64") { return "d"; }
+  if (name == "base32" || name == "base64") { return "dw"; }
   if (name == "cat") { return "AETbenstv"; }
   if (name == "cut") { return "bcdf"; }
   if (name == "grep") { return "Ecinqvx"; }

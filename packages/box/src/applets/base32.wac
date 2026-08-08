@@ -27,7 +27,15 @@ export i32 base32(Core core, Cli cli, Fs fs, Args a) {
     cli.write(out!);
     return 0;
   }
-  cli.write(withNewline(b32(in.bytes, ALPHABET_STANDARD(), true)));
+  // **Wrapped at 76 columns, and nothing at all for empty input** — both GNU's, and neither was here:
+  // this wrote one long line, and answered a bare newline for no input where GNU answers nothing. The
+  // decoder's own comment said "its own encoder wraps at 76 columns and this one ends with a newline",
+  // so the difference was known and written down rather than fixed.
+  //
+  // `-w N` sets the width and `-w 0` turns wrapping off, which is why this is a number rather than a
+  // flag. A `0` has to be distinguishable from "not given", which is what `hasNum` is for.
+  i32 width = a.hasNum ? a.num : 76;
+  cli.write(wrapped(b32(in.bytes, ALPHABET_STANDARD(), true), width));
   return 0;
 }
 
@@ -45,6 +53,26 @@ u8[] withoutSpace(u8[] text) {
     i32 c = text[i];
     if (c == 32 || c == 9 || c == 10 || c == 13) { continue; }
     out.push(c);
+  }
+  return out.take();
+}
+
+/**
+ * `text` in lines of `width`, each with a newline — or, when `width` is 0, one line with **no** newline.
+ *
+ * That last part is measured rather than guessed: `base64 -w 0` writes exactly the encoding and stops,
+ * while the wrapped form ends every line including the last. Empty text produces nothing either way, not
+ * a newline — a program that wrote one would put a stray blank line in the middle of anything
+ * concatenating its output.
+ */
+u8[] wrapped(u8[] text, i32 width) {
+  if (text.len() == 0) { return u8[0](); }
+  if (width <= 0) { return text; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < text.len(); i = i + width) {
+    i32 end = i + width < text.len() ? i + width : text.len();
+    out.pushBytes(text, i, end - i);
+    out.push(10);
   }
   return out.take();
 }

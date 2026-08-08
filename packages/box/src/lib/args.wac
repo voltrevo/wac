@@ -248,6 +248,7 @@ bool takesNumber(string name, i32 letter) {
   if (name == "shuf" || name == "strings") { return letter == 'n'; }
   if (name == "fold") { return letter == 'w'; }
   if (name == "split") { return letter == 'l'; }
+  if (name == "base64" || name == "base32") { return letter == 'w'; }
   return false;
 }
 
@@ -284,6 +285,7 @@ bool takesValue(string name, i32 letter) {
   if (name == "cut") { return letter == 'd' || letter == 'f' || letter == 'b' || letter == 'c'; }
   if (name == "fold") { return letter == 'w'; }
   if (name == "split") { return letter == 'l'; }
+  if (name == "base64" || name == "base32") { return letter == 'w'; }
   return false;
 }
 

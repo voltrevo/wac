@@ -84,6 +84,16 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
     Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);
     bool inWord = false;
+    // **A run of non-whitespace is only a word if something in it is printable**, which is GNU's rule
+    // and not the obvious one: `printf '\001\002' | wc -w` is 0, and `a \377 b` is *two* words rather
+    // than three. Counting every run made `wc -w` disagree with the real one on any input that is not
+    // text — and nothing had asked, because every case anyone had written was text.
+    //
+    // Measured in the C locale, which is what this machine has (`locale -a`: C, C.utf8, POSIX) and what
+    // every differential here runs under. GNU in a UTF-8 locale counts `é` as a word and this counts it
+    // as none; there is no such locale to compare against, so that difference is stated rather than
+    // guessed at.
+    bool printable = false;
     // A read that fails part way is a different thing from one that never opened, and GNU words the
     // difference in the output as well as in the message: a **directory** gets a row of zeroes, because
     // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
@@ -97,10 +107,21 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
       for (i32 i = 0; i < data.len(); i++) {
         i32 b = data[i];
         if (b == '\n') { one.lines++; }
-        bool space = b == ' ' || b == '\n' || b == '\t' || b == '\r';
-        if (space) { inWord = false; } else if (!inWord) { inWord = true; one.words++; }
+        bool space = b == ' ' || b == '\n' || b == '\t' || b == '\r' || b == 11 || b == 12;
+        if (space) {
+          // Counted at the *end* of a run rather than at its start, because whether it is a word is not
+          // known until the run is over.
+          if (inWord && printable) { one.words++; }
+          inWord = false;
+          printable = false;
+        } else {
+          inWord = true;
+          if (b >= 33 && b < 127) { printable = true; }
+        }
       }
     }
+    // The last run, which no space closed.
+    if (inWord && printable) { one.words++; }
     // Printed here rather than collected: the width is already known, and a complaint about the next
     // operand must not arrive before this line.
     if (unread) {

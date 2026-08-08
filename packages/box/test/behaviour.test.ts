@@ -37,6 +37,16 @@ const CASES = [
   "rev words.txt", "rev nonl.txt", "basename /a/b/c.txt .txt", "dirname /a/b/c.txt",
   "seq 5", "seq 2 6", "seq 1 3 10", "seq -1 1", "seq 5 1",
   "sha256sum nonl.txt", "base64 nonl.txt", "base32 nonl.txt",
+  // **Bytes that are not text**, which every case above is. Found by feeding the applets NUL bytes,
+  // invalid UTF-8, no trailing newline and 5000-character lines and comparing the *bytes*: `wc -w`
+  // counted a run of unprintable bytes as a word where GNU counts none, and `base64` wrote one long
+  // line where GNU wraps at 76 columns and wrote a newline for empty input where GNU writes nothing.
+  "wc -w bin.txt", "wc bin.txt", "wc -w ctrl.txt", "wc -w hi.txt",
+  "base64 long.txt", "base64 -w 10 words.txt", "base64 -w 0 long.txt", "base64 empty.txt",
+  "base32 long.txt", "base32 -w 0 words.txt", "base32 empty.txt",
+  "base64 bin.txt", "base64 hi.txt", "cat hi.txt", "sha256sum hi.txt", "sha256sum empty.txt",
+  "head -1 hi.txt", "tail -1 hi.txt", "tac hi.txt", "sort hi.txt", "cut -c1-2 hi.txt",
+  "tr a-z A-Z < hi.txt", "nl hi.txt", "fold -w3 hi.txt", "uniq hi.txt",
   "split -l 10 long.txt part; ls part*; rm -f part*",
   "shuf -n 0 long.txt", "strings -n 2 bin.txt",
 ];
@@ -68,6 +78,10 @@ Deno.test({
       await w("long.txt", Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
       await w("bin.txt", "a\x00b\x01c\n");
       await w("nonl.txt", "no newline");
+      await w("empty.txt", "");
+      // Not `writeTextFile`: these are the bytes a text encoder would not survive, which is the point.
+      await Deno.writeFile(`${dir}/hi.txt`, Uint8Array.from([0x80, 0x81, 0xff, 0x0a, 0x61, 0xff, 0x62, 0x0a]));
+      await Deno.writeFile(`${dir}/ctrl.txt`, Uint8Array.from([0x01, 0x02, 0x0a, 0x01, 0x61, 0x0a]));
 
       const run = async (cmd: string, script: string) => {
         const r = await new Deno.Command(cmd, {
