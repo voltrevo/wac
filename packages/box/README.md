@@ -1,6 +1,6 @@
 # box — a busybox, written in wac
 
-62 applets in one program, chosen by the first argument — 61 tools and `help`, which prints the list. No TypeScript: `src/` is
+63 applets in one program, chosen by the first argument — 62 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
 That number is a digit rather than a word because it kept going stale: it said fifty-nine when
@@ -22,7 +22,7 @@ cat README.md | ./box sort -u | ./box wc -l
 
 ```
 base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
-fold fsdump get gets grep gunzip gzip head hex httpd json ls mkdir mv nl paste
+fold fsdump get gets grep gunzip gzip head hex httpd init json ls mkdir mv nl paste
 nc ps rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
 strings tac tail
 tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd

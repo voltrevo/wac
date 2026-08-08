@@ -127,6 +127,21 @@ Deno.test("an image written on one host is the same system on the other", async 
   const read = session(native, [manifest], img, "ls /home/ada; cat /home/ada/note; sort -nr /home/ada/n | head -1; wc -l < /etc/passwd");
   assertEquals(read.out, "n\nnote\nhello from deno\n5\n2\n", read.err);
 
+  // **Two and a half: the system's *services*, from the same file.** design/0001 step 7 — what runs at
+  // boot is `/etc/init` in the image, so `init` on the other host starts what this one wrote down.
+  // Everything about it crosses: the parsing, the spawning, the relayed output and the statuses.
+  const wroteInit = session(deno, [], img, "printf 'echo from the init file\nfalse\n' > /etc/init; wc -l < /etc/init");
+  assertEquals(wroteInit.out, "2\n", wroteInit.err);
+  const booted = session(native, [manifest], img, "init; echo status=$?");
+  assertEquals(booted.out.split("\n").filter((l) => l.length > 0), [
+    "init: started echo",
+    "init: started false",
+    "from the init file",
+    "init: echo exited 0",
+    "init: false exited 1",
+    "status=1",
+  ], booted.err);
+
   // **Three.** And back the other way, which is the half that would be missing if only one host could
   // write: the format is not "what Deno emits and wasmtime tolerates".
   const wrote = session(native, [manifest], img, "echo written by wasmtime > /home/ada/back; ls /home/ada");

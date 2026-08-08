@@ -49,6 +49,7 @@ import { gunzip } from "./applets/gunzip.wac";
 import { gzip } from "./applets/gzip.wac";
 import { head } from "./applets/head.wac";
 import { hex } from "./applets/hex.wac";
+import { init } from "./applets/init.wac";
 import { httpd } from "./applets/httpd.wac";
 import { json } from "./applets/json.wac";
 import { ls } from "./applets/ls.wac";
@@ -146,6 +147,7 @@ export i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
   // success is a reasonable thing to write.
   if (applet == "help" || applet == "--help" || applet == "-h") { usage(core); return 0; }
   if (applet == "hex")       { return hex(core, cli, fs, a); }
+  if (applet == "init")      { return init(core, cli, fs, a); }
   if (applet == "httpd")     { return httpd(core, cli, fs, a); }
   if (applet == "json")      { return json(core, cli, fs, a); }
   if (applet == "ls")        { return ls(core, cli, fs, a); }
@@ -204,7 +206,7 @@ export string[] appletNames() {
   return string[](
     "base32", "base64", "basename", "cat", "cp", "crc32", "cut", "date", "diff", "dirname",
     "du", "echo", "false", "find", "fold", "fsdump", "get", "gets", "grep", "gunzip", "gzip", "head",
-    "help", "hex", "httpd", "json", "ls", "mkdir", "mv", "nc", "nl", "paste", "ps", "rev", "rm", "rmdir",
+    "help", "hex", "httpd", "init", "json", "ls", "mkdir", "mv", "nc", "nl", "paste", "ps", "rev", "rm", "rmdir",
     "seq", "serve", "sha256sum", "sha512sum", "shuf", "sort", "split", "sponge", "stat",
     "strings", "tac", "tail", "tar", "tee", "touch", "tr", "true", "uniq", "unzstd",
     "urldecode", "urlencode", "uuid", "wc", "wget", "yes", "zstd"
