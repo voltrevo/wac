@@ -225,5 +225,37 @@ export function generateEmit(): Cell[] {
     `enum W { Add(i32 lhs, i32 rhs), Neg(i32 lhs) }\n` +
     `export i32 f() { W w = W.Add(3, 4); match (w) { case Add(a, b): return a + b; ` +
     `case Neg(a): return 0 - a; } }`);
+
+  // Nullable references, which are the same wasm type as the ones that are not: what varies is
+  // whether the value is there, so every cell is generated in both states and the pair is the point.
+  for (const t of ["i32", "f64", "string"]) {
+    const some = t === "string" ? `"abc"` : t === "f64" ? `1.5` : `7`;
+    const arr = t === "string" ? `string[]` : `${t}[]`;
+    add(`null ${t} array is null`, `export bool f() { ${arr}? a = null; return a is null; }`);
+    add(`null ${t} array is not null`,
+      `export bool f() { ${arr}? a = ${arr}(${some}, ${some}); return a is null; }`);
+    add(`null ${t} array unwrapped`,
+      `export i32 f() { ${arr}? a = ${arr}(${some}, ${some}); return a!.len(); }`);
+    add(`null ${t} struct is null`,
+      `struct P { ${t} v; }\nexport bool f() { P? p = null; return p is null; }`);
+    add(`null ${t} struct unwrapped`,
+      t === "string"
+        ? `struct P { ${t} v; }\nexport i32 f() { P? p = P(${some}); return p!.v.len(); }`
+        : `struct P { ${t} v; }\nexport ${t} f() { P? p = P(${some}); return p!.v; }`);
+    add(`null ${t} guarded`,
+      `struct P { ${t} v; }\nexport bool f() { P? p = null; if (p is null) { return true; } ` +
+      `return p!.v == ${some}; }`);
+    add(`null ${t} from a function`,
+      `struct P { ${t} v; }\nP? mk(bool y) { if (y) { return P(${some}); } return null; }\n` +
+      `export bool f() { return (mk(false) is null) && !(mk(true) is null); }`);
+    add(`null ${t} in a field`,
+      `struct N { ${t} v; N? next; }\nexport bool f() { N tail = N(${some}, null); ` +
+      `N head = N(${some}, tail); return (tail.next is null) && !(head.next is null); }`);
+    add(`null ${t} identity`,
+      `struct P { ${t} v; }\nexport bool f() { P a = P(${some}); P b = a; P c = P(${some}); ` +
+      `return (a is b) && !(a is c); }`);
+    add(`null ${t} ternary`,
+      `export i32 f() { ${arr}? a = null; return a is null ? 5 : a!.len(); }`);
+  }
   return out;
 }

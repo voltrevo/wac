@@ -1065,6 +1065,16 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
       string inner = typeOfTyName(src, lexed, elem);
       return inner == "" ? "" : inner + "[]";
     }
+    // **`T?` is `T`**, which is free here for the reason `array.new_default` forced two slots ago:
+    // every reference this emitter writes is the nullable `0x63`, so a type that admits null and one
+    // that does not are already the same wasm type and the difference is the checker's to keep. A
+    // nullable *primitive* is not — there is no null `i32` — and comes back unspelled.
+    case Nullable(inner): {
+      match (inner.kind) {
+        case Prim(tok): { return ""; }
+        else: { return typeOfTyName(src, lexed, inner); }
+      }
+    }
     else: { return ""; }
   }
 }
@@ -1912,6 +1922,22 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     // `s is Circle` is a **tag comparison**. No cast and no test instruction: a variant and its enum
     // are the same wasm type here, so what distinguishes them is the value in slot 0 and nothing else.
     case Is(left, target, other, negated): {
+      // Three tests share one node, and which one it is comes from what is present: a type, a value,
+      // or neither, which is `x is null`.
+      if ((target is null) && (other is null)) {
+        emitExpr(fb, src, lexed, env, left);
+        fb.byte(209);   // ref.is_null
+        if (negated) { fb.byte(69); }   // i32.eqz
+        return;
+      }
+      if (!(other is null)) {
+        string lt2 = typeOfE(src, lexed, env, left);
+        emitExprAt(fb, src, lexed, env, left, lt2);
+        emitExprAt(fb, src, lexed, env, other!, lt2);
+        fb.byte(211);   // ref.eq — identity, which is what `is` means between two values
+        if (negated) { fb.byte(69); }
+        return;
+      }
       if (target is null) { return; }
       i32 vi = env.variantAt(typeOfTyName(src, lexed, target!));
       if (vi < 0) { return; }
@@ -1930,6 +1956,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     case MatchExpr(subject, arms): {
       emitMatchExpr(fb, src, lexed, env, subject, arms, want);
+    }
+    case NullLit: {
+      if (isArrayType(want) || want == "string" || env.isStructName(want)) {
+        emitDefault(fb, env, want);
+      }
+    }
+    // `x!` asserts and **traps** where the assertion fails. Emitting nothing would be the same value
+    // with the same type — our references are all nullable — and a different answer: the reference
+    // traps on a null and silence would return one.
+    case Unwrap(operand): {
+      emitExpr(fb, src, lexed, env, operand);
+      fb.byte(212);   // ref.as_non_null
     }
     case Ternary(cond, then, els): {
       // **The branches' type, not `i32`.** A block that produces a value declares which, and this
@@ -2039,6 +2077,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       return typeOfE(src, lexed, env, right);
     }
     case Is(left, target, other, negated): { return "bool"; }
+    case Unwrap(operand): { return typeOfE(src, lexed, env, operand); }
     case MatchExpr(subject, arms): {
       // **With the arm's names in scope.** An arm whose value is its own binding — `case B(x): x`,
       // which is most of them — is untyped to anyone who cannot see `x`, and a match whose type is
@@ -2570,7 +2609,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case Var(type, nameTok, init, isConst): {
       string t = typeOfTyName(src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
-      string r0 = unsupportedValue(src, lexed, env, init);
+      string r0 = unsupportedValueAt(src, lexed, env, init, t);
       if (r0 != "") { return r0; }
       // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
@@ -2599,7 +2638,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
     case Return(value): {
       if (value is null) { return ""; }
-      return unsupportedValue(src, lexed, env, value!);
+      return unsupportedValueAt(src, lexed, env, value!, env.returnType);
     }
     case ExprStmt(e): {
       string r = unsupportedExpr(src, lexed, env, e);
@@ -2698,6 +2737,30 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
  * Separate from `unsupportedExpr` because a call in statement position legitimately has no type — a
  * `void` function returns nothing, and demanding one there would decline every effectful call.
  */
+/** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
+bool isRefType(Env env, string t) {
+  return isArrayType(t) || t == "string" || env.isStructName(t);
+}
+
+/**
+ * A value **for a known slot**, which is the only way `null` can be asked about.
+ *
+ * `null` has no type of its own, so whether it can be emitted is a question about where it is going,
+ * and the walk answers questions with no `want` in hand. The sites that do know one — an
+ * initialiser, an argument, a field — ask through here; everywhere else `null` stays declined, which
+ * is conservative in the direction that matters. Approving it everywhere and emitting it only where
+ * the type was a reference is how nine corpus modules came back with *"not enough arguments on the
+ * stack for struct.new"*: the argument had emitted nothing at all.
+ */
+string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
+  match (e.kind) {
+    case NullLit: {
+      return isRefType(env, want) ? "" : "a null in a slot that is not a reference";
+    }
+    else: { return unsupportedValue(src, lexed, env, e); }
+  }
+}
+
 string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
   string r = unsupportedExpr(src, lexed, env, e);
   if (r != "") { return r; }
@@ -2731,6 +2794,9 @@ bool isLiteral(Expr e) {
     case IntLit(tok): { return true; }
     case FloatLit(tok): { return true; }
     case BoolLit(value): { return true; }
+    // `null` takes its type from the slot exactly as `0` does — it is context-typed rather than
+    // untyped, which is why the emitter can give it the wanted reference type and why the guard that
+    // declines an expression of unknown type is not about it.
     case NullLit: { return true; }
     case Unary(op, operand): { return isLiteral(operand); }
     // Both sides literal *and of the same family*. `1 / 2.0` is two literals and not one type: the
@@ -2855,20 +2921,23 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (env.isStructName(n)) {
             i32 want = env.fieldCountOf(n);
             if (args.len() != 0 && args.len() != want) { return "a construction with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a = unsupportedValueAt(src, lexed, env, args[i], env.fieldTypeAt(n, i));
+              if (a != "") { return a; }
+            }
+            return "";
           }
-          if (!env.isStructName(n)) {
-            i32 fa = env.funcAt(n);
-            if (fa < 0) { return "a call to something unknown"; }
-            if (!env.funcOk[fa]) { return "a call to something this slice cannot emit"; }
+          i32 fa = env.funcAt(n);
+          if (fa < 0) { return "a call to something unknown"; }
+          if (!env.funcOk[fa]) { return "a call to something this slice cannot emit"; }
+          for (i32 i = 0; i < args.len(); i++) {
+            string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(fa, i));
+            if (a != "") { return a; }
           }
+          return "";
         }
         else: { return "a construction kind"; }
       }
-      for (i32 i = 0; i < args.len(); i++) {
-        string a = unsupportedValue(src, lexed, env, args[i]);
-        if (a != "") { return a; }
-      }
-      return "";
     }
     case Call(callee, args): {
       match (callee.kind) {
@@ -2896,7 +2965,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             if (sa < 0) { return "no static " + owner + "." + mn; }
             if (!env.funcOk[sa]) { return "a static this slice cannot emit"; }
             for (i32 i = 0; i < args.len(); i++) {
-              string a = unsupportedValue(src, lexed, env, args[i]);
+              string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(sa, i));
               if (a != "") { return a; }
             }
             return "";
@@ -2921,7 +2990,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
           for (i32 i = 0; i < args.len(); i++) {
-            string a = unsupportedValue(src, lexed, env, args[i]);
+            // A method's parameters start after the receiver, which is its first parameter here.
+            string a = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ma, i + 1));
             if (a != "") { return a; }
           }
           return "";
@@ -2931,6 +3001,21 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     case Incr(target, op, prefix): { return "increment as an expression"; }
     case Is(left, target, other, negated): {
+      if ((target is null) && (other is null)) {
+        string nl = unsupportedValue(src, lexed, env, left);
+        if (nl != "") { return nl; }
+        string nt = typeOfE(src, lexed, env, left);
+        return isArrayType(nt) || nt == "string" || env.isStructName(nt) ? ""
+                                                                        : "a null test on a value";
+      }
+      if (!(other is null)) {
+        string il2 = unsupportedValue(src, lexed, env, left);
+        if (il2 != "") { return il2; }
+        string ir2 = unsupportedValue(src, lexed, env, other!);
+        if (ir2 != "") { return ir2; }
+        string it2 = typeOfE(src, lexed, env, left);
+        return isArrayType(it2) || env.isStructName(it2) ? "" : "an identity test on a value";
+      }
       if (target is null) { return "is null"; }
       if (env.variantAt(typeOfTyName(src, lexed, target!)) < 0) { return "a type test"; }
       string il = unsupportedValue(src, lexed, env, left);
@@ -2938,7 +3023,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return env.isEnumName(env.canonType(typeOfE(src, lexed, env, left))) ? ""
                                                                            : "a test on a non-enum";
     }
-    case Unwrap(operand): { return "unwrap"; }
+    case Unwrap(operand): { return unsupportedValue(src, lexed, env, operand); }
     case MatchExpr(subject, arms): {
       string mm = unsupportedMatch(src, lexed, env, subject, arms);
       if (mm != "") { return mm; }
@@ -2964,8 +3049,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
  * Records what stopped it on the way out, so a caller can report the *feature* rather than the wasm
  * stack error that a half-emitted function eventually produces.
  */
-bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string receiver) {
+bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string receiver,
+             string ret) {
   i32 savedCount = env.localCount;
+  // The **return type**, for the same reason the parameters are here: `return null;` is a question
+  // about the slot it is returning into, and a walk that does not know the slot can only decline.
+  string savedRet = env.returnType;
+  env.returnType = ret;
   i32 savedParams = env.paramCount;
   env.localCount = 0;
   if (receiver != "") { env.addLocal("this", receiver); }
@@ -2985,12 +3075,14 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
     if (env.blocked == "") { env.blocked = "two types for the local " + dup; }
     env.localCount = savedCount;
     env.paramCount = savedParams;
+    env.returnType = savedRet;
     return false;
   }
   string why = unsupportedIn(src, lexed, env, body);
   if (why != "" && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
   env.paramCount = savedParams;
+  env.returnType = savedRet;
   return why == "";
 }
 
@@ -3025,14 +3117,15 @@ string emitBlockedOf(u8[] src, i32 entryDecls) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { return "a generic function"; }
-        canEmit(src, lexed, env, params, body, "");
+        canEmit(src, lexed, env, params, body, "", typeOfTyName(src, lexed, returnType));
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { return "a generic struct"; }
         string owner = tokenTextOf(src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
           canEmit(src, lexed, env, methods[m].params, methods[m].body,
-                  methods[m].hasThis ? owner : "");
+                  methods[m].hasThis ? owner : "",
+                  typeOfTyName(src, lexed, methods[m].returnType));
         }
       }
       // An enum itself emits nothing — it is a type, and its declaration is what registered it. What
@@ -3230,7 +3323,9 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       match (prog.decls[d].kind) {
         case Func(nameTok, returnType, params, body, exported, typeParams): {
           if (typeParams.len() > 0) { continue; }
-          if (env.funcOk[at] && !canEmit(src, lexed, env, params, body, "")) {
+          if (env.funcOk[at] &&
+              !canEmit(src, lexed, env, params, body, "",
+                       typeOfTyName(src, lexed, returnType))) {
             env.funcOk[at] = false;
             changed = true;
           }
@@ -3242,7 +3337,8 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
           for (i32 m = 0; m < methods.len(); m++) {
             if (env.funcOk[at] &&
                 !canEmit(src, lexed, env, methods[m].params, methods[m].body,
-                         methods[m].hasThis ? owner : "")) {
+                         methods[m].hasThis ? owner : "",
+                         typeOfTyName(src, lexed, methods[m].returnType))) {
               env.funcOk[at] = false;
               changed = true;
             }
