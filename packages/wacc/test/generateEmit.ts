@@ -148,5 +148,82 @@ export function generateEmit(): Cell[] {
         `export ${t} f() { P p = P(${v}); return p.get(); }`);
     }
   }
+
+  // Enums: a tag, a payload, and the four things a program does with one — construct it, match it,
+  // narrow it, test it. The payload type is the axis, since a payload slot is a struct field and
+  // every field type has its own instruction.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][0];
+    const E = `enum E { A, B(${t} x), C(${t} p, ${t} q) }\n`;
+    add(`enum ${t} construct`,
+      E + `export ${t} f() { E e = E.B(${v}); match (e) { case A: return ${w}; ` +
+      `case B(x): return x; case C(p, q): return p; } }`);
+    add(`enum ${t} second payload`,
+      E + `export ${t} f() { E e = E.C(${w}, ${v}); match (e) { case A: return ${w}; ` +
+      `case B(x): return x; case C(p, q): return q; } }`);
+    add(`enum ${t} payload-less`,
+      E + `export ${t} f() { E e = E.A; match (e) { case A: return ${v}; ` +
+      `case B(x): return x; case C(p, q): return p; } }`);
+    add(`enum ${t} else arm`,
+      E + `export ${t} f() { E e = E.B(${v}); match (e) { case B(x): return x; else: return ${w}; } }`);
+    add(`enum ${t} ignored payload`,
+      E + `export ${t} f() { E e = E.C(${v}, ${w}); match (e) { case C(_, q): return q; ` +
+      `else: return ${w}; } }`);
+    add(`enum ${t} narrowed field`,
+      E + `export ${t} f() { E e = E.B(${v}); match (e) { case B: return e.x; else: return ${w}; } }`);
+    add(`enum ${t} is`,
+      E + `export bool f() { E e = E.B(${v}); return e is B; }`);
+    add(`enum ${t} is other`,
+      E + `export bool f() { E e = E.C(${v}, ${w}); return e is B; }`);
+    add(`enum ${t} through a call`,
+      E + `${t} g(E e) { match (e) { case A: return ${w}; case B(x): return x; ` +
+      `case C(p, q): return p + q; } }\n` +
+      `export ${t} f() { return g(E.C(${v}, ${w})) + g(E.B(${v})) + g(E.A); }`);
+    add(`enum ${t} in an array`,
+      E + `export ${t} f() { E[] es = E[](E.A, E.B(${v}), E.C(${v}, ${w})); ${t} n = ${w}; ` +
+      `for (i32 i = 0; i < 3; i++) { match (es[i]) { case A: n = n + ${w}; case B(x): n = n + x; ` +
+      `case C(p, q): n = n + q; } } return n; }`);
+    add(`enum ${t} in a struct`,
+      E + `struct H { E e; }\nexport ${t} f() { H h = H(E.B(${v})); ` +
+      `match (h.e) { case B(x): return x; else: return ${w}; } }`);
+    add(`enum ${t} as an expression`,
+      E + `export ${t} f() { E e = E.B(${v}); return match (e) { case A: ${w}, case B(x): x, ` +
+      `case C(p, q): q }; }`);
+  }
+
+  // The shapes that are about the *enum* rather than its payload: many variants, so a tag is not a
+  // boolean; a variant with a reference payload; a match whose arms fall through to other control
+  // flow; and a `break` inside an arm, which leaves the enclosing loop rather than the match.
+  const TAGS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+  for (let n = 2; n <= TAGS.length; n++) {
+    const decl = `enum T { ${TAGS.slice(0, n).join(", ")} }\n`;
+    for (let k = 0; k < n; k++) {
+      add(`enum tag ${k}/${n}`,
+        decl + `export i32 f() { T t = T.${TAGS[k]}; match (t) { ` +
+        TAGS.slice(0, n).map((c, i) => `case ${c}: return ${i * 3 + 1};`).join(" ") + ` } }`);
+    }
+  }
+  add("enum reference payload",
+    `enum V { N(i32 x), S(string s), L(i32[] xs) }\n` +
+    `export i32 f() { V v = V.L(i32[](1, 2, 3)); match (v) { case N(x): return x; ` +
+    `case S(s): return s.len(); case L(xs): return xs.len(); } }`);
+  add("enum string payload",
+    `enum V { N(i32 x), S(string s) }\n` +
+    `export i32 f() { V v = V.S("hello"); match (v) { case N(x): return x; ` +
+    `case S(s): return s.len(); } }`);
+  add("enum break leaves the loop",
+    `enum S { Go, Stop }\nstruct H { S s; }\n` +
+    `export i32 f() { H h = H(S.Go); i32 n = 0; ` +
+    `while (n < 100) { n = n + 1; match (h.s) { case Go: { if (n > 3) { h = H(S.Stop); } } ` +
+    `case Stop: break; } } return n; }`);
+  add("enum nested match",
+    `enum A { P(i32 v), Q }\nenum B { R(i32 w), S }\n` +
+    `export i32 f() { A a = A.P(4); B b = B.R(5); match (a) { case P(v): { ` +
+    `match (b) { case R(w): return v * w; case S: return v; } } case Q: return 0; } return -1; }`);
+  add("enum two payloads named alike",
+    `enum W { Add(i32 lhs, i32 rhs), Neg(i32 lhs) }\n` +
+    `export i32 f() { W w = W.Add(3, 4); match (w) { case Add(a, b): return a + b; ` +
+    `case Neg(a): return 0 - a; } }`);
   return out;
 }

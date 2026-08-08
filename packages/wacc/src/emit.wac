@@ -14,7 +14,8 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Param, Program, Stmt, StmtKind, Ty, TyKind,
+  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Param, Program, Stmt, StmtKind, Ty,
+  TyKind,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -331,6 +332,27 @@ export struct Env {
   bool[] funcOk;
   i32[] funcIndex;
   i32 funcCount;
+  /**
+   * Every enum variant: the name it is known by, the enum it belongs to, the tag it carries, and
+   * where its payload sits.
+   *
+   * **An enum is one wasm struct**, not a base type with a subtype per variant. The hierarchy the
+   * language describes is what the reference emits; what this rung compares is answers, and a flat
+   * struct — a tag in slot 0, then a slot per payload field of every variant in declaration order —
+   * gives the same ones with no subtyping in the type section and no cast at any use. A variant is
+   * then the *same wasm type* as its enum, which is what makes assigning one to the other free and
+   * `match` a comparison rather than a test.
+   *
+   * The cost is space: a `Rect` carries the slots a `Circle` would have used. That is the trade a
+   * language with no unions makes anyway, and nothing here is measuring bytes yet.
+   */
+  string[] variantNames;
+  string[] variantOwners;
+  i32[] variantTags;
+  /** The first field slot of this variant's payload, and how many slots it has. */
+  i32[] variantSlot;
+  i32[] variantArity;
+  i32 variantCount;
 
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
@@ -399,8 +421,9 @@ export struct Env {
 
   /** A struct's type index, which follows the arrays. */
   i32 structType(this, string name) {
+    string n = this.canonType(name);
     for (i32 i = 0; i < this.structCount; i++) {
-      if (this.structNames[i] == name) { return this.arrayCount + i; }
+      if (this.structNames[i] == n) { return this.arrayCount + i; }
     }
     return -1;
   }
@@ -414,8 +437,9 @@ export struct Env {
   }
 
   bool isStructName(const this, string name) {
+    string n = this.canonType(name);
     for (i32 i = 0; i < this.structCount; i++) {
-      if (this.structNames[i] == name) { return true; }
+      if (this.structNames[i] == n) { return true; }
     }
     return false;
   }
@@ -488,6 +512,42 @@ export struct Env {
     return "";
   }
 
+  /** The enum a variant belongs to, or `""` — which is also the question "is this a variant". */
+  string enumOf(const this, string variant) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantNames[i] == variant) { return this.variantOwners[i]; }
+    }
+    return "";
+  }
+
+  /** Whether a name is an enum's own name, which is what a construction is qualified by. */
+  bool isEnumName(const this, string name) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantOwners[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  /** Where a variant is in the table, so its tag, slot and arity come from one lookup. */
+  i32 variantAt(const this, string variant) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantNames[i] == variant) { return i; }
+    }
+    return -1;
+  }
+
+  /**
+   * A type name as the *type section* knows it: a variant and its enum are one struct.
+   *
+   * Everywhere a wac type name reaches wasm — a local's declaration, a field, a parameter — it goes
+   * through here first, so `Circle c` and `Shape s` are the same wasm type and neither needs a cast
+   * to become the other.
+   */
+  string canonType(const this, string name) {
+    string e = this.enumOf(name);
+    return e == "" ? name : e;
+  }
+
   void addLocal(this, string name, string ty) {
     if (this.localCount >= this.locals.len()) { return; }
     this.locals[this.localCount] = name;
@@ -524,6 +584,12 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
       case For(init, cond, update, inner): { collectArrayTypes(env, src, lexed, inner); }
       case Switch(subject, cases): {
         for (i32 c = 0; c < cases.len(); c++) { collectArrayTypes(env, src, lexed, cases[c].body); }
+      }
+      // **An arm is a block.** The enum spec says five separate walks were missing this case, and
+      // each failure was a type or a name reachable only through an arm — invisible here, and
+      // reported by wasm as something else entirely.
+      case Match(subject, arms): {
+        for (i32 a = 0; a < arms.len(); a++) { collectArrayTypes(env, src, lexed, arms[a].body); }
       }
       else: { }
     }
@@ -562,6 +628,13 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         }
         collectLocals(env, src, lexed, inner);
       }
+      // An arm's *bindings* are not collected here — they are added while the arm is emitted and
+      // retired after it, which is what makes them arm-scoped. Its `var`s are ordinary locals and
+      // have to be, or a declaration inside an arm has no slot and every use of it reads whatever
+      // slot 0 happens to hold.
+      case Match(subject, arms): {
+        for (i32 a = 0; a < arms.len(); a++) { collectLocals(env, src, lexed, arms[a].body); }
+      }
       else: { }
     }
   }
@@ -579,7 +652,7 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0, string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
 
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
@@ -666,6 +739,18 @@ export u8[] emitModule(u8[] src) {
       // section is written — otherwise `writeValType` hands out an index while writing it, past the
       // count already emitted, and the module refers to a type that is not there. The symptom is
       // *"invalid array index"*, which names the consequence and not the cause.
+      // An enum's payloads are fields, and the rule this pre-pass keeps re-learning is *every place a
+      // type can be named*. A `Node(i32[] kids)` whose array type is registered while the type
+      // section is being written refers to an index that is not there yet.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 v = 0; v < variants.len(); v++) {
+          for (i32 i = 0; i < variants[v].fields.len(); i++) {
+            string vt = typeOfTyName(src, lexed, variants[v].fields[i].type);
+            if (isArrayType(vt)) { env.arrayType(vt); }
+          }
+        }
+      }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < fields.len(); i++) {
@@ -831,6 +916,243 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
 }
 
 /** Statements, in order. */
+/**
+ * The variant a `Enum.Variant` names, or `""` when the member is an ordinary field access.
+ *
+ * `Shape.Point` and `p.x` are the same node — a member of something — and only the table can tell
+ * them apart: the object is a bare name that is an *enum*, and the member is one of its variants.
+ */
+string variantOfMember(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string on = tokenTextOf(src, lexed, tok);
+      if (!env.isEnumName(on)) { return ""; }
+      string vn = tokenTextOf(src, lexed, nameTok);
+      if (env.enumOf(vn) != on) { return ""; }
+      return vn;
+    }
+    else: { return ""; }
+  }
+}
+
+/**
+ * Which slot a field access on an enum value means: -1 for none, -2 for more than one.
+ *
+ * A value whose static type is a *variant* asks that variant. A value still typed as the enum — the
+ * subject of an arm that did not narrow, since narrowing is a shadowed binding rather than a
+ * retyping — asks every variant, and the answer is only usable if exactly one has the field. Two
+ * variants with a field of the same name are a real shape (`Add(i32 lhs)`, `Sub(i32 lhs)`) and the
+ * honest answer there is to decline rather than to pick the first.
+ */
+i32 enumSlot(Env env, string ty, string field) {
+  string en = env.canonType(ty);
+  if (env.enumOf(ty) != "") { return env.fieldIndex(en, ty + "." + field); }
+  i32 found = -1;
+  for (i32 i = 0; i < env.variantCount; i++) {
+    if (env.variantOwners[i] != en) { continue; }
+    i32 at = env.fieldIndex(en, env.variantNames[i] + "." + field);
+    if (at < 0) { continue; }
+    if (found >= 0 && found != at) { return -2; }
+    found = at;
+  }
+  return found;
+}
+
+/**
+ * A value of `t` that means nothing, for the payload slots a variant does not use.
+ *
+ * `struct.new` wants every field on the stack, and a `Circle` has to put *something* in `Rect`'s
+ * two. A reference field takes a null — which is why every reference this emitter writes is the
+ * nullable `0x63` and not `0x64`, a decision made one slot ago for arrays and paid off here.
+ */
+void emitDefault(B fb, Env env, string t) {
+  if (t == "string") { fb.byte(208); fb.i32leb(env.arrayType("i8[]")); return; }
+  if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
+  if (env.isStructName(t)) { fb.byte(208); fb.i32leb(env.structType(t)); return; }
+  i32 v = valType(t);
+  if (v == 126) { fb.byte(66); fb.i64leb(0); return; }
+  if (v == 125) { fb.byte(67); fb.f32bits(0.0); return; }
+  if (v == 124) { fb.byte(68); fb.f64bits(0.0); return; }
+  fb.byte(65);
+  fb.i32leb(0);
+}
+
+/** `Shape.Circle(2.0)` — the tag, the payload in its own slots, and a default in everyone else's. */
+void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] args) {
+  i32 vi = env.variantAt(vname);
+  if (vi < 0) { return; }
+  string en = env.variantOwners[vi];
+  i32 n = env.fieldCountOf(en);
+  fb.byte(65);
+  fb.i32leb(env.variantTags[vi]);
+  for (i32 slot = 1; slot < n; slot++) {
+    i32 k = slot - env.variantSlot[vi];
+    string ft = env.fieldTypeAt(en, slot);
+    if (k >= 0 && k < env.variantArity[vi] && k < args.len()) {
+      if (!(args[k] is null)) {
+        emitExprAt(fb, src, lexed, env, args[k]!, ft);
+        continue;
+      }
+    }
+    emitDefault(fb, env, ft);
+  }
+  fb.byte(251);
+  fb.u32leb(0);   // struct.new
+  fb.u32leb(env.structType(en));
+}
+
+/** The tag of the value on the stack, which is what every arm and every `is` compares. */
+void emitTagOf(B fb, Env env, i32 subj, string en) {
+  fb.byte(32);
+  fb.u32leb(subj);
+  fb.byte(251);
+  fb.u32leb(2);   // struct.get
+  fb.u32leb(env.structType(en));
+  fb.u32leb(0);
+}
+
+/**
+ * An arm's names: its payload bindings, and the narrowed subject.
+ *
+ * Both are **added while the body is emitted and retired after it**, which is possible only because
+ * the locals *declaration* is written once the body is finished. That makes the shadowing lexical
+ * for free: a binding is found before an outer local of the same name because `localAt` searches
+ * backwards, and retiring the entry by renaming it — rather than by dropping it — keeps the wasm
+ * slot and its type, which the declaration list still has to describe.
+ */
+void emitArmNames(B fb, u8[] src, Lexed lexed, Env env, i32 subj, string vn, i32[] bindingToks,
+                  Expr subject) {
+  i32 vi = env.variantAt(vn);
+  if (vi < 0) { return; }
+  string en = env.variantOwners[vi];
+  for (i32 b = 0; b < bindingToks.len(); b++) {
+    if (b >= env.variantArity[vi]) { continue; }
+    string bn = tokenTextOf(src, lexed, bindingToks[b]);
+    if (bn == "_") { continue; }
+    env.addLocal(bn, env.fieldTypeAt(en, env.variantSlot[vi] + b));
+    i32 at = env.localCount - 1;
+    fb.byte(32);
+    fb.u32leb(subj);
+    fb.byte(251);
+    fb.u32leb(2);
+    fb.u32leb(env.structType(en));
+    fb.u32leb(env.variantSlot[vi] + b);
+    fb.byte(33);
+    fb.u32leb(at);
+  }
+  // **Narrowing is a binding, not a retyping** — the spec says so, and it is also the only version
+  // this emitter could implement: the subject keeps its wasm type either way, and what the arm needs
+  // is a *name* whose wac type is the variant, so `s.width` resolves to one slot rather than to
+  // whichever variant declared that field first.
+  match (subject.kind) {
+    case Ident(tok): {
+      env.addLocal(tokenTextOf(src, lexed, tok), vn);
+      i32 sh = env.localCount - 1;
+      fb.byte(32);
+      fb.u32leb(subj);
+      fb.byte(33);
+      fb.u32leb(sh);
+    }
+    else: { }
+  }
+}
+
+/** Retire every name an arm introduced, keeping the slots it declared. */
+void retireFrom(Env env, i32 from) {
+  for (i32 i = from; i < env.localCount; i++) { env.locals[i] = " gone"; }
+}
+
+/**
+ * `match` as a statement: a comparison chain on the tag, each arm nested in the previous one's else.
+ *
+ * Nesting rather than a block-and-branch per arm is what makes `break` mean the enclosing **loop**,
+ * which is what the language says an arm's `break` does and the one place `match` differs from
+ * `switch`. An `if` is a label like any other, so `env.depth` counts every one of them or a `break`
+ * three arms deep branches to the wrong place — and validates while doing it.
+ */
+void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
+  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (!env.isEnumName(en)) { return; }
+  env.addLocal(" match", en);
+  i32 subj = env.localCount - 1;
+  emitExprAt(fb, src, lexed, env, subject, en);
+  fb.byte(33);
+  fb.u32leb(subj);
+  i32 opened = 0;
+  for (i32 a = 0; a < arms.len(); a++) {
+    string vn = arms[a].variantTok < 0 ? "" : tokenTextOf(src, lexed, arms[a].variantTok);
+    if (vn != "") {
+      emitTagOf(fb, env, subj, en);
+      fb.byte(65);
+      fb.i32leb(env.variantTags[env.variantAt(vn)]);
+      fb.byte(70);   // i32.eq
+      fb.byte(4);
+      fb.byte(64);
+      env.depth = env.depth + 1;
+      opened = opened + 1;
+    }
+    i32 saved = env.localCount;
+    if (vn != "") { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
+    emitBody(fb, src, lexed, env, arms[a].body);
+    retireFrom(env, saved);
+    if (vn != "" && a < arms.len() - 1) { fb.byte(5); }   // else — the rest of the chain goes here
+  }
+  for (i32 i = 0; i < opened; i++) {
+    fb.byte(11);
+    env.depth = env.depth - 1;
+  }
+}
+
+/**
+ * `match` as an expression, where every arm leaves a value.
+ *
+ * The **last arm is not tested**. An `if` that produces a value must have an else branch, and the
+ * match is exhaustive, so the final arm is that branch: the test would be a comparison whose answer
+ * is already known, and without it there is nowhere to put the value.
+ */
+void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms, string want) {
+  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (!env.isEnumName(en) || arms.len() == 0) { return; }
+  string rt = "";
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (arms[a].value is null) { continue; }
+    if (rt != "") { continue; }
+    i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
+    rt = typeOfE(src, lexed, env, arms[a].value!);
+    env.localCount = saved;
+  }
+  if (rt == "") { rt = want; }
+  env.addLocal(" match", en);
+  i32 subj = env.localCount - 1;
+  emitExprAt(fb, src, lexed, env, subject, en);
+  fb.byte(33);
+  fb.u32leb(subj);
+  i32 opened = 0;
+  for (i32 a = 0; a < arms.len(); a++) {
+    string vn = arms[a].variantTok < 0 ? "" : tokenTextOf(src, lexed, arms[a].variantTok);
+    bool last = a == arms.len() - 1;
+    if (vn != "" && !last) {
+      emitTagOf(fb, env, subj, en);
+      fb.byte(65);
+      fb.i32leb(env.variantTags[env.variantAt(vn)]);
+      fb.byte(70);
+      fb.byte(4);
+      writeValType(fb, env, rt);
+      env.depth = env.depth + 1;
+      opened = opened + 1;
+    }
+    i32 saved = env.localCount;
+    if (vn != "") { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
+    if (!(arms[a].value is null)) { emitExprAt(fb, src, lexed, env, arms[a].value!, rt); }
+    retireFrom(env, saved);
+    if (!last) { fb.byte(5); }
+  }
+  for (i32 i = 0; i < opened; i++) {
+    fb.byte(11);
+    env.depth = env.depth - 1;
+  }
+}
+
 void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
 }
@@ -1010,6 +1332,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         else: { }
       }
     }
+    case Match(subject, arms): { emitMatchStmt(fb, src, lexed, env, subject, arms); }
     case Block(inner): { emitBody(fb, src, lexed, env, inner); }
     case ExprStmt(e) : {
       // A call for its effect — and if it *does* return something, the value has to go somewhere.
@@ -1021,7 +1344,6 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       string st = typeOfE(src, lexed, env, e);
       if (st != "" && st != "void") { fb.byte(26); }   // drop
     }
-    else: { }
   }
 }
 
@@ -1333,6 +1655,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
+          // `Shape.Circle(2.0)` reaches here as a **call**, because that is what it looks like from
+          // the parser's side. It builds a value instead.
+          string vnew = variantOfMember(src, lexed, env, obj, nameTok);
+          if (vnew != "") {
+            Expr?[] vargs = Expr?[args.len()]();
+            for (i32 i = 0; i < args.len(); i++) { vargs[i] = args[i]; }
+            emitVariantNew(fb, src, lexed, env, vnew, vargs);
+            return;
+          }
           // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
             i32 fb2 = env.funcAt(" str_from_bytes");
@@ -1403,13 +1734,48 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
     }
     case Member(obj, nameTok): {
+      // A payload-less variant is a **value and not a call** — `Shape.Point`, with no parentheses —
+      // so the construction has to be recognised here as well as under `Call`.
+      string vnew2 = variantOfMember(src, lexed, env, obj, nameTok);
+      if (vnew2 != "") {
+        emitVariantNew(fb, src, lexed, env, vnew2, Expr?[0]());
+        return;
+      }
       string ot2 = typeOfE(src, lexed, env, obj);
       if (!env.isStructName(ot2)) { return; }
       emitExpr(fb, src, lexed, env, obj);
       fb.byte(251);
       fb.u32leb(2);   // struct.get
       fb.u32leb(env.structType(ot2));
+      // An enum's fields are the variants' payloads, laid out flat and named for the variant that
+      // declared them, so the slot comes from the variant table rather than from the field's name.
+      if (env.enumOf(ot2) != "" || env.isEnumName(ot2)) {
+        fb.u32leb(enumSlot(env, ot2, tokenTextOf(src, lexed, nameTok)));
+        return;
+      }
       fb.u32leb(env.fieldIndex(ot2, tokenTextOf(src, lexed, nameTok)));
+    }
+    // `s is Circle` is a **tag comparison**. No cast and no test instruction: a variant and its enum
+    // are the same wasm type here, so what distinguishes them is the value in slot 0 and nothing else.
+    case Is(left, target, other, negated): {
+      if (target is null) { return; }
+      i32 vi = env.variantAt(typeOfTyName(src, lexed, target!));
+      if (vi < 0) { return; }
+      string en = env.variantOwners[vi];
+      // The scratch local, not a fresh one: the value is dead the moment its tag has been read, so
+      // every `is` on the same enum in a function can share one slot. `match` cannot — its subject
+      // lives for the whole chain, and a nested match on the same enum would overwrite it.
+      i32 at = env.scratch(en);
+      emitExprAt(fb, src, lexed, env, left, en);
+      fb.byte(33);
+      fb.u32leb(at);
+      emitTagOf(fb, env, at, en);
+      fb.byte(65);
+      fb.i32leb(env.variantTags[vi]);
+      fb.byte(negated ? 71 : 70);   // i32.ne / i32.eq
+    }
+    case MatchExpr(subject, arms): {
+      emitMatchExpr(fb, src, lexed, env, subject, arms, want);
     }
     case Ternary(cond, then, els): {
       // **The branches' type, not `i32`.** A block that produces a value declares which, and this
@@ -1461,7 +1827,15 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
     case ArrNew(elem, size, fill, elements): { return typeOfTyName(src, lexed, elem) + "[]"; }
     case Member(obj, nameTok): {
+      // A variant construction's type is the **variant**, not the enum: `Shape.Circle(2.0)` is a
+      // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
+      string vn3 = variantOfMember(src, lexed, env, obj, nameTok);
+      if (vn3 != "") { return vn3; }
       string o = typeOfE(src, lexed, env, obj);
+      if (env.enumOf(o) != "" || env.isEnumName(o)) {
+        i32 sl = enumSlot(env, o, tokenTextOf(src, lexed, nameTok));
+        return sl < 0 ? "" : env.fieldTypeAt(env.canonType(o), sl);
+      }
       return env.isStructName(o) ? env.fieldType(o, tokenTextOf(src, lexed, nameTok)) : "";
     }
     case Index(arr, index): {
@@ -1477,6 +1851,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
+          string vn4 = variantOfMember(src, lexed, env, obj, nameTok);
+          if (vn4 != "") { return vn4; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
@@ -1507,6 +1883,22 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       string lt = typeOfE(src, lexed, env, left);
       if (lt != "") { return lt; }
       return typeOfE(src, lexed, env, right);
+    }
+    case Is(left, target, other, negated): { return "bool"; }
+    case MatchExpr(subject, arms): {
+      // **With the arm's names in scope.** An arm whose value is its own binding — `case B(x): x`,
+      // which is most of them — is untyped to anyone who cannot see `x`, and a match whose type is
+      // unknown is declined by the guard above. Pushing the names here is what the emitter does when
+      // it walks the same arm, and the two answers have to be the same one.
+      string mt = "";
+      for (i32 a = 0; a < arms.len(); a++) {
+        if (arms[a].value is null) { continue; }
+        if (mt != "") { continue; }
+        i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
+        mt = typeOfE(src, lexed, env, arms[a].value!);
+        env.localCount = saved;
+      }
+      return mt;
     }
     case Ternary(cond, then, els): {
       string tt = typeOfE(src, lexed, env, then);
@@ -1974,6 +2366,51 @@ string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
   return "";
 }
 
+/**
+ * What stops a `match` — the subject, the arms' variants, or the enum itself.
+ *
+ * Shared by the statement and the expression form, which differ only in what an arm holds.
+ */
+string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms) {
+  string sv = unsupportedValue(src, lexed, env, subject);
+  if (sv != "") { return sv; }
+  string en = env.canonType(typeOfE(src, lexed, env, subject));
+  if (!env.isEnumName(en)) { return "a match on something that is not an enum"; }
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (arms[a].variantTok < 0) { continue; }
+    string vn = tokenTextOf(src, lexed, arms[a].variantTok);
+    if (env.enumOf(vn) != en) { return "an arm naming a variant of another enum"; }
+  }
+  return "";
+}
+
+/**
+ * The arm's names, in scope for the walk exactly as they will be for the emission.
+ *
+ * The walk asks the same questions of an arm's body that the emitter will — whether a name is a
+ * local, what type it has, which slot a field is — so it has to see the same scope, or it approves a
+ * body that reads a binding it thinks is undefined. Returns what to restore the count to.
+ */
+i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
+  i32 saved = env.localCount;
+  if (arm.variantTok < 0) { return saved; }
+  string vn = tokenTextOf(src, lexed, arm.variantTok);
+  i32 vi = env.variantAt(vn);
+  if (vi < 0) { return saved; }
+  string en = env.variantOwners[vi];
+  for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    if (b >= env.variantArity[vi]) { continue; }
+    string bn = tokenTextOf(src, lexed, arm.bindingToks[b]);
+    if (bn == "_") { continue; }
+    env.addLocal(bn, env.fieldTypeAt(en, env.variantSlot[vi] + b));
+  }
+  match (subject.kind) {
+    case Ident(tok): { env.addLocal(tokenTextOf(src, lexed, tok), vn); }
+    else: { }
+  }
+  return saved;
+}
+
 string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
@@ -1985,7 +2422,11 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
       // conversion to write, because the two are the same value and only the *checker* knows that.
       string g0 = isLiteral(init) ? "" : typeOfE(src, lexed, env, init);
-      if (g0 != "" && g0 != t && valType(g0) == valType(t) &&
+      // A **variant and its enum are not related types here, they are the same one** — `Shape s =
+      // Shape.Point;` differs only in the name, and the flat representation is what makes that true.
+      // Canonicalising before the comparison is the whole of the difference between an enum this
+      // emitter can do and one it declines on its first line.
+      if (g0 != "" && env.canonType(g0) != env.canonType(t) && valType(g0) == valType(t) &&
           (isArrayType(t) || env.isStructName(t))) {
         return "an assignment between related reference types";
       }
@@ -2060,7 +2501,17 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case Break: { return ""; }
     case Continue: { return ""; }
     case Trap: { return ""; }
-    case Match(subject, arms): { return "match"; }
+    case Match(subject, arms): {
+      string ms = unsupportedMatch(src, lexed, env, subject, arms);
+      if (ms != "") { return ms; }
+      for (i32 a = 0; a < arms.len(); a++) {
+        i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
+        string b = unsupportedIn(src, lexed, env, arms[a].body);
+        env.localCount = saved;
+        if (b != "") { return b; }
+      }
+      return "";
+    }
   }
 }
 
@@ -2212,9 +2663,18 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return unsupportedValue(src, lexed, env, index);
     }
     case Member(obj, nameTok): {
+      // The variant question comes **first**, because the object of `Shape.Point` is a bare name
+      // that is not a local and every other path here would decline it as one.
+      if (variantOfMember(src, lexed, env, obj, nameTok) != "") { return ""; }
       string o = unsupportedExpr(src, lexed, env, obj);
       if (o != "") { return o; }
-      return env.isStructName(typeOfE(src, lexed, env, obj)) ? "" : "member of an unknown type";
+      string ot3 = typeOfE(src, lexed, env, obj);
+      if (env.enumOf(ot3) != "" || env.isEnumName(ot3)) {
+        i32 sl = enumSlot(env, ot3, tokenTextOf(src, lexed, nameTok));
+        if (sl == -2) { return "a payload name two variants share"; }
+        return sl < 0 ? "a payload that is not on this variant" : "";
+      }
+      return env.isStructName(ot3) ? "" : "member of an unknown type";
     }
     case ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(src, lexed, elem) == "") { return "array of an unspelled type"; }
@@ -2260,6 +2720,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
+          string vcall = variantOfMember(src, lexed, env, obj, nameTok);
+          if (vcall != "") {
+            i32 cvi = env.variantAt(vcall);
+            if (args.len() != env.variantArity[cvi]) { return "a variant with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a2 = unsupportedValue(src, lexed, env, args[i]);
+              if (a2 != "") { return a2; }
+            }
+            return "";
+          }
           // A **static** call names its owner with a type rather than a value: `Big.create(…)`. The
           // receiver is not an expression at all, so asking whether it is one calls a perfectly good
           // struct name unresolved — which is what three corpus files were saying.
@@ -2306,9 +2776,27 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       }
     }
     case Incr(target, op, prefix): { return "increment as an expression"; }
-    case Is(left, target, other, negated): { return "is"; }
+    case Is(left, target, other, negated): {
+      if (target is null) { return "is null"; }
+      if (env.variantAt(typeOfTyName(src, lexed, target!)) < 0) { return "a type test"; }
+      string il = unsupportedValue(src, lexed, env, left);
+      if (il != "") { return il; }
+      return env.isEnumName(env.canonType(typeOfE(src, lexed, env, left))) ? ""
+                                                                           : "a test on a non-enum";
+    }
     case Unwrap(operand): { return "unwrap"; }
-    case MatchExpr(subject, arms): { return "match as an expression"; }
+    case MatchExpr(subject, arms): {
+      string mm = unsupportedMatch(src, lexed, env, subject, arms);
+      if (mm != "") { return mm; }
+      for (i32 a = 0; a < arms.len(); a++) {
+        if (arms[a].value is null) { return "an arm with no value"; }
+        i32 saved = pushArmNames(src, lexed, env, arms[a], subject);
+        string v = unsupportedValue(src, lexed, env, arms[a].value!);
+        env.localCount = saved;
+        if (v != "") { return v; }
+      }
+      return "";
+    }
   }
 }
 
@@ -2365,7 +2853,8 @@ export string emitBlocked(u8[] src) {
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
                 string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
-                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0);
+                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0,
+                string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -2382,7 +2871,17 @@ export string emitBlocked(u8[] src) {
                   methods[m].hasThis ? owner : "");
         }
       }
-      case EnumDecl(nameTok, variants, exported, methods, typeParams): { return "an enum"; }
+      // An enum itself emits nothing — it is a type, and its declaration is what registered it. What
+      // can still stop it is a **method**, which would be a function this pass never registered, and
+      // a type parameter, which nothing here does.
+      // An enum itself emits nothing — it is a type, and its declaration is what registered it. The
+      // arm must not answer `""` for the whole module: this loop reports the *first* thing that
+      // stops it, so returning "nothing wrong here" ends the scan before the functions are asked,
+      // and the module then comes back empty while the report says it is whole.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { return "a generic enum"; }
+        if (methods.len() > 0) { return "a method on an enum"; }
+      }
       case Import(pathTok, prefixTok, items): { return "an import"; }
       case ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(src, lexed, type);
@@ -2445,6 +2944,45 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
           env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, fields[i].type);
           env.fieldCount = env.fieldCount + 1;
+        }
+      }
+      // **An enum is registered as a struct**, because that is what it becomes: slot 0 is the tag
+      // and the rest are every variant's payload laid end to end. The slots are named `Variant.field`
+      // — a spelling no wac identifier has, so a payload can share a name with a real field, and with
+      // another variant's payload, without either being reachable by accident.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string ename = tokenTextOf(src, lexed, nameTok);
+        if (env.structCount < env.structNames.len()) {
+          env.structNames[env.structCount] = ename;
+          env.structCount = env.structCount + 1;
+        }
+        if (env.fieldCount < env.fieldNames.len()) {
+          env.fieldOwners[env.fieldCount] = ename;
+          env.fieldNames[env.fieldCount] = " tag";
+          env.fieldTypes[env.fieldCount] = "i32";
+          env.fieldCount = env.fieldCount + 1;
+        }
+        i32 slot = 1;
+        for (i32 v = 0; v < variants.len(); v++) {
+          string vname = tokenTextOf(src, lexed, variants[v].nameTok);
+          if (env.variantCount < env.variantNames.len()) {
+            env.variantNames[env.variantCount] = vname;
+            env.variantOwners[env.variantCount] = ename;
+            env.variantTags[env.variantCount] = v;
+            env.variantSlot[env.variantCount] = slot;
+            env.variantArity[env.variantCount] = variants[v].fields.len();
+            env.variantCount = env.variantCount + 1;
+          }
+          for (i32 i = 0; i < variants[v].fields.len(); i++) {
+            if (env.fieldCount >= env.fieldNames.len()) { break; }
+            env.fieldOwners[env.fieldCount] = ename;
+            env.fieldNames[env.fieldCount] = vname + "." +
+              tokenTextOf(src, lexed, variants[v].fields[i].nameTok);
+            env.fieldTypes[env.fieldCount] = typeOfTyName(src, lexed, variants[v].fields[i].type);
+            env.fieldCount = env.fieldCount + 1;
+          }
+          slot = slot + variants[v].fields.len();
         }
       }
       else: { }
@@ -2579,7 +3117,8 @@ export string emitNames(u8[] src) {
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
                 string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
-                bool[512](), i32[512](), 0);
+                bool[512](), i32[512](), 0,
+                string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);

@@ -1183,6 +1183,62 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Enums, in one struct rather than a hierarchy
+
+The language's enums compile, as the spec says, to "the struct hierarchy you would otherwise write by
+hand: a base struct for the enum, a subtype per variant, and a tag". This emitter does not write that
+hierarchy, and the freedom to not write it is the point of rung 4's oracle: **what is compared is
+answers, not bytes.** An enum here is *one* wasm struct — a tag in slot 0, then a slot per payload
+field of every variant, laid end to end. A variant is then the same wasm type as its enum, which
+makes three problems disappear at once:
+
+| the hierarchy would need | the flat struct |
+|---|---|
+| `sub` declarations and a subtyping order in the rec group | one struct, declared like any other |
+| a cast at every narrowing | none — the value already has the type |
+| `Shape s = Shape.Point;` to be a widening | an assignment between two names for one type |
+
+The cost is space: a `Rect` carries the slot a `Circle` would have used. That is the trade a language
+with no unions makes anyway, and nothing here is measuring bytes yet.
+
+What is implemented is the whole of the feature as `spec/spec/enums.md` describes it, minus generics:
+construction of payload-less and payload-carrying variants, `match` as a statement and as an
+expression, positional bindings and `_`, the `else` arm, narrowing, and `is`. Two decisions did the
+work.
+
+**Narrowing is a binding, not a retyping** — which the spec says, and which is also the only version
+that is cheap: the arm adds a local with the subject's name at the *variant's* type, `localAt`
+searches backwards so it shadows, and it is retired at the end of the arm by renaming the entry
+rather than dropping it, since the wasm slot it declared still has to be described. The same
+mechanism gives the payload bindings their scope, and the same names are pushed for the
+*emittability walk*, so the walk and the emitter answer questions about an arm with identical scopes
+in view.
+
+**An arm's `break` leaves the enclosing loop**, unlike `switch`'s. That falls out of emitting the
+chain as nested `if`/`else` rather than a block per arm: there is no label to leave, so the only
+branch target is the loop, which is what the language says it should be.
+
+Three things this slot got wrong, all of them the same mistake in different clothes — **a walk that
+did not know about the new node**:
+
+- `emitBlocked` reports the *first* thing that stops a module, so a new `EnumDecl` arm answering
+  `""` for "nothing wrong here" returned out of the whole scan before the functions were asked. The
+  report said the module was whole; the module had no functions in it. The spec warns about exactly
+  this — five walks with no `match` case — one section above where I was reading.
+- The `Var` guard declines an assignment between two reference types that differ, because struct
+  inheritance has no representation here. `Shape s = Shape.Point;` is exactly that shape and exactly
+  not that problem; canonicalising both sides through the variant table before comparing is the
+  difference between an enum this emitter can do and one that declines on its first line.
+- `typeOfE` on a match *expression* read each arm's value with the arm's bindings out of scope, so
+  `case B(x): x` was untyped and the honest "untyped match" guard declined all six of the generated
+  cells. The type walk needed the same scope push the other two walks had already been given.
+
+The sweep is where all three showed up: **3,050 programs, 2,699 compared, 0 mismatched, 0 declined**
+— 112 of them enum cells generated over the payload-type axis, since a payload slot is a struct field
+and every field type has its own instruction. The corpus went from two files declined for "an enum"
+to none, 31 whole to 32, and the one enum still refused is `Option<T>`, which is a generic and a
+different rung's problem.
+
 ### The sweep the last slot argued for, and eleven cast bugs
 
 Last slot ended on an argument rather than a number: a hand-written corpus tests what its author
