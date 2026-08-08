@@ -353,24 +353,15 @@ a `set -e` that did not stop on an error is worse than one that does not exist. 
 shell's own variables sorted, which is the same idea as bash's over a much smaller set and so
 cannot be compared with it.
 
-**`wc`'s columns are seven wide when its input is standard input, where GNU's are sometimes
-narrower.** GNU takes the width from the digits of the total size of its inputs and falls back to 7
-when it cannot know one, which is what a pipe is: `seq 1 5 | wc` is seven wide in both. But GNU asks
-the *descriptor*, so `wc - < f` on a 108894-byte file gives six-wide columns, and nothing here can
-ask — there is no `fstat` in the capability world, and a redirection reaches a spawned program as
-bytes over a bridge rather than as a file. So that one case prints wider than GNU's.
+**There is no job control**, and `&` is refused rather than run in the foreground. That refusal is the
+whole of it: no `wait`, no `jobs`, no `%1`. Backgrounding needs something that can run two things at
+once and something that knows what is running, which is design/0001 step 3.
 
-It is a gap and not a preference: what it would take is a capability that reports the size of
-standard input. Both of this shell's paths agree with each other meanwhile — the in-process one holds
-the redirected bytes and *could* answer 6 — and consistency was the thing worth keeping, because a
-`wc` whose output depended on whether the shell could spawn would be the harder bug to find.
-
-The same missing size costs one more thing, and it is worth naming because it looks like a bug: `wc`
-cannot print a file's counts *until it has read every input*, since the width depends on the total. So
-`wc -l f missing` prints its complaint after the counts where GNU prints it between them. GNU gets both
-because `fstat` tells it the widths before it reads anything. `cat` has no such constraint and does
-interleave correctly — see `complain` in `program.wac`, which flushes the output sink before writing to
-the error one, because a 64 KiB buffer is enough to reverse the two.
+**`local` is not implemented**, so a variable set in a function is the shell's. `trap`, arrays,
+here-strings, process substitution, `for ((;;))` and brace expansion are also absent — measured against
+bash on 2026-08-08, alongside the ones that *are* here: `case`, `until`, `${x:-y}` and its family,
+`${#x}`, substring and pattern removal, `$@` versus `$*`, subshells, groups, `elif`. Where a construct
+is missing the shell says so rather than doing something plausible.
 
 **A file whose name is not valid UTF-8 can be listed and not opened, and it says so.** `ls` shows
 `bad-\ufffd-name` where bash shows the real bytes, and every program that tries to open that name reports

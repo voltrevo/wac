@@ -30,7 +30,7 @@ import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeli
          RedirKind, Script, Simple, Word, parse } from "./parse.wac";
 import { Output, optionRefusal } from "./refusal.wac";
 import { Sink } from "../../platform/src/stream.wac";
-import { printf } from "./printf.wac";
+import { isNumber, printf } from "./printf.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
@@ -57,6 +57,28 @@ export struct Shell {
   i32 status;
   bool exiting;
   i32 exitCode;
+  /**
+   * How many enclosing loops `break` is still unwinding, or 0.
+   *
+   * Control flow that leaves a construct early has no value to return — a builtin answers with an
+   * `Output` and `break` is not a value — so it is a *state* the walker checks, exactly as `exiting`
+   * already was. Each loop that catches one decrements it and stops; if it is still positive the loop
+   * above catches the rest, which is `break 2`.
+   */
+  i32 breaking;
+  /** The same for `continue`: the innermost loop that catches it goes round again. */
+  i32 continuing;
+  /** Whether `return` is unwinding to the function call that will catch it. */
+  bool returning;
+  /**
+   * How many loops this shell is inside, so `break` outside one can say so.
+   *
+   * bash distinguishes them: inside a loop `break` is silent, outside it complains — and a shell that
+   * cannot tell has to pick one and be wrong half the time.
+   */
+  i32 loops;
+  /** How many function calls deep, for the same reason: `return` outside one is an error. */
+  i32 depth;
   /**
    * Standard error, for a shell that is *capturing*. Empty otherwise — see `err` below.
    *
@@ -210,7 +232,8 @@ export struct Shell {
     // Asked once, at the start: the host knows where relative paths land and the shell cannot
     // guess. A browser answers "/" — the root of its Origin Private File System — which is the
     // true answer there rather than a stand-in.
-    return Shell(core, cli, Fs.onHost(cli, 0), Map.create(hashString, stringEq), 0, false, 0, Buf.create(),
+    return Shell(core, cli, Fs.onHost(cli, 0), Map.create(hashString, stringEq), 0, false, 0,
+                 0, 0, false, 0, 0, Buf.create(),
                  false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
@@ -388,10 +411,50 @@ export i32 runScript(Shell sh, string src) {
   return sh.exiting ? sh.exitCode : sh.status;
 }
 
+/**
+ * One loop's share of a `break` or a `continue`, and whether that loop should stop.
+ *
+ * The counts are how many loops are still to be left, so a loop takes one off and answers "stop" for a
+ * `break` and "go round again" for a `continue` — and where the count is still positive after the
+ * decrement, it answers stop for *both*, because the loop above is the one that has to decide. That is
+ * the whole of `break 2` and `continue 2`, and it is why these are counters rather than flags.
+ */
+bool caughtBreak(Shell sh) {
+  // **The outermost loop swallows whatever is left.** `break 5` inside one loop leaves that loop and
+  // the script carries on — it is not an error and it does not keep unwinding past the last loop
+  // there is. Without this the count stayed positive, `unwinding` stayed true, and everything after
+  // the loop was silently skipped: `for i in 1 2; do break 5; done; echo out` printed nothing.
+  bool outermost = sh.loops <= 1;
+  if (sh.breaking > 0) {
+    sh.breaking = sh.breaking - 1;
+    if (outermost) { sh.breaking = 0; }
+    return true;
+  }
+  if (sh.continuing > 0) {
+    sh.continuing = sh.continuing - 1;
+    if (outermost) { sh.continuing = 0; return false; }
+    // Still unwinding: this loop is not the one that catches it, so stop here and leave the count for
+    // the loop outside. Caught here, it falls through to the next iteration.
+    return sh.continuing > 0;
+  }
+  return false;
+}
+
+/**
+ * Whether anything is unwinding: `exit`, `return`, `break` or `continue`.
+ *
+ * Every walker below stops on this rather than on `exiting` alone. They are one question — "is this
+ * statement still the thing to run?" — and four flags, because what *catches* each of them differs: a
+ * loop catches `break`, a function call catches `return`, and nothing catches `exit`.
+ */
+bool unwinding(Shell sh) {
+  return sh.exiting || sh.returning || sh.breaking > 0 || sh.continuing > 0;
+}
+
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
 void runList(Shell sh, Vec<AndOr> lists) {
   for (i32 i = 0; i < lists.len(); i++) {
-    if (sh.exiting) { return; }
+    if (unwinding(sh)) { return; }
     runAndOr(sh, lists.get(i));
   }
 }
@@ -404,7 +467,7 @@ void runAndOr(Shell sh, AndOr list) {
     return;
   }
   for (i32 i = 0; i < list.items.len(); i++) {
-    if (sh.exiting) { return; }
+    if (unwinding(sh)) { return; }
     Item item = list.items.get(i);
     match (item.op) {
       case First: {}
@@ -808,6 +871,7 @@ export bool isBuiltin(string name) {
       || name == "export" || name == "unset" || name == "cd" || name == "pwd" || name == "ls"
       || name == "mkdir" || name == "rm" || name == "chmod" || name == "chown"
       || name == "read" || name == "shift" || name == "set"
+      || name == "break" || name == "continue" || name == "return"
       || name == "test" || name == "[" || name == "help" || name == "printf";
 }
 
@@ -896,15 +960,18 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
     case While: { runLoop(sh, cmd.clauses.get(0), false); }
     case Until: { runLoop(sh, cmd.clauses.get(0), true); }
     case For: {
+      sh.loops = sh.loops + 1;
       Vec<string> items = Vec.create();
       for (i32 i = 0; i < cmd.words.len(); i++) { expandInto(sh, cmd.words.get(i), items); }
       // A `for` over nothing runs its body zero times and succeeds, which is why the status is
       // set before the loop rather than left as whatever ran last.
       sh.status = 0;
-      for (i32 i = 0; i < items.len() && !sh.exiting; i++) {
+      for (i32 i = 0; i < items.len() && !sh.exiting && !sh.returning; i++) {
         sh.setVar(cmd.varName, items.get(i));
         runList(sh, cmd.clauses.get(0).body);
+        if (caughtBreak(sh)) { break; }
       }
+      sh.loops = sh.loops - 1;
     }
     case Brace: { runList(sh, cmd.clauses.get(0).body); }
     case Subshell: {
@@ -977,15 +1044,18 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
  */
 void runLoop(Shell sh, Clause c, bool untilForm) {
   i32 limit = 100000;
+  sh.loops = sh.loops + 1;
   sh.status = 0;
   for (i32 i = 0; i < limit; i++) {
-    if (sh.exiting) { return; }
+    if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
     runList(sh, c.cond);
-    if (sh.exiting) { return; }
+    if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
     bool go = untilForm ? sh.status != 0 : sh.status == 0;
-    if (!go) { sh.status = 0; return; }
+    if (!go) { sh.status = 0; sh.loops = sh.loops - 1; return; }
     runList(sh, c.body);
+    if (caughtBreak(sh)) { sh.loops = sh.loops - 1; return; }
   }
+  sh.loops = sh.loops - 1;
   sh.err("sh: loop ran 100000 times and was stopped\n".toBytes());
   sh.status = 2;
 }
@@ -1353,6 +1423,67 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
  * $HOME` printed it, because expansion falls back to the environment and this did not. The corpus
  * could not see it — it runs both shells with `HOME` cleared, so bash says "HOME not set" too.
  */
+/**
+ * `break` and `continue`, whose whole effect is on the walker rather than on any output.
+ *
+ * Every rule here is bash's, measured rather than remembered, and three of them are surprising:
+ *
+ * - **outside a loop it is not an error status.** It complains and the status stays 0, which is
+ *   `break; echo $?` printing `0`. A shell that returned 1 would break `set -e` scripts that bash runs.
+ * - **a count of 0 is an error** and the status is 1 — `break 0` is a mistake rather than a no-op.
+ * - **a count that is not a number ends the shell**, with status 128. That is the one place a bad
+ *   argument to a builtin is fatal, and it is bash's answer for a reason worth keeping: a `break $n`
+ *   whose `$n` is empty would otherwise loop forever.
+ *
+ * A count larger than the loops enclosing it is *not* an error: `break 5` inside one loop leaves it,
+ * which is why the counters below are allowed to go past what will catch them.
+ */
+Output breakOrContinue(Shell sh, Vec<string> argv) {
+  string name = argv.get(0);
+  i32 n = 1;
+  if (argv.len() > 1) {
+    if (!isNumber(argv.get(1))) {
+      sh.err((name + ": " + argv.get(1) + ": numeric argument required\n").toBytes());
+      sh.exiting = true;
+      sh.exitCode = 128;
+      return Output.ok(u8[0]());
+    }
+    n = atoiOr(argv.get(1), 1);
+    if (n < 1) {
+      // An out-of-range count is an error **and** leaves every loop, which is bash's answer and not
+      // the obvious one: `for i in 1 2; do echo $i; break 0; done` prints `1` and stops. Measured.
+      sh.breaking = sh.loops;
+      return Output.fail((name + ": " + argv.get(1) + ": loop count out of range\n").toBytes(), 1);
+    }
+  }
+  if (sh.loops == 0) {
+    // bash's wording, and its status: the complaint goes to standard error and 0 stays in `$?`.
+    sh.err((name + ": only meaningful in a `for', `while', or `until' loop\n").toBytes());
+    return Output.ok(u8[0]());
+  }
+  if (name == "break") { sh.breaking = n; } else { sh.continuing = n; }
+  return Output.ok(u8[0]());
+}
+
+/**
+ * `return`, which unwinds to the function call and nothing further.
+ *
+ * With no argument it keeps the status of the last command — `f() { false; return; }` answers 1 — so
+ * this must not set 0 by default, which is the easy mistake and makes `return` look like `true`.
+ *
+ * Outside a function bash complains and leaves status 2, and does **not** end the shell. A sourced
+ * script is the other place it is allowed, and this shell has no `source`.
+ */
+Output returnFrom(Shell sh, Vec<string> argv) {
+  if (sh.depth == 0) {
+    sh.err("return: can only `return' from a function or sourced script\n".toBytes());
+    return Output.fail(u8[0](), 2);
+  }
+  sh.returning = true;
+  i32 code = argv.len() > 1 ? atoiOr(argv.get(1), 0) : sh.status;
+  return Output(u8[0](), u8[0](), code, true);
+}
+
 Output cd(Shell sh, Vec<string> argv) {
   // An argument that is present but empty is not the same as no argument: bash's `cd ""` stays where
   // it is and succeeds, rather than going home.
@@ -1598,6 +1729,8 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == ":" || name == "true") { return Output.ok(u8[0]()); }
   if (name == "false") { return Output(u8[0](), u8[0](), 1, true); }
   if (name == "echo") { return echo(argv); }
+  if (name == "break" || name == "continue") { return breakOrContinue(sh, argv); }
+  if (name == "return") { return returnFrom(sh, argv); }
   if (name == "exit") {
     sh.exiting = true;
     sh.exitCode = argv.len() > 1 ? atoiOr(argv.get(1), 0) : sh.status;
@@ -1684,7 +1817,7 @@ export string[] builtinNames() {
   return string[](
     ":", "true", "false", "echo", "exit", "export", "unset", "cd", "pwd", "ls", "mkdir", "rm",
     "chmod", "chown",
-    "read", "shift", "set", "test", "[", "help", "printf"
+    "read", "shift", "set", "break", "continue", "return", "test", "[", "help", "printf"
   );
 }
 
@@ -1933,7 +2066,20 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.capture = true;
   sh.outBuf = Buf.create();
 
+  // **A function body is not inside the caller's loops.** `f() { break; }` called from a loop
+  // complains rather than leaving it, which is bash's answer and is what these two lines buy: the
+  // count is put aside for the call and restored after it, so the body counts only its own.
+  i32 savedLoops = sh.loops;
+  sh.loops = 0;
+  sh.depth = sh.depth + 1;
+
   runCommand(sh, body, u8[0](), true);
+
+  // `return` is caught here and nowhere else. `break` and `continue` are *not* reset: a body that
+  // leaves them set is a `break` with no loop to catch it, which the builtin already refused.
+  sh.returning = false;
+  sh.depth = sh.depth - 1;
+  sh.loops = savedLoops;
 
   u8[] produced = sh.outBuf.take();
   sh.capture = savedCapture;

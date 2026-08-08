@@ -884,6 +884,39 @@ esac`,
   // Bash warns on stderr about an unterminated body but still runs the command, exit 0.
   `cat <<EOF`,
   `cat <<EOF\nno terminator`,
+  // ── break, continue and return ─────────────────────────────────────────────
+  //
+  // wac-mono 0111. Control flow that leaves a construct early, which this shell had none of: `break`
+  // printed "command not found" and the loop ran to the end. Every rule here was measured on bash and
+  // several are not what anyone would guess — an out-of-range count *also* leaves the loop, a count
+  // larger than the loops enclosing it is not an error, and a bad argument ends the shell with 128.
+  `for i in 1 2 3; do echo $i; if [ $i = 2 ]; then break; fi; done`,
+  `for i in 1 2 3; do if [ $i = 2 ]; then continue; fi; echo $i; done`,
+  `for i in 1 2; do for j in a b; do break 2; done; echo no; done; echo done`,
+  `for i in 1 2; do for j in a b; do echo $i$j; break 2; done; done; echo end`,
+  `for i in 1 2; do for j in a b; do continue 2; done; echo skipped; done; echo end`,
+  `for i in 1 2; do break 5; done; echo out`,
+  `for i in 1 2; do for j in a b; do echo $i$j; break 5; done; done; echo end`,
+  `for i in 1 2 3; do echo $i; continue 5; done; echo end`,
+  `break; echo after=$?`,
+  `continue; echo after=$?`,
+  `for i in 1 2; do echo $i; break 0; done; echo st=$?`,
+  `for i in 1 2 3; do echo $i; continue 0; done; echo end`,
+  `for i in 1; do false; break; done; echo st=$?`,
+  `for i in 1; do false; continue; done; echo st=$?`,
+  `f() { return 3; }; f; echo $?`,
+  `f() { false; return; }; f; echo st=$?`,
+  `return 4; echo after=$?`,
+  `f() { for i in 1 2; do return 7; done; echo no; }; f; echo st=$?`,
+  `g() { return 5; }; f() { g; echo inner=$?; return 6; }; f; echo outer=$?`,
+  `i=0; while [ $i -lt 3 ]; do i=$((i+1)); if [ $i = 2 ]; then continue; fi; echo $i; done`,
+  `i=0; until false; do i=$((i+1)); [ $i = 2 ] && break; done; echo $i`,
+  `f() { break; }; for i in 1 2; do f; echo $i; done`,
+  `for i in 1 2 3; do continue; echo no; done; echo end`,
+  `i=0; while true; do i=$((i+1)); if [ $i = 3 ]; then break; fi; done; echo $i`,
+  `f() { return 2; }; if f; then echo yes; else echo no; fi`,
+  `for i in 1 2; do break; done; for j in a b; do echo $j; done`,
+  `for i in 1 2 3; do case $i in 2) break;; *) echo $i;; esac; done; echo end`,
 ];
 
 /**
