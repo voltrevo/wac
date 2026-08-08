@@ -396,13 +396,16 @@ program that would be refused on every host — and `probe` reads the difference
 "not granted". The grant check now comes first, in the Deno host's own wording; the
 not-implemented answer is what a program *with* the grant gets.
 
-**One legal difference, now pinned rather than discovered again.** `overlap` asks `isDone()`
-immediately after submitting two reads. Deno says "one finished already" every time; this says "both
-still running" every time. Neither host promises *when* a read completes — a JavaScript host does the
-work while the worker is still inside the second call, and a native one hands it to a thread. So both
-are right, and it is the clearest example yet of what D12 is for: in a deterministic mode that answer
-would be the scheduler's rather than the machine's. The test states the expected line **on each side**
-rather than skipping the case, so a host that stopped printing either fails.
+**One line that is a race on both hosts, and a lesson about pinning measurements.** `overlap` asks
+`isDone()` immediately after submitting two reads. On an idle machine Deno says "one finished already"
+every time and this says "both still running" every time — which looks exactly like a property of each
+host. I wrote it down as one, and the gate caught it within a single run: under the full suite Deno
+says "both still running" too. **A stable observation is not a guarantee.**
+
+So the test normalises the line on both sides and separately checks that each host printed *one of the
+two* legal answers, which is the difference between allowing a race and ignoring a line. It is the
+clearest thing in the repo to point at for D12: in a deterministic mode that answer would be the
+scheduler's rather than the machine's load.
 
 Everything else agrees exactly, including `inside` (a program run inside another with a world of its
 own), `twin` (a program that runs itself) and `roundtrip` (the host filesystem end to end).

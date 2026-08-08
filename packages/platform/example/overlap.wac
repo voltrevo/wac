@@ -16,16 +16,17 @@ export i32 main(Core core, Cli cli) {
 
   // Nothing has been waited for yet. Both reads are in the host's hands.
   //
-  // **This line is the one place two hosts observably disagree, and both are right.** Deno prints
-  // "one finished already" every time; the native runtime prints "both still running" every time.
-  // `isDone` is documented as "whether `wait` would return immediately", and neither host promises
-  // *when* a read completes — a JavaScript host does the work while the worker is still inside the
-  // second call, and a native one hands it to a thread that has not been scheduled yet.
+  // **This line has two legal answers and which one you get is a race.** `isDone` is documented as
+  // "whether `wait` would return immediately", and no host promises *when* a read completes.
   //
-  // So it is a real difference in scheduling rather than in the interface, which is exactly what
-  // design/0001's D12 is about: in a deterministic mode the answer here would be the scheduler's
-  // rather than the machine's. Until there is one, a program that branches on `isDone` immediately
-  // after submitting is asking a question with two legal answers, and this line exists to show that.
+  // Measured, and the measurement is the point: on an idle machine Deno says "one finished already"
+  // every time and the native runtime says "both still running" every time, which looks exactly like
+  // a property of each host — and under load Deno says "both still running" too. It is a race, not a
+  // difference between the two, and the first version of this comment recorded the idle answers as a
+  // rule. A stable observation is not a guarantee.
+  //
+  // Which makes it the clearest thing in this repo to point at for design/0001's D12: in a
+  // deterministic mode this answer would be the scheduler's rather than the machine's load.
   core.log(a.isDone() || b.isDone() ? "one finished already" : "both still running");
 
   FileResult ra = a.wait();

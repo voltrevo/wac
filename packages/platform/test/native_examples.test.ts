@@ -14,16 +14,17 @@
 //      implemented", and `probe` is the program that reads the difference.
 //   2. **`overlap` disagrees on purpose**, and the two hosts are both right — see below.
 //
-// ## The one case that is expected to differ
+// ## The one line that is a race, on both hosts
 //
-// `overlap` asks `isDone()` immediately after submitting two reads. Deno answers "one finished
-// already" every time; the native runtime answers "both still running" every time. Neither host
-// promises *when* a read completes, so both are legal — a JavaScript host does the work while the
-// worker is still inside the second call, and a native one hands it to a thread. design/0001's D12
-// is the decision that would make this the scheduler's answer rather than the machine's.
+// `overlap` asks `isDone()` immediately after submitting two reads, and no host promises *when* a
+// read completes. On an idle machine Deno says "one finished already" every time and the native
+// runtime says "both still running" every time — which looks exactly like a property of each host,
+// and is not: under the full suite Deno says "both still running" too.
 //
-// It is listed as a known difference **with the expected text on each side**, not skipped: a host
-// that stopped printing either line, or printed the other one, fails here.
+// This test pinned the idle answers first and the gate caught it within one run. So the line is
+// **normalised on both sides** rather than expected per host: what is compared is that the two hosts
+// agree about everything else, and that each printed *one of the two* legal answers rather than
+// something else. design/0001's D12 is the decision that would make this deterministic.
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
@@ -94,8 +95,13 @@ type Case = {
   args: string[];
   stdin: string;
   grants: { read?: boolean; write?: boolean; env?: boolean; net?: boolean };
-  /** When the two hosts differ legally: what each must say. */
-  differs?: { deno: string; native: string };
+  /**
+   * A line with more than one legal answer, and every answer it may have.
+   *
+   * Normalised away before comparing, and checked to be one of these — which is the difference
+   * between allowing a race and ignoring a line.
+   */
+  racy?: string[];
   /**
    * A measurement to mask before comparing.
    *
@@ -119,7 +125,7 @@ const CASES: Case[] = [
     args: ["in.txt", "in.txt"],
     stdin: "",
     grants: { read: true },
-    differs: { deno: "one finished already", native: "both still running" },
+    racy: ["one finished already", "both still running"],
   },
 ];
 
@@ -156,20 +162,24 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
     await buildNative(`packages/platform/example/${c.name}.wac`, `${tmp}/${c.name}`, c.grants);
     const rs = await run(native, [`${tmp}/${c.name}.json`, ...c.args], c.stdin, workspace(c.name, "native"));
 
-    const hide = (s: string) => (c.mask === undefined ? s : s.replace(c.mask, "<measured>"));
-    if (c.differs === undefined) {
-      assertEquals(hide(rs.out), hide(js.out), `${c.name}: stdout`);
-      assertEquals(hide(rs.err), hide(js.err), `${c.name}: stderr`);
-      assertEquals(rs.code, js.code, `${c.name}: status`);
-      continue;
+    const hide = (s: string) => {
+      let out = c.mask === undefined ? s : s.replace(c.mask, "<measured>");
+      for (const answer of c.racy ?? []) out = out.replace(answer, "<either>");
+      return out;
+    };
+    // Each host must have printed *one of* the legal answers, not merely something maskable: that is
+    // the difference between allowing a race and ignoring a line.
+    for (const [name, r] of [["deno", js], ["native", rs]] as const) {
+      if (c.racy !== undefined) {
+        assertEquals(
+          c.racy.some((answer) => r.out.includes(answer)),
+          true,
+          `${name} ${c.name} said none of ${JSON.stringify(c.racy)}: ${r.out}`,
+        );
+      }
     }
-    // A known, legal difference: each host must say its own line, and neither may say the other's.
-    assertEquals(js.out.includes(c.differs.deno), true, `deno ${c.name}: ${js.out}`);
-    assertEquals(rs.out.includes(c.differs.native), true, `native ${c.name}: ${rs.out}`);
-    assertEquals(
-      rs.out.replace(c.differs.native, c.differs.deno),
-      js.out,
-      `${c.name} differs by more than the line it is allowed to differ by`,
-    );
+    assertEquals(hide(rs.out), hide(js.out), `${c.name}: stdout`);
+    assertEquals(hide(rs.err), hide(js.err), `${c.name}: stderr`);
+    assertEquals(rs.code, js.code, `${c.name}: status`);
   }
 });
