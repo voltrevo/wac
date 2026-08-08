@@ -232,9 +232,29 @@ export struct Shell {
    * and reads nothing outside itself — design/0001 D1 and D3, and the reason wac-mono 0067's thread was
    * worth doing rather than leaving the shell to reach for `cli` per operation.
    */
+  /**
+   * Whether an unset variable may fall back to the **host process's** environment.
+   *
+   * True for a shell whose filesystem is the host's — `echo $HOME` working without an assignment is
+   * what a person expects of `wacsh`, and the environment it reads is the same machine's as the disk.
+   *
+   * False for a shell built on a system filesystem, and that is not a preference. A session sealed in
+   * an image reported `HOME=/home/claude` and a `$PATH` from the server it was running on: the
+   * design's opening promise is a system "none of which touches the host it happens to be running
+   * on", and D4 says a session's `Cli` has `env` that is *the session's*. Measured over ssh, where it
+   * had been true since the shell learned to read an environment at all.
+   *
+   * The same rule as spawning, and for the same reason: a session whose world is its own does not
+   * borrow the machine's. `Shell.onFs` sets it, because `onFs` is exactly the statement that this
+   * shell's world is that filesystem.
+   */
+  bool hostEnv;
+
   Shell onFs(Core core, Cli cli, Fs fs) {
     Shell sh = Shell.create(core, cli);
     sh.fs = fs;
+    // This shell's world is `fs`, so its environment is its own too — see `hostEnv`.
+    sh.hostEnv = false;
     return sh;
   }
 
@@ -247,7 +267,7 @@ export struct Shell {
                  false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
-                 cli.cwd().wait());
+                 cli.cwd().wait(), true);
   }
 
   /**
@@ -382,6 +402,7 @@ export struct Shell {
     // `.wait()` matters more than it looks: without it this asks whether the *ticket* is null,
     // which it never is, so every name reads as set and `${x-default}` stops substituting.
     // The check compiles either way — a `Pending<string?>` is a reference like any other.
+    if (!this.hostEnv) { return false; }
     return this.cli.env(name).wait() is not null;
   }
 
@@ -410,6 +431,7 @@ export struct Shell {
       // Bytes, because an environment value is not text — wac-mono 0065. The shell wants text here and
       // says so; a value that is not valid UTF-8 keeps its bytes either way, since a wac string *is*
       // bytes.
+      if (!this.hostEnv) { return ""; }
       u8[]? env = this.cli.env(name).wait();
       return (env is null) ? "" : string.fromBytes(env!);
     }

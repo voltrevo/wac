@@ -410,5 +410,57 @@ export u8[] execCommand(u8[] payload) {
   return r.ok ? command : u8[0]();
 }
 
+/**
+ * The terminal a `pty-req` asks for: its type, and how big it is.
+ *
+ * RFC 4254 §6.2 — `TERM`, then the width and height in characters and in pixels, then the encoded
+ * modes. Nothing here reads the modes: what this session does is one arrangement, canonical with echo
+ * on, which `packages/tty` implements and a client's defaults ask for anyway.
+ *
+ * design/0001 step 5 asks for "a `TERM` worth setting", and until this the request was accepted and
+ * every field in it dropped — so a session ran with no `$TERM` at all and every program that asks
+ * what terminal it is talking to got the empty string.
+ */
+export struct Terminal {
+  /** As the client sent it: `xterm-256color`, `dumb`, `screen`. Empty when this is not a `pty-req`. */
+  string term;
+  i32 columns;
+  i32 rows;
+}
+
+export Terminal readPtyReq(u8[] payload) {
+  Reader r = Reader.over(payload);
+  if (r.byte() != msgChannelRequest()) { return Terminal("", 0, 0); }
+  r.u32();
+  u8[] name = r.str();
+  r.bool();
+  if (!r.ok || !equal(name, ascii("pty-req"))) { return Terminal("", 0, 0); }
+  u8[] term = r.str();
+  i32 columns = r.u32();
+  i32 rows = r.u32();
+  if (!r.ok) { return Terminal("", 0, 0); }
+  return Terminal(string.fromBytes(term), columns, rows);
+}
+
+/**
+ * The new size out of a `window-change`, or zeroes.
+ *
+ * RFC 4254 §6.7, and it has **no `want_reply`**: the request is defined to want no answer, so the
+ * field a `pty-req` has here is simply not present. Reading one would take the first byte of the
+ * width and every number after it would be wrong.
+ */
+export Terminal readWindowChange(u8[] payload) {
+  Reader r = Reader.over(payload);
+  if (r.byte() != msgChannelRequest()) { return Terminal("", 0, 0); }
+  r.u32();
+  u8[] name = r.str();
+  r.bool();
+  if (!r.ok || !equal(name, ascii("window-change"))) { return Terminal("", 0, 0); }
+  i32 columns = r.u32();
+  i32 rows = r.u32();
+  if (!r.ok) { return Terminal("", 0, 0); }
+  return Terminal("", columns, rows);
+}
+
 u8[] ascii(string s) { return s.toBytes(); }
 

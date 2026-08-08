@@ -52,7 +52,8 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          channelFailure, channelStderr, channelSuccess, ecdhReply, ephemeralPublic, exchangeHash, execCommand,
          exitStatus, hostKeyBlob, openConfirmation, openFailure, parseAuthRequest, parseEcdhInit,
          readOpenChannel, requestWantsReply,
-         requestName, serverProposal, serviceAccept, sharedSecret, verifyAuth,
+         readPtyReq, readWindowChange, requestName, serverProposal, serviceAccept, sharedSecret,
+         Terminal, verifyAuth,
          byApplication, disconnect } from "./server.wac";
 import { equal } from "../../bytes/src/slice.wac";
 import { User, authorizedKeysOf, parsePasswd, userNamed } from "../../fs/src/passwd.wac";
@@ -161,7 +162,7 @@ export i32 main(Core core, Cli cli) {
  * disagree about which filesystem a client is talking to. That is the kind of difference nobody notices
  * until a `ssh host 'ls'` and an interactive `ls` answer differently.
  */
-Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
+Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
   Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
   sh.capture = true;
   if (o.image != "") { sh.cwd = "/"; }
@@ -195,6 +196,21 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs) {
   // reading the wrong disk would be worse than one that shows less.
   sh.external = boxRun;
   sh.externalNames = boxNames;
+  // **What terminal the client says it has** — design/0001 step 5's "a `TERM` worth setting".
+  //
+  // Set only when the client asked for a pty and said so: `ssh -T host` sends no `pty-req`, and a
+  // session with no terminal should have no `$TERM` rather than a guessed one. A program that reads
+  // it can then tell "no terminal" from "a terminal I have never heard of", which is the distinction
+  // an invented default destroys.
+  //
+  // `COLUMNS` and `LINES` come from the same request and are kept current by `window-change`, because
+  // a size read once is wrong for the rest of a session that was resized.
+  if (terminal.term != "") { sh.setVar("TERM", terminal.term); }
+  if (terminal.columns > 0) {
+    sh.setVar("COLUMNS", itoa(terminal.columns));
+    sh.setVar("LINES", itoa(terminal.rows));
+  }
+
   // **A session starts in its own home, as its own user.** `fs.user` was set when the key was matched;
   // the rest — `$HOME`, `$USER`, and where `cd` with no argument goes — is read from the same
   // `/etc/passwd` the key was found through, so there is one table rather than a second idea of it.
@@ -465,6 +481,7 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   u8[] command = u8[0]();
   bool interactive = false;
   bool pty = false;
+  Terminal terminal = Terminal("", 0, 0);
   for (i32 i = 0; i < 32 && command.len() == 0 && !interactive; i++) {
     u8[] p = conn.readPacket();
     if (conn.failed()) { return; }
@@ -481,6 +498,10 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
       // implements and what a client's default modes ask for anyway. A client that asks for raw mode
       // gets canonical, and that is a gap rather than a translation.
       pty = true;
+      // **What the client said its terminal is.** design/0001 step 5 asks for "a `TERM` worth
+      // setting", and every field of this request used to be dropped — so a session ran with no
+      // `$TERM` and every program that asks what it is talking to got the empty string.
+      terminal = readPtyReq(p);
       if (requestWantsReply(p)) { conn.sendPacket(channelSuccess(clientChannel)); }
       continue;
     }
@@ -492,9 +513,17 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
       }
       continue;
     }
-    // Anything else — `env`, `signal`, `window-change` — is not honoured, and is answered only if it
-    // asked to be. `window-change` in particular: nothing here wraps or pages, so a width is not a
-    // fact this session has any use for yet.
+    if (equal(name, "window-change".toBytes())) {
+      // The size can change after the `pty-req`, and a program that read `$COLUMNS` once would then
+      // be wrong for the rest of the session. Kept, and the terminal *type* is not in this request —
+      // only the size — so the type already read is left alone.
+      Terminal now = readWindowChange(p);
+      if (now.columns > 0) { terminal.columns = now.columns; terminal.rows = now.rows; }
+      // No reply: RFC 4254 §6.7 defines `window-change` as wanting none, which is why it has no
+      // `want_reply` field to read either.
+      continue;
+    }
+    // Anything else — `env`, `signal` — is not honoured, and is answered only if it asked to be.
     if (requestWantsReply(p)) { conn.sendPacket(channelFailure(clientChannel)); }
   }
   if (command.len() == 0 && !interactive) {
@@ -504,8 +533,8 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return; }
 
   Result result = interactive
-    ? interactiveSession(conn, cli, core, clientChannel, o, fs, pty)
-    : run(cli, core, command, o, fs);
+    ? interactiveSession(conn, cli, core, clientChannel, o, fs, pty, terminal)
+    : run(cli, core, command, o, fs, terminal);
   if (conn.failed()) { return; }
   if (result.out.len() > 0) { conn.sendPacket(channelData(clientChannel, result.out)); }
   if (result.err.len() > 0) { conn.sendPacket(channelStderr(clientChannel, result.err)); }
@@ -562,8 +591,9 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  *   which is right, and it cannot end a running `yes`, which is design/0001 step 5's own criterion and
  *   needs step 3's process table. Not approximated: there is no signal here to deliver.
  */
-Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty) {
-  Shell sh = sessionShell(core, cli, o, fs);
+Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
+                          Terminal terminal) {
+  Shell sh = sessionShell(core, cli, o, fs, terminal);
   Buf pending = Buf.create();
   Line tty = Line.create();
 
@@ -690,8 +720,8 @@ struct Result {
  * what the server can read and write nothing. That is a real exposure and the operator chooses its
  * size, which is the capability world working as intended rather than a gap.
  */
-Result run(Cli cli, Core core, u8[] command, Options o, Fs fs) {
-  Shell sh = sessionShell(core, cli, o, fs);
+Result run(Cli cli, Core core, u8[] command, Options o, Fs fs, Terminal terminal) {
+  Shell sh = sessionShell(core, cli, o, fs, terminal);
   i32 status = runScript(sh, string.fromBytes(command));
   return Result(sh.outBuf.take(), sh.errOut.take(), status);
 }

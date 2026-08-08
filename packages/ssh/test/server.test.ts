@@ -733,6 +733,94 @@ Deno.test({
  * one, and that is the point: the system builds its own world with the tools it ships.
  */
 Deno.test({
+  name: "a session knows what terminal the client said it has",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    // design/0001 step 5 asks for "a `TERM` worth setting". The `pty-req` carries the terminal type
+    // and its size, and every field of it used to be dropped — so a session ran with no `$TERM` and a
+    // program asking what it was talking to got nothing.
+    //
+    // Through a **real pty request**, which means `ssh -tt`: the value has to survive the client's
+    // encoding of it rather than a string this test made up.
+    let s: Wacsshd | null = null;
+    try {
+      s = await startWacsshd();
+      const r = await new Deno.Command("ssh", {
+        args: [
+          "-tt", "-p", String(s.port), "-i", `${s.dir}/clientkey`,
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=10",
+          "x@127.0.0.1", "echo T=[$TERM]; exit",
+        ],
+        env: { ...Deno.env.toObject(), TERM: "vt100" },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const out = new TextDecoder().decode(r.stdout);
+      if (!out.includes("T=[vt100]")) {
+        throw new Error(`the session did not learn the client's terminal: ${JSON.stringify(out)}`);
+      }
+      // And a session with no pty has **no** `$TERM` rather than a guessed one, which is what lets a
+      // program tell "no terminal" from "a terminal I have never heard of".
+      //
+      // Asked of a server booted on an *image*, because this one has no image and is therefore a
+      // host-mounted shell — where an unset variable does fall back to the machine's environment, on
+      // purpose, exactly as `wacsh` does. That is the same rule from the other side, and asking the
+      // wrong server was how this test first failed.
+      const dir = await Deno.makeTempDir({ prefix: "wac-sshd-term-" });
+      let sealed: Wacsshd | null = null;
+      try {
+        sealed = await startWacsshd(["-i", `${dir}/term.wacimg`], wacsshdWritableBinary);
+        const plain = await realSsh(sealed, "echo T=[$TERM]");
+        if (plain.stdout !== "T=[]\n") {
+          throw new Error(`a session with no pty had a TERM: ${JSON.stringify(plain.stdout)}`);
+        }
+      } finally {
+        if (sealed !== null) await stopWacsshd(sealed);
+        await Deno.remove(dir, { recursive: true });
+      }
+    } finally {
+      if (s !== null) await stopWacsshd(s);
+    }
+  },
+});
+
+Deno.test({
+  name: "a session on an image has its own environment, not the server's",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    // **design/0001's opening promise, and it was untrue.** A session sealed in an image reported
+    // `HOME=/home/claude` and a `$PATH` from the machine the server was running on, because an unset
+    // variable fell back to `cli.env` — the *server process's* environment. D4 says a session's `Cli`
+    // has `env` that is the session's.
+    //
+    // The fallback is right for `wacsh`, whose filesystem is the same machine's, and wrong here. So
+    // `Shell.onFs` turns it off: a shell whose world is a filesystem does not borrow the host's
+    // environment, which is the same rule as not spawning its stages.
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-env-" });
+    let s: Wacsshd | null = null;
+    try {
+      s = await startWacsshd(["-i", `${dir}/env.wacimg`], wacsshdWritableBinary);
+      const said = await realSsh(s, "echo HOME=[$HOME] PATHLEN=${#PATH} TERM=[$TERM]");
+      if (said.code !== 0) throw new Error(`exit ${said.code}: ${said.stderr}`);
+      if (said.stdout !== "HOME=[] PATHLEN=0 TERM=[]\n") {
+        throw new Error(`a sealed session read the server's environment: ${JSON.stringify(said.stdout)}`);
+      }
+      // The canary: the server *does* have those variables, so an empty answer means they were
+      // withheld rather than that this machine happens to have none.
+      if ((Deno.env.get("HOME") ?? "").length === 0) {
+        throw new Error("this machine has no HOME, so the test above proves nothing");
+      }
+    } finally {
+      if (s !== null) await stopWacsshd(s);
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "two keys land in two homes, and neither can read the other's private file",
   ignore: !haveSshd,
   sanitizeResources: false,
