@@ -1159,3 +1159,64 @@ Deno.test("rung 3: a const this refuses writes through the receiver", () => {
   }
   if (ours(good).length !== 0) throw new Error("a non-const method may write through this");
 });
+
+/**
+ * Method calls: does the struct have it, and may this receiver call it?
+ *
+ * Static and instance calls are the same syntax — `P.mk()` and `p.mk()` differ only in whether the
+ * receiver names a struct or a value — so the receiver decides which question is asked, and a local
+ * shadowing a struct name is a value, which is why the scope is consulted first.
+ *
+ * Three things had to be excluded, and all three were found by the corpus rather than reasoned out:
+ *
+ *   - a **generic**'s methods are not recorded, so an empty answer means "not modelled" rather than
+ *     "not there" — `this.hash(k)` inside `Map<K, V>` is an ordinary call;
+ *   - a **funcref field** is called like a method: `sh.externalNames()` calls a field, and four of
+ *     them live in `packages/sh`;
+ *   - and a field's *existence* is the question there, not its type — a funcref field has no name
+ *     this slice can spell, so asking its type says "no such field" about a field that is right
+ *     there.
+ */
+Deno.test("rung 3: method calls, static and through a const receiver", () => {
+  const D = "struct P { i32 x; i32 get(const this) { return this.x; } " +
+    "void set(this, i32 v) { this.x = v; } i32 mk() { return 1; } } ";
+  const CAUGHT = [
+    "export void a(const P p) { p.set(1); }",
+    "export i32 e2() { return P.nope(); }",
+    "export i32 f(P p) { return p.nope(); }",
+    // A static called on an instance, and an instance called on the struct.
+    "export i32 h(P p) { return p.mk(); }",
+    "export i32 i() { return P.get(); }",
+  ];
+  const QUIET = [
+    "export i32 b(const P p) { return p.get(); }",
+    "export void c(P p) { p.set(1); }",
+    "export i32 d() { return P.mk(); }",
+    "export i32 j(P p) { return p.get(); }",
+    // A generic's methods are not modelled, so nothing is said about them.
+    "struct Box<T> { T v; i32 get(const this) { return 1; } } export i32 k2() { return 1; }",
+  ];
+  for (const t of CAUGHT) {
+    const src = t.startsWith("struct") ? t : D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(t)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const t of QUIET) {
+    const src = t.startsWith("struct") ? t : D + t;
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(t)} is not this rule's to report, and we said ` +
+        mine.join(", "));
+    }
+  }
+});

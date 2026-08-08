@@ -542,8 +542,33 @@ paths, array elements and `const this` all confirm the root.
 **Spec coverage: 26 of 83**, from 20 — the largest jump so far, and the reason is that the corpus's
 untouched cases were clustered in one family rather than scattered.
 
-Next: more of rung 3 — generics properly, `switch` and `match` subjects, and the static/method
-families (`type 'X' has no static method`, `cannot call non-const method through const`).
+### Method calls, and a statement nothing walked
+
+A method table — owner, name, whether it is static, whether its `this` is const — and calls checked
+against it. Static and instance calls are the same syntax, differing only in whether the receiver names a struct
+or a value, so the receiver decides which question is asked and
+the scope is consulted first, because a local shadowing a struct name is a value.
+
+**Spec coverage: 27 of 83**, from 26.
+
+Three exclusions, all found by the corpus rather than reasoned out. A **generic**'s methods are not
+recorded, so an empty answer means "not modelled" rather than "not there" — `this.hash(k)` inside
+`Map<K, V>` is an ordinary call. A **funcref field** is called like a method: `packages/sh` has four.
+And the question there is the field's *existence*, not its type — a funcref field has no name this
+slice can spell, so asking its type says "no such field" about a field two lines above.
+
+Genericity is recorded rather than inferred from an empty field table, because *generic* and *has no
+fields* are different facts and only one of them means say nothing.
+
+**The find of the slot was a statement nothing walked.** `p.set(1);` is an `ExprStmt`, and `checkStmt`
+had no arm for one — so every expression rule reached only expressions that were part of something
+else: a return, an initialiser, a condition. A statement that is just a call is the commonest shape in
+the language and had no rule applied to it at all. It surfaced as the const-receiver check looking
+broken when it was merely unreached, which is the second time this week a rule has looked wrong and
+been unvisited instead.
+
+Next: more of rung 3 — the cast-operator family (`lossy cast not needed`), `switch` and `match`
+subjects, and generics properly.
 
 ### What rung 3's oracle looks like, measured
 
