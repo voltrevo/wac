@@ -21,9 +21,9 @@ export i32 fold(Core core, Cli cli, Fs fs, Args a) {
     return 1;
   }
 
-  Reader r = Reader.create(core, cli, fs, a, 0);
 
   Sink out = Sink.create(cli);
+  Reader r = Reader.create(core, cli, fs, a, 0, out);
   while (true) {
     Line l = r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }

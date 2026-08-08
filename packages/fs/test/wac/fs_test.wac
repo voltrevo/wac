@@ -7,7 +7,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs } from "../../src/fs.wac";
-import { FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FileResult }
+import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FileResult }
   from "../../../platform/src/platform.wac";
 
 export string test_a_file_written_reads_back() {
@@ -47,8 +47,11 @@ export string test_directories_and_their_faults() {
 
   // The three answers `rm -f` needs to tell apart, which is why they are categories and not messages.
   t.eqI32(fs.mkdir("/e", false).fault, FAULT_NONE(), "another directory");
-  t.eqI32(fs.readFile("/e").fault, FAULT_OTHER(), "reading a directory is refused, as the hosts say it");
-  t.eqI32(fs.writeFile("/e", "no\n".toBytes()).fault, FAULT_OTHER(), "and so is writing over one");
+  // `FAULT_IS_DIR`, which used to be `FAULT_OTHER` "as the hosts say it" — and the hosts said it that way
+  // because `faults.ts` had no word for `EISDIR`, so the category was matching a gap rather than a fact.
+  // Both sides know now, and this is the assertion that they agree.
+  t.eqI32(fs.readFile("/e").fault, FAULT_IS_DIR(), "reading a directory is refused, and says which");
+  t.eqI32(fs.writeFile("/e", "no\n".toBytes()).fault, FAULT_IS_DIR(), "and so is writing over one");
   return t.report();
 }
 

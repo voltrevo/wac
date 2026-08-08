@@ -5,7 +5,7 @@
 
 import { Change, Cli, Core, faultWords, FileResult } from "../../../platform/src/platform.wac";
 import { Args } from "./args.wac";
-import { Feed, Line, Lines, nextLine } from "../../../platform/src/stream.wac";
+import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
 /**
@@ -63,6 +63,9 @@ export string operandAt(Args a, i32 n) {
   return a.rest[n] == "-" && dashIsStdin(a.name) ? "" : a.rest[n];
 }
 
+/** What the `n`th operand is *called* in a message — what was written, or `""` when there was none. */
+export string labelAt(Args a, i32 n) { return a.rest.len() <= n ? "" : a.rest[n]; }
+
 /**
  * Whether a lone `-` names standard input for this tool. **Not universal**, and measured rather than
  * assumed.
@@ -86,6 +89,12 @@ bool dashIsStdin(string name) { return name != "rev" && name != "strings"; }
  * reason this is a table rather than a format string.
  */
 string cannotOpen(string name, string path, string why) {
+  // **A directory is not an open failure.** It opens; the *read* is what refuses, and the tools that
+  // word the two differently say so: `sort somedir` is "read failed: somedir: Is a directory", not
+  // "cannot read". Ours reaches this through one call that does both, so the reason is what tells them
+  // apart — which is only possible now that "Is a directory" is a category rather than the host's
+  // sentence.
+  if (why == "Is a directory") { return readFailed(name, path, why); }
   // Five wordings, each measured on the tool it belongs to rather than derived from the majority.
   // `head`, `tail` and `split` quote the name and say what they were going to do with it; `tac` says the
   // same thing and calls it a *failure* to do it; util-linux's `rev` says "cannot open" without quotes;
@@ -213,17 +222,39 @@ export Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
  */
 export struct Chunk { bool ok; bool more; u8[] bytes; }
 
-/** The next chunk, reporting a failure to standard error as it goes. */
-export Chunk nextChunk(Core core, Cli cli, Feed fed, Args a) {
+/**
+ * The next chunk, reporting a failure to standard error as it goes.
+ *
+ * `label` is the operand being read, or `""` for standard input — it is in the sentence because it is in
+ * the real tool's: `cat somedir` says `cat: somedir: Is a directory`, and this said `cat: Is a directory`
+ * with nothing to say *which* file, which is the same fault as printing the host's errno and was hidden by
+ * the same thing, since a read only fails on inputs nobody had tried.
+ */
+export Chunk nextChunk(Core core, Cli cli, Feed fed, Args a, string label) {
   u8[] bytes = fed.next();
   if (bytes.len() > 0) { return Chunk(true, true, bytes); }
   // `Feed` answers an empty array for both "finished" and "failed" and keeps the reason, which is the
   // one place the three states collapse to two. Asking afterwards is how they come apart again.
   if (fed.why != "") {
-    core.warn(a.name + ": " + fed.why);
+    core.warn(readFailed(a.name, label, fed.why));
     return Chunk(false, false, u8[0]());
   }
   return Chunk(true, false, u8[0]());
+}
+
+/**
+ * How this tool says a read of something it had already opened went wrong.
+ *
+ * Two wordings, each measured: `head` says `head: error reading 'x': …` and `sort` says
+ * `sort: read failed: x: …`, where the rest say the name and the reason — the same shape as
+ * `cannotOpen` above and, for most tools, the same sentence, because to them a directory that opens and
+ * then refuses to be read is just a file they could not read.
+ */
+export string readFailed(string name, string label, string why) {
+  if (label == "") { return name + ": " + why; }
+  if (name == "head" || name == "tail") { return name + ": error reading '" + label + "': " + why; }
+  if (name == "sort") { return name + ": read failed: " + label + ": " + why; }
+  return name + ": " + label + ": " + why;
 }
 
 /**
@@ -282,8 +313,15 @@ export Span nextSpan(Core core, Cli cli, Fs fs, Args a, i32 at, bool opened, Fee
       at = at + 1;
     }
   }
-  Chunk got = nextChunk(core, cli, here, a);
-  if (!got.ok) { return Span(false, false, u8[0](), at, here, failed); }
+  Chunk got = nextChunk(core, cli, here, a, labelAt(a, at));
+  // A read that fails is the same skip as an open that fails, once there is another operand: GNU's
+  // `cat a somedir b` prints `a`, complains, and prints `b`. It used to end the run here, which lost `b`
+  // for the same reason and with the same invisibility as the open case.
+  if (!got.ok) {
+    if (files <= at + 1) { return Span(false, false, u8[0](), at, here, true); }
+    Span next = nextSpan(core, cli, fs, a, at + 1, false, here);
+    return Span(next.ok, next.more, next.bytes, next.at, next.fed, true);
+  }
   if (got.more) { return Span(true, true, got.bytes, at, here, failed); }
   // This file is done. If another was named, roll on; the caller sees one stream.
   if (files > at + 1) {
@@ -325,6 +363,19 @@ export struct Reader {
   i32 at;
   Lines s;
   Feed fed;
+  /**
+   * The caller's output, so that a complaint about the *next* operand cannot overtake the lines of this
+   * one.
+   *
+   * Output here is block-buffered — a write per line costs a park and a wake per line, which is why
+   * `Sink` exists — while `core.warn` goes straight out. So `cut -c1 a missing b`, with both streams
+   * merged as they are at a prompt, printed the complaint before `a`. GNU has exactly the same
+   * arrangement and settles it the same way: its `error()` flushes standard output first.
+   *
+   * The reader holds it because the reader is what opens the next operand, one layer under the applet
+   * that has both objects in scope. wac-mono 0112.
+   */
+  Sink out;
 
   /**
    * A reader over the operands from `first`, or over standard input when there are none.
@@ -335,21 +386,21 @@ export struct Reader {
    * on it and then read stdin answered with the piped input reversed, which is a wrong answer where
    * there had been a refusal. When every operand fails the reader is empty and `failed` is set.
    */
-  Reader create(Core core, Cli cli, Fs fs, Args a, i32 first) {
+  Reader create(Core core, Cli cli, Fs fs, Args a, i32 first, Sink out) {
     if (operandCount(a, 0) <= first) {
-      return Reader(true, false, false, first, Lines.create(), Feed.fromStdin(cli));
+      return Reader(true, false, false, first, Lines.create(), Feed.fromStdin(cli), out);
     }
     bool failed = false;
     for (i32 at = first; at < operandCount(a, 0); at++) {
       Input in = openStream(core, cli, fs, a, at, -1);
       // The feed the opener chose, not the process's: on anything but a host mount it is serving bytes
       // this filesystem handed over.
-      if (in.ok) { return Reader(true, false, failed, at, Lines.create(), in.fed); }
+      if (in.ok) { return Reader(true, false, failed, at, Lines.create(), in.fed, out); }
       failed = true;
     }
     // Every one of them was refused, and each has already said so. An empty feed rather than standard
     // input: there is nothing left to read, and reading anything would be inventing an operand.
-    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[0]()));
+    return Reader(true, false, true, operandCount(a, 0), Lines.create(), Feed.of(cli, u8[0]()), out);
   }
 
   /**
@@ -369,9 +420,30 @@ export struct Reader {
     Line l = nextLine(this.s, this.fed);
     if (l.ok) { return l; }
     // A read that failed part way is not an end of input, and `Line.ok` cannot say which happened.
-    if (this.s.broken != "") { this.broken = true; return l; }
+    //
+    // **And it is said out loud.** `broken` was set and nothing printed, so `nl somedir` — a path that
+    // opens and then refuses to be read — exited 1 having written nothing at all, which is a status with
+    // no sentence attached. Every real tool names the file and the reason.
+    if (this.s.broken != "") {
+      this.out.flush();
+      core.warn(readFailed(a.name, labelAt(a, this.at), this.s.broken));
+      this.broken = true;
+      // …and on to the next operand, which is what GNU does: `cut -c1 a somedir b` prints `a`,
+      // complains, and prints `b`. Ending the whole sequence here lost `b` — the same mistake as
+      // stopping at an operand that will not *open*, one layer along, and it survived the fix for that
+      // one because a read only fails on inputs nobody had tried.
+      if (operandCount(a, 0) <= this.at + 1) { return l; }
+      this.at = this.at + 1;
+      Input more = openStream(core, cli, fs, a, this.at, -1);
+      if (!more.ok) { this.failed = true; return this.next(core, cli, fs, a); }
+      this.s = Lines.create();
+      this.fed = more.fed;
+      return this.next(core, cli, fs, a);
+    }
     if (operandCount(a, 0) <= this.at + 1) { return l; }
     this.at = this.at + 1;
+    // Everything written from the file just finished, before anything is said about the next one.
+    this.out.flush();
     Input in = openStream(core, cli, fs, a, this.at, -1);
     // Reported already, by `openStream`. Remember that it happened, and read the next operand.
     if (!in.ok) { this.failed = true; return this.next(core, cli, fs, a); }

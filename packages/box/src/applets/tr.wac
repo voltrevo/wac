@@ -117,7 +117,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
 
   i32 last = -1;
   while (true) {
-    Chunk got = nextChunk(core, cli, fed, a);
+    Chunk got = nextChunk(core, cli, fed, a, in.label);
     if (!got.ok) { return 1; }
     if (!got.more) { return 0; }
     u8[] chunk = got.bytes;

@@ -29,6 +29,7 @@ import {
   STAT_FAULT,
   changeBytes,
   changed,
+  readFailure,
   pathFailure,
   statFault,
 } from "./faults.ts";
@@ -613,7 +614,12 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       } catch (e) {
         // The third state, said out loud. This used to answer with nothing, which the caller could
         // only read as "finished".
-        return failed(e instanceof Error ? e.message : String(e));
+        //
+        // **The category's phrase where there is one**, and the host's message only where there is not.
+        // A read of a directory arrived here as "Is a directory (os error 21)" — an errno, no filename,
+        // and a different sentence under Node — which is the leak wac-mono 0062 closed for the *open*
+        // path and never for this one.
+        return failed(readFailure(e));
       }
     },
     [OP.OUTPUT_ERROR]: () => str(outputFailure),

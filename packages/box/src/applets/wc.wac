@@ -21,9 +21,10 @@
 import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
-import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
+import { Chunk, Input, openStream, nextChunk, operandAt, operandCount } from "../lib/input.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Fs } from "../../../fs/src/fs.wac";
+import { Stat } from "../../../platform/src/platform.wac";
 import { Feed } from "../../../platform/src/stream.wac";
 
 /** One file's counts. */
@@ -35,30 +36,61 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
   // No operands means standard input, which is one unnamed pass.
   i32 count = files == 0 ? 1 : files;
 
-  // Every file's counts are held until the end, because the column width is a property of the whole run:
-  // the real one right-aligns every number to the width of the total byte count. Printing as it went is
-  // what made this package's `wc` unpadded, and the test compensated by comparing numbers rather than
-  // text — which then hid a missing filename for months. A few integers per file is what that costs.
-  i32[] lines = i32[count](fill: 0);
-  i32[] words = i32[count](fill: 0);
-  i32[] sizes = i32[count](fill: 0);
-  string[] labels = string[count](fill: "");
+  // **The width comes from `stat`, before anything is read**, which is what lets each line be printed as
+  // its file is counted rather than all of them at the end.
+  //
+  // The columns are right-aligned to the digits in the total *byte* count — which is why `wc -l` over two
+  // small files still pads to three when they are 408 bytes between them, and only makes sense once you
+  // know it is the size being measured. This used to derive that from the counting, so no line could be
+  // printed until every file had been read: `wc -l a missing b` printed its complaint about `missing`
+  // before `a`'s count, where GNU interleaves them (wac-mono 0112). GNU stats the operands and gets the
+  // same number without reading a byte, and so does this now.
+  //
+  // A file it cannot stat contributes nothing, which is also GNU's answer: `wc -l big missing tiny` pads
+  // to the digits of `big` plus `tiny`.
+  i32 asked = (has(a, 'l') ? 1 : 0) + (has(a, 'w') ? 1 : 0) + (has(a, 'c') ? 1 : 0);
+  // **A `-` operand is standard input, and standard input has no size to stat** — so `wc -` pads to seven
+  // exactly as `wc` with no operand does, and prints `-` as the label. The rule was written as "no
+  // operands", which was the only way to reach stdin before a lone dash meant it.
+  bool fromStdin = files == 0;
+  i64 totalSize = 0 as i64;
+  for (i32 f = 0; f < files; f++) {
+    string path = operandAt(a, f);
+    if (path == "") { fromStdin = true; continue; }
+    Stat st = fs.stat(path);
+    // **Something with no size to take** — a directory, a device — puts the whole run on the fallback
+    // width, exactly as standard input does: `wc -l f somedir` pads to seven where `wc -l f g` pads to
+    // the digits of their total. Measured, not reasoned about; a missing operand is *not* one of these,
+    // because there is nothing there to be unsizeable.
+    if (st.exists && !st.isFile) { fromStdin = true; }
+    if (st.exists && st.isFile) { totalSize = totalSize + st.size; }
+  }
+  // Measured one flag combination at a time rather than reasoned about:
+  //
+  //     wc -l a.txt              ->  `3 a.txt`            one column, one input: no padding at all
+  //     wc -lw big.txt           ->  `  6   6 big.txt`    two columns: the width of the total size
+  //     wc -l big.txt tiny.txt   ->  `  6 big.txt` …      two inputs: likewise, and a `total` row
+  //     printf … | wc -lw        ->  `      2       3`    nothing to stat: seven
+  bool single = asked == 1 && count == 1;
+  i32 width = single ? 1 : (fromStdin ? 7 : digits(totalSize as! i32));
 
   Counts total = Counts(0, 0, 0);
   // A file that will not open is reported, skipped, and the status at the end — GNU's rule, and until
   // this it stopped the run, so `wc -l a missing b` printed nothing at all, not even `a`'s count.
-  bool[] counted = bool[count](fill: false);
   i32 status = 0;
   for (i32 f = 0; f < count; f++) {
     Input in = openStream(core, cli, fs, a, f, -1);
     if (!in.ok) { status = 1; continue; }
-    counted[f] = true;
     Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);
     bool inWord = false;
+    // A read that fails part way is a different thing from one that never opened, and GNU words the
+    // difference in the output as well as in the message: a **directory** gets a row of zeroes, because
+    // it was there and was named, while a missing file gets no row at all. Both leave the status at 1.
+    bool unread = false;
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a);
-      if (!got.ok) { return 1; }
+      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      if (!got.ok) { unread = true; break; }
       if (!got.more) { break; }
       u8[] data = got.bytes;
       one.bytes = one.bytes + data.len();
@@ -69,51 +101,19 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
         if (space) { inWord = false; } else if (!inWord) { inWord = true; one.words++; }
       }
     }
-    lines[f] = one.lines;
-    words[f] = one.words;
-    sizes[f] = one.bytes;
-    labels[f] = in.label;
+    // Printed here rather than collected: the width is already known, and a complaint about the next
+    // operand must not arrive before this line.
+    if (unread) {
+      core.log(row(a, Counts(0, 0, 0), in.label, width));
+      status = 1;
+      continue;
+    }
+    core.log(row(a, one, in.label, width));
     total.lines = total.lines + one.lines;
     total.words = total.words + one.words;
     total.bytes = total.bytes + one.bytes;
   }
 
-  // The width is the digits in the total byte count — which is what the real one uses, rather than the
-  // widest number it is about to print. `wc -l` over two small files still pads to three when the files
-  // are 408 bytes between them, which only makes sense once you know it is the *size* being measured.
-  //
-  // Standard input is the exception, and has a rule of its own that nothing in the output explains —
-  // measured, one flag combination at a time:
-  //
-  //     printf 'a b\nc\n' | wc -l     ->  `2`
-  //     printf 'a b\nc\n' | wc -lw    ->  `      2       3`
-  //
-  // Nothing can be stat'd, so there is no size to derive a width from: the real one uses **seven**, except
-  // when exactly one column is asked for, where it pads to nothing. A file's width comes from its size,
-  // which is why `wc -l` over two small files still pads to three when they are 408 bytes between them.
-  // The rule, measured one flag combination at a time rather than reasoned about:
-  //
-  //     wc -l a.txt              ->  `3 a.txt`            one column, one input: no padding at all
-  //     wc -lw big.txt           ->  `  6   6 big.txt`    two columns: the width of the total size
-  //     wc -l big.txt tiny.txt   ->  `  6 big.txt` …      two inputs: likewise, and a `total` row
-  //     printf … | wc -lw        ->  `      2       3`    nothing to stat: seven
-  //
-  // So: one column *and* one input means no padding; otherwise it is the digits in the total byte count,
-  // or seven when there is no file to take a size from.
-  i32 asked = (has(a, 'l') ? 1 : 0) + (has(a, 'w') ? 1 : 0) + (has(a, 'c') ? 1 : 0);
-  bool single = asked == 1 && count == 1;
-  // **A `-` operand is standard input, and standard input has no size to stat** — so `wc -` pads to seven
-  // exactly as `wc` with no operand does, and prints `-` as the label. The rule was written as "no
-  // operands", which was the only way to reach stdin before a lone dash meant it.
-  bool fromStdin = files == 0;
-  for (i32 f = 0; f < files; f++) {
-    if (a.rest[f] == "-") { fromStdin = true; }
-  }
-  i32 width = single ? 1 : (fromStdin ? 7 : digits(total.bytes));
-  for (i32 f = 0; f < count; f++) {
-    if (!counted[f]) { continue; }
-    core.log(row(a, Counts(lines[f], words[f], sizes[f]), labels[f], width));
-  }
   // A total only when there was more than one file to total, which is the real one's rule. It counts the
   // files that were read, since the ones that were not have no counts to add.
   if (files > 1) { core.log(row(a, total, "total", width)); }

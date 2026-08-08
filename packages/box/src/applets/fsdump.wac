@@ -37,7 +37,7 @@ export i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
     // difference from the applets above, which do stream.
     Buf held = Buf.create();
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a);
+      Chunk got = nextChunk(core, cli, fed, a, in.label);
       if (!got.ok) { return 1; }
       if (!got.more) { break; }
       held.pushAll(got.bytes);

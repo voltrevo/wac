@@ -36,6 +36,7 @@ import {
   STAT_FAULT,
   changeBytes,
   changed,
+  readFailure,
   statFault,
 } from "./faults.ts";
 
@@ -514,7 +515,8 @@ export function nodeWorld(
         const got = source === null ? await io.readStdinChunk() : await source.read();
         return got.length === 0 ? END : data(got);
       } catch (e) {
-        return failed(e instanceof Error ? e.message : String(e));
+        // The category's phrase where there is one; see the same line in `deno.ts`.
+        return failed(readFailure(e));
       }
     },
     [OP.OUTPUT_ERROR]: () => str(outputFailure),

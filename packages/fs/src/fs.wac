@@ -32,7 +32,7 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
-  FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
+  FAULT_IS_DIR, FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
 import { resolvePath } from "./path.wac";
 
 /** Where a mount's bytes actually live. */
@@ -287,13 +287,12 @@ export struct Fs {
       return FileResult.of(false, u8[0](), "permission denied", FAULT_DENIED());
     }
     if (this.nodes.get(node).isDir) {
-      // `FAULT_OTHER`, not `FAULT_DENIED`, because that is what the hosts answer: the category set has no
-      // "is a directory", so `faults.ts` classifies Deno's `EISDIR` as other and the message carries it.
-      // Chosen by comparing against a real filesystem — the first run of `test/host.test.ts` said 2 where
-      // the host said 5, and the host is the oracle. Whether the taxonomy *should* grow a category is a
-      // separate question, noted in 0067: a program does branch on it, since `cat` on a directory and
-      // `cat` on a missing file are different mistakes.
-      return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER());
+      // `FAULT_IS_DIR`, which is the category 0067 asked for and did not have: this used to be
+      // `FAULT_OTHER` because that is what the hosts answered, and the hosts answered it because
+      // `faults.ts` had no better word for `EISDIR`. Both sides know now, so a memory filesystem and a
+      // real one give a program the same answer to the same mistake — which is the whole point of the
+      // categories, and was not true here.
+      return FileResult.of(false, u8[0](), "Is a directory", FAULT_IS_DIR());
     }
     return FileResult.of(true, this.nodes.get(node).bytes(), "", FAULT_NONE());
   }
@@ -392,7 +391,7 @@ export struct Fs {
     match (m.backing) {
       case Host(cli): {}
       else: {
-        if (this.stat(path).isDir) { return Change.of(FAULT_OTHER(), "is a directory"); }
+        if (this.stat(path).isDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
       }
     }
     match (m.backing) {
@@ -626,14 +625,15 @@ export struct Fs {
     // none of them: it replaced the entry whatever it was, so `mv f d` where `d` is a directory
     // succeeded and orphaned everything `d` held. Not a missing check — a wrong answer, and in an image
     // it is data loss. The categories are the host's, taken from `test/host.test.ts`'s transcript rather
-    // than chosen: a file onto any directory and a directory onto a file are both `FAULT_OTHER`, a
-    // directory onto a *non-empty* directory is `FAULT_NOT_EMPTY`, and a directory onto an empty one is
-    // the single pair that is allowed.
+    // than chosen: a file onto any directory is `FAULT_IS_DIR` — which the host started saying the moment
+    // `faults.ts` learned the word for `EISDIR`, and this transcript is what noticed that memory had not
+    // — a directory onto a file is `FAULT_OTHER`, a directory onto a *non-empty* directory is
+    // `FAULT_NOT_EMPTY`, and a directory onto an empty one is the single pair that is allowed.
     i32 existing = this.child(toParent, baseOf(to));
     if (existing >= 0 && existing != node) {
       bool fromDir = this.nodes.get(node).isDir;
       bool toDir = this.nodes.get(existing).isDir;
-      if (!fromDir && toDir) { return Change.of(FAULT_OTHER(), "is a directory"); }
+      if (!fromDir && toDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
       if (fromDir && !toDir) { return Change.of(FAULT_OTHER(), "not a directory"); }
       if (fromDir && toDir && this.nodes.get(existing).entries.len() > 0) {
         return Change.of(FAULT_NOT_EMPTY(), "directory not empty");

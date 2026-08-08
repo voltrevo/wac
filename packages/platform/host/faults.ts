@@ -39,6 +39,19 @@ export const FAULT_NOT_REPRESENTABLE = 6;
 export const FAULT_NOT_GRANTED = 7;
 
 /**
+ * A directory where a file was wanted.
+ *
+ * The eighth category, and the argument against it was the one in the header: errno granularity is not
+ * what this taxonomy is for. What overruled it is that a program *branches* on this — `cat` on a
+ * directory and `cat` on a missing file are different mistakes, and every real tool says so — and 0067
+ * had already recorded the question. Without it the host's own sentence was the only information, so
+ * `wc -l somedir` said `wc: Is a directory (os error 21)` under Deno and something else again under
+ * Node: an errno, no filename, and a different answer per runtime. That is precisely what wac-mono 0062
+ * fixed for a missing file, on a path nobody had walked.
+ */
+export const FAULT_IS_DIR = 8;
+
+/**
  * A fault a host had to name itself, because its filesystem does not report one.
  *
  * OPFS is the case that needs it: it has no exclusive create, so "already exists" is a question the
@@ -116,6 +129,7 @@ export function faultOf(e: unknown): number {
     if (code === "EACCES" || code === "EPERM") return FAULT_DENIED;
     if (code === "EEXIST") return FAULT_EXISTS;
     if (code === "ENOTEMPTY") return FAULT_NOT_EMPTY;
+    if (code === "EISDIR") return FAULT_IS_DIR;
   }
 
   // The File System Access API throws `DOMException`s with names rather than codes.
@@ -133,6 +147,9 @@ export function faultOf(e: unknown): number {
   // directory under Deno arrives as a plain `Error`, and its os error number is the only marker.
   const message = e instanceof Error ? e.message : String(e);
   if (/not empty|os error 39|os error 66/i.test(message)) return FAULT_NOT_EMPTY;
+  // A directory where a file was wanted. Deno throws a plain `Error` for a read of one — no typed
+  // error, no `code` — so its os error number is the only structural marker, exactly as above.
+  if (/is a directory|os error 21/i.test(message)) return FAULT_IS_DIR;
   // A grant this program was never given. This line said `FAULT_DENIED` for a year after the category
   // below it existed, which made the distinction it was added for unobservable from a message.
   if (/not granted/i.test(message)) return FAULT_NOT_GRANTED;
@@ -181,9 +198,24 @@ export function phraseOf(fault: number): string {
   if (fault === FAULT_DENIED) return "permission denied";
   if (fault === FAULT_EXISTS) return "already exists";
   if (fault === FAULT_NOT_EMPTY) return "directory not empty";
+  if (fault === FAULT_IS_DIR) return "Is a directory";
   if (fault === FAULT_NOT_REPRESENTABLE) return "the name is not representable on this host";
   if (fault === FAULT_NOT_GRANTED) return "not granted to this application";
   return "";
+}
+
+/**
+ * How a *read* failure is worded: the category's phrase where there is one, the host's own message where
+ * there is not.
+ *
+ * The read path used to hand back `e.message` unconditionally, which is the one thing `faultOf` exists to
+ * stop: `wc -l somedir` said "Is a directory (os error 21)" under Deno and something else under Node, so
+ * a program's output depended on which runtime it happened to be on. `FAULT_OTHER` still falls through to
+ * the message, deliberately — that category means the host had something to say that no phrase covers.
+ */
+export function readFailure(e: unknown): string {
+  const phrase = phraseOf(faultOf(e));
+  return phrase === "" ? (e instanceof Error ? e.message : String(e)) : phrase;
 }
 
 /**

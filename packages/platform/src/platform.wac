@@ -435,6 +435,18 @@ export i32 FAULT_NOT_REPRESENTABLE() { return 6; }
 export i32 FAULT_NOT_GRANTED() { return 7; }
 
 /**
+ * A directory where a file was wanted.
+ *
+ * The eighth, and the argument against it was that this taxonomy is not errno granularity. What
+ * overruled it: a program *branches* on this. `cat` on a directory and `cat` on a missing file are
+ * different mistakes and every real tool says so, and wac-mono 0067 recorded the question when
+ * `Fs.readFile` had to answer `FAULT_OTHER` for it. Without a category the host's own sentence was the
+ * only information, so a read of a directory reached the output as "Is a directory (os error 21)" — an
+ * errno, no filename, and a different sentence per runtime.
+ */
+export i32 FAULT_IS_DIR() { return 8; }
+
+/**
  * A fault in the words the real tools use, or `""` where the category has none to give.
  *
  * One table, because there were four: `sh` had one for a `Change` and another for a `FileResult`, `box`
@@ -466,6 +478,8 @@ export string faultWords(i32 fault) {
   // operating system has, so GNU never had to say this. It is the sentence a caller most needs, because it
   // is the one failure that is nothing to do with the file.
   if (fault == FAULT_NOT_GRANTED()) { return "Not granted to this application"; }
+  // Capitalised, like the rest here and like `strerror`, which is where GNU's wording comes from.
+  if (fault == FAULT_IS_DIR()) { return "Is a directory"; }
   return "";
 }
 

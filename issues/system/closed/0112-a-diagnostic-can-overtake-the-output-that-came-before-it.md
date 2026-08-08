@@ -1,6 +1,6 @@
 # 0112 — a diagnostic can overtake the output that came before it
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** diagnostic
@@ -67,3 +67,41 @@ The tidy version is probably that a diagnostic and the output share a flush poin
 `Sink` being reachable from wherever a complaint is made, so "flush before you complain" is stated once
 rather than remembered at each call. That is a decision about the shape of `lib/input.wac`, which is why
 this is filed rather than patched at four call sites.
+
+## Fixed, 2026-08-08 — all three causes, and a fourth thing underneath them
+
+**The `Reader` applets.** `Reader` holds the caller's `Sink` and flushes it before opening the next
+operand, which is where the complaint comes from. That is what `cat` and `head` already did in their own
+loops; the reader is one layer under the applet, so it had to be given the object rather than trusted to
+be near it.
+
+**`wc`.** The width comes from `stat` now, before anything is read — which is how GNU gets the same
+number without reading a byte — so each line is printed as its file is counted rather than all of them
+at the end. Two rules came out of measuring it that were not in the old comment: an operand with **no
+size to take** (a directory, a device) puts the whole run on the fallback width of seven, and a
+directory gets a **row of zeroes** while a missing file gets no row at all.
+
+**`tac`.** Every operand is read before anything is written, which is that tool's own rule rather than
+the family's — proved with `stdbuf -o0`, because the same experiment on `rev` shows the opposite.
+
+**And `rev` is the one that stays**, on purpose. util-linux does not flush standard output before
+complaining, so *its* merged order depends on whether stdout is a pipe or a terminal, and ours does not.
+Copying that would be copying a buffering artefact. The test compares its streams separately and says so.
+
+## What the directory cases found, which was the bigger half
+
+Adding "the operand is a directory" to the sweep turned up worse than ordering. A directory *opens* and
+then refuses to be read, which is a path nobody had walked:
+
+- the host's own sentence reached the output — `wc: Is a directory (os error 21)`, an errno, no
+  filename, and a different wording under Node. `FAULT_IS_DIR` is the eighth category; wac-mono 0062 is
+  the same fix on the open path, and 0067 had recorded the question and left it.
+- `head -1 somedir` printed **nothing and exited 0**. `Line.ok` false means "no more lines" whether the
+  input ended or the read failed, and `head` pulls `nextLine` itself rather than through `Reader`.
+- a read failure ended the run in `nextSpan`, `Reader`, `wc` and the checksums, so
+  `cat a somedir b` never printed `b` — the same bug as the open case, one layer along, which survived
+  that fix because a read only fails on inputs nobody had tried.
+- the message had no filename in it at all: `nextChunk` knew the tool but not the operand.
+
+Twenty-nine invocations in `packages/box/test/operand_errors.test.ts` now, missing and directory both,
+against the real tools.

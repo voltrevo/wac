@@ -26,10 +26,13 @@ export i32 sha512sum(Core core, Cli cli, Fs fs, Args a) {
     if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
 
+    bool unread = false;
     Sha512 h = Sha512.create();
     while (true) {
-      Chunk got = nextChunk(core, cli, fed, a);
-      if (!got.ok) { return 1; }
+      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      // A read that fails part way is a skip like any other, not the end of the run: the files named
+      // after it are still hashed. It used to `return`, so `sha256sum a somedir b` never reached `b`.
+      if (!got.ok) { status = 1; unread = true; break; }
       if (!got.more) { break; }
       u8[] chunk = got.bytes;
       h.update(chunk);

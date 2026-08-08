@@ -18,12 +18,21 @@ import { buildApp } from "../../platform/build.ts";
 // the end. `sort` is the exception and refuses the whole run with 2, because it cannot answer about an
 // ordering it has not seen all of.
 //
-// ## Two kinds of assertion, because two things are true
+// ## Two kinds of operand, and both are here
 //
-// Where the whole invocation matches byte for byte, it is compared byte for byte. Where only the
-// *ordering* of standard error against standard output still differs, that is stated as such and the
-// content and status are compared instead — with the difference named in the table, rather than dropped
-// from the sweep. wac-mono 0112 is that difference.
+// **Missing** — the file is not there, and the open fails. **A directory** — the open *succeeds* and the
+// read is what refuses, which is a different code path, a different message in every tool, and was
+// answered here by printing the host's own sentence: `wc: Is a directory (os error 21)`, with an errno,
+// no filename, and a different wording under Node. `FAULT_IS_DIR` is the category that fixes that, and
+// wac-mono 0062 is the same fix on the open path, made a year earlier for the same reason.
+//
+// The directory cases also found the worse half of the same bug: `head -1 somedir` printed **nothing and
+// exited 0**, because `Line.ok` false means "no more lines" whether the input ended or the read failed.
+//
+// ## Where a comparison is not possible
+//
+// Where the whole invocation matches byte for byte, it is compared byte for byte. Two entries compare
+// the streams separately, and each says why in its own row.
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -69,26 +78,55 @@ function ran(binary: string, args: string[], cwd: string) {
  * it — the applet's output is block-buffered and the complaint is not, where GNU's `error()` flushes
  * standard output first. Where it is `true` the whole run is compared byte for byte.
  */
-const CASES: { script: string; interleaves: boolean; why?: string }[] = [
+const CASES: { script: string; interleaves: boolean; wording?: false; why?: string }[] = [
+  // ── An operand that is not there ──────────────────────────────────────────
   { script: "cat f1 nothing f2", interleaves: true },
   { script: "cat -n f1 nothing f2", interleaves: true },
   { script: "cat f1 bad worse f2", interleaves: true },
   { script: "head -1 f1 nothing f2", interleaves: true },
   { script: "sha256sum f1 nothing f2", interleaves: true },
-  { script: "rev f1 nothing f2", interleaves: true },
+  { script: "wc -l f1 nothing f2", interleaves: true },
+  { script: "wc f1 nothing f2", interleaves: true },
+  { script: "cut -c1 f1 nothing f2", interleaves: true },
+  { script: "nl f1 nothing f2", interleaves: true },
+  { script: "fold f1 nothing f2", interleaves: true },
+  { script: "tac f1 nothing f2", interleaves: true },
   // Refuses the whole run with 2 rather than skipping, which is what GNU's does.
   { script: "sort f1 nothing f2", interleaves: true },
-  // The column width is the digits in the *total* byte count, so no line can be printed until every file
-  // has been counted — GNU stats the files up front and gets its width without reading them.
-  { script: "wc -l f1 nothing f2", interleaves: false, why: "the width needs every file's size first" },
-  { script: "wc f1 nothing f2", interleaves: false, why: "the width needs every file's size first" },
-  // `Reader` opens the next operand as soon as the current one ends, which is before the caller has
-  // flushed what it wrote from the current one.
-  { script: "cut -c1 f1 nothing f2", interleaves: false, why: "Reader opens ahead of the flush" },
-  { script: "nl f1 nothing f2", interleaves: false, why: "Reader opens ahead of the flush" },
-  { script: "fold f1 nothing f2", interleaves: false, why: "Reader opens ahead of the flush" },
-  // GNU's `tac` reports every unopenable operand before printing anything; ours reports at the join.
-  { script: "tac f1 nothing f2", interleaves: false, why: "GNU reports before it writes; we report at the join" },
+  // util-linux rather than coreutils, and its `error()` does not flush standard output first — so where
+  // both streams are merged, *its* ordering depends on whether stdout is a pipe or a terminal, and ours
+  // does not. Measured with `stdbuf -o0`, where it prints in the order things happened, as we do.
+  {
+    script: "rev f1 nothing f2",
+    interleaves: false,
+    why: "util-linux does not flush stdout before complaining, so its merged order is a libc artefact",
+  },
+
+  // ── An operand that is a directory: the open succeeds and the read refuses ─
+  { script: "cat adir", interleaves: true },
+  { script: "cat f1 adir f2", interleaves: true },
+  { script: "wc -l adir", interleaves: true },
+  { script: "wc -l f1 adir f2", interleaves: true },
+  { script: "wc f1 adir", interleaves: true },
+  { script: "head -1 adir", interleaves: true },
+  { script: "head -c 3 adir", interleaves: true },
+  { script: "head -1 f1 adir f2", interleaves: true },
+  { script: "cut -c1 adir", interleaves: true },
+  { script: "cut -c1 f1 adir f2", interleaves: true },
+  { script: "nl f1 adir f2", interleaves: true },
+  { script: "fold f1 adir f2", interleaves: true },
+  { script: "sha256sum adir", interleaves: true },
+  { script: "sha256sum f1 adir f2", interleaves: true },
+  { script: "sort adir", interleaves: true },
+  // GNU's own message here is `tac: adir: read error: Invalid argument`, which is neither its
+  // open-failure wording nor the reason any other tool gives for the same file. Ours says what the file
+  // is; the streams are compared separately rather than matching a sentence that describes nothing.
+  {
+    script: "tac adir",
+    interleaves: false,
+    wording: false,
+    why: "GNU says 'read error: Invalid argument', which names neither the fault nor its own convention",
+  },
 ];
 
 Deno.test("an operand that cannot be opened is skipped, not the end of the run", async () => {
@@ -96,6 +134,7 @@ Deno.test("an operand that cannot be opened is skipped, not the end of the run",
   try {
     await Deno.writeTextFile(`${dir}/f1`, "a\n");
     await Deno.writeTextFile(`${dir}/f2`, "b\n");
+    await Deno.mkdir(`${dir}/adir`);
 
     // **The canary.** Every assertion below is "these two agree", which a harness comparing nothing also
     // satisfies. Two invocations that must *not* agree prove the comparison is live.
@@ -104,7 +143,7 @@ Deno.test("an operand that cannot be opened is skipped, not the end of the run",
     assertEquals(live.out === dead.out, false, "the harness compares nothing");
 
     const differed: string[] = [];
-    for (const { script, interleaves, why } of CASES) {
+    for (const { script, interleaves, wording, why } of CASES) {
       const theirs = ran("bash", ["-c", script], dir);
       const ours = ran(shell, ["-c", script], dir);
 
@@ -121,13 +160,19 @@ Deno.test("an operand that cannot be opened is skipped, not the end of the run",
         }
         continue;
       }
-      // Ordering aside (0112, and `why` says which), the same bytes on each stream is still the whole of
-      // what the applet produced — including `b`, which is what this file exists to keep.
+      // Where the merged order is not comparable, the same bytes on each stream still are — including
+      // `b`, which is what this file exists to keep.
       if (ours.out !== theirs.out) {
         differed.push(`${script} (${why}): output ${JSON.stringify(ours.out)} vs ${JSON.stringify(theirs.out)}`);
       }
-      if (ours.err !== theirs.err) {
+      // `wording: false` is the third kind: not the order, the *sentence*. Only one case has it, and
+      // what is still asserted there is that we said something and that the status matches — a sentence
+      // we would have to copy without agreeing with is not an oracle.
+      if (wording !== false && ours.err !== theirs.err) {
         differed.push(`${script} (${why}): stderr ${JSON.stringify(ours.err)} vs ${JSON.stringify(theirs.err)}`);
+      }
+      if (wording === false && ours.err.trim() === "") {
+        differed.push(`${script} (${why}): said nothing, where bash said ${JSON.stringify(theirs.err)}`);
       }
     }
     assertEquals(differed.length, 0, `${differed.length} of ${CASES.length} differ:\n  ${differed.join("\n  ")}`);

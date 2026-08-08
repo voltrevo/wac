@@ -15,9 +15,9 @@ import { Fs } from "../../../fs/src/fs.wac";
 
 export i32 rev(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
-  Reader r = Reader.create(core, cli, fs, a, 0);
 
   Sink out = Sink.create(cli);
+  Reader r = Reader.create(core, cli, fs, a, 0, out);
   while (true) {
     Line l = r.next(core, cli, fs, a);
     if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }

@@ -144,7 +144,9 @@ Deno.test("a mount point is a directory, and every question about it had a diffe
   //     mkdir -p /dev     ->                   status 0
   const wrote = await sh("echo x > /dev; echo status=$?");
   assertEquals(wrote.out, "status=1\n");
-  assertEquals(wrote.err.includes("is a directory"), true, wrote.err);
+  // Capitalised, as `strerror` and GNU have it — the phrase is `faultWords(FAULT_IS_DIR)` now rather
+  // than a sentence the filesystem wrote for itself.
+  assertEquals(wrote.err.includes("Is a directory"), true, wrote.err);
 
   const made = await sh("mkdir /dev; echo status=$?");
   assertEquals(made.out, "status=1\n");

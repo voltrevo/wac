@@ -26,10 +26,12 @@ export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   if (!in.ok) { status = 1; continue; }
   Feed fed = in.fed;
 
+  bool unread = false;
   u32 acc = crc32Start();
   while (true) {
-    Chunk got = nextChunk(core, cli, fed, a);
-    if (!got.ok) { return 1; }
+    Chunk got = nextChunk(core, cli, fed, a, in.label);
+    // A skip, not the end of the run — the same rule as `sha256sum` beside it.
+    if (!got.ok) { status = 1; unread = true; break; }
     if (!got.more) { break; }
     u8[] chunk = got.bytes;
     acc = crc32Update(table, acc, chunk);
@@ -43,6 +45,7 @@ export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 0; i < 8; i++) {
     out[7 - i] = digits[(v >> (i * 4)) & 15];
   }
+  if (unread) { continue; }
   core.log(string.fromBytes(out) + "  " + (in.label == "" ? "-" : in.label));
   }
   return status;
