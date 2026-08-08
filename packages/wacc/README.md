@@ -468,8 +468,38 @@ That is the lesson worth keeping from this slot: a rule derived in one position 
 the type. The grids that built this checker all asked about return types, and the answer they gave is
 narrower than it looked.
 
-Next: more of rung 3 — the nullable-to-non-null family, generics, and the `is`/cast expressions, which
-are typed nowhere.
+### Every expression form has a type
+
+`typeOfExpr` answered *unknown* for everything except a name and a member, so casts, `is`, unary,
+index, ternary, calls and constructions evaporated and every rule downstream went quiet on them. All
+of them are typed now, each read off the reference first:
+
+| form | type |
+|---|---|
+| `n as i64`, `as!`, `as~` | the cast's target — the four spellings differ in what they *permit*, not in what they produce |
+| `p is P` | `bool`, whatever `x` and `T` are |
+| `-n` / `!b` | the operand's type / `bool` |
+| `arr[0]` | the element type |
+| `b ? n : n` | both branches or nothing |
+| a call | the function's return type, so signatures now carry one |
+| a construction | the struct — or the return type, since the parser cannot tell a construction from a call |
+| `opt!` | the `T` inside a `T?` |
+
+**Spec coverage: 19 of 83**, from 18 — and a grid of 78 cells, 65 rejections, all caught.
+
+Two things it found. Reading a **packed array element widens**: `return this.data[i];` from an `i32`
+function is how this repository reads a byte, so calling `bytes[i]` a `u8` reported 115 files. That is
+the same position lesson as the packed assignment target last slot, arriving from the read side —
+which is now two independent confirmations that the return-type grid's answer for packed is narrower
+than it looks.
+
+And the grid itself was nearly useless. It *reported* how many cells it caught rather than asserting
+it, so untyping casts moved the number from 65 to 50 and passed. A recall regression that prints
+itself is still a recall regression. It asserts `caught === rejected` now, and a form deliberately left
+untyped comes out of `FORMS` — so the removal is the decision, rather than a count quietly dropping.
+
+Next: more of rung 3 — the nullable-to-non-null family, generics, and struct construction arguments
+against field types.
 
 ### What rung 3's oracle looks like, measured
 

@@ -35,7 +35,7 @@
 import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
-  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign,
+  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
 } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty, TyKind,
@@ -228,6 +228,8 @@ export struct C {
   string[] fieldTypes;
   i32 fieldCount;
   string[] funcNames;
+  /** Each function's return type, so a call has one. */
+  string[] funcReturns;
   i32[] funcParamAt;
   i32[] funcParamCount;
   string[] funcParamTypes;
@@ -241,7 +243,8 @@ export struct C {
     return C(src, toks, string[capacity](), string[capacity](), 0,
              string[capacity](), string[capacity](), 0,
              string[capacity](), string[capacity](), string[capacity](), 0,
-             string[capacity](), i32[capacity](), i32[capacity](), string[capacity](), 0, 0,
+             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
+             string[capacity](), 0, 0,
              i32[capacity * 3](), 0);
   }
 
@@ -281,13 +284,14 @@ export struct C {
    * its own diagnostic — so there is no ambiguity to be conservative about, only a program this
    * slice will not reach.
    */
-  void declareFunc(this, string name, string[] paramTypes, i32 count) {
+  void declareFunc(this, string name, string ret, string[] paramTypes, i32 count) {
     for (i32 i = 0; i < this.funcCount; i++) {
       if (this.funcNames[i] == name) { return; }
     }
     if (this.funcCount >= this.funcNames.len()) { return; }
     if (this.funcParamTotal + count > this.funcParamTypes.len()) { return; }
     this.funcNames[this.funcCount] = name;
+    this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = count;
     for (i32 i = 0; i < count; i++) {
@@ -501,6 +505,7 @@ export string typeOfLvalue(C c, Lvalue lv) {
       if (!isArrayName(arr)) { return typeNone(); }
       return dropLast(arr, 2);
     }
+
     case LUnwrap(base): {
       string inner = withoutNull(typeOfLvalue(c, base));
       return inner == "" ? typeNone() : inner;
@@ -517,6 +522,52 @@ export string typeOfExpr(C c, Expr e) {
       string owner = typeOfExpr(c, obj);
       if (owner == typeNone()) { return typeNone(); }
       return c.fieldType(owner, tokenText(c, nameTok));
+    }
+    // A cast is its target type, whichever of the four spellings it used. `as` `as!` `as~` `as@`
+    // differ in what they *permit*, which is the reference's business, and not in what they produce.
+    case Cast(op, operand, target): { return typeOfTy(c, target); }
+    // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
+    case Is(left, target, other, negated): { return "bool"; }
+    case Unwrap(operand): {
+      string inner = withoutNull(typeOfExpr(c, operand));
+      return inner == "" ? typeNone() : inner;
+    }
+    case Index(arr, index): {
+      string a = typeOfExpr(c, arr);
+      if (!isArrayName(a)) { return typeNone(); }
+      string elem = dropLast(a, 2);
+      // Reading a packed element **widens**: `bytes[i]` from a `u8[]` is an i32-shaped value, which
+      // is why `return this.data[i];` from an `i32` function is the ordinary way this repository
+      // reads a byte. Calling it a `u8` reported 115 files. The exact widened type is not measured,
+      // so this says nothing — the same answer, and the same reason, as a packed assignment target.
+      if (isPackedName(elem)) { return typeNone(); }
+      return elem;
+    }
+    // `!x` is a boolean; `-x` and `~x` are whatever `x` is.
+    case Unary(op, operand): {
+      if (tokenKind(c, op) == kBang()) { return "bool"; }
+      return typeOfExpr(c, operand);
+    }
+    // Both branches or nothing. A conditional whose arms disagree has a type the reference works out
+    // by unification, which this slice cannot do — and guessing one branch would be worse than
+    // silence, because the guess is right half the time and wrong in a way nothing here would catch.
+    case Ternary(cond, then, els): {
+      string t = typeOfExpr(c, then);
+      return t == typeOfExpr(c, els) ? t : typeNone();
+    }
+    // A construction is either a struct being made or a function being called — the parser cannot
+    // tell, so neither can this, and the name decides. A struct name gives the struct; a function
+    // name gives what it returns; anything else is unknown.
+    case Construct(ctype, args, named): {
+      string name = "";
+      match (ctype.kind) {
+        case Named(tok, typeArgs): { if (typeArgs.len() == 0) { name = tokenText(c, tok); } }
+        else: { }
+      }
+      if (name == "") { return typeNone(); }
+      if (c.isStruct(name)) { return name; }
+      i32 at = c.funcAt(name);
+      return at < 0 ? typeNone() : c.funcReturns[at];
     }
     else: { return typeNone(); }
   }
@@ -923,7 +974,7 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         string[] prims = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
-        c.declareFunc(tokenText(c, nameTok), prims, params.len());
+        c.declareFunc(tokenText(c, nameTok), typeOfTy(c, returnType), prims, params.len());
       }
       else: { }
     }

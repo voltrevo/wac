@@ -916,3 +916,74 @@ Deno.test("rung 3: assignment, through names, fields and elements", () => {
     }
   }
 });
+
+/**
+ * Every expression form, in every return slot, with the reference deciding each cell.
+ *
+ * `typeOfExpr` answered *unknown* for everything except a name and a member, so casts, `is`, unary,
+ * index, ternary, calls and constructions all evaporated and every rule downstream went quiet on
+ * them. This is the grid for the rest of them, built the same way as the literal and parameter grids:
+ * the reference decides, and our job is to agree or be silent.
+ *
+ * Each expression is placed in a `return` whose declared type varies, which turns "what type is this
+ * expression" into a question the reference already answers — *"return: expected T, found U"* — with
+ * no need for it to expose a typer.
+ */
+const FORMS: [string, string][] = [
+  ["cast as", "n as i64"],
+  ["cast as!", "m as! i32"],
+  ["cast as~", "m as~ i32"],
+  ["is", "p is P"],
+  ["unary minus", "-n"],
+  ["unary not", "!b"],
+  ["index", "arr[0]"],
+  ["ternary", "b ? n : n"],
+  ["call", "fi()"],
+  ["call string", "fs()"],
+  ["construct", "P(1)"],
+  ["unwrap", "opt!"],
+  ["member", "p.x"],
+];
+
+Deno.test("rung 3: every expression form, against every return type", () => {
+  const D = 'struct P { i32 x; } i32 fi() { return 1; } string fs() { return "a"; } ';
+  const PARAMS = "i32 n, i64 m, bool b, P p, i32[] arr, i32? opt";
+  let cells = 0;
+  let rejected = 0;
+  let caught = 0;
+  for (const [label, expr] of FORMS) {
+    for (const ret of ["i32", "i64", "bool", "string", "f64", "P"]) {
+      const src = `${D}export ${ret} probe(${PARAMS}) { return ${expr}; }`;
+      const theirs = reference(src);
+      const mine = ours(src);
+      cells++;
+      if (theirs.length === 0) {
+        if (mine.length !== 0) {
+          throw new Error(`${label} is a valid ${ret} and we report ${mine.join(", ")} — ` +
+            JSON.stringify(src));
+        }
+        continue;
+      }
+      rejected++;
+      for (const at of mine) {
+        if (!theirs.some((e) => e.at === at)) {
+          throw new Error(`${label} into ${ret}: we report ${at}, the reference reports ` +
+            theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+        }
+      }
+      if (mine.length > 0) caught++;
+    }
+  }
+  if (cells !== FORMS.length * 6) throw new Error(`grid did not run: ${cells} cells`);
+  if (rejected < 60) throw new Error(`only ${rejected} rejected cells — the grid is too easy`);
+  // **Asserted, not reported.** Every form in the list above is typed, so every rejection in this
+  // grid is one this slice owns and every one must be caught. Reporting the number instead was the
+  // first version, and untyping casts moved it from 65 to 50 without failing anything — a recall
+  // regression that printed itself and passed. If a form is ever deliberately left untyped, it comes
+  // out of `FORMS` and the removal is the decision, rather than a count quietly dropping.
+  if (caught !== rejected) {
+    throw new Error(`the reference rejects ${rejected} of ${cells} cells and we catch ${caught}; ` +
+      "every form in FORMS is meant to be typed");
+  }
+  console.error(`    expression grid: ${cells} cells, ${rejected} rejected, all caught`);
+});
