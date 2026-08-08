@@ -1994,7 +1994,18 @@ Output ls(Shell sh, Vec<string> argv) {
       // Not a directory, or unreadable. A plain file is listed as itself, which is what `ls` does
       // and is why this is not simply an error.
       Stat st = sh.fs.stat(path);
-      if (st.exists) {
+      // **A directory that is there and could not be listed is a failure, not a name.** `chmod 000 d;
+      // ls d` printed `d` and exited 0, where GNU says "cannot open directory 'd': Permission denied"
+      // and exits 2 — a wrong answer reported as success, from the most ordinary permission a person
+      // can set. The branch below is right for a *file*, and a directory took it because `readDir`
+      // answers `string[]?` and a null carries no reason.
+      //
+      // The reason comes from `stat`, which can carry one. GNU's words, and GNU's status.
+      if (st.exists && st.isDir) {
+        string refused = st.answered() ? "Permission denied" : statReason(st);
+        errs.pushAll(("ls: cannot open directory '" + given + "': " + refused + "\n").toBytes());
+        status = 2;
+      } else if (st.exists) {
         out.pushAll((given + "\n").toBytes());
       } else {
         // GNU's words, which this had invented its own version of: `ls: cannot access 'x': No such file

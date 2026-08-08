@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0117](open/0117-a-fault-vocabulary-with-no-word-for-not-implemented.md) | a fault vocabulary with no word for "not implemented", so `chmod` blames the file | diagnostic | wrong answer |
 | [0116](open/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md) | a spawned pipeline stage gets the host's filesystem, so a sealed session cannot spawn | missing feature | wrong answer |
 | [0115](open/0115-yes-head-1-throws-the-childs-output-is-not-being-read-under-load.md) | `yes \| head -1` kills the shell with "the child's output is not being read" under load | bug | wrong answer |
 | [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |

@@ -317,3 +317,47 @@ Deno.test("`test -e` refuses about a path it may not look at, rather than saying
   assertEquals(absent.out.trim(), "[1]", absent.out);
   assertEquals(absent.err, "", `absence should be silent: ${absent.err}`);
 });
+
+// ── A directory that is there and cannot be listed ───────────────────────────
+//
+// The same failure again, and the worst of the three because the answer was **success**: `chmod 000 d;
+// ls d` printed `d` and exited 0, where GNU says "cannot open directory 'd': Permission denied" and
+// exits 2. `ls` prints a *file*'s own name — that is what `ls f` does — and a directory whose listing
+// was refused took that branch, because `readDir` answers `string[]?` and a null carries no reason.
+//
+// Not in `packages/sh`'s corpus, though that is where a bash comparison belongs, and the reason is
+// worth knowing: **`chmod` on a host mount is not implemented**, so no script this shell can run is
+// able to set the mode up. The condition is made here with `Deno.chmod` instead, and bash is still the
+// oracle — its exact words and its exact status are what these assert.
+
+Deno.test("a directory that cannot be listed is a failure, not a name", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-unlistable-" });
+  try {
+    await Deno.mkdir(`${dir}/shut`);
+    await Deno.writeTextFile(`${dir}/plain`, "x\n");
+    await Deno.chmod(`${dir}/shut`, 0o000);
+
+    // What bash's `ls` says, asked rather than assumed — the words and the status both.
+    const gnu = new Deno.Command("bash", {
+      args: ["-c", "cd \"$1\"; ls shut; echo status=$?", "bash", dir],
+      stdout: "piped",
+      stderr: "piped",
+    }).outputSync();
+    const d = new TextDecoder();
+    const theirs = { out: d.decode(gnu.stdout), err: d.decode(gnu.stderr) };
+    // The canary: if this machine let us list it — running as root would — the comparison below is
+    // between two successes and says nothing.
+    assertEquals(theirs.out.trim(), "status=2", `bash could list a 000 directory: ${theirs.out}`);
+
+    const ours = byteSh(shell, [], `cd ${dir}; ls shut; echo status=$?`);
+    assertEquals(ours.out.trim(), "status=2", `${ours.out} / ${ours.err}`);
+    assertEquals(ours.err, theirs.err, "the complaint should be bash's, word for word");
+
+    // And the branch it used to take is still right for a file: `ls f` prints `f`.
+    const file = byteSh(shell, [], `cd ${dir}; ls plain; echo status=$?`);
+    assertEquals(file.out, "plain\nstatus=0\n", `${file.out} / ${file.err}`);
+  } finally {
+    await Deno.chmod(`${dir}/shut`, 0o700).catch(() => {});
+    await Deno.remove(dir, { recursive: true });
+  }
+});
