@@ -984,10 +984,21 @@ fn dispatch(
             );
         }
         Cap::Connect | Cap::Listen | Cap::Accept => {
+            // **"Not granted" outranks "not implemented"**, and the order is not cosmetic. A program
+            // built without `--allow-net` would be refused on *every* host; telling it that this
+            // particular runtime has no sockets is a fact about the runtime that is both irrelevant
+            // to it and misleading, and `example/probe.wac` reads the difference — it looks for the
+            // words "not granted" and reports `denied` rather than `failed`. The Deno host says
+            // "network access not granted to this application", so this says the same thing.
+            let why = if caller.data().grants.net {
+                "networking is not implemented in the native runtime yet"
+            } else {
+                "network access not granted to this application"
+            };
             return settle_now(
                 caller,
                 Kind::Socket,
-                Outcome::Socket(-1, "networking is not implemented in the native runtime yet".into(), String::new(), 0),
+                Outcome::Socket(-1, why.into(), String::new(), 0),
                 results,
             );
         }
@@ -999,13 +1010,13 @@ fn dispatch(
             let Some(stream) = readable(caller, h) else {
                 // Not a child's handle, so it could only have been a socket. `Read.Failed` rather
                 // than `Read.End`, which would tell a reader the peer had finished rather than that
-                // there was never a peer.
-                return settle_now(
-                    caller,
-                    Kind::Read,
-                    Outcome::Str(b"networking is not implemented in the native runtime yet".to_vec()),
-                    results,
-                );
+                // there was never a peer — and the same ranking as `connect` above.
+                let why: &[u8] = if caller.data().grants.net {
+                    b"networking is not implemented in the native runtime yet"
+                } else {
+                    b"network access not granted to this application"
+                };
+                return settle_now(caller, Kind::Read, Outcome::Str(why.to_vec()), results);
             };
             // On a thread: a child that has not written yet must not stop its parent from reading
             // another child, which is exactly what a pipeline does.

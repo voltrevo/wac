@@ -381,3 +381,31 @@ error** — the child ran, exited 0, and said nothing:
 The **network**. That is the whole of what stands between here and the arrival test's last two words:
 `Fs.user` is set by `packages/ssh`'s server, so logging in as two users on both hosts needs sockets.
 Item 6's remaining half.
+
+## Progress — 2026-08-08 (seventh tick), agent-a — a hunt over the capability layer
+
+Every runnable program in `packages/platform/example/` on both hosts, compared:
+`packages/platform/test/native_examples.test.ts`. These are the programs written to demonstrate the
+*capabilities* — one idea each — where the other native tests drive the boundary through the shell,
+which is a lot of code above a little of it.
+
+**One bug: "not granted" was ranked below "not implemented".** `probe` said `net=failed` where Deno
+said `net=denied`, because the native host answered an ungranted `connect` with "networking is not
+implemented in the native runtime". That is a fact about the runtime and it is *irrelevant* to a
+program that would be refused on every host — and `probe` reads the difference, looking for the words
+"not granted". The grant check now comes first, in the Deno host's own wording; the
+not-implemented answer is what a program *with* the grant gets.
+
+**One line that is a race on both hosts, and a lesson about pinning measurements.** `overlap` asks
+`isDone()` immediately after submitting two reads. On an idle machine Deno says "one finished already"
+every time and this says "both still running" every time — which looks exactly like a property of each
+host. I wrote it down as one, and the gate caught it within a single run: under the full suite Deno
+says "both still running" too. **A stable observation is not a guarantee.**
+
+So the test normalises the line on both sides and separately checks that each host printed *one of the
+two* legal answers, which is the difference between allowing a race and ignoring a line. It is the
+clearest thing in the repo to point at for D12: in a deterministic mode that answer would be the
+scheduler's rather than the machine's load.
+
+Everything else agrees exactly, including `inside` (a program run inside another with a world of its
+own), `twin` (a program that runs itself) and `roundtrip` (the host filesystem end to end).

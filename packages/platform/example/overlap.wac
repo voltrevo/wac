@@ -15,6 +15,18 @@ export i32 main(Core core, Cli cli) {
   Pending<FileResult> b = cli.readFile(string.fromBytes(cli.arg(1).wait()));
 
   // Nothing has been waited for yet. Both reads are in the host's hands.
+  //
+  // **This line has two legal answers and which one you get is a race.** `isDone` is documented as
+  // "whether `wait` would return immediately", and no host promises *when* a read completes.
+  //
+  // Measured, and the measurement is the point: on an idle machine Deno says "one finished already"
+  // every time and the native runtime says "both still running" every time, which looks exactly like
+  // a property of each host — and under load Deno says "both still running" too. It is a race, not a
+  // difference between the two, and the first version of this comment recorded the idle answers as a
+  // rule. A stable observation is not a guarantee.
+  //
+  // Which makes it the clearest thing in this repo to point at for design/0001's D12: in a
+  // deterministic mode this answer would be the scheduler's rather than the machine's load.
   core.log(a.isDone() || b.isDone() ? "one finished already" : "both still running");
 
   FileResult ra = a.wait();
