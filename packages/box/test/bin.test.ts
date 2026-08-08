@@ -106,6 +106,31 @@ Deno.test("a path into /bin runs the program, however it is spelled", async () =
   assertEquals(near.out.includes("status=127"), true, `${near.out} / ${near.err}`);
 });
 
+Deno.test("a build with no programs has no /bin at all", async () => {
+  // `packages/ssh`'s server wires no applets, and an **empty** `/bin` would claim more than an absent
+  // one: `ls /` would show a directory of programs with no programs in it. So `mountBin` of nothing
+  // mounts nothing, and this is the assertion that says so from the other side — every listing in the
+  // suite that gained a `bin` did so because that build has programs.
+  //
+  // Checked through `packages/fs` directly rather than by building a second shell: the rule is the
+  // filesystem's, and a shell with no applets is not a thing this package builds.
+  const mod = await import("../../../harness/wacBind.ts");
+  const fs = await mod.wacBind("packages/fs/src/fs.wac") as unknown as {
+    Fs: { inMemory(now: bigint): { mountBin(names: unknown, random: unknown): void; readDir(p: string): string[] | null } };
+    "Vec$string": { create(): { push(s: string): void } };
+  };
+  const empty = fs.Fs.inMemory(0n);
+  empty.mountBin(fs["Vec$string"].create(), null);
+  assertEquals(empty.readDir("/"), [], "an empty /bin was mounted anyway");
+
+  const one = fs.Fs.inMemory(0n);
+  const names = fs["Vec$string"].create();
+  names.push("wc");
+  one.mountBin(names, null);
+  assertEquals(one.readDir("/"), ["bin"], "a build with a program has a /bin");
+  assertEquals(one.readDir("/bin"), ["wc"]);
+});
+
 Deno.test("/bin is read-only, like every other synthesised mount", async () => {
   for (const script of ["echo x > /bin/wc", "rm /bin/wc", "mkdir /bin/d"]) {
     const r = await sh(script);

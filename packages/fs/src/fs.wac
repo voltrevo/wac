@@ -269,6 +269,10 @@ export struct Fs {
    */
   void mountBin(this, Vec<string> programs, fn[Pending<u8[]>(i32)] randomBytes) {
     this.programs = programs;
+    // **No programs, no `/bin`.** A build that wired no applets — `packages/ssh`'s server is one —
+    // would otherwise show an empty directory where the programs are meant to be, which claims more
+    // than an absent one does. `ls /` on such a machine says there is no `/bin`, and that is true.
+    if (programs.len() == 0) { return; }
     // The funcref again, because `Backing.Synth` carries one for `/dev/urandom`'s sake and nothing
     // in `/bin` will ever call it. Passing the caller's own is honest; inventing a stub that
     // answered zero bytes would be a generator that exists to satisfy a type.

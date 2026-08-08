@@ -74,7 +74,7 @@ Deno.test("a sealed shell has a filesystem, and it is not the host's", async () 
 
     // And the root holds `/dev` and `/proc` and nothing else — a *system*, not the host's root with a
     // filter over it. design/0001 step 6; before it, this was empty.
-    assertEquals(run("ls /", dir).out, "dev\nproc\ntmp\n");
+    assertEquals(run("ls /", dir).out, "bin\ndev\nproc\ntmp\n");
     // Which a sealed session gets without any grant at all, because `randomBytes` is a host function
     // rather than a permission. This is the one that would be surprising if it stopped being true.
     assertEquals(run("head -c 8 /dev/urandom | wc -c", dir).out, "8\n");

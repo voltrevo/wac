@@ -50,7 +50,7 @@ Deno.test("the applets work on a filesystem that is not the host's", async () =>
 
     // The world is its own: what the shell wrote is what an applet reads, and `ls` sees both mounts.
     const listed = await run("echo hi > /f; cat /f; ls /");
-    assertEquals(listed.out, "hi\ndev\nf\nproc\ntmp\n", listed.err);
+    assertEquals(listed.out, "hi\nbin\ndev\nf\nproc\ntmp\n", listed.err);
 
     // **And the host is not there.** Not "refused" by a permission — absent, because the only
     // filesystem this program has is the one it made.
@@ -201,7 +201,7 @@ Deno.test("an applet runs when the shell cannot spawn and its own input stays op
     // choice `lib/input.wac` makes for reading.
     const pieces = await open("seq 1 10 > n; split -l 4 n part; ls; cat partac");
     assertEquals(pieces.code, 0, "split finished");
-    assertEquals(pieces.out, "dev\nn\npart" + "aa\npartab\npartac\nproc\ntmp\n9\n10\n");
+    assertEquals(pieces.out, "bin\ndev\nn\npart" + "aa\npartab\npartac\nproc\ntmp\n9\n10\n");
 
     // **A relative operand after `cd`.** Resolution used to happen on the host, inside `pushChild`'s
     // frame; an applet asks the filesystem now, so the filesystem had to be told where the shell is
