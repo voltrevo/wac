@@ -329,6 +329,55 @@ Deno.test({
 });
 
 Deno.test({
+  name: "with a pty the server does the line editing, and the output comes back for a terminal",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    // `ssh -tt` asks for a pty, which this server refused until design/0001 step 5. The refusal was the
+    // honest answer while there was nothing to echo with: a client that gets a pty stops echoing
+    // locally, so every keystroke it sends must come back or the user types blind.
+    //
+    // What is asserted is the two halves of that. The **echo**, including an erase the client never
+    // saw — the backspace is one byte on the wire and three back, and the client does nothing with
+    // either. And **`\r\n` on the output**, which the shell does not write: a terminal in raw mode does
+    // not return the cursor on a bare newline, so without that translation every line would start where
+    // the last one ended.
+    let s: Wacsshd | undefined;
+    try {
+      s = await startWacsshd();
+      const r = new Deno.Command("ssh", {
+        args: [
+          "-tt", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "BatchMode=yes", "claude@127.0.0.1",
+        ],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = r.stdin.getWriter();
+      // `echo hX<DEL>i` — typed wrong and corrected, which only works if this end is editing.
+      await w.write(new TextEncoder().encode("echo hX\x7fi\n"));
+      await w.write(new Uint8Array([4]));   // ^D on an empty line ends the session
+      await w.close();
+      const out = await r.output();
+      const got = text(out.stdout);
+
+      // The echo, with the erase in it: three bytes back for the one that was typed.
+      if (!got.includes("echo hX\b \bi\r\n")) {
+        throw new Error(`no echo with an erase in it: ${JSON.stringify(got)}`);
+      }
+      // …and the corrected command ran, with its output wound back to the left margin.
+      if (!got.includes("hi\r\n")) {
+        throw new Error(`the corrected command did not run: ${JSON.stringify(got)}`);
+      }
+    } finally {
+      await stopWacsshd(s);
+    }
+  },
+});
+
+Deno.test({
   name: "an interactive session keeps its shell between lines",
   ignore: !haveSshd,
   sanitizeResources: false,
@@ -464,7 +513,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "a refused pty-req is answered, because that request did want a reply",
+  name: "a refused subsystem is answered, because that request did want a reply",
   ignore: !haveSshd,
   sanitizeResources: false,
   async fn() {
@@ -475,21 +524,22 @@ Deno.test({
       // we still *answer* one that asked. Without it, `requestWantsReply` could return a constant
       // `false` and the whole suite stayed green — which is exactly what mutation testing found.
       //
-      // `ssh -tt` forces `pty-req` with want_reply set. We refuse it deliberately (no terminal
-      // modes to honour), and the client prints the refusal. No answer at all and there is
-      // nothing for it to print.
+      // It used to ask this with `ssh -tt`, whose `pty-req` we refused. That request is **accepted**
+      // now (design/0001 step 5, and the test above drives it), so the refusal it was reading is gone
+      // and the property needed a request this server still refuses. `-s` asks for a subsystem —
+      // `sftp` — with want_reply set, and there is no subsystem here.
       const r = await new Deno.Command("ssh", {
         args: [
-          "-tt", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
+          "-s", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
           "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-          "-o", "BatchMode=yes", "claude@127.0.0.1",
+          "-o", "BatchMode=yes", "claude@127.0.0.1", "sftp",
         ],
         stdin: "null",
         stdout: "piped",
         stderr: "piped",
       }).output();
       const err = text(r.stderr);
-      if (!err.includes("PTY allocation request failed")) {
+      if (!err.includes("subsystem request failed")) {
         throw new Error(`no refusal reached the client. stderr: ${JSON.stringify(err)}`);
       }
     } finally {

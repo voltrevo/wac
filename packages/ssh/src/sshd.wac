@@ -25,8 +25,10 @@
 // **One connection at a time**, because the world has no `poll`: `accept` blocks, the connection
 // is served to completion, then the next. Fine for what this is for and not a design to copy.
 //
-// **No rekeying, no pty, no port forwarding, no agent forwarding, no subsystems.** A client
-// asking for any of them gets a refusal rather than silence.
+// **No rekeying, no port forwarding, no agent forwarding, no subsystems.** A client asking for any of
+// them gets a refusal rather than silence. A **pty** it does get: `packages/tty` is the line
+// discipline behind it, and the modes in the request are not read — canonical with echo is the one
+// arrangement this serves.
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -41,6 +43,7 @@ import { Match, lookUp } from "./authorizedkeys.wac";
 import { Incoming, msgChannelClose, msgChannelData, msgChannelEof, msgChannelOpen,
          msgChannelRequest, msgChannelWindowAdjust, parse } from "./channel.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
+import { Line, Typed } from "../../tty/src/line.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { Booted, boot, save } from "../../fs/src/image.wac";
 import { Vec } from "../../std/src/vec.wac";
@@ -426,13 +429,18 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   // runs the client with `-F /dev/null`, which discards the config that sends the `env` in the
   // first place.
   //
-  // **`pty-req` is refused deliberately.** Accepting it makes the client put its terminal in raw
-  // mode and stop echoing locally, expecting the server to echo every keystroke back — which
-  // needs terminal modes this has no way to honour, and the user would type blind. Refusing means
-  // `ssh -T host` behaves exactly as it does against a real sshd running a non-interactive shell,
-  // and plain `ssh host` still works with the client's own line editing.
+  // **`pty-req` is accepted now**, and it used to be refused deliberately: accepting one makes the
+  // client put its own terminal in raw mode and stop echoing, expecting the server to echo every
+  // keystroke back — and with nothing here to do that, the user typed blind. `packages/tty` is that
+  // something (design/0001 step 5), so the refusal has become an acceptance and the session below
+  // does the editing.
+  //
+  // Both shapes still work and they are different sessions: `ssh -T host` sends no `pty-req`, the
+  // client keeps its own line editing, and the server sees whole lines — which is what every test
+  // here drives. `ssh -tt host` asks for one, and then every keystroke arrives on its own.
   u8[] command = u8[0]();
   bool interactive = false;
+  bool pty = false;
   for (i32 i = 0; i < 32 && command.len() == 0 && !interactive; i++) {
     u8[] p = conn.readPacket();
     if (conn.failed()) { return; }
@@ -443,6 +451,15 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
 
     u8[] name = requestName(p);
     if (equal(name, "shell".toBytes())) { interactive = true; break; }
+    if (equal(name, "pty-req".toBytes())) {
+      // The modes in the request — speeds, `VERASE`, `ICANON` and the rest — are **not read**. What
+      // this session does is one arrangement: canonical, echo on, which is what `packages/tty`
+      // implements and what a client's default modes ask for anyway. A client that asks for raw mode
+      // gets canonical, and that is a gap rather than a translation.
+      pty = true;
+      if (requestWantsReply(p)) { conn.sendPacket(channelSuccess(clientChannel)); }
+      continue;
+    }
     if (equal(name, "exec".toBytes())) {
       command = execCommand(p);
       // An `exec` we cannot read the command out of is a refusal, and it did want an answer.
@@ -451,8 +468,9 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
       }
       continue;
     }
-    // Anything else — `env`, `pty-req`, `signal`, `window-change` — is not honoured, and is
-    // answered only if it asked to be.
+    // Anything else — `env`, `signal`, `window-change` — is not honoured, and is answered only if it
+    // asked to be. `window-change` in particular: nothing here wraps or pages, so a width is not a
+    // fact this session has any use for yet.
     if (requestWantsReply(p)) { conn.sendPacket(channelFailure(clientChannel)); }
   }
   if (command.len() == 0 && !interactive) {
@@ -462,7 +480,7 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return; }
 
   Result result = interactive
-    ? interactiveSession(conn, cli, core, clientChannel, o, fs)
+    ? interactiveSession(conn, cli, core, clientChannel, o, fs, pty)
     : run(cli, core, command, o, fs);
   if (conn.failed()) { return; }
   if (result.out.len() > 0) { conn.sendPacket(channelData(clientChannel, result.out)); }
@@ -502,10 +520,28 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  * No prompt is written. Without a pty a real shell is not interactive and prints none, so this
  * matches `ssh -T host` against a real sshd, which is also the only thing that can be compared
  * against it.
+ *
+ * ## With a pty, this end does the editing
+ *
+ * `pty` says the client asked for a terminal and got one, which means it has stopped echoing and put
+ * its own terminal in raw mode: every keystroke arrives here on its own, and nothing appears on the
+ * user's screen unless this sends it back. `packages/tty` is what decides what to send back and what
+ * counts as a line — the same module a browser's keydown loop wants, which is why it is a package.
+ *
+ * Two consequences that are easy to miss and very visible:
+ *
+ * - **The shell's output needs `\r\n`.** A terminal in raw mode does not return the cursor on a bare
+ *   newline, so output written with `\n` stair-steps down the screen. That translation is `ONLCR`, and
+ *   it belongs here rather than in the shell, which is writing bytes rather than talking to a terminal.
+ * - **`^C` cannot interrupt anything yet.** Nothing is running while this waits for a keystroke — the
+ *   shell runs a line and returns — so `^C` throws away what has been typed and starts a fresh line,
+ *   which is right, and it cannot end a running `yes`, which is design/0001 step 5's own criterion and
+ *   needs step 3's process table. Not approximated: there is no signal here to deliver.
  */
-Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs) {
+Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty) {
   Shell sh = sessionShell(core, cli, o, fs);
   Buf pending = Buf.create();
+  Line tty = Line.create();
 
   while (true) {
     u8[] p = conn.readPacket();
@@ -519,6 +555,30 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
 
     if (m.kind == msgChannelEof() || m.kind == msgChannelClose()) { break; }
     if (m.kind != msgChannelData()) { continue; }
+
+    if (pty) {
+      // Keystroke by keystroke, through the discipline. Everything it says to echo goes straight back
+      // — before the line is run, so what is typed appears as it is typed.
+      for (i32 i = 0; i < m.data.len(); i++) {
+        Typed t = tty.feed(m.data[i]);
+        if (t.echo.len() > 0) { conn.sendPacket(channelData(channel, t.echo)); }
+        if (t.interrupt) { conn.sendPacket(channelData(channel, crlf())); continue; }
+        if (t.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
+        if (!t.hasLine) { continue; }
+        // The newline the discipline put on the end is for a program reading a stream; a command is a
+        // string, so it comes off again.
+        i32 end = t.line.len() > 0 && t.line[t.line.len() - 1] == 10 ? t.line.len() - 1 : t.line.len();
+        u8[] cmd = u8[end]();
+        cmd.copyFrom(t.line, 0, 0, end);
+        runScript(sh, string.fromBytes(cmd));
+        u8[] out = sh.outBuf.take();
+        u8[] err = sh.errOut.take();
+        if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
+        if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
+        if (sh.exiting) { return Result(u8[0](), u8[0](), sh.exitCode); }
+      }
+      continue;
+    }
 
     pending.pushAll(m.data);
     // Run whole lines only. A client sends what it has, which may be half a line or three.
@@ -555,6 +615,29 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
     if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
   }
   return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status);
+}
+
+/** A newline as a terminal in raw mode needs it: return, then feed. */
+u8[] crlf() {
+  u8[] out = u8[2](fill: 13);
+  out[1] = 10;
+  return out;
+}
+
+/**
+ * A program's output, as a terminal in raw mode needs it: every `\n` becomes `\r\n`.
+ *
+ * `ONLCR`, which the kernel does for a program writing to a tty. Without it every line after the first
+ * starts where the last one ended and the output walks off the right of the screen — the classic
+ * stair-step, and the first thing anybody notices about a shell served over a raw channel.
+ */
+u8[] forTerminal(u8[] bytes) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < bytes.len(); i++) {
+    if (bytes[i] == 10) { out.push(13); }
+    out.push(bytes[i]);
+  }
+  return out.take();
 }
 
 /** The client's channel number out of a CHANNEL_OPEN for a session, or -1. */

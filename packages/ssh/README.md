@@ -317,12 +317,21 @@ echo $x world
 A REPL needs no concurrency, which is why this works at all with one thread: the client sends a
 line and waits, so the ordinary blocking read is the right shape.
 
-**`pty-req` is refused, deliberately.** Accepting it makes the client put its terminal in raw mode
-and stop echoing locally, expecting the server to echo every keystroke — which needs terminal
-modes this cannot honour, and the user would type blind. Refused, `ssh host` from a real terminal
-prints `PTY allocation request failed on channel 0` and carries on with the client's own line
-editing, which is the same thing a real sshd gives you when no pty is available. No prompt is
-written, because without a pty a real shell is not interactive and prints none.
+**`pty-req` is accepted**, and it was refused for a year because accepting it makes the client put its
+terminal in raw mode and stop echoing locally, expecting the server to echo every keystroke — and there
+was nothing here to echo with, so the user would have typed blind. `packages/tty` is that something
+(design/0001 step 5): every keystroke arrives on its own, the discipline decides what to send back and
+what counts as a line, and the shell's output gets `\r\n` on the way out because a terminal in raw mode
+does not return the cursor on a bare newline.
+
+The modes in the request — speeds, `VERASE`, `ICANON` — are **not read**. Canonical with echo is the one
+arrangement this serves, so a client asking for raw mode gets canonical: a gap rather than a translation.
+And `^C` throws away the line being typed but cannot end a running command, because nothing is running
+while the server waits for a keystroke. Interrupting one needs design/0001 step 3.
+
+Without a pty — `ssh -T host` — nothing changes: the client keeps its own line editing, the server sees
+whole lines, and no prompt is written, because without a pty a real shell is not interactive and prints
+none.
 
 **It still cannot start a process, and now it never will** —
 [issue 0015](../../issues/closed/0015-platform-cannot-start-a-process-so-a-server-cannot-run-a-command.md)
