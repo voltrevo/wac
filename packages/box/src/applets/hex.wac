@@ -13,12 +13,14 @@ export i32 hex(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   i32 at = 0;
   bool opened = false;
+  bool failed = false;
   // The feed travels with the span: it changes at an operand boundary, and on anything but a host mount
   // it serves bytes this filesystem handed over rather than pulling on the process's own input.
   Feed fed = Feed.of(cli, u8[0]());
   while (true) {
     Span got = nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
+    failed = failed || got.failed;
     if (!got.ok) { return 1; }
     opened = true;
     at = got.at;
@@ -27,5 +29,5 @@ export i32 hex(Core core, Cli cli, Fs fs, Args a) {
     cli.write(hexencode(chunk));
   }
   cli.write(u8[1](fill: '\n'));
-  return 0;
+  return failed ? 1 : 0;
 }

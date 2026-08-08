@@ -25,9 +25,11 @@ export i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
   // for the same reason: reading the first operand and stopping is wac-mono 0096.
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, fs, a, f);
-    if (!in.ok) { return 1; }
+    Input in = openStream(core, cli, fs, a, f, -1);
+    // Reported, skipped, and the status at the end — the rule every operand-taking applet here follows.
+    if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
 
     // Held whole rather than streamed: `read` checks a checksum over the entire image before it believes
@@ -51,5 +53,5 @@ export i32 fsdump(Core core, Cli cli, Fs fs, Args a) {
     core.log(text);
     if (text.slice(0, 6) == "cannot") { return 1; }
   }
-  return 0;
+  return status;
 }

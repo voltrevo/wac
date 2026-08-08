@@ -15,7 +15,7 @@ import { Feed } from "../../../platform/src/stream.wac";
 export i32 sponge(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   if (a.rest.len() < 1) { core.warn("usage: " + a.name + " <file>"); return 2; }
-  Input in = openStream(core, cli, fs, a, 1);   // index 1: the file is the destination
+  Input in = openStream(core, cli, fs, a, 1, -1);   // index 1: the file is the destination
   if (!in.ok) { return 1; }
   Feed fed = in.fed;
   Change wrote = streamAtomic(core, cli, fs, fed, a.rest[0]);

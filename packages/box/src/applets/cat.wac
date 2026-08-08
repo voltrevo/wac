@@ -51,9 +51,18 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
   i32 files = operandCount(a, 0);
   i32 many = files == 0 ? 1 : files;
   Sink out = Sink.create(cli);
+  i32 status = 0;
   for (i32 f = 0; f < many; f++) {
-    Input in = openStream(core, cli, fs, a, f);
-    if (!in.ok) { out.flush(); return 1; }
+    // Flushed *before* opening, because the diagnostic goes straight to standard error while output is
+    // block-buffered here — so without this, `a` arrives after the complaint about the file between it
+    // and `b`. GNU's `error()` flushes standard output for exactly this reason.
+    out.flush();
+    Input in = openStream(core, cli, fs, a, f, -1);
+    // **An operand that will not open does not end the run.** GNU reports it, carries on with the next
+    // file and exits 1 at the end — `cat a missing b` prints both `a` and `b` — and stopping here meant
+    // every file after the first bad one silently produced nothing. Found by moving `backings.test.ts`
+    // into this package (wac-mono 0103), where one script names three files and the middle one is absent.
+    if (!in.ok) { status = 1; continue; }
     Lines s = Lines.create();
     // **The feed the opener chose**, not the process's own input. `openStream` redirects standard input
     // only when the path is on the host; anywhere else it hands back a feed over the bytes the
@@ -93,33 +102,36 @@ export i32 cat(Core core, Cli cli, Fs fs, Args a) {
       // `-E` marks a line *end*, and a last line that arrived without a newline has none: `printf x |
       // cat -A` is `x`, not `x$`. The flag shows what is there rather than asserting where lines stop.
       if (ends && l.nl) { line.push('$'); }
-      if (!emitTo(out, line.take(), l.nl)) { out.flush(); return 0; }
+      if (!emitTo(out, line.take(), l.nl)) { out.flush(); return status; }
     }
   }
   out.flush();
-  return 0;
+  return status;
 }
 
 /** The plain path: bytes through, a chunk at a time, which is what `cat` is for. */
 i32 copy(Core core, Cli cli, Fs fs, Args a) {
   i32 at = 0;
   bool opened = false;
+  // An operand that would not open is skipped and remembered: the status at the end, not a stop.
+  bool failed = false;
   // The feed travels with the span: it changes when the run moves to the next operand, and on anything
   // but a host mount it is serving bytes rather than pulling on the process's own input.
   Feed fed = Feed.of(cli, u8[0]());
   while (true) {
     Span got = nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
+    failed = failed || got.failed;
     if (!got.ok) { return 1; }
     opened = true;
     at = got.at;
-    if (!got.more) { return 0; }
+    if (!got.more) { return failed ? 1 : 0; }
     // `write` answers false when the other end has gone, which is the only signal there is — this
     // used to discard it and keep reading, so `cat` of an endless source went on for ever after
     // whatever was reading it had exited. Success, as it is for every filter.
-    if (!cli.write(got.bytes)) { return 0; }
+    if (!cli.write(got.bytes)) { return failed ? 1 : 0; }
   }
-  return 0;
+  return failed ? 1 : 0;
 }
 
 bool known(i32 letter) {

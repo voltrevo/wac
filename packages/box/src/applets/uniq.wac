@@ -24,7 +24,7 @@ export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
     return 1;
   }
   if (extraOperand(core, a, 2)) { return 1; }
-  Input in = openStream(core, cli, fs, a, 0);
+  Input in = openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
   bool counting = has(a, 'c');
   // **`-d` and `-u` select which runs are shown**, and both were accepted and ignored: `uniq -d` printed

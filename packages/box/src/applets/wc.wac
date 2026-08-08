@@ -45,9 +45,14 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
   string[] labels = string[count](fill: "");
 
   Counts total = Counts(0, 0, 0);
+  // A file that will not open is reported, skipped, and the status at the end — GNU's rule, and until
+  // this it stopped the run, so `wc -l a missing b` printed nothing at all, not even `a`'s count.
+  bool[] counted = bool[count](fill: false);
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, fs, a, f);
-    if (!in.ok) { return 1; }
+    Input in = openStream(core, cli, fs, a, f, -1);
+    if (!in.ok) { status = 1; continue; }
+    counted[f] = true;
     Feed fed = in.fed;
     Counts one = Counts(0, 0, 0);
     bool inWord = false;
@@ -106,11 +111,13 @@ export i32 wc(Core core, Cli cli, Fs fs, Args a) {
   }
   i32 width = single ? 1 : (fromStdin ? 7 : digits(total.bytes));
   for (i32 f = 0; f < count; f++) {
+    if (!counted[f]) { continue; }
     core.log(row(a, Counts(lines[f], words[f], sizes[f]), labels[f], width));
   }
-  // A total only when there was more than one file to total, which is the real one's rule.
+  // A total only when there was more than one file to total, which is the real one's rule. It counts the
+  // files that were read, since the ones that were not have no counts to add.
   if (files > 1) { core.log(row(a, total, "total", width)); }
-  return 0;
+  return status;
 }
 
 /** How many characters a count needs, at least one. */

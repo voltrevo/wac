@@ -21,11 +21,11 @@
 // It is also the shape the browser terminal wants — an image, and commands over it — and the shape
 // design/0001 step 7 needs, where something boots an image and serves sessions from it.
 //
-// **One thing does not work here and is not a regression**: `head -c 8 /dev/urandom`. A synthesised
-// device has no whole to read, so `Fs.readFile` refuses it by name — which is right — and the reader
-// above has no bounded-chunk route for a non-host mount, only whole-file. `Fs.readSome` is that route
-// and nothing plumbs it in yet. The refusal is accurate about the file and misleading about what to do,
-// which is worth fixing when something needs it rather than guessing at a chunk size now.
+// **`head -c 8 /dev/urandom` works here**, which it did not until `openStream` grew a byte cap. A
+// synthesised device is endless, so `Fs.readFile` refuses it by name rather than inventing a length —
+// and the reader had only a whole-file route for a non-host mount, so the refusal reached an applet
+// that wanted eight bytes. The bound is the applet's to declare and the file is the filesystem's to
+// know; `Fs.readSome` was already the route and nothing was passing the number down it.
 
 import { Core, Cli } from "../../../platform/src/platform.wac";
 import { Fs, mountSystem } from "../../../fs/src/fs.wac";

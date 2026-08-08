@@ -17,7 +17,7 @@ export i32 cp(Core core, Cli cli, Fs fs, Args a) {
   // GNU names the one it *did* get, which is the difference between "you forgot both" and "you forgot
   // where to put it" — and the second is the mistake people actually make.
   if (a.rest.len() < 2) { return missingAfter(core, a.name, "destination file operand", a.rest[0]); }
-  Input in = openStream(core, cli, fs, a, 0);
+  Input in = openStream(core, cli, fs, a, 0, -1);
   if (!in.ok) { return 1; }
   Feed fed = in.fed;
   Change wrote = streamAtomic(core, cli, fs, fed, a.rest[1]);

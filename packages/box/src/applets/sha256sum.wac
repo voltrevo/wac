@@ -18,9 +18,12 @@ export i32 sha256sum(Core core, Cli cli, Fs fs, Args a) {
   // `sha256sum *.tar` checksummed one archive and said nothing about the others (wac-mono 0096).
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, fs, a, f);
-    if (!in.ok) { return 1; }
+    Input in = openStream(core, cli, fs, a, f, -1);
+    // An operand that will not open is reported, skipped, and the status at the end — GNU's rule, and
+    // the one `nextSpan` and `Reader` follow. Stopping meant every later file produced nothing at all.
+    if (!in.ok) { status = 1; continue; }
     Feed fed = in.fed;
 
     Sha256 h = Sha256.create();
@@ -36,5 +39,5 @@ export i32 sha256sum(Core core, Cli cli, Fs fs, Args a) {
     core.log(string.fromBytes(hexencode(h.finish())) + "  " + name);
   }
 
-  return 0;
+  return status;
 }

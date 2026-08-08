@@ -17,9 +17,11 @@ export i32 tac(Core core, Cli cli, Fs fs, Args a) {
   // fixture I first tried it on.
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
     Input in = readInput(core, cli, fs, a, f);
-    if (!in.ok) { return 1; }
+    // Reported, skipped, and the status at the end — GNU's rule for every operand-taking filter here.
+    if (!in.ok) { status = 1; continue; }
     u8[][] lines = splitLines(in.bytes);
     i32 n = lines.len();
     u8[][] out = u8[][n](fill: u8[0]());
@@ -33,5 +35,5 @@ export i32 tac(Core core, Cli cli, Fs fs, Args a) {
     if (!ended && keep > 0 && text[keep - 1] == 10) { keep = keep - 1; }
     cli.write(slice(text, 0, keep));
   }
-  return 0;
+  return status;
 }

@@ -19,9 +19,11 @@ export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   i32 files = operandCount(a, 0);
   i32 count = files == 0 ? 1 : files;
   u32[] table = crcTable8();
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-  Input in = openStream(core, cli, fs, a, f);
-  if (!in.ok) { return 1; }
+  Input in = openStream(core, cli, fs, a, f, -1);
+  // Reported, skipped, and the status at the end — the same rule as `sha256sum` beside it.
+  if (!in.ok) { status = 1; continue; }
   Feed fed = in.fed;
 
   u32 acc = crc32Start();
@@ -43,5 +45,5 @@ export i32 crc32(Core core, Cli cli, Fs fs, Args a) {
   }
   core.log(string.fromBytes(out) + "  " + (in.label == "" ? "-" : in.label));
   }
-  return 0;
+  return status;
 }

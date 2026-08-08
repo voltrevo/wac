@@ -110,7 +110,7 @@ export i32 tr(Core core, Cli cli, Fs fs, Args a) {
     for (i32 i = 0; i < which.len(); i++) { squeezed[which[i]] = 1; }
   }
 
-  Input in = openStream(core, cli, fs, a, 2);
+  Input in = openStream(core, cli, fs, a, 2, -1);
   if (!in.ok) { return 1; }
 
   Feed fed = in.fed;

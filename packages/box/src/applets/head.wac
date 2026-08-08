@@ -37,9 +37,18 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
   bool banner = files > 1;
 
   Sink out = Sink.create(cli);
+  i32 status = 0;
   for (i32 f = 0; f < count; f++) {
-    Input in = openStream(core, cli, fs, a, f);
-    if (!in.ok) { return 1; }
+    // Flushed before opening: the complaint goes straight to standard error while this is
+    // block-buffered, so without it the banner and lines of an earlier file arrive after it.
+    out.flush();
+    // **The one applet with a bound to declare.** `head -c 8` reads eight bytes and no more, which is
+    // what lets it answer for `/dev/urandom` at all — an endless file has no whole for `readFile` to
+    // return. `-c -8` is "all but the last eight", which needs the whole thing, so it declares nothing.
+    Input in = openStream(core, cli, fs, a, f, bytes && !allButLast ? want : -1);
+    // Reported, skipped, and the status at the end. GNU prints the banner of every file it *can* open,
+    // so a missing one in the middle costs a complaint and nothing else.
+    if (!in.ok) { status = 1; continue; }
     if (banner) {
       if (f > 0) { out.line(""); }
       out.line("==> " + in.label + " <==");
@@ -48,7 +57,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
     // The feed the opener chose — see `lib/input.wac`; not the process's own input.
     Feed fed = in.fed;
     if (bytes) {
-      if (!headBytes(out, fed, want, allButLast)) { out.flush(); return 0; }
+      if (!headBytes(out, fed, want, allButLast)) { out.flush(); return status; }
       continue;
     }
     if (allButLast) {
@@ -58,7 +67,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
         while (true) {
           Line l = nextLine(s, fed);
           if (!l.ok) { break; }
-          if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return 0; }
+          if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
         }
         continue;
       }
@@ -70,7 +79,7 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
         if (!l.ok) { break; }
         if (seen >= want) {
           i32 at = (seen - want) % want;
-          if (!emitTo(out, held[at], ended[at])) { out.flush(); return 0; }
+          if (!emitTo(out, held[at], ended[at])) { out.flush(); return status; }
         }
         held[seen % want] = l.bytes;
         ended[seen % want] = l.nl;
@@ -81,11 +90,11 @@ export i32 head(Core core, Cli cli, Fs fs, Args a) {
     for (i32 i = 0; i < want; i++) {
       Line l = nextLine(s, fed);
       if (!l.ok) { break; }
-      if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return 0; }
+      if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
     }
   }
   out.flush();
-  return 0;
+  return status;
 }
 
 /**

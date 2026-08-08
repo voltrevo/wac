@@ -20,11 +20,13 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
 
   Sink out = Sink.create(cli);
   Buf run = Buf.create();
+  bool failed = false;
   // The feed travels with the span — see `lib/input.wac`.
   Feed fed = Feed.of(cli, u8[0]());
   while (true) {
     Span got = nextSpan(core, cli, fs, a, at, opened, fed);
     fed = got.fed;
+    failed = failed || got.failed;
     if (!got.ok) { out.flush(); return 1; }
     opened = true;
     at = got.at;
@@ -38,7 +40,7 @@ export i32 strings(Core core, Cli cli, Fs fs, Args a) {
   }
   emit(out, run, min);
   out.flush();
-  return 0;
+  return failed ? 1 : 0;
 }
 
 /**
