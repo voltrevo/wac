@@ -357,6 +357,17 @@ cannot be compared with it.
 whole of it: no `wait`, no `jobs`, no `%1`. Backgrounding needs something that can run two things at
 once and something that knows what is running, which is design/0001 step 3.
 
+**A descriptor above 2 cannot be made.** `2>`, `2>>`, `2>&1`, `1>&2`, `>&2` and `2>&-` all work — a
+two-entry table, applied in the order the redirections were written, which is why `cmd > f 2>&1` and
+`cmd 2>&1 > f` differ. But `3>&1` is refused where bash makes a third descriptor and carries on, and
+`1>&-` is refused because bash reports a per-command write error rather than dropping the output.
+`&>file` is not parsed.
+
+**Both streams to one file arrive out of order** when both are non-empty. Two descriptors on one file
+share a position, so bash writes them as the command produced them; a command here answers with two
+finished buffers and there is no such order to offer, so standard output is written first. It is the
+same limitation as `wc`'s widths had: the seam hands back values rather than a stream.
+
 **`test` refuses four operators it cannot answer**, and they are the ones that need something the
 capability world does not report: `-r`, `-w` and `-x` want a mode, `-ef` wants a device and an inode.
 `Stat` carries neither. They exit 2 saying "not implemented" rather than guessing, which is the same

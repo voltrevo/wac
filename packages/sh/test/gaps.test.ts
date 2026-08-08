@@ -186,7 +186,7 @@ Deno.test({
  *     A command that did not run and reported success is the one outcome worse than either.
  */
 Deno.test({
-  name: "a redirection this shell cannot perform is named, and the command still runs",
+  name: "the descriptor forms work, and the ones that cannot are named",
   fn: async () => {
     const { buildApp } = await import("../../platform/build.ts");
     const built = await Deno.makeTempFile({ prefix: "wacsh-redir-" });
@@ -203,33 +203,39 @@ Deno.test({
         return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
       };
 
-      // Named, not called a syntax error — and named with the descriptors that were meant.
+      // **These used to be the refusals this test existed for.** `2>&1` was a syntax error, then a
+      // named gap; `2>` said "redirecting fd 2 is not implemented". They are a two-entry descriptor
+      // table now (2026-08-08), and what this asserts is the routing rather than the wording — the
+      // corpus compares the bytes against bash.
+      const merged = await run("echo hi 1>&2");
+      assertEquals(merged.out, "", "1>&2 leaves nothing on standard output");
+      assertEquals(merged.err, "hi\n", "…and puts it on standard error");
+
+      const dropped = await run("ls /nosuchfile 2>/dev/null; echo st=$?");
+      assertEquals(dropped.err, "", "2>/dev/null takes the complaint");
+      assertEquals(dropped.out, "st=2\n", "…and leaves the status alone");
+
+      const both = await run("echo out 2>&1");
+      assertEquals(both.out, "out\n", "2>&1 with nothing on the error stream changes nothing");
+
+      // **What is still refused, and named rather than called a syntax error.** There is no `exec 3>`
+      // in this shell, so a descriptor above 2 has nowhere to come from, and closing standard output is
+      // refused because bash reports a per-command write error rather than dropping the output.
+      //
+      // `1>&3` is bash's answer too — `3: Bad file descriptor` — but `3>&1` is *not*: bash makes a
+      // third descriptor there and carries on, because it has descriptors to make. This refuses it,
+      // which is a real divergence and the honest one: a shell that cannot create the descriptor should
+      // not pretend the redirection happened.
       for (const [script, want] of [
-        ["echo hi 2>&1", "2>&1"],
-        ["echo hi 1>&2", "1>&2"],
-        ["echo hi >&2", "1>&2"],
+        ["echo hi 1>&3", "3: Bad file descriptor"],
+        ["echo hi 3>&1", "3: Bad file descriptor"],
+        ["echo hi 1>&-", "closing standard output is not implemented"],
+        ["echo hi 3>f", "redirecting fd 3 is not implemented"],
       ]) {
         const got = await run(script);
-        assertEquals(got.err.includes("not implemented"), true, `${script}: ${got.err}`);
+        assertEquals(got.err.includes(want), true, `${script} should say ${want}: ${JSON.stringify(got.err)}`);
         assertEquals(got.err.includes("syntax error"), false, `${script} is not a syntax error`);
-        assertEquals(got.err.includes(want), true, `${script} should name ${want}: ${got.err}`);
-        assertEquals(got.code, 2, `${script}: status`);
       }
-      // Still a syntax error when it really is one: `2>&` has nothing to duplicate.
-      assertEquals((await run("echo hi 2>&")).err.includes("syntax error"), true, "2>& is invalid");
-
-      // A refused stage fails the whole pipeline. This exited 0 — the refusal was printed and the
-      // status came from `cat`, which had succeeded at doing nothing.
-      const piped = await run("echo hi 2>&1 | cat");
-      assertEquals(piped.err.includes("not implemented"), true, piped.err);
-      assertEquals(piped.code !== 0, true, `a refused pipeline reported success (${piped.code})`);
-
-      // And the descriptor this shell cannot capture: the redirection is refused, the command runs.
-      const kept = await run("echo hi 2>/dev/null");
-      assertEquals(kept.out, "hi\n", `the command's own output was lost: ${JSON.stringify(kept.out)}`);
-      assertEquals(kept.err.includes("not implemented"), true, kept.err);
-      const after = await run("echo one 2>/dev/null; echo two");
-      assertEquals(after.out, "one\ntwo\n", after.out);
     } finally {
       await Deno.remove(built);
     }

@@ -981,6 +981,34 @@ esac`,
   `test ! -f /nosuch; echo $?`,
   `[ /etc/passwd -nt /nosuchfile ]; echo $?`,
   `[ /nosuchfile -ot /etc/passwd ]; echo $?`,
+
+  // ── descriptors: `2>`, `2>&1`, `>&2`, `2>&-` ───────────────────────────────
+  //
+  // All of these were refused until 2026-08-08 — `2>&1` said "not implemented" and `2>` said
+  // "redirecting fd 2 is not implemented", because the seam hands a command's two streams back as two
+  // byte arrays and only one of them was being placed. There is a two-entry descriptor table now,
+  // applied in the order the redirections were written, which is the whole of why `cmd > f 2>&1` and
+  // `cmd 2>&1 > f` differ.
+  //
+  // **Not here: both streams to the same file with both non-empty.** Two descriptors on one file share
+  // a position, so bash writes them in the order the command produced them, and a command that answers
+  // with two finished buffers has no such order to offer. `ls nosuch f > all 2>&1` is the case, and it
+  // is named in `exec.wac` rather than compared here.
+  `ls /nosuchfile 2> e; echo "[$(cat e)]"; rm -f e`,
+  `ls /nosuchfile 2> e; ls /nosuchother 2>> e; wc -l < e; rm -f e`,
+  `echo hi >&2`,
+  `echo hi 1>&2 2>/dev/null; echo done`,
+  `ls /nosuchfile 2>&-; echo st=$?`,
+  `ls /nosuchfile 2>/dev/null; echo st=$?`,
+  `echo hi 1>&3; echo st=$?`,
+  `ls /nosuchfile 2>/dev/null; echo $?`,
+  `ls /etc/passwd /nosuchfile 2> e; echo "--"; wc -l < e; rm -f e`,
+  `ls /etc/passwd /nosuchfile > all; echo "--"; cat all; rm -f all`,
+  `ls /etc/passwd /nosuchfile 2>&1 >/dev/null | wc -l`,
+  `ls /etc/passwd /nosuchfile 2>&1 | wc -l`,
+  `echo hi 2>/dev/null | wc -c`,
+  `pwd > p; wc -l < p; rm -f p`,
+  `cat <<EOF 2>/dev/null\nx\nEOF`,
 ];
 
 /**

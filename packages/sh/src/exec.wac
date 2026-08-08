@@ -501,13 +501,6 @@ void runPipeline(Shell sh, Pipeline pipeline) {
 }
 
 void runStages(Shell sh, Pipeline pipeline) {
-  // **Before any stage runs**, and for the whole pipeline rather than per stage. `N>&M` is parsed and
-  // not implemented, and refusing it inside a stage left the *pipeline's* status at whatever the last
-  // stage returned — `echo hi 2>&1 | cat` printed the refusal and exited 0, which is the same "said no
-  // and reported success" this file had in `writeTo`. One stage refusing means the pipeline refused.
-  for (i32 i = 0; i < pipeline.stages.len(); i++) {
-    if (refuseDup(sh, pipeline.stages.get(i).simple.redirs)) { return; }
-  }
   // `streamPipeline` answers false for a world that cannot spawn at all, which is not a failure of
   // the pipeline: the sequential path below runs the same stages in process, which is what a browser
   // tab did before a page could spawn. Nothing has started when it answers that, so falling through
@@ -909,7 +902,6 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
   i32 savedPos = sh.stdinPos;
   bool savedHeld = sh.heldInput;
   bool ownInput = stdin.len() > 0;
-  if (refuseDup(sh, cmd.redirs)) { return u8[0](); }
   if (ownInput) {
     sh.stdinBytes = stdin;
     sh.stdinPos = 0;
@@ -946,6 +938,13 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
   bool collect = !last || cmd.redirs.len() > 0 || isSubshell;
   bool savedCapture = sh.capture;
   Buf savedBuf = sh.outBuf;
+  // **The error stream is collected too**, and only while this compound's own redirections are in
+  // force. `{ … } 2>f` and `( … ) 2>/dev/null` need it: a compound writes its errors as it goes, so
+  // without this there is nothing left to place by the time the redirections are read, which is why
+  // this used to refuse them.
+  Buf savedErr = sh.errOut;
+  bool holdErr = cmd.redirs.len() > 0;
+  if (holdErr) { sh.errOut = Buf.create(); }
   if (collect) {
     sh.capture = true;
     sh.outBuf = Buf.create();
@@ -1024,23 +1023,44 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
   u8[] produced = sh.outBuf.take();
   sh.capture = savedCapture;
   sh.outBuf = savedBuf;
-
-  for (i32 i = 0; i < cmd.redirs.len(); i++) {
-    Redir r = cmd.redirs.get(i);
-    match (r.kind) {
-      // Only when the write actually happened: a refused redirection falls through to the ordinary
-      // paths below, so the output still reaches whoever was going to get it.
-      case Out: { if (writeTo(sh, r, produced, false)) { return u8[0](); } }
-      case Append: { if (writeTo(sh, r, produced, true)) { return u8[0](); } }
-      else: {}
-    }
+  u8[] complaints = u8[0]();
+  if (holdErr) {
+    complaints = sh.errOut.take();
+    sh.errOut = savedErr;
   }
-  if (last) {
-    if (sh.capture) { sh.outBuf.pushAll(produced); }
-    else { sh.cli.write(produced); }
+
+  // The same two-entry table the simple path uses, over the two buffers this compound produced.
+  Plan plan = planRedirs(sh, cmd.redirs);
+  if (!plan.ok) { return u8[0](); }
+  if (sameFile(plan.one, plan.two)) {
+    emitTo(sh, plan.one, complaints, produced);
     return u8[0]();
   }
-  return produced;
+  Buf onward = Buf.create();
+  if (sameAsStart(plan.one, 1)) { onward.pushAll(produced); }
+  if (sameAsStart(plan.two, 1)) { onward.pushAll(complaints); }
+  if (sameAsStart(plan.two, 2)) { sh.err(complaints); }
+  if (toFile(plan.two)) { emitTo(sh, plan.two, complaints, u8[0]()); }
+  if (toFile(plan.one)) { emitTo(sh, plan.one, produced, u8[0]()); }
+  if (sameAsStart(plan.one, 2)) { sh.err(produced); }
+  u8[] going = onward.take();
+  if (last) {
+    if (going.len() > 0) {
+      if (sh.capture) { sh.outBuf.pushAll(going); }
+      else { sh.cli.write(going); }
+    }
+    return u8[0]();
+  }
+  return going;
+}
+
+/** Whether a plan entry is still the stream it started as. */
+bool sameAsStart(Where w, i32 fd) {
+  match (w) {
+    case Stream(f): { return f == fd; }
+    else: { return false; }
+  }
+  return false;
 }
 
 /**
@@ -1126,7 +1146,6 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
   // `while … done < file` sees the file rather than an empty stage.
   u8[] input = stdin;
   bool hasInput = stdin.len() > 0;
-  if (refuseDup(sh, cmd.redirs)) { return u8[0](); }
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
@@ -1197,51 +1216,180 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
     return u8[0]();
   }
   sh.status = result.status;
-  if (result.err.len() > 0) { sh.err(result.err); }
 
-  // Output redirection wins over the pipeline and over standard output.
+  // **Both streams, placed by the plan.** The command's error output used to go straight to the shell's
+  // error stream whatever the redirections said, and `2>` was refused for want of anywhere to put it —
+  // the seam hands back two byte arrays, and only one of them was being placed.
+  Plan plan = planRedirs(sh, cmd.redirs);
+  if (!plan.ok) { return u8[0](); }
   u8[] out = result.out;
-  bool redirected = false;
-  for (i32 i = 0; i < cmd.redirs.len(); i++) {
-    Redir r = cmd.redirs.get(i);
-    match (r.kind) {
-      case Out: { if (writeTo(sh, r, out, false)) { redirected = true; } }
-      case Append: { if (writeTo(sh, r, out, true)) { redirected = true; } }
-      else: {}
-    }
-  }
-  if (redirected) { return u8[0](); }
-  if (last) {
-    if (sh.capture) { sh.outBuf.pushAll(out); }
-    else { sh.cli.write(out); }
+  u8[] err = result.err;
+  // Two descriptors on one file share a position, so one write carries both — output first.
+  if (sameFile(plan.one, plan.two)) {
+    emitTo(sh, plan.one, err, out);
     return u8[0]();
   }
-  return out;
+  // **What goes to `Stream(1)` is what this command was going to write anyway** — down the pipe if
+  // there is one, to the terminal if there is not — and that is a different thing from "wherever
+  // descriptor 1 ends up", which is the distinction `2>&1 > f` turns on: the copy was taken while 1
+  // was still the pipe, so the error goes there and only the output goes to the file.
+  Buf onward = Buf.create();
+  if (sameAsStart(plan.one, 1)) { onward.pushAll(out); }
+  if (sameAsStart(plan.two, 1)) { onward.pushAll(err); }
+  if (sameAsStart(plan.two, 2)) { sh.err(err); }
+  if (toFile(plan.two)) { emitTo(sh, plan.two, err, u8[0]()); }
+  if (toFile(plan.one)) { emitTo(sh, plan.one, out, u8[0]()); }
+  // `1>&2`: what would have been output goes to the error stream, and nothing goes down the pipe.
+  if (sameAsStart(plan.one, 2)) { sh.err(out); }
+  u8[] going = onward.take();
+  if (last) {
+    if (going.len() > 0) {
+      if (sh.capture) { sh.outBuf.pushAll(going); }
+      else { sh.cli.write(going); }
+    }
+    return u8[0]();
+  }
+  return going;
 }
 
 /**
- * Report an `N>&M`, which is parsed and not implemented, and say so before anything runs.
+ * Where a command's two output streams end up, once its redirections have been read.
  *
- * True when there was one. It is refused *before* the command rather than after because the command's
- * output would otherwise go somewhere the caller did not ask for — the same mistake `writeTo` made by
- * answering true for a descriptor it could not write.
+ * A shell's `>`s are applied **in order**, and each one can name where another currently points: that
+ * is all `2>&1` is, and it is why `cmd > f 2>&1` and `cmd 2>&1 > f` mean different things — the first
+ * sends both to the file, the second sends the error to the terminal and only the output to the file.
+ * A rule stated as "2>&1 merges the streams" gets the second one wrong, and every shell tutorial states
+ * it that way.
  *
- * `2>&1` used to be a **syntax error**, which told the caller they had written something invalid. They
- * had not: the gap is ours, `exec.wac` said as much in a comment about `2>`, and only the parser
- * disagreed. Recognising the form is what lets this name it.
+ * So this is a two-entry descriptor table rather than a flag, and `>&` copies the entry it names *as it
+ * stands at that point*, which is what a `dup2` does.
  */
-bool refuseDup(Shell sh, Vec<Redir> redirs) {
+enum Where {
+  /** The stream it started as: 1 is the shell's standard output, 2 its standard error. */
+  Stream(i32 fd),
+  /** A file, and whether it appends rather than truncates. */
+  File(string path, bool append),
+  /** `2>&-`: the stream is closed, and what would have gone there is dropped. */
+  Closed,
+}
+
+/** The plan for one command's output: where 1 goes, where 2 goes, and whether it could be worked out. */
+struct Plan {
+  Where one;
+  Where two;
+  /** False when a redirection was refused, with the reason already reported. */
+  bool ok;
+}
+
+/**
+ * Read a command's redirections into a plan, in the order they were written.
+ *
+ * Refuses rather than approximates, and says which: a descriptor above 2 has nowhere to come from in
+ * this world — there is no `exec 3>` to make one — and `1>&-` is refused because bash does not merely
+ * drop what a closed standard output would have taken, it reports a write error per command, which is
+ * a thing to imitate properly or not at all.
+ */
+Plan planRedirs(Shell sh, Vec<Redir> redirs) {
+  Where one = Where.Stream(1);
+  Where two = Where.Stream(2);
   for (i32 i = 0; i < redirs.len(); i++) {
     Redir r = redirs.get(i);
+    bool append = false;
     match (r.kind) {
+      case Append: { append = true; }
+      case Out: {}
       case Dup: {
-        sh.err(("sh: " + itoa(r.fd) + ">&" + joinWord(sh, r.target)
-                + " is not implemented\n").toBytes());
-        sh.status = 2;
-        return true;
+        string target = joinWord(sh, r.target);
+        if (r.fd > 2 || (target != "1" && target != "2" && target != "-")) {
+          // bash names the descriptor that does not exist, which is the one out of range — the source
+          // for `3>&1` and the target for `1>&3`. Naming the whole redirection instead was our own
+          // invention and told the caller less than either.
+          string bad = r.fd > 2 ? itoa(r.fd) : target;
+          sh.err(("sh: " + bad + ": Bad file descriptor\n").toBytes());
+          sh.status = 1;
+          return Plan(one, two, false);
+        }
+        if (target == "-") {
+          if (r.fd != 2) {
+            sh.err("sh: closing standard output is not implemented\n".toBytes());
+            sh.status = 1;
+            return Plan(one, two, false);
+          }
+          two = Where.Closed;
+          continue;
+        }
+        // The entry as it stands *now*, which is the whole of the ordering rule above.
+        Where from = target == "1" ? one : two;
+        if (r.fd == 1) { one = from; } else { two = from; }
+        continue;
       }
-      else: {}
+      else: { continue; }
     }
+    if (r.fd > 2) {
+      sh.err(("sh: redirecting fd " + itoa(r.fd) + " is not implemented\n").toBytes());
+      sh.status = 1;
+      return Plan(one, two, false);
+    }
+    Where to = Where.File(sh.resolve(joinWord(sh, r.target)), append);
+    if (r.fd == 1) { one = to; } else { two = to; }
+  }
+  return Plan(one, two, true);
+}
+
+/** Whether this plan sends a stream to a file, which is what stops it going down a pipe. */
+bool toFile(Where w) {
+  match (w) {
+    case File(path, append): { return true; }
+    else: { return false; }
+  }
+  return false;
+}
+
+/**
+ * Send one stream where the plan says.
+ *
+ * `alsoHere` is what the *other* stream is writing to the same file in this command, and it goes first:
+ * two descriptors on one file share a position, so `cmd > f 2>&1` writes both in the order they were
+ * produced. Nothing here knows that order — the streams arrive as two finished buffers — so this states
+ * the rule it can keep, which is that standard output precedes standard error. bash interleaves them as
+ * they happen; a command that writes to both and cares about the order between them will differ.
+ */
+bool emitTo(Shell sh, Where w, u8[] data, u8[] alsoHere) {
+  match (w) {
+    case Closed: { return true; }
+    case Stream(fd): {
+      if (fd == 2) { sh.err(data); return true; }
+      return false;
+    }
+    case File(path, append): {
+      Buf both = Buf.create();
+      if (append) {
+        FileResult existing = sh.fs.readFile(path);
+        if (existing.ok) { both.pushAll(existing.bytes); }
+      }
+      both.pushAll(alsoHere);
+      both.pushAll(data);
+      Change wrote = sh.fs.writeFile(path, both.take());
+      if (!wrote.ok()) {
+        sh.err(("sh: " + path + ": " + wrote.message + "\n").toBytes());
+        sh.status = 1;
+      }
+      return true;
+    }
+  }
+  return true;
+}
+
+/** Whether two plan entries name the same file, which is when one write has to carry both streams. */
+bool sameFile(Where a, Where b) {
+  match (a) {
+    case File(pa, aa): {
+      match (b) {
+        case File(pb, ab): { return pa == pb; }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
   }
   return false;
 }
@@ -1700,6 +1848,11 @@ Output ls(Shell sh, Vec<string> argv) {
   if (paths.len() == 0) { paths.push("."); }
 
   Buf out = Buf.create();
+  // **A complaint is not output.** These went into the same buffer, and a run with any bad operand
+  // answered `Output.fail`, which puts the whole thing on the *error* stream — so `ls f nosuch > list`
+  // wrote nothing to `list` and sent `f` to the terminal along with the complaint. Nothing saw it
+  // because nothing redirected one stream without the other until `2>` existed.
+  Buf errs = Buf.create();
   i32 status = 0;
   for (i32 i = 0; i < paths.len(); i++) {
     string given = paths.get(i);
@@ -1720,7 +1873,7 @@ Output ls(Shell sh, Vec<string> argv) {
         // opened, so the file is there and we cannot reach it. `st.exists` is false either way, which is
         // why the fault has to be consulted rather than inferred.
         string why = st.answered() ? "No such file or directory" : statReason(st);
-        out.pushAll(("ls: cannot access '" + given + "': " + why + "\n").toBytes());
+        errs.pushAll(("ls: cannot access '" + given + "': " + why + "\n").toBytes());
         status = 2;
       }
       continue;
@@ -1737,7 +1890,7 @@ Output ls(Shell sh, Vec<string> argv) {
     }
     if (paths.len() > 1 && i + 1 < paths.len()) { out.pushAll("\n".toBytes()); }
   }
-  return status == 0 ? Output.ok(out.take()) : Output.fail(out.take(), status);
+  return Output(out.take(), errs.take(), status, true);
 }
 
 /**
