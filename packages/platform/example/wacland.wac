@@ -1,0 +1,55 @@
+// The conformance program for a host: what a runtime must be able to do, as a program rather than prose.
+//
+// design/0001 step 2a, wac-mono 0087. It exists to be run on **every** host — the three JavaScript ones
+// and the native one — and to say the same thing on each. That is the arrival test in miniature: not
+// "the runtime compiles" but "the same program observes the same behaviour through a different host".
+//
+// The stages grow with the runtime, and each says what it checked rather than only that it passed. A
+// stage that a host cannot reach at all stops the program there, which is the point — 0087's criteria
+// are things a half-built host fails on rather than skips.
+//
+// ## The stages
+//
+//   1. **output** — `log` and `warn` reach two different streams.
+//   2. **arguments** — argv crosses as bytes, in order. *(needs a ticket table)*
+//   3. **two in flight, out of order** — two requests submitted, the later one collected first.
+//   4. **`waitAny` with a deadline** — nothing ready, and it returns on time rather than hanging.
+//   5. **spawn** — a child instance, waited for alongside one of this program's own tickets.
+//
+// Stages 2 to 5 are 0087's "done when", and they are in the order a host acquires them. A host that
+// resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
+// clause is in the criteria rather than a single request.
+
+import { Cli, Core } from "../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  // Stage 1. Both streams, because a host that wired `warn` to standard output would look right in a
+  // terminal and be wrong to everything that reads one of the two.
+  core.log("wacland: stage 1 output");
+  core.warn("wacland: stage 1 warn");
+
+  // Stage 2 onwards need a `Pending<T>`, which is the ticket table. A host without one traps here with
+  // the name of the capability it has not got — see the native runtime's `NotImplemented`.
+  i32 n = cli.argCount().wait();
+  core.log("wacland: stage 2 argCount " + itoa(n));
+  for (i32 i = 0; i < n; i++) {
+    core.log("wacland: stage 2 arg " + itoa(i) + " " + string.fromBytes(cli.arg(i).wait()));
+  }
+
+  core.log("wacland: reached the end of what is implemented");
+  return 0;
+}
+
+/** Decimal, without pulling `fmt` in for a conformance program that must build everywhere. */
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  string out = "";
+  i32 x = v;
+  bool negative = x < 0;
+  if (negative) { x = 0 - x; }
+  while (x > 0) {
+    out = string.fromCodepoint('0' + (x % 10)) + out;
+    x = x / 10;
+  }
+  return negative ? "-" + out : out;
+}

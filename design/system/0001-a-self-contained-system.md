@@ -412,7 +412,7 @@ Each step is an issue when it becomes actionable, and each references this docum
 |---|---|
 | 1. VFS with two backings | **done.** `packages/fs`, threaded through `packages/sh` as a value the shell holds; `sealed.wac` is a session on `Fs.inMemory()` built with no filesystem grants at all. 57 scripts answer identically on both backings and identically to bash — 0067 |
 | 2. image format | **done.** `packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so. `packages/sh/src/imaged.wac` is the restart the criterion asks for: two processes, nothing shared but the file |
-| 2a. a second host, no JavaScript | not started — [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md) |
+| 2a. a second host, no JavaScript | **started, and a wac program runs on it.** `packages/platform/host/native/` — Rust on wasmtime, no JavaScript in the artifact and no WASI import in the module. A compiled wac program turned out to have **no imports of its own** beyond one dispatcher per funcref signature, so there is no bundle and no generated glue: `deno task app:native` emits a `.wasm` and a manifest, and the runtime reads the manifest. D9 survived its first contact — the `SharedArrayBuffer`, `Atomics.wait` and the ring of slots have no counterpart here and none was reimplemented. **Not done: the ticket table, `waitAny`, `spawn`**, so every capability returning a `Pending<T>` traps with its own name rather than answering. None of [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md)'s three criteria is met yet; all three need the table |
 | 3. process table | **the table is done and `ps` reads it; `kill` is not.** `packages/fs/src/proc.wac` — pids never reused, parents, running and zombie states, exit statuses — and `/proc/<pid>/{cmdline,comm,status}` renders it in Linux's exact formats, checked against this machine's own `/proc` rather than against expectations. The shell enters every command for the length of its run, so `ps` in a **sealed** session shows the tree it is running while the host knows of one process. Signal *delivery* is what is left: `kill` needs something that polls, since a function call cannot be interrupted from outside in wasm — and `jobs` and `&` need concurrency this shell has not got |
 | 4. users and login | **done.** `/etc/passwd` is data in the image — `packages/fs/src/passwd.wac` reads it — and `packages/fs` **enforces** `mode` and `owner`, which it had recorded and ignored since step 1. `sshd` matches a client key against each user's own `~/.ssh/authorized_keys`, sets `Fs.user`, and starts the session in that user's home with `$USER` and `$HOME`. `packages/sh` grew `chmod` and `chown` as builtins, without which a session could not make a file private. The criterion is a test: two keys, two homes, and neither can read the other's private file — nor widen it first. **Traversal is not enforced**, and the tests say so: a private file is protected by its own mode rather than by the directory above it |
 | 5. line discipline | **the module is done and `sshd` uses it.** `packages/tty` — echo, erase, `^U`, `^W`, `^C`, `^D`, `^V` — with every rule read off the kernel's own discipline through a pty, thirty-one sequences byte for byte. Three of them are not what anyone would write down: erasing `^A` takes two backspaces, `^H` is not erase, and `^W` goes back over letters and digits rather than to the previous space. `sshd` accepts `pty-req` now — it refused it for a year for want of exactly this — so `ssh -tt` gets a session where the server echoes, honours an erase the client never saw, and sends its output back with `\r\n`, driven in the tests by OpenSSH's own client. What is left is the browser's keydown loop, terminal *modes* (canonical with echo is the only arrangement, so no raw mode for an editor), and the step's own criterion — `^C` ends a running `yes` — which needs step 3, since interrupting a program takes something that knows what is running |
@@ -438,15 +438,17 @@ as well as of the shell.
 - ~~The fourth host has no JavaScript.~~ Answered by D9, D10 and D11, and scheduled as step 2a.
   ~~Whether plain WASI can express the interface.~~ Answered: it cannot, and it is not used — D10 and
   D11. What remains is not a design question:
-- **Where the native runtime lives.** The other three hosts are `packages/platform/host/*.ts` and the
-  interface they implement is defined beside them, which argues for keeping the fourth there. Against:
-  cargo is a second build system, `deno task test` cannot cover it, and "no TypeScript in any package's
-  `src/`" is a stated property of this repo that "…and some Rust" muddies. Its own bare repo, or
-  `packages/platform/host/native/`. An operator decision, and not urgent until 0087 starts.
-- **The toolchain is a precondition, not a detail.** No `cargo` or `rustc` here, and this repo has no
-  compiled language at all today — 371 `.wac`, 305 `.ts`, with Python and shell only as tooling. Needs
-  `sudo` plus proxy allowlist entries for rustup and crates.io. Only whoever *builds* the runtime needs
-  it; everyone else gets a binary.
+- **Where the native runtime lives.** Still an operator decision, now **taken provisionally** because
+  0087 started: it is at `packages/platform/host/native/`. The arguments that decided it in the moment
+  are that the interface it implements is defined beside it, that the differential test needs both
+  hosts in one suite to be a test at all, and that moving a cargo crate is a directory move. The
+  arguments against stand — cargo is a second build system and `deno task test` reaches it only by
+  shelling out — and the mitigation is that the test **skips loudly** when cargo is absent rather than
+  reddening the suite. Worth confirming or overruling rather than letting the provisional answer set.
+- ~~The toolchain is a precondition, not a detail.~~ Answered: `rustc` and `cargo` 1.97.1 are installed
+  and crates.io is on the allowlist. This repo now has one compiled language, in one directory. Only
+  whoever *builds* the runtime needs the toolchain; everyone else gets a binary, and the test that runs
+  it skips loudly rather than failing when cargo is absent.
 - **Supervised services are named in D8 and in none of the eight steps.** Step 7 is `init`, which owns
   the image, starts daemons and reaps; supervision — restart policy, dependency order, health — is a
   different shape. Either it belongs in step 7's definition of done or it is a ninth step.

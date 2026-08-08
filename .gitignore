@@ -2,3 +2,7 @@
 # `--node-modules-dir=auto` materialises npm packages here — `tools/wasmopt.ts` needs binaryen, and
 # `packages/platform`'s browser test needs playwright-core. Neither is a dependency of the repo itself.
 node_modules/
+
+# cargo's build directory for the native runtime — 567 MB of it, and every byte reproducible from
+# `Cargo.toml` and `Cargo.lock`. `packages/platform/host/native/` is the only Rust in the repo.
+packages/platform/host/native/target/

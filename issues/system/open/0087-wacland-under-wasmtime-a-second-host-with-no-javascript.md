@@ -1,7 +1,7 @@
 # 0087 — the native runtime: a second host, with no JavaScript and no WASI in it
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-a (2026-08-08) — in flight, see "Progress" at the end
 - **Reported by:** agent-c
 - **Date:** 2026-08-06
 - **Kind:** missing feature
@@ -153,3 +153,52 @@ D12's seam:
   path.
 
 Cheap now, and the same shape of change this project keeps paying for when it is left until later.
+
+## Progress — 2026-08-08, agent-a
+
+**Items 1 and 2 of the six are done, and a wac program prints through a Rust host with no JavaScript in
+it.** `packages/platform/host/native/`, ~300 lines, and
+`packages/platform/test/native.test.ts` runs the same program on both hosts and compares.
+
+What the ABI turned out to be, since this is the part that decided the shape:
+
+- **A compiled wac program has no imports of its own.** It asks for `wac.cb0`…`wac.cbN` — one
+  dispatcher per funcref *signature*, taking a slot number first — and everything else a host does is
+  calling exports. There is no bundle, no generated glue, and nothing to keep in step but a manifest.
+- **The values cross as references**, so the module needs the function-references and gc proposals on.
+  `$bind$fnref_N(slot)` hands back a real funcref, which goes straight into `Core.of` untouched.
+- **Strings marshal through a staging buffer at offset 0** of `$bind$mem`, sized by `$bind$mem_ensure`.
+  Four helper exports and no layout knowledge on the host side.
+- The prediction in this issue held: the `SharedArrayBuffer`, `Atomics.wait`, the sequence counters and
+  the ring of slots have **no counterpart here**. Nothing was reimplemented, so D9's assumption that the
+  interface and the transport are separable survives its first contact.
+
+`packages/platform/native.ts` (`deno task app:native`) emits the artifact: `<stem>.wasm` and
+`<stem>.json`. The manifest carries the **field order of `Core` and `Cli`**, which is the thing a
+runtime must not hold its own copy of — insert a capability in the middle of `platform.wac` and a host
+with a hardcoded order builds a `Core` whose `log` is the previous field's function, and every call goes
+somewhere plausible. `provider.ts` does hold such a copy, in a `Core.of(...)` bindgen generated for it.
+
+### What is not done
+
+Items 3, 4, 5 and 6: **the ticket table, `waitAny`, `spawn`, and the operating system underneath.**
+Every capability returning a `Pending<T>` is registered, callable, and traps with its own name —
+`Cli.argCount is not implemented in the native runtime yet` — rather than answering a plausible zero.
+So none of the three "done when" clauses is met yet: they all need the ticket table, which is next.
+
+D12's scheduler seam and D13's visible deadline are for that piece and have not been designed yet. They
+should be built in rather than retrofitted, which is what those two decisions say.
+
+### Where it lives — assumed, not decided
+
+Put at `packages/platform/host/native/`, which is one of the two options in 0001's open questions and
+still an operator decision. The reasons for choosing it now rather than waiting: the interface it
+implements is defined beside it, the differential test needs both hosts in one suite, and moving a
+cargo crate is a directory move. `target/` is gitignored (567 MB, all reproducible).
+
+### Cost, measured
+
+Release build 68s cold and 1.4s warm; the binary is 12.6 MB with the feature set in `Cargo.toml`
+(`cranelift`, `runtime`, `gc`, `gc-drc` — default features off). The test builds through cargo and
+**skips loudly** if cargo is absent, with the Deno half still asserting, so a machine without the
+toolchain gets a warning rather than a red suite or a silent pass.
