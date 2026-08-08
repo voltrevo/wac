@@ -48,7 +48,7 @@ const FOREIGN = new Set([
   // `wacCompile` above is the same case. Listed rather than resolved because reading TS declarations
   // is a second parser for a handful of names, and the point of this file is that the wac half is
   // strict; a name here is unchecked, so keep the group small.
-  "refCompress",
+  "refCompress", "generate",
   // Mathematics and cryptography, written the way the papers write it
   "e", "E", "EXP", "MAC", "O", "sqrt",
   // Ethereum's consensus and execution specs

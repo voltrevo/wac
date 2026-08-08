@@ -2060,6 +2060,21 @@ i32 fieldArity(C c, string t) {
   return n;
 }
 
+/**
+ * Whether a type is held by reference, for the purposes of a cast.
+ *
+ * Wider than `isReferenceType`, which `anyref` asks: an enum and a funcref are references too, and a
+ * nullable one is still one. Kept separate because the two questions have different answers for
+ * `anyref` itself and there is no benefit to pretending otherwise.
+ */
+bool isCastRef(C c, string t) {
+  string core = withoutNull(t);
+  string at = core == "" ? t : core;
+  if (at == "" || at == typeNone()) { return false; }
+  return isArrayName(at) || at == "string" || at == "anyref" || startsWithFn(at) ||
+         c.isEnum(at) || c.isStruct(at);
+}
+
 /** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
 bool descendsFrom(C c, string sub, string sup) {
   string at = c.parentOf(sub);
@@ -2330,18 +2345,44 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // always safe and takes `as`; downcasting can fail and takes `as!`; `as~` and `as@` are refused
   // outright, because truncating and reinterpreting are questions about a bit pattern and a reference
   // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
-  if (c.isStruct(to)) {
-    string sf = typeOfExpr(c, operand);
-    if (!c.isStruct(sf)) { return; }
-    i32 rk = tokenKind(c, op);
-    bool down = descendsFrom(c, to, sf);
-    bool up = descendsFrom(c, sf, to);
-    if (rk == kAsTilde() || rk == kAsAt()) {
-      if (down || up) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+  string castFrom = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
+  bool fromRef = isCastRef(c, castFrom);
+  bool toRef = isCastRef(c, to);
+  i32 ck = tokenKind(c, op);
+  // Crossing between the two worlds is never a conversion. `i32 as string` and `P as i32` are both
+  // *"no valid cast"*, whichever spelling is used — a number and a reference have nothing in common
+  // to convert. The one exception is `i31ref`, handled below, which exists precisely to cross.
+  if (fromRef != toRef && castFrom != "i31ref" && to != "i31ref" &&
+      (fromRef || isValueType(castFrom)) && (toRef || isValueType(to)) &&
+      !isPackedName(castFrom) && !isPackedName(to)) {
+    c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    return;
+  }
+  // Two references. Only `as` and `as!` mean anything, and which is right depends on the direction:
+  // upcasting — including a type to itself — is always safe and takes `as`, and everything else is
+  // treated as a downcast that may fail and takes `as!`. `string as P` is a downcast by this rule
+  // rather than an error of its own, which is measured: the reference words it *"downcast to 'P' may
+  // fail"* even though a string will never be a `P`.
+  if (fromRef && toRef && castFrom != "i31ref" && to != "i31ref") {
+    if (ck == kAsTilde() || ck == kAsAt()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
       return;
     }
-    if (down && rk == kAs()) { c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op)); }
-    if (up && rk == kAsBang()) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+    // Two things have to widen for a cast to be the safe direction: the **type**, and the
+    // **nullability**. `P as P?` adds the possibility of being absent and cannot fail; `P? as P`
+    // takes it away and can; `Sub as Base?` does both at once. Measured across the nullable row,
+    // where `P? as Base?` is a downcast despite both sides being nullable, because `P` is not a
+    // `Base` — the two conditions are independent and both are required.
+    string fromCore = withoutNull(castFrom);
+    string fromBase = fromCore == "" ? castFrom : fromCore;
+    string toCore = withoutNull(to);
+    string toBase = toCore == "" ? to : toCore;
+    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase);
+    bool widensNull = isNullableName(to) || !isNullableName(castFrom);
+    bool up = widensType && widensNull;
+    if (up && ck == kAsBang()) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+    if (!up && ck == kAs()) { c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op)); }
     return;
   }
   // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is
@@ -2378,8 +2419,11 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   i32 k = tokenKind(c, op);
   // A cast to the type it already is does nothing, and the language says so rather than allowing it
   // as a no-op. Only measured for plain `as`; the checked and truncating spellings say nothing here.
+  // A cast to the type it already is does nothing, whichever of the four was written — the checked
+  // and truncating spellings are as redundant as the plain one, which the first version of this
+  // assumed the opposite of.
   if (from == to) {
-    if (k == kAs()) { c.report(errRedundantCast(), tokenLine(c, op), tokenCol(c, op)); }
+    c.report(errRedundantCast(), tokenLine(c, op), tokenCol(c, op));
     return;
   }
 

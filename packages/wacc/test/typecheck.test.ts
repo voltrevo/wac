@@ -2024,3 +2024,88 @@ Deno.test("rung 3: funcrefs, what is callable, and casts between references", ()
     }
   }
 });
+
+/**
+ * The whole cast law, now that the sweep has been over every pair of types four times.
+ *
+ * Three worlds rather than one table. **Value to value** is the numeric tables, which were measured
+ * long ago. **Value to reference and back** is never a conversion at all — a number and a reference
+ * have nothing in common to convert — with `i31ref` as the one type that exists to cross. **Reference
+ * to reference** takes only `as` and `as!`, and which of the two depends on the direction.
+ *
+ * The direction has two independent halves, which is the part that took a measurement rather than a
+ * guess: a cast is the safe direction only if the **type** widens *and* the **nullability** does.
+ * `P? as Base?` is a downcast despite both sides being nullable, because a `P` is not a `Base`; and
+ * `P? as P` is a downcast despite the types matching, because it takes away the possibility of
+ * absence. Requiring only one of the two was wrong in both directions, one cell each.
+ */
+Deno.test("rung 3: the cast law across all three worlds", () => {
+  const D = "struct P { i32 x; } struct Base { i32 b; } struct Sub : Base { i32 s; } enum E { A, B } ";
+  const CAUGHT = [
+    // A self-cast is redundant whichever spelling is used, not only the plain one.
+    "export void f(i32 a) { i32 v = a as i32; }",
+    "export void f(i32 a) { i32 v = a as! i32; }",
+    "export void f(i32 a) { i32 v = a as~ i32; }",
+    "export void f(i32 a) { i32 v = a as@ i32; }",
+    // Crossing between values and references, in both directions and every spelling.
+    "export void f(i32 a) { string v = a as string; }",
+    "export void f(i32 a) { P v = a as! P; }",
+    "export void f(i32 a) { i32[] v = a as~ i32[]; }",
+    "export void f(string a) { i32 v = a as i32; }",
+    "export void f(E a) { i32 v = a as! i32; }",
+    // Reference to reference: `as~` and `as@` are never right.
+    "export void f(Sub a) { Base v = a as~ Base; }",
+    "export void f(Base a) { Sub v = a as@ Sub; }",
+    "export void f(P a) { P v = a as~ P; }",
+    // The wrong spelling for the direction.
+    "export void f(Sub a) { Base v = a as! Base; }",
+    "export void f(Base a) { Sub v = a as Sub; }",
+    "export void f(P a) { P? v = a as! P?; }",
+    "export void f(P? a) { P v = a as P; }",
+    // Both halves of the direction, independently: the type does not widen, or the nullability does not.
+    "export void f(P? a) { Base? v = a as Base?; }",
+    "export void f(string a) { P v = a as P; }",
+  ];
+  const QUIET = [
+    // The safe direction with `as`, and the checked one with `as!`.
+    "export void f(Sub a) { Base v = a as Base; }",
+    "export void f(Base a) { Sub v = a as! Sub; }",
+    "export void f(P a) { P? v = a as P?; }",
+    "export void f(P? a) { P v = a as! P; }",
+    "export void f(P? a) { P? v = a as P?; }",
+    "export void f(Sub a) { Base? v = a as Base?; }",
+    "export void f(P? a) { Base? v = a as! Base?; }",
+    // A string is a reference: casting one to itself is ordinary, where an `i32` to an `i32` is not.
+    "export void f(string a) { string v = a as string; }",
+    "export void f(i32[] a) { i32[] v = a as i32[]; }",
+    "export void f(E a) { E v = a as E; }",
+    // The value tables, untouched by any of this.
+    "export void f(i32 a) { i64 v = a as i64; }",
+    "export void f(i64 a) { i32 v = a as~ i32; }",
+    "export void f(i32 a) { u32 v = a as@ u32; }",
+    // `i31ref` is the one type that crosses: lossy going in, lossless coming back.
+    "export void f(i32 a) { i31ref v = a as! i31ref; }",
+    "export void f(i31ref a) { i32 v = a as i32; }",
+  ];
+  for (const t of CAUGHT) {
+    const src = D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(t)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const t of QUIET) {
+    const mine = ours(D + t);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(t)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

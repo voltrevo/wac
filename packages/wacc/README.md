@@ -936,6 +936,56 @@ Two cases remain. `case true:` needs a position on the `Case` node, which is a p
 making deliberately rather than in passing; and a static method used as a value types as a funcref,
 which is the only remaining place a member needs to *produce* one.
 
+### A generated sweep, and the concept three rules were missing
+
+Both corpora are nearly exhausted — 77 of 83 and 122 of 124 — and neither can say anything about a
+combination nobody wrote down. **Every grid in this package has had hand-written axes**, and each
+one's gap was in an axis somebody forgot: the cast grid measured numeric pairs and so missed the whole
+`bool` row.
+
+`generate()` builds the cross product instead — 17 types against ~30 contexts, **9,554 programs in
+0.6s** — so a type added there is asked about in every context at once, and a context added there is
+asked about every type. Nothing in it encodes an expectation: it is a *program source*, and the sweep
+asks the reference what each one means.
+
+What is asserted is deliberately **not recall** but two properties about being wrong: no false alarm
+on a program the reference accepts, and no contradiction. Recall is printed. A number that may never
+fall on nine thousand programs makes every refactor a negotiation, and this ladder has already traded
+a case away on purpose once.
+
+The **canary** is asserted first and separately, because a differential harness that compares nothing
+reports that everything agrees and every number it prints looks reassuring. It was also verified the
+only way that means anything: by reintroducing a fixed bug and watching the sweep name the cell.
+
+**What it found, immediately: the concept three rules had been missing.** `isPrimitiveName` includes
+`string`, and a string is a *reference* — it can be null, so `s is null` is a fair question; it can be
+cast to itself, so `s as string` is not redundant; it has methods, so `s.slice(…)` is not a call on
+something with none. That list is about how a type is **passed**, not about what it can **do**. Three
+rules had now been written with it where they meant "held by value", so the distinction has a name —
+`isValueType` — because naming it is cheaper than remembering it.
+
+And a gap neither corpus reached at all: **`typeOfExpr` had no `Binary` arm**, so every binary
+expression typed as unknown. A comparison is `bool`; everything else is the type of whichever operand
+is not a literal.
+
+### The cast law, in three worlds
+
+**Sweep recall: 88% → 97%**, from generalising the one family the sweep said was thin: 894 of the
+1,294 missed cells were casts.
+
+Three worlds rather than one table. **Value to value** is the numeric tables. **Value to reference and
+back is never a conversion at all** — a number and a reference have nothing in common to convert, and
+`i31ref` is the one type that exists to cross. **Reference to reference** takes only `as` and `as!`.
+
+Which of the two takes two independent halves, and this is the part that needed measuring rather than
+guessing: a cast is the safe direction only if the **type** widens *and* the **nullability** does.
+`P? as Base?` is a downcast despite both sides being nullable, because a `P` is not a `Base`; and
+`P? as P` is a downcast despite the types matching, because it takes away the possibility of absence.
+Requiring only one of the two was wrong in both directions — one sweep cell each, found in seconds.
+
+Also measured, and the opposite of what the first version assumed: **a self-cast is redundant in all
+four spellings**, not only the plain one.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,
