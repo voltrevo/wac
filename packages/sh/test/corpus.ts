@@ -953,6 +953,34 @@ esac`,
   `i=0; while [ $i = 0 ]; do i=1; j=0; while [ $j = 0 ]; do j=1; false; done; done; echo $?`,
   `for i in 1; do false; done; echo $?`,
   `for i in; do false; done; echo $?`,
+
+  // ── `test`'s connectives, parentheses, string order and mtimes ─────────────
+  //
+  // `[ -f x -a -d y ]` was "too many arguments": the arity ladder knew 0 to 3 words and a script's
+  // commonest shapes are longer. There is a grammar now — `-o` loosest, then `-a`, then `!`, then a
+  // primary — and `-nt`/`-ot` stopped saying "not implemented", because `Stat` has carried the
+  // modification time all along and nothing had looked.
+  `[ -f /etc/passwd -a -d /etc ]; echo $?`,
+  `[ -f /nosuch -a -d /etc ]; echo $?`,
+  `[ -f /nosuch -o -d /etc ]; echo $?`,
+  `[ -f /nosuch -o -d /nosuch ]; echo $?`,
+  `[ \( -f /etc/passwd \) ]; echo $?`,
+  `[ \( -f /nosuch -o -f /etc/passwd \) -a -d /etc ]; echo $?`,
+  `[ -f /nosuch -a -f /nosuch -o -f /etc/passwd ]; echo $?`,
+  `[ ! -f /nosuch -a -d /etc ]; echo $?`,
+  `[ ! \( -f /etc/passwd \) ]; echo $?`,
+  `[ \( \( -f /etc/passwd \) \) ]; echo $?`,
+  `[ abc \< abd ]; echo $?`,
+  `[ b \> a ]; echo $?`,
+  `[ b \< a ]; echo $?`,
+  `[ a == a ]; echo $?`,
+  `[ a = a -a b = b ]; echo $?`,
+  `[ 1 -lt 2 -a 3 -gt 2 ]; echo $?`,
+  `[ \( -n x \) -a \( -z "" \) ]; echo $?`,
+  `[ a b c d e ]; echo $?`,
+  `test ! -f /nosuch; echo $?`,
+  `[ /etc/passwd -nt /nosuchfile ]; echo $?`,
+  `[ /nosuchfile -ot /etc/passwd ]; echo $?`,
 ];
 
 /**
