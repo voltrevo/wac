@@ -39,6 +39,13 @@ is `(uint256, bytes)`. One walk over the descriptor rather than one function per
 | a `bool` that is not 0 or 1 | a word with anything else in it is not a bool |
 | an `address` with its high twelve bytes set | those bytes are not part of an address |
 
+**Two real decoders were asked what they do with each of those**, and they do not agree with each
+other: `cast` accepts a dirty address and truncates it, `ethers` refuses; both accept a `bool` that
+is 2 and both ignore trailing bytes, where Solidity's own decoder reverts. `test/strictness.test.ts`
+is that table, measured rather than claimed, and it fails if either tool changes its mind. The
+reason to stay strict is what this package is *for*: bytes a contract produced, whose own decoder
+would have reverted on them — a client that quietly truncates a word is inventing an answer.
+
 ## How it is tested
 
 `npm:ethers@6` is the oracle. `tools/vendor.ts` encodes a corpus — thirty cases from `uint256` to
