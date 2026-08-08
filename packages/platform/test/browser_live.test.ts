@@ -364,6 +364,23 @@ Deno.test({
       // Redirection into OPFS and back out again: a shell with a real filesystem under it.
       assertEquals((await command("echo kept > note.txt; cat note.txt")).endsWith("kept"), true);
 
+      // **What a tab does not have, pinned so the gap is visible rather than assumed.**
+      //
+      // design/0001 wants the browser terminal to be "the *same system* in a tab", which means the
+      // `/dev`, `/proc` and `/bin` every other session has. It does not have them, and mounting them
+      // was tried this tick and had to come out: the shell got them and its *programs* did not,
+      // because a spawned stage is a fresh instance with `Fs.onHost`. `ls /bin` listed sixty-three
+      // programs — `ls` is a builtin, on the session's own filesystem — and `cat /dev/null` failed.
+      //
+      // So this asserts the gap. When wac-mono 0116 is decided these become the positive assertions,
+      // and until then a tab that quietly grew half a world fails here.
+      const devnull = await command("cat /dev/null; echo [$?]");
+      assertEquals(
+        devnull.endsWith("[0]"),
+        false,
+        `a tab has no /dev yet (0116); it said ${JSON.stringify(devnull)}`,
+      );
+
       // **The cursor is a block, and stays one.** `caret-shape: block` only paints a full cell if
       // the field has a cell left to paint in; sizing the input to its content — which is the
       // obvious way to make prompt, command and cursor one line — silently clips it back to a bar.

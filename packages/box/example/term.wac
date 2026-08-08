@@ -52,8 +52,6 @@
 
 import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
-import { mountSystem } from "../../fs/src/fs.wac";
-import { Vec } from "../../std/src/vec.wac";
 // `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -186,16 +184,17 @@ export i32 page(Core core, Cli cli, Page page) {
   // the page's log rather than the screen being drawn.
   Shell sh = Shell.create(core, cli);
   sh.capture = true;
-  // **The same world a session gets anywhere else**, which is design/0001's "the browser terminal
-  // should be the *same system* in a tab rather than a second port of the idea". Without this a tab
-  // had no `/dev/null`, no `/proc/self` and no `/bin` — sixty-three programs that `help` listed and
-  // the machine had no directory for. `mountSystem` is what `sealedsh` and `imaged` already call;
-  // this was the one session that built half a world.
-  // A page has no command line, so `/proc/self/cmdline` names the terminal itself rather than
-  // inventing arguments nobody passed.
-  Vec<string> argv = Vec.create();
-  argv.push("term");
-  mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+  // **No `mountSystem` here, and it is a gap rather than an oversight.** design/0001 wants the
+  // browser terminal to be "the *same system* in a tab", which means the `/dev`, `/proc` and `/bin`
+  // every other session has. Mounting them was tried this tick and had to come out: the shell got
+  // them and its *programs* did not, because a spawned stage is a fresh instance and `shrun.wac`
+  // gives a fresh instance `Fs.onHost`. So `ls /bin` listed sixty-three programs — `ls` is a builtin,
+  // on the session's own filesystem — and `cat /dev/null` failed, because `cat` was spawned.
+  //
+  // A consistent poorer world beats an inconsistent richer one: a system that answers differently
+  // depending on which route the shell took is the quiet-wrong-answer shape this repo keeps removing.
+  // wac-mono 0116 is what unblocks it, and it is a decision about what `spawnSelf` hands a child.
+
   // Every `box` applet, as a command you can type — `sort`, `sha256sum`, `gzip`, `cut`, `shuf` and
   // fifty more, the same code `box` runs on a command line. This is the *fallback* now: the shell
   // spawns them (below), and calls them only in a world that cannot.
@@ -205,6 +204,12 @@ export i32 page(Core core, Cli cli, Page page) {
   // rather than calling them: `spawnSelf(["sort", "-n"])` re-enters `main` above, which dispatches
   // on the first argument. Its own instance, its own grants — and in a page this is the only route
   // to a real program at all.
+  //
+  // **Turning this off was tried this tick and is worse.** A called applet's output is captured in
+  // memory and capped at 8 MiB, so `seq 1 1500000 | wc -c` truncates; a spawned one's queue drains
+  // as the next stage reads it. The assertion in `platform/test/browser_live.test.ts` exists to tell
+  // the two routes apart and caught it immediately. A missing `/dev/null` is a visible failure; a
+  // silently short byte count is the other kind.
   sh.externalSpawnable = true;
 
   // Open on a session rather than on a prompt with nothing above it. These are run through the

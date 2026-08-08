@@ -57,7 +57,25 @@ its own filesystem through a pipe and cannot read the machine by any route, and 
 — still can. That test is what makes option 3 safe to leave in place; before it, the only thing holding
 the line was a comment.
 
-**The browser terminal is a smaller instance of the same split.** `packages/box/example/term.wac` is
-`externalSpawnable` and its shell now mounts `/dev`, `/proc` and `/bin`; a spawned stage there gets
-`Fs.onHost`, which in a tab is the same OPFS *files* but without those three. So `cat /proc/self/cmdline`
-works called and fails spawned. Same cause, no data leak, and it wants the same decision.
+## The browser terminal, and why it has no `/dev` either
+
+`packages/box/example/term.wac` is `externalSpawnable`, and it was given `mountSystem` — the same
+world every other session has — for one tick. Measured in a real browser:
+
+```
+ls /bin | wc -l    ->  63        # `ls` is a builtin, on the session's own filesystem
+cat /dev/null      ->  fails     # `cat` is spawned, and a spawned instance has Fs.onHost
+```
+
+So the shell had a world its programs could not see. Both ways out were tried:
+
+- **stop spawning**, so everything runs in process on the session's filesystem. It works and it is
+  worse: a *called* applet's output is captured in memory and capped at 8 MiB, so
+  `seq 1 1500000 | wc -c` truncates where a spawned stage streams.
+  `platform/test/browser_live.test.ts` compares that number against bash's and caught it in one run. A
+  missing `/dev/null` is a visible failure; a silently short byte count is the other kind.
+- **keep the half world**, which leaves a system that answers differently depending on which route the
+  shell took — the quiet-wrong-answer shape.
+
+So a tab has no `/dev`, `/proc` or `/bin`, the browser test **asserts their absence**, and design/0001's
+"the same system in a tab" waits on this issue. When it is decided, those assertions turn positive.
