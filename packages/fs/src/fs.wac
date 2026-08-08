@@ -32,7 +32,8 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
-  FAULT_IS_DIR, FAULT_OTHER, FileResult, Pending, Stat } from "../../platform/src/platform.wac";
+  FAULT_IS_DIR, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult, Pending, Stat }
+  from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "./path.wac";
 import { PROC_RUN, Proc, Procs } from "./proc.wac";
@@ -672,12 +673,11 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      // **Not implemented, and the fault vocabulary has no word for that.** `FAULT_DENIED` is the
-      // closest, and it is wrong in a way that reaches the user: `packages/sh`'s `chmod` turns a
-      // fault into GNU's words for that category, so this arrives as "cannot access 'd':
-      // Permission denied" — which blames the file. The message says the truth and the fault
-      // contradicts it; a caller reading the category is told the wrong thing. wac-mono 0117.
-      case Host(cli): { return Change.of(FAULT_DENIED(), "chmod on a host mount is not implemented"); }
+      // **Not implemented**, which is now a category of its own rather than the nearest one:
+      // `FAULT_DENIED` reached the user as "cannot access 'd': Permission denied", blaming the file
+      // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
+      // message below is what a caller prints. wac-mono 0117.
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
       case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
@@ -699,7 +699,7 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
-      case Host(cli): { return Change.of(FAULT_DENIED(), "chown on a host mount is not implemented"); }
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
       case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
     }
@@ -729,17 +729,17 @@ export struct Fs {
         // rather than half-done: it would need reading the whole file, which a `Change` cannot report.
         match (toMount.backing) {
           case Host(cli2): { return cli.rename(from, to).wait(); }
-          else: { return Change.of(FAULT_DENIED(), "rename across mounts is not implemented"); }
+          else: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
         }
       }
       else: {}
     }
     match (toMount.backing) {
-      case Host(cli): { return Change.of(FAULT_DENIED(), "rename across mounts is not implemented"); }
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
       else: {}
     }
     if (fromMount.at != toMount.at) {
-      return Change.of(FAULT_DENIED(), "rename across mounts is not implemented");
+      return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented");
     }
     i32 fromParent = this.find(fromMount, parentOf(from));
     if (fromParent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }

@@ -52,6 +52,15 @@ export const FAULT_NOT_GRANTED = 7;
 export const FAULT_IS_DIR = 8;
 
 /**
+ * **We have not written this** — see `FAULT_UNSUPPORTED` in `platform.wac`, which carries the argument.
+ *
+ * Here so that a host can answer it too. Nothing does yet: every case found so far is on the wac side,
+ * where `Fs` knows a backing cannot do something. A host that grew one would use this rather than
+ * `FAULT_DENIED`, which is what made "we have not written this" reach a user as "Permission denied".
+ */
+export const FAULT_UNSUPPORTED = 9;
+
+/**
  * A fault a host had to name itself, because its filesystem does not report one.
  *
  * OPFS is the case that needs it: it has no exclusive create, so "already exists" is a question the
