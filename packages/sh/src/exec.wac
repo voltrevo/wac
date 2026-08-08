@@ -28,10 +28,10 @@ import { Change, Child, Cli, Core, faultWords, FileResult,
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
 import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeline, Redir,
          RedirKind, Script, Simple, Word, parse } from "./parse.wac";
-import { Output, names, optionRefusal, run } from "./program.wac";
+import { Output, optionRefusal } from "./refusal.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { printf } from "./printf.wac";
-// Not through `program.wac`: wac has no re-export, and the one implementation lives in `fmt`.
+// From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, evaluate } from "./arith.wac";
@@ -76,8 +76,8 @@ export struct Shell {
   Buf outBuf;
 
   /**
-   * What to try for a command that is not a builtin, before the small implementations in
-   * `program.wac`.
+   * What to try for a command that is not a builtin. There is nothing after it: an unwired shell
+   * answers 127.
    *
    * A funcref rather than an import, because the table of real programs is in `packages/box` and
    * `box` already depends on this package — importing it back would be a cycle. So the wiring goes
@@ -1637,17 +1637,17 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "test" || name == "[") { return test(sh, argv); }
   if (name == "help") { return help(sh); }
   if (name == "printf") {
-    // Collected exactly the way `program.wac`'s `run` collects the twelve — `Sink.toBuffer` and
-    // `taken()` — because a builtin answers with bytes rather than writing as it goes.
+    // Collected rather than streamed — `Sink.toBuffer` and `taken()` — because a builtin answers
+    // with bytes rather than writing as it goes.
     Sink out = Sink.toBuffer(sh.cli);
     Sink errs = Sink.toBuffer(sh.cli);
     i32 code = printf(argv, out, errs);
     return Output(out.taken(), errs.taken(), code, true);
   }
 
-  // A real program if `$WACPATH` has one, and the wac implementation if it does not. That order
-  // is the whole point of the table in `program.wac`: those exist because nothing could be
-  // started, and now that something can they are the fallback rather than the answer.
+  // A real program if `$WACPATH` has one. There is no wac implementation behind this any more:
+  // `program.wac` held twelve because nothing could start a process, and wac-mono 0103 deleted them
+  // once `packages/box`'s applets were held to this package's own corpus against bash.
   Output spawned = trySpawn(sh, argv, mayInherit);
   if (spawned.found) { return spawned; }
   // Then this program's own applets as *children*, where that is possible: `packages/box` decides
@@ -1667,7 +1667,10 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
                              inheritIn ? u8[0]() : sh.restOfStdin(), inheritIn);
   if (given.found) { return given; }
-  return run(sh.fs, sh.cli, sh.cwd, argv, sh.restOfStdin());
+  // Nothing answered, and there is no last resort to fall back on. `Output.missing()` is 127, which
+  // is what a shell says about a name it cannot run — and saying it is better than the shell having
+  // its own private second-best copy of the command, which is what used to be here.
+  return Output.missing();
 }
 
 /**
@@ -2068,10 +2071,9 @@ bool gnuTestOperator(string op) {
 /**
  * What this shell can run, in the order it would try it.
  *
- * Takes the shell because the interesting half is no longer a constant: which programs exist
- * depends on what was wired into `Shell.external`, and the old version listed the twelve in
- * `program.wac` and cited issue 0015 — which was closed `wontfix` and is now the wrong reason for
- * a smaller list than the truth.
+ * Takes the shell because the interesting half is not a constant: which programs exist depends on
+ * what was wired into `Shell.external`. An older version listed twelve programs this package carried
+ * itself and cited issue 0015 — closed `wontfix`, and by then the wrong reason for anything.
  */
 Output help(Shell sh) {
   // **The names `isBuiltin` answers to, not a list beside it.** The hand-written one had already lost
@@ -2084,15 +2086,11 @@ Output help(Shell sh) {
     s = s + "programs: " + wrapNames(wired) + "\n";
   }
 
-  // Named as what they are. They are tried last, and every one of them is also in the list above
-  // when something has been wired in — where the other implementation is the better one.
-  Vec<string> own = names();
-  s = s + (wired.len() > 0 ? "built in:" : "programs:");
-  for (i32 i = 0; i < own.len(); i++) { s = s + " " + own.get(i); }
-  s = s + "\n";
-
+  // There is no third list any more. This shell used to carry twelve programs of its own and name
+  // them here as "built in"; they are deleted (wac-mono 0103), so what a person can run is the
+  // builtins above, whatever was wired in, and whatever `$WACPATH` finds.
   if (wired.len() > 0) {
-    s = s + "$WACPATH programs are tried first, then the list above, then the built-in ones.\n";
+    s = s + "$WACPATH programs are tried first, then the list above.\n";
   } else {
     s = s + "set $WACPATH to run programs, or hand this shell a table — see the README.\n";
   }

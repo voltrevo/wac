@@ -473,8 +473,10 @@ Deno.test({
 
     // And a diagnostic naming a file whose bytes are not valid UTF-8 survives, which the old flush
     // through a string could not do: `string.fromBytes` of an invalid sequence is not the bytes back.
+    // `ls`, a builtin, because this binary has no programs left to name a file at — the applets that
+    // do are `packages/box`'s. What is being asked is the shell's error *path*, not `ls`.
     const odd = await new Deno.Command(wacshBinary, {
-      args: ["-c", "cat $(printf '\\xff\\xfe')"],
+      args: ["-c", "ls $(printf '\\xff\\xfe')"],
       env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
       clearEnv: true,
     }).output();
@@ -504,16 +506,16 @@ Deno.test({
  * `echo hi; cat` and `seq 1 2; cat` are the other side of it and belong here: a command that ignores its
  * input must leave it for the next one, in-process or not.
  */
+const DRAIN = "while read l; do echo \"$l\"; done";
 const STDIN_CASES: [string, string][] = [
-  ["cat", "a b c\nd\n"],
-  ["read x; echo \"[$x]\"; cat", "a b c\nd\n"],
-  ["echo hi; cat", "kept\n"],
-  ["seq 1 2; cat", "kept\n"],
+  [DRAIN, "a b c\nd\n"],
+  [`read x; echo "[$x]"; ${DRAIN}`, "a b c\nd\n"],
+  [`echo hi; ${DRAIN}`, "kept\n"],
   ["read x; read y; echo \"[$x][$y]\"", "one\ntwo\nthree\n"],
-  ["cat", ""],
+  [DRAIN, ""],
   ["read x; echo \"[$x]\"", ""],
   ["while read line; do echo \"got $line\"; done", "a\nb\nc\n"],
-  ["echo before; cat; echo after", "middle\n"],
+  [`echo before; ${DRAIN}; echo after`, "middle\n"],
 ];
 
 Deno.test({
@@ -548,7 +550,7 @@ Deno.test({
 
     // A script *read from* standard input consumes it, so a command inside it has nothing left —
     // `echo cat | sh` runs `cat` with no input rather than feeding it the rest of the script.
-    const script = "cat\n";
+    const script = 'read x; echo "[$x]"\n';
     const asScript = async (cmd: string, args: string[]) => {
       const p = new Deno.Command(cmd, {
         args,
@@ -617,7 +619,7 @@ Deno.test({
         "v=~:~; echo $v",              // …so both of these expand, unlike in the word above
         "z=~; echo $z/y",              // expanded once, at assignment time
         "cd ~; pwd",
-        "echo hi > ~/f; cat ~/f",      // a redirection target, which is why `joinWord` does it too
+        "echo hi > ~/f; ls ~/f",       // a redirection target, which is why `joinWord` does it too
       ];
       for (const script of cases) {
         const run = (cmd: string, args: string[]) =>
@@ -671,30 +673,15 @@ Deno.test({
     const dir = await Deno.makeTempDir({ prefix: "sh-unread-" });
     try {
       const cases = [
-        // Usage errors, which GNU words to the byte and follows with a "Try 'x --help'" line. They are
-        // here rather than in a test of their own because the property is the same one: where the
-        // message is derivable it is compared, and where it is *ours* — a gap this shell has and GNU
-        // does not — it is not comparable and is not compared.
-        "seq",
-        "seq abc",
-        "seq 1 2 3 4",
-        "seq 1 0 3",
-        "seq -q 1",
-        // Not `seq --nope 1`, which used to be here. GNU answers "unrecognized option '--nope'", and
-        // this shell said the same — correctly for `--nope`, and *falsely* for `--separator`, which GNU
-        // has and this does not. Telling the two apart needs a table of every long name GNU documents,
-        // which nothing here has; so both now get one sentence that is true of either, and it is ours
-        // rather than GNU's: "seq: long options are not implemented: --nope". Under the rule this list
-        // states, a message that is ours is not comparable and is not compared.
-        "echo x | cat -Q",
-        "cat missing",
-        "wc -l missing",
-        "head -1 missing",
-        "sort missing",
-        "grep x missing",
-        // Not `rev`, `nl`, `tail` or `uniq`: those are gone from this shell, and their cases run against
-        // `packages/box`'s applets in `packages/box/test/programs.test.ts`. The rest follow as each is
-        // deleted.
+        // **One case, and it is a builtin.** Every other line here named one of the twelve programs
+        // this package used to carry — `seq`, `cat missing`, `wc -l missing`, `head -1 missing`,
+        // `sort missing`, `grep x missing` — and they are deleted (wac-mono 0103). Their wording is
+        // still compared against GNU, in `packages/box/test/programs.test.ts` and `operands.test.ts`,
+        // where the applets that answer now live.
+        //
+        // Leaving them here would have compared "command not found" against GNU and failed, which is
+        // at least honest; the version of this mistake to avoid is a list that quietly passes.
+        //
         // `ls`'s own wording, which was invented rather than GNU's until 0067's work went past it: it said
         // `ls: x: no such file or directory` where GNU says `ls: cannot access 'x': No such file or
         // directory`. Nothing compared it, because every `ls` case in the corpus lists something that

@@ -580,7 +580,7 @@ Deno.test({
       if (found.stdout !== "hello\nnotes\n") throw new Error(JSON.stringify(found.stdout));
 
       // And the host's own files are not reachable through it, which is what makes this offerable to a
-      // stranger — `sealed.wac` names that as the reason it exists.
+      // stranger — `packages/box/src/bin/sealedsh.wac` names that as the reason it exists.
       const host = await realSsh(s, "cat /etc/passwd; echo status=$?");
       if (!host.stdout.includes("status=1")) throw new Error(JSON.stringify(host.stdout));
 

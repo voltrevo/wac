@@ -1,10 +1,14 @@
 // The same scripts on the host's filesystem and on a memory one, required to agree.
 //
+// In `packages/box` because both sides of the comparison are `packages/box` shells: `bin/sh.wac` on the
+// host and `bin/sealedsh.wac` on `Fs.inMemory()`. It ran against `packages/sh`'s own two shells until
+// that package's twelve programs were deleted (wac-mono 0103) — and every script here *is* a command,
+// so it moved to the package that has them. The subject is unchanged: what the two backings answer.
+//
 // wac-mono 0067's "done when", and design/0001's D7: the host filesystem is the reference answer for the
 // one in `packages/fs`, so running a script against both and diffing is a VFS test with an oracle rather
-// than a set of expectations somebody wrote down. `wacsh` is the host-backed shell and `sealed` is the same
-// shell on `Fs.inMemory()` — the only difference between the two programs is which `Fs` they hand the
-// shell, which is what makes the comparison meaningful.
+// than a set of expectations somebody wrote down. The only difference between the two programs is which
+// `Fs` they hand the shell, which is what makes the comparison meaningful.
 //
 // **What can be compared.** Only scripts that are self-contained: they create what they read, and they name
 // nothing that exists on one side and not the other. `cat /etc/passwd` is not a divergence, it is a
@@ -46,8 +50,8 @@ globalThis.addEventListener("unload", () => {
     }
   }
 });
-await buildApp("packages/sh/src/sh.wac", hosted, { read: true, write: true, env: true });
-await buildApp("packages/sh/src/sealed.wac", sealed, {});
+await buildApp("packages/box/src/bin/sh.wac", hosted, { read: true, write: true, env: true });
+await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {});
 
 const dec = new TextDecoder();
 const ENV = { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };

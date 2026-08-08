@@ -59,16 +59,21 @@ Deno.test("a child waiting for an answer that never comes is reported, not waite
 });
 
 Deno.test("a program that is merely busy is never called deadlocked", async () => {
-  // The half that keeps the detector honest. `seq 1 300000 | wc -l` does real work with host calls in
-  // flight the whole time, so its state changes between checks even at a 500ms budget. If this ever
-  // fails, the detector is looking at elapsed time rather than at progress, and every long-running
-  // program in the repo is about to start failing.
+  // The half that keeps the detector honest. This does real work with host calls in flight the whole
+  // time, so its state changes between checks even at a 500ms budget. If this ever fails, the detector
+  // is looking at elapsed time rather than at progress, and every long-running program in the repo is
+  // about to start failing.
+  //
+  // It was `seq 1 300000 | wc -l` through `packages/sh`'s shell, which had `seq` and `wc` of its own
+  // until wac-mono 0103 deleted them. The busy work is a shell loop now — slower per iteration, so
+  // fewer of them — and it is still a pipeline, because a pipeline is what has host calls outstanding
+  // at every moment rather than in bursts.
   Deno.env.set("WAC_STALL_MS", "500");
   try {
     const sh = await appRunner("packages/sh/src/sh.wac", { read: true, write: true, env: true });
-    const r = await sh.run(["-c", "seq 1 300000 | wc -l"], {});
+    const r = await sh.run(["-c", "i=0; while [ $i -lt 4000 ]; do echo $i; i=$((i+1)); done | while read l; do :; done; echo done"], {});
     assertEquals(r.code, 0, r.err);
-    assertEquals(r.out.trim(), "300000");
+    assertEquals(r.out.trim(), "done");
   } finally {
     Deno.env.delete("WAC_STALL_MS");
   }

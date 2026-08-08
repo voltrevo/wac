@@ -265,7 +265,8 @@ file than fits in memory, and `cp` of a 176MB file peaked near a gigabyte.
 src/box.wac        the dispatcher, and the table of contents
 src/applets/       one applet per file, always src/applets/<name>.wac
 src/lib/           args, bytes, num, lines, input, reader, safe
-src/bin/           four applets built as standalone programs
+src/bin/           four applets as standalone programs, and three shells:
+                   sh (the host), sealedsh (memory, no grants), imaged (a file)
 test/box.test.ts   every applet against the utility it imitates
 ```
 

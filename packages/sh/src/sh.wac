@@ -11,51 +11,41 @@
 //   sh                  run standard input
 //
 // External commands are a spawned `$WACPATH` program, then whatever was wired into
-// `Shell.external`, then the small table in `program.wac`. This entry wires nothing, so it is the
-// third — `help` lists what there is. `packages/box/src/bin/sh.wac` is the same shell with sixty
-// applets wired in, and it is four lines, because the shell being handed its programs rather than
-// containing them is the point of the seam.
+// `Shell.external`, and that is all there is. This entry wires nothing, so `wacsh` on its own is the
+// shell *language* and its builtins: `help` lists what there is, and anything else is 127.
+//
+// It used to be more, and the difference is wac-mono 0103. This package carried twelve programs
+// written in wac because nothing could start a process; `packages/box` has sixty applets now, held to
+// this package's own differential corpus against bash, and keeping both meant two `grep`s that
+// disagreed for months with nothing comparing them. `packages/box/src/bin/sh.wac` is this same shell
+// with those applets wired in, and it is four lines — the shell being handed its programs rather than
+// containing them is the point of the seam, and this file is what the seam looks like from the other
+// side.
 
 import { Cli, Core } from "../../platform/src/platform.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Shell } from "./exec.wac";
 import { shellMain } from "./entry.wac";
-import { isProgram, programNames, runStreaming } from "./program.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 /**
- * A shell, or one of its own twelve programs — decided by the first argument.
+ * The shell, and nothing else — there is no multi-call branch here any more.
  *
- * This is what a multi-call binary is, and `packages/box` has been one for a while: `box sort` is `box`
- * with `sort` as its first argument. The shell needs to be one so that it can run its *own* programs as
- * real children — `spawnSelf(["seq", "1", "5"])` re-enters here, `runStreaming` answers, and the child
- * writes through the capability as it goes rather than handing back every byte at once. Without it the
- * twelve could only ever be called in process, which is why `seq 1 2000000000 | head -1` trapped where
- * bash prints one line. wac-mono 0061.
+ * There was one: `wacsh seq 1 5` ran this bundle's own `seq`, because the shell spawning its own
+ * programs as real children is what let a pipeline's stages run at once and `head` stop `seq`
+ * (wac-mono 0061). The programs are deleted, so the branch has nothing to dispatch to.
  *
- * Deciding by argv rather than by a flag keeps the two spellings identical for the shell's own dispatch
- * and for a person: `wacsh seq 1 5` works, and so does `wacsh -c 'seq 1 5'`.
+ * `packages/box` is still a multi-call binary and still spawns — `box sort` is `box` with `sort` as
+ * its first argument — so nothing about that design was wrong; it moved to the package that has the
+ * programs.
  */
 export i32 main(Core core, Cli cli) {
-  i32 n = cli.argCount().wait();
-  if (n >= 1 && isProgram(string.fromBytes(cli.arg(0).wait()))) {
-    Vec<string> argv = Vec.create();
-    for (i32 i = 0; i < n; i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
-    // The real filesystem, which is what `wacsh` is: a shell on the host. A session sealed off from it
-    // is a different program — design/0001 D3a — and building one is now a matter of handing the shell a
-    // different `Fs`, which is the whole point of wac-mono 0067's thread.
-    return runStreaming(Fs.onHost(cli, 0), cli, cli.cwd().wait(), argv);
-  }
-
   Shell sh = Shell.create(core, cli);
-  // The twelve are programs of this very bundle, so the shell spawns them rather than calling them, which
-  // is what makes a pipeline's stages run at once and lets `head` stop `seq`. Two platform bugs kept this
-  // off until now — a non-UTF-8 argument did not survive a spawn (wac-mono 0065: the argv wire format
-  // decoded arguments as text, and now carries bytes), and a spawned child did not receive what the shell
-  // had left of its standard input (wac-mono 0066: `Shell.heldInput`). Both were reachable by anything
-  // wiring `Shell.external`, including `packages/box`'s terminal, so they were worth fixing rather than
-  // routing around.
-  sh.externalNames = programNames;
+  // Spawnable, though nothing is wired in here: `$WACPATH` is the route a person has, and a spawned
+  // child is a real boundary with its own grants. Two platform bugs had to be fixed before that
+  // worked at all — a non-UTF-8 argument did not survive a spawn (wac-mono 0065: the argv wire format
+  // decoded arguments as text, and now carries bytes), and a spawned child did not receive what the
+  // shell had left of its standard input (wac-mono 0066: `Shell.heldInput`).
   sh.externalSpawnable = true;
   return shellMain(core, cli, sh, 0);
 }

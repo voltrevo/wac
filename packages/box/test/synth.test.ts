@@ -1,5 +1,10 @@
 // `/dev` and `/proc`: files that do not exist until they are read.
 //
+// In `packages/box` rather than `packages/fs`, whose feature this is, for the reason the whole file
+// states below: a synthesised mount takes a capability, so it has to be driven through a built shell —
+// and a shell can only be asked about a file by running a command. `packages/box` is where the commands
+// are (wac-mono 0103).
+//
 // design/0001 step 6, and its own criterion — "`cat /proc/self/cmdline` answers and
 // `head -c 16 /dev/urandom | hex` works" — is the last test here, run through a **sealed** shell,
 // which is the version of it that means something: a session built with no filesystem grants at all
@@ -14,7 +19,7 @@ import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 
 const built = await Deno.makeTempFile({ prefix: "wac-fs-synth-" });
-await buildApp("packages/sh/src/sealed.wac", built, {});
+await buildApp("packages/box/src/bin/sealedsh.wac", built, {});
 globalThis.addEventListener("unload", () => {
   try {
     Deno.removeSync(built);
@@ -49,8 +54,8 @@ Deno.test("a mount is visible from the directory it is mounted in", async () => 
   // Without this a mount is invisible from above: the root's own tree has no entry for `/dev`, and only
   // the mount table knows. A listing that omits a directory you can `cd` into is worse than a wrong one,
   // because nothing about it looks wrong.
-  assertEquals((await sh("ls /")).out, "dev\nproc\n");
-  assertEquals((await sh("mkdir /home; ls /")).out, "dev\nhome\nproc\n", "sorted in with the real ones");
+  assertEquals((await sh("ls /")).out, "dev\nproc\ntmp\n");
+  assertEquals((await sh("mkdir /home; ls /")).out, "dev\nhome\nproc\ntmp\n", "sorted in with the real ones");
   // Only directly in it: `/proc/self` is under `/proc`, not under `/`.
   assertEquals((await sh("ls /proc")).out, "self\n");
   assertEquals((await sh("ls /proc/self")).out, "cmdline\n");

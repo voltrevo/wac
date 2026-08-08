@@ -5,11 +5,11 @@
 // expression and threw "has differential.test.ts changed shape?" if anyone reformatted it. A list this
 // long is a fixture, not a detail of one test.
 //
-// Two suites read it now and they own different halves. `packages/sh`'s runs the scripts that are about
-// the *shell language*; `packages/box`'s runs the ones that name an external program, through a shell
-// built with `packages/box`'s applets — which is the split wac-mono 0103 needs before `packages/sh`'s
-// own copies of those programs can be deleted. `needsProgram` is the line between them, and it is one
-// list of names rather than a judgement made twice.
+// Two suites read it and they own different halves. `packages/sh`'s runs the scripts that are about the
+// *shell language*; `packages/box`'s runs the ones that name an external program, through a shell built
+// with `packages/box`'s applets. That split is what let `packages/sh`'s own copies of those programs be
+// deleted (wac-mono 0103, closed), and `needsProgram` is the line between them — one list of names
+// rather than a judgement made twice.
 
 export const CORPUS: string[] = [
   // `head`/`tail` with the traditional count, which nothing here asked for until `head -2` was found
@@ -887,7 +887,7 @@ esac`,
 ];
 
 /**
- * The eleven programs `packages/sh` still carries, and `packages/box` has as applets.
+ * The eleven programs `packages/sh` used to carry, and `packages/box` has as applets.
  *
  * `printf`, `echo` and `test` are *builtins* in bash and here, so a script using them needs no external
  * program and stays with the language cases. That distinction is not cosmetic: it is what made deleting
@@ -911,16 +911,18 @@ export function needsProgram(script: string): boolean {
 /**
  * The programs `packages/sh` no longer carries, deleted in favour of `packages/box`'s applets.
  *
- * wac-mono 0103 wants all eleven gone, and the reason it had not started is that they cannot all go at
- * once without a red tree — half the shell's own tests use `wc` and `seq` as *incidental* commands
- * rather than as subjects. So they go a few at a time, and this list is what makes that safe: every
- * script list in `packages/sh`'s differential is filtered through `usesDeleted`, so a script naming a
- * program this shell no longer has is skipped here and still runs in `packages/box`'s suite, which owns
- * every script that names any of the eleven.
+ * All of them, now: `program.wac` is deleted and wac-mono 0103 is closed. The list stays as `PROGRAMS`
+ * rather than being folded into `needsProgram`, because the two words mean different things and the
+ * distinction is the whole reason the deletion could be done a few at a time — `needsProgram` asks
+ * "does this script name an external command", which is a fact about the script, and `usesDeleted`
+ * asks "can `packages/sh`'s own shell still run it", which was a fact about the calendar. They are the
+ * same list only because the deletion finished.
  *
- * Adding a name here and deleting the program from `program.wac` is the whole of one step.
+ * Every script naming any of these runs in `packages/box/test/corpus.test.ts`, against bash, through
+ * the applets that replaced them — so nothing here is untested, it is tested somewhere that has the
+ * commands.
  */
-export const DELETED = ["nl", "rev", "uniq", "tail", "tr"];
+export const DELETED = PROGRAMS;
 
 /** Whether a script runs a program `packages/sh` has already given up. */
 export function usesDeleted(script: string): boolean {

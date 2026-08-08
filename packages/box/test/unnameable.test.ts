@@ -39,7 +39,7 @@ globalThis.addEventListener("unload", () => {
     // Already gone, or never built.
   }
 });
-await buildApp("packages/sh/src/sh.wac", shell, { read: true, write: true, env: true });
+await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, env: true });
 
 /** A directory holding one ordinary file and one whose name is not valid UTF-8. */
 async function fixture(): Promise<string> {

@@ -70,20 +70,19 @@ Deno.test("a long option is one word, not a bundle of short ones", async () => {
       return new TextDecoder().decode(r.stderr).trim();
     };
 
-    // Read as a bundle, the first letter these could not implement was the *second dash*, so the
-    // refusal named a character the caller never typed: `wc: invalid option -- '-'`.
-    assertEquals(err("wc --lines"), "wc: long options are not implemented: --lines");
-    // Each of the scanners this shell still has: `options`, `head`'s counter, and `ls` in `exec.wac`.
-    // `tr`'s loop went with `tr`.
-    assertEquals(err("head --lines=2"), "head: long options are not implemented: --lines=2");
-    // Was `tr --delete`; `tr` has gone to `packages/box` (wac-mono 0103) and `sort` reaches the same
-    // scanner — `options`, the one `wc`, `sort`, `uniq` and `rev` all share.
-    assertEquals(err("echo x | sort --reverse"), "sort: long options are not implemented: --reverse");
+    // Read as a bundle, the first letter this could not implement was the *second dash*, so the refusal
+    // named a character the caller never typed: `ls: invalid option -- '-'`.
+    //
+    // **One scanner is left here**, and it is `ls` in `exec.wac`. The others — `options`, `head`'s
+    // counter, `tr`'s loop — went with the programs they belonged to (wac-mono 0103), and
+    // `packages/box/test/flags.test.ts` asks the same question of the applets that replaced them.
     assertEquals(err("ls --all"), "ls: long options are not implemented: --all");
-    // `seq` said GNU's "unrecognized option", which tells a caller they invented `--separator`.
-    assertEquals(err("seq --separator=, 3"), "seq: long options are not implemented: --separator=,");
+    assertEquals(err("ls --sort=size"), "ls: long options are not implemented: --sort=size");
     // `echo` is not a getopt program: GNU's prints `--nonsense` and says nothing.
     assertEquals(err("echo --nonsense"), "");
+    // And a name this shell does not have at all is 127 rather than an option complaint, which is the
+    // difference the deletion made: `wc --lines` used to reach a scanner here.
+    assertEquals(err("wc --lines"), "wc: command not found");
   } finally {
     await Deno.remove(built);
   }
@@ -97,15 +96,18 @@ Deno.test({
     try {
       await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true });
 
-      // The eight of this shell's twelve programs that a real tool exists for. `printf`, `seq`, `echo`
-      // and `cat` take no letter this cares about.
-      // `ls` is a *builtin* rather than one of the twelve, and it was the one place left where an
-      // option was read as a filename: `ls -l` said "cannot access '-l': No such file or
-      // directory", blaming the caller for a real flag. It answers to the same table now, so it
-      // belongs in the same sweep.
-      // No `nl` or `rev`: this shell has given them up to `packages/box`, whose `test/flags.test.ts`
-      // asks the same question of the applets. The list shrinks as the rest follow (wac-mono 0103).
-      const tools = ["wc", "head", "sort", "grep", "ls"];
+      // **One tool, and it is a builtin.** This list was eight of the twelve programs this package
+      // carried; they are deleted (wac-mono 0103) and `packages/box/test/flags.test.ts` asks the same
+      // question of the applets that replaced them, over more tools than were ever here.
+      //
+      // Leaving them in the list would have been worse than useless: this shell answers 127 for a name
+      // it does not have, 127 says nothing about options, and the sweep would have gone green while
+      // checking nothing at all.
+      //
+      // `ls` stays because it is a *builtin* rather than a program — a shell needs `ls` before it needs
+      // a toolbox — and it was the one place where an option was read as a filename: `ls -l` said
+      // "cannot access '-l': No such file or directory", blaming the caller for a real flag.
+      const tools = ["ls"];
       const cases: { tool: string; letter: string; script: string }[] = [];
       for (const tool of tools) {
         for (const letter of await gnuOptions(tool)) {
@@ -122,8 +124,9 @@ Deno.test({
           });
         }
       }
-      // If the tools were all missing this test would pass while checking nothing.
-      assertEquals(cases.length > 40, true, `only ${cases.length} options found — are the coreutils installed?`);
+      // If the tool were missing this test would pass while checking nothing. `ls` alone has about
+      // forty options, so this is still a real floor rather than a nominal one.
+      assertEquals(cases.length > 25, true, `only ${cases.length} options found — are the coreutils installed?`);
 
       const shell = (script: string) => {
         const r = new Deno.Command(built, {

@@ -307,16 +307,23 @@ That works because of `Shell.capturing`: standard output collects into a buffer 
 to the process's own terminal. Command substitution needs exactly the same thing, so it is one
 flag rather than two mechanisms.
 
-## Three shells, and the line between them
+## One shell here, and three built from it
 
-`wacsh` is a shell on the real disk. `sealed.wac` is the same shell handed `Fs.inMemory()` and built with
-no filesystem grants at all. `imaged.wac` is the same shell again, handed a filesystem loaded from a file
-and saved back to it — so a session's writes survive a restart, which is design/0001 step 2's criterion.
+`wacsh` — `src/sh.wac` — is this package's only program: the shell language, its builtins, and whatever
+`$WACPATH` finds. It has **no commands of its own**. It carried twelve until wac-mono 0103, and deleting
+them is why the other two shells this section used to describe now live in `packages/box`:
+
+| | where | what it is |
+| --- | --- | --- |
+| `wacsh` | `packages/sh/src/sh.wac` | the shell on the real disk, builtins only |
+| `box sh` | `packages/box/src/bin/sh.wac` | the same shell, on the real disk, with sixty applets |
+| `sealedsh` | `packages/box/src/bin/sealedsh.wac` | the same shell on `Fs.inMemory()`, built with no filesystem grants at all |
+| `imaged` | `packages/box/src/bin/imaged.wac` | the same shell again, on a filesystem loaded from a file and saved back to it |
 
 One line of difference between each pair, which is the argument for a filesystem being a *value* the
 shell holds rather than something it reaches for per operation (wac-mono 0067). The grants differ because
-the programs differ: `imaged` needs read and write on its image, and giving `sealed` that option would
-have spent the property that makes it sealed.
+the programs differ: `imaged` needs read and write on its image, and giving `sealedsh` that option would
+spend the property that makes it sealed.
 
     imaged home.wacimg -c 'mkdir /data; echo one > /data/notes'
     imaged home.wacimg -c 'cat /data/notes'          ->  one
@@ -326,12 +333,17 @@ It saves after the script whether or not the script succeeded: the session whose
 keeping is the one that ended badly. It refuses an image it cannot read rather than starting empty,
 because starting empty would then save over the thing it could not read.
 
-**A correction worth keeping.** `sealed.wac` used to say a redirection on a pipeline's last stage reached
-the host, because that path streams through `openOutput` — a capability rather than a filesystem
+**A correction worth keeping.** The sealed shell used to say a redirection on a pipeline's last stage
+reached the host, because that path streams through `openOutput` — a capability rather than a filesystem
 operation. Building `imaged` and trying it showed otherwise: the streaming pipeline in `exec.wac` gives
 up as soon as `spawnStage` reports no spawn in this world, and the sequential path it falls back to
-writes through `Fs`. Neither shell is built with `spawn`, so neither reaches it. The risk belongs to the
-grants rather than to the shell, and `test/imaged.test.ts` fails if that ever stops being true.
+writes through `Fs`. Neither is built with `spawn`, so neither reaches it. The risk belongs to the grants
+rather than to the shell, and `packages/box/test/imaged.test.ts` fails if that ever stops being true.
+
+**Why the tests moved with them.** `backings`, `sealed`, `imaged`, `unnameable`, `node_shell` and
+`packages/fs`'s `synth` are all in `packages/box/test` now. Each one asks about a *filesystem*, and every
+question you can ask a shell about a filesystem is asked with a *command* — so once this package had no
+commands, this was no longer the package that could ask.
 
 ## What it does not do
 

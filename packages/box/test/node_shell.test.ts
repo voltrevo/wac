@@ -94,7 +94,7 @@ Deno.test({
     const { buildApp } = await import("../../platform/build.ts");
     const built = await Deno.makeTempFile({ prefix: "sh-node-diff-" });
     try {
-      await buildApp("packages/sh/src/sh.wac", built, { read: true, write: true, env: true }, "node");
+      await buildApp("packages/box/src/bin/sh.wac", built, { read: true, write: true, env: true }, "node");
 
       for (const { script, stdin } of CASES) {
         // A directory of its own per case: several of these write files, and one leaking into the next

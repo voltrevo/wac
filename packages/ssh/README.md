@@ -261,7 +261,7 @@ OpenSSH's own client driving all of it in `test/server.test.ts`.
 Without `-i` nothing changes: the session is `Shell.capturing` on `Fs.onHost`, reaching whatever the
 server was granted. Which of the two a client gets is the operator's decision and never the client's.
 
-**This is what makes the demo offerable to a stranger.** `packages/sh/src/sealed.wac` names that as the
+**This is what makes the demo offerable to a stranger.** `packages/box/src/bin/sealedsh.wac` names that as the
 reason it exists, and until now the ssh server could not use it: a client reached the server's own disk,
 bounded only by the server's grants. On an image it reaches an image.
 

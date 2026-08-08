@@ -1,8 +1,14 @@
 // A session whose filesystem is its own.
 //
-// wac-mono 0067, and the payoff for threading the filesystem through the shell as a *value*: `wacsh` is a
-// shell on the host, `sealed` is the same shell handed `Fs.inMemory()`, and the difference is one line at
-// the top of the program.
+// wac-mono 0067, and the payoff for threading the filesystem through the shell as a *value*: `bin/sh.wac`
+// is a shell on the host, `bin/sealedsh.wac` is the same shell handed `Fs.inMemory()`, and the difference
+// is one line at the top of the program.
+//
+// It lived in `packages/sh` until the twelve programs there were deleted (wac-mono 0103). What it asks
+// about is a *filesystem*, and every question about a filesystem is asked with a *command* — so it moved
+// to the package that has the commands, along with `backings`, `imaged`, `unnameable`, `node_shell` and
+// `fs`'s `synth`, all for the same reason. `sealed.test.ts` beside this one asks whether the applets can
+// reach the host; this one asks what the session's own world contains.
 //
 // The strongest part of this is not what the tests assert but how the binary is built: **no filesystem
 // grants at all**. `buildApp(..., {})` means the world has no `fs`, so the program could not reach the host
@@ -35,7 +41,7 @@ globalThis.addEventListener("unload", () => {
 // this repo builds instrumented programs, and one of those carries a scoped `--allow-write` for
 // its coverage dump. That is a genuine difference in what the shebang says, and not the thing
 // this file is checking. wac-mono 0024.
-await buildApp("packages/sh/src/sealed.wac", sealed, {}, "deno", false, { coverage: false });
+await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {}, "deno", false, { coverage: false });
 
 function run(script: string, cwd: string) {
   const r = new Deno.Command(sealed, {
@@ -68,7 +74,7 @@ Deno.test("a sealed shell has a filesystem, and it is not the host's", async () 
 
     // And the root holds `/dev` and `/proc` and nothing else — a *system*, not the host's root with a
     // filter over it. design/0001 step 6; before it, this was empty.
-    assertEquals(run("ls /", dir).out, "dev\nproc\n");
+    assertEquals(run("ls /", dir).out, "dev\nproc\ntmp\n");
     // Which a sealed session gets without any grant at all, because `randomBytes` is a host function
     // rather than a permission. This is the one that would be surprising if it stopped being true.
     assertEquals(run("head -c 8 /dev/urandom | wc -c", dir).out, "8\n");

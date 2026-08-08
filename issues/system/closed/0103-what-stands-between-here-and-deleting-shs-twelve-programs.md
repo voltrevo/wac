@@ -1,6 +1,6 @@
 # What stands between here and deleting `packages/sh`'s twelve programs
 
-**Status**: open
+**Status**: closed
 **Filed**: 2026-08-07
 
 ## What
@@ -239,3 +239,39 @@ same question of the applets over more tools than were ever here.
 
 `break` is not implemented: `while read l; do echo "$l"; break; done` prints `break: command not
 found` and loops forever. Nothing in the corpus uses it. Filed separately as **0111**.
+
+## 2026-08-08, done
+
+`packages/sh` has no programs. `program.wac` is deleted; `Output` and `optionRefusal` live in
+`src/refusal.wac`, because neither is a program and `ls` is a builtin that still refuses flags.
+
+The step this issue could not see until it was tried was **moving the image shells up a package**, and
+that is what made the rest mechanical:
+
+- `packages/box/src/bin/imaged.wac` is new — `packages/sh/src/imaged.wac` with the applets wired in —
+  and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as shells with builtins only.
+- `backings`, `sealed` (now `session`), `imaged`, `unnameable`, `node_shell` and `packages/fs`'s `synth`
+  moved to `packages/box/test`, where the shell they build has commands. 0110's still-open-stdin case
+  went to `packages/box/test/stdin_open.test.ts` for the same reason.
+- `packages/sh/test/differential.test.ts` keeps the language cases; the four hand-written groups that
+  used `cat` and `seq` as scenery use builtins now.
+
+**Three things fell out of the move, and they are the reason it was worth doing rather than a cost of
+doing it.**
+
+`head -c 8 /dev/urandom` works in a sealed session. `openStream` takes a byte cap, so a bounded read
+reaches `Fs.readSome` — the route that has always existed for endless synthesised files and that nothing
+was passing a number down. `sealedsh.wac` named this as the one thing that did not work.
+
+**An unreadable operand in the middle of a list stopped the run.** `cat a missing b` printed `a`,
+complained, and never printed `b`. Eight applets did it — `cat` twice, once in each of its two paths —
+and `lib/input.wac`'s own comment described it as "a difference worth naming rather than a difference
+worth pretending about". Every operand case anyone had written names one file, or two that both exist;
+the one script in `backings.test.ts` that names three found it the moment it ran against these applets.
+Fixed, with `packages/box/test/operand_errors.test.ts` as the sweep, against the real tools.
+
+**Two more wordings.** `tac` says "failed to open 'x' for reading" and `split` says "cannot open 'x' for
+reading" — five distinct sentences now in `cannotOpen`, each read off the tool.
+
+What is left is ordering, and it is **0112**: where both streams are merged, a complaint can overtake
+output produced before it. Same bytes, same status.

@@ -33,7 +33,7 @@ import { Captured, Cli, Core } from "../../platform/src/platform.wac";
 import { Vec } from "../../std/src/vec.wac";
 import { Args, parseList } from "./lib/args.wac";
 import { UNKNOWN, appletNames, dispatch } from "./box.wac";
-import { Output } from "../../sh/src/program.wac";
+import { Output } from "../../sh/src/refusal.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 /**

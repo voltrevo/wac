@@ -201,7 +201,7 @@ export struct Booted {
 /**
  * Load an image from a path, or start an empty world, and mount `/dev` and `/proc` over it.
  *
- * Two programs boot an image — `packages/sh/src/imaged.wac` and `packages/ssh/src/sshd.wac` — and both
+ * Two programs boot an image — `packages/box/src/bin/imaged.wac` and `packages/ssh/src/sshd.wac` — and both
  * had this written out, which is two copies of three decisions that must not drift:
  *
  *   * **a path that is not there is an empty world**, so a first run needs no separate step;

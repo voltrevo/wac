@@ -10,7 +10,7 @@ import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 
 const built = await Deno.makeTempFile({ prefix: "wac-imaged-" });
-await buildApp("packages/sh/src/imaged.wac", built, { read: true, write: true });
+await buildApp("packages/box/src/bin/imaged.wac", built, { read: true, write: true });
 globalThis.addEventListener("unload", () => {
   try {
     Deno.removeSync(built);
