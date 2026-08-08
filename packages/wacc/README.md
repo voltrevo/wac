@@ -522,8 +522,28 @@ which is a name like any other and therefore looks like a struct called `T` — 
 constructing a `Box` a field mismatch against a type that does not exist. A generic struct's fields are not recorded now,
 so its arity is zero, never matches, and construction of one says nothing.
 
-Next: more of rung 3 — generics properly, `switch` and `match` subjects, and the const rules
-(`cannot write to const field`), which are the largest untouched family left in the corpus.
+### The const family
+
+Three refusals, kept apart because the reference keeps them apart: *"cannot assign to const variable
+'n'"*, *"cannot write to const field 'k'"*, *"cannot write through const reference"*. They say
+different things about where the constness lives — on the binding, on the field, or on the path to it
+— and a caller fixing one would not fix the others. Constness now rides alongside type in the scope
+and in the field table, so a `const` parameter, a `const` local, a `const` field and a `const this`
+are all one mechanism.
+
+Every write counts, not just `=`. `n += 1` and `n++` are refused on a const exactly as `n = 1` is,
+which is why the check runs before the plain-`=` gate the assignment rule uses.
+
+All three report at the **root of the path**, and that was measured rather than assumed: for
+`p.k = 1` the reference names the `p`, not the field node one column later. Reporting at the node that
+is actually const is the obvious choice and is off by one against every compound target — nested
+paths, array elements and `const this` all confirm the root.
+
+**Spec coverage: 26 of 83**, from 20 — the largest jump so far, and the reason is that the corpus's
+untouched cases were clustered in one family rather than scattered.
+
+Next: more of rung 3 — generics properly, `switch` and `match` subjects, and the static/method
+families (`type 'X' has no static method`, `cannot call non-const method through const`).
 
 ### What rung 3's oracle looks like, measured
 

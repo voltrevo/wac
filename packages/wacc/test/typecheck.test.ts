@@ -1084,3 +1084,78 @@ Deno.test("rung 3: nullable into non-null, in every position that assigns", () =
     }
   }
 });
+
+/**
+ * The const family: three refusals, kept apart because the reference keeps them apart.
+ *
+ * *"cannot assign to const variable 'n'"*, *"cannot write to const field 'k'"* and *"cannot write
+ * through const reference"* say different things about where the constness lives — on the binding, on
+ * the field, or on the path to it — and a caller fixing one would not fix the others.
+ *
+ * Every write counts, not just `=`: `n += 1` and `n++` are refused on a const exactly as `n = 1` is.
+ *
+ * All three report at the **root of the path**, which is measured rather than assumed: for
+ * `p.k = 1` the reference names the `p`, not the field node one column later. Reporting at the node
+ * that is actually const would have been the obvious choice and is off by one against every compound
+ * target.
+ */
+Deno.test("rung 3: const variables, const fields and const references", () => {
+  const D = "struct P { i32 x; const i32 k; } struct Q { P p; } ";
+  const CAUGHT = [
+    "export void a() { const i32 n = 1; n = 2; }",
+    "export void b() { const i32 n = 1; n += 1; }",
+    "export void c() { const i32 n = 1; n++; }",
+    "export void h(const i32 n) { n = 2; }",
+    "export void e2(P p) { p.k = 1; }",
+    "export void g(const P p) { p.x = 1; }",
+    "export void n(const Q q) { q.p.x = 1; }",
+    "export void o(const i32[] a) { a[0] = 1; }",
+  ];
+  const QUIET = [
+    "export void d() { i32 n = 1; n = 2; }",
+    "export void f(P p) { p.x = 1; }",
+    "export void i(i32 n) { n = 2; }",
+    "export void j(Q q) { q.p.x = 1; }",
+    "export void k2(i32[] a) { a[0] = 1; }",
+  ];
+  for (const t of CAUGHT) {
+    const src = D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(t)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const t of QUIET) {
+    const mine = ours(D + t);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(t)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
+
+Deno.test("rung 3: a const this refuses writes through the receiver", () => {
+  // The same rule as a `const P p` parameter, reusing it exactly: `this` is declared with the
+  // method's own constness, and everything else follows.
+  const bad = "struct R { i32 y; void w(const this) { this.y = 1; } }";
+  const good = "struct R { i32 y; void w(this) { this.y = 1; } }";
+  const theirs = reference(bad);
+  const mine = ours(bad);
+  if (mine.length === 0) {
+    throw new Error("a write through a const this was not refused: " +
+      theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+  }
+  for (const at of mine) {
+    if (!theirs.some((e) => e.at === at)) {
+      throw new Error(`we report ${at}, the reference reports ${theirs.map((e) => e.at).join(", ")}`);
+    }
+  }
+  if (ours(good).length !== 0) throw new Error("a non-const method may write through this");
+});

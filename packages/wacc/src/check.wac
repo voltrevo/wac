@@ -74,6 +74,16 @@ export i32 errNotComparable() { return 7; }
 export i32 errFieldMismatch() { return 8; }
 /** A nullable value where a non-null one is required. */
 export i32 errNullableToNonNull() { return 9; }
+/**
+ * The three ways a write can be refused, kept apart because the reference keeps them apart.
+ *
+ * *"cannot assign to const variable 'n'"*, *"cannot write to const field 'k'"* and *"cannot write
+ * through const reference"* say different things about where the constness lives — on the binding,
+ * on the field, or on the path to it — and a caller fixing one would not fix the others.
+ */
+export i32 errConstVariable() { return 10; }
+export i32 errConstField() { return 11; }
+export i32 errConstReference() { return 12; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -222,6 +232,8 @@ export struct C {
    */
   string[] names;
   string[] types;
+  /** Whether each name was declared `const`. */
+  bool[] nameConsts;
   i32 nameCount;
   /**
    * Every function in the file, and the primitives of its parameters.
@@ -248,6 +260,8 @@ export struct C {
   string[] fieldOwners;
   string[] fieldNames;
   string[] fieldTypes;
+  /** Whether each field was declared `const`. */
+  bool[] fieldConsts;
   i32 fieldCount;
   string[] funcNames;
   /** Each function's return type, so a call has one. */
@@ -262,9 +276,9 @@ export struct C {
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), string[capacity](), 0,
+    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), 0,
-             string[capacity](), string[capacity](), string[capacity](), 0,
+             string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
              string[capacity](), 0, 0,
              i32[capacity * 3](), 0);
@@ -280,14 +294,26 @@ export struct C {
    * few names that are declared twice and keeps the checker a subset, which is the property
    * everything here depends on.
    */
-  void declare(this, string name, string ty) {
+  void declare(this, string name, string ty) { this.declareConst(name, ty, false); }
+
+  /** The same, recording whether the binding is `const`. */
+  void declareConst(this, string name, string ty, bool isConst) {
     for (i32 i = 0; i < this.nameCount; i++) {
       if (this.names[i] == name) { this.types[i] = typeNone(); return; }
     }
     if (this.nameCount >= this.names.len()) { return; }
     this.names[this.nameCount] = name;
     this.types[this.nameCount] = ty;
+    this.nameConsts[this.nameCount] = isConst;
     this.nameCount = this.nameCount + 1;
+  }
+
+  /** Whether a name was declared `const`. Unknown names are not, which is silence. */
+  bool isConstName(this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return this.nameConsts[i]; }
+    }
+    return false;
   }
 
   /** The type a name was declared with, or `typeNone` for one this slice never saw. */
@@ -336,10 +362,16 @@ export struct C {
 
   /** Record one field of one struct. */
   void declareField(this, string owner, string name, string ty) {
+    this.declareFieldConst(owner, name, ty, false);
+  }
+
+  /** The same, recording whether the field is `const`. */
+  void declareFieldConst(this, string owner, string name, string ty, bool isConst) {
     if (this.fieldCount >= this.fieldNames.len()) { return; }
     this.fieldOwners[this.fieldCount] = owner;
     this.fieldNames[this.fieldCount] = name;
     this.fieldTypes[this.fieldCount] = ty;
+    this.fieldConsts[this.fieldCount] = isConst;
     this.fieldCount = this.fieldCount + 1;
   }
 
@@ -349,6 +381,19 @@ export struct C {
       if (this.structNames[i] == name) { return this.structParents[i]; }
     }
     return "";
+  }
+
+  /** Whether `owner.name` is a const field, following the inheritance chain. */
+  bool isConstField(this, string owner, string name) {
+    string at = owner;
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return false; }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return this.fieldConsts[i]; }
+      }
+      at = this.parentOf(at);
+    }
+    return false;
   }
 
   /** How many fields `owner` declares itself, ignoring anything inherited. */
@@ -904,10 +949,79 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named) {
   }
 }
 
+/**
+ * Whether writing through this lvalue is refused, and why.
+ *
+ * Three answers because the reference gives three, and they are about different things: the binding
+ * is const, the field is const, or the path to it goes through a const reference. A caller fixing one
+ * would not fix the others.
+ *
+ * Reported at the **target**, which is where the reference puts all three.
+ */
+void checkWrite(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): {
+      if (c.isConstName(tokenText(c, tok))) {
+        c.report(errConstVariable(), lv.line, lv.col);
+      }
+    }
+    case LField(base, nameTok): {
+      Lvalue root = rootOf(lv);
+      string owner = typeOfLvalue(c, base);
+      if (owner != typeNone() && c.isConstField(owner, tokenText(c, nameTok))) {
+        c.report(errConstField(), root.line, root.col);
+        return;
+      }
+      // Otherwise the path itself may be const: a `const P p` refuses every write through it, field
+      // by field, whatever those fields say about themselves.
+      if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
+    }
+    case LIndex(base, index): {
+      Lvalue r = rootOf(lv);
+      if (constPath(c, base)) { c.report(errConstReference(), r.line, r.col); }
+    }
+    case LUnwrap(base): { checkWrite(c, base); }
+  }
+}
+
+/**
+ * The leftmost lvalue in a path — `p` in `p.a.b[0]`.
+ *
+ * Every const complaint is reported here, which is where the reference puts them: for `p.k = 1` it
+ * names column 56, the `p`, and not 57, the field node. Reporting at the node that *is* const would
+ * have been the obvious choice and is off by one against every compound target.
+ */
+Lvalue rootOf(Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return lv; }
+    case LField(base, nameTok): { return rootOf(base); }
+    case LIndex(base, index): { return rootOf(base); }
+    case LUnwrap(base): { return rootOf(base); }
+  }
+}
+
+/**
+ * Whether an lvalue names a const reference — a binding declared `const`, or a path through one.
+ *
+ * Distinct from `checkWrite`'s first case: assigning *to* `p` is a const-variable error, while
+ * assigning to `p.x` through a const `p` is a const-reference one. Same constness, different
+ * complaint, because one rebinds the name and the other reaches past it.
+ */
+bool constPath(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
+    case LField(base, nameTok): { return constPath(c, base); }
+    case LIndex(base, index): { return constPath(c, base); }
+    case LUnwrap(base): { return constPath(c, base); }
+  }
+}
+
 /** Every name a statement declares, however deeply nested. */
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
-    case Var(type, nameTok, init, isConst): { c.declare(tokenText(c, nameTok), typeOfTy(c, type)); }
+    case Var(type, nameTok, init, isConst): {
+      c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), isConst);
+    }
     case Block(body): { declareAll(c, body); }
     case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
     case While(cond, body): { declareAll(c, body); }
@@ -972,8 +1086,13 @@ void checkStmt(C c, Stmt s, Ty want) {
      * the reference accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two
      * would report the literal cases that rule deliberately skips.
      */
+    // `n++` writes as much as `n = n + 1` does.
+    case IncrStmt(target, op): { checkWrite(c, target); }
     case Assign(target, op, rhs): {
       checkExpr(c, rhs);
+      // Every assignment writes, compound or not — `n += 1` on a const is refused exactly as `n = 1`
+      // is, so this comes before the plain-`=` gate below.
+      checkWrite(c, target);
       if (tokenKind(c, op) != kAssign()) { return; }
       string wantTo = typeOfLvalue(c, target);
       if (wantTo == typeNone()) { return; }
@@ -1079,7 +1198,8 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // until instantiation is modelled.
         if (typeParams.len() == 0) {
           for (i32 i = 0; i < fields.len(); i++) {
-            c.declareField(name, tokenText(c, fields[i].nameTok), typeOfTy(c, fields[i].type));
+            c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
+                                typeOfTy(c, fields[i].type), fields[i].isConst);
           }
         }
       }
@@ -1107,10 +1227,15 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         for (i32 mi = 0; mi < methods.len(); mi++) {
           c.clearScope();
           // A method without `this` is static, and `this` means nothing in it.
-          if (methods[mi].hasThis) { c.declare("this", owner); }
+          // A `const this` method may not write through the receiver, which is the same rule as a
+          // `const P p` parameter and reuses it exactly.
+          if (methods[mi].hasThis) {
+            c.declareConst("this", owner, methods[mi].thisConst);
+          }
           for (i32 i = 0; i < methods[mi].params.len(); i++) {
-            c.declare(tokenText(c, methods[mi].params[i].nameTok),
-                      typeOfTy(c, methods[mi].params[i].type));
+            c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
+                           typeOfTy(c, methods[mi].params[i].type),
+                           methods[mi].params[i].isConst);
           }
           declareAll(c, methods[mi].body);
           checkAll(c, methods[mi].body, methods[mi].returnType);
@@ -1135,7 +1260,8 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // and so does this.
         c.clearScope();
         for (i32 i = 0; i < params.len(); i++) {
-          c.declare(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type));
+          c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
+                         params[i].isConst);
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
