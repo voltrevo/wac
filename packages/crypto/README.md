@@ -280,8 +280,20 @@ NIST primes: a hex literal in [2^31, 2^32) is sign-extended when the target is w
 | AES-CTR | SP 800-38A | done, full 128-bit counter |
 | GHASH | SP 800-38D §6.4 | done |
 | AES-GCM | SP 800-38D | done, any IV length |
+| SHA-3, SHAKE128/256 | FIPS 202 | done |
+| keccak256 | the original Keccak padding | done |
+| SHA-1 | FIPS 180-4 | done, incremental — for Tor's relay digest |
+| bcrypt_pbkdf, Blowfish | OpenSSH's KDF | done |
+| X25519 | RFC 7748 | done |
+| Ed25519 | RFC 8032 | done, sign and verify |
+| P-256 | FIPS 186-4, SEC 1 | done, ECDH and ECDSA |
+| P-384 | FIPS 186-4, SEC 1 | verification only |
+| RSA | RFC 8017 | verification only, PKCS#1 v1.5 and PSS |
+| ML-KEM-768 | FIPS 203 | done |
 
-Everything the suite set out to cover is here.
+This table is what the package is, rather than what one milestone set out to cover — it said the
+latter for a while and listed eleven rows while the package had grown to twenty-seven source files,
+which reads as a smaller package that finished rather than a larger one still going.
 
 ### GHASH, and testing field arithmetic without vectors
 

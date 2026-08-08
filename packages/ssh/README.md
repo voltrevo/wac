@@ -391,6 +391,29 @@ none, which reads as "this line is not for you" and lets a *restricted* key thro
 Options are then refused rather than obeyed: a server that reads a restriction and ignores it is
 worse than one that refuses, because the operator wrote it expecting it to hold.
 
+## Which user, not merely that somebody authenticated
+
+design/0001 step 4, and the half of it that belongs to a server. `sshd -i image` matches the
+client's key against **each user's own `~/.ssh/authorized_keys` inside the image**, sets `Fs.user`
+to whoever it matched, and starts the session in that user's home with `$USER` and `$HOME` from
+the same `/etc/passwd` the key was found through — one table rather than a second idea of it.
+A key allowed by the server-wide `-a` file alone belongs to nobody in particular and gets root,
+which is what every caller that predates this already had.
+
+`packages/fs` is what enforces the answer: `mode` and `owner` are recorded on every node and
+checked against `Fs.user`. So the criterion is a test rather than a claim — **two keys land in two
+homes and neither can read the other's private file** — and the enforcement is our own code reading
+a mode stored *in the image*, which the operating system could not do even in principle, the image
+being one file owned by whoever ran the process.
+
+**The user is put back before each authentication.** `Fs` outlives a connection — it is the world
+the server serves — so a `Fs.user` left set from the last session meant the *next* connection read
+`/etc/passwd` and every user's `authorized_keys` as whoever was served last. That is an
+authorisation decision made with somebody else's permissions, and it was not deterministic from the
+client's side: a user whose `~/.ssh` is 0700 could log in when the previous session was root's and
+not otherwise. The step-4 test now logs in as the second user *after* the first, which is the case
+that fails without the reset.
+
 ## How this is tested, and what the numbers mean
 
 Three oracles, because no one of them sees enough.
