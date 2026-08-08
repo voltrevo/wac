@@ -1,6 +1,6 @@
 # 0113 — a pipeline whose first stage produces nothing hangs, if standard input is still open
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** bug
@@ -54,3 +54,29 @@ Two corrections in and the reproduction still stands: the remaining cause is som
 or drop input it should have. That is worth a tick with a bounded harness rather than the tail of one —
 the reproduction is exact, and `packages/sh/test/spawn.test.ts` already has the "standard input stays
 open" harness this needs.
+
+## Fixed, 2026-08-08 — one condition, and it was in the place the issue pointed at
+
+`Shell.ensureStdin` decided whether to go and read the program's real standard input with
+
+    if (ownsStdin && !triedStdin && stdinPos >= stdinBytes.len())
+
+and `stdinPos >= stdinBytes.len()` is **true of an empty held input**. "The buffer is spent" and "the
+shell was never given an input" are the same expression, so a command handed nothing by a pipe or by
+`< /dev/null` went to the terminal and waited. `heldInput` — the flag that says "these bytes are the
+shell's and they are all there is" — already existed and this line did not ask it.
+
+`cat < /dev/null` hanging was the case that found it: no pipeline in sight, so the fault could not be
+in the plumbing between stages.
+
+Fifteen cases in `packages/box/test/stdin_open.test.ts`, including the three that always worked, so a
+future fix that breaks them says so. The two corrections pushed with the report stand and were needed:
+without `piped`, a stage after an empty one still had `heldInput` false and would hang again.
+
+## And what the generator found next
+
+The same harness, 400 scripts: **374 agreed**. The 26 that did not were all one class — `test`'s
+diagnostics. `[ x y ]` says `[: …` in bash and `test: …` here, which names a command the caller never
+typed in every message from the spelling a script actually uses; and GNU's wording says *where* it
+wanted an operator (`b: binary operator expected`, `x: unary operator expected`) where ours said
+"unknown operator". Both fixed, twelve cases in the corpus.

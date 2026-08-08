@@ -32,6 +32,24 @@ globalThis.addEventListener("unload", () => {
 await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, env: true });
 
 /**
+ * Run a script with standard input **open and never written to**, which is what a terminal is.
+ *
+ * `timeout` rather than a `setTimeout` and a kill: a hang here must fail the test rather than wedge the
+ * suite, and the system's own bound closes the pipes as well as stopping the process. 124 is `timeout`
+ * killing it, which is what every bug this file guards looks like.
+ */
+const open = async (script: string) => {
+  const child = new Deno.Command("timeout", {
+    args: ["10", shell, "-c", script],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const r = await child.output();
+  return { out: new TextDecoder().decode(r.stdout), code: r.code };
+};
+
+/**
  * A pipeline whose first stage is spawned, with the shell's own standard input **still open**.
  *
  * wac-mono 0110. `wacsh -c 'seq 1 3 | cat'` typed at a terminal never returned: a pipeline of two or
@@ -48,18 +66,6 @@ await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, 
  * than wedge the suite, and the system's own bound closes the pipes as well as stopping the process.
  */
 Deno.test("a pipeline runs when the shell's own standard input is still open", async () => {
-  const open = async (script: string) => {
-    const child = new Deno.Command("timeout", {
-      args: ["10", shell, "-c", script],
-      stdin: "piped",       // …and never written to, and never closed: this is a terminal's shape
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-    const r = await child.output();
-    // 124 is `timeout` killing it, which is what the bug looked like.
-    return { out: new TextDecoder().decode(r.stdout), code: r.code };
-  };
-
   const piped = await open("seq 1 3 | cat");
   assertEquals(piped.code, 0, "a two-stage pipeline finished");
   assertEquals(piped.out, "1\n2\n3\n");
@@ -75,4 +81,47 @@ Deno.test("a pipeline runs when the shell's own standard input is still open", a
   const lone = await open("echo hi");
   assertEquals(lone.code, 0);
   assertEquals(lone.out, "hi\n");
+});
+
+/**
+ * A pipeline whose first stage produces **nothing**, with standard input still open. wac-mono 0113.
+ *
+ * `: | cat` never returned, and neither did `true | cat`, `: | wc -c`, or
+ * `echo a | while read l; do echo [$l]; done`. `echo x | cat` was fine, which is why nothing saw it:
+ * every case anyone had written has a first stage that produces bytes.
+ *
+ * The cause was one condition in `Shell.ensureStdin`. "The buffer is spent" and "the shell was never
+ * given an input" look identical to `stdinPos >= stdinBytes.len()` — it is true of an *empty* held
+ * input — so a command handed nothing by a pipe went and read the real standard input. The flag that
+ * says "these bytes are the shell's and they are all there is" already existed; that line decided
+ * without asking it.
+ *
+ * `cat < /dev/null` is here too, and it is the case that found the cause: no pipeline in sight and it
+ * hung the same way, which is what said the fault was in the *input* rather than in the plumbing
+ * between stages.
+ */
+Deno.test("a stage after one that produced nothing does not go looking for a terminal", async () => {
+  const cases: [string, string][] = [
+    [": | cat", ""],
+    ["true | cat", ""],
+    ["false | cat", ""],
+    [": | wc -c", "0\n"],
+    ["g() { :; }; g | cat", ""],
+    [": | cat | cat", ""],
+    ["echo a | while read l; do echo [$l]; done", "[a]\n"],
+    [": | while read l; do echo no; done; echo end", "end\n"],
+    ["printf '' | wc -c", "0\n"],
+    ["echo hi | head -0 | wc -c", "0\n"],
+    ["cat </dev/null; echo done", "done\n"],
+    ["read x </dev/null; echo [$x]", "[]\n"],
+    // …and the ones that always worked, so a fix that broke them would say so here.
+    ["echo x | cat", "x\n"],
+    ["seq 1 3 | cat", "1\n2\n3\n"],
+    ["{ echo a; } | cat", "a\n"],
+  ];
+  for (const [script, want] of cases) {
+    const got = await open(script);
+    assertEquals(got.code, 0, `${script} did not finish: ${JSON.stringify(got.out)}`);
+    assertEquals(got.out, want, script);
+  }
 });
