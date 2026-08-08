@@ -7,8 +7,8 @@
 //
 // The program is `example/wacland.wac`, whose stages are 0087's "done when" in the order a host
 // acquires them: output, arguments, two requests completing out of order, a `waitAny` that comes back
-// on its deadline, and a spawned child waited for alongside a ticket of another kind. Both hosts reach
-// the end, so the comparison is the whole run.
+// on its deadline, a spawned child waited for alongside a ticket of another kind, and a child given
+// less than its parent has. Both hosts reach the end, so the comparison is the whole run.
 //
 // **What is compared and what is not.** Two of the lines carry monotonic nanoseconds, which are a
 // measurement rather than an answer — two hosts that agreed on those would be suspicious rather than
@@ -67,7 +67,7 @@ async function nativeBinary(): Promise<string | null> {
     console.warn(
       `SKIPPING the native half of the arrival test: cargo did not build ${CRATE}.\n` +
         `  ${e instanceof Error ? e.message.split("\n")[0] : e}\n` +
-        `  The Deno half below still runs. See issues/open/0087.`,
+        `  The Deno half below still runs. See issues/closed/0087.`,
     );
     return null;
   }
@@ -103,7 +103,7 @@ function assertConformant(r: Run, host: string): void {
   const lines = r.out.split("\n").filter((l) => l.length > 0);
   assertEquals(r.code, 0, `${host} exited ${r.code}: ${r.err}`);
   // The line count, so that masking a number cannot hide a stage that never ran.
-  assertEquals(lines.length, 12, `${host}: ${r.out}`);
+  assertEquals(lines.length, 14, `${host}: ${r.out}`);
   assertEquals(lines[0], "wacland: stage 1 output");
   assertEquals(r.err.trim(), "wacland: stage 1 warn", `${host} put the warning on the wrong stream`);
   assertEquals(lines.includes("wacland: stage 2 argCount 2"), true, r.out);
@@ -131,12 +131,21 @@ function assertConformant(r: Run, host: string): void {
   assertEquals(lines.includes("wacland: stage 5 heard wacland: I am the child"), true, r.out);
   assertEquals(lines.includes("wacland: stage 5 status 7"), true, `${host}: the child's own status`);
 
+  // **A child gets what its parent granted, and no more.** Asked twice on purpose: a child refused
+  // when its parent had nothing to give is not evidence of an intersection, so this program is built
+  // *with* reading and the two answers must differ. One answer would pass on a host that denied
+  // everything and on a host that granted everything.
+  assertEquals(lines.includes("wacland: stage 6 withheld denied"), true, `${host}: ${r.out}`);
+  assertEquals(lines.includes("wacland: stage 6 granted ok"), true, `${host}: ${r.out}`);
+
   assertEquals(lines[lines.length - 1], "wacland: reached the end of what is implemented");
 }
 
 Deno.test("the same program says the same thing on a JavaScript host and one that is not", async () => {
   const denoProgram = `${tmp}/wacland-deno`;
-  await buildApp(ENTRY, denoProgram, {});
+  // **With reading**, which stage 6 needs: it hands a child `GRANT_NONE` and then `GRANT_READ`, and
+  // a parent that could not read either way would prove nothing about the ceiling.
+  await buildApp(ENTRY, denoProgram, { read: true });
   const js = await runIt(denoProgram, ["one", "two"]);
 
   // The Deno half on its own, so that a skipped native half still tests something.
@@ -145,7 +154,7 @@ Deno.test("the same program says the same thing on a JavaScript host and one tha
   const native = await nativeBinary();
   if (native === null) return;
 
-  await buildNative(ENTRY, `${tmp}/wacland`, {});
+  await buildNative(ENTRY, `${tmp}/wacland`, { read: true });
   const rs = await runIt(native, [`${tmp}/wacland.json`, "one", "two"]);
   assertConformant(rs, "native");
 

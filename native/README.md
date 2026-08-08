@@ -5,7 +5,7 @@ JavaScript: they share the transport, the worker model and the event loop, so ag
 weak evidence that the interface is portable. This one is Rust on wasmtime, and it is the only host that
 tests the claim at all.
 
-design/0001 step 2a, tracked as [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
+design/0001 step 2a, tracked as [0087](../issues/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
 
 ```
 deno task app:native packages/platform/example/wacland.wac -o /tmp/wacland
