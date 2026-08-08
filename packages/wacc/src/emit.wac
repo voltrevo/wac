@@ -84,6 +84,32 @@ export struct B {
     }
   }
 
+  /** An `f32` constant: four raw little-endian bytes, not a LEB — floats are not varints. */
+  void f32bits(this, f32 v) {
+    u32 bits = f32.toBits(v);
+    u32 sh = 0;
+    while (sh < 32) {
+      this.byte((bits >> sh & 255) as~ i32);
+      sh = sh + 8;
+    }
+  }
+
+  /**
+   * An `f64` constant: eight raw little-endian bytes.
+   *
+   * The shift amount is a `u64` too. Shifting a `u64` by an `i32` came out as `ff ff ff ff` in the
+   * low half — every constant wrong by exactly one part in 2^20, which reads as a rounding error and
+   * is not one. Keeping both sides the same width is the fix and the lesson.
+   */
+  void f64bits(this, f64 v) {
+    u64 bits = f64.toBits(v);
+    u64 sh = 0;
+    while (sh < 64) {
+      this.byte((bits >> sh & 255) as~ i32);
+      sh = sh + 8;
+    }
+  }
+
   /** A name, length-prefixed, which is how wasm writes every string in the binary. */
   void name(this, string s) {
     u8[] b = s.toBytes();
@@ -92,7 +118,28 @@ export struct B {
   }
 }
 
-/** `0x7f`, the only value type this slice emits. */
+/**
+ * A wac type's wasm value type.
+ *
+ * Four of them, and the mapping is many-to-one: `u32` and `bool` are `i32` in wasm, `u64` is `i64`.
+ * That is exactly why the opcodes cannot be chosen from the value type — `i32.div_s` and `i32.div_u`
+ * are both operations on an `i32`, and which one is right is a fact about the *wac* type that the
+ * wasm type has already thrown away.
+ */
+i32 valType(string t) {
+  if (t == "i64" || t == "u64") { return 126; }
+  if (t == "f32") { return 125; }
+  if (t == "f64") { return 124; }
+  return 127;
+}
+
+/** Whether a wac type is one of the unsigned integers, which decides `_s` from `_u`. */
+bool isUnsigned(string t) { return t == "u32" || t == "u64"; }
+
+/** Whether a wac type is a float, which decides a whole family of opcodes rather than a suffix. */
+bool isFloat(string t) { return t == "f32" || t == "f64"; }
+
+/** `0x7f`, the value type of everything this emitter cannot type. */
 i32 wasmI32() { return 127; }
 
 /**
@@ -118,10 +165,22 @@ void section(B out, i32 id, B sec) {
  */
 export struct Env {
   string[] locals;
+  /** Each local's wac type, which is what decides every opcode the local takes part in. */
+  string[] localTypes;
   i32 localCount;
   i32 paramCount;
   string[] funcs;
+  /** Each function's return type, so a call has one without re-reading the declaration. */
+  string[] funcReturns;
   i32 funcCount;
+
+  /** A local's wac type, or `""` when the name is not one. */
+  string localType(const this, string name) {
+    for (i32 i = this.localCount - 1; i >= 0; i--) {
+      if (this.locals[i] == name) { return this.localTypes[i]; }
+    }
+    return "";
+  }
 
   /** The index of a local, or -1. Searched from the end so an inner declaration wins a shadow. */
   i32 localAt(const this, string name) {
@@ -138,9 +197,10 @@ export struct Env {
     return -1;
   }
 
-  void addLocal(this, string name) {
+  void addLocal(this, string name, string ty) {
     if (this.localCount >= this.locals.len()) { return; }
     this.locals[this.localCount] = name;
+    this.localTypes[this.localCount] = ty;
     this.localCount = this.localCount + 1;
   }
 }
@@ -166,7 +226,9 @@ bool emittable(Decl d) {
 void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
-      case Var(type, nameTok, init, isConst): { env.addLocal(tokenTextOf(src, lexed, nameTok)); }
+      case Var(type, nameTok, init, isConst): {
+        env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, type));
+      }
       case Block(inner): { collectLocals(env, src, lexed, inner); }
       case If(cond, then, els): {
         collectLocals(env, src, lexed, then);
@@ -178,7 +240,7 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
         if (!(init is null)) {
           match (init!.kind) {
             case Var(type, nameTok, ini, isConst): {
-              env.addLocal(tokenTextOf(src, lexed, nameTok));
+              env.addLocal(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, type));
             }
             else: { }
           }
@@ -204,13 +266,14 @@ export u8[] emitModule(u8[] src) {
 
   // Function names first, over the whole file: a call names one declared elsewhere and often further
   // down, which is the same argument the checker makes for collecting signatures before bodies.
-  Env env = Env(string[64](), 0, 0, string[64](), 0);
+  Env env = Env(string[64](), string[64](), 0, 0, string[64](), string[64](), 0);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (env.funcCount < env.funcs.len()) {
           env.funcs[env.funcCount] = tokenTextOf(src, lexed, nameTok);
+          env.funcReturns[env.funcCount] = typeOfTyName(src, lexed, returnType);
           env.funcCount = env.funcCount + 1;
         }
       }
@@ -248,10 +311,13 @@ export u8[] emitModule(u8[] src) {
         // resolves types by structure precisely so that difference is not a mismatch.
         types.byte(96);
         types.u32leb(params.len());
-        for (i32 i = 0; i < params.len(); i++) { types.byte(wasmI32()); }
-        bool returnsValue = typeOfTyName(src, lexed, returnType) != "void";
+        for (i32 i = 0; i < params.len(); i++) {
+          types.byte(valType(typeOfTyName(src, lexed, params[i].type)));
+        }
+        string ret = typeOfTyName(src, lexed, returnType);
+        bool returnsValue = ret != "void";
         types.u32leb(returnsValue ? 1 : 0);
-        if (returnsValue) { types.byte(wasmI32()); }
+        if (returnsValue) { types.byte(valType(ret)); }
 
         funcs.u32leb(index);
         if (exported) {
@@ -262,19 +328,21 @@ export u8[] emitModule(u8[] src) {
 
         env.localCount = 0;
         for (i32 i = 0; i < params.len(); i++) {
-          env.addLocal(tokenTextOf(src, lexed, params[i].nameTok));
+          env.addLocal(tokenTextOf(src, lexed, params[i].nameTok),
+                       typeOfTyName(src, lexed, params[i].type));
         }
         env.paramCount = params.len();
         collectLocals(env, src, lexed, body);
 
         B fb = B.create();
+        // One entry per local rather than runs of a repeated type. Both are legal, the runs form is
+        // shorter, and a canonical module form flattens the difference — which is the same argument
+        // that keeps this emitter from pooling function types.
         i32 extra = env.localCount - env.paramCount;
-        if (extra > 0) {
+        fb.u32leb(extra);
+        for (i32 i = env.paramCount; i < env.localCount; i++) {
           fb.u32leb(1);
-          fb.u32leb(extra);
-          fb.byte(wasmI32());
-        } else {
-          fb.u32leb(0);
+          fb.byte(valType(env.localTypes[i]));
         }
         emitBody(fb, src, lexed, env, body);
         // Every wac function that returns a value returns on all paths — the checker says so — so the
@@ -346,7 +414,7 @@ void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
 void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
-      emitExpr(fb, src, lexed, env, init);
+      emitExprAt(fb, src, lexed, env, init, typeOfTyName(src, lexed, type));
       fb.byte(33);   // local.set
       fb.u32leb(env.localAt(tokenTextOf(src, lexed, nameTok)));
     }
@@ -363,8 +431,9 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
             fb.byte(32);
             fb.u32leb(at);
           }
-          emitExpr(fb, src, lexed, env, rhs);
-          if (k != kAssign()) { emitCompound(fb, k); }
+          string at2 = env.localTypes[at];
+          emitExprAt(fb, src, lexed, env, rhs, at2);
+          if (k != kAssign()) { emitCompound(fb, k, at2); }
           fb.byte(33);
           fb.u32leb(at);
         }
@@ -412,11 +481,11 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
 }
 
 /** The operator of a compound assignment, which is the binary one with the `=` taken off. */
-void emitCompound(B fb, i32 k) {
-  if (k == 58) { fb.byte(106); }   // +=
-  if (k == 59) { fb.byte(107); }   // -=
-  if (k == 60) { fb.byte(108); }   // *=
-  if (k == 61) { fb.byte(109); }   // /=
+void emitCompound(B fb, i32 k, string t) {
+  if (k == 58) { emitBinary(fb, kPlus(), t); }
+  if (k == 59) { emitBinary(fb, kMinus(), t); }
+  if (k == 60) { emitBinary(fb, kStar(), t); }
+  if (k == 61) { emitBinary(fb, kSlash(), t); }
 }
 
 /**
@@ -427,14 +496,43 @@ void emitCompound(B fb, i32 k) {
  * with a value type — the one place this emitter writes a block that produces something.
  */
 void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
+  emitExprAt(fb, src, lexed, env, e, "");
+}
+
+/**
+ * An expression, told what type the slot it fills is.
+ *
+ * Only a literal needs it — everything else knows its own type — but a literal can be anywhere, so
+ * the wanted type is passed down every arm rather than special-cased at the few places one is likely.
+ */
+void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
     case IntLit(tok): {
+      // A literal is emitted at the type its **context** wants, which is the same fact the checker
+      // states as "a literal is polymorphic over a family": `i64 x = 1;` needs `i64.const`, and the
+      // `1` says nothing about that.
+      i32 v = parseInt(tokenTextOf(src, lexed, tok));
+      if (valType(want) == 126) { fb.byte(66); fb.i32leb(v); return; }
+      if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
+      if (want == "f64") { fb.byte(68); fb.f64bits(v as f64); return; }
       fb.byte(65);
-      fb.i32leb(parseInt(tokenTextOf(src, lexed, tok)));
+      fb.i32leb(v);
+    }
+    case FloatLit(tok): {
+      f64 v = parseFloat(tokenTextOf(src, lexed, tok));
+      if (want == "f32") { fb.byte(67); fb.f32bits(v as~ f32); return; }
+      fb.byte(68);
+      fb.f64bits(v);
     }
     case BoolLit(value): {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
+    }
+    case Cast(op, operand, target): {
+      string from = typeOfE(src, lexed, env, operand);
+      string to = typeOfTyName(src, lexed, target);
+      emitExprAt(fb, src, lexed, env, operand, from == "" ? to : from);
+      emitConversion(fb, from == "" ? to : from, to);
     }
     case Ident(tok): {
       i32 at = env.localAt(tokenTextOf(src, lexed, tok));
@@ -449,20 +547,25 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
         fb.byte(69);   // i32.eqz
         return;
       }
+      string ut = typeOfE(src, lexed, env, operand);
+      if (ut == "") { ut = want; }
       if (k == kMinus()) {
-        // No `i32.neg` exists: negation is a subtraction from zero, which is what the instruction set
-        // offers and what every wasm emitter writes.
-        fb.byte(65);
-        fb.i32leb(0);
-        emitExpr(fb, src, lexed, env, operand);
-        fb.byte(107);
+        // A float *has* a negation instruction; an integer does not, and is a subtraction from zero.
+        if (isFloat(ut)) {
+          emitExprAt(fb, src, lexed, env, operand, ut);
+          fb.byte(ut == "f32" ? 140 : 154);
+          return;
+        }
+        if (valType(ut) == 126) { fb.byte(66); fb.i32leb(0); }
+        else { fb.byte(65); fb.i32leb(0); }
+        emitExprAt(fb, src, lexed, env, operand, ut);
+        fb.byte(valType(ut) == 126 ? 125 : 107);
         return;
       }
       if (k == kTilde()) {
-        emitExpr(fb, src, lexed, env, operand);
-        fb.byte(65);
-        fb.i32leb(-1);
-        fb.byte(115);   // i32.xor with all ones
+        emitExprAt(fb, src, lexed, env, operand, ut);
+        if (valType(ut) == 126) { fb.byte(66); fb.i32leb(-1); fb.byte(133); }
+        else { fb.byte(65); fb.i32leb(-1); fb.byte(115); }
         return;
       }
     }
@@ -486,9 +589,10 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
         fb.byte(11);
         return;
       }
-      emitExpr(fb, src, lexed, env, left);
-      emitExpr(fb, src, lexed, env, right);
-      emitBinary(fb, k);
+      string ot = operandType(src, lexed, env, left, right);
+      emitExprAt(fb, src, lexed, env, left, ot);
+      emitExprAt(fb, src, lexed, env, right, ot);
+      emitBinary(fb, k, ot);
     }
     case Construct(ctype, args, named): {
       match (ctype.kind) {
@@ -516,30 +620,130 @@ void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
 }
 
 /**
+ * An expression's wac type — the emitter's own small type pass.
+ *
+ * Not the checker's. The checker answers a much harder question over the whole language and reports
+ * when the answer is wrong; this one only has to be right for the expressions this slice emits, and
+ * it is *needed* rather than merely useful: `a / b` is `i32.div_s` or `i32.div_u` depending on it, and
+ * nothing in the token says which.
+ *
+ * A literal is the one case with no type of its own. It takes the other operand's, which is what the
+ * language says and what makes `x + 1` an `i64` addition when `x` is an `i64`.
+ */
+string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return ""; }
+    case FloatLit(tok): { return ""; }
+    case BoolLit(value): { return "bool"; }
+    case Ident(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
+    case Cast(op, operand, target): { return typeOfTyName(src, lexed, target); }
+    case Unary(op, operand): {
+      i32 k = lexed.tokens[op * tokenStride()];
+      if (k == kBang()) { return "bool"; }
+      return typeOfE(src, lexed, env, operand);
+    }
+    case Binary(op, left, right): {
+      i32 k = lexed.tokens[op * tokenStride()];
+      if (k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
+          k == kAndAnd() || k == kOrOr()) {
+        return "bool";
+      }
+      string lt = typeOfE(src, lexed, env, left);
+      if (lt != "") { return lt; }
+      return typeOfE(src, lexed, env, right);
+    }
+    case Ternary(cond, then, els): {
+      string tt = typeOfE(src, lexed, env, then);
+      if (tt != "") { return tt; }
+      return typeOfE(src, lexed, env, els);
+    }
+    case Construct(ctype, args, named): {
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          i32 at = env.funcAt(tokenTextOf(src, lexed, tok));
+          return at < 0 ? "" : env.funcReturns[at];
+        }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
+}
+
+/** The type a binary operator's operands share, taken from whichever side is not a literal. */
+string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
+  string lt = typeOfE(src, lexed, env, left);
+  if (lt != "") { return lt; }
+  return typeOfE(src, lexed, env, right);
+}
+
+/**
  * A binary operator's opcode.
  *
  * The signed ones are signed because this slice is `i32` throughout: `/`, `%`, `>>` and the four
  * comparisons each have a `_u` twin that an unsigned type would want instead, and choosing between
  * them is the first thing a second numeric type will need.
  */
-void emitBinary(B fb, i32 k) {
+void emitBinary(B fb, i32 k, string t) {
+  bool u = isUnsigned(t);
+  if (isFloat(t)) {
+    // The float opcodes are a block of their own rather than a suffix on the integer ones, and `f32`
+    // and `f64` are two blocks 20 apart. Neither has a signed/unsigned distinction: a float has one
+    // ordering, which is the reason the comparison opcodes here take no suffix.
+    // The two float blocks are **14 apart** for arithmetic and **6 apart** for comparison, which is
+    // not a mistake in the format and is exactly the sort of thing a table lifted from memory gets
+    // wrong: `f32.add` is 0x92 and `f64.add` is 0xa0, while `f32.eq` is 0x5b and `f64.eq` is 0x61.
+    i32 base = t == "f32" ? 0 : 14;
+    if (k == kPlus()) { fb.byte(146 + base); }
+    if (k == kMinus()) { fb.byte(147 + base); }
+    if (k == kStar()) { fb.byte(148 + base); }
+    if (k == kSlash()) { fb.byte(149 + base); }
+    if (k == kEq()) { fb.byte(91 + (t == "f32" ? 0 : 6)); }
+    if (k == kNe()) { fb.byte(92 + (t == "f32" ? 0 : 6)); }
+    if (k == kLt()) { fb.byte(93 + (t == "f32" ? 0 : 6)); }
+    if (k == kGt()) { fb.byte(94 + (t == "f32" ? 0 : 6)); }
+    if (k == kLe()) { fb.byte(95 + (t == "f32" ? 0 : 6)); }
+    if (k == kGe()) { fb.byte(96 + (t == "f32" ? 0 : 6)); }
+    return;
+  }
+  if (valType(t) == 126) {
+    // `i64`, whose arithmetic is the `i32` block shifted by 18 and whose comparisons are shifted by 6.
+    if (k == kPlus()) { fb.byte(124); }
+    if (k == kMinus()) { fb.byte(125); }
+    if (k == kStar()) { fb.byte(126); }
+    if (k == kSlash()) { fb.byte(u ? 128 : 127); }
+    if (k == kPercent()) { fb.byte(u ? 130 : 129); }
+    if (k == kAnd()) { fb.byte(131); }
+    if (k == kOr()) { fb.byte(132); }
+    if (k == kCaret()) { fb.byte(133); }
+    if (k == kShl()) { fb.byte(134); }
+    if (k == kShr()) { fb.byte(u ? 136 : 135); }
+    if (k == kShrU()) { fb.byte(136); }
+    if (k == kEq()) { fb.byte(81); }
+    if (k == kNe()) { fb.byte(82); }
+    if (k == kLt()) { fb.byte(u ? 84 : 83); }
+    if (k == kGt()) { fb.byte(u ? 86 : 85); }
+    if (k == kLe()) { fb.byte(u ? 88 : 87); }
+    if (k == kGe()) { fb.byte(u ? 90 : 89); }
+    return;
+  }
   if (k == kPlus()) { fb.byte(106); }
   if (k == kMinus()) { fb.byte(107); }
   if (k == kStar()) { fb.byte(108); }
-  if (k == kSlash()) { fb.byte(109); }     // i32.div_s
-  if (k == kPercent()) { fb.byte(111); }   // i32.rem_s
+  if (k == kSlash()) { fb.byte(u ? 110 : 109); }
+  if (k == kPercent()) { fb.byte(u ? 112 : 111); }
   if (k == kAnd()) { fb.byte(113); }
   if (k == kOr()) { fb.byte(114); }
   if (k == kCaret()) { fb.byte(115); }
   if (k == kShl()) { fb.byte(116); }
-  if (k == kShr()) { fb.byte(117); }       // i32.shr_s
-  if (k == kShrU()) { fb.byte(118); }      // i32.shr_u
+  if (k == kShr()) { fb.byte(u ? 118 : 117); }
+  if (k == kShrU()) { fb.byte(118); }
   if (k == kEq()) { fb.byte(70); }
   if (k == kNe()) { fb.byte(71); }
-  if (k == kLt()) { fb.byte(72); }         // i32.lt_s
-  if (k == kGt()) { fb.byte(74); }
-  if (k == kLe()) { fb.byte(76); }
-  if (k == kGe()) { fb.byte(78); }
+  if (k == kLt()) { fb.byte(u ? 73 : 72); }
+  if (k == kGt()) { fb.byte(u ? 75 : 74); }
+  if (k == kLe()) { fb.byte(u ? 77 : 76); }
+  if (k == kGe()) { fb.byte(u ? 79 : 78); }
 }
 
 /** A decimal integer literal's value. */
@@ -549,6 +753,98 @@ i32 parseInt(string s) {
   for (i32 i = 0; i < a.len(); i++) {
     if (a[i] < 48 || a[i] > 57) { break; }
     v = v * 10 + (a[i] - 48);
+  }
+  return v;
+}
+
+/**
+ * The instruction that turns one numeric type into another.
+ *
+ * The interesting half is what is **not** here: `i32` to `u32` and back is nothing at all, because
+ * they are the same 32 bits and the difference lives only in which opcodes read them. That is the
+ * whole reason this emitter needed a type model — the conversion is a no-op and the *arithmetic* is
+ * not.
+ */
+void emitConversion(B fb, string from, string to) {
+  if (from == to) { return; }
+  if (valType(from) == valType(to) && !isFloat(from)) { return; }   // i32/u32, i64/u64
+  if (valType(from) == 127 && valType(to) == 126) {
+    fb.byte(isUnsigned(from) ? 173 : 172);   // i64.extend_i32_u / _s
+    return;
+  }
+  if (valType(from) == 126 && valType(to) == 127) {
+    // **Known divergence.** wac's `as~` between integer widths *saturates* — `(2^32 + 7) as~ i32` is
+    // `i32` max, not 7 — and this is `i32.wrap_i64`, which agrees in range and not outside it.
+    // Clamping needs the operand twice and therefore a scratch local, which this slice has no
+    // mechanism for. Named here and in the README rather than emitted as if it were right.
+    fb.byte(167);   // i32.wrap_i64
+    return;
+  }
+  if (!isFloat(from) && to == "f64") {
+    if (valType(from) == 126) { fb.byte(isUnsigned(from) ? 186 : 185); }
+    else { fb.byte(isUnsigned(from) ? 184 : 183); }
+    return;
+  }
+  if (!isFloat(from) && to == "f32") {
+    if (valType(from) == 126) { fb.byte(imm(180, 181, isUnsigned(from))); }
+    else { fb.byte(imm(178, 179, isUnsigned(from))); }
+    return;
+  }
+  if (isFloat(from) && !isFloat(to)) {
+    // **Rounded, not truncated.** `3.9 as~ i32` is 4 in wac, and wasm's `trunc` family goes the other
+    // way, so the value is put through `nearest` first. Measured — the spelling `as~` reads like C's
+    // truncation and is not it, which no amount of looking at the emitter would have said.
+    fb.byte(from == "f32" ? 144 : 158);   // f32.nearest / f64.nearest
+    if (valType(to) == 126) {
+      if (from == "f32") { fb.byte(imm(174, 175, isUnsigned(to))); }
+      else { fb.byte(imm(176, 177, isUnsigned(to))); }
+    } else {
+      if (from == "f32") { fb.byte(imm(168, 169, isUnsigned(to))); }
+      else { fb.byte(imm(170, 171, isUnsigned(to))); }
+    }
+    return;
+  }
+  if (from == "f32" && to == "f64") { fb.byte(187); }
+  if (from == "f64" && to == "f32") { fb.byte(182); }
+}
+
+/** One of two opcodes, by signedness — the shape half of `emitConversion` is made of. */
+i32 imm(i32 signed, i32 unsigned, bool u) { return u ? unsigned : signed; }
+
+/** A decimal float literal's value. */
+f64 parseFloat(string s) {
+  u8[] a = s.toBytes();
+  f64 v = 0.0;
+  i32 i = 0;
+  while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+    v = v * 10.0 + (a[i] - 48) as f64;
+    i = i + 1;
+  }
+  if (i < a.len() && a[i] == 46) {
+    i = i + 1;
+    f64 scale = 0.1;
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      v = v + (a[i] - 48) as f64 * scale;
+      scale = scale * 0.1;
+      i = i + 1;
+    }
+  }
+  i32 exp = 0;
+  bool neg = false;
+  if (i < a.len() && (a[i] == 101 || a[i] == 69)) {
+    i = i + 1;
+    if (i < a.len() && (a[i] == 43 || a[i] == 45)) {
+      neg = a[i] == 45;
+      i = i + 1;
+    }
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      exp = exp * 10 + (a[i] - 48);
+      i = i + 1;
+    }
+  }
+  if (exp > 400) { exp = 400; }
+  for (i32 e = 0; e < exp; e++) {
+    if (neg) { v = v * 0.1; } else { v = v * 10.0; }
   }
   return v;
 }

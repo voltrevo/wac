@@ -1183,6 +1183,39 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 4 learns types, and the oracle corrects two assumptions
+
+**64 programs, 87 calls, every answer agreeing.** Unsigned opcodes, `i64`, `f32`, `f64`, and the
+conversions between them.
+
+The boundary the last slice ended at was exactly this: `/`, `%`, `>>` and the four comparisons each
+have a `_u` twin, and **the wasm value type cannot choose between them**. `u32` and `bool` are both
+`i32` in wasm and `u64` is `i64` — the mapping is many-to-one, so which opcode is right is a fact
+about the *wac* type that the wasm type has already thrown away. Hence a small type pass in the
+emitter: not the checker's, which answers a much harder question over the whole language, but one that
+only has to be right for what this slice emits, and is *needed* rather than merely useful.
+
+**The oracle corrected two assumptions about the language**, and neither would have been found by
+reading anything:
+
+- **`as~` from a float rounds, it does not truncate.** `3.9 as~ i32` is 4. The spelling reads like C's
+  cast and is not it, so the value goes through `nearest` before wasm's `trunc`. The ties are now
+  asked about too, because half-to-even and half-away differ exactly there and both are defensible.
+- **`as~` between integer widths saturates.** `(2^32 + 7) as~ i32` is `i32` max, not 7. This emitter
+  writes `i32.wrap_i64`, which agrees in range and not outside it — clamping needs the operand twice
+  and therefore a scratch local, which this slice has no mechanism for. **Named as a divergence** in
+  the emitter and here, and its test narrowed to the range where the answer is right, rather than
+  left to look correct.
+
+And one bug that read as a rounding error and was not one: every `f64` constant came out wrong by
+exactly one part in 2²⁰. Shifting a `u64` by an `i32` produced `ff ff ff ff` in the low half — keeping
+both sides the same width is the fix, and "a floating-point answer that is slightly off is a
+floating-point problem" is the assumption that cost the time.
+
+The float opcodes are worth a line because a table from memory gets them wrong: the two blocks are
+**14 apart for arithmetic and 6 apart for comparison**. `f32.add` is `0x92` and `f64.add` is `0xa0`,
+while `f32.eq` is `0x5b` and `f64.eq` is `0x61`.
+
 ### Rung 4: a slice that can express a real function
 
 **33 programs, 52 calls, every answer agreeing with the reference.** From nine and thirteen: locals

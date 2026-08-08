@@ -41,7 +41,8 @@ function reference(src: string): Record<string, unknown> {
   ).exports;
 }
 
-type Call = { name: string; args: number[] };
+// `bigint` because an `i64` crosses the boundary as one, in both directions.
+type Call = { name: string; args: (number | bigint)[] };
 
 const CASES: [string, Call[]][] = [
   ["export i32 answer() { return 42; }", [{ name: "answer", args: [] }]],
@@ -144,6 +145,62 @@ const CASES: [string, Call[]][] = [
   // Recursion, which is a call that has to work before the function it is in is finished.
   ["export i32 fact(i32 n) { if (n <= 1) { return 1; } return n * fact(n - 1); }",
     [{ name: "fact", args: [1] }, { name: "fact", args: [5] }, { name: "fact", args: [10] }]],
+
+  // ── Unsigned: the same 32 bits, and different opcodes to read them ──────────
+  // Every one of these is the half a signed opcode gets wrong, so the earlier slice would have agreed
+  // on small arguments and been silently wrong here.
+  ["export u32 f(u32 a, u32 b) { return a / b; }", [{ name: "f", args: [4294967288, 2] }]],
+  ["export u32 f(u32 a, u32 b) { return a % b; }", [{ name: "f", args: [4294967288, 3] }]],
+  ["export u32 f(u32 a) { return a >> 1; }", [{ name: "f", args: [4294967288] }]],
+  ["export bool f(u32 a, u32 b) { return a < b; }", [{ name: "f", args: [4294967288, 1] }]],
+  ["export bool f(u32 a, u32 b) { return a >= b; }", [{ name: "f", args: [1, 4294967288] }]],
+
+  // ── i64, a different opcode block entirely ─────────────────────────────────
+  ["export i64 f(i64 a, i64 b) { return a + b; }", [{ name: "f", args: [2n, 3n] }]],
+  ["export i64 f(i64 a, i64 b) { return a * b; }", [{ name: "f", args: [4294967296n, 3n] }]],
+  ["export i64 f(i64 a, i64 b) { return a / b; }", [{ name: "f", args: [-9n, 2n] }]],
+  ["export i64 f(i64 a) { return a << 40; }", [{ name: "f", args: [1n] }]],
+  ["export i64 f(i64 a) { i64 x = a; x += 1; return x * 2; }", [{ name: "f", args: [10n] }]],
+  ["export bool f(i64 a, i64 b) { return a < b; }", [{ name: "f", args: [-1n, 1n] }]],
+  ["export u64 f(u64 a, u64 b) { return a / b; }", [{ name: "f", args: [18446744073709551608n, 2n] }]],
+  ["export i64 f(i64 n) { i64 t = 0; i64 i = 0; while (i < n) { t = t + i; i = i + 1; } return t; }",
+    [{ name: "f", args: [10n] }]],
+  // A literal takes the other side's type, which is what makes this an i64 addition.
+  ["export i64 f(i64 a) { return a + 1; }", [{ name: "f", args: [4294967295n] }]],
+
+  // ── Floats, whose opcodes are a block of their own ─────────────────────────
+  ["export f64 f(f64 a, f64 b) { return a + b; }", [{ name: "f", args: [1.5, 2.25] }]],
+  ["export f64 f(f64 a, f64 b) { return a / b; }", [{ name: "f", args: [1.0, 3.0] }]],
+  ["export f64 f(f64 a) { return -a; }", [{ name: "f", args: [2.5] }]],
+  ["export bool f(f64 a, f64 b) { return a < b; }", [{ name: "f", args: [1.5, 2.5] }]],
+  ["export f64 f() { f64 x = 1.5; return x * 2.0; }", [{ name: "f", args: [] }]],
+  ["export f32 f(f32 a, f32 b) { return a * b; }", [{ name: "f", args: [1.5, 3.0] }]],
+  ["export f64 f(f64 a) { f64 t = 0.0; i32 i = 0; while (i < 4) { t = t + a; i = i + 1; } return t; }",
+    [{ name: "f", args: [0.25] }]],
+
+  // ── Conversions, including the one that is nothing at all ──────────────────
+  ["export u32 f(i32 a) { return a as@ u32; }", [{ name: "f", args: [-8] }]],
+  ["export i32 f(u32 a) { return a as@ i32; }", [{ name: "f", args: [4294967288] }]],
+  ["export i64 f(i32 a) { return a as i64; }", [{ name: "f", args: [-5] }]],
+  ["export i64 f(u32 a) { return a as i64; }", [{ name: "f", args: [4294967288] }]],
+  // In range only. `as~` from a wider integer **saturates** in wac — 2^32 + 7 gives `i32` max, not 7 —
+  // and this emitter writes `i32.wrap_i64`, which is the same answer in range and a different one
+  // outside it. Clamping needs the value twice and so needs a scratch local, which this slice has no
+  // mechanism for; the divergence is named in the README rather than papered over here.
+  ["export i32 f(i64 a) { return a as~ i32; }", [{ name: "f", args: [7n] }]],
+  ["export f64 f(i32 a) { return a as f64; }", [{ name: "f", args: [-3] }]],
+  ["export f64 f(u32 a) { return a as f64; }", [{ name: "f", args: [4294967288] }]],
+  // Rounded, not truncated: `as~` reads like C's truncation and is not it. The ties are asked about
+  // too, because half-to-even and half-away-from-zero differ exactly there and both are defensible.
+  ["export i32 f(f64 a) { return a as~ i32; }", [
+    { name: "f", args: [3.9] },
+    { name: "f", args: [3.4] },
+    { name: "f", args: [-3.9] },
+    { name: "f", args: [2.5] },
+    { name: "f", args: [3.5] },
+  ]],
+  ["export f64 f(f32 a) { return a as f64; }", [{ name: "f", args: [1.5] }]],
+  ["export f32 f(f64 a) { return a as~ f32; }", [{ name: "f", args: [1.5] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {
@@ -152,8 +209,8 @@ Deno.test("rung 4: what wacc emits runs, and answers what the reference's does",
     const theirs = reference(src);
     const mine = ours(src);
     for (const { name, args } of invocations) {
-      const a = theirs[name] as (...xs: number[]) => number;
-      const b = mine[name] as (...xs: number[]) => number;
+      const a = theirs[name] as (...xs: (number | bigint)[]) => number | bigint;
+      const b = mine[name] as (...xs: (number | bigint)[]) => number | bigint;
       if (typeof a !== "function") throw new Error(`the reference exports no ${name} for ${src}`);
       if (typeof b !== "function") throw new Error(`we export no ${name} for ${src}`);
       const want = a(...args);
