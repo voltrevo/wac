@@ -10,6 +10,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { checkProgram } from "./check.wac";
+import { emitModule } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -46,4 +47,14 @@ export i32[] dumpTypeErrors(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   return checkProgram(src, lexed.tokens, lexed.tokenCount, prog);
+}
+
+/**
+ * Rung 4's surface: a wasm module for the program, as bytes.
+ *
+ * Bytes out rather than a structure, for the same reason everything else here is bytes in — and
+ * because the oracle for this rung is that the caller can *run* what comes back.
+ */
+export u8[] emit(u8[] src) {
+  return emitModule(src);
 }

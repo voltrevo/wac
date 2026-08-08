@@ -20,7 +20,7 @@ them depends on the next being designed yet.
 | 1. lexer | `wacLex.ts` | token streams match | 366 |
 | 2. parser | `wacParse.ts` | ASTs match under a canonical serialization | 1651 |
 | 3. type checker | `wacTypeCheck.ts` | diagnostics match, including positions | 3189 |
-| 4. emitter | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
+| 4. emitter ▸ | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
 | 5. bootstrap | itself | fixpoint: wacc's own output, compiled both ways, byte for byte | — |
 
 Corpus for every rung: every `.wac` file in wac-mono and `wac/spec/tour.wac`, plus
@@ -1182,6 +1182,38 @@ positions, and never invents one. It does **not** mean the checker is complete: 
 texts exist across 3,190 reference lines and this implements a fraction of them, and the sweep's own
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
+
+### Rung 4 has a skeleton that runs
+
+`emitModule` produces a wasm module, and the module **runs**. An exported `i32` function whose body is
+one `return` over literals, parameters and arithmetic — a fraction of the language, and the fraction is
+not the point. The point is that the shape is end to end, so the next rule the emitter learns is
+measured by running it rather than by reading it.
+
+**The oracle is the one this README argued for before there was anything to measure**: ask each
+program of both compilers, instantiate both modules, call the export with the same arguments, compare
+what comes back. Nine programs, thirteen calls, every answer agreeing. Nothing in the test asserts an
+expected answer — a hand-written `5` would be a *third* opinion, and the whole point of a differential
+test is that there are only two. Beside it, `WebAssembly.validate` on every module: a second opinion
+about the bytes that costs nothing and is not the reference's, because a module can run the one
+function a test calls and still be malformed elsewhere.
+
+Checked the only way that means anything, again: by emitting `i32.sub` where `i32.add` belonged and
+watching it report *"add(2, 3) is -1 from us and 5 from the reference"*.
+
+What the scaffolding is, since everything after builds on it:
+
+- **A growable byte buffer**, written locally rather than imported. `packages/wacc` has no
+  dependencies, and the whole value of a self-hosting compiler is that it needs none.
+- **LEB128, signed and unsigned.** The encoding is *not* canonical — `0` may be written as one byte or
+  five — which is the argument against byte identity restated as a fact about the format.
+- **A section is built in a buffer of its own and spliced in**, because its length has to be written
+  before its contents. That is why a wasm emitter is a tree of buffers rather than one.
+
+Three things the language pushed back on while writing it, all in the first ten minutes: `else if`
+does not chain here, `fn` is a keyword and cannot name a variable, and a packed array element takes an
+`i32` directly — `v as~ u8` is *"no valid cast"*, which is this checker's own rule seen from the other
+side.
 
 ### What rung 3's oracle looks like, measured
 

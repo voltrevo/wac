@@ -1,0 +1,270 @@
+// Rung 4, first slice: a wasm module that runs.
+//
+// The ladder's oracle for this rung is deliberately *not* byte identity with the reference — see the
+// README — but a canonical module form beside the one already sitting in this repository for nothing:
+// **compile a program and run it**. That oracle needs something to run, and nothing here emitted a
+// byte until now, so this is the walking skeleton: the binary scaffolding every later section needs,
+// and just enough of the language to make a module that answers a question.
+//
+// What it covers: an exported function taking `i32` parameters and returning an `i32`, whose body is
+// a single `return` of a literal, a parameter, or arithmetic over those. That is a fraction of the
+// language and the point is not the fraction — it is that the shape is end to end, so the next rule
+// added is measured by running it rather than by reading it.
+
+import { lex, Lexed, tokenStride } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import {
+  Decl, DeclKind, Expr, ExprKind, Param, Program, Stmt, StmtKind, Ty, TyKind,
+} from "./ast.wac";
+import { kPlus, kMinus, kStar } from "./kinds.wac";
+
+/**
+ * A growable byte buffer.
+ *
+ * wac has no growable array, so this is the same doubling `Buf` every package here ends up writing —
+ * kept local rather than imported because `packages/wacc` has no dependencies and the whole value of
+ * a self-hosting compiler is that it needs none.
+ */
+export struct B {
+  u8[] data;
+  i32 len;
+
+  B create() { return B(u8[64](), 0); }
+
+  void byte(this, i32 v) {
+    if (this.len >= this.data.len()) {
+      u8[] bigger = u8[this.data.len() * 2]();
+      for (i32 i = 0; i < this.len; i++) { bigger[i] = this.data[i]; }
+      this.data = bigger;
+    }
+    this.data[this.len] = v;
+    this.len = this.len + 1;
+  }
+
+  /** Every byte of another buffer, which is how a section is spliced in once its length is known. */
+  void bytes(this, B other) {
+    for (i32 i = 0; i < other.len; i++) { this.byte(other.data[i]); }
+  }
+
+  /**
+   * LEB128, unsigned. Seven bits at a time, low group first, the top bit saying "more follows".
+   *
+   * The encoding is not canonical — `0` may be written as one byte or five — which is exactly why
+   * rung 4 does not compare bytes: two implementations may both be right and differ. This writes the
+   * short form, being the one everything else writes.
+   */
+  void u32leb(this, i32 v) {
+    i32 rest = v;
+    for (i32 guard = 0; guard < 5; guard++) {
+      i32 low = rest & 127;
+      rest = (rest as@ u32 >> 7) as@ i32;
+      if (rest == 0) {
+        this.byte(low);
+        return;
+      }
+      this.byte(low | 128);
+    }
+  }
+
+  /** LEB128, signed: the same, but the sign bit of the last group has to be the value's own. */
+  void i32leb(this, i32 v) {
+    i32 rest = v;
+    for (i32 guard = 0; guard < 5; guard++) {
+      i32 low = rest & 127;
+      rest = rest >> 7;
+      bool signBit = (low & 64) != 0;
+      if ((rest == 0 && !signBit) || (rest == -1 && signBit)) {
+        this.byte(low);
+        return;
+      }
+      this.byte(low | 128);
+    }
+  }
+
+  /** A name, length-prefixed, which is how wasm writes every string in the binary. */
+  void name(this, string s) {
+    u8[] b = s.toBytes();
+    this.u32leb(b.len());
+    for (i32 i = 0; i < b.len(); i++) { this.byte(b[i]); }
+  }
+}
+
+/** `0x7f`, the only value type this slice emits. */
+i32 wasmI32() { return 127; }
+
+/**
+ * A section: its id, then its byte length, then its contents.
+ *
+ * The length has to be known before the contents are written, which is why a section is built in a
+ * buffer of its own and spliced in — the same shape the reference uses and the reason a wasm emitter
+ * is a tree of buffers rather than one.
+ */
+void section(B out, i32 id, B sec) {
+  out.byte(id);
+  out.u32leb(sec.len);
+  out.bytes(sec);
+}
+
+/** Whether a declaration is a function this slice can emit: exported, all `i32`, one `return`. */
+bool emittable(Decl d) {
+  match (d.kind) {
+    case Func(nameTok, returnType, params, body, exported, typeParams): {
+      return exported && typeParams.len() == 0;
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * A module for the functions this slice understands.
+ *
+ * Four sections and no more: types, functions, exports, code. No memory, no globals, no tables —
+ * none of which an `i32` calculation needs, and each of which is a section that can be added when
+ * something needs it rather than because a real module usually has one.
+ */
+export u8[] emitModule(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+
+  B types = B.create();
+  B funcs = B.create();
+  B exports = B.create();
+  B code = B.create();
+  i32 count = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    if (!emittable(prog.decls[d])) { continue; }
+    count = count + 1;
+  }
+  types.u32leb(count);
+  funcs.u32leb(count);
+  exports.u32leb(count);
+  code.u32leb(count);
+
+  i32 index = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    if (!emittable(prog.decls[d])) { continue; }
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        // One type per function, never deduplicated. The reference pools them, and a canonical form
+        // resolves types by structure precisely so that difference is not a mismatch.
+        types.byte(96);
+        types.u32leb(params.len());
+        for (i32 i = 0; i < params.len(); i++) { types.byte(wasmI32()); }
+        bool returnsValue = typeOfTyName(src, lexed, returnType) != "void";
+        types.u32leb(returnsValue ? 1 : 0);
+        if (returnsValue) { types.byte(wasmI32()); }
+
+        funcs.u32leb(index);
+        exports.name(tokenTextOf(src, lexed, nameTok));
+        exports.byte(0);
+        exports.u32leb(index);
+
+        B fb = B.create();
+        fb.u32leb(0);   // no locals beyond the parameters
+        emitBody(fb, src, lexed, params, body);
+        fb.byte(11);    // `end`
+        code.u32leb(fb.len);
+        code.bytes(fb);
+        index = index + 1;
+      }
+      else: { }
+    }
+  }
+
+  B out = B.create();
+  // `\0asm`, then version 1 as four little-endian bytes.
+  out.byte(0);
+  out.byte(97);
+  out.byte(115);
+  out.byte(109);
+  out.byte(1);
+  out.byte(0);
+  out.byte(0);
+  out.byte(0);
+  section(out, 1, types);
+  section(out, 3, funcs);
+  section(out, 7, exports);
+  section(out, 10, code);
+
+  u8[] result = u8[out.len]();
+  for (i32 i = 0; i < out.len; i++) { result[i] = out.data[i]; }
+  return result;
+}
+
+/** A token's text, which the emitter needs for an export's name. */
+string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = lexed.tokens[t * tokenStride() + 1];
+  i32 len = lexed.tokens[t * tokenStride() + 2];
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = src[start + i]; }
+  return string.fromBytes(out);
+}
+
+/** A declared type's name, enough to tell `void` from a value. */
+string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
+  match (t.kind) {
+    case Prim(tok): { return tokenTextOf(src, lexed, tok); }
+    case Named(tok, typeArgs): { return tokenTextOf(src, lexed, tok); }
+    else: { return ""; }
+  }
+}
+
+/** The statements of a body. Only a `return` carries a value in this slice. */
+void emitBody(B fb, u8[] src, Lexed lexed, Param[] params, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      case Return(value): {
+        if (!(value is null)) { emitExpr(fb, src, lexed, params, value!); }
+        return;
+      }
+      else: { }
+    }
+  }
+}
+
+/**
+ * An expression, in the order wasm wants it: operands, then the operator.
+ *
+ * A parameter is a local by its position, which is the whole of the environment here — locals proper
+ * arrive with the statement that declares one.
+ */
+void emitExpr(B fb, u8[] src, Lexed lexed, Param[] params, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): {
+      fb.byte(65);   // i32.const
+      fb.i32leb(parseInt(tokenTextOf(src, lexed, tok)));
+    }
+    case Ident(tok): {
+      string want = tokenTextOf(src, lexed, tok);
+      for (i32 i = 0; i < params.len(); i++) {
+        if (tokenTextOf(src, lexed, params[i].nameTok) == want) {
+          fb.byte(32);   // local.get
+          fb.u32leb(i);
+          return;
+        }
+      }
+    }
+    case Binary(op, left, right): {
+      emitExpr(fb, src, lexed, params, left);
+      emitExpr(fb, src, lexed, params, right);
+      i32 k = lexed.tokens[op * tokenStride()];
+      if (k == kPlus()) { fb.byte(106); }
+      if (k == kMinus()) { fb.byte(107); }
+      if (k == kStar()) { fb.byte(108); }
+    }
+    else: { }
+  }
+}
+
+/** A decimal integer literal's value. */
+i32 parseInt(string s) {
+  u8[] a = s.toBytes();
+  i32 v = 0;
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] < 48 || a[i] > 57) { break; }
+    v = v * 10 + (a[i] - 48);
+  }
+  return v;
+}
