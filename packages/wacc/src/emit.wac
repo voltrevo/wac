@@ -14,9 +14,12 @@
 import { lex, Lexed, tokenStride } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Param, Program, Stmt, StmtKind, Ty, TyKind,
+  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Param, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
-import { kPlus, kMinus, kStar } from "./kinds.wac";
+import {
+  kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
+  kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign,
+} from "./kinds.wac";
 
 /**
  * A growable byte buffer.
@@ -105,13 +108,85 @@ void section(B out, i32 id, B sec) {
   out.bytes(sec);
 }
 
-/** Whether a declaration is a function this slice can emit: exported, all `i32`, one `return`. */
+
+/**
+ * Where a name lives while a function is being emitted.
+ *
+ * wasm has no names: a parameter and a local are both an *index*, parameters first, and a call names
+ * a function by its index too. So the whole environment is two lists of names whose position is the
+ * answer — which is the emitter's version of what the checker's flat name table already is.
+ */
+export struct Env {
+  string[] locals;
+  i32 localCount;
+  i32 paramCount;
+  string[] funcs;
+  i32 funcCount;
+
+  /** The index of a local, or -1. Searched from the end so an inner declaration wins a shadow. */
+  i32 localAt(const this, string name) {
+    for (i32 i = this.localCount - 1; i >= 0; i--) {
+      if (this.locals[i] == name) { return i; }
+    }
+    return -1;
+  }
+
+  i32 funcAt(const this, string name) {
+    for (i32 i = 0; i < this.funcCount; i++) {
+      if (this.funcs[i] == name) { return i; }
+    }
+    return -1;
+  }
+
+  void addLocal(this, string name) {
+    if (this.localCount >= this.locals.len()) { return; }
+    this.locals[this.localCount] = name;
+    this.localCount = this.localCount + 1;
+  }
+}
+
+/** Whether a declaration is a function this slice can emit. */
 bool emittable(Decl d) {
   match (d.kind) {
     case Func(nameTok, returnType, params, body, exported, typeParams): {
-      return exported && typeParams.len() == 0;
+      return typeParams.len() == 0;
     }
     else: { return false; }
+  }
+}
+
+/**
+ * Every local a body declares, in the order wasm will number them.
+ *
+ * Collected before anything is emitted, exactly as the checker collects names before walking a body,
+ * and for a related reason: the locals *declaration* comes before the code that uses them, so the
+ * count has to be known first. Nested blocks contribute theirs — wasm has one flat frame per
+ * function, whatever the language's scopes look like.
+ */
+void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      case Var(type, nameTok, init, isConst): { env.addLocal(tokenTextOf(src, lexed, nameTok)); }
+      case Block(inner): { collectLocals(env, src, lexed, inner); }
+      case If(cond, then, els): {
+        collectLocals(env, src, lexed, then);
+        collectLocals(env, src, lexed, els);
+      }
+      case While(cond, inner): { collectLocals(env, src, lexed, inner); }
+      case DoWhile(inner, cond): { collectLocals(env, src, lexed, inner); }
+      case For(init, cond, update, inner): {
+        if (!(init is null)) {
+          match (init!.kind) {
+            case Var(type, nameTok, ini, isConst): {
+              env.addLocal(tokenTextOf(src, lexed, nameTok));
+            }
+            else: { }
+          }
+        }
+        collectLocals(env, src, lexed, inner);
+      }
+      else: { }
+    }
   }
 }
 
@@ -127,18 +202,41 @@ export u8[] emitModule(u8[] src) {
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
+  // Function names first, over the whole file: a call names one declared elsewhere and often further
+  // down, which is the same argument the checker makes for collecting signatures before bodies.
+  Env env = Env(string[64](), 0, 0, string[64](), 0);
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    if (!emittable(prog.decls[d])) { continue; }
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (env.funcCount < env.funcs.len()) {
+          env.funcs[env.funcCount] = tokenTextOf(src, lexed, nameTok);
+          env.funcCount = env.funcCount + 1;
+        }
+      }
+      else: { }
+    }
+  }
+
   B types = B.create();
   B funcs = B.create();
   B exports = B.create();
   B code = B.create();
   i32 count = 0;
+  i32 exportCount = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     if (!emittable(prog.decls[d])) { continue; }
     count = count + 1;
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (exported) { exportCount = exportCount + 1; }
+      }
+      else: { }
+    }
   }
   types.u32leb(count);
   funcs.u32leb(count);
-  exports.u32leb(count);
+  exports.u32leb(exportCount);
   code.u32leb(count);
 
   i32 index = 0;
@@ -156,13 +254,33 @@ export u8[] emitModule(u8[] src) {
         if (returnsValue) { types.byte(wasmI32()); }
 
         funcs.u32leb(index);
-        exports.name(tokenTextOf(src, lexed, nameTok));
-        exports.byte(0);
-        exports.u32leb(index);
+        if (exported) {
+          exports.name(tokenTextOf(src, lexed, nameTok));
+          exports.byte(0);
+          exports.u32leb(index);
+        }
+
+        env.localCount = 0;
+        for (i32 i = 0; i < params.len(); i++) {
+          env.addLocal(tokenTextOf(src, lexed, params[i].nameTok));
+        }
+        env.paramCount = params.len();
+        collectLocals(env, src, lexed, body);
 
         B fb = B.create();
-        fb.u32leb(0);   // no locals beyond the parameters
-        emitBody(fb, src, lexed, params, body);
+        i32 extra = env.localCount - env.paramCount;
+        if (extra > 0) {
+          fb.u32leb(1);
+          fb.u32leb(extra);
+          fb.byte(wasmI32());
+        } else {
+          fb.u32leb(0);
+        }
+        emitBody(fb, src, lexed, env, body);
+        // Every wac function that returns a value returns on all paths — the checker says so — so the
+        // fall-through is unreachable rather than missing. Saying it explicitly is what makes the
+        // block well-typed without inventing a value for a path nothing takes.
+        if (returnsValue) { fb.byte(0); }
         fb.byte(11);    // `end`
         code.u32leb(fb.len);
         code.bytes(fb);
@@ -192,7 +310,7 @@ export u8[] emitModule(u8[] src) {
   return result;
 }
 
-/** A token's text, which the emitter needs for an export's name. */
+/** A token's text, which the emitter needs for an export's name and for every lookup. */
 string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   if (t < 0) { return ""; }
   i32 start = lexed.tokens[t * tokenStride() + 1];
@@ -211,51 +329,217 @@ string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
   }
 }
 
-/** The statements of a body. Only a `return` carries a value in this slice. */
-void emitBody(B fb, u8[] src, Lexed lexed, Param[] params, Stmt[] body) {
-  for (i32 i = 0; i < body.len(); i++) {
-    match (body[i].kind) {
-      case Return(value): {
-        if (!(value is null)) { emitExpr(fb, src, lexed, params, value!); }
-        return;
-      }
-      else: { }
+/** Statements, in order. */
+void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
+}
+
+/**
+ * One statement.
+ *
+ * `if` and `while` are wasm's structured control flow rather than jumps, which is the one place the
+ * emitted shape is *simpler* than the language's: a `while` is a `block` wrapping a `loop`, the
+ * condition inverted and branching out of the block, the body branching back to the loop's top. The
+ * two labels are relative — 1 is the block, 0 is the loop — and getting them the wrong way round
+ * produces a module that validates and hangs, which is why both are tested by running.
+ */
+void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      emitExpr(fb, src, lexed, env, init);
+      fb.byte(33);   // local.set
+      fb.u32leb(env.localAt(tokenTextOf(src, lexed, nameTok)));
     }
+    case Assign(target, op, rhs): {
+      match (target.kind) {
+        case LIdent(tok): {
+          string name = tokenTextOf(src, lexed, tok);
+          i32 at = env.localAt(name);
+          if (at < 0) { return; }
+          i32 k = lexed.tokens[op * tokenStride()];
+          if (k != kAssign()) {
+            // `n += 1` is `n = n + 1` with the operator spelled into the assignment, so the target is
+            // pushed first and the compound operator applied to the pair.
+            fb.byte(32);
+            fb.u32leb(at);
+          }
+          emitExpr(fb, src, lexed, env, rhs);
+          if (k != kAssign()) { emitCompound(fb, k); }
+          fb.byte(33);
+          fb.u32leb(at);
+        }
+        else: { }
+      }
+    }
+    case Return(value): {
+      if (!(value is null)) { emitExpr(fb, src, lexed, env, value!); }
+      fb.byte(15);   // return
+    }
+    case If(cond, then, els): {
+      emitExpr(fb, src, lexed, env, cond);
+      fb.byte(4);    // if
+      fb.byte(64);   // blocktype: nothing
+      emitBody(fb, src, lexed, env, then);
+      if (els.len() > 0) {
+        fb.byte(5);  // else
+        emitBody(fb, src, lexed, env, els);
+      }
+      fb.byte(11);   // end
+    }
+    case While(cond, inner): {
+      fb.byte(2);
+      fb.byte(64);   // block
+      fb.byte(3);
+      fb.byte(64);   // loop
+      emitExpr(fb, src, lexed, env, cond);
+      fb.byte(69);   // i32.eqz — leave when the condition fails
+      fb.byte(13);
+      fb.u32leb(1);  // br_if out of the block
+      emitBody(fb, src, lexed, env, inner);
+      fb.byte(12);
+      fb.u32leb(0);  // br back to the loop
+      fb.byte(11);
+      fb.byte(11);
+    }
+    case Block(inner): { emitBody(fb, src, lexed, env, inner); }
+    case ExprStmt(e) : {
+      // A call for its effect. Nothing here produces a value that is then discarded, because the only
+      // expression statement this slice emits is a call to a `void` function.
+      emitExpr(fb, src, lexed, env, e);
+    }
+    else: { }
   }
+}
+
+/** The operator of a compound assignment, which is the binary one with the `=` taken off. */
+void emitCompound(B fb, i32 k) {
+  if (k == 58) { fb.byte(106); }   // +=
+  if (k == 59) { fb.byte(107); }   // -=
+  if (k == 60) { fb.byte(108); }   // *=
+  if (k == 61) { fb.byte(109); }   // /=
 }
 
 /**
  * An expression, in the order wasm wants it: operands, then the operator.
  *
- * A parameter is a local by its position, which is the whole of the environment here — locals proper
- * arrive with the statement that declares one.
+ * `&&` and `||` are the exception, and the reason is that they **short-circuit**: they cannot be two
+ * operands and an opcode, because the right one may not be evaluated at all. Each becomes an `if`
+ * with a value type — the one place this emitter writes a block that produces something.
  */
-void emitExpr(B fb, u8[] src, Lexed lexed, Param[] params, Expr e) {
+void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
   match (e.kind) {
     case IntLit(tok): {
-      fb.byte(65);   // i32.const
+      fb.byte(65);
       fb.i32leb(parseInt(tokenTextOf(src, lexed, tok)));
     }
+    case BoolLit(value): {
+      fb.byte(65);
+      fb.i32leb(value ? 1 : 0);
+    }
     case Ident(tok): {
-      string want = tokenTextOf(src, lexed, tok);
-      for (i32 i = 0; i < params.len(); i++) {
-        if (tokenTextOf(src, lexed, params[i].nameTok) == want) {
-          fb.byte(32);   // local.get
-          fb.u32leb(i);
-          return;
-        }
+      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
+      if (at < 0) { return; }
+      fb.byte(32);
+      fb.u32leb(at);
+    }
+    case Unary(op, operand): {
+      i32 k = lexed.tokens[op * tokenStride()];
+      if (k == kBang()) {
+        emitExpr(fb, src, lexed, env, operand);
+        fb.byte(69);   // i32.eqz
+        return;
+      }
+      if (k == kMinus()) {
+        // No `i32.neg` exists: negation is a subtraction from zero, which is what the instruction set
+        // offers and what every wasm emitter writes.
+        fb.byte(65);
+        fb.i32leb(0);
+        emitExpr(fb, src, lexed, env, operand);
+        fb.byte(107);
+        return;
+      }
+      if (k == kTilde()) {
+        emitExpr(fb, src, lexed, env, operand);
+        fb.byte(65);
+        fb.i32leb(-1);
+        fb.byte(115);   // i32.xor with all ones
+        return;
       }
     }
     case Binary(op, left, right): {
-      emitExpr(fb, src, lexed, params, left);
-      emitExpr(fb, src, lexed, params, right);
       i32 k = lexed.tokens[op * tokenStride()];
-      if (k == kPlus()) { fb.byte(106); }
-      if (k == kMinus()) { fb.byte(107); }
-      if (k == kStar()) { fb.byte(108); }
+      if (k == kAndAnd() || k == kOrOr()) {
+        emitExpr(fb, src, lexed, env, left);
+        fb.byte(4);
+        fb.byte(wasmI32());   // if, producing an i32
+        if (k == kAndAnd()) {
+          emitExpr(fb, src, lexed, env, right);
+          fb.byte(5);
+          fb.byte(65);
+          fb.i32leb(0);
+        } else {
+          fb.byte(65);
+          fb.i32leb(1);
+          fb.byte(5);
+          emitExpr(fb, src, lexed, env, right);
+        }
+        fb.byte(11);
+        return;
+      }
+      emitExpr(fb, src, lexed, env, left);
+      emitExpr(fb, src, lexed, env, right);
+      emitBinary(fb, k);
+    }
+    case Construct(ctype, args, named): {
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          i32 at = env.funcAt(tokenTextOf(src, lexed, tok));
+          if (at < 0) { return; }
+          for (i32 i = 0; i < args.len(); i++) { emitExpr(fb, src, lexed, env, args[i]); }
+          fb.byte(16);   // call
+          fb.u32leb(at);
+        }
+        else: { }
+      }
+    }
+    case Ternary(cond, then, els): {
+      emitExpr(fb, src, lexed, env, cond);
+      fb.byte(4);
+      fb.byte(wasmI32());
+      emitExpr(fb, src, lexed, env, then);
+      fb.byte(5);
+      emitExpr(fb, src, lexed, env, els);
+      fb.byte(11);
     }
     else: { }
   }
+}
+
+/**
+ * A binary operator's opcode.
+ *
+ * The signed ones are signed because this slice is `i32` throughout: `/`, `%`, `>>` and the four
+ * comparisons each have a `_u` twin that an unsigned type would want instead, and choosing between
+ * them is the first thing a second numeric type will need.
+ */
+void emitBinary(B fb, i32 k) {
+  if (k == kPlus()) { fb.byte(106); }
+  if (k == kMinus()) { fb.byte(107); }
+  if (k == kStar()) { fb.byte(108); }
+  if (k == kSlash()) { fb.byte(109); }     // i32.div_s
+  if (k == kPercent()) { fb.byte(111); }   // i32.rem_s
+  if (k == kAnd()) { fb.byte(113); }
+  if (k == kOr()) { fb.byte(114); }
+  if (k == kCaret()) { fb.byte(115); }
+  if (k == kShl()) { fb.byte(116); }
+  if (k == kShr()) { fb.byte(117); }       // i32.shr_s
+  if (k == kShrU()) { fb.byte(118); }      // i32.shr_u
+  if (k == kEq()) { fb.byte(70); }
+  if (k == kNe()) { fb.byte(71); }
+  if (k == kLt()) { fb.byte(72); }         // i32.lt_s
+  if (k == kGt()) { fb.byte(74); }
+  if (k == kLe()) { fb.byte(76); }
+  if (k == kGe()) { fb.byte(78); }
 }
 
 /** A decimal integer literal's value. */

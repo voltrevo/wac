@@ -1183,7 +1183,44 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
-### Rung 4 has a skeleton that runs
+### Rung 4: a slice that can express a real function
+
+**33 programs, 52 calls, every answer agreeing with the reference.** From nine and thirteen: locals
+and assignment, compound assignment, the whole `i32` operator set, comparisons, short-circuiting `&&`
+and `||`, `if`/`else`, `while`, the ternary, calls, a call to something declared further down, and
+recursion. Every module validates, and each construct earns its place by being *run* rather than read.
+
+Three things are worth writing down.
+
+**wasm has no names.** A parameter and a local are both an index, parameters first, and a call names a
+function by index too — so the whole environment is two lists whose *position* is the answer. That is
+the emitter's version of what the checker's flat name table already was, arrived at from the other
+end.
+
+**The locals declaration comes before the code that uses it**, so every local a body declares has to
+be collected before anything is emitted — nested blocks included, since wasm has one flat frame per
+function whatever the language's scopes look like. That is the same shape as the checker's
+declare-before-walk pass, for a related reason.
+
+**`&&` and `||` cannot be two operands and an opcode**, because they short-circuit: the right side may
+not be evaluated at all. Each becomes an `if` with a value type, which is the one place this emitter
+writes a block that produces something. The test for it divides by zero on the side that must not run,
+so a wrong answer traps rather than merely differing.
+
+`while` is a `block` wrapping a `loop`, the condition inverted and branching out, the body branching
+back — labels relative, 1 for the block and 0 for the loop. Getting them the wrong way round produces
+a module that **validates and hangs**, which is the argument for an oracle that runs the code in one
+sentence.
+
+The slice ends where a second numeric type begins. `/`, `%`, `>>` and the four comparisons each have a
+`_u` twin, and choosing between them needs the *type* of the operand rather than the token — so `>>>`
+is deliberately not exercised rather than exercised wrongly, and an unsigned cast is the first thing
+the next slice will want.
+
+Checked, as before, by emitting `i32.div_u` where `i32.div_s` belonged and watching it report
+*"f(-7, 2) is 2147483644 from us and -3 from the reference"*.
+
+### Rung 4's first skeleton
 
 `emitModule` produces a wasm module, and the module **runs**. An exported `i32` function whose body is
 one `return` over literals, parameters and arithmetic — a fraction of the language, and the fraction is

@@ -66,6 +66,84 @@ const CASES: [string, Call[]][] = [
   // A literal wide enough to need more than one LEB byte, in both signs.
   ["export i32 big() { return 100000; }", [{ name: "big", args: [] }]],
   ["export i32 neg() { return 0 - 100000; }", [{ name: "neg", args: [] }]],
+
+  // ── Locals and assignment ──────────────────────────────────────────────────
+  ["export i32 f(i32 a) { i32 x = a + 1; return x * x; }", [{ name: "f", args: [4] }]],
+  ["export i32 f(i32 a) { i32 x = a; x = x + 10; x = x * 2; return x; }", [{ name: "f", args: [3] }]],
+  ["export i32 f(i32 a) { i32 x = a; x += 5; x -= 2; x *= 3; return x; }", [{ name: "f", args: [1] }]],
+  // Two locals, so the indices have to be assigned in declaration order after the parameters.
+  ["export i32 f(i32 a, i32 b) { i32 x = a * 2; i32 y = b * 3; return x + y; }",
+    [{ name: "f", args: [5, 7] }]],
+
+  // ── The rest of the i32 operators, signedness included ──────────────────────
+  ["export i32 f(i32 a, i32 b) { return a / b; }", [
+    { name: "f", args: [7, 2] },
+    // Signed division truncates toward zero, which is the half `i32.div_u` would get wrong.
+    { name: "f", args: [-7, 2] },
+  ]],
+  ["export i32 f(i32 a, i32 b) { return a % b; }", [
+    { name: "f", args: [7, 3] },
+    { name: "f", args: [-7, 3] },
+  ]],
+  ["export i32 f(i32 a, i32 b) { return (a & b) + (a | b) + (a ^ b); }",
+    [{ name: "f", args: [12, 10] }]],
+  ["export i32 f(i32 a, i32 b) { return a << b; }", [{ name: "f", args: [1, 10] }]],
+  // `>>` is arithmetic here because everything in this slice is `i32`. The logical twin needs an
+  // unsigned operand to be reached at all, and an unsigned *type* is what this slice does not have —
+  // so `>>>` is deliberately not exercised rather than exercised wrongly.
+  ["export i32 f(i32 a) { return a >> 1; }", [{ name: "f", args: [-8] }]],
+  ["export i32 f(i32 a) { return -a; }", [{ name: "f", args: [5] }]],
+  ["export i32 f(i32 a) { return ~a; }", [{ name: "f", args: [5] }]],
+
+  // ── Comparisons and the boolean operators ──────────────────────────────────
+  ["export bool f(i32 a, i32 b) { return a < b; }", [
+    { name: "f", args: [1, 2] },
+    { name: "f", args: [2, 1] },
+    // Signed comparison, which is the half `lt_u` would get wrong.
+    { name: "f", args: [-1, 1] },
+  ]],
+  ["export bool f(i32 a, i32 b) { return a == b || a > b; }", [
+    { name: "f", args: [3, 3] },
+    { name: "f", args: [4, 3] },
+    { name: "f", args: [2, 3] },
+  ]],
+  ["export bool f(i32 a, i32 b) { return a != b && a <= b; }", [
+    { name: "f", args: [1, 2] },
+    { name: "f", args: [2, 2] },
+  ]],
+  ["export bool f(bool a) { return !a; }", [{ name: "f", args: [1] }, { name: "f", args: [0] }]],
+  // Short-circuit is observable: if `||` evaluated its right side, this would divide by zero and trap.
+  ["export bool f(i32 a) { return a == 0 || 10 / a > 1; }", [{ name: "f", args: [0] }]],
+
+  // ── Control flow ───────────────────────────────────────────────────────────
+  ["export i32 f(i32 a) { if (a > 0) { return 1; } return 0; }", [
+    { name: "f", args: [5] },
+    { name: "f", args: [-5] },
+  ]],
+  ["export i32 f(i32 a) { if (a > 0) { return 1; } else { return 2; } }", [
+    { name: "f", args: [1] },
+    { name: "f", args: [-1] },
+  ]],
+  ["export i32 f(i32 n) { i32 total = 0; i32 i = 0; while (i < n) { total = total + i; i = i + 1; } return total; }",
+    [{ name: "f", args: [5] }, { name: "f", args: [0] }, { name: "f", args: [100] }]],
+  // A loop whose body has an `if` in it, so the labels have to nest correctly.
+  ["export i32 f(i32 n) { i32 c = 0; i32 i = 0; while (i < n) { if (i % 2 == 0) { c = c + 1; } i = i + 1; } return c; }",
+    [{ name: "f", args: [10] }]],
+  ["export i32 f(bool c, i32 a, i32 b) { return c ? a : b; }", [
+    { name: "f", args: [1, 7, 9] },
+    { name: "f", args: [0, 7, 9] },
+  ]],
+
+  // ── Calls ──────────────────────────────────────────────────────────────────
+  ["i32 twice(i32 a) { return a * 2; } export i32 f(i32 a) { return twice(a) + twice(1); }",
+    [{ name: "f", args: [10] }]],
+  // A call to something declared *after* it, which is why the names are collected in a pass of
+  // their own.
+  ["export i32 f(i32 a) { return later(a); } i32 later(i32 a) { return a + 100; }",
+    [{ name: "f", args: [1] }]],
+  // Recursion, which is a call that has to work before the function it is in is finished.
+  ["export i32 fact(i32 n) { if (n <= 1) { return 1; } return n * fact(n - 1); }",
+    [{ name: "fact", args: [1] }, { name: "fact", args: [5] }, { name: "fact", args: [10] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {
