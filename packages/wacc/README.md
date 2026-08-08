@@ -1183,6 +1183,43 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Imports: linking by concatenation — 32 of 336 to 70
+
+297 of the 336 corpus files were declined for "an import", which made it the largest single thing
+standing between this emitter and the rung above: `wacc` is eight files, and a compiler that cannot
+compile a program with imports cannot compile itself.
+
+**Linking is a concatenation here**, and the reason it can be is how this emitter already worked:
+every declaration in a module is collected before any function is emitted, so a name declared in
+another file is reached exactly as one declared further down the same file is. The entry goes first
+and the closure of its imports follows, resolved by following each file's own import paths — which
+is also what makes the export rule right: the module's exports are the *entry's*, and an imported
+file's `export` marks a name as reachable across files rather than as a wasm export.
+
+What that gives up is **per-file scope**: a file here can see a name it never imported. That is safe
+in one direction only — this emitter accepts more than the language does, and the checker one rung
+down is what says no — and it could not make a program mean something *different*. The failure it
+does have is sharper, and it is now the corpus's largest category: two files that declare one name.
+`sha256.wac` and `sha512.wac` both declare a module-level `K`; three files declare `itoa64`. A pool
+cannot hold two meanings for a name, and picking whichever registered first is how a call reaches the
+wrong function, so the whole module is declined by name — `two files declaring K` — rather than half
+of it emitted.
+
+| | before | after |
+|---|---|---|
+| whole files | 31 | **70** |
+| invalid modules | 0 | 0 |
+| blocked by an import | 297 | 0 |
+| blocked by a name two files share | — | 109 |
+
+The nine cross-file shapes in `linkEmit.test.ts` all agreed on the first run — a function, a struct, a
+method, a constant, a string, an enum matched in a file that never imported its type, a diamond, a
+three-deep chain, and a `../` path — which says the hard part was never the linking. Both ways it can
+fail are asserted by name too: a file the caller did not supply and a clash both produce a module
+that does nothing, and "does nothing" is the one answer this rung must never report quietly.
+
+The next step is the obvious one: names scoped to their file, so `K` in two files is two names.
+
 ### Enums, in one struct rather than a hierarchy
 
 The language's enums compile, as the spec says, to "the struct hierarchy you would otherwise write by

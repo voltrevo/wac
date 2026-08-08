@@ -14,25 +14,31 @@ import { loadCorpus } from "./corpus.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
-const emit = mod.emit as (src: Uint8Array) => Uint8Array;
-const blocked = mod.blocked as (src: Uint8Array) => string;
-const enc = new TextEncoder();
+const emitFiles = mod.emitFiles as (p: string[], s: string[], e: string) => Uint8Array;
+const blockedFiles = mod.blockedFiles as (p: string[], s: string[], e: string) => string;
 
 Deno.test("rung 4: the repository corpus, compiled", async () => {
   const entries = await loadCorpus("packages/wacc/test/corpusEmit.test.ts");
   if (entries.length < 100) throw new Error(`only ${entries.length} corpus files loaded`);
 
+  // **Every file is compiled as an entry, with the whole corpus available to import from.** Passing
+  // more files than the entry needs costs nothing — what is emitted is the closure of its imports —
+  // and it is the only honest way to ask the question, since resolving the closure here would be
+  // this test grading its own homework.
+  const paths = entries.map(([name]) => name);
+  const sources = entries.map(([, src]) => src);
+
   let whole = 0;
   let partial = 0;
   let invalid = 0;
   const reasons = new Map<string, number>();
-  for (const [, src] of entries) {
-    const bytes = Uint8Array.from(emit(enc.encode(src)) as unknown as number[]);
+  for (const [name] of entries) {
+    const bytes = Uint8Array.from(emitFiles(paths, sources, name) as unknown as number[]);
     if (!WebAssembly.validate(bytes)) {
       invalid++;
       continue;
     }
-    const why = blocked(enc.encode(src));
+    const why = blockedFiles(paths, sources, name);
     if (why === "") whole++;
     else {
       partial++;

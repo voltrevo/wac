@@ -346,6 +346,14 @@ export struct Env {
    * The cost is space: a `Rect` carries the slots a `Circle` would have used. That is the trade a
    * language with no unions makes anyway, and nothing here is measuring bytes yet.
    */
+  /**
+   * The first top-level name two linked files both declare, or `""`.
+   *
+   * Linking by concatenation puts every file's declarations in one pool, and a pool cannot hold two
+   * meanings for one name: a call would resolve to whichever was registered first, silently, in a
+   * module that validates. So the whole module is declined rather than half of it emitted.
+   */
+  string clash;
   string[] variantNames;
   string[] variantOwners;
   i32[] variantTags;
@@ -640,6 +648,117 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   }
 }
 
+/** The last `/` in a path, or -1 — the one piece of path arithmetic everything else here needs. */
+i32 lastSlash(string path) {
+  for (i32 i = path.len() - 1; i >= 0; i--) {
+    if (path[i] == "/") { return i; }
+  }
+  return -1;
+}
+
+/**
+ * The file an import names, resolved against the file that wrote it.
+ *
+ * Only the two spellings a wac import uses — `./x.wac` and `../y/z.wac` — because a path with no
+ * prefix is not a file import at all but a capability, and those are declined by name.
+ */
+string resolveImport(string from, string rel) {
+  string dir = from.slice(0, lastSlash(from) + 1);
+  string r = rel;
+  for (i32 guard = 0; guard < 64; guard++) {
+    if (r.len() >= 2 && r.slice(0, 2) == "./") {
+      r = r.slice(2, r.len());
+      continue;
+    }
+    if (r.len() >= 3 && r.slice(0, 3) == "../") {
+      r = r.slice(3, r.len());
+      // Up one: drop the trailing slash, then everything after the one before it.
+      dir = dir.slice(0, dir.len() - 1);
+      dir = dir.slice(0, lastSlash(dir) + 1);
+      continue;
+    }
+    return dir + r;
+  }
+  return dir + r;
+}
+
+/** A file's text from the table the caller supplied, or `""` when it was not supplied. */
+string sourceOf(string[] paths, string[] sources, string path) {
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == path) { return sources[i]; }
+  }
+  return "";
+}
+
+/**
+ * The entry and everything it imports, transitively, in one buffer with the entry first.
+ *
+ * **Linking by concatenation**, which is available because of how this emitter already works: every
+ * declaration in the module is collected before any function is emitted, so a name declared in
+ * another file is reached exactly as one declared further down the same file is. What that gives up
+ * is per-file scope — a file here can see a name it never imported — and giving it up is safe in one
+ * direction only: this emitter *accepts* more than the language does, and the checker one rung down
+ * is what says no. It could not make a program mean something different.
+ *
+ * The entry goes first so that the decls belonging to it are a prefix, which is what decides who may
+ * be exported: the module's exports are the entry's, and an imported file's `export` marks a name as
+ * reachable across files rather than as a wasm export.
+ *
+ * `""` means a file was named that the caller did not supply — the one failure this cannot paper
+ * over, since the missing declarations would otherwise look merely undefined.
+ */
+string linkFiles(string[] paths, string[] sources, string entry) {
+  string[] queue = string[256]();
+  string[] seen = string[256]();
+  i32 qn = 1;
+  i32 sn = 0;
+  queue[0] = entry;
+  string out = "";
+  for (i32 qi = 0; qi < qn; qi++) {
+    string path = queue[qi];
+    bool dup = false;
+    for (i32 i = 0; i < sn; i++) {
+      if (seen[i] == path) { dup = true; }
+    }
+    if (dup) { continue; }
+    if (sn >= seen.len()) { return ""; }
+    seen[sn] = path;
+    sn = sn + 1;
+    string body = sourceOf(paths, sources, path);
+    if (body == "") { return ""; }
+    // A newline between files, so a file that ends mid-line cannot join itself to the next one.
+    out = out + body + "\n";
+    u8[] b = body.toBytes();
+    Lexed lexed = lex(b);
+    P p = P.create(b, lexed.tokens, lexed.tokenCount);
+    Program prog = parseProgram(p);
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case Import(pathTok, prefixTok, items): {
+          // A capability import (`from core`) names no file. It is left for the walk to decline by
+          // name rather than treated as a missing one.
+          if (prefixTok >= 0) { continue; }
+          string quoted = tokenTextOf(b, lexed, pathTok);
+          if (quoted.len() < 2) { continue; }
+          if (qn >= queue.len()) { return ""; }
+          queue[qn] = resolveImport(path, quoted.slice(1, quoted.len() - 1));
+          qn = qn + 1;
+        }
+        else: { }
+      }
+    }
+  }
+  return out;
+}
+
+/** How many declarations the entry file contributes, which is how far the exports reach. */
+i32 declCountOf(string source) {
+  u8[] b = source.toBytes();
+  Lexed lexed = lex(b);
+  P p = P.create(b, lexed.tokens, lexed.tokenCount);
+  return parseProgram(p).decls.len();
+}
+
 /**
  * A module for the functions this slice understands.
  *
@@ -647,12 +766,45 @@ void collectLocals(Env env, u8[] src, Lexed lexed, Stmt[] body) {
  * none of which an `i32` calculation needs, and each of which is a section that can be added when
  * something needs it rather than because a real module usually has one.
  */
-export u8[] emitModule(u8[] src) {
+export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1); }
+
+/**
+ * One module from many files: the entry, everything it imports, and nothing else.
+ *
+ * The caller supplies the files because this compiler is a wasm module and has no filesystem — which
+ * is the same reason the reference takes a map rather than a directory. A path it names and the
+ * caller did not supply is a bare module rather than a wrong one.
+ */
+export u8[] emitLinked(string[] paths, string[] sources, string entry) {
+  string blob = linkFiles(paths, sources, entry);
+  if (blob == "") { return bareModule(); }
+  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)));
+}
+
+/** A module with nothing in it, for the cases where emitting anything would be a guess. */
+u8[] bareModule() {
+  u8[] out = u8[8]();
+  out[0] = 0;
+  out[1] = 97;
+  out[2] = 115;
+  out[3] = 109;
+  out[4] = 1;
+  return out;
+}
+
+/**
+ * `entryDecls` is how many declarations may be exported, or -1 when the source is a single file.
+ *
+ * The two are the same pipeline: linking happens before this, and what arrives is one buffer either
+ * way. The count is the only thing that has to survive the join — an imported file's `export` means
+ * "visible to the file that imported me", not "visible to JavaScript".
+ */
+u8[] emitModuleOf(u8[] src, i32 entryDecls) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0, string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "", string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0, string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0, "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
 
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
@@ -683,6 +835,7 @@ export u8[] emitModule(u8[] src) {
     one2[0] = "u8[]";
     env.addFunc(" str_from_bytes", "string", one2);
   }
+  if (env.clash != "") { return bareModule(); }
   settleEmittable(env, src, lexed, prog);
 
   B types = B.create();
@@ -699,7 +852,7 @@ export u8[] emitModule(u8[] src) {
         if (env.funcIndex[countAt] < 0) { countAt = countAt + 1; continue; }
         countAt = countAt + 1;
         count = count + 1;
-        if (exported) { exportCount = exportCount + 1; }
+        if (exported && (entryDecls < 0 || d < entryDecls)) { exportCount = exportCount + 1; }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
@@ -831,7 +984,8 @@ export u8[] emitModule(u8[] src) {
         if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
         emitAt = emitAt + 1;
         emitFunction(types, funcs, exports, code, src, lexed, env, prog,
-                     exported ? tokenTextOf(src, lexed, nameTok) : "",
+                     exported && (entryDecls < 0 || d < entryDecls)
+                       ? tokenTextOf(src, lexed, nameTok) : "",
                      returnType, params, body, "", index, declTypes);
         index = index + 1;
       }
@@ -2847,16 +3001,26 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
  * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
  */
-export string emitBlocked(u8[] src) {
+export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1); }
+
+/** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
+export string blockedLinked(string[] paths, string[] sources, string entry) {
+  string blob = linkFiles(paths, sources, entry);
+  if (blob == "") { return "an import of a file that was not supplied"; }
+  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)));
+}
+
+string emitBlockedOf(u8[] src, i32 entryDecls) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
                 string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0, bool[512](), i32[512](), 0,
-                string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+                "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
+  if (env.clash != "") { return "two files declaring " + env.clash; }
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -2882,7 +3046,13 @@ export string emitBlocked(u8[] src) {
         if (typeParams.len() > 0) { return "a generic enum"; }
         if (methods.len() > 0) { return "a method on an enum"; }
       }
-      case Import(pathTok, prefixTok, items): { return "an import"; }
+      // An import is only a blocker when nothing resolved it. Linked, the names it brings in are
+      // already in the pool — except a capability import, which names no file and would be a wasm
+      // import of something this emitter has no way to supply.
+      case Import(pathTok, prefixTok, items): {
+        if (entryDecls < 0) { return "an import"; }
+        if (prefixTok >= 0) { return "an import from a capability"; }
+      }
       case ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(src, lexed, type);
         if (isArrayType(ct) || env.isStructName(ct)) {
@@ -2934,6 +3104,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string sname = tokenTextOf(src, lexed, nameTok);
+        if (env.isStructName(sname) && env.clash == "") { env.clash = sname; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = sname;
           env.structCount = env.structCount + 1;
@@ -2953,6 +3124,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string ename = tokenTextOf(src, lexed, nameTok);
+        if (env.isStructName(ename) && env.clash == "") { env.clash = ename; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = ename;
           env.structCount = env.structCount + 1;
@@ -2993,6 +3165,8 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
         if (env.constCount >= env.constNames.len()) { continue; }
+        string cname = tokenTextOf(src, lexed, nameTok);
+        if (env.constAt(cname) >= 0 && env.clash == "") { env.clash = cname; }
         env.constNames[env.constCount] = tokenTextOf(src, lexed, nameTok);
         env.constGlobal[env.constCount] = -1;
         env.constTypes[env.constCount] = typeOfTyName(src, lexed, type);
@@ -3011,7 +3185,9 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         if (typeParams.len() > 0) { continue; }
         string[] pts = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { pts[i] = typeOfTyName(src, lexed, params[i].type); }
-        env.addFunc(tokenTextOf(src, lexed, nameTok), typeOfTyName(src, lexed, returnType), pts);
+        string fname = tokenTextOf(src, lexed, nameTok);
+        if (env.funcAt(fname) >= 0 && env.clash == "") { env.clash = fname; }
+        env.addFunc(fname, typeOfTyName(src, lexed, returnType), pts);
       }
       // A method is a function with the receiver as its first parameter — which is what the call site
       // does too, pushing the object before the arguments. Registered under `Struct.name` so a bare
@@ -3118,7 +3294,7 @@ export string emitNames(u8[] src) {
                 string[64](), i32[64](), string[64](), Expr?[64](), 0, string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
                 string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
                 bool[512](), i32[512](), 0,
-                string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
+                "", string[256](), string[256](), i32[256](), i32[256](), i32[256](), 0);
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
