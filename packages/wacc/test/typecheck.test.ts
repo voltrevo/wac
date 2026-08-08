@@ -1220,3 +1220,56 @@ Deno.test("rung 3: method calls, static and through a const receiver", () => {
     }
   }
 });
+
+/**
+ * Every conversion against every cast operator, with the reference deciding each cell.
+ *
+ * `losslessCast` and `rawCast` in the checker are **tables**, not formulas, because no formula fits.
+ * `u32 -> u64` is lossless and `i32 -> u64` is not, since the first cannot be negative;
+ * `f32 -> f64` is and `i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer; and
+ * `as@` is close to "an integer target no wider than the source" except for `f64 -> i64`, which the
+ * reference refuses while allowing `f64 -> i32`. A rule invented to cover most of that would be wrong
+ * about the rest.
+ *
+ * So the tables are carried, and this re-derives them from the reference on every run. That is the
+ * arrangement for anything measured rather than reasoned: the table is the implementation, the grid
+ * is the proof, and drift in the language fails here rather than being discovered later.
+ */
+Deno.test("rung 3: every conversion against every cast operator", () => {
+  const TYPES = ["i32", "u32", "i64", "u64", "f32", "f64"];
+  const OPS = ["as", "as!", "as~", "as@"];
+  let cells = 0;
+  let rejected = 0;
+  let caught = 0;
+  for (const from of TYPES) {
+    for (const to of TYPES) {
+      if (from === to) continue;
+      for (const op of OPS) {
+        const src = `export ${to} f(${from} x) { return x ${op} ${to}; }`;
+        const theirs = reference(src);
+        const mine = ours(src);
+        cells++;
+        if (theirs.length === 0) {
+          if (mine.length !== 0) {
+            throw new Error(`${from} ${op} ${to} is accepted and we report ${mine.join(", ")}`);
+          }
+          continue;
+        }
+        rejected++;
+        for (const at of mine) {
+          if (!theirs.some((e) => e.at === at)) {
+            throw new Error(`${from} ${op} ${to}: we report ${at}, the reference reports ` +
+              theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+          }
+        }
+        if (mine.length > 0) caught++;
+      }
+    }
+  }
+  if (cells !== 120) throw new Error(`${cells} cells, expected 120`);
+  if (caught !== rejected) {
+    throw new Error(`the reference rejects ${rejected} of ${cells} conversions and we catch ` +
+      `${caught}; the tables in check.wac have drifted from the language`);
+  }
+  console.error(`    cast grid: ${cells} cells, ${rejected} rejected, all caught`);
+});

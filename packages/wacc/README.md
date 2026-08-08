@@ -593,8 +593,38 @@ The lesson is the one the grid nearly missed: **a dimension you did not think to
 matter how finely you vary the others.** Written after a bug, a test tends to cover the shape of that
 bug rather than the space it came from.
 
-Next: more of rung 3 — the cast-operator family (`lossy cast not needed`), `switch` and `match`
-subjects, and generics properly.
+### The cast operators, which are a claim rather than a synonym
+
+Four spellings, and the language treats each as a statement about what is happening: `as` says nothing
+is lost, `as!` says the value is checked, `as~` says it is truncated, `as@` says the bits are
+reinterpreted. Writing the wrong one is an error precisely so that a reader can trust the spelling.
+
+**Spec coverage: 31 of 83**, from 27, and a grid of 120 conversions with all 54 rejections caught.
+
+`losslessCast` and `rawCast` are **tables, not formulas**, because no formula fits. `u32 -> u64` is
+lossless and `i32 -> u64` is not, since the first cannot be negative. `f32 -> f64` is and
+`i64 -> f64` is not, since 53 bits of mantissa do not hold 64 of integer. And `as@` is close to *an
+integer target no wider than the source* except for `f64 -> i64`, which the reference refuses while
+allowing `f64 -> i32`. A rule invented to cover most of that would have been wrong about the rest, so
+the tables are carried and the grid re-derives them from the reference on every run.
+
+**The positions took three corrections**, and only the corpus found each one:
+
+- *"lossy cast not needed"* names the **operand**;
+- *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* names the **operator**;
+- *"no raw conversion"* names the **operator**.
+
+The complaint that names the operand is the one saying the cast should not be there; the two that name
+the operator are saying this operator is the wrong one. That reads as a principle in hindsight and was
+three separate contradictions in practice — each landing two columns from the right answer, which is
+close enough to look like an off-by-one and be something else.
+
+Losslessness is also decided **before** the operator is looked at: `x as@ i64` from an `i32` is *"not
+needed"*, not *"no raw conversion"*. The reference complains that the conversion needs no help before
+it complains about which help was offered.
+
+Next: more of rung 3 — `switch` and `match` subjects, generics properly, and the remaining scattered
+type-mismatch cases.
 
 ### What rung 3's oracle looks like, measured
 

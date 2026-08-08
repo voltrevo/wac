@@ -36,6 +36,7 @@ import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
+  kAs, kAsBang, kAsTilde, kAsAt,
 } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Program, Stmt, StmtKind,
@@ -90,6 +91,8 @@ export i32 errNoStaticMethod() { return 13; }
 export i32 errNoMethod() { return 14; }
 /** A non-const method called through a const receiver. */
 export i32 errNonConstThroughConst() { return 15; }
+/** A cast written with an operator the conversion does not take. */
+export i32 errWrongCastOp() { return 16; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -129,6 +132,38 @@ export bool isPrimitiveName(string n) {
  * `void` rather than a side effect of not modelling it.
  */
 export bool returnsAValue(string n) { return n != "" && n != "void"; }
+
+/**
+ * Whether `from` to `to` loses nothing, so plain `as` is the operator.
+ *
+ * Measured, not derived. There is no tidy formula: `u32 -> u64` is lossless and `i32 -> u64` is not,
+ * because the first cannot be negative; `f32 -> f64` is and `i64 -> f64` is not, because 53 bits of
+ * mantissa do not hold 64 of integer. A rule invented to cover the first six would have been wrong
+ * about the seventh, so this is the set the reference agrees to, and the grid in
+ * `test/typecheck.test.ts` re-derives it from the reference on every run rather than trusting it.
+ */
+bool losslessCast(string from, string to) {
+  if (from == "i32") { return to == "i64" || to == "f64"; }
+  if (from == "u32") { return to == "i64" || to == "u64" || to == "f64"; }
+  if (from == "f32") { return to == "f64"; }
+  return false;
+}
+
+/**
+ * Whether `as@` — reinterpret the bits — is available for this conversion.
+ *
+ * Also measured. It is close to "the target is an integer no wider than the source", and that rule
+ * is wrong for `f64 -> i64`, which the reference refuses while allowing `f64 -> i32`. Rather than
+ * carry a formula with an exception, this carries the pairs.
+ */
+bool rawCast(string from, string to) {
+  if (from == "i32") { return to == "u32"; }
+  if (from == "u32") { return to == "i32"; }
+  if (from == "i64") { return to == "i32" || to == "u32" || to == "u64"; }
+  if (from == "u64") { return to == "i32" || to == "u32" || to == "i64"; }
+  if (from == "f32" || from == "f64") { return to == "i32" || to == "u32"; }
+  return false;
+}
 
 /** Whether `s` ends with `suffix`. wac has no string method for it. */
 bool endsWith(string s, string suffix) {
@@ -714,8 +749,8 @@ export string typeOfExpr(C c, Expr e) {
       if (owner == typeNone()) { return typeNone(); }
       return c.fieldType(owner, tokenText(c, nameTok));
     }
-    // A cast is its target type, whichever of the four spellings it used. `as` `as!` `as~` `as@`
-    // differ in what they *permit*, which is the reference's business, and not in what they produce.
+    // A cast is its target type, whichever of the four spellings it used. The four differ in what
+    // they *permit* — see `checkCast` — and not in what they produce.
     case Cast(op, operand, target): { return typeOfTy(c, target); }
     // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
     case Is(left, target, other, negated): { return "bool"; }
@@ -932,7 +967,7 @@ void checkExpr(C c, Expr e) {
     case Unary(op, operand): { checkExpr(c, operand); }
     // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
     // right answer — meant never looking inside it.
-    case Cast(op, operand, target): { checkExpr(c, operand); }
+    case Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
     case Unwrap(operand): { checkExpr(c, operand); }
     case Is(left, target, other, negated): {
       checkExpr(c, left);
@@ -1158,6 +1193,59 @@ void checkMethodCall(C c, Expr call, Expr obj, string name) {
   if (!isStatic && recvConst && !c.methodConsts[at]) {
     c.report(errNonConstThroughConst(), call.line, call.col);
   }
+}
+
+/**
+ * Whether this cast used the operator the conversion takes.
+ *
+ * Four spellings, and the language treats them as a claim about what is happening rather than as
+ * synonyms: `as` says nothing is lost, `as!` says the value is checked, `as~` says it is truncated,
+ * `as@` says the bits are reinterpreted. Using the wrong one is *"lossy cast not needed"* or its
+ * siblings — the reference's own family — and the point is that a reader can trust the spelling.
+ *
+ * Only conversions between two primitives this slice can name. A cast to or from a struct, an array
+ * or a generic is a reference cast, which has its own rules and its own diagnostics.
+ *
+ * The **position differs by which complaint it is**, which no amount of reasoning would have
+ * suggested and which took three corrections to get right:
+ *
+ *   - *"lossy cast not needed"* — a heavier operator on a conversion that loses nothing — names the
+ *     **operand**. For `x as~ i64` it is the `x`, not the `as~` two columns later.
+ *   - *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* names the **operator**, because it is
+ *     advice about which operator to write.
+ *   - *"no raw conversion for 'f64' -> 'f32'"* names the **operator** too.
+ *
+ * The one that names the operand is the one saying the cast should not be there at all; the two that
+ * name the operator are saying this operator is the wrong one. That reads as a principle in
+ * hindsight and was three separate contradictions from the spec corpus in practice.
+ */
+void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
+  string to = typeOfTy(c, target);
+  if (to == typeNone() || !isPrimitiveName(to) || isPackedName(to)) { return; }
+  string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  if (from == typeNone() || !isPrimitiveName(from) || isPackedName(from)) { return; }
+  if (from == to) { return; }
+
+  i32 k = tokenKind(c, op);
+  bool lossless = losslessCast(from, to);
+
+  // Losslessness is decided first, whichever operator was written. `x as@ i64` from an `i32` is
+  // *"lossy cast not needed"* and not *"no raw conversion"* — the reference complains that the
+  // conversion needs no help before it complains about which help was offered. Ordering this the
+  // other way round put the right diagnostic at the wrong position, and only the corpus said so.
+  if (k == kAs()) {
+    // At the operator: *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* is advice about
+    // which operator to write, so it points at the one that is there.
+    if (!lossless) { c.report(errWrongCastOp(), e.line, e.col); }
+    return;
+  }
+  if (lossless) {
+    c.report(errWrongCastOp(), operand.line, operand.col);
+    return;
+  }
+  // Not lossless, so `as!` and `as~` are both fine. `as@` additionally needs a raw form to exist,
+  // and *that* complaint is about the operator, so it is reported there.
+  if (k == kAsAt() && !rawCast(from, to)) { c.report(errWrongCastOp(), e.line, e.col); }
 }
 
 /** Every name a statement declares, however deeply nested. */
