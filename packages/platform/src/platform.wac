@@ -447,6 +447,29 @@ export i32 FAULT_NOT_GRANTED() { return 7; }
 export i32 FAULT_IS_DIR() { return 8; }
 
 /**
+ * **We have not written this.** Not the file's fault, not the build's, and not the host's.
+ *
+ * The ninth, and it exists because the closest available word was reaching users as a lie. `Fs.chmod`
+ * on a host mount is not implemented and said so in its *message* — while answering `FAULT_DENIED`,
+ * because that was the nearest category. `packages/sh` renders a fault as `faultWords` gives it, so
+ * "we have not written this" arrived as `chmod: cannot access 'o': Permission denied`, which blames
+ * the file for something the file did not do. GNU succeeds there: `chmod` wants ownership, not read.
+ *
+ * `faultWords` deliberately has **no phrase** for it, which is not an oversight but the mechanism:
+ * every caller already spells the empty case as `words == "" ? f.error : words`, so the *message* is
+ * what reaches the user — and the message is the only thing that can say **what** is unimplemented.
+ * A category with fixed words would say less than the sentence it replaced.
+ *
+ * So why a category at all, if it prints the message either way? Because a caller can **branch** on
+ * it, which is the same argument `FAULT_IS_DIR` won on. `FAULT_OTHER` means "the host said something
+ * no category covers" — a real failure, out there. This one means the request never reached a host.
+ * A program deciding whether to try another route needs to tell those apart, and until now could not.
+ *
+ * wac-mono 0117.
+ */
+export i32 FAULT_UNSUPPORTED() { return 9; }
+
+/**
  * A fault in the words the real tools use, or `""` where the category has none to give.
  *
  * One table, because there were four: `sh` had one for a `Change` and another for a `FileResult`, `box`
@@ -480,6 +503,8 @@ export string faultWords(i32 fault) {
   if (fault == FAULT_NOT_GRANTED()) { return "Not granted to this application"; }
   // Capitalised, like the rest here and like `strerror`, which is where GNU's wording comes from.
   if (fault == FAULT_IS_DIR()) { return "Is a directory"; }
+  // `FAULT_UNSUPPORTED` falls through to `""` on purpose — see its own comment. The message says what
+  // is unimplemented, and no fixed phrase could.
   return "";
 }
 

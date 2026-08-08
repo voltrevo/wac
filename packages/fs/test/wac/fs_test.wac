@@ -7,7 +7,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs } from "../../src/fs.wac";
-import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FileResult }
+import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult }
   from "../../../platform/src/platform.wac";
 
 export string test_a_file_written_reads_back() {
@@ -109,8 +109,10 @@ export string test_a_mount_takes_the_longest_prefix() {
   t.eqI32(fs.writeFile("/homework", "elsewhere\n".toBytes()).fault, FAULT_NONE(), "`/homework` is not `/home`");
   t.eqStr(string.fromBytes(fs.readFile("/homework").bytes), "elsewhere\n", "and stays where it was written");
 
-  // A rename across mounts is not implemented, and says so rather than half-doing it.
-  t.eqI32(fs.rename("/homework", "/home/hw").fault, FAULT_DENIED(), "across mounts is refused: not implemented, and said so");
+  // A rename across mounts is not implemented, and says so rather than half-doing it — in the
+  // category for exactly that, which is what this line was reaching for when it said `FAULT_DENIED`.
+  // That word means the *file* refused, and nothing here did; wac-mono 0117 gave it its own.
+  t.eqI32(fs.rename("/homework", "/home/hw").fault, FAULT_UNSUPPORTED(), "across mounts is refused: not implemented, and said so");
   return t.report();
 }
 

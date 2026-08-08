@@ -56,3 +56,25 @@ Found by trying to add a `chmod 000 d; ls d` case to `packages/sh`'s corpus and 
 cannot set the mode up at all. The `ls` half of that — a directory that is there and cannot be listed
 was printed as a *name* with status 0 — is fixed, with the case in
 `packages/box/test/unnameable.test.ts` and bash as the oracle.
+
+
+## Closed — 2026-08-08, agent-a
+
+`FAULT_UNSUPPORTED` is the ninth category, in `platform.wac` and `host/faults.ts`. It has **no phrase**
+in `faultWords`, and that is the mechanism rather than an omission: every caller already spells the
+empty case as `words == "" ? message : words`, so the message prints — and only the message can say
+*what* is unimplemented. A fixed phrase would say less than the sentence it replaced.
+
+Why a category at all, if the message prints either way: a caller can **branch** on it, which is the
+argument `FAULT_IS_DIR` won on. `FAULT_OTHER` means the host said something no category covers — a real
+failure, out there. This one means the request never reached a host.
+
+`Fs.chmod`, `Fs.chown` and `Fs.rename`-across-mounts use it, which is every place whose *message*
+already said "not implemented" while its fault said something else. And `packages/sh`'s `chmod` no
+longer wraps it in `cannot access '<path>'`: that frame is about the path, and this failure is not.
+
+    before   chmod: cannot access 'o': Permission denied
+    after    chmod: chmod on a host mount is not implemented
+
+`packages/box/test/unnameable.test.ts` holds it, with bash as the canary — GNU succeeds at that `chmod`,
+so the refusal is demonstrably ours rather than the directory's.

@@ -22,7 +22,7 @@ import { Option } from "../../std/src/option.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from core;
-import { Change, Child, Cli, Core, faultWords, FileResult,
+import { Change, Child, Cli, Core, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending, Stat }
   from "../../platform/src/platform.wac";
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
@@ -1854,7 +1854,15 @@ Output ownership(Shell sh, Vec<string> argv) {
     Change done = name == "chmod" ? sh.fs.chmod(sh.resolve(given), mode)
                                   : sh.fs.chown(sh.resolve(given), spec);
     if (!done.ok()) {
-      err.pushAll((name + ": cannot access '" + given + "': " + reasonOf(done) + "\n").toBytes());
+      // **"cannot access" is about the path, and this failure may not be.** An unsupported operation
+      // is a fact about *us*: framing it as reaching the file says the wrong thing twice over, once in
+      // the frame and once in whatever category the reason came from. So that one case says what it
+      // is and names no path — there is nothing wrong with the path. wac-mono 0117.
+      if (done.fault == FAULT_UNSUPPORTED()) {
+        err.pushAll((name + ": " + done.message + "\n").toBytes());
+      } else {
+        err.pushAll((name + ": cannot access '" + given + "': " + reasonOf(done) + "\n").toBytes());
+      }
       status = 1;
     }
   }
