@@ -2893,6 +2893,73 @@ Deno.test("[§wac-buf-pop-empty-c7jw3kf] testPopEmpty() traps", async () => {
 
 // ── Every tag in spec/ is named by a test ───────────────────────────────────
 
+/**
+ * Every `// error:` in the spec is a claim the compiler has to keep.
+ *
+ * The spec teaches by showing code, and where the code is *meant* to be rejected it says so in the block:
+ *
+ *     const i32 A = f();       // error: needs a compile-time value
+ *
+ * Nothing checked those. The tag test above checks that every `§wac-…` has a test naming it, which is a
+ * check on the *prose*; this is the same question asked of the **code**, and it is the half that rots
+ * silently — a rule relaxed in the checker leaves the spec asserting something no longer true, and the
+ * only reader who finds out is somebody writing the code the spec told them was an error.
+ *
+ * Fifty-five blocks claim an error and all fifty-five are still refused, which is why this lands as a
+ * ratchet rather than a bug report.
+ *
+ * **Only one direction is checked.** "Claims an error and compiles" is a defect with no false alarms.
+ * The opposite — "claims nothing and does not compile" — is not, because most blocks are fragments:
+ * statements meant to sit in a function, or a type defined in an earlier block. Asserting *those*
+ * compile would report the spec's own presentation as a bug, which is how a check gets deleted.
+ */
+Deno.test("every block the spec marks `// error:` is still an error", async () => {
+  const dir = new URL("../../spec", import.meta.url).pathname;
+  const files: string[] = [];
+  const walk = async (at: string) => {
+    for await (const e of Deno.readDir(at)) {
+      const path = `${at}/${e.name}`;
+      if (e.isDirectory) await walk(path);
+      else if (e.name.endsWith(".md")) files.push(path);
+    }
+  };
+  await walk(dir);
+
+  const accepted: string[] = [];
+  let claimed = 0;
+  for (const path of files.sort()) {
+    const text = await Deno.readTextFile(path);
+    for (const m of text.matchAll(/^```wac\n([\s\S]*?)^```/gm)) {
+      const body = m[1];
+      if (!/^\s*\/\/\s*error:/m.test(body) && !/\/\/\s*error:/.test(body)) continue;
+      claimed++;
+      const line = text.slice(0, m.index).split("\n").length;
+      const compile = (src: string) => {
+        try { return wacCompile(new Map([["main.wac", src]]), "main.wac"); } catch { return null; }
+      };
+      const parseOnly = (d: { message: string }[]) =>
+        d.every((x) => /^expected |^unexpected /.test(x.message));
+      // A fragment fails to parse at top level before the rule it illustrates is reached, so ask again
+      // with it inside a function. Either refusal counts — what must not happen is acceptance.
+      let r = compile(body);
+      if (r !== null && !r.ok && parseOnly(r.diagnostics)) {
+        const wrapped = compile(`export void _block() {\n${body}\n}`);
+        if (wrapped !== null && wrapped.ok) r = wrapped;
+      }
+      if (r !== null && r.ok) {
+        const says = body.match(/\/\/\s*error:\s*(.+)/)?.[1] ?? "";
+        accepted.push(`${path.slice(path.indexOf("/spec/"))}:${line} compiles, and says: ${says}`);
+      }
+    }
+  }
+  if (claimed < 40) throw new Error(`only ${claimed} blocks claim an error — did the walk resolve?`);
+  if (accepted.length > 0) {
+    throw new Error(
+      `${accepted.length} block(s) the spec calls an error now compile:\n  ${accepted.join("\n  ")}`,
+    );
+  }
+});
+
 Deno.test("every §wac-* tag in spec/ is named by some test", async () => {
   // A tag is a promise that the claim beside it is checked. Nothing enforced that, and one had
   // slipped through — §wac-wapy-range-6mn4dtq, which was true and untested for as long as it had

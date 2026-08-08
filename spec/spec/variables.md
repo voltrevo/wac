@@ -110,7 +110,7 @@ compile error — a write would otherwise be visible from every use.
 
 ```wac
 const i32[] T = i32[](1, 2);
-T[0] = 9;      // error: cannot assign to constant
+T[0] = 9;      // error: cannot write through const reference
 i32 x = T[1];  // reading is fine
 ```
 
