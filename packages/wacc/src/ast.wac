@@ -167,6 +167,15 @@ export struct Case {
   /** null for `default`. */
   Expr? value;
   Stmt[] body;
+  /**
+   * The `case` or `default` keyword's own position.
+   *
+   * A `Case` is not a `Stmt` and has no position otherwise, and *"case value must be i32"* names the
+   * keyword rather than the value — the same exception `override` is, and for the same reason: the
+   * complaint is about the arm rather than about the expression in it.
+   */
+  i32 line;
+  i32 col;
 }
 
 /**

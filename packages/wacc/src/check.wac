@@ -554,6 +554,25 @@ export struct C {
   string[] methodNames;
   bool[] methodStatics;
   bool[] methodConsts;
+  /**
+   * What each method returns, as written — `T` inside a generic, substituted at the call site.
+   *
+   * Absent until now, so a method call typed as *unknown* and every rule downstream of one stopped
+   * there: `this.getInner().mutate()` could not be refused because nothing knew what `getInner()`
+   * handed back, and `S.make` as a value had no type to mismatch against.
+   */
+  string[] methodReturns;
+  /**
+   * Each method's parameter types, flat, with `methodParamAt` and `methodParamCount` indexing in.
+   *
+   * Only a **static** method needs them: taking one as a value produces a funcref, and a funcref
+   * spells its parameters. An instance method cannot be taken as a value at all, so its parameters
+   * are recorded and never read — which is cheaper than a second table that leaves them out.
+   */
+  string[] methodParamTypes;
+  i32[] methodParamAt;
+  i32[] methodParamCount;
+  i32 methodParamTotal;
   i32 methodCount;
   string[] fieldOwners;
   string[] fieldNames;
@@ -586,7 +605,8 @@ export struct C {
              string[capacity](), 0, 0,
              string[capacity](), string[capacity](),
              string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
-             string[capacity](), string[capacity](), bool[capacity](), bool[capacity](), 0,
+             string[capacity](), string[capacity](), bool[capacity](), bool[capacity](),
+             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](), 0, 0,
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
              string[capacity](), 0, 0,
@@ -732,12 +752,21 @@ export struct C {
   }
 
   /** Record one method of one struct. */
-  void declareMethod(this, string owner, string name, bool isStatic, bool isConst) {
+  void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
+                     string[] params) {
     if (this.methodCount >= this.methodNames.len()) { return; }
+    this.methodParamAt[this.methodCount] = this.methodParamTotal;
+    this.methodParamCount[this.methodCount] = params.len();
+    for (i32 i = 0; i < params.len(); i++) {
+      if (this.methodParamTotal >= this.methodParamTypes.len()) { break; }
+      this.methodParamTypes[this.methodParamTotal] = params[i];
+      this.methodParamTotal = this.methodParamTotal + 1;
+    }
     this.methodOwners[this.methodCount] = owner;
     this.methodNames[this.methodCount] = name;
     this.methodStatics[this.methodCount] = isStatic;
     this.methodConsts[this.methodCount] = isConst;
+    this.methodReturns[this.methodCount] = ret;
     this.methodCount = this.methodCount + 1;
   }
 
@@ -1099,12 +1128,36 @@ export string typeOfExpr(C c, Expr e) {
     // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
     case Member(obj, nameTok): {
       string owner = typeOfExpr(c, obj);
-      if (owner == typeNone()) { return typeNone(); }
+      if (owner == typeNone()) {
+        // A **static** method named without being called is a value: a funcref of its own signature.
+        // `S.make` is a `fn() -> S`, which is why assigning it to an `i32` is an ordinary mismatch
+        // rather than the *"cannot use method as a value"* an instance method gets — a static is a
+        // function, and an instance method is not one until it has a receiver.
+        return staticMethodType(c, obj, tokenText(c, nameTok));
+      }
       return c.fieldType(owner, tokenText(c, nameTok));
     }
     // A cast is its target type, whichever of the four spellings it used. The four differ in what
     // they *permit* — see `checkCast` — and not in what they produce.
     case Cast(op, operand, target): { return typeOfTy(c, target); }
+    /**
+     * A method call, typed by what the method says it returns.
+     *
+     * Read in the receiver's world, so `Vec<i32>.at()` declared `T at(…)` is an `i32`. A funcref call
+     * has no name to look up and stays unknown, as it always did.
+     */
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          string recvT = receiverType(c, obj);
+          if (recvT == typeNone() || recvT == "") { return typeNone(); }
+          i32 mi = c.methodAt(recvT, tokenText(c, nameTok));
+          if (mi < 0) { return typeNone(); }
+          return substituteType(c, recvT, c.methodReturns[mi]);
+        }
+        else: { return typeNone(); }
+      }
+    }
     // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
     case Is(left, target, other, negated): { return "bool"; }
     /**
@@ -2008,6 +2061,16 @@ bool constExpr(C c, Expr e) {
     case Member(obj, nameTok): { return constExpr(c, obj); }
     case Index(arr, index): { return constExpr(c, arr); }
     case Unwrap(operand): { return constExpr(c, operand); }
+    // What a method hands back through a const receiver is itself const. `this.getInner().mutate()`
+    // inside a `const this` method is refused, and the accessor is the whole point of the case: it
+    // looks like a way to launder the constness and is not one. The receiver decides, not the return
+    // type — a method called on something const returns something const.
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): { return constExpr(c, obj); }
+        else: { return false; }
+      }
+    }
     else: { return false; }
   }
 }
@@ -2149,6 +2212,46 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
   string got = typeOfExpr(c, args[0]);
   if (got != typeNone() && got != want) { c.report(errBuiltinArg(), args[0].line, args[0].col); }
   return true;
+}
+
+/** The funcref type of `S.make`, or unknown when the receiver is not a struct with that static. */
+string staticMethodType(C c, Expr obj, string name) {
+  string owner = "";
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      if (c.typeOfName(n) == typeNone() && c.isStruct(n)) { owner = n; }
+    }
+    else: { }
+  }
+  if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
+  i32 at = c.ownMethodAt(owner, name);
+  if (at < 0 || !c.methodStatics[at]) { return typeNone(); }
+  string out = "fn(";
+  for (i32 i = 0; i < c.methodParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + c.methodParamTypes[c.methodParamAt[at] + i];
+  }
+  return out + ") -> " + c.methodReturns[at];
+}
+
+/**
+ * The type a receiver denotes: the value's type, or the struct itself when the receiver names one.
+ *
+ * `p.m()` and `P.m()` are the same syntax and differ only in that, which the method-call rule already
+ * knew and `typeOfExpr` did not.
+ */
+string receiverType(C c, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      string t = c.typeOfName(n);
+      if (t != typeNone()) { return t; }
+      if (c.isStruct(n)) { return n; }
+      return typeNone();
+    }
+    else: { return typeOfExpr(c, obj); }
+  }
 }
 
 /**
@@ -2726,6 +2829,24 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (subT != typeNone() && subT != "" && subT != "i32" && subT != "u32") {
         c.report(errSwitchSubject(), subject.line, subject.col);
       }
+      // A case value is compared against the subject with `==`, so it is an `i32` like the subject.
+      // At the `case` keyword rather than at the value, which is why a `Case` now carries a position:
+      // the complaint is about the arm rather than about the expression in it.
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { continue; }
+        Expr cv = cases[i].value!;
+        i32 cvl = litKindOf(cv);
+        if (cvl != litNone()) {
+          if (!acceptsLiteral("i32", cvl)) {
+            c.report(errSwitchSubject(), cases[i].line, cases[i].col);
+          }
+        } else {
+          string cvt = typeOfExpr(c, cv);
+          if (cvt != typeNone() && !isIntegerName(cvt)) {
+            c.report(errSwitchSubject(), cases[i].line, cases[i].col);
+          }
+        }
+      }
       c.loopDepth = c.loopDepth + 1;
       for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
       c.loopDepth = c.loopDepth - 1;
@@ -2800,8 +2921,13 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
                               typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
         }
         for (i32 i = 0; i < methods.len(); i++) {
+          string[] mps = string[methods[i].params.len()]();
+          for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
+            mps[pi] = typeOfTy(c, methods[i].params[pi].type);
+          }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
-                          !methods[i].hasThis, methods[i].thisConst);
+                          !methods[i].hasThis, methods[i].thisConst,
+                          typeOfTy(c, methods[i].returnType), mps);
         }
       }
       else: { }

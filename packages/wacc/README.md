@@ -1026,6 +1026,38 @@ rather than a workaround: rung 3 compares type checkers, and a program that did 
 diagnostics to compare — whatever the checker says next is about a broken tree, which is rung 2's
 oracle and not this one's.
 
+### The reference corpus, finished — and three facts the checker did not record
+
+**Reference recall: 124 of 124.** Spec 78 of 83. Sweep 99%, no false alarms anywhere.
+
+None of the last three was a rule nobody had thought of. Each was blocked on a **fact the checker did
+not record**, which is a different kind of gap and took a table rather than a branch:
+
+- a `case` arm had no **position**, because a `Case` is not a `Stmt` — and *"case value must be i32"*
+  names the keyword rather than the value, the same exception `override` is;
+- a method call had no **type**, because nothing recorded what a method returns;
+- a static method had no **signature**, because nothing recorded its parameters.
+
+The middle one is the one worth keeping. Calling a mutating method on what an accessor hands back
+reads like a way to launder
+constness, and the language refuses it. **What decides is the receiver, not the return type**: a method called on
+something const returns something const. That is three lines in `constExpr`, and it was unreachable
+for four slots because the call in the middle typed as unknown.
+
+Recording method returns is worth more than the one case it closed: every rule downstream of a method
+call had been stopping there. `c.get()` is now checked where it lands, and a generic's method is read
+in the instantiation's world, so `Box<i32>.get()` is an `i32`.
+
+**A static method named without being called is a funcref** — `S.make` is a `fn() -> S`, which is why
+assigning it to an `i32` is an ordinary mismatch rather than the *"cannot use method as a value"* an
+instance method gets. A static is a function; an instance method is not one until it has a receiver.
+
+**What is left, all five, and each needs its own machine:** two nullable-narrowing cases, where
+`s.radius` is legal after `if (s is Circle)` and not after `if ((s is Circle) || true)` — flow, not
+types; a deep-const alias (`Counter c = this; c.mutate();`) — also flow; an `f32` literal out of
+range, which needs the literal's *value* and not just its text; and target-type inference, which is
+two of them. None is a missing rule, and each is a different analysis from the one this rung is.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,
