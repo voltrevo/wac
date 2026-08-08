@@ -400,8 +400,19 @@ export bool assignable(C c, string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
   if (withoutNull(want) == got) { return true; }
-  // `T?` into a `T` is rejected, and now under a family of its own — see `nullableIntoNonNull`.
-  if (endsWith(got, "?")) { return true; }
+  // A nullable source is a hatch **only when its base would fit**. `P?` into a `P` is the
+  // nullable-into-non-null family and reports there; `P?` into an `i32` is an ordinary mismatch and
+  // was silent for as long as this said "any nullable is assignable to anything". The sweep found it
+  // forty times over — one cell per (nullable type, unrelated slot) — which is what a blanket
+  // exemption looks like from the outside: not a wrong answer anywhere, just no answer at all.
+  // Both nullable: the question is entirely about the bases, and `Circle?` goes into a `Shape?` for
+  // the same reason a `Circle` goes into a `Shape`. Unwrapping only the source compared `Shape?`
+  // against `Circle` and called a working program wrong — the reference corpus caught it where the
+  // sweep did not, because the sweep's accepted half has no nullable-child-into-nullable-parent cell.
+  if (isNullableName(want) && isNullableName(got)) {
+    return assignable(c, withoutNull(want), withoutNull(got));
+  }
+  if (isNullableName(got)) { return assignable(c, want, withoutNull(got)); }
   // A child goes into a parent's slot without a cast; the other direction is the downcast that needs
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
@@ -2365,6 +2376,13 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   // rather than an error of its own, which is measured: the reference words it *"downcast to 'P' may
   // fail"* even though a string will never be a `P`.
   if (fromRef && toRef && castFrom != "i31ref" && to != "i31ref") {
+    // A funcref is a reference that converts to nothing but itself — there is no hierarchy of
+    // function types here and nothing to check at runtime, so every spelling is refused.
+    if (startsWithFn(castFrom) != startsWithFn(to) ||
+        (startsWithFn(castFrom) && castFrom != to)) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      return;
+    }
     if (ck == kAsTilde() || ck == kAsAt()) {
       c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
       return;
@@ -2565,7 +2583,15 @@ void checkStmt(C c, Stmt s, Ty want) {
         // rather than at the operator. Literals count here, unlike in a binary expression, because
         // there is no other side for the literal to take its type from — the target settles it.
         string ct = typeOfLvalue(c, target);
-        if (ct == typeNone() || isPackedName(ct)) { return; }
+        if (ct == typeNone() || ct == "" || isPackedName(ct)) { return; }
+        // `+=` and its siblings are arithmetic, so the target has to be something arithmetic can be
+        // done to: a number, or a `string`, which concatenates. An array, a struct, an enum and a
+        // funcref all *agree with themselves*, so the type comparison below has nothing to say about
+        // `a += b` on two of them — the same shape as `a & b` on two floats, one operator family on.
+        if (!isValueType(ct) && ct != "string") {
+          c.report(errOperandMismatch(), target.line, target.col);
+          return;
+        }
         i32 clit = litKindOf(rhs);
         if (clit != litNone()) {
           if (!acceptsLiteral(ct, clit)) { c.report(errOperandMismatch(), target.line, target.col); }
