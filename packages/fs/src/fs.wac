@@ -141,6 +141,14 @@ export struct Fs {
    * and whether it is still running.
    */
   Procs procs;
+  /**
+   * The programs this build has, which `/bin` lists — design/0001's "a `/bin` full of programs".
+   *
+   * Handed in rather than discovered, like `procs` and `now`: the applets live in `packages/box`,
+   * which depends on this package, so a filesystem cannot ask what programs exist. Empty until
+   * somebody says, and then `/bin` is a directory with that many entries in it.
+   */
+  Vec<string> programs;
   /** Where a relative path starts from — see `setCwd`. */
   string cwd;
 
@@ -150,7 +158,7 @@ export struct Fs {
     Vec<Inode> nodes = Vec.create();
     nodes.push(dirNode("root", now));
     mounts.push(Mount("", Backing.Memory, 0));
-    return Fs(mounts, nodes, "root", now, Procs.create(), "/");
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), "/");
   }
 
   /**
@@ -166,7 +174,7 @@ export struct Fs {
     // **The host's own directory**, because that is what a relative path means to a program standing on
     // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
     // file. A memory filesystem starts at its own root, where there is nowhere else to be.
-    return Fs(mounts, nodes, "root", now, Procs.create(), cli.cwd().wait());
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), cli.cwd().wait());
   }
 
   /**
@@ -248,6 +256,27 @@ export struct Fs {
     i32 pid = this.procs.start(0, argv, this.now);
     this.procs.self = pid;
     return pid;
+  }
+
+  /**
+   * Record which programs this build has, and mount `/bin` so they can be seen.
+   *
+   * **What a file in `/bin` is, honestly.** The applets are compiled into this program: there is no
+   * bundle on disk to point at, and writing one that looked like an executable would be the "plausible
+   * rows" design/0001 D6 refuses. So each entry is a real directory entry with a real mode, and
+   * reading it gives one line saying what it is. `ls /bin` is the truth; `cp /bin/wc elsewhere` gets a
+   * sentence rather than a program, and says so in the sentence.
+   */
+  void mountBin(this, Vec<string> programs, fn[Pending<u8[]>(i32)] randomBytes) {
+    this.programs = programs;
+    // **No programs, no `/bin`.** A build that wired no applets — `packages/ssh`'s server is one —
+    // would otherwise show an empty directory where the programs are meant to be, which claims more
+    // than an absent one does. `ls /` on such a machine says there is no `/bin`, and that is true.
+    if (programs.len() == 0) { return; }
+    // The funcref again, because `Backing.Synth` carries one for `/dev/urandom`'s sake and nothing
+    // in `/bin` will ever call it. Passing the caller's own is honest; inventing a stub that
+    // answered zero bytes would be a generator that exists to satisfy a type.
+    this.mounts.push(Mount("/bin", Backing.Synth(randomBytes), -1));
   }
 
   /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
@@ -731,7 +760,7 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
 }
 
 /**
- * Mount `/dev` and `/proc`, and enter this program in the process table, in one call.
+ * Mount `/dev`, `/proc` and `/bin`, and enter this program in the process table, in one call.
  *
  * Three programs want exactly this and a fourth will; spelling it out in each is how the three drift.
  * The pid is answered rather than discarded because a caller that starts children wants to be their
@@ -742,9 +771,11 @@ string[] withMountsUnder(Fs fs, string path, string[] own) {
  * `packages/box`'s `Args.name` problem in another place — so each entry point states what it is. Pass
  * the arguments alone and `ps` shows a shell called `-c`.
  */
-export i32 mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv) {
+export i32 mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv,
+                      Vec<string> programs) {
   fs.mountSynth("/dev", randomBytes);
   fs.mountSynth("/proc", randomBytes);
+  fs.mountBin(programs, randomBytes);
   return fs.enter(argv);
 }
 
@@ -771,6 +802,8 @@ i32 SYNTH_DIR() { return 5; }
 i32 SYNTH_COMM() { return 6; }
 /** `/proc/<pid>/status`: the four lines whose values this system actually has. */
 i32 SYNTH_STATUS() { return 7; }
+/** `/bin/<name>`: a program this build has, which is not a file it could hand you. */
+i32 SYNTH_PROGRAM() { return 8; }
 
 /**
  * The pid a `/proc` path is about, or -1 for a path that is not about one.
@@ -810,6 +843,13 @@ i32 synthKind(Fs fs, Mount m, string path) {
     if (rest == "/null") { return SYNTH_NULL(); }
     if (rest == "/zero") { return SYNTH_ZERO(); }
     if (rest == "/urandom" || rest == "/random") { return SYNTH_RANDOM(); }
+    return SYNTH_NONE();
+  }
+  if (m.at == "/bin") {
+    string name = rest.slice(1, rest.len());
+    for (i32 i = 0; i < fs.programs.len(); i++) {
+      if (fs.programs.get(i) == name) { return SYNTH_PROGRAM(); }
+    }
     return SYNTH_NONE();
   }
   if (m.at == "/proc") {
@@ -857,6 +897,13 @@ FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomB
   }
   if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER()); }
   if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[0](), "", FAULT_NONE()); }
+  if (kind == SYNTH_PROGRAM()) {
+    u8[] all = programBytes(path.slice(m.at.len() + 1, path.len()));
+    if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(all, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
   if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
     u8[] all = procBytes(fs, m, path, kind);
     if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
@@ -870,6 +917,17 @@ FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomB
   }
   if (kind == SYNTH_ZERO()) { return FileResult.of(true, u8[n](fill: 0), "", FAULT_NONE()); }
   return FileResult.of(true, randomBytes(n).wait(), "", FAULT_NONE());
+}
+
+/**
+ * What reading a program in `/bin` gives you.
+ *
+ * One sentence, and it is the sentence rather than a program because there is no program here to give:
+ * the applets are compiled into the running binary. A reader that copied this somewhere and tried to
+ * run it gets a text file that explains itself, which is the failure worth having.
+ */
+u8[] programBytes(string name) {
+  return (name + " is built into this program; there is no file here to copy elsewhere.\n").toBytes();
 }
 
 /**
@@ -901,6 +959,9 @@ Stat synthStat(Fs fs, Mount m, string path) {
   if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
     size = procBytes(fs, m, path, kind).len() as i64;
   }
+  if (kind == SYNTH_PROGRAM()) {
+    size = programBytes(path.slice(m.at.len() + 1, path.len())).len() as i64;
+  }
   return Stat.of(true, true, false, size, fs.now, false, FAULT_NONE());
 }
 
@@ -909,6 +970,12 @@ string[]? synthDir(Fs fs, Mount m, string path) {
   if (kind != SYNTH_DIR()) { return null; }
   string rest = path.slice(m.at.len(), path.len());
   if (m.at == "/dev") { return string[]("null", "random", "urandom", "zero"); }
+  if (m.at == "/bin") {
+    string[] names = string[fs.programs.len()](fill: "");
+    for (i32 i = 0; i < fs.programs.len(); i++) { names[i] = fs.programs.get(i); }
+    sortNames(names);
+    return names;
+  }
   if (rest != "" && rest != "/") { return string[]("cmdline", "comm", "status"); }
   // `/proc` itself: every pid, and `self`. Linux lists a great deal more here — `uptime`, `meminfo`,
   // `mounts` — and each of those is a fact this system would have to have to answer, so the ones it

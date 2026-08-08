@@ -112,7 +112,10 @@ export i32 main(Core core, Cli cli) {
   if (o.image != "") {
     Vec<string> argv = Vec.create();
     argv.push("sshd");
-    Booted booted = boot(core, cli, o.image, argv);
+    // `packages/ssh` has no applets of its own: a session's programs are whatever wired the
+    // shell, and this server wires none. So `/bin` here is empty and honest rather than a
+    // list of names nothing would run.
+    Booted booted = boot(core, cli, o.image, argv, Vec.create());
     if (!booted.ok) {
       // Before the socket: a server that cannot read its image is not a server, and binding first meant
       // it announced "listening on port 2222" and *then* refused — a moment in which it looked like it

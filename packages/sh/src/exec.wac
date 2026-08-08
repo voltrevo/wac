@@ -856,6 +856,25 @@ void stopAll(Shell sh, i32[] outH, i32[] errH, i32 n) {
   }
 }
 
+/**
+ * The applet a `/bin/<name>` path names, or "" for anything else.
+ *
+ * By the *resolved* path, so `/bin/wc`, `cd /bin; ./wc` and `/bin/../bin/wc` are one thing — a shell
+ * that matched on the text would answer differently for three spellings of one program.
+ */
+string binProgram(Shell sh, string name) {
+  if (!containsSlash(name)) { return ""; }
+  string full = sh.resolve(name);
+  if (full.len() < 6 || full.slice(0, 5) != "/bin/") { return ""; }
+  string leaf = full.slice(5, full.len());
+  if (containsSlash(leaf)) { return ""; }
+  string[] mine = sh.externalNames();
+  for (i32 i = 0; i < mine.len(); i++) {
+    if (mine[i] == leaf) { return leaf; }
+  }
+  return "";
+}
+
 /** Whether this name would reach `trySelf` — not a function, not a builtin, and one of ours. */
 bool spawnableName(Shell sh, string name) {
   if (name == "" || containsSlash(name)) { return false; }
@@ -2039,6 +2058,22 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
     Sink errs = Sink.toBuffer(sh.cli);
     i32 code = printf(argv, out, errs);
     return Output(out.taken(), errs.taken(), code, true);
+  }
+
+  // **A program named by its path in `/bin`.** design/0001 asks for "a `/bin` full of programs", and a
+  // `/bin` you can only `ls` is a listing rather than a directory of programs — `/bin/wc -l` has to
+  // work, because that is what a path to a program means everywhere else.
+  //
+  // Rewritten to the bare name rather than read: the file in `/bin` is one sentence saying the applet
+  // is built into this binary (see `Fs.mountBin`), so the spawn route below would read it and refuse
+  // it as "not a wac worker bundle", which is true of the sentence and false of the program. This is
+  // the *first* thing tried for a slashed name, before anything looks at the bytes.
+  string named = binProgram(sh, argv.len() > 0 ? argv.get(0) : "");
+  if (named != "") {
+    Vec<string> rewritten = Vec.create();
+    rewritten.push(named);
+    for (i32 i = 1; i < argv.len(); i++) { rewritten.push(argv.get(i)); }
+    return dispatch(sh, rewritten, mayInherit);
   }
 
   // A real program if `$WACPATH` has one. There is no wac implementation behind this any more:

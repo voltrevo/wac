@@ -54,8 +54,8 @@ Deno.test("a mount is visible from the directory it is mounted in", async () => 
   // Without this a mount is invisible from above: the root's own tree has no entry for `/dev`, and only
   // the mount table knows. A listing that omits a directory you can `cd` into is worse than a wrong one,
   // because nothing about it looks wrong.
-  assertEquals((await sh("ls /")).out, "dev\nproc\ntmp\n");
-  assertEquals((await sh("mkdir /home; ls /")).out, "dev\nhome\nproc\ntmp\n", "sorted in with the real ones");
+  assertEquals((await sh("ls /")).out, "bin\ndev\nproc\ntmp\n");
+  assertEquals((await sh("mkdir /home; ls /")).out, "bin\ndev\nhome\nproc\ntmp\n", "sorted in with the real ones");
   // Only directly in it: `/proc/self` is under `/proc`, not under `/`.
   //
   // The pids are the process table — design/0001 step 3. `1` is the session, `2` is the `ls` doing the

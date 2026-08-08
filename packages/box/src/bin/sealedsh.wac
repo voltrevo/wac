@@ -50,7 +50,9 @@ export i32 main(Core core, Cli cli) {
   Vec<string> argv = Vec.create();
   argv.push("sealedsh");
   for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
-  mountSystem(fs, core.randomBytes, argv);
+  // `/bin` is `boxNames()`: the programs this build actually has, so `ls /bin` is the truth
+  // about this binary rather than a list somebody typed.
+  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
 
   Shell sh = Shell.onFs(core, cli, fs);
   sh.cwd = "/";

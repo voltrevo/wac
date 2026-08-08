@@ -213,7 +213,7 @@ export struct Booted {
  * `argv` becomes `/proc/self/cmdline`. The caller passes it because a filesystem cannot know its own
  * program's arguments.
  */
-export Booted boot(Core core, Cli cli, string path, Vec<string> argv) {
+export Booted boot(Core core, Cli cli, string path, Vec<string> argv, Vec<string> programs) {
   Fs fs = Fs.inMemory(core.nowMillis().wait());
   FileResult existing = cli.readFile(path).wait();
   if (existing.ok) {
@@ -224,7 +224,7 @@ export Booted boot(Core core, Cli cli, string path, Vec<string> argv) {
     // A directory, or no permission, or a disk that is not there. Only "not found" means "new".
     return Booted.of(false, fs, existing.error);
   }
-  mountSystem(fs, core.randomBytes, argv);
+  mountSystem(fs, core.randomBytes, argv, programs);
   return Booted.of(true, fs, "");
 }
 

@@ -93,9 +93,9 @@ Deno.test("a new image is an empty world, not an error", async () => {
   try {
     const run = await imaged(image, "ls /");
     if (run.code !== 0) throw new Error(`${run.code} ${run.err}`);
-    // `/dev` and `/proc` are there from the start — design/0001 step 6 — and hold nothing that is saved,
-    // so an empty session is one with nothing *of its own* in it.
-    if (run.out !== "dev\nproc\n") {
+    // `/dev`, `/proc` and `/bin` are there from the start — design/0001 steps 6 and 7 — and none of
+    // them holds anything that is saved, so an empty session is one with nothing *of its own* in it.
+    if (run.out !== "bin\ndev\nproc\n") {
       throw new Error(`a fresh session was not empty: ${JSON.stringify(run.out)}`);
     }
     // And it saved one, so the next run is a load rather than another empty start.
@@ -115,7 +115,7 @@ Deno.test("a session that fails still saves what it did", async () => {
     if (run.code === 0) throw new Error("the failing script reported success");
 
     const back = await imaged(image, "ls /");
-    if (back.out !== "dev\nkept\nproc\n") throw new Error(JSON.stringify(back.out));
+    if (back.out !== "bin\ndev\nkept\nproc\n") throw new Error(JSON.stringify(back.out));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

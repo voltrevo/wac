@@ -45,7 +45,7 @@ Fs system() {
   Vec<string> argv = Vec.create();
   argv.push("probe");
   argv.push("-x");
-  mountSystem(fs, pendingRandom, argv);
+  mountSystem(fs, pendingRandom, argv, Vec.create());
   return fs;
 }
 
