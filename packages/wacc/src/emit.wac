@@ -588,12 +588,27 @@ export u8[] emitModule(u8[] src) {
   // can contain, so it cannot collide with anything the source declares.
   // Only when the module has strings at all: the helper names the `i8[]` type, and registering that
   // while the type section is being written is the "index out of bounds" this rung has hit four times.
+  // **The helper set.** Four functions nobody wrote, registered together because they are needed
+  // together: a module that has strings at all is likely to compare or join them, and an unused one
+  // costs a few dozen bytes. `u8[]` is registered here too — `toBytes` names it, and a type has to
+  // exist before the section that declares it is written.
   bool needsStrings = env.arrayCount > 0 && hasStringType(env);
   if (needsStrings) {
-    string[] eqParams = string[2]();
-    eqParams[0] = "string";
-    eqParams[1] = "string";
-    env.addFunc(" str_eq", "bool", eqParams);
+    env.arrayType("u8[]");
+    string[] two = string[2]();
+    two[0] = "string";
+    two[1] = "string";
+    env.addFunc(" str_eq", "bool", two);
+    string[] two2 = string[2]();
+    two2[0] = "string";
+    two2[1] = "string";
+    env.addFunc(" str_concat", "string", two2);
+    string[] one = string[1]();
+    one[0] = "string";
+    env.addFunc(" str_to_bytes", "u8[]", one);
+    string[] one2 = string[1]();
+    one2[0] = "u8[]";
+    env.addFunc(" str_from_bytes", "string", one2);
   }
   settleEmittable(env, src, lexed, prog);
 
@@ -671,7 +686,7 @@ export u8[] emitModule(u8[] src) {
     }
   }
 
-  i32 helpers = needsStrings ? 1 : 0;
+  i32 helpers = needsStrings ? 4 : 0;
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
@@ -740,7 +755,12 @@ export u8[] emitModule(u8[] src) {
   }
 
   // The helper, last, so every index the source could name is already assigned.
-  if (needsStrings) { emitStringEquals(types, funcs, code, env, index, declTypes); }
+  if (needsStrings) {
+    emitStringEquals(types, funcs, code, env, index, declTypes);
+    emitStringConcat(types, funcs, code, env, index + 1, declTypes);
+    emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
+    emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
+  }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -1198,6 +1218,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       string ot0 = operandType(src, lexed, env, left, right);
+      if (ot0 == "string" && k == kPlus()) {
+        i32 cc = env.funcAt(" str_concat");
+        if (cc < 0 || env.funcIndex[cc] < 0) { return; }
+        emitExpr(fb, src, lexed, env, left);
+        emitExpr(fb, src, lexed, env, right);
+        fb.byte(16);
+        fb.u32leb(env.funcIndex[cc]);
+        return;
+      }
       if (ot0 == "string" && (k == kEq() || k == kNe())) {
         i32 eq = env.funcAt(" str_eq");
         if (eq < 0 || env.funcIndex[eq] < 0) { return; }
@@ -1305,6 +1334,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         case Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
           // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
+          if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
+            i32 fb2 = env.funcAt(" str_from_bytes");
+            if (fb2 < 0 || env.funcIndex[fb2] < 0) { return; }
+            emitExpr(fb, src, lexed, env, args[0]);
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[fb2]);
+            return;
+          }
           string sowner = staticOwner(src, lexed, env, obj);
           if (sowner != "") {
             i32 sa = env.funcAt(sowner + "." + mname);
@@ -1318,6 +1355,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           string ot = typeOfE(src, lexed, env, obj);
           // `a.len()` is an instruction rather than a call, which is the one method wasm has itself.
+          // `s.toBytes()` and `string.fromBytes(b)` are copies between two array types of the same
+          // shape, which is a helper rather than an instruction — the reference's own bytes say so.
+          if (ot == "string" && mname == "toBytes") {
+            i32 tb = env.funcAt(" str_to_bytes");
+            if (tb < 0 || env.funcIndex[tb] < 0) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[tb]);
+            return;
+          }
           if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
@@ -1413,12 +1460,14 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
             i32 si = env.funcAt(sown + "." + mn);
             return si < 0 ? "" : env.funcReturns[si];
           }
           string ot = typeOfE(src, lexed, env, obj);
+          if (ot == "string" && mn == "toBytes") { return "u8[]"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           i32 mi = env.funcAt(ot + "." + mn);
           return mi < 0 ? "" : env.funcReturns[mi];
@@ -2060,7 +2109,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string ot2 = operandType(src, lexed, env, left, right);
       i32 bk = lexed.tokens[op * tokenStride()];
       // String equality has a helper now; everything else on a reference still does not.
-      if (ot2 == "string" && (bk == kEq() || bk == kNe())) { return ""; }
+      if (ot2 == "string" && (bk == kEq() || bk == kNe() || bk == kPlus())) { return ""; }
       if (isArrayType(ot2) || ot2 == "string" || env.isStructName(ot2)) {
         return "an operator on a reference — concatenation needs a helper";
       }
@@ -2138,6 +2187,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // A **static** call names its owner with a type rather than a value: `Big.create(…)`. The
           // receiver is not an expression at all, so asking whether it is one calls a perfectly good
           // struct name unresolved — which is what three corpus files were saying.
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes" && args.len() == 1) {
+            return unsupportedValue(src, lexed, env, args[0]);
+          }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
@@ -2152,6 +2204,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           string o = unsupportedExpr(src, lexed, env, obj);
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
+          if (ot == "string" && mn == "toBytes" && args.len() == 0) { return ""; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
           i32 ma = env.funcAt(ot + "." + mn);
           if (ma < 0) { return "a method this slice has not got"; }
@@ -2738,4 +2791,114 @@ bool hasStringType(Env env) {
     if (env.arrayTypes[i] == "i8[]") { return true; }
   }
   return false;
+}
+
+/**
+ * `string str_concat(string a, string b)` — allocate the total, copy both halves in.
+ *
+ * `array.copy` does the copying in one instruction rather than a loop, which is the difference
+ * between fifteen instructions and fifty. It pops five operands — destination, destination offset,
+ * source, source offset, length — and its immediates are the two array *types*, which here are the
+ * same one.
+ */
+void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
+  i32 at = env.arrayType("i8[]");
+
+  types.byte(96);
+  types.u32leb(2);
+  types.byte(99); types.u32leb(at);
+  types.byte(99); types.u32leb(at);
+  types.u32leb(1);
+  types.byte(99); types.u32leb(at);
+
+  funcs.u32leb(index + declTypes);
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(1); b.byte(127);              // local 2: the joined length
+  b.u32leb(1); b.byte(99); b.u32leb(at); // local 3: the result
+
+  // n = a.len + b.len
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(32); b.u32leb(1); b.byte(251); b.u32leb(15);
+  b.byte(106);
+  b.byte(33); b.u32leb(2);
+  // out = i8[n]()
+  b.byte(32); b.u32leb(2);
+  b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(3);
+  // out[0..a.len] = a
+  b.byte(32); b.u32leb(3);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);
+  // out[a.len..] = b
+  b.byte(32); b.u32leb(3);
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(32); b.u32leb(1);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(1); b.byte(251); b.u32leb(15);
+  b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);
+
+  b.byte(32); b.u32leb(3);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * `to(from)` — a copy between two array types of the same shape.
+ *
+ * `string` and `u8[]` hold the same bytes and are *different types*, which is why this is a copy and
+ * not the no-op it looks like. One function serves both directions, because the only difference is
+ * which type index goes where.
+ */
+void emitBytesCopy(B types, B funcs, B code, Env env, i32 index, i32 declTypes, string to, string from) {
+  i32 dst = env.arrayType(to);
+  i32 srcT = env.arrayType(from);
+
+  types.byte(96);
+  types.u32leb(1);
+  types.byte(99); types.u32leb(srcT);
+  types.u32leb(1);
+  types.byte(99); types.u32leb(dst);
+
+  funcs.u32leb(index + declTypes);
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(1); b.byte(127);
+  b.u32leb(1); b.byte(99); b.u32leb(dst);
+
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1);
+  b.byte(251); b.u32leb(7); b.u32leb(dst);
+  b.byte(33); b.u32leb(2);
+  b.byte(32); b.u32leb(2);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(1);
+  b.byte(251); b.u32leb(17); b.u32leb(dst); b.u32leb(srcT);
+  b.byte(32); b.u32leb(2);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/** Whether a receiver is the *type name* `string`, as in `string.fromBytes(b)`. */
+bool isStringTypeName(u8[] src, Lexed lexed, Env env, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenTextOf(src, lexed, tok);
+      // A local of that name would be a value, and shadowing wins — the same order every receiver
+      // question in this emitter uses.
+      if (env.localAt(n) >= 0 || env.constAt(n) >= 0) { return false; }
+      return n == "string";
+    }
+    else: { return false; }
+  }
 }

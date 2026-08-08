@@ -391,6 +391,27 @@ const CASES: [string, Call[]][] = [
   // Multi-byte, where equality is over bytes and not characters.
   ['export bool f() { return "é" == "é"; }', [{ name: "f", args: [] }]],
   ['const string G = "wac"; export bool f() { return G == "wac"; }', [{ name: "f", args: [] }]],
+
+  // ── Concatenation and the byte conversions, all generated helpers ──────────
+  ['export i32 f() { string s = "ab" + "cde"; return s.len(); }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "ab" + "cd" == "abcd"; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "" + "x" == "x"; }', [{ name: "f", args: [] }]],
+  ['export bool f() { return "x" + "" == "x"; }', [{ name: "f", args: [] }]],
+  // Three joined, so the result of one concatenation is the operand of the next.
+  ['export bool f() { return "a" + "b" + "c" == "abc"; }', [{ name: "f", args: [] }]],
+  ['export i32 f(bool c) { string s = "n" + (c ? "yes" : "no"); return s.len(); }',
+    [{ name: "f", args: [1] }, { name: "f", args: [0] }]],
+  // Multi-byte on both sides, since the join is over bytes.
+  ['export i32 f() { return ("é" + "é").len(); }', [{ name: "f", args: [] }]],
+  // The two conversions, and a round trip through them.
+  ['export i32 f() { u8[] b = "abc".toBytes(); return b.len() + b[0]; }', [{ name: "f", args: [] }]],
+  ['export i32 f() { u8[] b = u8[](104, 105); string s = string.fromBytes(b); return s.len(); }',
+    [{ name: "f", args: [] }]],
+  ['export bool f() { return string.fromBytes("hi".toBytes()) == "hi"; }', [{ name: "f", args: [] }]],
+  ['export i32 f() { return string.fromBytes(u8[0]()).len(); }', [{ name: "f", args: [] }]],
+  // A concatenation in a loop, which allocates each time round.
+  ['export i32 f(i32 n) { string s = ""; for (i32 i = 0; i < n; i++) { s = s + "ab"; } return s.len(); }',
+    [{ name: "f", args: [0] }, { name: "f", args: [3] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

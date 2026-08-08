@@ -1183,6 +1183,27 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Four functions nobody wrote — 22 of 39 to 26
+
+Concatenation, equality, and the two byte conversions, all synthesized on last slot's mechanism. The
+bodies turned out to be short because **`array.copy` does in one instruction what a loop would do in
+fifty**: it pops destination, destination offset, source, source offset and length, and takes the two
+array *types* as immediates. Concatenation is a length, an allocation and two copies.
+
+`s.toBytes()` is a copy and not the no-op it looks like, which the reference's bytes said last slot
+and this confirms: `string` and `u8[]` hold the same bytes in the same storage type and are
+**different types**, so the conversion has to make a new array. One function serves both directions —
+the only difference is which type index goes where.
+
+The corpus moved **22 → 26**, and the "method" category halved. What is left of it is `copyFrom` and a
+handful of others whose signatures I have not measured; the difference between those and these four is
+only that nobody has read the reference's bytes for them yet.
+
+Worth noting what did *not* need doing. `!=` is the equality helper with an `i32.eqz` after it. Three
+strings joined is two calls, because the result of one is an ordinary operand to the next. Neither
+needed a rule: they fell out of treating a helper as a function like any other, which is what made the
+mechanism worth building rather than special-casing `==` where it stood.
+
 ### The emitter writes a function nobody wrote
 
 `a == b` on two strings compares **contents**, and wasm has no instruction for that. The reference
