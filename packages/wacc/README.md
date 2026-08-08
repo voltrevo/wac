@@ -1183,6 +1183,47 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Null, and a question the walk could not ask — 70 to 93
+
+`T?` is `T` here. Every reference this emitter writes is the nullable `0x63`, a decision forced two
+slots ago by `array.new_default`, so a type that admits null and one that does not are already the
+same wasm type and the difference is the checker's to keep. That made the feature small: `null` is
+`ref.null` at the wanted type, `is null` is `ref.is_null`, `x is y` between two references is
+`ref.eq`, and `x!` is `ref.as_non_null` — which **traps**, and emitting nothing instead would have
+been the same value with the same type and a different answer.
+
+The interesting part was not the emission. `null` is *context-typed* — it has no type of its own and
+takes the slot's, exactly as `0` does — and the emittability walk asks its questions with no slot in
+hand. Approving it everywhere and emitting it only where the wanted type turned out to be a
+reference produced nine corpus modules that said:
+
+```
+Compiling function #8 failed: not enough arguments on the stack for struct.new (need 4, got 3)
+```
+
+The argument had emitted **nothing at all**. This is the failure the corpus invariant exists for — *a
+function the walk approves produces a module that validates* — and it is the fifth consecutive slot
+in which that assertion has caught something before a human did.
+
+The fix is a second question rather than a better guess: `unsupportedValueAt` takes the slot's type,
+and the sites that know one — an initialiser, a construction argument, a call argument, a `return` —
+ask through it. Everywhere else `null` stays declined, which is conservative in the direction that
+matters. `return null;` needed the walk to know the function's return type, which it had never been
+told: `canEmit` had the parameters in scope and not the return, so it could answer questions about
+`x` and not about what `x` was being returned *into*.
+
+| | before | after |
+|---|---|---|
+| whole files | 70 | **93** |
+| invalid modules | 0 | 0 |
+| blocked by `null` | 24 | 0 |
+
+The sweep grew a nullable family — 30 cells, each generated in both states, because a null test that
+is only ever asked of a null is half a test — and reports 3,080 programs, 2,729 compared, 0
+mismatched, 0 declined. It also grew a guard: a program returning a reference hands back a GC object,
+`String()` on one throws, and one such cell turned a sweep of 3,080 programs into a single TypeError
+naming none of them.
+
 ### Imports: linking by concatenation — 32 of 336 to 70
 
 297 of the 336 corpus files were declined for "an import", which made it the largest single thing
