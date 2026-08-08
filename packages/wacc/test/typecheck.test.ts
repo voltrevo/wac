@@ -559,14 +559,16 @@ Deno.test("rung 3: a call's arguments against its parameters", () => {
     "f64 g(f64 x) { return x; } export f64 bad(f32 a) { return g(a); }",
     'i32 g(i32 x) { return x; } export i32 sl() { return g("s"); }',
     "i32 g(i32 x) { return x; } export i32 tw(i64 a) { return g(a); }",
+    // Arity, which is a rule of its own: one complaint about the call rather than one per argument
+    // that happened to line up with the wrong parameter. All three directions.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
+    "i32 g() { return 1; } export i32 ar2() { return g(1); }",
+    "i32 g(i32 a) { return a; } export i32 ar3() { return g(1, 2); }",
   ];
   const QUIET = [
     "i32 g(i32 x) { return x; } export i32 ok(i32 a) { return g(a); }",
     "i32 g(i32 x) { return x; } export i32 lit() { return g(1); }",
     "i64 g(i64 x) { return x; } export i64 wide() { return g(1); }",
-    // Arity: the reference complains with its own message and we deliberately do not, which is a
-    // pass for a subset checker rather than a failure.
-    "i32 g(i32 a, i32 b) { return a; } export i32 ar() { return g(1); }",
     // A struct construction is the same syntax as a call and must not be read as one.
     "struct P { i32 x; } export i32 st() { P p = P(1); return p.x; }",
   ];
@@ -1502,6 +1504,80 @@ Deno.test("rung 3: override, increments, construction arity and default values",
       "export void ok(Circle c) { Shape s = c as Shape; }",
     "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
       "export void ok(Shape s) { Circle c = s as! Circle; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
+
+/**
+ * Five rules that need something other than a type: a count, a depth, a representation, a pass order.
+ *
+ * The `break` pair is the only rule here that depends on *where* a statement is rather than what is
+ * in it, which is why the checker carries a loop depth at all. Switches count for both — including
+ * `continue`, which the reference accepts inside one despite a message that says otherwise. Measured,
+ * not inferred: the message is not the rule.
+ */
+Deno.test("rung 3: arity, loop depth, representation, and compile-time constants", () => {
+  const CAUGHT = [
+    // `break` and `continue` with nothing to leave.
+    "export void f() { break; }",
+    "export void f() { continue; }",
+    // Arithmetic on booleans. They agree with each other, so the same-type rule has nothing to say.
+    "export bool f(bool a, bool b) { return a + b; }",
+    "export i32 f(bool a) { return a - 1; }",
+    "export bool f(bool a, bool b) { return a & b; }",
+    // Call arity, all three directions.
+    "i32 g() { return 1; } export i32 f() { return g(1); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(); }",
+    "i32 g(i32 a) { return a; } export i32 f() { return g(1, 2); }",
+    // A nullable packed type has no representation, in an array or on its own.
+    "export i32 f() { u8?[] xs = u8?[3](); return xs.len(); }",
+    "export void f() { u8? x = null; }",
+    "export void f(i8? y) { }",
+    // A constant computed by calling something.
+    "i32 n() { return 3; } const i32 K = n(); export i32 f() { return K; }",
+    "i32 n() { return 3; } const i32[] T = i32[n()](); export i32 f() { return T[0]; }",
+  ];
+  const QUIET = [
+    // Every enclosing form that makes `break` legal, and `continue` in a switch, which the reference
+    // accepts. A checker that read the message instead of measuring would have rejected this one.
+    "export void f() { while (true) { break; } }",
+    "export void f() { for (i32 i = 0; i < 2; i++) { continue; } }",
+    "export void f(i32 x) { switch (x) { case 1: break; } }",
+    "export void f(i32 x) { switch (x) { case 1: continue; } }",
+    "export void f() { do { break; } while (true); }",
+    // Booleans where booleans belong.
+    "export bool ok(bool a, bool b) { return a && b; }",
+    "export bool ok2(bool a, bool b) { return a == b; }",
+    // The right number of arguments, and a construction that must not be read as a call.
+    "i32 g(i32 a, i32 b) { return a; } export i32 ok() { return g(1, 2); }",
+    "struct P { i32 x; i32 y; } export i32 ok() { P p = P(1, 2); return p.x; }",
+    // A packed array is fine; it is the *nullable* packed that has nowhere to live.
+    "export i32 ok(u8[] b) { return b.len(); }",
+    "export i32 ok2(i32? x) { return 1; }",
+    // Constants that are computable: arithmetic on literals, and a construction, which is a shape
+    // rather than a computation.
+    "const i32 K = 1 + 2; export i32 ok() { return K; }",
+    "struct P { i32 v; } const P S = P(1); export i32 ok() { return S.v; }",
+    "const i32[] T = i32[3](); export i32 ok() { return T[0]; }",
   ];
   for (const src of CAUGHT) {
     const theirs = reference(src);

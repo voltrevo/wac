@@ -70,12 +70,30 @@ const EXPRESSIONS: [string, string | null][] = [
   ["Ternary-cond", `void f(i32 p, f64 q, bool c) { i32 r = (${SUB} > 0) ? 1 : 0; }`],
   ["Index", `void f(i32 p, f64 q, i32[] a) { i32 r = a[${SUB}]; }`],
   ["Member", `struct P { i32 x; } void f(i32 p, f64 q, P s) { i32 r = s.x + ${SUB}; }`],
-  ["Call-arg", `void g(i32 n) { } void f(i32 p, f64 q) { g(${SUB}); }`],
-  ["Construct-arg", `struct P { i32 x; } void f(i32 p, f64 q) { P s = P(${SUB}); }`],
-  ["Method-arg", `struct P { i32 x; void m(this, i32 n) { } } void f(i32 p, f64 q, P s) { s.m(${SUB}); }`],
+  ["Call", `void g(i32 n) { } void f(i32 p, f64 q) { g(${SUB}); }`],
+  ["Call-method", `struct P { i32 x; void m(this, i32 n) { } } void f(i32 p, f64 q, P s) { s.m(${SUB}); }`],
+  ["Construct", `struct P { i32 x; } void f(i32 p, f64 q) { P s = P(${SUB}); }`],
   ["Assign-rhs", `void f(i32 p, f64 q, i32 n) { n = ${SUB}; }`],
   ["Return-value", `i32 f(i32 p, f64 q) { return ${SUB}; }`],
   ["Condition", `void f(i32 p, f64 q) { if (${SUB} > 0) { } }`],
+  // Added after `Incr` turned out to be unwalked in its expression form: `p.n++;` was checked and
+  // `return x++;` was not. The grid had a Return-value cell and it passed, because the fault it
+  // buries is always the same `(p + q)` — what it never varied is *which kind of expression holds
+  // the fault*, which is the dimension the missing arm lived in.
+  ["Incr", `void f(i32 p, f64 q, i32[] a) { a[${SUB}]++; }`],
+  ["Unwrap", `void f(i32 p, f64 q, i32[]? a) { i32 r = a![${SUB}]; }`],
+  ["Is", `struct B { i32 b; } struct C : B { i32 c; } void f(i32 p, f64 q, B b, i32[] a) { bool r = a[${SUB}] > 0 && (b is C); }`],
+  ["ArrNew", `void f(i32 p, f64 q) { i32[] a = i32[2](${SUB}, 1); }`],
+  ["ArrNew-size", `void f(i32 p, f64 q) { i32[] a = i32[${SUB}](); }`],
+  ["MatchExpr", `enum E { A, B } void f(i32 p, f64 q, E e) { i32 r = match (e) { case A: ${SUB} case B: 0 }; }`],
+  // Nothing can be buried in these: they are leaves, with no sub-expression to descend into. Listed
+  // rather than omitted so the completeness check below sees every kind the AST has.
+  ["IntLit", null],
+  ["FloatLit", null],
+  ["StrLit", null],
+  ["BoolLit", null],
+  ["NullLit", null],
+  ["Ident", null],
 ];
 
 Deno.test("reach: every statement kind is walked", () => {
@@ -95,6 +113,25 @@ Deno.test("reach: every statement kind is walked", () => {
   }
 });
 
+/**
+ * The variants of one `enum` in `ast.wac`, so a grid can be checked against the AST it is a grid of.
+ *
+ * The alternative is a hand-written count, which is what the statement grid had: it asserts "17
+ * placements" and is therefore only ever as complete as the day somebody counted. A kind added to the
+ * AST tomorrow does not move that number, so the grid silently stops covering the language. Read from
+ * the source, a new variant fails this file by name on the first run.
+ */
+function variantsOf(enumName: string): string[] {
+  const src = Deno.readTextFileSync(new URL("../src/ast.wac", import.meta.url));
+  const start = src.indexOf(`export enum ${enumName} {`);
+  if (start < 0) throw new Error(`no enum ${enumName} in ast.wac`);
+  const body = src.slice(start, src.indexOf("\n}", start));
+  return [...body.matchAll(/^  ([A-Z][A-Za-z]*)[(,]/gm)].map((m) => m[1]);
+}
+
+/** The kind a grid row is about — `Ternary-cond` and `Ternary` are both the `Ternary` kind. */
+const kindOf = (label: string) => label.split("-")[0];
+
 Deno.test("reach: every expression kind is walked", () => {
   const missed: string[] = [];
   for (const [kind, src] of EXPRESSIONS) {
@@ -104,6 +141,17 @@ Deno.test("reach: every expression kind is walked", () => {
   if (missed.length !== 0) {
     throw new Error(`a bad operand inside these expression positions is not reported, so the walk ` +
       `does not descend into them: ${missed.join(", ")}`);
+  }
+});
+
+Deno.test("reach: the grids cover every kind the AST has", () => {
+  for (const [enumName, grid] of [["ExprKind", EXPRESSIONS], ["StmtKind", STATEMENTS]] as const) {
+    const covered = new Set(grid.map(([label]) => kindOf(label)));
+    const uncovered = variantsOf(enumName).filter((v) => !covered.has(v));
+    if (uncovered.length !== 0) {
+      throw new Error(`${enumName} has variants no cell of the grid is about, so nothing checks ` +
+        `whether the walk reaches them: ${uncovered.join(", ")}`);
+    }
   }
 });
 

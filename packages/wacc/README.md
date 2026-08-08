@@ -711,11 +711,51 @@ case, so `p.n++;` was checked and `return x++;` was not. Every previous instance
 tell — one member of a family failing while its siblings passed — and it has now cost enough that the
 reachability grid should be extended to expression *positions of statements*, not just statement kinds.
 
-**What is left, all thirteen:** a call arity case and a `bool` operand case; `break`/`continue`
-outside a loop; a bare field name used as a variable; two deep-const cases, one of which needs flow
-analysis (`Counter c = this; c.mutate();`); an `f32` literal out of range; a `const` initialiser that
-is not compile-time; generics properly, which is two of them — a construction of `Box` with no type argument,
-and `Box<Base>` from `Box<Sub>`; narrowing after `is` in a condition; and nullable packed types.
+### Five rules that need something other than a type, and a grid that found its own gap
+
+**Spec coverage: 76 of 83**, from 70. Seven left.
+
+- **`break` and `continue` need something to leave**, which is the only rule here that depends on
+  *where* a statement is rather than what is in it — hence a loop depth on the checker's state. And
+  the reference accepts `continue` inside a `switch` despite a message that says *"outside loop"*, so
+  switches count for both. Measured, not inferred: **the message is not the rule**, which is now the
+  third time that has mattered.
+- **Arithmetic on booleans.** Two booleans *agree*, so the same-type rule had nothing to say about
+  `a + b` — this is the question of what the operands are, the same distinction `&&` draws one
+  operator family along.
+- **Call arity**, reported once at the call rather than once per argument that happened to line up
+  with the wrong parameter.
+- **A nullable packed type has no representation.** `u8?` is not a narrower `i32?`: unwrapping one
+  has to yield a value and no slot is one byte wide. Refused wherever the type is written.
+- **A module-level `const` may not call a function.** Phrased as "does this contain a call" rather
+  than "is this constant", because the second is the larger claim and the first is what the corpus
+  distinguishes.
+
+Two mistakes worth keeping, both about **pass order and position** rather than about a rule:
+
+- The const-initialiser pass first ran *before* signatures were collected, so `funcAt` found nothing
+  and the rule silently reported zero. That looks identical to a rule that does not work.
+- `u8?[]` reported three columns late, because **each `[]` and `?` suffix carries its own token
+  position** — a complaint about the type reported at the `Ty` lands on the bracket. Rung 2 learned
+  this about parse errors; it reached a different consumer here, and only the corpus's
+  never-contradict assertion caught it.
+
+**The reachability grid found two gaps of its own**, which is the first time it has paid for itself
+rather than confirming what a rule test already knew. It now varies *which kind of expression holds
+the fault* — the dimension the `Incr` bug lived in — and it checks itself against the AST: the list of
+`ExprKind` and `StmtKind` variants is read out of `ast.wac` at test time, so a node added tomorrow
+fails the file by name. A hand-written count is only ever as complete as the day somebody counted.
+
+What it found: `a[i]++` never walked the `i`, because a write's target was examined for what it *is*
+and not for what is in it; and `MatchExpr` arms were not walked at all, since they hold expressions
+where the statement form holds statements. Neither is in the spec corpus — which is the argument for
+the grid, since recall is only ever visible where somebody thought to look.
+
+**What is left, all seven:** a bare field name used as a variable; two deep-const cases, one of
+which needs flow analysis (`Counter c = this; c.mutate();`); an `f32` literal out of range, which
+needs the literal's value and not just its text; generics properly, which is two of them — a
+construction of `Box` with no type argument, and `Box<Base>` from `Box<Sub>`; narrowing after `is` in
+a condition; and a field access on an enum variant.
 
 ### What rung 3's oracle looks like, measured
 

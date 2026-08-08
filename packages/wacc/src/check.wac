@@ -121,6 +121,14 @@ export i32 errNoDefault() { return 28; }
 export i32 errRecursiveField() { return 29; }
 /** `as` where the conversion is a downcast and may fail. */
 export i32 errDowncast() { return 30; }
+/** `break` or `continue` with nothing to leave. */
+export i32 errNoLoop() { return 31; }
+/** A call with the wrong number of arguments. */
+export i32 errCallArity() { return 32; }
+/** A nullable packed type, which has no representation. */
+export i32 errPackedNullable() { return 33; }
+/** A module-level `const` whose value cannot be computed at compile time. */
+export i32 errNotCompileTime() { return 34; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -368,6 +376,14 @@ export struct C {
   string[] funcParamTypes;
   i32 funcCount;
   i32 funcParamTotal;
+  /**
+   * How many loops and switches enclose the statement being checked.
+   *
+   * On the state rather than threaded through `checkStmt`, which every rule here would otherwise have
+   * to carry to reach the two that use it. Switches count: `break` leaves one, and the reference also
+   * accepts `continue` inside one, which is measured rather than inferred from its message.
+   */
+  i32 loopDepth;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
@@ -380,6 +396,7 @@ export struct C {
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
              string[capacity](), 0, 0,
+             0,
              i32[capacity * 3](), 0);
   }
 
@@ -1018,6 +1035,14 @@ void checkExpr(C c, Expr e) {
           c.report(errShiftOp(), tokenLine(c, op), tokenCol(c, op));
         }
       }
+      bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
+                   k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
+      // Arithmetic and bitwise operators want a number. Two booleans *agree*, so the same-type rule
+      // below has nothing to say about `a + b` — this is the question of what the operands are, which
+      // is the same distinction `&&` draws, one operator family further along.
+      if (arith && (typeOfExpr(c, left) == "bool" || typeOfExpr(c, right) == "bool")) {
+        c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
+      }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
       bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
@@ -1055,6 +1080,16 @@ void checkExpr(C c, Expr e) {
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
     case Incr(target, op, prefix): { checkIncr(c, target, op); }
+    // A `match` used for its value. Its arms hold expressions rather than statements, so nothing that
+    // walked the statement form reached them — found by the grid, not by a rule looking wrong.
+    case MatchExpr(subject, arms): {
+      checkExpr(c, subject);
+      // An expression arm carries a value and no body — one `Arm` type serves both forms, as the
+      // reference has it — so the value is the whole of what there is to walk here.
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
+      }
+    }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
     case ArrNew(elem, size, fill, elements): {
@@ -1107,7 +1142,7 @@ void checkExpr(C c, Expr e) {
               }
             }
           }
-          else { checkCall(c, name, args); }
+          else { checkCall(c, name, args, e); }
         }
         else: { }
       }
@@ -1136,9 +1171,61 @@ void checkExpr(C c, Expr e) {
  */
 void checkIncr(C c, Lvalue target, i32 op) {
   checkWrite(c, target);
+  checkLvalueExprs(c, target);
   string t = typeOfLvalue(c, target);
   if (t == "f32" || t == "f64") {
     c.report(errIncrType(), tokenLine(c, op), tokenCol(c, op));
+  }
+}
+
+/**
+ * A nullable packed type, which the language has nowhere to put.
+ *
+ * `u8?` is not a narrower `i32?`: unwrapping one has to yield a value, and no slot is one byte wide,
+ * so there is no representation for the unwrapped case at all. Refused wherever the type is written,
+ * and the array form `u8?[]` is the same fact one level down — an array of them would need the
+ * element to exist.
+ */
+void checkPackedNullable(C c, string t, Ty at) {
+  string inner = t;
+  if (isArrayName(inner)) { inner = dropLast(inner, 2); }
+  string unwrapped = withoutNull(inner);
+  if (unwrapped != "" && isPackedName(unwrapped)) {
+    Ty base = baseTy(at);
+    c.report(errPackedNullable(), base.line, base.col);
+  }
+}
+
+/**
+ * The innermost type under any `[]` and `?` suffixes.
+ *
+ * Each suffix carries its own token position — the parser records where the `[` is, not where the
+ * type it decorates begins — so a complaint about `u8?[]` reported at the `Ty` itself lands on the
+ * bracket, three columns past where the reference puts it. Rung 2 learned this about parse errors;
+ * this is the same fact reaching a different consumer.
+ */
+Ty baseTy(Ty t) {
+  match (t.kind) {
+    case Arr(elem): { return baseTy(elem); }
+    case Nullable(inner): { return baseTy(inner); }
+    else: { return t; }
+  }
+}
+
+/**
+ * The expressions buried inside an lvalue — the `i` in `a[i]`, and so on down the path.
+ *
+ * A write's target is walked for what it *is* (const, a string index) and, until the grid asked, not
+ * at all for what is in it: `a[(p + q)]++` had a fault in a position nothing visited. Writing this
+ * separately from `checkWrite` keeps the two questions apart, since one reports about the path and
+ * the other about the expressions hanging off it.
+ */
+void checkLvalueExprs(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIndex(base, index): { checkLvalueExprs(c, base); checkExpr(c, index); }
+    case LField(base, nameTok): { checkLvalueExprs(c, base); }
+    case LUnwrap(base): { checkLvalueExprs(c, base); }
+    else: { }
   }
 }
 
@@ -1161,10 +1248,15 @@ bool notBool(C c, Expr e) {
  * argument(s), got 1"* — and pairing arguments with parameters positionally when the counts differ
  * would report the wrong ones anyway.
  */
-void checkCall(C c, string name, Expr[] args) {
+void checkCall(C c, string name, Expr[] args, Expr call) {
   i32 at = c.funcAt(name);
   if (at < 0) { return; }
-  if (c.funcParamCount[at] != args.len()) { return; }
+  // The count first, and it stops there: a call with the wrong number of arguments is one complaint
+  // about the call, not one per argument that happened to line up with the wrong parameter.
+  if (c.funcParamCount[at] != args.len()) {
+    c.report(errCallArity(), call.line, call.col);
+    return;
+  }
   for (i32 i = 0; i < args.len(); i++) {
     string want = c.funcParamTypes[c.funcParamAt[at] + i];
     if (want == typeNone()) { continue; }
@@ -1294,6 +1386,48 @@ void checkElement(C c, string want, Expr e) {
   }
   string got = typeOfExpr(c, e);
   if (!assignable(want, got)) { c.report(errArrayElement(), e.line, e.col); }
+}
+
+/**
+ * Whether an expression calls a function, which is what a module-level `const` may not do.
+ *
+ * A constant's value is computed before the program runs, so arithmetic on literals is fine and
+ * `P(1)` is fine — a construction is a shape rather than a computation — while `n()` and `i32[n()]()`
+ * are not. Phrased as "does this contain a call" rather than "is this constant" on purpose: the
+ * second is the larger claim and the first is the one the corpus actually distinguishes, so this
+ * says nothing about anything else.
+ */
+bool callsAFunction(C c, Expr e) {
+  match (e.kind) {
+    case Construct(ctype, args, named): {
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (c.funcAt(tokenText(c, tok)) >= 0) { return true; }
+        }
+        else: { }
+      }
+      for (i32 i = 0; i < args.len(); i++) {
+        if (callsAFunction(c, args[i])) { return true; }
+      }
+      return false;
+    }
+    case Call(callee, args): { return true; }
+    case Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
+    case Unary(op, operand): { return callsAFunction(c, operand); }
+    case ArrNew(elem, size, fill, elements): {
+      if (!(size is null)) {
+        if (callsAFunction(c, size!)) { return true; }
+      }
+      if (!(fill is null)) {
+        if (callsAFunction(c, fill!)) { return true; }
+      }
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (callsAFunction(c, elements[i])) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
 }
 
 /**
@@ -1582,9 +1716,11 @@ void checkParams(C c, Param[] params) {
   for (i32 i = 0; i < params.len(); i++) {
     // A packed type has no slot of its own — it exists as an array element and nowhere else — so it
     // cannot be a parameter. Reported at the type, which is the same position a duplicate name uses.
-    if (isPackedName(typeOfTy(c, params[i].type))) {
+    string pt = typeOfTy(c, params[i].type);
+    if (isPackedName(pt)) {
       c.report(errPackedPosition(), params[i].type.line, params[i].type.col);
     }
+    checkPackedNullable(c, pt, params[i].type);
     string a = tokenText(c, params[i].nameTok);
     for (i32 j = 0; j < i; j++) {
       if (tokenText(c, params[j].nameTok) == a) {
@@ -1701,6 +1837,7 @@ void checkStmt(C c, Stmt s, Ty want) {
     // The same question one position over: a declared type, and something that has to fit it.
     case Var(type, nameTok, init, isConst): {
       string wantVar = typeOfTy(c, type);
+      checkPackedNullable(c, wantVar, type);
       if (wantVar == typeNone()) { return; }
       i32 litVar = litKindOf(init);
       if (litVar != litNone()) {
@@ -1747,8 +1884,27 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkAll(c, then, want);
       checkAll(c, els, want);
     }
-    case While(cond, body): { checkCond(c, cond); checkAll(c, body, want); }
-    case DoWhile(body, cond): { checkCond(c, cond); checkAll(c, body, want); }
+    // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
+    // and `continue` because the reference accepts it there, which is measured rather than read off
+    // its message. Reported at the statement, which is the whole of it.
+    case Break: {
+      if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
+    }
+    case Continue: {
+      if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
+    }
+    case While(cond, body): {
+      checkCond(c, cond);
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
+    }
+    case DoWhile(body, cond): {
+      checkCond(c, cond);
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
+    }
     case For(init, cond, update, body): {
       // The init and update are statements, and were declared but never checked — a `for` whose
       // initialiser is wrong said nothing. The reachability grid found it: `For` passed on its body
@@ -1757,13 +1913,19 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (!(init is null)) { checkStmt(c, init!, want); }
       if (!(cond is null)) { checkCond(c, cond!); }
       if (!(update is null)) { checkStmt(c, update!, want); }
+      c.loopDepth = c.loopDepth + 1;
       checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
     }
     case Switch(subject, cases): {
+      c.loopDepth = c.loopDepth + 1;
       for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
+      c.loopDepth = c.loopDepth - 1;
     }
     case Match(subject, arms): {
+      c.loopDepth = c.loopDepth + 1;
       for (i32 i = 0; i < arms.len(); i++) { checkAll(c, arms[i].body, want); }
+      c.loopDepth = c.loopDepth - 1;
     }
     else: { }
   }
@@ -1833,6 +1995,19 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   // struct, so a method's returns, initialisers and operands went entirely unchecked. `this` is an
   // ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the struct's own
   // name — and every rule then reaches `this.x` through the field table that already existed.
+  // A module-level constant's initialiser, *after* the signatures — the rule is "does this call a
+  // function", so it needs to know which names are functions, and a constant may be initialised by
+  // one declared further down the file. The first version of this ran before the signature pass and
+  // silently found nothing, which looked exactly like the rule not working.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
+      }
+      else: { }
+    }
+  }
+
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
