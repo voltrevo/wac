@@ -28,6 +28,21 @@ export i32 ls(Core core, Cli cli, Fs fs, Args a) {
     // tell "by design" — it can now: `Stat` carries a fault, so a path this host cannot name and a path
     // with nothing at it are different answers rather than the same `exists = false`. wac-mono 0065.
     Stat st = fs.stat(path);
+    // **A directory that is there and could not be listed is a failure, not a name.** This said
+    // `exists` and printed the path, which is right for a *file* — `ls f` prints `f` — and was wrong
+    // for a directory whose listing was refused: `chmod 000 d; ls d` printed `d` and exited 0, where
+    // GNU says "cannot open directory 'd': Permission denied" and exits 2. A wrong answer reported as
+    // success, from the most ordinary permission a person can set.
+    //
+    // `readDir` cannot say *why* — it answers `string[]?`, and a null carries no reason — so the
+    // reason comes from `stat`, which can. That is the same route this branch already took for a path
+    // that is not there at all.
+    if (st.exists && st.isDir) {
+      string why = faultWords(st.fault);
+      core.warn(a.name + ": cannot open directory '" + path + "': "
+        + (why == "" ? "Permission denied" : why));
+      return 2;
+    }
     if (st.exists) { core.log(path); return 0; }
     string words = faultWords(st.fault);
     core.warn(a.name + ": " + path + ": " + (words == "" ? "cannot list" : words));

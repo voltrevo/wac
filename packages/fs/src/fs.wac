@@ -672,6 +672,11 @@ export struct Fs {
     if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
+      // **Not implemented, and the fault vocabulary has no word for that.** `FAULT_DENIED` is the
+      // closest, and it is wrong in a way that reaches the user: `packages/sh`'s `chmod` turns a
+      // fault into GNU's words for that category, so this arrives as "cannot access 'd':
+      // Permission denied" — which blames the file. The message says the truth and the fault
+      // contradicts it; a caller reading the category is told the wrong thing. wac-mono 0117.
       case Host(cli): { return Change.of(FAULT_DENIED(), "chmod on a host mount is not implemented"); }
       case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
       else: {}
