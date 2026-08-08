@@ -373,12 +373,12 @@ capability world does not report: `-r`, `-w` and `-x` want a mode, `-ef` wants a
 `Stat` carries neither. They exit 2 saying "not implemented" rather than guessing, which is the same
 choice `cd` makes about permission.
 
-**`local` is not implemented**, so a variable set in a function is the shell's. `trap`, arrays,
-here-strings, process substitution, `for ((;;))` and brace expansion are also absent, and `~user` is
-left as it was written — measured against bash on 2026-08-08, alongside the ones that *are* here:
-`break`, `continue` and `return` with their counts, `!` before a pipeline, `case`, `until`, `${x:-y}`
-and its family, `${#x}`, substring and pattern removal, `${x:?msg}`, `$@` versus `$*`, subshells,
-groups, `elif`. Where a construct is missing the shell says so rather than doing something plausible.
+**`trap`, arrays, here-strings, process substitution, `for ((;;))` and brace expansion are absent**,
+and `~user` is left as it was written — measured against bash on 2026-08-08, alongside the ones that
+*are* here: `local`, `break`, `continue` and `return` with their counts, `!` before a pipeline, `case`,
+`until`, `${x:-y}` and its family, `${#x}`, substring and pattern removal, `${x:?msg}`, `$@` versus
+`$*`, subshells, groups, `elif`. Where a construct is missing the shell says so rather than doing
+something plausible.
 
 **A file whose name is not valid UTF-8 can be listed and not opened, and it says so.** `ls` shows
 `bad-\ufffd-name` where bash shows the real bytes, and every program that tries to open that name reports

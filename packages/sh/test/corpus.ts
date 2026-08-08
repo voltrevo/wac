@@ -1009,6 +1009,27 @@ esac`,
   `echo hi 2>/dev/null | wc -c`,
   `pwd > p; wc -l < p; rm -f p`,
   `cat <<EOF 2>/dev/null\nx\nEOF`,
+
+  // ── `local` ────────────────────────────────────────────────────────────────
+  //
+  // Dynamically scoped, which is bash's: there is one set of variables and the *call boundary* puts
+  // names back. A function called from inside another sees its caller's locals, and that is the
+  // behaviour rather than a leak to fix. `local x` with no value is x *unset*, not x empty.
+  `f() { local x=1; echo $x; }; x=outer; f; echo $x`,
+  `x=outer; f() { local x; echo "[$x]"; }; f; echo $x`,
+  `f() { local y=1; }; f; echo "[$y]"`,
+  `local z=1; echo st=$?`,
+  `f() { local; echo st=$?; }; f`,
+  `f() { local a=1 b=2; echo $a$b; }; f`,
+  `g() { echo "[$v]"; }; f() { local v=inner; g; }; v=outer; f; g`,
+  `f() { local n=1; h() { local n=2; echo $n; }; h; echo $n; }; f`,
+  `f() { local q=1; echo st=$?; }; f`,
+  `f() { local c=$(echo hi); echo $c; }; f`,
+  `export e=1; f() { local e=2; echo $e; }; f; echo $e`,
+  `x=o; f() { local x=1; local x=2; echo $x; }; f; echo $x`,
+  `x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x`,
+  `f() { local u; echo \${u:-fallback}; }; f`,
+  `f() { local 1=x; echo st=$?; }; f`,
 ];
 
 /**

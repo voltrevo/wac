@@ -80,6 +80,16 @@ export struct Shell {
   /** How many function calls deep, for the same reason: `return` outside one is an error. */
   i32 depth;
   /**
+   * The variables this function call declared `local`, and what they were before it did.
+   *
+   * bash is **dynamically** scoped, which is what makes this a stack of saved values rather than a
+   * scope chain: a function called from inside another one sees the caller's locals, so there is only
+   * ever one set of variables and the call boundary is where names are put back.
+   */
+  Vec<string> localNames;
+  Vec<string> localValues;
+  Vec<i32> localExisted;
+  /**
    * Standard error, for a shell that is *capturing*. Empty otherwise — see `err` below.
    *
    * `packages/ssh`'s server and command substitution both need the bytes rather than the terminal,
@@ -233,7 +243,7 @@ export struct Shell {
     // guess. A browser answers "/" — the root of its Origin Private File System — which is the
     // true answer there rather than a stand-in.
     return Shell(core, cli, Fs.onHost(cli, 0), Map.create(hashString, stringEq), 0, false, 0,
-                 0, 0, false, 0, 0, Buf.create(),
+                 0, 0, false, 0, 0, Vec.create(), Vec.create(), Vec.create(), Buf.create(),
                  false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
@@ -872,7 +882,7 @@ export bool isBuiltin(string name) {
       || name == "export" || name == "unset" || name == "cd" || name == "pwd" || name == "ls"
       || name == "mkdir" || name == "rm" || name == "chmod" || name == "chown"
       || name == "read" || name == "shift" || name == "set"
-      || name == "break" || name == "continue" || name == "return"
+      || name == "break" || name == "continue" || name == "return" || name == "local"
       || name == "test" || name == "[" || name == "help" || name == "printf";
 }
 
@@ -1550,6 +1560,63 @@ Output setBuiltin(Shell sh, Vec<string> argv) {
  * could not see it — it runs both shells with `HOME` cleared, so bash says "HOME not set" too.
  */
 /**
+ * `local NAME[=VALUE]…` — a variable the enclosing function call puts back when it returns.
+ *
+ * Dynamically scoped, which is bash's and is the simpler of the two to be right about: there is one set
+ * of variables, and `local` records what a name was so the call boundary can restore it. A function
+ * called from inside this one *sees* the local, and that is not an accident to fix — it is what
+ * `g() { echo $v; }; f() { local v=inner; g; }` prints in bash.
+ *
+ * `local x` with no value is x *unset*, not x empty — measured, and the difference shows the moment
+ * anything says `${x:-default}`. Outside a function it is an error and the message is bash's.
+ */
+Output localVar(Shell sh, Vec<string> argv) {
+  if (sh.depth == 0) {
+    return Output.fail("local: can only be used in a function\n".toBytes(), 1);
+  }
+  for (i32 i = 1; i < argv.len(); i++) {
+    string word = argv.get(i);
+    i32 eq = indexOfEq(word);
+    string name = eq < 0 ? word : word.slice(0, eq);
+    if (!isName(name)) {
+      return Output.fail(("local: `" + word + "': not a valid identifier\n").toBytes(), 1);
+    }
+    // Recorded once per call: a second `local x` in the same function must not overwrite what the
+    // *first* one saved, or the caller's value is lost.
+    if (!declaredLocal(sh, name)) {
+      Option<string> before = sh.vars.get(name);
+      sh.localNames.push(name);
+      sh.localValues.push(before.isSome() ? before.unwrap() : "");
+      sh.localExisted.push(before.isSome() ? 1 : 0);
+    }
+    if (eq < 0) { sh.vars.remove(name); }
+    else { sh.setVar(name, word.slice(eq + 1, word.len())); }
+  }
+  return Output.ok(u8[0]());
+}
+
+/** Whether this call has already made `name` local, so its saved value is the caller's. */
+bool declaredLocal(Shell sh, string name) {
+  for (i32 i = 0; i < sh.localNames.len(); i++) {
+    if (sh.localNames.get(i) == name) { return true; }
+  }
+  return false;
+}
+
+/** Whether a word is a name a variable may have: a letter or underscore, then letters, digits, underscores. */
+bool isName(string w) {
+  u8[] b = w.toBytes();
+  if (b.len() == 0) { return false; }
+  if (!(b[0] == '_' || (b[0] >= 'a' && b[0] <= 'z') || (b[0] >= 'A' && b[0] <= 'Z'))) { return false; }
+  for (i32 i = 1; i < b.len(); i++) {
+    i32 c = b[i];
+    bool ok = c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    if (!ok) { return false; }
+  }
+  return true;
+}
+
+/**
  * `break` and `continue`, whose whole effect is on the walker rather than on any output.
  *
  * Every rule here is bash's, measured rather than remembered, and three of them are surprising:
@@ -1871,6 +1938,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == ":" || name == "true") { return Output.ok(u8[0]()); }
   if (name == "false") { return Output(u8[0](), u8[0](), 1, true); }
   if (name == "echo") { return echo(argv); }
+  if (name == "local") { return localVar(sh, argv); }
   if (name == "break" || name == "continue") { return breakOrContinue(sh, argv); }
   if (name == "return") { return returnFrom(sh, argv); }
   if (name == "exit") {
@@ -1959,7 +2027,7 @@ export string[] builtinNames() {
   return string[](
     ":", "true", "false", "echo", "exit", "export", "unset", "cd", "pwd", "ls", "mkdir", "rm",
     "chmod", "chown",
-    "read", "shift", "set", "break", "continue", "return", "test", "[", "help", "printf"
+    "read", "shift", "set", "break", "continue", "return", "local", "test", "[", "help", "printf"
   );
 }
 
@@ -2214,8 +2282,24 @@ Output callFunction(Shell sh, Vec<string> argv) {
   i32 savedLoops = sh.loops;
   sh.loops = 0;
   sh.depth = sh.depth + 1;
+  // A fresh record of what this call makes local, and the caller's kept aside — nested calls each put
+  // back their own.
+  Vec<string> outerNames = sh.localNames;
+  Vec<string> outerValues = sh.localValues;
+  Vec<i32> outerExisted = sh.localExisted;
+  sh.localNames = Vec.create();
+  sh.localValues = Vec.create();
+  sh.localExisted = Vec.create();
 
   runCommand(sh, body, u8[0](), true);
+
+  for (i32 i = 0; i < sh.localNames.len(); i++) {
+    if (sh.localExisted.get(i) == 1) { sh.setVar(sh.localNames.get(i), sh.localValues.get(i)); }
+    else { sh.vars.remove(sh.localNames.get(i)); }
+  }
+  sh.localNames = outerNames;
+  sh.localValues = outerValues;
+  sh.localExisted = outerExisted;
 
   // `return` is caught here and nowhere else. `break` and `continue` are *not* reset: a body that
   // leaves them set is a `break` with no loop to catch it, which the builtin already refused.
