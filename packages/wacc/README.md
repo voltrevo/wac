@@ -1183,6 +1183,42 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A string is not an array of bytes — 108 to 118
+
+Two features, both reached by fixing the one above and reading what the corpus then said. That is the
+loop this rung has settled into: the largest decline names a construct, the construct gets built, and
+the count moves to whatever it was hiding.
+
+**`f64.toBits` and its three siblings.** A static whose receiver is a *type* rather than a value, and
+one reinterpret instruction each. Four instructions, 37 files.
+
+**`s[i]`**, which is where the interesting part is. It looks like `a[i]` and is not: a string index
+**decodes**, and the spec is precise about it — the lead byte says how many bytes the character is,
+an index that lands in the middle of a sequence is `""` rather than half a character, and an index
+past the end traps. So it is a synthesized helper like concatenation and equality, and its body is
+four range tests on the lead byte followed by an `array.copy`. The bounds check is free: `array.get`
+traps on its own, which is exactly the specified behaviour.
+
+The sweep's cells for it are chosen by *encoding* rather than by content — one, two, three and four
+byte characters, and every offset inside each — because a decoder that reads the lead byte and a
+decoder that reads any byte agree on all of ASCII. `"a😀b"` indexed at 1 is `"😀"`, at 2 is `""`,
+and both are in the sweep, along with the loop that indexes every byte and concatenates the pieces
+back into the original.
+
+While in there: the four string helpers wrote their own reference types with an unsigned LEB, the
+same bug as the type section's and latent for the same reason — `i8[]` is type index 0 or 1 in every
+module that has one.
+
+| | before | after |
+|---|---|---|
+| whole files | 108 | **118** |
+| invalid | 0 | 0 |
+| sweep comparisons | 2,729 | **3,075**, 0 mismatched |
+
+What is left, in order: a **call through a funcref** (34 files, and the largest single feature the
+emitter still lacks), a constant whose initialiser is not a constant expression (29), a capability
+import (21, and it needs a host to import *from*), and generics (19).
+
 ### `p.x += 5` was `p.x = 5`
 
 The corpus's largest decline was *"a call to something unknown"* at 66 files, which named none of

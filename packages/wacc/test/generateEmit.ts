@@ -294,5 +294,42 @@ export function generateEmit(): Cell[] {
     add("compound string in a loop",
       `export i32 f() { string s = ${a}; for (i32 i = 0; i < 3; i++) { s += "ab"; } return s.len(); }`);
   }
+
+  // The statics on a primitive: a receiver that is a type name rather than a value, and one
+  // reinterpret instruction each. Round-tripped as well as read, since a pair of instructions that
+  // are each other's inverse is the one shape where two wrongs agree.
+  for (const [t, bits] of [["f32", "u32"], ["f64", "u64"]] as const) {
+    for (const v of VALUES[t]) {
+      add(`${t}.toBits`, `export ${bits} f() { return ${t}.toBits(${v}); }`);
+      add(`${t}.toBits via local`, `export ${bits} f() { ${t} x = ${v}; return ${t}.toBits(x); }`);
+      add(`${t} bits round trip`,
+        `export bool f() { ${t} x = ${v}; return ${t}.fromBits(${t}.toBits(x)) == x; }`);
+      add(`${t} bits are not the value`,
+        `export bool f() { ${t} x = ${v}; return ${t}.toBits(x) == 0; }`);
+    }
+    for (const v of VALUES[bits]) {
+      add(`${t}.fromBits`, `export bool f() { ${t} x = ${t}.fromBits(${v}); return x == x; }`);
+    }
+  }
+
+  // Indexing a string, which is a decode rather than a read. The strings here are chosen for their
+  // *encodings* — one, two, three and four byte characters, and the offsets in the middle of each —
+  // since a decoder that reads the lead byte and a decoder that reads any byte agree on ASCII.
+  const UTF8 = ['"hello"', '"h\u00e9llo"', '"a\u{1f600}b"', '"\u{20ac}"', '"\u00e9\u00e9"', '""'];
+  for (const s2 of UTF8) {
+    for (let i = 0; i < 6; i++) {
+      add(`string index ${i}`, `export i32 f() { string s = ${s2}; return s.len() > ${i} ? s[${i}].len() : -1; }`);
+      add(`string index ${i} equals itself`,
+        `export bool f() { string s = ${s2}; return s.len() > ${i} ? s[${i}] == s[${i}] : true; }`);
+    }
+    add("string index sums to the length",
+      `export i32 f() { string s = ${s2}; i32 n = 0; for (i32 i = 0; i < s.len(); i++) { ` +
+      `n = n + s[i].len(); } return n; }`);
+    add("string index concatenated back",
+      `export i32 f() { string s = ${s2}; string out = ""; ` +
+      `for (i32 i = 0; i < s.len(); i++) { out += s[i]; } return out == s ? 1 : out.len(); }`);
+    add("string index of a computed string",
+      `export i32 f() { string s = ${s2} + "z"; return s[s.len() - 1].len(); }`);
+  }
   return out;
 }

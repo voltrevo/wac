@@ -213,6 +213,45 @@ void writeValType(B out, Env env, string t) {
   out.byte(valType(t));
 }
 
+/**
+ * The result type of a static on a *primitive* — `f64.toBits(x)` and its three siblings — or `""`.
+ *
+ * These are not methods on a value and not calls to anything declared: the receiver is a type name,
+ * and each is one reinterpret instruction. They are the only reason 37 corpus files stop where they
+ * do, which is what makes four instructions worth a table.
+ */
+string primStaticType(string owner, string name) {
+  if (owner == "f32" && name == "toBits") { return "u32"; }
+  if (owner == "f64" && name == "toBits") { return "u64"; }
+  if (owner == "f32" && name == "fromBits") { return "f32"; }
+  if (owner == "f64" && name == "fromBits") { return "f64"; }
+  return "";
+}
+
+/** What such a static takes, so a literal argument arrives at the right width. */
+string primStaticArg(string owner, string name) {
+  if (owner == "f32" && name == "toBits") { return "f32"; }
+  if (owner == "f64" && name == "toBits") { return "f64"; }
+  if (owner == "f32" && name == "fromBits") { return "u32"; }
+  if (owner == "f64" && name == "fromBits") { return "u64"; }
+  return "";
+}
+
+/** The type name a bare identifier spells, when it is a primitive rather than a value. */
+string primTypeName(Env env, u8[] src, Lexed lexed, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenTextOf(src, lexed, tok);
+      if (env.localAt(n) >= 0) { return ""; }
+      if (n == "f32" || n == "f64" || n == "i32" || n == "i64" || n == "u32" || n == "u64") {
+        return n;
+      }
+      return "";
+    }
+    else: { return ""; }
+  }
+}
+
 /** The key a name token means — its own file's declaration, or whichever file has one. */
 string nameKeyOf(Env env, u8[] src, Lexed lexed, i32 tok) {
   return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
@@ -1079,6 +1118,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     string[] one2 = string[1]();
     one2[0] = "u8[]";
     env.addFunc(" str_from_bytes", "string", one2);
+    string[] idx = string[2]();
+    idx[0] = "string";
+    idx[1] = "i32";
+    env.addFunc(" str_idx", "string", idx);
   }
   if (env.full) { return bareModule(); }
   settleEmittable(env, src, lexed, prog);
@@ -1171,7 +1214,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     }
   }
 
-  i32 helpers = needsStrings ? 4 : 0;
+  i32 helpers = needsStrings ? 5 : 0;
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
@@ -1246,6 +1289,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     emitStringConcat(types, funcs, code, env, index + 1, declTypes);
     emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
     emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
+    emitStringIndex(types, funcs, code, env, index + 4, declTypes);
   }
 
   B out = B.create();
@@ -2124,6 +2168,16 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     }
     case Index(arr, index): {
       string at2 = typeOfE(src, lexed, env, arr);
+      // A string index is a decode and so a call, not an `array.get`.
+      if (at2 == "string") {
+        i32 si = env.funcAt(" str_idx");
+        if (si < 0 || env.funcIndex[si] < 0) { return; }
+        emitExpr(fb, src, lexed, env, arr);
+        emitExprAt(fb, src, lexed, env, index, "i32");
+        fb.byte(16);
+        fb.u32leb(env.funcIndex[si]);
+        return;
+      }
       emitExpr(fb, src, lexed, env, arr);
       emitAt(fb, src, lexed, env, index, "i32");
       emitArrayGet(fb, env, at2);
@@ -2148,6 +2202,15 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             emitExpr(fb, src, lexed, env, args[0]);
             fb.byte(16);
             fb.u32leb(env.funcIndex[fb2]);
+            return;
+          }
+          string pown = primTypeName(env, src, lexed, obj);
+          if (primStaticType(pown, mname) != "" && args.len() == 1) {
+            emitExprAt(fb, src, lexed, env, args[0], primStaticArg(pown, mname));
+            if (pown == "f32" && mname == "toBits") { fb.byte(188); }     // i32.reinterpret_f32
+            if (pown == "f64" && mname == "toBits") { fb.byte(189); }     // i64.reinterpret_f64
+            if (pown == "f32" && mname == "fromBits") { fb.byte(190); }   // f32.reinterpret_i32
+            if (pown == "f64" && mname == "fromBits") { fb.byte(191); }   // f64.reinterpret_i64
             return;
           }
           string sowner = staticOwner(src, lexed, env, obj);
@@ -2345,6 +2408,9 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     case Index(arr, index): {
       string a = typeOfE(src, lexed, env, arr);
+      // `s[i]` is a one-character **string**, not a byte — the representation is shared with `i8[]`
+      // and the type is not, which is the same distinction `repType` exists for.
+      if (a == "string") { return "string"; }
       if (!isArrayType(a)) { return ""; }
       string e = elemOf(a);
       // A packed element is an `i32` where it is used — the getter zero- or sign-extends it — which
@@ -2358,6 +2424,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string mn = tokenTextOf(src, lexed, nameTok);
           string vn4 = variantOfMember(src, lexed, env, obj, nameTok);
           if (vn4 != "") { return vn4; }
+          string pst = primStaticType(primTypeName(env, src, lexed, obj), mn);
+          if (pst != "") { return pst; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
@@ -3196,7 +3264,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case Index(arr, index): {
       string a = unsupportedValue(src, lexed, env, arr);
       if (a != "") { return a; }
-      if (!isArrayType(typeOfE(src, lexed, env, arr))) { return "index of an unknown type"; }
+      string ia = typeOfE(src, lexed, env, arr);
+      if (ia != "string" && !isArrayType(ia)) { return "index of an unknown type"; }
       return unsupportedValue(src, lexed, env, index);
     }
     case Member(obj, nameTok): {
@@ -3263,6 +3332,11 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       match (callee.kind) {
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
+          string pw = primTypeName(env, src, lexed, obj);
+          if (primStaticType(pw, mn) != "") {
+            if (args.len() != 1) { return "a " + pw + "." + mn + " with the wrong count"; }
+            return unsupportedValueAt(src, lexed, env, args[0], primStaticArg(pw, mn));
+          }
           string vcall = variantOfMember(src, lexed, env, obj, nameTok);
           if (vcall != "") {
             i32 cvi = env.variantAt(vcall);
@@ -4061,17 +4135,17 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
 
   types.byte(96);
   types.u32leb(2);
-  types.byte(99); types.u32leb(at);
-  types.byte(99); types.u32leb(at);
+  types.byte(99); types.i32leb(at);
+  types.byte(99); types.i32leb(at);
   types.u32leb(1);
-  types.byte(99); types.u32leb(at);
+  types.byte(99); types.i32leb(at);
 
   funcs.u32leb(index + declTypes);
 
   B b = B.create();
   b.u32leb(2);
   b.u32leb(1); b.byte(127);              // local 2: the joined length
-  b.u32leb(1); b.byte(99); b.u32leb(at); // local 3: the result
+  b.u32leb(1); b.byte(99); b.i32leb(at); // local 3: the result
 
   // n = a.len + b.len
   b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
@@ -4104,6 +4178,95 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
 }
 
 /**
+ * `string str_idx(string s, i32 i)` — the codepoint starting at byte `i`, as a one-character string.
+ *
+ * Indexing a string is a **decode**, not a read: the lead byte says how many bytes the character is,
+ * a byte in the middle of a sequence is `""` rather than half a character, and an index past the end
+ * traps — which `array.get` does on its own, so the bounds check is the instruction.
+ */
+void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
+  i32 at = env.arrayType("i8[]");
+
+  types.byte(96);
+  types.u32leb(2);
+  types.byte(99); types.i32leb(at);
+  types.byte(127);
+  types.u32leb(1);
+  types.byte(99); types.i32leb(at);
+
+  funcs.u32leb(index + declTypes);
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(2); b.byte(127);              // locals 2, 3: the lead byte and the character's length
+  b.u32leb(1); b.byte(99); b.i32leb(at); // local 4: the result
+
+  // lead = s[i] — and this is the bounds check, since `array.get` traps on its own.
+  b.byte(32); b.u32leb(0);
+  b.byte(32); b.u32leb(1);
+  b.byte(251); b.u32leb(13);  // array.get_u
+  b.u32leb(at);
+  b.byte(33); b.u32leb(2);
+
+  b.byte(65); b.i32leb(0);
+  b.byte(33); b.u32leb(3);
+
+  // 0xxxxxxx is one byte, 110xxxxx two, 1110xxxx three, 11110xxx four. Anything else — a
+  // continuation byte, or a lead byte UTF-8 never uses — leaves the length at zero.
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(128); b.byte(73);   // i32.lt_u
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(1); b.byte(33); b.u32leb(3);
+  b.byte(11);
+
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(192); b.byte(79);   // i32.ge_u
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(224); b.byte(73);
+  b.byte(113);                                                      // i32.and
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(2); b.byte(33); b.u32leb(3);
+  b.byte(11);
+
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(224); b.byte(79);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(240); b.byte(73);
+  b.byte(113);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(3); b.byte(33); b.u32leb(3);
+  b.byte(11);
+
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(240); b.byte(79);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(248); b.byte(73);
+  b.byte(113);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(4); b.byte(33); b.u32leb(3);
+  b.byte(11);
+
+  // Nothing to copy — a mid-sequence byte, or a sequence that runs off the end.
+  b.byte(32); b.u32leb(3); b.byte(69);                              // i32.eqz
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(3); b.byte(106);    // i + n
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);               // array.len
+  b.byte(74);                                                       // i32.gt_s
+  b.byte(114);                                                      // i32.or
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(0);
+  b.byte(251); b.u32leb(7); b.u32leb(at);                           // array.new_default
+  b.byte(15);                                                       // return
+  b.byte(11);
+
+  b.byte(32); b.u32leb(3);
+  b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(4);
+  b.byte(32); b.u32leb(4);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0);
+  b.byte(32); b.u32leb(1);
+  b.byte(32); b.u32leb(3);
+  b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);            // array.copy
+  b.byte(32); b.u32leb(4);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
  * `to(from)` — a copy between two array types of the same shape.
  *
  * `string` and `u8[]` hold the same bytes and are *different types*, which is why this is a copy and
@@ -4116,9 +4279,9 @@ void emitBytesCopy(B types, B funcs, B code, Env env, i32 index, i32 declTypes, 
 
   types.byte(96);
   types.u32leb(1);
-  types.byte(99); types.u32leb(srcT);
+  types.byte(99); types.i32leb(srcT);
   types.u32leb(1);
-  types.byte(99); types.u32leb(dst);
+  types.byte(99); types.i32leb(dst);
 
   funcs.u32leb(index + declTypes);
 
