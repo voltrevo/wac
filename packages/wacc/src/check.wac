@@ -33,6 +33,7 @@
 // and column, so this is `e.line, e.col` and not arithmetic.
 
 import { lex, tokenStride } from "./lex.wac";
+import { kPlus, kMinus, kStar, kSlash, kPercent } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
 } from "./ast.wac";
@@ -50,6 +51,8 @@ export i32 errMissingReturn() { return 2; }
  * arrive here as one.
  */
 export i32 errInitTypeMismatch() { return 3; }
+/** Two operands of an arithmetic operator that are not the same type. */
+export i32 errOperandMismatch() { return 4; }
 
 /**
  * The primitive types, as ids. `primNone` is "this slice does not know".
@@ -162,6 +165,19 @@ export struct C {
     this.errors[this.errorCount * 3 + 2] = col;
     this.errorCount = this.errorCount + 1;
   }
+}
+
+/**
+ * A token's kind.
+ *
+ * `Binary.op` is a token *index*, not a kind — `print.wac` renders it with `tok(op)`, which reads the
+ * source text at that index. Comparing the index against a `kPlus()` constant compares an index to a
+ * kind and is quietly always false, which is what the first version of the operand check did: it
+ * compiled, ran, and reported nothing.
+ */
+i32 tokenKind(C c, i32 t) {
+  if (t < 0) { return -1; }
+  return c.toks[t * tokenStride()];
 }
 
 /** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
@@ -342,6 +358,45 @@ bool breaksOutOf(Stmt s) {
   }
 }
 
+/**
+ * The operands of `+ - * / %`, which must be the same type.
+ *
+ * **Only those five.** The grid says shifts deliberately accept mixed widths — `i64 << i32` is legal
+ * and the friction log records a compiler bug from assuming otherwise — and `&& || & | ^` and the
+ * comparisons each answer a *differently worded* diagnostic when their operands disagree, which a
+ * comparison by code would merge with this one. Narrow and certain beats wide and guessed: this
+ * slice reports a subset, and the operators left out cost recall rather than correctness.
+ *
+ * A literal operand is skipped rather than typed. `x + 1` is legal for any numeric `x` because the
+ * literal takes the other side's type, so demanding they agree would report exactly the code
+ * everybody writes.
+ */
+void checkExpr(C c, Expr e) {
+  match (e.kind) {
+    case Binary(op, left, right): {
+      checkExpr(c, left);
+      checkExpr(c, right);
+      i32 k = tokenKind(c, op);
+      if (k != kPlus() && k != kMinus() && k != kStar() && k != kSlash() && k != kPercent()) {
+        return;
+      }
+      if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) { return; }
+      i32 a = primOfExpr(c, left);
+      i32 b = primOfExpr(c, right);
+      if (a != primNone() && b != primNone() && a != b) {
+        c.report(errOperandMismatch(), e.line, e.col);
+      }
+    }
+    case Unary(op, operand): { checkExpr(c, operand); }
+    case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
+    case Index(arr, index): { checkExpr(c, arr); checkExpr(c, index); }
+    case Call(callee, args): {
+      for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+    }
+    else: { }
+  }
+}
+
 /** Every name a statement declares, however deeply nested. */
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
@@ -392,6 +447,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (gotVar != primNone() && gotVar != wantVar) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
+      checkExpr(c, init);
     }
     case Return(value): {
       if (value is null) { return; }
@@ -411,6 +467,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (got != primNone() && got != expected) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
+      checkExpr(c, e);
     }
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
     // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.

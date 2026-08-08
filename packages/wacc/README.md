@@ -256,9 +256,26 @@ wrongly refused.
 
 **Spec coverage: 12 of 83**, from 8.
 
-Next: more of rung 3. What is left in the type-mismatch family needs machinery this does not have —
-binary operator operands (`i32 + f64`), call arguments against parameters, and generics — and each is
-a slice of its own.
+### Into the expressions
+
+Everything before this looked only at the top expression of a return or an initialiser. Operand
+checking needs a walk, which is the machinery this slice adds — and then `+ - * / %` require both
+operands to be the same type.
+
+**Only those five**, and the restraint is the point. Shifts deliberately accept mixed widths
+(`i64 << i32` is legal, and the friction log records a compiler bug from assuming otherwise), while
+`&& || & | ^` and the comparisons answer *differently worded* diagnostics when their operands
+disagree — which a comparison by code would merge with this one. The operators left out cost recall
+rather than correctness. A literal operand is skipped too: `x + 1` is legal for any numeric `x`,
+because the literal takes the other side's type.
+
+**Spec coverage: 14 of 83**, from 12.
+
+`Binary.op` is a token **index**, not a kind. Comparing it against `kPlus()` compares an index to a
+kind and is quietly always false — the first version compiled, ran, and reported nothing.
+
+Next: more of rung 3 — call arguments against parameters, and the comparison and logical operators,
+each needing its own reading of what the reference actually answers.
 
 ### What rung 3's oracle looks like, measured
 
