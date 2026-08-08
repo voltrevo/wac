@@ -5,7 +5,7 @@ JavaScript: they share the transport, the worker model and the event loop, so ag
 weak evidence that the interface is portable. This one is Rust on wasmtime, and it is the only host that
 tests the claim at all.
 
-design/0001 step 2a, tracked as [0087](../../../../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
+design/0001 step 2a, tracked as [0087](../issues/open/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
 
 ```
 deno task app:native packages/platform/example/wacland.wac -o /tmp/wacland
@@ -62,9 +62,10 @@ that piece rather than after it.
 
 ## Where this lives
 
-`packages/platform/host/native/` is one of the two options in 0001's open questions and is **assumed
-rather than decided** — see the issue. `target/` is gitignored: 567 MB, all of it reproducible from
-`Cargo.toml` and `Cargo.lock`.
+The repo root, next to `tools/` and `harness/`, **assumed rather than decided** — see the issue. It was
+inside `packages/platform` for an hour, which is how long it took the suite to point out that cargo's
+567 MB `target/` is walked by every test that walks that package, and *changes while the build runs*.
+`target/` is gitignored: all of it is reproducible from `Cargo.toml` and `Cargo.lock`.
 
 `packages/platform/test/native.test.ts` runs `example/wacland.wac` on this host and on Deno and compares
 them. It builds through cargo and **skips loudly** when cargo is absent, with the Deno half still

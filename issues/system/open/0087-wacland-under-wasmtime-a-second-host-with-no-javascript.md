@@ -96,7 +96,7 @@ Settled, so nobody repeats it:
 ## Still an operator decision
 
 **This repo has no compiled language today** — 371 `.wac`, 305 `.ts`, with Python and shell only as
-tooling. Where the runtime lives is undecided: its own bare repo, or `packages/platform/host/native/`.
+tooling. Where the runtime lives is undecided: its own bare repo, or `native/`.
 See 0001's open questions. Worth settling before code lands rather than after.
 
 Only whoever *builds* the runtime needs the toolchain; everyone else needs a binary.
@@ -157,7 +157,7 @@ Cheap now, and the same shape of change this project keeps paying for when it is
 ## Progress — 2026-08-08, agent-a
 
 **Items 1 and 2 of the six are done, and a wac program prints through a Rust host with no JavaScript in
-it.** `packages/platform/host/native/`, ~300 lines, and
+it.** `native/`, ~300 lines, and
 `packages/platform/test/native.test.ts` runs the same program on both hosts and compares.
 
 What the ABI turned out to be, since this is the part that decided the shape:
@@ -191,10 +191,12 @@ should be built in rather than retrofitted, which is what those two decisions sa
 
 ### Where it lives — assumed, not decided
 
-Put at `packages/platform/host/native/`, which is one of the two options in 0001's open questions and
-still an operator decision. The reasons for choosing it now rather than waiting: the interface it
-implements is defined beside it, the differential test needs both hosts in one suite, and moving a
-cargo crate is a directory move. `target/` is gitignored (567 MB, all reproducible).
+Put at the repo root in `native/`, still an operator decision. It went in
+`packages/platform/host/native/` first — the interface it implements is defined beside it — and the
+suite found the cost in one run: `packages/box`'s applet comparison walks `packages/platform` with
+`find` and `du`, and cargo's 567 MB `target/` **changes while the build runs**, so `du` disagreed with
+`du -sb` by 34 MB and the walk went from a second to fourteen. A build directory inside a package is a
+cost every test that walks it pays. `target/` is gitignored either way.
 
 ### Cost, measured
 

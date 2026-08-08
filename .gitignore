@@ -5,4 +5,4 @@ node_modules/
 
 # cargo's build directory for the native runtime — 567 MB of it, and every byte reproducible from
 # `Cargo.toml` and `Cargo.lock`. `packages/platform/host/native/` is the only Rust in the repo.
-packages/platform/host/native/target/
+native/target/

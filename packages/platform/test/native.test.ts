@@ -28,7 +28,7 @@ import { buildNative } from "../native.ts";
 import "../../../harness/spawnRetry.ts";
 
 const ENTRY = "packages/platform/example/wacland.wac";
-const CRATE = "packages/platform/host/native";
+const CRATE = "native";
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
