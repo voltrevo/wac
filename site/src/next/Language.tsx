@@ -5,6 +5,7 @@
 // editing them here without editing that would be the drift the test exists to catch.
 
 import InlineDemo from "../editor/InlineDemo";
+import { TOTALS } from "../data/built";
 import { A, Code, Lead, m, P, Page, Pair, Section, Sub } from "./ui";
 import { c, font, space } from "./tokens";
 
@@ -203,7 +204,7 @@ export default function Language() {
 
       <Section id="wasm-gaps" kicker="the other direction" title="What WebAssembly is missing">
         <P>
-          Writing 65,000 lines of byte-heavy systems code against WasmGC — TLS, SSH, Tor, gzip,
+          Writing {Math.round(TOTALS.lines / 1000)},000 lines of byte-heavy systems code against WasmGC — TLS, SSH, Tor, gzip,
           Zstandard, BLS12-381, SHA-2, ChaCha20 — with no C runtime underneath and no linear memory
           in the artifact turns up gaps that are hard to see from anywhere else. The languages that
           usually report on WasmGC bring Java, Kotlin, Dart and Scheme; none of them is parsing a

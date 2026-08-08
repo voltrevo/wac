@@ -10,7 +10,8 @@
 // with you is worth more than any suite you wrote, and the further down this page you go the more
 // the evidence is internal.
 
-import { A, Caveat, Code, Lead, m, P, Page, Section, Sub, Table } from "./ui";
+import { TOTALS } from "../data/built";
+import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
 import { c, font } from "./tokens";
 
 const MONO_REPO = "https://github.com/voltrevo/wac-mono";
@@ -47,7 +48,7 @@ export default function Checked() {
             [<span style={{ fontFamily: font.mono }}>OpenSSL, rustls</span>, "our TLS 1.3 client and server, both directions, each configured to accept nothing but the suite under test"],
             [<span style={{ fontFamily: font.mono }}>C tor</span>, "our relay carries its circuits; our directory authority bootstraps it to 100%; it parses every cell, certificate, vote and consensus we produce"],
             [<span style={{ fontFamily: font.mono }}>OpenSSH</span>, "its client against our server, its server against our client"],
-            [<span style={{ fontFamily: font.mono }}>GNU bash</span>, <span>652 scripts, compared on standard output <em>and</em> exit status</span>],
+            [<span style={{ fontFamily: font.mono }}>GNU bash</span>, <span>{TOTALS.corpus} scripts, compared on standard output <em>and</em> exit status</span>],
             [<span style={{ fontFamily: font.mono }}>zlib, GNU gzip, zstd</span>, "our compressed output decompressed by theirs, and the reverse"],
             [<span style={{ fontFamily: font.mono }}>consensus-spec-tests</span>, <span>2,233 SSZ vectors, including all 1,131 <em>invalid</em> ones</span>],
             [<span style={{ fontFamily: font.mono }}>ethereum/tests</span>, "RLP driven in both directions against the published bytes"],
@@ -73,6 +74,51 @@ export default function Checked() {
         </P>
       </Section>
 
+      <Section id="two-hosts" kicker="evidence, second kind" title="A second host that shares nothing with the first">
+        <P>
+          There were three hosts — browser, Node, Deno — and they are all JavaScript, so they share
+          the transport, the worker model and the event loop. That makes them poor evidence for
+          anything: <Lead>a design flaw common to all three is invisible from any of them.</Lead>
+        </P>
+        <P>
+          The fourth is Rust on wasmtime, with no JavaScript in the artifact and no WASI reaching
+          the program. It shares no code with the others — the{" "}
+          {m({ children: "SharedArrayBuffer" })}, the {m({ children: "Atomics.wait" })}, the
+          sequence counters and the ring of slots have no counterpart in it and none was
+          reimplemented. What crosses between the two is an image and a set of answers.
+        </P>
+        <Facts
+          rows={[
+            ["corpus scripts agreeing across both hosts", String(TOTALS.corpus)],
+            ["image written on one, read on the other", "byte-identical"],
+          ]}
+        />
+        <P>
+          The sharpest of those is the second. A session that changes nothing writes the{" "}
+          <em>same bytes</em> on either host — no directory order, no clock reading, no allocator
+          padding leaking into the file. And the whole of it composes: the JavaScript host writes an
+          image with two users, two homes and two private files, the host with no JavaScript serves
+          it, and <Lead>a real OpenSSH client logs in as each of them</Lead> — each landing in their
+          own home, each reading their own secret, and one refused the other&rsquo;s. The permission
+          check is our own code reading a mode and an owner stored inside the image, which the
+          operating system could not enforce if it tried: the image is one file owned by whoever ran
+          the process.
+        </P>
+        <P>
+          What it found is the argument for it. Every path in the native host was resolved against
+          the wrong directory — {m({ children: "cat f" })} worked and{" "}
+          {m({ children: "cd sub; cat f" })} did not, which is the most ordinary thing a script
+          does and was invisible to every test that never changed directory.
+        </P>
+        <Caveat title="A canary that did not fire, and was worth more than one that did">
+          Perturbing the native host&rsquo;s directory listing to answer in reverse order changed
+          nothing in the crossing test — because everything a session does to files goes through the
+          virtual filesystem <em>inside</em> the image, so the host surface being exercised is two
+          calls wide. That is now written at the top of the test, because the file otherwise reads
+          as covering far more than it does.
+        </Caveat>
+      </Section>
+
       <Section id="symmetry" kicker="the trap it avoids" title="Why a round trip proves less than it looks">
         <P>
           Encode, decode, compare: the shape of a thousand test suites, and it can only fail if the
@@ -88,7 +134,7 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="interleavings" kicker="evidence, second kind" title="Every interleaving, not a sample">
+      <Section id="interleavings" kicker="evidence, third kind" title="Every interleaving, not a sample">
         <P>
           Concurrency bugs do not fail reproducibly, so a suite that runs them a thousand times is
           measuring luck. Two real ones here were like that: a zero-length write ended a stream{" "}
@@ -107,7 +153,7 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="cttrace" kicker="evidence, third kind" title="Tracing what a secret touches">
+      <Section id="cttrace" kicker="evidence, fourth kind" title="Tracing what a secret touches">
         <P>
           The compiler has a mode that records the ordered sequence of branches taken <em>and</em>{" "}
           memory indices used. Run a routine twice with the same public input and different secrets;
@@ -132,7 +178,7 @@ export default function Checked() {
         </Caveat>
       </Section>
 
-      <Section id="mutation" kicker="evidence, fourth kind" title="Testing the tests">
+      <Section id="mutation" kicker="evidence, fifth kind" title="Testing the tests">
         <P>
           A passing suite says the code does what the suite checks. It says nothing about what the
           suite forgot. So the code is mutated — a comparison flipped, a constant changed — and the
@@ -146,7 +192,7 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="spec" kicker="evidence, fifth kind" title="A specification that cannot drift">
+      <Section id="spec" kicker="evidence, sixth kind" title="A specification that cannot drift">
         <P>
           The language has a written specification, and <Lead>409 of its claims carry a tag</Lead>{" "}
           like {m({ children: "[§wac-core-one-type-8fjm2wq]" })}. Every tag names a test. A claim
@@ -162,7 +208,7 @@ export default function Checked() {
         </P>
       </Section>
 
-      <Section id="in-wac" kicker="evidence, sixth kind" title="Tests written in the language itself">
+      <Section id="in-wac" kicker="evidence, seventh kind" title="Tests written in the language itself">
         <P>
           <Lead>78 test files are written in wac</Lead>, not in the host language, and run through
           the same compiler as everything else. That is partly principle — a package whose tests are

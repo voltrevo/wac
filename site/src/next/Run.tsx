@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
 import { EX_ENUM } from "../snippets";
+import { TOTALS } from "../data/built";
 import { A, Code, Lead, m, P, Page, Section, Table } from "./ui";
 import { c, font, space } from "./tokens";
 
@@ -24,7 +25,7 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     title: "A shell, in a tab",
     src: `${MONO_SRC}/box/example/term.wac`,
     what:
-      "packages/sh with a keyboard in front of it, and all sixty packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.",
+      `packages/sh with a keyboard in front of it, and all ${TOTALS.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.`,
   },
   {
     file: "../hash.html",
@@ -93,8 +94,8 @@ export default function Run() {
         <P>
           The shell is the one to try first, and the thing to notice is that nothing about it is a
           demonstration build. It is {m({ children: "packages/sh" })} — the shell that agrees with
-          GNU bash on 652 differential scripts — with a terminal in front of it, and the commands
-          are the same sixty applets that run on a command line. Type {m({ children: "seq 1 20 | grep 7 | wc -l" })}.
+          GNU bash on {TOTALS.corpus} differential scripts — with a terminal in front of it, and the commands
+          are the same {TOTALS.applets} applets that run on a command line. Type {m({ children: "seq 1 20 | grep 7 | wc -l" })}.
         </P>
       </Section>
 

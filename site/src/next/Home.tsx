@@ -124,7 +124,7 @@ export default function Home() {
       {/* ── The shell ─────────────────────────────────────────────────────── */}
       <Section id="wacland" kicker="start here" title="Meet wacland: userland written in wac">
         <P>
-          A shell, sixty applets and a filesystem, running on a worker in this tab — and{" "}
+          A shell, {TOTALS.applets} applets and a filesystem, running on a worker in this tab — and{" "}
           <Lead>all of it is wac</Lead>. Not busybox compiled to wasm, not a libc port, not wac glue
           around somebody else&rsquo;s binaries: it is {m({ children: "packages/sh" })} itself, the
           same program that runs on a command line, and the only thing underneath it is the compiler.
@@ -181,15 +181,20 @@ export default function Home() {
         </P>
 
         <Caveat title="not complete yet">
-          The shell, the applets and the filesystem are real. The rest of a system — the parts that
-          make a session something you can save, reopen and log back into — is still being written.
+          Saving, reopening and logging back in all work now — a session&rsquo;s filesystem is a
+          file, {m({ children: "sshd -i" })} serves sessions from one, and two keys land in two
+          homes where neither can read the other&rsquo;s private file. What is missing is smaller
+          and more specific: a spawned pipeline stage still gets the host&rsquo;s filesystem rather
+          than the session&rsquo;s, so the strongest sealing holds only where nothing spawns, and
+          there is no way to stop a running service once{" "}
+          {m({ children: "init" })} has started it.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
             {m({ children: "sort" })}, {m({ children: "sha256sum" })}, {m({ children: "gzip" })},{" "}
             {m({ children: "diff" })}, {m({ children: "tar" })}, {m({ children: "nc" })} — with
             pipelines, loops, variables, history, and redirection into a filesystem that survives a
-            reload. The shell agrees with GNU bash on <Lead>652 differential scripts</Lead>, on
+            reload. The shell agrees with GNU bash on <Lead>{TOTALS.corpus} differential scripts</Lead>, on
             standard output and exit status. <A href="#/run">Two more running here →</A>
           </span>
         </P>

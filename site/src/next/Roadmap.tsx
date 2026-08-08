@@ -130,16 +130,30 @@ export default function Roadmap() {
         </P>
         <State
           rows={[
-            ["toolchain, and the two mechanisms proven on a probe", "done"],
-            ["the runtime itself", "not started"],
+            ["the toolchain, and the two mechanisms proven on a probe", "done"],
+            ["the runtime itself — filesystem, spawn, network", "done"],
             ["a deterministic mode, and virtual time on top of it", "designed, not started"],
           ]}
         />
         <P>
-          The acceptance test is one a runtime cannot pass by accident: two capability requests that
-          complete <em>out of order</em>, waited on together, each resolving its own value — a host
-          that answered everything immediately would pass the types and fail that.{" "}
-          <A href={`${ISSUES}/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md`} external>issue 0087</A>
+          <Lead>The runtime arrived, and this direction is mostly finished.</Lead> The acceptance
+          test was one a host cannot pass by accident — two capability requests completing{" "}
+          <em>out of order</em>, waited on together, each resolving its own value, where a runtime
+          that answered everything immediately would pass the types and fail that. It passes, and it
+          was checked to fail: gutting the sleep so every ticket settles at once makes the test say
+          so by name. <A href={`${ISSUES}/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md`} external>Issue 0087</A>{" "}
+          is closed, and what it bought is on{" "}
+          <A href="#/checked/two-hosts">the method page</A>, because a second host is a kind of
+          evidence rather than a feature.
+        </P>
+        <P>
+          What is left here is the second half, and it is the half this direction was really for: a
+          deterministic mode and a clock the scheduler owns. The seams are in rather than
+          retrofitted — {m({ children: "waitAny" })} answers the first ticket in the{" "}
+          <em>caller&rsquo;s</em> list rather than the first to finish, so a program&rsquo;s
+          behaviour does not depend on how threads were scheduled, and a wait&rsquo;s deadline lives
+          in the runtime&rsquo;s own table rather than inside a worker&rsquo;s memory, where a
+          scheduler can see it. The clock is still real; it is no longer invisible.
         </P>
       </Section>
 

@@ -172,7 +172,7 @@ export default function Stack() {
         <P>
           Quoting, expansion, here-documents, {m({ children: "$(…)" })}, pipelines, redirection,
           functions, loops, {m({ children: "case" })}, {m({ children: "read" })} —{" "}
-          <Lead>652 scripts run through GNU bash and through this one</Lead>, and the two must agree
+          <Lead>{TOTALS.corpus} scripts run through GNU bash and through this one</Lead>, and the two must agree
           on standard output <em>and</em> on the exit status. That is the only test worth much for a
           shell: nearly every rule has a case where the obvious implementation is subtly wrong, and
           bash is the one thing that will say so.
@@ -181,7 +181,7 @@ export default function Stack() {
         <P>
           Bytes in, bytes out, a status, and {m({ children: "found" })} — because a shell reports
           127 for <em>no such command</em> and the program&rsquo;s own code for <em>ran and
-          failed</em>, and one integer cannot say both. That seam is why sixty applets from another
+          failed</em>, and one integer cannot say both. That seam is why {TOTALS.applets} applets from another
           package became commands you can type with a single line of wiring, in a browser tab as
           much as on a command line, running the same code either way.
         </P>
@@ -230,6 +230,44 @@ export default function Stack() {
             which is how a real Chromium says which route ran.
           </P>
         </Sub>
+      </Section>
+
+      <Section id="wacland" kicker="what the shell grew into" title="A system, not a shell with commands">
+        <P>
+          The shell and the applets were the first half. What has been built around them since is
+          the part that makes a session something you can leave and come back to.
+        </P>
+        <Table
+          head={["what", "and what makes it more than a name"]}
+          rows={[
+            ["a filesystem that is a value", <span>{m({ children: "Fs" })} is held by the program, not reached through the host — in memory, on a real disk, or synthesised, resolved by longest prefix so the three compose</span>],
+            ["an image", <span>that filesystem written to one file, so a session survives a restart — and a session that changes nothing writes byte-identical bytes</span>],
+            ["users and login", <span>mode and owner enforced from data inside the image; two keys land in two homes and neither can read the other&rsquo;s private file</span>],
+            [<span style={{ fontFamily: font.mono }}>/bin</span>, <span>synthesised from the applet list, so it cannot disagree with what is wired in — and {m({ children: "/bin/wc -l" })} runs</span>],
+            [<span style={{ fontFamily: font.mono }}>/dev</span>, <span>a real CSPRNG in a program built with no filesystem grant at all, because randomness is a host function rather than a grant</span>],
+            [<span style={{ fontFamily: font.mono }}>/proc</span>, <span>a process table, so {m({ children: "ps" })} answers about the session it is running in</span>],
+            [<span style={{ fontFamily: font.mono }}>init</span>, <span>{m({ children: "/etc/init" })} is a file you can {m({ children: "cat" })} and edit; each line becomes a real child with its own grants</span>],
+          ]}
+        />
+        <P>
+          Two things stop that list being a set of claims. The whole corpus runs against{" "}
+          <Lead>three different filesystems</Lead> — memory, an image and a real disk — and all{" "}
+          {TOTALS.corpus} scripts agree across them, which is the differential a virtual filesystem
+          needs and is easy not to have. Beside it a test that keeps the first from being vacuous:
+          if the image were secretly in memory too, three identical things would agree perfectly, so
+          it also checks the image outlives its own process and the sealed session does not.
+        </P>
+        <P>
+          And a sealed session — a shell built with <em>no capabilities at all</em> — is held to
+          being unable to reach the machine by any of four routes, through a pipe as well as
+          directly. Before that test the line was held by a comment, and a comment is what somebody
+          edits.
+        </P>
+        <Caveat title="init is not a supervisor, and says so">
+          No restart policy, no dependency order, no health checks, no readiness, and no way to stop
+          a service once it is running. All five are named in the source, because a supervisor that
+          quietly did none of them would look like the real thing until the first service died.
+        </Caveat>
       </Section>
 
       <Section id="tor" kicker="hard to fake, #2" title="Tor, both ends">
@@ -402,6 +440,66 @@ export default function Stack() {
             corpus generator refuses to admit a name unless {m({ children: "ethers" })} says it is
             already normalised, which keeps the tests true and leaves the gap where a reader can see
             it.
+          </P>
+        </Sub>
+      </Section>
+
+      <Section id="wacc" kicker="hard to fake, #4" title="The compiler, being rewritten in the language it compiles">
+        <P>
+          {m({ children: "packages/wacc" })} is the wac compiler ported to wac, so that it can
+          eventually compile itself. The point is not the compiler.{" "}
+          <Lead>A compiler is the program shape this language is worst at</Lead> — syntax trees want
+          sum types, symbol tables want generics, everything wants strings — so it exercises the
+          friction with a real consumer rather than by argument.
+        </P>
+        <P>
+          It is built as a ladder, and each rung is checked against the TypeScript implementation
+          before the next is started. Same input, compare outputs, no judgement calls about which is
+          right.
+        </P>
+        <Table
+          head={["rung", "oracle", "state"]}
+          rows={[
+            [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
+            [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
+            [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>under way</span>],
+            [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.dim }}>not started</span>],
+          ]}
+        />
+        <P>
+          The type checker is the one worth reading the numbers for, because it was finished against{" "}
+          <em>three</em> independent corpora rather than one: every rejection the language&rsquo;s
+          own specification documents, the reference compiler&rsquo;s own test suite, and a
+          generated sweep over the cross product of type against context —{" "}
+          <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead>. It reports a subset of the
+          reference&rsquo;s diagnostics at its exact positions and never invents one.
+        </P>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            Subset, not equal — roughly 210 distinct diagnostics exist in the reference and this
+            implements a fraction. What &ldquo;done&rdquo; claims is that the oracles which exist
+            have nothing further to say, which is a narrower thing and the only one that was
+            measured.
+          </span>
+        </P>
+        <Sub id="wacc-emitter" title="Why the emitter is not checked on its bytes">
+          <P>
+            The obvious oracle for an emitter is that the wasm comes out identical, and it is the
+            wrong one. Byte identity pins the type section&rsquo;s ordering, index assignment,
+            section order and{" "}
+            <Lead>the width of a number&rsquo;s encoding</Lead> — a wasm integer may legally be
+            written in one byte or five — none of which is the language. Held to it, this would be
+            reproducing an implementation rather than a language, against a reference that changes
+            several times a day.
+          </P>
+          <P>
+            So the two modules are <em>run</em> and their answers compared, on every program in the
+            set. That is what catches the class of fault the whole exercise exists to find: a
+            literal reader that took decimal digits and stopped, so{" "}
+            {m({ children: "0xff" })} compiled to {m({ children: "0" })}. It had been there since
+            the first slice, and nothing found it because every hand-written case used plain decimal
+            — <em>a corpus tests what its author thought to write down.</em>
           </P>
         </Sub>
       </Section>
