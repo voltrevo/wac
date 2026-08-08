@@ -46,8 +46,15 @@ Deno.test("rung 4: the repository corpus, compiled", async () => {
 
   // The canary: a harness that compiled nothing would report that nothing is wrong.
   if (whole === 0) throw new Error("no corpus file was emitted in full — the harness is not reaching the emitter");
-  if (partial + invalid === 0) throw new Error("every file emitted whole, which cannot be true yet");
-  // What is declined must be declined *by name*. A file that produces an invalid module was not
-  // declined at all — it was mis-emitted, which is a different and worse thing.
+  if (partial === 0) throw new Error("every file emitted whole, which cannot be true yet");
   if (reasons.size === 0) throw new Error("nothing was declined by name — the emittability walk is not running");
+
+  // **The invariant, asserted.** A function the walk approves must produce a module that validates.
+  // Anything else means the walk lied: it said yes to something the emitter then got wrong, and the
+  // wasm error arrives dozens of instructions from the cause. This was 43 when the walk was written
+  // and is 0 now, so it can stop being a number and start being a rule.
+  if (invalid !== 0) {
+    throw new Error(`${invalid} corpus file(s) produced an invalid module — the emittability walk ` +
+      `approved something the emitter cannot actually do`);
+  }
 });

@@ -1183,6 +1183,40 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The walk is honest now: 28 invalid to 0, and the invariant is a rule
+
+**336 files: 10 whole, 326 partial, 0 invalid.** A function this emitter approves produces a module
+that validates — asserted rather than reported, because it is finally true.
+
+Getting there needed a way to ask *which* function failed: wasm says "compiling function #7" and #7 is
+an index into a list only the emitter can see. `emitNames` returns them in order, and every diagnosis
+after that took a minute instead of a guess. It should have been the first thing built.
+
+Six causes, and the two structural ones are worth the space:
+
+- **A type may only refer to one defined before it** — outside a **rec group**. An array whose element
+  is a struct declared later refers forward, which wasm rejects from the type section itself with no
+  function to name. The reference wraps every type in one rec group, and the reason is exactly this.
+- **A non-null reference has no default value**, so an array of them cannot be made with
+  `array.new_default` — which is how wac makes arrays constantly. References are `0x63`, nullable, not
+  `0x64`. The reference's own locals said so and I had read past it twice.
+
+And four ordinary ones, each a value of the wrong width or in the wrong place:
+
+- A **ternary's block type was hardcoded `i32`**, so `cond ? x : y` on two `u64`s promised an `i32`.
+- An array's **element type was written as a single byte**, so `u8[][]`'s element came out `i32`.
+  Registering the outer array now registers the inner one first, transitively.
+- **Compound assignment handled four operators out of eleven**, by raw token number. `result ^= x`
+  emitted its operands and no operator, leaving a value on the stack.
+- When **both operands of a binary are literals** there is no type to take from them and the slot is
+  the only thing that knows. `0.0 / 0.0` went out as two `f64` constants and an `i32.div_s` — the two
+  halves of one expression disagreeing because they asked different questions.
+
+Two things are declined rather than guessed, which is the other half of an honest walk: a binary
+mixing an integer and a float literal, where no context can settle both; and an assignment between two
+different reference types, which is wac's struct inheritance and needs a notion of subtype this slice
+has not got.
+
 ### Making the walk honest: 43 invalid to 28
 
 The walk approves a function and the emitter then produces it; when the module does not validate, the

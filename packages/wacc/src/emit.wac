@@ -19,6 +19,8 @@ import {
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
+  kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
+  kShlEq, kShrEq, kShrUEq,
 } from "./kinds.wac";
 
 /**
@@ -171,13 +173,17 @@ string elemOf(string t) {
  * which is the shape a GC type forces on an emitter that started with scalars.
  */
 void writeValType(B out, Env env, string t) {
+  // **Nullable** references, `0x63`, not the non-null `0x64`. A non-null reference has no default
+  // value, so an array of them cannot be created with `array.new_default` — *"array type 1 has
+  // non-defaultable element"* — and wac arrays are created that way constantly. The reference's own
+  // locals are nullable too, which is the measurement that settled it.
   if (isArrayType(t)) {
-    out.byte(100);   // ref
+    out.byte(99);
     out.u32leb(env.arrayType(t));
     return;
   }
   if (env.isStructName(t)) {
-    out.byte(100);
+    out.byte(99);
     out.u32leb(env.structType(t));
     return;
   }
@@ -347,6 +353,13 @@ export struct Env {
       if (this.arrayTypes[i] == t) { return i; }
     }
     if (this.arrayCount >= this.arrayTypes.len()) { return 0; }
+    // **The element first, transitively.** `u8[][]`'s element is `u8[]`, which is a declared type of
+    // its own and has to exist before anything refers to it. Registering only the outer one meant the
+    // inner was created while the section was being *written* — an index past the count already
+    // emitted, which wasm reports as "type index out of bounds" and which is the same mistake a field
+    // of array type made two slots ago, one level further in.
+    string el = elemOf(t);
+    if (isArrayType(el)) { this.arrayType(el); }
     this.arrayTypes[this.arrayCount] = t;
     this.arrayCount = this.arrayCount + 1;
     return this.arrayCount - 1;
@@ -593,10 +606,23 @@ export u8[] emitModule(u8[] src) {
   code.u32leb(count);
 
   i32 declTypes = env.arrayCount + env.structCount;
+  // **One recursive group holding every type.** Outside a rec group a type may only refer to one
+  // defined *before* it, and an array of a struct refers forward the moment the struct is declared
+  // later — which wasm reports as "type index out of bounds" from the type section itself, with no
+  // function to name. A rec group makes the whole set mutually visible, which is also why the
+  // reference emits exactly one for the same reason.
+  types.u32leb(1);
+  types.byte(78);   // rec
   types.u32leb(count + declTypes);
   for (i32 i = 0; i < env.arrayCount; i++) {
     types.byte(94);   // array
-    types.byte(storageType(elemOf(env.arrayTypes[i])));
+    // A **storage type** is a value type or one of the two packed widths — and a value type can be a
+    // reference. `u8[][]` is an array whose element is an array, and writing that element as a single
+    // byte said `i32`, which is what `array.new` was complaining about four files later.
+    string el = elemOf(env.arrayTypes[i]);
+    if (el == "i8" || el == "u8") { types.byte(120); }
+    else if (el == "i16" || el == "u16") { types.byte(119); }
+    else { writeValType(types, env, el); }
     types.byte(1);    // mutable, which every wac array is
   }
   for (i32 i = 0; i < env.structCount; i++) {
@@ -930,10 +956,20 @@ void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, St
 
 /** The operator of a compound assignment, which is the binary one with the `=` taken off. */
 void emitCompound(B fb, i32 k, string t) {
-  if (k == 58) { emitBinary(fb, kPlus(), t); }
-  if (k == 59) { emitBinary(fb, kMinus(), t); }
-  if (k == 60) { emitBinary(fb, kStar(), t); }
-  if (k == 61) { emitBinary(fb, kSlash(), t); }
+  // **All eleven**, by name. Four of them were written as raw numbers 58 to 61, which covered the
+  // arithmetic and silently ignored the bitwise ones — `result ^= x` emitted its two operands and no
+  // operator, leaving a value on the stack that wasm noticed at the end of the function.
+  if (k == kPlusEq()) { emitBinary(fb, kPlus(), t); }
+  if (k == kMinusEq()) { emitBinary(fb, kMinus(), t); }
+  if (k == kStarEq()) { emitBinary(fb, kStar(), t); }
+  if (k == kSlashEq()) { emitBinary(fb, kSlash(), t); }
+  if (k == kPercentEq()) { emitBinary(fb, kPercent(), t); }
+  if (k == kAndEq()) { emitBinary(fb, kAnd(), t); }
+  if (k == kOrEq()) { emitBinary(fb, kOr(), t); }
+  if (k == kCaretEq()) { emitBinary(fb, kCaret(), t); }
+  if (k == kShlEq()) { emitBinary(fb, kShl(), t); }
+  if (k == kShrEq()) { emitBinary(fb, kShr(), t); }
+  if (k == kShrUEq()) { emitBinary(fb, kShrU(), t); }
 }
 
 /**
@@ -1038,6 +1074,11 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         return;
       }
       string ot = operandType(src, lexed, env, left, right);
+      // When **both** operands are literals there is no type to take from them, and the slot is the
+      // only thing that knows: `0.0 / 0.0` in an `f64` return is an `f64` division. Without this the
+      // operands went out as `f64` and the operator as `i32.div_s` — the two halves of one expression
+      // disagreeing, because they asked different things.
+      if (ot == "") { ot = want; }
       emitExprAt(fb, src, lexed, env, left, ot);
       // **A shift's amount is not the shift's type.** wac lets `wide >> narrow`, and wasm's
       // `i64.shr_s` wants both sides `i64` — so a right operand that is genuinely a different width
@@ -1148,12 +1189,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.u32leb(env.fieldIndex(ot2, tokenTextOf(src, lexed, nameTok)));
     }
     case Ternary(cond, then, els): {
+      // **The branches' type, not `i32`.** A block that produces a value declares which, and this
+      // declared `i32` for every ternary — so `n == 0 ? x : y` on two `u64`s was a block promising an
+      // `i32` and delivering an `i64`. wasm says so at the *end* of the function, in a fall-through
+      // it has nothing to do with.
+      string tt = typeOfE(src, lexed, env, then);
+      if (tt == "") { tt = typeOfE(src, lexed, env, els); }
+      if (tt == "") { tt = want; }
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);
-      fb.byte(wasmI32());
-      emitExpr(fb, src, lexed, env, then);
+      writeValType(fb, env, tt);
+      emitExprAt(fb, src, lexed, env, then, tt);
       fb.byte(5);
-      emitExpr(fb, src, lexed, env, els);
+      emitExprAt(fb, src, lexed, env, els, tt);
       fb.byte(11);
     }
     else: { }
@@ -1632,7 +1680,17 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case Var(type, nameTok, init, isConst): {
       string t = typeOfTyName(src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
-      return unsupportedValue(src, lexed, env, init);
+      string r0 = unsupportedValue(src, lexed, env, init);
+      if (r0 != "") { return r0; }
+      // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
+      // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
+      // conversion to write, because the two are the same value and only the *checker* knows that.
+      string g0 = isLiteral(init) ? "" : typeOfE(src, lexed, env, init);
+      if (g0 != "" && g0 != t && valType(g0) == valType(t) &&
+          (isArrayType(t) || env.isStructName(t))) {
+        return "an assignment between related reference types";
+      }
+      return "";
     }
     case Assign(target, op, rhs): {
       string lv = unsupportedLvalue(src, lexed, env, target);
@@ -1644,7 +1702,15 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       if (value is null) { return ""; }
       return unsupportedValue(src, lexed, env, value!);
     }
-    case ExprStmt(e): { return unsupportedExpr(src, lexed, env, e); }
+    case ExprStmt(e): {
+      string r = unsupportedExpr(src, lexed, env, e);
+      if (r != "") { return r; }
+      // A statement's value has to be *dropped*, and dropping needs to know whether there is one.
+      // An unknown type means the emitter cannot tell, so it emits no `drop` and leaves the value on
+      // the stack — which wasm reports at the end of the function as a fall-through of the wrong
+      // type, seven files away from the statement that caused it.
+      return typeOfE(src, lexed, env, e) == "" ? "a statement whose value this slice cannot place" : "";
+    }
     case If(cond, then, els): {
       string c = unsupportedExpr(src, lexed, env, cond);
       if (c != "") { return c; }
@@ -1733,6 +1799,16 @@ string unsupportedValue(u8[] src, Lexed lexed, Env env, Expr e) {
   return "";
 }
 
+/** Whether a literal is a float one, which cannot share a slot with an integer one. */
+bool isFloatLiteral(Expr e) {
+  match (e.kind) {
+    case FloatLit(tok): { return true; }
+    case Unary(op, operand): { return isFloatLiteral(operand); }
+    case Binary(op, left, right): { return isFloatLiteral(left) || isFloatLiteral(right); }
+    else: { return false; }
+  }
+}
+
 /**
  * Whether an expression takes its type from **context** rather than having one of its own.
  *
@@ -1749,7 +1825,13 @@ bool isLiteral(Expr e) {
     case StrLit(tok): { return true; }
     case NullLit: { return true; }
     case Unary(op, operand): { return isLiteral(operand); }
-    case Binary(op, left, right): { return isLiteral(left) && isLiteral(right); }
+    // Both sides literal *and of the same family*. `1 / 2.0` is two literals and not one type: the
+    // context cannot settle it, because whatever it says one of the two will be wrong. Treating it as
+    // context-typed emitted an `f64.const` into an `i32` division.
+    case Binary(op, left, right): {
+      if (!isLiteral(left) || !isLiteral(right)) { return false; }
+      return isFloatLiteral(left) == isFloatLiteral(right);
+    }
     else: { return false; }
   }
 }
@@ -2054,4 +2136,31 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
   if (want == "" || got == "" || got == want) { return; }
   if (valType(got) == valType(want) && !isFloat(got)) { return; }
   emitConversion(fb, env, got, want);
+}
+
+/**
+ * The names of the functions in the module, in the order they were emitted.
+ *
+ * wasm reports a failure as *"compiling function #7"*, and #7 is an index into a list this emitter
+ * builds and nobody else can see. Without this, diagnosing a corpus failure means guessing which
+ * function of two hundred it was; with it, the index is a name.
+ */
+export string emitNames(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  Env env = Env(string[1024](), string[1024](), 0, 0, 0, -1, -1, string[128](), 0, "", "",
+                string[256](), 0, string[2048](), string[2048](), string[2048](), 0,
+                string[512](), string[512](), string[2048](), i32[512](), i32[512](), 0,
+                bool[512](), i32[512](), 0);
+  collectDeclarations(env, src, lexed, prog);
+  settleEmittable(env, src, lexed, prog);
+  string out = "";
+  for (i32 emitted = 0; emitted < env.funcCount; emitted++) {
+    for (i32 i = 0; i < env.funcCount; i++) {
+      if (env.funcIndex[i] != emitted) { continue; }
+      out = out + env.funcs[i] + "\n";
+    }
+  }
+  return out;
 }

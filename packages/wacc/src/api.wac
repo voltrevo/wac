@@ -10,7 +10,7 @@ import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { checkProgram } from "./check.wac";
-import { emitModule, emitBlocked } from "./emit.wac";
+import { emitModule, emitBlocked, emitNames } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -62,4 +62,9 @@ export u8[] emit(u8[] src) {
 /** Why a module was not emitted in full — the feature that stopped it, or `""`. */
 export string blocked(u8[] src) {
   return emitBlocked(src);
+}
+
+/** The emitted functions in order, so a wasm "function #N" can be turned back into a name. */
+export string names(u8[] src) {
+  return emitNames(src);
 }
