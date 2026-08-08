@@ -199,7 +199,21 @@ export struct C {
    */
   /** The structs declared in this file, so a name can be known to be a reference type. */
   string[] structNames;
+  /** Each struct's parent, or `""`. Parallel to `structNames`, so inheritance is one hop per lookup. */
+  string[] structParents;
   i32 structCount;
+  /**
+   * Every field of every struct, as three parallel arrays.
+   *
+   * Flat rather than nested because wac has no map and no growable array of structs, and a field
+   * lookup is rare enough that a scan costs nothing at this size. `structNames` could have held an
+   * offset and a count, as the function table does — it does not, because a field is looked up by
+   * (struct, name) rather than by position, so the offset would buy nothing.
+   */
+  string[] fieldOwners;
+  string[] fieldNames;
+  string[] fieldTypes;
+  i32 fieldCount;
   string[] funcNames;
   i32[] funcParamAt;
   i32[] funcParamCount;
@@ -212,7 +226,8 @@ export struct C {
 
   C create(u8[] src, i32[] toks, i32 capacity) {
     return C(src, toks, string[capacity](), string[capacity](), 0,
-             string[capacity](), 0,
+             string[capacity](), string[capacity](), 0,
+             string[capacity](), string[capacity](), string[capacity](), 0,
              string[capacity](), i32[capacity](), i32[capacity](), string[capacity](), 0, 0,
              i32[capacity * 3](), 0);
   }
@@ -269,14 +284,52 @@ export struct C {
     this.funcCount = this.funcCount + 1;
   }
 
-  /** Record a struct declared in this file. */
-  void declareStruct(this, string name) {
+  /** Record a struct declared in this file, and who it inherits from. */
+  void declareStruct(this, string name, string parent) {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return; }
     }
     if (this.structCount >= this.structNames.len()) { return; }
     this.structNames[this.structCount] = name;
+    this.structParents[this.structCount] = parent;
     this.structCount = this.structCount + 1;
+  }
+
+  /** Record one field of one struct. */
+  void declareField(this, string owner, string name, string ty) {
+    if (this.fieldCount >= this.fieldNames.len()) { return; }
+    this.fieldOwners[this.fieldCount] = owner;
+    this.fieldNames[this.fieldCount] = name;
+    this.fieldTypes[this.fieldCount] = ty;
+    this.fieldCount = this.fieldCount + 1;
+  }
+
+  /** A struct's declared parent, or `""`. */
+  string parentOf(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return this.structParents[i]; }
+    }
+    return "";
+  }
+
+  /**
+   * The type of `owner.name`, following the inheritance chain, or `typeNone`.
+   *
+   * A field the chain does not have is unknown rather than an error: *"struct 'P' has no field
+   * 'nope'"* is the reference's own diagnostic and a family this slice does not own. The walk is
+   * bounded by the number of structs, so a cycle in the parent chain — which the reference rejects
+   * separately — terminates here rather than hanging.
+   */
+  string fieldType(this, string owner, string name) {
+    string at = owner;
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return typeNone(); }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return this.fieldTypes[i]; }
+      }
+      at = this.parentOf(at);
+    }
+    return typeNone();
   }
 
   /**
@@ -418,6 +471,13 @@ export bool acceptsLiteral(string want, i32 lit) {
 export string typeOfExpr(C c, Expr e) {
   match (e.kind) {
     case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
+    // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
+    // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
+    case Member(obj, nameTok): {
+      string owner = typeOfExpr(c, obj);
+      if (owner == typeNone()) { return typeNone(); }
+      return c.fieldType(owner, tokenText(c, nameTok));
+    }
     else: { return typeNone(); }
   }
 }
@@ -590,6 +650,7 @@ void checkExpr(C c, Expr e) {
     case Unary(op, operand): { checkExpr(c, operand); }
     case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
     case Index(arr, index): { checkExpr(c, arr); checkExpr(c, index); }
+    case Member(obj, nameTok): { checkExpr(c, obj); }
     // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
     // construction — `Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a
     // `Named` type for both and the resolver decides which later. A `case Call` never matches a
@@ -780,7 +841,11 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        c.declareStruct(tokenText(c, nameTok));
+        string name = tokenText(c, nameTok);
+        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok));
+        for (i32 i = 0; i < fields.len(); i++) {
+          c.declareField(name, tokenText(c, fields[i].nameTok), typeOfTy(c, fields[i].type));
+        }
       }
       else: { }
     }

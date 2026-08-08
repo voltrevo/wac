@@ -410,8 +410,27 @@ mismatch against its own parameter. They are declared as *unknown* now, which si
 because a second declaration poisons — silences any local elsewhere in the function sharing the name.
 The whole-repo corpus caught it, on the file it was written in.
 
-Next: more of rung 3 — the nullable-to-non-null family, generics, and `this`/member access, which is
-the largest remaining gap in what an expression can be typed from.
+### Member access
+
+`p.x` has a type now, taken from the struct's field declarations — the largest widening of what an
+expression can be typed from since names arrived, and it needed no new rules at all. Every rule
+already built reaches field reads without knowing anything about fields. The receiver is typed by the
+same function, so `a.b.c` works by recursion for as long as every step is nameable.
+
+Inheritance is one hop per lookup up the `parentTok` chain, bounded by the number of structs so a
+cycle — which the reference rejects separately — terminates rather than hangs. A field the chain does
+not have is *unknown* rather than an error, because `struct 'P' has no field 'nope'` is the
+reference's own diagnostic and a family this slice does not own.
+
+Fields are three parallel arrays rather than a per-struct list, because a field is looked up by
+(struct, name) rather than by position, so the offset-and-count shape the function table uses would
+buy nothing.
+
+Spec coverage holds at 18 — the corpus's rejections do not include field-type shapes — so this is
+recall on real code again.
+
+Next: more of rung 3 — the nullable-to-non-null family, `this` inside methods (method bodies are not
+walked at all yet), and generics.
 
 ### What rung 3's oracle looks like, measured
 
