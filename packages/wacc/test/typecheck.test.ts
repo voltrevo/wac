@@ -2179,3 +2179,74 @@ Deno.test("rung 3: a case's position, a method's return, and a static as a value
     }
   }
 });
+
+/**
+ * Narrowing: the first rule here that depends on *where in the control flow* an expression sits.
+ *
+ * An enum's value is one of its variants and the checker does not know which, so a payload field is
+ * unreachable through the enum type. A guard is what makes it reachable — and which guards count is
+ * measured rather than reasoned about, because the reference declines to be as clever as it could be:
+ *
+ * - `x is T` narrows, and `&&` propagates it, because both sides must hold;
+ * - **`||` does not**, because the other arm may be the one that held;
+ * - **`!` does not**, so an early return under a negated guard leaves the rest unnarrowed even though
+ *   a human can see it is safe;
+ * - and nothing survives the `if`.
+ *
+ * The last two are the reference choosing a simpler rule than it could defend, and matching it
+ * exactly is the point: a checker that were *cleverer* here would be silent where the reference
+ * complains, which is a miss, and one that were less clever would complain where it is silent, which
+ * is a false alarm on working code.
+ *
+ * This rule arrived with its own hole: reporting unnarrowed access is a rejection, and **none of the
+ * three oracles had a program exercising the accepted half**. The sweep gained one per type, and was
+ * checked by disabling the narrowing and watching twelve cells go red.
+ */
+Deno.test("rung 3: narrowing, and the guards that do not count", () => {
+  const E = "enum Shape { Point, Circle(f64 radius) } ";
+  const S = "struct Base { i32 b; } struct Sub : Base { i32 s; } ";
+  const CAUGHT = [
+    // No guard at all, on an enum and on a parent struct.
+    E + "export f64 f(Shape s) { return s.radius; }",
+    S + "export i32 f(Base b) { return b.s; }",
+    // Guards that do not narrow.
+    E + "export f64 f(Shape s) { if ((s is Circle) || true) { return s.radius; } return 0.0; }",
+    E + "export f64 f(Shape s) { if (!(s is Circle)) { return 0.0; } return s.radius; }",
+    // Narrowing does not survive the branch it guards.
+    E + "export f64 f(Shape s) { if (s is Circle) { } return s.radius; }",
+    // Narrowed to the wrong variant: `Point` has no payload, and the complaint says so.
+    E + "export f64 f(Shape s) { if (s is Point) { return s.radius; } return 0.0; }",
+  ];
+  const QUIET = [
+    // The guard, alone and under a conjunction, and one level deeper.
+    E + "export f64 f(Shape s) { if (s is Circle) { return s.radius; } return 0.0; }",
+    E + "export f64 f(Shape s) { if ((s is Circle) && true) { return s.radius; } return 0.0; }",
+    E + "export f64 f(Shape s) { if (s is Circle) { if (true) { return s.radius; } } return 0.0; }",
+    // A struct downcast narrows the same way.
+    S + "export i32 f(Base b) { if (b is Sub) { return b.s; } return 0; }",
+    // A `match` binds the payload by name and needs no narrowing at all.
+    E + "export f64 f(Shape s) { match (s) { case Circle(r): { return r; } case Point: { return 0.0; } } }",
+    // The enum's own name is still usable for what it does have.
+    E + "export Shape f() { return Shape.Circle(1.0); }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
