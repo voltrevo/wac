@@ -56,8 +56,9 @@ const FOREIGN = new Set([
   "get_subtree_index", "transfer", "addr",
   // tor's own source and specification
   "get_time_period_length", "MAX",
-  // Placeholders in prose: `x(…)` is any capability, `chooser()` any of several
-  "x", "chooser", "feed", "cliFeed", "transform", "page",
+  // Placeholders in prose: `x(…)` is any capability, `chooser()` any of several. `Box` is the
+  // spec's own example generic — `struct Box<T>` appears in generics.md and nowhere in the tree.
+  "x", "chooser", "feed", "cliFeed", "transform", "page", "Box",
   // The language's own surface. These exist, but no package declares them — they are builtins the
   // compiler knows about, so there is nothing for this check to resolve them against.
   "f64.toBits", "f64.fromBits", "f32.toBits", "f32.fromBits",

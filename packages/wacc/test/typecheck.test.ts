@@ -1600,3 +1600,75 @@ Deno.test("rung 3: arity, loop depth, representation, and compile-time constants
     }
   }
 });
+
+/**
+ * Generics as a real type, which is mostly a consequence of one decision.
+ *
+ * The model here has always been that **a type is its canonical name**, so an instantiation spells
+ * itself: `Box<i32>`. Invariance then costs nothing — two instantiations differ exactly when their
+ * names do — and what remains is substitution, reading a member written `T` in the world of whatever
+ * the owner was instantiated with.
+ *
+ * The corpus barely touches any of this: it has one invariance case and one that needs inference. So
+ * this test is where the substitution is actually asserted, which is the usual shape — recall is only
+ * ever visible where somebody thought to look.
+ */
+Deno.test("rung 3: generic instantiations, and substitution at their members", () => {
+  const BOX = "struct Box<T> { T v; T get(const this) { return this.v; } } ";
+  const VEC = "struct Vec<T> { T[] items; i32 n; } ";
+  const PAIR = "struct Pair<A, B> { A a; B b; } ";
+  const CAUGHT = [
+    // A constructor argument read through the type argument.
+    BOX + "export i32 f() { Box<i32> b = Box<i32>(1.5); return b.v; }",
+    // A field read through it — the whole point of substitution.
+    BOX + "export f64 f() { Box<i32> b = Box<i32>(1); return b.v; }",
+    PAIR + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
+    // `T[]` substitutes under the suffix, not instead of it.
+    VEC + "export f64 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    // Invariance: `Box<f64>` is not a `Box<i32>`, and neither is a `Box<Sub>` a `Box<Base>`.
+    BOX + "export i32 f() { Box<i32> b = Box<f64>(1.0); return b.v; }",
+    VEC + "export i32 f() { Vec<i32> v = Vec<f64>(f64[2](), 0); return v.n; }",
+    BOX + "struct Base { i32 a; } struct Sub : Base { i32 b; } i32 take(Box<Base> x) { return 1; } " +
+      "export i32 f(Box<Sub> s) { return take(s); }",
+    // An instantiation is a struct, so a method it does not have is still a missing method.
+    BOX + "export i32 f() { Box<i32> b = Box<i32>(1); return b.nosuch(); }",
+  ];
+  const QUIET = [
+    // The same programs with the types agreeing.
+    BOX + "export i32 f() { Box<i32> b = Box<i32>(1); return b.v; }",
+    BOX + "export f64 f() { Box<f64> b = Box<f64>(1.0); return b.v; }",
+    VEC + "export i32 f() { Vec<i32> v = Vec<i32>(i32[2](), 0); return v.items[0]; }",
+    PAIR + "export i32 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.a; }",
+    PAIR + "export f64 f() { Pair<i32, f64> p = Pair<i32, f64>(1, 2.0); return p.b; }",
+    // A bare template with the arguments left to inference. Legal, and unknowable from the syntax
+    // here — so it is typed as unknown rather than as `Box`, which is a type nothing has.
+    BOX + "export i32 f() { Box<i32> b = Box(1); return b.v; }",
+    // Inside a generic's own methods the bare name means the instantiation being compiled. Five
+    // sites in `packages/std` are this shape, and typing it as `Vec` reported every one of them.
+    "struct Vec<T> { T[] items; Vec<T> empty() { return Vec(T[]()); } }",
+    // A generic function's signature is written in its own parameters, which mean nothing at a call
+    // site: `Box<T>` accepts every `Box<…>` and `T` accepts anything.
+    "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } " +
+      "export f64 f(Box<f64> b) { return unbox(b); }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

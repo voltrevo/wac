@@ -751,11 +751,54 @@ and not for what is in it; and `MatchExpr` arms were not walked at all, since th
 where the statement form holds statements. Neither is in the spec corpus — which is the argument for
 the grid, since recall is only ever visible where somebody thought to look.
 
+### Generics, which were one decision rather than a feature
+
+**Spec coverage: 76 of 83.** The number did not move, and what happened underneath it is the point.
+
+A generic was previously invisible: `typeOfTy` returned *unknown* for every instantiation, because
+`Box<i32>` and `Box<f64>` are different types and the name `Box` cannot tell them apart. So no
+generic's fields were recorded, no method on one was checked, and `packages/std` — the most
+generics-dense wac in existence — was silent for the wrong reason.
+
+The fix follows from the model rather than extending it. **A type is its canonical name**, so an
+instantiation spells itself: `Box<i32>`, `Pair<i32, f64>`. Invariance then costs nothing — two
+instantiations differ exactly when their names do — and the `Box<Base>` from `Box<Sub>` corpus case
+falls out of string inequality. What remains is **substitution**: a member written `T`, read in the
+world of whatever the owner was instantiated with. `T` becomes `i32`, and `T[]` becomes `i32[]`,
+because the suffixes are peeled off and put back rather than substituted through.
+
+Three things had to be told apart, and each of them was a false alarm first:
+
+- **A bare template is not a type.** `Box(1.0)` is legal — the arguments are *inferred* from whatever
+  the construction flows into — so it is typed as unknown rather than as `Box`, which is a type
+  nothing has. `isGeneric` stays exact while `isStruct` resolves to the template, and the two
+  together say it: a bare `Box` is the unmodelled template, `Box<i32>` is a real type.
+- **Inside a generic's own methods, the bare name means the instantiation being compiled.**
+  `return Vec(T[](), 0)` inside `struct Vec<T>` is ordinary, and five sites in `packages/std` are
+  exactly this shape. Typing it as `Vec` reported every one of them.
+- **A generic function's signature is written in its own parameters**, which mean nothing at a call
+  site: `Box<T>` accepts every `Box<…>` and `T` accepts anything. Recorded as unknown, arity kept —
+  the arity does not depend on the types.
+
+That last one **cost a case, correctly**. `i32 x = unbox(b)` used to be caught, because `T` as a
+return type was compared against `i32` and differed. It was right by accident and would false-alarm
+the moment `T` *is* `i32`. Trading it for an honest unknown is why coverage stayed at 76 while the
+checker got better, and it is worth writing down that those two are not the same measurement.
+
+**Neither remaining generic case is about generics.** Both need *target-type inference* — knowing what
+type a construction is flowing into — which is a different machine from substitution and the one place
+the reference does real inference. `Box(1.0)` is legal where a `Box<f64>` is expected and
+`Box(1).get()` is not, and nothing local to the expression distinguishes them.
+
+The substitution itself is asserted in `typecheck.test.ts` rather than by the corpus, which has one
+invariance case and nothing else: fields, `T[]` under a suffix, multi-parameter `Pair<A, B>`,
+constructor arguments, and a missing method on an instantiation, each against the reference's exact
+position.
+
 **What is left, all seven:** a bare field name used as a variable; two deep-const cases, one of
 which needs flow analysis (`Counter c = this; c.mutate();`); an `f32` literal out of range, which
-needs the literal's value and not just its text; generics properly, which is two of them — a
-construction of `Box` with no type argument, and `Box<Base>` from `Box<Sub>`; narrowing after `is` in
-a condition; and a field access on an enum variant.
+needs the literal's value and not just its text; the two generic cases above, which are inference
+rather than generics; narrowing after `is` in a condition; and a field access on an enum variant.
 
 ### What rung 3's oracle looks like, measured
 

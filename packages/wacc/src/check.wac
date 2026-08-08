@@ -212,6 +212,109 @@ bool endsWith(string s, string suffix) {
   return true;
 }
 
+/**
+ * The template name in an instantiation — `Box` in `Box<i32>` — or `""` when it is not one.
+ *
+ * Everything the checker knows about a generic is recorded under the template, because that is the
+ * only place its fields are written down. So every lookup that takes an owner has to come back here
+ * first, and the type arguments are what it substitutes afterwards.
+ */
+string genericBase(string t) {
+  if (!endsWith(t, ">")) { return ""; }
+  u8[] a = t.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 60) {
+      u8[] out = u8[i]();
+      for (i32 j = 0; j < i; j++) { out[j] = a[j]; }
+      return string.fromBytes(out);
+    }
+  }
+  return "";
+}
+
+/**
+ * The type arguments of an instantiation, split at the commas that are not inside another one.
+ *
+ * `Pair<Vec<i32>, f64>` has two arguments and four commas' worth of temptation to get this wrong, so
+ * the split counts `<` and `>` depth rather than looking for a separator.
+ */
+string[] genericArgs(string t) {
+  string base = genericBase(t);
+  if (base == "") { return string[0](); }
+  u8[] a = t.toBytes();
+  i32 start = base.toBytes().len() + 1;
+  i32 end = a.len() - 1;
+  i32 n = 1;
+  i32 depth = 0;
+  for (i32 i = start; i < end; i++) {
+    if (a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+  }
+  string[] out = string[n]();
+  i32 at = 0;
+  i32 from = start;
+  depth = 0;
+  for (i32 i = start; i <= end; i++) {
+    bool cut = i == end;
+    if (i < end) {
+      if (a[i] == 60) { depth = depth + 1; }
+      else if (a[i] == 62) { depth = depth - 1; }
+      else if (a[i] == 44 && depth == 0) { cut = true; }
+    }
+    if (!cut) { continue; }
+    i32 lo = from;
+    while (lo < i && a[lo] == 32) { lo = lo + 1; }
+    u8[] piece = u8[i - lo]();
+    for (i32 j = 0; j < piece.len(); j++) { piece[j] = a[lo + j]; }
+    out[at] = string.fromBytes(piece);
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+/** The template an instantiation is of — `Box` for `Box<i32>` — or the type itself when it is not one. */
+string templateOf(string t) {
+  string base = genericBase(t);
+  return base == "" ? t : base;
+}
+
+/**
+ * A type written inside a generic, read in the world of one of its instantiations.
+ *
+ * `T` inside `Box<T>` is `i32` when the owner is `Box<i32>`, and `T[]` is `i32[]` — the suffixes come
+ * along, because a parameter can appear under any number of them. A type that mentions no parameter
+ * comes back unchanged, which is most of them.
+ *
+ * Returns unknown when the owner is not an instantiation but the written type still names a
+ * parameter: that is a generic's member read without knowing what it was instantiated with, and
+ * there is no answer to give.
+ */
+string substituteType(C c, string owner, string written) {
+  string base = genericBase(owner);
+  string template = base == "" ? owner : base;
+  i32 si = c.structAt(template);
+  if (si < 0 || c.structParamCount[si] == 0) { return written; }
+
+  // Peel `[]` and `?` off, substitute the core, and put them back in the order they came off.
+  string core = written;
+  string suffix = "";
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    else { break; }
+  }
+
+  string[] args = genericArgs(owner);
+  for (i32 i = 0; i < c.structParamCount[si]; i++) {
+    if (c.structParamNames[c.structParamAt[si] + i] != core) { continue; }
+    if (i >= args.len()) { return typeNone(); }
+    return args[i] + suffix;
+  }
+  return written;
+}
+
 /** `s` without its last `n` bytes. */
 string dropLast(string s, i32 n) {
   u8[] a = s.toBytes();
@@ -334,6 +437,17 @@ export struct C {
   /** Each struct's parent, or `""`. Parallel to `structNames`, so inheritance is one hop per lookup. */
   string[] structParents;
   /**
+   * The names of each struct's type parameters — `T` for `Box<T>`, `A` and `B` for `Pair<A, B>`.
+   *
+   * Flat, with `structParamAt` and `structParamCount` indexing into it, which is the same shape the
+   * function parameters use and for the same reason: wac has no growable array of arrays. These are
+   * what a field type written `T` is substituted *from*, so without them a generic's fields are text.
+   */
+  string[] structParamNames;
+  i32[] structParamAt;
+  i32[] structParamCount;
+  i32 structParamTotal;
+  /**
    * Whether each struct takes type parameters.
    *
    * Recorded rather than inferred from an empty field table, because "generic" and "has no fields"
@@ -391,7 +505,8 @@ export struct C {
   C create(u8[] src, i32[] toks, i32 capacity) {
     return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), 0, 0,
-             string[capacity](), string[capacity](), bool[capacity](), 0,
+             string[capacity](), string[capacity](),
+             string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
              string[capacity](), string[capacity](), bool[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
@@ -466,15 +581,30 @@ export struct C {
   }
 
   /** Record a struct declared in this file, and who it inherits from. */
-  void declareStruct(this, string name, string parent, bool generic) {
+  void declareStruct(this, string name, string parent, string[] typeParams) {
     for (i32 i = 0; i < this.structCount; i++) {
       if (this.structNames[i] == name) { return; }
     }
     if (this.structCount >= this.structNames.len()) { return; }
     this.structNames[this.structCount] = name;
     this.structParents[this.structCount] = parent;
-    this.structGenerics[this.structCount] = generic;
+    this.structGenerics[this.structCount] = typeParams.len() > 0;
+    this.structParamAt[this.structCount] = this.structParamTotal;
+    this.structParamCount[this.structCount] = typeParams.len();
+    for (i32 i = 0; i < typeParams.len(); i++) {
+      if (this.structParamTotal >= this.structParamNames.len()) { break; }
+      this.structParamNames[this.structParamTotal] = typeParams[i];
+      this.structParamTotal = this.structParamTotal + 1;
+    }
     this.structCount = this.structCount + 1;
+  }
+
+  /** Which entry holds this struct, or -1. */
+  i32 structAt(const this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return i; }
+    }
+    return -1;
   }
 
   /** Whether this struct takes type parameters, and so is not modelled beyond its name. */
@@ -527,6 +657,7 @@ export struct C {
    * one with a flag.
    */
   i32 ownMethodAt(this, string owner, string name) {
+    owner = templateOf(owner);
     for (i32 i = 0; i < this.methodCount; i++) {
       if (this.methodOwners[i] == owner && this.methodNames[i] == name) { return i; }
     }
@@ -535,6 +666,7 @@ export struct C {
 
   /** Which entry holds `owner.name`, following the inheritance chain, or -1. */
   i32 methodAt(this, string owner, string name) {
+    owner = templateOf(owner);
     string at = owner;
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return -1; }
@@ -554,7 +686,7 @@ export struct C {
    * the type would have said "no such field" about a field two lines above it.
    */
   bool hasField(this, string owner, string name) {
-    string at = owner;
+    string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return false; }
       for (i32 i = 0; i < this.fieldCount; i++) {
@@ -567,7 +699,7 @@ export struct C {
 
   /** Whether `owner.name` is a const field, following the inheritance chain. */
   bool isConstField(this, string owner, string name) {
-    string at = owner;
+    string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return false; }
       for (i32 i = 0; i < this.fieldCount; i++) {
@@ -607,7 +739,7 @@ export struct C {
    */
   i32 constructArity(this, string owner) {
     i32 n = 0;
-    string at = owner;
+    string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return n; }
       n = n + this.ownFieldCount(at);
@@ -618,6 +750,7 @@ export struct C {
 
   /** The type of the `i`th positional field of `owner`, parents first. */
   string constructFieldAt(this, string owner, i32 i) {
+    owner = templateOf(owner);
     string parent = this.parentOf(owner);
     i32 inherited = parent == "" ? 0 : this.constructArity(parent);
     if (i < inherited) { return this.constructFieldAt(parent, i); }
@@ -633,11 +766,15 @@ export struct C {
    * separately — terminates here rather than hanging.
    */
   string fieldType(this, string owner, string name) {
-    string at = owner;
+    // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
+    // template to find the field and substitutes on the way back out.
+    string at = templateOf(owner);
     for (i32 hop = 0; hop <= this.structCount; hop++) {
       if (at == "") { return typeNone(); }
       for (i32 i = 0; i < this.fieldCount; i++) {
-        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return this.fieldTypes[i]; }
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) {
+          return substituteType(this, owner, this.fieldTypes[i]);
+        }
       }
       at = this.parentOf(at);
     }
@@ -651,9 +788,13 @@ export struct C {
    * also not a primitive, and this slice has not measured what the reference says about comparing
    * those — so they stay unknown rather than being swept in by a rule about everything else.
    */
-  bool isStruct(this, string name) {
+  bool isStruct(const this, string name) {
+    // An instantiation is a struct: `Box<i32>` is as much a reference type as `Box` is, and every
+    // rule that asks this question means the reference-type one. `isGeneric` stays exact, so the two
+    // together say what is wanted — a bare `Box` is the unmodelled template, `Box<i32>` is a type.
+    string at = templateOf(name);
     for (i32 i = 0; i < this.structCount; i++) {
-      if (this.structNames[i] == name) { return true; }
+      if (this.structNames[i] == at) { return true; }
     }
     return false;
   }
@@ -739,10 +880,20 @@ export string typeOfTy(C c, Ty t) {
   match (t.kind) {
     case Prim(tok): { return tokenText(c, tok); }
     case Named(tok, typeArgs): {
-      // A generic instantiation is not the same type as its template, and this cannot spell the
-      // difference — `Box<i32>` and `Box<f64>` would both come back `Box`. Unknown instead.
-      if (typeArgs.len() > 0) { return typeNone(); }
-      return tokenText(c, tok);
+      // A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
+      // model here is that a type *is* its canonical name, so the name has to carry the arguments —
+      // an earlier version returned unknown for all of them, which made every generic invisible.
+      // Invariance then costs nothing: two instantiations differ exactly when their names do.
+      string base = tokenText(c, tok);
+      if (typeArgs.len() == 0) { return base; }
+      string out = base + "<";
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        string a = typeOfTy(c, typeArgs[i]);
+        if (a == typeNone()) { return typeNone(); }
+        if (i > 0) { out = out + ", "; }
+        out = out + a;
+      }
+      return out + ">";
     }
     // `i32[]` and `P?` are names too, built from the name inside. An element or inner type this
     // slice cannot spell makes the whole thing unspellable rather than half-named: `Box<i32>[]` is
@@ -882,11 +1033,18 @@ export string typeOfExpr(C c, Expr e) {
     case Construct(ctype, args, named): {
       string name = "";
       match (ctype.kind) {
-        case Named(tok, typeArgs): { if (typeArgs.len() == 0) { name = tokenText(c, tok); } }
+        case Named(tok, typeArgs): {
+          if (typeArgs.len() > 0) { return typeOfTy(c, ctype); }
+          name = tokenText(c, tok);
+        }
         else: { }
       }
       if (name == "") { return typeNone(); }
-      if (c.isStruct(name)) { return name; }
+      // `Box(1.0)` with no type arguments written is legal — the arguments are *inferred*, from the
+      // declared type of whatever the construction flows into, and inside the generic's own methods
+      // the bare name means the instantiation being compiled. Neither is knowable from the syntax at
+      // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
+      if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
       i32 at = c.funcAt(name);
       return at < 0 ? typeNone() : c.funcReturns[at];
     }
@@ -1129,7 +1287,9 @@ void checkExpr(C c, Expr e) {
         case Named(tok, typeArgs): {
           string name = tokenText(c, tok);
           if (c.isStruct(name)) {
-            checkConstruct(c, name, args, named);
+            // The *spelled* type, so `Box<i32>(…)` carries its argument into the field check while a
+            // bare `Box(…)` does not. `checkConstruct` resolves the template itself.
+            checkConstruct(c, typeArgs.len() > 0 ? typeOfTy(c, ctype) : name, args, named);
             // Two questions a construction asks that the field types do not. With arguments, the
             // count has to match — parents included, since a child is constructed with the whole
             // chain's fields. With none, it is a *default* construction, and the struct has to have
@@ -1288,7 +1448,9 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named) {
   if (named.len() > 0) { return; }
   if (c.constructArity(name) != args.len()) { return; }
   for (i32 i = 0; i < args.len(); i++) {
-    string want = c.constructFieldAt(name, i);
+    // Read in the instantiation's world: `Box<i32>(1)` wants an `i32` where the field says `T`, and
+    // a bare `Box(1)` has nothing to substitute from, so `T` comes back unknown and says nothing.
+    string want = substituteType(c, name, c.constructFieldAt(name, i));
     if (want == typeNone()) { continue; }
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
@@ -1957,7 +2119,9 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string name = tokenText(c, nameTok);
-        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), typeParams.len() > 0);
+        string[] tps = string[typeParams.len()]();
+        for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
+        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
         // A generic struct's fields are not recorded. `struct Box<T> { T v; }` has a field whose
         // type is the *parameter* `T`, which is a name like any other to `typeOfTy` and therefore
         // looks like a struct called `T` — enough to make `Box(1)` a field mismatch against a type
@@ -1965,17 +2129,19 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // `[§wac-generic-expected-position-3qmz8vk]`. With no fields recorded the arity is zero,
         // never matches, and construction of a generic says nothing — which is the honest answer
         // until instantiation is modelled.
-        if (typeParams.len() == 0) {
-          for (i32 i = 0; i < fields.len(); i++) {
-            // `const struct Config { … }` makes every field const without any of them saying so,
-            // which is the whole point of the spelling: one word instead of one per field.
-            c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
-                                typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
-          }
-          for (i32 i = 0; i < methods.len(); i++) {
-            c.declareMethod(name, tokenText(c, methods[i].nameTok),
-                            !methods[i].hasThis, methods[i].thisConst);
-          }
+        // Generics included, and their field types recorded **as written** — `T`, `T[]`. A name like
+        // `T` is meaningless on its own, and becomes a type only once an instantiation says what its
+        // arguments are, which is what `substituteType` does at every lookup. Recording nothing, as
+        // the first version did, made every generic's members invisible rather than unknown.
+        for (i32 i = 0; i < fields.len(); i++) {
+          // `const struct Config { … }` makes every field const without any of them saying so,
+          // which is the whole point of the spelling: one word instead of one per field.
+          c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
+                              typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
+        }
+        for (i32 i = 0; i < methods.len(); i++) {
+          c.declareMethod(name, tokenText(c, methods[i].nameTok),
+                          !methods[i].hasThis, methods[i].thisConst);
         }
       }
       else: { }
@@ -1984,9 +2150,17 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
+        // A generic function's signature is written in terms of its own type parameters, which mean
+        // nothing at a call site: `Box<T>` accepts every `Box<…>`, and `T` accepts everything. Its
+        // arity is still worth having — that does not depend on the types — so the parameters are
+        // recorded as unknown rather than the function being left out.
+        bool generic = typeParams.len() > 0;
         string[] prims = string[params.len()]();
-        for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
-        c.declareFunc(tokenText(c, nameTok), typeOfTy(c, returnType), prims, params.len());
+        for (i32 i = 0; i < params.len(); i++) {
+          prims[i] = generic ? typeNone() : typeOfTy(c, params[i].type);
+        }
+        c.declareFunc(tokenText(c, nameTok), generic ? typeNone() : typeOfTy(c, returnType),
+                      prims, params.len());
       }
       else: { }
     }
