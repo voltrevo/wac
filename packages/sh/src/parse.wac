@@ -34,6 +34,15 @@ export enum RedirKind {
   /** `<<WORD` — the input is in the script, not in a file. */
   Here,
   /**
+   * `<<<WORD` — a here-*string*: the word itself is the input, with a newline appended.
+   *
+   * Its own kind rather than a `Here` with the body filled in, because the two differ in when the text
+   * is known: a here-document's body is read by the *lexer* from the lines that follow, and a
+   * here-string's is an ordinary word that expands when the command runs — `<<< "$x"` is whatever `$x`
+   * is at that moment.
+   */
+  HereString,
+  /**
    * `N>&M` — make one descriptor a copy of another.
    *
    * Parsed but **not implemented**, which is a deliberate pair rather than an oversight. It used to be a
@@ -623,6 +632,11 @@ i32 takeRedirs(Vec<Token> toks, i32 at, Command out) {
                               Word.of(noTarget), toks.get(p).body, toks.get(p).bodyExpand));
         p++;
       }
+      case TLess: {
+        i32 next = takeRedirInto(toks, p, out.redirs, RedirKind.HereString, 0);
+        if (next < 0) { return -1; }
+        p = next;
+      }
       else: return p;
     }
   }
@@ -676,6 +690,13 @@ i32 parseSimple(Vec<Token> toks, i32 at, Simple out) {
         out.redirs.push(Redir(RedirKind.Here, t.fd < 0 ? 0 : t.fd,
                               Word.of(noTarget), t.body, t.bodyExpand));
         p++;
+      }
+      case TLess: {
+        // A here-string *does* have a target word, and it is an ordinary one: `<<< "$x"` expands when
+        // the command runs, which is the difference from the body above.
+        i32 next = takeRedir(toks, p, out, RedirKind.HereString, 0);
+        if (next < 0) { return -1; }
+        p = next;
       }
       else: {
         // Anything else ends the command. A command with neither words nor redirections is a

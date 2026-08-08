@@ -941,6 +941,15 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
         sh.heldInput = true;
         ownInput = true;
       }
+      case HereString: {
+        // The word, expanded now, with a newline: `cat <<< abc` writes four bytes. A word is a word —
+        // quotes come off, `$x` expands — which is why this is `joinWord` rather than the here-document
+        // path, whose body was fixed when the script was lexed.
+        sh.stdinBytes = (joinWord(sh, r.target) + "\n").toBytes();
+        sh.stdinPos = 0;
+        sh.heldInput = true;
+        ownInput = true;
+      }
       else: {}
     }
   }
@@ -1172,6 +1181,13 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
       }
       case Here: {
         input = hereBody(sh, r);
+        hasInput = true;
+      }
+      case HereString: {
+        // The word with a newline on the end, expanded now — `cat <<< "$x"` is whatever `$x` is at this
+        // moment. This is the *simple command's* copy of the rule; the compound one above holds the
+        // same bytes in `stdinBytes` instead, because a compound reads them through the shell.
+        input = (joinWord(sh, r.target) + "\n").toBytes();
         hasInput = true;
       }
       else: {}

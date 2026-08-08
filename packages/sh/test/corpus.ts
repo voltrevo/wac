@@ -1030,6 +1030,39 @@ esac`,
   `x=o; f() { local x=1; unset x; echo "[$x]"; }; f; echo $x`,
   `f() { local u; echo \${u:-fallback}; }; f`,
   `f() { local 1=x; echo st=$?; }; f`,
+
+  // ── `$'…'` and `<<<` ───────────────────────────────────────────────────────
+  //
+  // Two forms the lexer did not know. `$'a\tb'` is ANSI-C quoting: the escapes are interpreted at lex
+  // time and the result is *single*-quoted, so `$'$x'` is a dollar and an x. An escape it does not know
+  // keeps its backslash — `$'a\qb'` is four characters — which is bash's rule and the one that would
+  // quietly change strings if it were wrong. `<<<` is a here-string: the word, expanded when the
+  // command runs, with a newline on the end.
+  "printf '[%s]\\n' $'a\\tb'",
+  "echo $'x\\ny'",
+  "echo \"$'x\\ny'\"",
+  "echo $'a\\\\b'",
+  "echo $'it\\'s'",
+  "echo $'\\x41\\x42'",
+  "echo $'\\101'",
+  "echo $'é'",
+  "echo $'a\\qb'",
+  "x=v; echo $'$x'",
+  "echo \"[$'']\"",
+  "echo pre$'\\t'post | wc -c",
+  "cat <<< hello",
+  'x=world; cat <<< "hi $x"',
+  "cat <<< ''; echo end",
+  "cat 0<<< fd0",
+  "cat <<< abc | wc -c",
+  'echo "[$(cat <<< abc)]"',
+  "cat <<< 'a b'",
+  'cat <<< "*"',
+  "cat <<< one; echo two",
+  "f() { cat <<< in-fn; }; f",
+  "read a <<< hi; echo \"[$a]\"",
+  "cat <<< $'x\\ty'",
+  "echo ignored | cat <<< wins",
 ];
 
 /**

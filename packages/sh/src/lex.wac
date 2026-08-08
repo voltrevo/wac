@@ -18,6 +18,7 @@
 // process substitution. Each is noted where it would go.
 
 import { Vec } from "../../std/src/vec.wac";
+import { Buf } from "../../bytes/src/buf.wac";
 
 export enum Kind {
   /** A word, in `parts`. */
@@ -33,6 +34,8 @@ export enum Kind {
   DGreat,
   /** `<<WORD` or `<<-WORD`, with the body already collected. */
   DLess,
+  /** `<<<` — a here-*string*: the word after it is the input, with a newline on the end. */
+  TLess,
   LParen,
   RParen,
   /** `;;` — ends a `case` arm. */
@@ -171,6 +174,15 @@ export Vec<Token> tokenize(string src) {
     if (c == 0x28) { out.push(Token.of(Kind.LParen)); at++; continue; }   // '('
     if (c == 0x29) { out.push(Token.of(Kind.RParen)); at++; continue; }   // ')'
     if (c == 0x3c) {                                        // '<'
+      // `<<<` before `<<`, because the here-document lexer would otherwise take the third `<` as the
+      // first character of its delimiter and wait for a line saying `<`.
+      if (at + 2 < s.len() && s[at + 1] == 0x3c && s[at + 2] == 0x3c) {
+        Token t = Token.of(Kind.TLess);
+        t.fd = 0;
+        out.push(t);
+        at += 3;
+        continue;
+      }
       if (at + 1 < s.len() && s[at + 1] == 0x3c) {
         i32 next = takeHereDoc(s, at, out, pendingAt, pendingDelim, pendingStrip, -1);
         if (next < 0) { out.push(Token.of(Kind.Bad)); return out; }
@@ -196,6 +208,13 @@ export Vec<Token> tokenize(string src) {
       if (scan < s.len() && (s[scan] == 0x3e || s[scan] == 0x3c)) {
         i32 fd = 0;
         for (i32 i = at; i < scan; i++) { fd = fd * 10 + (s[i] - 0x30); }
+        if (s[scan] == 0x3c && scan + 2 < s.len() && s[scan + 1] == 0x3c && s[scan + 2] == 0x3c) {
+          Token t = Token.of(Kind.TLess);
+          t.fd = fd;
+          out.push(t);
+          at = scan + 3;
+          continue;
+        }
         if (s[scan] == 0x3c && scan + 1 < s.len() && s[scan + 1] == 0x3c) {
           i32 next = takeHereDoc(s, scan, out, pendingAt, pendingDelim, pendingStrip, fd);
           if (next < 0) { out.push(Token.of(Kind.Bad)); return out; }
@@ -445,6 +464,29 @@ i32 lexWord(u8[] s, i32 at, Token word) {
       continue;
     }
 
+    // `$'…'` — ANSI-C quoting. The result is a *single-quoted* string: the escapes are interpreted
+    // here and nothing expands afterwards, so `$'$x'` is a dollar and an x. Only unquoted: inside
+    // double quotes bash leaves `$'…'` alone, which is why this sits in the unquoted branch.
+    if (c == 0x24 && p + 1 < s.len() && s[p + 1] == 0x27) {
+      if (haveLit && !litQuoted) { word.parts.push(Part.of(PartKind.Lit, lit, false)); lit = ""; }
+      litQuoted = true;
+      haveLit = true;
+      p += 2;
+      Buf body = Buf.create();
+      while (p < s.len() && s[p] != 0x27) {
+        if (s[p] == 0x5c && p + 1 < s.len()) {
+          i32 after = ansiEscape(s, p + 1, body);
+          if (after > 0) { p = after; continue; }
+        }
+        body.push(s[p]);
+        p++;
+      }
+      if (p >= s.len()) { return -1; }                       // unterminated
+      p++;
+      lit = lit + body.toStr();
+      continue;
+    }
+
     if (c == 0x24) {                                        // '$'
       if (haveLit) { word.parts.push(Part.of(PartKind.Lit, lit, litQuoted)); lit = ""; haveLit = false; }
       litQuoted = false;
@@ -668,6 +710,55 @@ bool isSpecialName(i32 c) {
 }
 
 /** The four characters a backslash escapes inside double quotes. Everything else stays literal. */
+/**
+ * One escape inside `$'…'`, appended to `out`; the index after it, or -1 if it is not an escape.
+ *
+ * bash's table, measured rather than remembered, and the last line is the one to keep: an escape it does
+ * not know is **not** an error and does not drop the backslash — `$'a\qb'` is `a`, a backslash, `q`, `b`.
+ * A table that silently ate the backslash would quietly change strings nobody was looking at.
+ */
+i32 ansiEscape(u8[] s, i32 at, Buf out) {
+  i32 c = s[at];
+  if (c == 0x6e) { out.push(10); return at + 1; }            // \n
+  if (c == 0x74) { out.push(9); return at + 1; }             // \t
+  if (c == 0x72) { out.push(13); return at + 1; }            // \r
+  if (c == 0x61) { out.push(7); return at + 1; }             // \a, the bell
+  if (c == 0x62) { out.push(8); return at + 1; }             // \b
+  if (c == 0x66) { out.push(12); return at + 1; }            // \f
+  if (c == 0x76) { out.push(11); return at + 1; }            // \v
+  if (c == 0x65 || c == 0x45) { out.push(27); return at + 1; }  // \e, and \E
+  if (c == 0x5c) { out.push(92); return at + 1; }            // \\
+  if (c == 0x27) { out.push(39); return at + 1; }            // \'
+  if (c == 0x22) { out.push(34); return at + 1; }            // \"
+  if (c == 0x3f) { out.push(63); return at + 1; }            // \?
+  if (c == 0x78) {                                            // \xHH — one or two hex digits
+    i32 p = at + 1;
+    i32 v = 0;
+    i32 n = 0;
+    while (p < s.len() && n < 2 && hexValue(s[p]) >= 0) { v = v * 16 + hexValue(s[p]); p++; n++; }
+    if (n == 0) { return -1; }
+    out.push(v & 0xFF);
+    return p;
+  }
+  if (c >= 0x30 && c <= 0x37) {                               // \NNN — up to three octal digits
+    i32 p = at;
+    i32 v = 0;
+    i32 n = 0;
+    while (p < s.len() && n < 3 && s[p] >= 0x30 && s[p] <= 0x37) { v = v * 8 + (s[p] - 0x30); p++; n++; }
+    out.push(v & 0xFF);
+    return p;
+  }
+  return -1;
+}
+
+/** A hex digit's value, or -1. */
+i32 hexValue(i32 c) {
+  if (c >= 0x30 && c <= 0x39) { return c - 0x30; }
+  if (c >= 0x61 && c <= 0x66) { return c - 0x61 + 10; }
+  if (c >= 0x41 && c <= 0x46) { return c - 0x41 + 10; }
+  return -1;
+}
+
 bool escapableInDquote(i32 c) {
   return c == 0x22 || c == 0x5c || c == 0x24 || c == 0x60;   // " \ $ `
 }
