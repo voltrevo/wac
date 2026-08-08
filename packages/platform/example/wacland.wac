@@ -20,9 +20,18 @@
 // resolved every ticket immediately would pass the types and fail stage 3, which is why the out-of-order
 // clause is in the criteria rather than a single request.
 
-import { Cli, Core, Pending } from "../src/platform.wac";
+import { Child, Cli, Core, GRANT_NONE, Pending } from "../src/platform.wac";
+import { Read } from core;
 
 export i32 main(Core core, Cli cli) {
+  // **This program is also its own child.** Stage 5 spawns another instance of this very module and
+  // waits for it, so `main` has to be a multi-call entry — the same shape `packages/box`'s `sh.wac`
+  // uses, and for the same reason: a spawned bundle re-enters `main`, and something has to say which
+  // half it is. A child prints one line and exits with a status its parent can check for.
+  if (cli.argCount().wait() > 0 && string.fromBytes(cli.arg(0).wait()) == "--child") {
+    core.log("wacland: I am the child");
+    return 7;
+  }
   // Stage 1. Both streams, because a host that wired `warn` to standard output would look right in a
   // terminal and be wrong to everything that reads one of the two.
   core.log("wacland: stage 1 output");
@@ -58,6 +67,42 @@ export i32 main(Core core, Cli cli) {
   // Cancelling says "discard the answer", not "stop trying" — so the sleep is still running and this
   // program is about to end anyway. Said here because the difference is the whole of what `cancel` is.
   never.cancel();
+
+  // Stage 5. **A child, and a wait over its exit *and* one of this program's own tickets.**
+  //
+  // 0087's third criterion, and the one it calls the point: "a readiness table that only handles one
+  // kind of event fails there and nowhere else". The sleep and the child are two different sorts of
+  // thing — a timer the runtime owns, and another wasm instance on another thread — and `waitAny` has
+  // to be able to hold both in one list.
+  //
+  // `GRANT_NONE`, which is what a child that only prints needs. Grants are a ceiling of the parent's
+  // own, so asking for more than this program has would not widen it anyway.
+  u8[][] childArgv = u8[][1](fill: u8[0]());
+  childArgv[0] = "--child".toBytes();
+  Child kid = cli.spawnSelf(childArgv, GRANT_NONE, "", false).wait();
+  if (kid.unavailable()) {
+    core.log("wacland: stage 5 no spawn in this world");
+    core.log("wacland: reached the end of what is implemented");
+    return 0;
+  }
+  if (kid.handle < 0) {
+    core.warn("wacland: stage 5 could not spawn: " + kid.error);
+    return 1;
+  }
+  // The child's output, read back through its handle — bytes crossing between two instances.
+  Pending<Read> said = cli.recv(kid.handle);
+  Pending<i32> over = cli.exitCode(kid.handle);
+  Pending<i64> tick = core.sleepMillis(1000);
+  // Both kinds in one list. The child finishes long before the second, so this must answer 0.
+  i32 which = core.waitAny(i32[](over.id, tick.id), -1);
+  core.log("wacland: stage 5 first " + itoa(which));
+  match (said.wait()) {
+    case Data(bytes): { core.log("wacland: stage 5 heard " + string.fromBytes(bytes)); }
+    case End: { core.log("wacland: stage 5 heard nothing"); }
+    case Failed(why): { core.log("wacland: stage 5 read failed " + why); }
+  }
+  core.log("wacland: stage 5 status " + itoa(over.wait()));
+  tick.cancel();
 
   core.log("wacland: reached the end of what is implemented");
   return 0;
