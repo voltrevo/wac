@@ -1299,11 +1299,11 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   // "an argv and an exit status", which `cd` has; imitating bash's split would mean a list of names to
   // maintain, and the difference is unobservable while commands run one at a time. `&` is what would
   // make it visible, and is not implemented.
-  i32 parent = sh.fs.procs.self;
+  i32 parent = sh.fs.procs.current;
   i32 pid = sh.fs.procs.start(parent, argv, sh.fs.now);
-  sh.fs.procs.self = pid;
+  sh.fs.procs.current = pid;
   Output result = dispatch(sh, argv, mayInherit);
-  sh.fs.procs.self = parent;
+  sh.fs.procs.current = parent;
   // Reaped straight away: nothing can `wait` for a stage yet, so a row left behind would be a leak
   // rather than a status somebody is coming for. `jobs` is what gives these somewhere to wait.
   sh.fs.procs.exited(pid, result.status);

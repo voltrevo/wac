@@ -269,7 +269,7 @@ export struct Fs {
    */
   i32 enter(this, Vec<string> argv) {
     i32 pid = this.procs.start(0, argv, this.now);
-    this.procs.self = pid;
+    this.procs.current = pid;
     return pid;
   }
 
@@ -899,7 +899,7 @@ i32 procPid(Fs fs, string rest) {
   i32 cut = 1;
   while (cut < rest.len() && rest.toBytes()[cut] != '/') { cut = cut + 1; }
   string name = rest.slice(1, cut);
-  if (name == "self") { return fs.procs.has(fs.procs.self) ? fs.procs.self : -1; }
+  if (name == "self") { return fs.procs.has(fs.procs.current) ? fs.procs.current : -1; }
   if (name.len() == 0) { return -1; }
   u8[] b = name.toBytes();
   for (i32 i = 0; i < b.len(); i++) {

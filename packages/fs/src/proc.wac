@@ -122,11 +122,17 @@ export struct Procs {
   /**
    * Which row `/proc/self` names.
    *
+   * **Not called `self`**, which is what it was: `self` is wapy's word for the receiver, so a field
+   * with that name has no wapy rendering and `wac`'s round-trip test — which reads every file in this
+   * repo — could not parse this one back. Same family as wac 0077, which is a *local* named `self`.
+   * That test lives in the other repo and this repo's gate does not run it, so it was red for hours
+   * without anything here noticing.
+   *
    * A single value rather than a per-caller one, because every program in a sealed session shares this
    * program: when the shell calls `wc` as a function, "self" is whatever the shell most recently said
    * it was. `enter`/`leave` in `sh` keep it honest; a spawned worker has a table of its own.
    */
-  i32 self;
+  i32 current;
 
   /** An empty table. Nothing is running, including whoever asked. */
   Procs create() { return Procs(Vec.create(), 1, 0); }
