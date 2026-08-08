@@ -355,6 +355,28 @@ const CASES: [string, Call[]][] = [
   // A local shadowing the struct's name makes the receiver a value again.
   ["struct P { i32 x; i32 get(const this) { return this.x; } } export i32 f() { P P2 = P(6); return P2.get(); }",
     [{ name: "f", args: [] }]],
+
+  // ── Strings, which are an i8 array in the emitted module ───────────────────
+  ['export i32 f() { string s = "hi"; return s.len(); }', [{ name: "f", args: [] }]],
+  ['export i32 f() { return "hello".len(); }', [{ name: "f", args: [] }]],
+  ['export i32 f() { string s = ""; return s.len(); }', [{ name: "f", args: [] }]],
+  // Escapes, resolved the way the language resolves them — a wrong one would be a wrong string
+  // rather than a missing feature, so an escape this cannot read declines the literal instead.
+  ['export i32 f() { return "a\\nb".len(); }', [{ name: "f", args: [] }]],
+  ['export i32 f() { return "a\\tb\\\\c".len(); }', [{ name: "f", args: [] }]],
+  ['export i32 f() { return "say \\"hi\\"".len(); }', [{ name: "f", args: [] }]],
+  // Multi-byte UTF-8: `.len()` is bytes, not characters, which is the whole reason it is an i8 array.
+  ['export i32 f() { return "é".len(); }', [{ name: "f", args: [] }]],
+  // A string crossing a call, and one in a struct field.
+  ['i32 size(string s) { return s.len(); } export i32 f() { return size("abcd"); }',
+    [{ name: "f", args: [] }]],
+  ['struct S { string name; } export i32 f() { S s = S("wacc"); return s.name.len(); }',
+    [{ name: "f", args: [] }]],
+  // A string constant, which has identity and so lives in a global.
+  ['const string G = "global"; export i32 f() { return G.len(); }', [{ name: "f", args: [] }]],
+  // An array of strings, so the element type is itself a reference.
+  ['export i32 f() { string[] xs = string[]("ab", "cde"); return xs[1].len() + xs.len(); }',
+    [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

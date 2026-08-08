@@ -20,7 +20,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq,
+  kShlEq, kShrEq, kShrUEq, kString,
 } from "./kinds.wac";
 
 /**
@@ -172,7 +172,23 @@ string elemOf(string t) {
  * byte and cannot be. Every place that wrote `types.byte(valType(t))` had to become a call here,
  * which is the shape a GC type forces on an emitter that started with scalars.
  */
+/**
+ * How a wac type is **represented**, which is not the same as what it is.
+ *
+ * A `string` is stored as an `i8[]` — the reference's type section says so and a literal is
+ * `array.new_fixed` over the bytes — but it is *not* an `i8[]` to the language: `s[i]` on a string
+ * gives a one-character string where `b[i]` on a `u8[]` gives an `i32`. Normalising the two into one
+ * type erased that and emitted `array.get_s` for a string index, which returns the wrong kind of
+ * thing entirely. The representation is shared; the type is not.
+ */
+string repType(string t) { return t == "string" ? "i8[]" : t; }
+
 void writeValType(B out, Env env, string t) {
+  if (t == "string") {
+    out.byte(99);
+    out.u32leb(env.arrayType("i8[]"));
+    return;
+  }
   // **Nullable** references, `0x63`, not the non-null `0x64`. A non-null reference has no default
   // value, so an array of them cannot be created with `array.new_default` — *"array type 1 has
   // non-defaultable element"* — and wac arrays are created that way constantly. The reference's own
@@ -762,7 +778,9 @@ string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
 /** A declared type's name, enough to tell `void` from a value. */
 string typeOfTyName(u8[] src, Lexed lexed, Ty t) {
   match (t.kind) {
-    case Prim(tok): { return tokenTextOf(src, lexed, tok); }
+    case Prim(tok): {
+      return tokenTextOf(src, lexed, tok);
+    }
     case Named(tok, typeArgs): { return tokenTextOf(src, lexed, tok); }
     // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
     // out, every array type came back as the empty string — the type section had no array entry, the
@@ -1073,6 +1091,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       fb.byte(65);
       fb.i32leb(value ? 1 : 0);
     }
+    case StrLit(tok): {
+      // The bytes, then `array.new_fixed`. A literal's token spans the quotes, so the span is walked
+      // rather than taken whole, and the four escapes wac's own sources use are resolved on the way.
+      u8[] bytes = stringLiteralBytes(src, lexed, tok);
+      for (i32 i = 0; i < bytes.len(); i++) {
+        fb.byte(65);
+        fb.i32leb(bytes[i]);
+      }
+      fb.byte(251);
+      fb.u32leb(8);   // array.new_fixed
+      fb.u32leb(env.arrayType("i8[]"));
+      fb.u32leb(bytes.len());
+    }
     case Cast(op, operand, target): {
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(src, lexed, target);
@@ -1256,7 +1287,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           string ot = typeOfE(src, lexed, env, obj);
           // `a.len()` is an instruction rather than a call, which is the one method wasm has itself.
-          if (isArrayType(ot) && mname == "len") {
+          if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
             fb.u32leb(15);   // array.len
@@ -1321,6 +1352,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return "bool"; }
+    // A string literal, unlike a numeric one, *has* a type: it is an `i8[]` and no context can make
+    // it anything else. `typeOfE` had no arm for one at all, so it came back unknown and the walk
+    // declined the very literal the emitter had just learned to write.
+    case StrLit(tok): { return "string"; }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
       string lt = env.localType(nm);
@@ -1353,7 +1388,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
             return si < 0 ? "" : env.funcReturns[si];
           }
           string ot = typeOfE(src, lexed, env, obj);
-          if (isArrayType(ot) && mn == "len") { return "i32"; }
+          if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           i32 mi = env.funcAt(ot + "." + mn);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
@@ -1803,6 +1838,11 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
     case Assign(target, op, rhs): {
       string lv = unsupportedLvalue(src, lexed, env, target);
       if (lv != "") { return lv; }
+      string tt2 = typeOfLv(src, lexed, env, target);
+      if (lexed.tokens[op * tokenStride()] != kAssign() &&
+          (isArrayType(tt2) || tt2 == "string" || env.isStructName(tt2))) {
+        return "a compound assignment to a reference";
+      }
       return unsupportedValue(src, lexed, env, rhs);
     }
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
@@ -1930,7 +1970,6 @@ bool isLiteral(Expr e) {
     case IntLit(tok): { return true; }
     case FloatLit(tok): { return true; }
     case BoolLit(value): { return true; }
-    case StrLit(tok): { return true; }
     case NullLit: { return true; }
     case Unary(op, operand): { return isLiteral(operand); }
     // Both sides literal *and of the same family*. `1 / 2.0` is two literals and not one type: the
@@ -1956,7 +1995,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case IntLit(tok): { return ""; }
     case FloatLit(tok): { return ""; }
     case BoolLit(value): { return ""; }
-    case StrLit(tok): { return "string literal"; }
+    case StrLit(tok): {
+      return knownEscapes(src, lexed, tok) ? "" : "a string literal with an escape this slice cannot read";
+    }
     case NullLit: { return "null"; }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
@@ -1979,7 +2020,17 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case Binary(op, left, right): {
       string l = unsupportedValue(src, lexed, env, left);
       if (l != "") { return l; }
-      return unsupportedValue(src, lexed, env, right);
+      string r = unsupportedValue(src, lexed, env, right);
+      if (r != "") { return r; }
+      // **No binary operator applies to a reference.** Now that a `string` is an `i8[]`, `a + b` on
+      // two of them types as an array and emits `i32.add` over two references — twenty-four corpus
+      // files' worth. Concatenation and comparison are generated helper *functions* in the reference,
+      // not instructions, and this slice has none, so it says so.
+      string ot2 = operandType(src, lexed, env, left, right);
+      if (isArrayType(ot2) || ot2 == "string" || env.isStructName(ot2)) {
+        return "an operator on a reference — concatenation or comparison needs a helper";
+      }
+      return "";
     }
     case Cast(op, operand, target): {
       string t = typeOfTyName(src, lexed, target);
@@ -2067,7 +2118,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           string o = unsupportedExpr(src, lexed, env, obj);
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
-          if (isArrayType(ot) && mn == "len") { return ""; }
+          if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
           i32 ma = env.funcAt(ot + "." + mn);
           if (ma < 0) { return "a method this slice has not got"; }
           if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
@@ -2183,6 +2234,16 @@ export string emitBlocked(u8[] src) {
  * Extracted so `emitBlocked` can ask the same questions without emitting anything.
  */
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
+  // **A string literal names the `i8[]` type**, and nothing else in the file need mention it: a bare
+  // `"hello".len()` declares no `string` anywhere. Scanning the tokens is complete by construction,
+  // where walking declarations for it would be one more place to forget — which this pre-pass has
+  // now been caught doing four times.
+  for (i32 t = 0; t < lexed.tokenCount; t++) {
+    if (lexed.tokens[t * tokenStride()] == kString()) {
+      env.arrayType("i8[]");
+      break;
+    }
+  }
   // Structs first of all: their fields are what a construction and every access are about, and a
   // method's receiver type is one of them.
   for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -2362,6 +2423,9 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case IntLit(tok): { return true; }
     case FloatLit(tok): { return true; }
     case BoolLit(value): { return true; }
+    // A string literal is `array.new_fixed` over its bytes, which *is* a constant expression — so a
+    // `const string` can live in a global like any other array constant.
+    case StrLit(tok): { return true; }
     case ArrNew(elem, size, fill, elements): {
       if (typeOfTyName(src, lexed, elem) == "") { return false; }
       for (i32 i = 0; i < elements.len(); i++) {
@@ -2494,4 +2558,55 @@ string duplicateLocal(Env env) {
     }
   }
   return "";
+}
+
+/**
+ * A string literal's bytes, with the quotes dropped and the escapes resolved.
+ *
+ * Only the four this repository's own sources use — `\\n`, `\\t`, `\\\\`, `\\"` — because an escape
+ * this does not know would be emitted as its own two characters, which is a wrong string rather than
+ * a missing feature. Anything else declines the literal instead.
+ */
+u8[] stringLiteralBytes(u8[] src, Lexed lexed, i32 tok) {
+  i32 start = lexed.tokens[tok * tokenStride() + 1];
+  i32 len = lexed.tokens[tok * tokenStride() + 2];
+  u8[] out = u8[len]();
+  i32 n = 0;
+  i32 i = start + 1;
+  i32 end = start + len - 1;
+  while (i < end) {
+    if (src[i] == 92 && i + 1 < end) {
+      i32 c = src[i + 1];
+      if (c == 110) { out[n] = 10; }
+      else if (c == 116) { out[n] = 9; }
+      else if (c == 114) { out[n] = 13; }
+      else if (c == 48) { out[n] = 0; }
+      else { out[n] = c; }
+      n = n + 1;
+      i = i + 2;
+      continue;
+    }
+    out[n] = src[i];
+    n = n + 1;
+    i = i + 1;
+  }
+  u8[] exact = u8[n]();
+  for (i32 k = 0; k < n; k++) { exact[k] = out[k]; }
+  return exact;
+}
+
+/** Whether a string literal uses only escapes this emitter resolves the same way the language does. */
+bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
+  i32 start = lexed.tokens[tok * tokenStride() + 1];
+  i32 end = start + lexed.tokens[tok * tokenStride() + 2] - 1;
+  i32 i = start + 1;
+  while (i < end) {
+    if (src[i] != 92) { i = i + 1; continue; }
+    if (i + 1 >= end) { return false; }
+    i32 c = src[i + 1];
+    bool ok = c == 110 || c == 116 || c == 114 || c == 48 || c == 92 || c == 34 || c == 39;
+    if (!ok) { return false; }
+    i = i + 2;
+  }
+  return true;
 }

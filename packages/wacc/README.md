@@ -1183,6 +1183,34 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A string is an array, and representation is not identity
+
+A string turned out to be much less than I had budgeted for. The reference's own bytes say it: the
+type section declares an array of `i8`, a literal is `array.new_fixed` over the characters, and
+`s.len()` is `array.len` — the instruction this emitter already had. What looked like a subsystem with
+a memory and a dozen host imports is, for reading, an array.
+
+So literals, `.len()`, strings through calls, string fields, string constants in globals and arrays of
+strings all arrived at once, including multi-byte UTF-8 — `"é".len()` is 2, because the length is
+bytes and that is *why* it is an `i8[]`.
+
+**Then the interesting mistake.** The first version normalised `string` to `i8[]` outright, in
+`typeOfTyName`, so every array rule would apply for free. It does — and it also erases a distinction
+the language has: `s[i]` on a string is a one-character **string**, where `b[i]` on a `u8[]` is an
+`i32`. Emitting `array.get_s` for a string index returns the wrong kind of thing entirely.
+
+**The representation is shared; the type is not.** `string` stays `string` throughout the emitter and
+becomes `i8[]` only at `repType`, where a value type is written. That is one line of difference and
+the whole of the correctness.
+
+The same slip, from the other side: with strings typed as arrays, `a + b` on two of them emitted
+`i32.add` over two references — **24 corpus files** at once. Concatenation and comparison are
+generated helper *functions* in the reference, not instructions, so no binary operator applies to a
+reference at all, and neither does a compound assignment to one. Both are now declined by name.
+
+The invariant caught every one of these within a minute of writing the feature. It has now paid for
+itself three slots running, which is worth more than the features it guards.
+
 ### Ternaries, statics, and one flat frame — 16 of 39 to 22
 
 Three features and one limitation, all of them found by making the decline messages **specific**. The
