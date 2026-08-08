@@ -90,6 +90,14 @@ const TYPED: Record<string, string> = {
   "so is NUL": "a\x00b\n",
   "bytes over 127 pass through": "a\xc3\xa9b\n",
   "literal next": "a\x16\x03b\n",
+  // A character is not a byte, and erase works on bytes: `é` is two of them, and one DEL leaves the
+  // first behind — on the screen *and* in the line. That is what this pty does, in both `iutf8` modes,
+  // measured rather than assumed, and it is why `columns` is a function of a byte.
+  "erase half of a two-byte character": "a\xc3\xa9\x7fz\n",
+  "erase half of a three-byte one": "a\xe2\x82\xac\x7fz\n",
+  "erase half of a four-byte one": "a\xf0\x9f\x92\xa9\x7fz\n",
+  "kill a line with a multi-byte character in it": "a\xc3\xa9b\x15z\n",
+  "word erase over one": "x a\xc3\xa9b\x17z\n",
 };
 
 const enc = (s: string) => Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
@@ -103,6 +111,46 @@ async function through(cmd: string, args: string[], input: Uint8Array): Promise<
 }
 
 const show = (b: Uint8Array) => JSON.stringify(String.fromCharCode(...b));
+
+/**
+ * The settings the oracle is running with, which decide what "correct" means.
+ *
+ * A line discipline is *configurable* — `stty erase ^H` moves erase to `^H`, `stty -echo` stops the echo,
+ * `stty raw` turns the whole thing off — so the pty this compares against is not "the" line discipline,
+ * it is one configuration of it. Every rule in `packages/tty` was measured through this pty, and none of
+ * the tests below record which pty they measured. On a machine whose defaults differ, they would fail
+ * with a byte mismatch and no clue why.
+ *
+ * So this asks the pty what it is set to, and fails with the setting rather than with the bytes. It is
+ * also the honest answer to "is your oracle independent?" — it is independent of our code and *not*
+ * independent of the machine's `termios` defaults, which is worth stating where somebody will read it.
+ */
+Deno.test({
+  name: "the oracle is a line discipline in the configuration this module implements",
+  ignore: !haveScript,
+  fn: async () => {
+    const said = new TextDecoder().decode(
+      await through("script", ["-qec", "stty -a", "/dev/null"], new Uint8Array(0)),
+    );
+    // As *tokens*, not as substrings. `stty -a` prints `-echoprt` and `-echonl`, so asking whether the
+    // output "includes echo" is a check that cannot fail — which is the shape this repo keeps finding in
+    // its own measurements and would be a poor thing to add while writing about it.
+    const flags = new Set(said.split(/[\s;]+/).filter((w) => w.length > 0));
+    const control = (name: string, key: string) => new RegExp(`\\b${name}\\s*=\\s*\\${key}`).test(said);
+
+    if (!control("erase", "^?")) throw new Error(`erase is not DEL in this pty:\n${said.trim()}`);
+    if (!control("kill", "^U")) throw new Error(`kill is not ^U in this pty:\n${said.trim()}`);
+    if (!control("werase", "^W")) throw new Error(`werase is not ^W in this pty:\n${said.trim()}`);
+    for (const on of ["icanon", "echo", "echoe", "isig"]) {
+      if (!flags.has(on)) {
+        throw new Error(`this pty has no \`${on}\`, so it is not what packages/tty implements:\n${said.trim()}`);
+      }
+      if (flags.has(`-${on}`)) {
+        throw new Error(`this pty has \`-${on}\`, which makes the comparison below meaningless`);
+      }
+    }
+  },
+});
 
 Deno.test({
   name: "every editing rule answers what the kernel's line discipline answers",
