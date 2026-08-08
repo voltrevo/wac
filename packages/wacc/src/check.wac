@@ -38,7 +38,8 @@ import {
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
 } from "./kinds.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Program, Stmt, StmtKind, Ty, TyKind,
+  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Program, Stmt, StmtKind,
+  Ty, TyKind,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -69,6 +70,10 @@ export i32 errArgumentMismatch() { return 5; }
 export i32 errNotBool() { return 6; }
 /** `==` or `!=` on a reference type, where the language wants `is`. */
 export i32 errNotComparable() { return 7; }
+/** A construction argument that cannot be the field it fills. */
+export i32 errFieldMismatch() { return 8; }
+/** A nullable value where a non-null one is required. */
+export i32 errNullableToNonNull() { return 9; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -148,9 +153,26 @@ export bool assignable(string want, string got) {
   if (want == "" || got == "") { return true; }
   if (want == got) { return true; }
   if (withoutNull(want) == got) { return true; }
-  // `T?` into a `T`: rejected by the reference under a family this slice does not own.
+  // `T?` into a `T` is rejected, and now under a family of its own — see `nullableIntoNonNull`.
   if (endsWith(got, "?")) { return true; }
   return false;
+}
+
+/**
+ * Whether this is specifically a nullable value going into a non-null slot.
+ *
+ * Its own diagnostic — *"cannot assign nullable to non-null"* — rather than a type mismatch, because
+ * the reference words it that way and a caller can tell them apart: one says the types are unrelated,
+ * the other says they are the same type and one of them might not be there.
+ *
+ * `assignable` still answers `true` for it, so the mismatch rules stay quiet and this reports instead
+ * of both firing at one position.
+ */
+export bool nullableIntoNonNull(string want, string got) {
+  if (want == "" || got == "") { return false; }
+  if (!endsWith(got, "?")) { return false; }
+  if (endsWith(want, "?")) { return false; }
+  return withoutNull(got) == want;
 }
 
 /** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
@@ -327,6 +349,52 @@ export struct C {
       if (this.structNames[i] == name) { return this.structParents[i]; }
     }
     return "";
+  }
+
+  /** How many fields `owner` declares itself, ignoring anything inherited. */
+  i32 ownFieldCount(this, string owner) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] == owner) { n = n + 1; }
+    }
+    return n;
+  }
+
+  /** The type of `owner`'s `k`th own field, in declaration order. */
+  string ownFieldAt(this, string owner, i32 k) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] != owner) { continue; }
+      if (n == k) { return this.fieldTypes[i]; }
+      n = n + 1;
+    }
+    return typeNone();
+  }
+
+  /**
+   * How many fields a positional construction of `owner` takes.
+   *
+   * Inherited ones included, because a construction fills them: `C(1, 2.0)` for `struct C : B` with
+   * `B { i32 b }` and `C { f64 c }` fills `b` then `c`. The parent's come **first**, which is not a
+   * guess — `C(1.0, 2.0)` puts the reference's complaint on the first argument.
+   */
+  i32 constructArity(this, string owner) {
+    i32 n = 0;
+    string at = owner;
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return n; }
+      n = n + this.ownFieldCount(at);
+      at = this.parentOf(at);
+    }
+    return n;
+  }
+
+  /** The type of the `i`th positional field of `owner`, parents first. */
+  string constructFieldAt(this, string owner, i32 i) {
+    string parent = this.parentOf(owner);
+    i32 inherited = parent == "" ? 0 : this.constructArity(parent);
+    if (i < inherited) { return this.constructFieldAt(parent, i); }
+    return this.ownFieldAt(owner, i - inherited);
   }
 
   /**
@@ -749,7 +817,11 @@ void checkExpr(C c, Expr e) {
     case Construct(ctype, args, named): {
       for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
       match (ctype.kind) {
-        case Named(tok, typeArgs): { checkCall(c, tokenText(c, tok), args); }
+        case Named(tok, typeArgs): {
+          string name = tokenText(c, tok);
+          if (c.isStruct(name)) { checkConstruct(c, name, args, named); }
+          else { checkCall(c, name, args); }
+        }
         else: { }
       }
     }
@@ -797,8 +869,37 @@ void checkCall(C c, string name, Expr[] args) {
       continue;
     }
     string got = typeOfExpr(c, args[i]);
-    if (!assignable(want, got)) {
+    if (nullableIntoNonNull(want, got)) {
+      c.report(errNullableToNonNull(), args[i].line, args[i].col);
+    } else if (!assignable(want, got)) {
       c.report(errArgumentMismatch(), args[i].line, args[i].col);
+    }
+  }
+}
+
+/**
+ * A struct construction's arguments against the fields they fill.
+ *
+ * Positional only, and the arity has to match. Both restrictions are the reference's rather than
+ * convenience: a wrong count is *"positional construction of 'P' expects 2 arguments"*, its own
+ * family; and `P(x: 1)` is not named-argument syntax at all — the reference answers *"expects 2
+ * arguments"* **and** *"undefined variable 'x'"*, so whatever that spelling means, it is not this.
+ */
+void checkConstruct(C c, string name, Expr[] args, NamedArg[] named) {
+  if (named.len() > 0) { return; }
+  if (c.constructArity(name) != args.len()) { return; }
+  for (i32 i = 0; i < args.len(); i++) {
+    string want = c.constructFieldAt(name, i);
+    if (want == typeNone()) { continue; }
+    i32 lit = litKindOf(args[i]);
+    if (lit != litNone()) {
+      if (!acceptsLiteral(want, lit)) {
+        c.report(errFieldMismatch(), args[i].line, args[i].col);
+      }
+      continue;
+    }
+    if (!assignable(want, typeOfExpr(c, args[i]))) {
+      c.report(errFieldMismatch(), args[i].line, args[i].col);
     }
   }
 }
@@ -887,7 +988,10 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
         return;
       }
-      if (!assignable(wantTo, typeOfExpr(c, rhs))) {
+      string gotTo = typeOfExpr(c, rhs);
+      if (nullableIntoNonNull(wantTo, gotTo)) {
+        c.report(errNullableToNonNull(), rhs.line, rhs.col);
+      } else if (!assignable(wantTo, gotTo)) {
         c.report(errInitTypeMismatch(), rhs.line, rhs.col);
       }
     }
@@ -903,7 +1007,9 @@ void checkStmt(C c, Stmt s, Ty want) {
         return;
       }
       string gotVar = typeOfExpr(c, init);
-      if (!assignable(wantVar, gotVar)) {
+      if (nullableIntoNonNull(wantVar, gotVar)) {
+        c.report(errNullableToNonNull(), init.line, init.col);
+      } else if (!assignable(wantVar, gotVar)) {
         c.report(errInitTypeMismatch(), init.line, init.col);
       }
       checkExpr(c, init);
@@ -923,7 +1029,9 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.
       string got = typeOfExpr(c, e);
-      if (!assignable(expected, got)) {
+      if (nullableIntoNonNull(expected, got)) {
+        c.report(errNullableToNonNull(), e.line, e.col);
+      } else if (!assignable(expected, got)) {
         c.report(errReturnTypeMismatch(), e.line, e.col);
       }
       checkExpr(c, e);
@@ -962,8 +1070,17 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string name = tokenText(c, nameTok);
         c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok));
-        for (i32 i = 0; i < fields.len(); i++) {
-          c.declareField(name, tokenText(c, fields[i].nameTok), typeOfTy(c, fields[i].type));
+        // A generic struct's fields are not recorded. `struct Box<T> { T v; }` has a field whose
+        // type is the *parameter* `T`, which is a name like any other to `typeOfTy` and therefore
+        // looks like a struct called `T` — enough to make `Box(1)` a field mismatch against a type
+        // that does not exist. The spec corpus caught it:
+        // `[§wac-generic-expected-position-3qmz8vk]`. With no fields recorded the arity is zero,
+        // never matches, and construction of a generic says nothing — which is the honest answer
+        // until instantiation is modelled.
+        if (typeParams.len() == 0) {
+          for (i32 i = 0; i < fields.len(); i++) {
+            c.declareField(name, tokenText(c, fields[i].nameTok), typeOfTy(c, fields[i].type));
+          }
         }
       }
       else: { }

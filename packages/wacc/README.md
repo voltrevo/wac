@@ -498,8 +498,32 @@ it, so untyping casts moved the number from 65 to 50 and passed. A recall regres
 itself is still a recall regression. It asserts `caught === rejected` now, and a form deliberately left
 untyped comes out of `FORMS` — so the removal is the decision, rather than a count quietly dropping.
 
-Next: more of rung 3 — the nullable-to-non-null family, generics, and struct construction arguments
-against field types.
+### Struct construction, and nullable into non-null
+
+Two families in one slot, both using the field table.
+
+**Construction arguments** are checked against the fields they fill, positionally, and only when the
+arity matches. Both restrictions are the reference's rather than conveniences. A wrong count is
+*"positional construction of 'P' expects 2 arguments"*, its own family. And `P(x: 1)` is **not**
+named-argument syntax — the reference answers *"expects 2 arguments"* and *"undefined variable 'x'"*,
+so whatever that spelling means it is not this, and a rule written for it would have been a rule for
+something the language does not have. Inherited fields come **first**, which is measured: `C(1.0, 2.0)`
+for `struct C : B` puts the complaint on the first argument, where `B`'s field is.
+
+**Nullable into non-null** gets its own code rather than folding into a type mismatch, because the
+reference words it differently and a caller can tell them apart: one says the types are unrelated, the
+other says they are the same type and one of them might not be there. `assignable` still answers
+`true` for the shape, so exactly one diagnostic lands at the position rather than two.
+
+**Spec coverage: 20 of 83**, from 19.
+
+The corpus caught a generic. `struct Box<T> { T v; }` has a field whose type is the *parameter* `T`,
+which is a name like any other and therefore looks like a struct called `T` — enough to make
+constructing a `Box` a field mismatch against a type that does not exist. A generic struct's fields are not recorded now,
+so its arity is zero, never matches, and construction of one says nothing.
+
+Next: more of rung 3 — generics properly, `switch` and `match` subjects, and the const rules
+(`cannot write to const field`), which are the largest untouched family left in the corpus.
 
 ### What rung 3's oracle looks like, measured
 

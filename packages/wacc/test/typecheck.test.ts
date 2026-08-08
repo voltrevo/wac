@@ -727,9 +727,6 @@ Deno.test("rung 3: arrays and nullables", () => {
     "export void f() { i32? n = null; }",
     "export void g() { i32? n = 5; }",
     D + "export void h(P p) { P? q = p; }",
-    // The other direction is rejected as "cannot assign nullable to non-null", a family this slice
-    // does not own — so silence is the right answer and a pass.
-    D + "export void i(P? p) { P q = p; }",
     "export void j(i32? a) { i32? b = a; }",
   ];
   for (const src of CAUGHT) {
@@ -986,4 +983,104 @@ Deno.test("rung 3: every expression form, against every return type", () => {
       "every form in FORMS is meant to be typed");
   }
   console.error(`    expression grid: ${cells} cells, ${rejected} rejected, all caught`);
+});
+
+/**
+ * Struct construction, argument by argument against the fields they fill.
+ *
+ * Positional only, and only when the arity matches — both the reference's restrictions rather than
+ * conveniences. A wrong count is *"positional construction of 'P' expects 2 arguments"*, its own
+ * family. And `P(x: 1)` is **not** named-argument syntax: the reference answers *"expects 2
+ * arguments"* and *"undefined variable 'x'"*, so whatever that spelling means it is not this, and
+ * assuming otherwise would have produced a rule for something the language does not have.
+ *
+ * Inherited fields come **first**, which is measured rather than guessed: `C(1.0, 2.0)` for
+ * `struct C : B` puts the reference's complaint on the first argument, where `B`'s `i32 b` is.
+ */
+Deno.test("rung 3: struct construction against field types", () => {
+  const D = "struct P { i32 x; string s; } struct B { i32 b; } struct C : B { f64 c; } ";
+  const CAUGHT = [
+    'export void b() { P p = P("y", 1); }',
+    "export void g() { C q = C(1.0, 2.0); }",
+    'export void k(i64 n) { P p = P(n, "y"); }',
+    "export void l(string t) { C q = C(1, t); }",
+  ];
+  const QUIET = [
+    'export void a() { P p = P(1, "y"); }',
+    "export void f() { C q = C(1, 2.0); }",
+    // Arity is the reference's own family and not this rule's.
+    "export void c() { P p = P(1); }",
+    'export void m() { P p = P(1, "y", 3); }',
+  ];
+  for (const t of CAUGHT) {
+    const src = D + t;
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(t)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(t)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const t of QUIET) {
+    const mine = ours(D + t);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(t)} is not this rule's to report, and we said ` +
+        mine.join(", "));
+    }
+  }
+});
+
+/**
+ * A nullable value where a non-null one is required.
+ *
+ * Its own diagnostic rather than a type mismatch, because the reference words it that way — *"cannot
+ * assign nullable to non-null"* — and a caller can tell them apart: one says the types are unrelated,
+ * the other says they are the same type and one of them might not be there.
+ *
+ * `assignable` still answers `true` for this shape, so the mismatch rules stay quiet and exactly one
+ * diagnostic lands at the position rather than two.
+ */
+Deno.test("rung 3: nullable into non-null, in every position that assigns", () => {
+  const D = "struct P { i32 x; } i32 takes(i32 n) { return n; } ";
+  const CAUGHT = [
+    "export void a(P? p) { P q = p; }",
+    "export P b(P? p) { return p; }",
+    "export void c(P? p, P q) { q = p; }",
+    "export void d(i32? n) { i32 m = n; }",
+    "export i32 e2(i32? n) { return takes(n); }",
+  ];
+  const QUIET = [
+    // Unwrapped, which is the whole point of `!`.
+    "export void f(P? p) { P q = p!; }",
+    "export i32 g(i32? n) { return n!; }",
+    // The other direction widens and is legal.
+    "export void h(P p) { P? q = p; }",
+    "export void i(P? p) { P? q = p; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(D + src);
+    const mine = ours(D + src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(D + src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
 });
