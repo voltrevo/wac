@@ -1365,6 +1365,23 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.funcIndex[tb]);
             return;
           }
+          // `dst.copyFrom(src, srcStart, dstStart, count)` is `array.copy`, whose operands go in a
+          // different order than the language writes them: wasm wants destination, destination
+          // offset, source, source offset, length. The arguments are therefore emitted 2, 0, 1, 3.
+          if (isArrayType(ot) && mname == "copyFrom" && args.len() == 4) {
+            string srcT = typeOfE(src, lexed, env, args[0]);
+            if (!isArrayType(srcT)) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            emitAt(fb, src, lexed, env, args[2], "i32");
+            emitExpr(fb, src, lexed, env, args[0]);
+            emitAt(fb, src, lexed, env, args[1], "i32");
+            emitAt(fb, src, lexed, env, args[3], "i32");
+            fb.byte(251);
+            fb.u32leb(17);   // array.copy
+            fb.u32leb(env.arrayType(ot));
+            fb.u32leb(env.arrayType(srcT));
+            return;
+          }
           if ((isArrayType(ot) || ot == "string") && mname == "len") {
             emitExpr(fb, src, lexed, env, obj);
             fb.byte(251);
@@ -1468,6 +1485,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes") { return "u8[]"; }
+          if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           i32 mi = env.funcAt(ot + "." + mn);
           return mi < 0 ? "" : env.funcReturns[mi];
@@ -1596,7 +1614,24 @@ void emitBinary(B fb, i32 k, string t) {
 i64 parseInt(string s) {
   u8[] a = s.toBytes();
   i64 v = 0;
+  // **Hex and separators.** Reading decimal digits and stopping at anything else made `0xff` into 0
+  // and `1_000` into 1 — a *wrong answer* rather than a decline, which is the failure mode this rung
+  // exists to catch and which no differential case had, because every literal in them was plain.
+  if (a.len() > 2 && a[0] == 48 && (a[1] == 120 || a[1] == 88)) {
+    for (i32 i = 2; i < a.len(); i++) {
+      i32 c = a[i];
+      if (c == 95) { continue; }
+      i32 d = -1;
+      if (c >= 48 && c <= 57) { d = c - 48; }
+      if (c >= 97 && c <= 102) { d = c - 87; }
+      if (c >= 65 && c <= 70) { d = c - 55; }
+      if (d < 0) { break; }
+      v = v * 16 + d as i64;
+    }
+    return v;
+  }
   for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 95) { continue; }
     if (a[i] < 48 || a[i] > 57) { break; }
     v = v * 10 + (a[i] - 48) as i64;
   }
@@ -2193,7 +2228,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
             i32 sa = env.funcAt(owner + "." + mn);
-            if (sa < 0) { return "a static this slice has not got"; }
+            if (sa < 0) { return "no static " + owner + "." + mn; }
             if (!env.funcOk[sa]) { return "a static this slice cannot emit"; }
             for (i32 i = 0; i < args.len(); i++) {
               string a = unsupportedValue(src, lexed, env, args[i]);
@@ -2205,9 +2240,20 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes" && args.len() == 0) { return ""; }
+          if (isArrayType(ot) && mn == "copyFrom" && args.len() == 4) {
+            // The source has to be an array this emitter can name, and the two element types have to
+            // match — `array.copy` takes both type indices and wasm checks they agree.
+            string st = typeOfE(src, lexed, env, args[0]);
+            if (!isArrayType(st) || st != ot) { return "a copyFrom between different array types"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a = unsupportedValue(src, lexed, env, args[i]);
+              if (a != "") { return a; }
+            }
+            return "";
+          }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
           i32 ma = env.funcAt(ot + "." + mn);
-          if (ma < 0) { return "a method this slice has not got"; }
+          if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return "a method this slice cannot emit"; }
           for (i32 i = 0; i < args.len(); i++) {
             string a = unsupportedValue(src, lexed, env, args[i]);

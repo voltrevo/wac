@@ -412,6 +412,40 @@ const CASES: [string, Call[]][] = [
   // A concatenation in a loop, which allocates each time round.
   ['export i32 f(i32 n) { string s = ""; for (i32 i = 0; i < n; i++) { s = s + "ab"; } return s.len(); }',
     [{ name: "f", args: [0] }, { name: "f", args: [3] }]],
+
+  // ── copyFrom, which is array.copy with the operands in a different order ───
+  ["export i32 f() { i32[] a = i32[4](); i32[] b = i32[](7, 8); a.copyFrom(b, 0, 0, 2); return a[0] + a[1] + a[3]; }",
+    [{ name: "f", args: [] }]],
+  // Into the middle, which is what the offsets are for — and the reason their order matters.
+  ["export i32 f() { i32[] a = i32[4](); i32[] b = i32[](7, 8); a.copyFrom(b, 0, 2, 2); return a[2] * 10 + a[0]; }",
+    [{ name: "f", args: [] }]],
+  // From the middle.
+  ["export i32 f() { i32[] a = i32[2](); i32[] b = i32[](1, 2, 3); a.copyFrom(b, 1, 0, 2); return a[0] * 10 + a[1]; }",
+    [{ name: "f", args: [] }]],
+  ["export i32 f() { u8[] a = u8[3](); u8[] b = u8[](200, 201); a.copyFrom(b, 0, 1, 2); return a[1] + a[2]; }",
+    [{ name: "f", args: [] }]],
+  // A zero-length copy, which must touch nothing.
+  ["export i32 f() { i32[] a = i32[](5, 6); i32[] b = i32[](9, 9); a.copyFrom(b, 0, 0, 0); return a[0] + a[1]; }",
+    [{ name: "f", args: [] }]],
+  // Overlapping within one array, where a naive forward loop would smear.
+  ["export i32 f() { i32[] a = i32[](1, 2, 3, 4); a.copyFrom(a, 0, 1, 3); return a[0] * 1000 + a[1] * 100 + a[2] * 10 + a[3]; }",
+    [{ name: "f", args: [] }]],
+  ["export i64 f() { i64[] a = i64[2](); i64[] b = i64[](4294967296, 2); a.copyFrom(b, 0, 0, 2); return a[0] + a[1]; }",
+    [{ name: "f", args: [] }]],
+
+  // ── Literals that are not plain decimal ────────────────────────────────────
+  // Every one of these was silently wrong: the reader took decimal digits and stopped, so `0xff` was
+  // 0 and `1_000` was 1. Nothing caught it because every literal in every case above is plain.
+  ["export i32 f() { return 0xff; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { return 0xDEAD; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { return 1_000_000; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { return 0xff_ff; }", [{ name: "f", args: [] }]],
+  ["export i64 f() { return 0xdeadbeef; }", [{ name: "f", args: [] }]],
+  ["export i64 f() { return 0x7fffffffffffffff; }", [{ name: "f", args: [] }]],
+  ["export i32 f() { return 0x0; }", [{ name: "f", args: [] }]],
+  ["export i32 f(i32 n) { return n & 0xff; }", [{ name: "f", args: [4660] }]],
+  ["const i32 M = 0xffff; export i32 f(i32 n) { return n & M; }", [{ name: "f", args: [123456] }]],
+  ["export i32 f() { i32[] a = i32[](0x10, 0x20); return a[0] + a[1]; }", [{ name: "f", args: [] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {

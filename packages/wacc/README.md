@@ -1183,6 +1183,29 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### One method, and a literal that was quietly wrong — 26 of 39 to 31
+
+Naming the decline finished the "method" category in one step: all six files wanted **`copyFrom`**, and
+`copyFrom` is not a helper at all but `array.copy`, whose operands go in a different order than the
+language writes them — wasm wants destination, destination offset, source, source offset, length, so
+the arguments are emitted 2, 0, 1, 3. Measured, as the routine now goes, and the whole category went
+with it.
+
+**Then the thing worth the slot.** Chasing why two constants were declined turned up a literal reader
+that took decimal digits and stopped at anything else: `0xff` compiled to **0**, and `1_000` to **1**.
+Not a decline — a *wrong answer*, which is the failure this rung exists to catch, and it had been
+sitting there since the first slice.
+
+Nothing caught it because **every literal in every differential case was plain decimal**. 172 programs
+and 222 calls, and not one of them wrote a number the way half this repository writes numbers. A
+corpus of hand-written cases tests what its author thought to write down, which is the same bias the
+spec corpus has and the reason the generated sweep exists one rung up. There is no sweep here yet, and
+this is the argument for one.
+
+The corpus number did not move — the two constants that led me there are declined for a different
+reason, an unary minus in a constant expression — which is worth saying plainly: the fix was worth
+more than the number it did not change.
+
 ### Four functions nobody wrote — 22 of 39 to 26
 
 Concatenation, equality, and the two byte conversions, all synthesized on last slot's mechanism. The
