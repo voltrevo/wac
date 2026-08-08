@@ -51,8 +51,13 @@ design/0001 step 3 puts a process table in.
 to the kernel: moving about inside a line is readline's job, in the program. Erase is backwards-only,
 which is what a line discipline is.
 
-**Nothing is wired to it yet.** `packages/ssh`'s `sshd` refuses `pty-req` deliberately — accepting one
-makes the client stop echoing locally and expect the server to do it — and this module is what a server
-needs before it can accept one. That edge, and the browser's `keydown` loop, are what step 5 is for; the
-step's own criterion (`^C` ends a running `yes`) also needs something that can interrupt a running
-program, which is step 3's process table.
+**`sshd` uses it.** It used to refuse `pty-req` — accepting one makes the client stop echoing locally
+and expect the server to do it, so a server needs this module before it can say yes. It says yes now:
+`packages/ssh/src/sshd.wac` imports `Line`, and a session gets `$TERM` from what the client asked for,
+with `$COLUMNS` and `$LINES` following a `window-change`. A session with *no* pty gets no `$TERM` rather
+than a guessed one, which is what lets a program tell "no terminal" from "a terminal I have never heard
+of".
+
+**The browser's `keydown` loop is not wired**, and that is the other half of step 5. The step's own
+criterion — `^C` ends a running `yes` — also needs something able to interrupt a running program: the
+process table exists now (step 3), so what is missing is the delivery half rather than the table.

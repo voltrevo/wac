@@ -123,6 +123,40 @@ directly in the path being listed, so `ls /` shows `dev` and `proc`. Before, onl
 they existed, and a listing that omits a directory you can `cd` into is worse than a wrong one — nothing
 about it looks wrong.
 
+## Users, a working directory, and a streaming write
+
+Three things arrived after the sections above were written, and each changes what a caller can
+assume.
+
+**`mode` and `owner` are enforced.** `Fs.user` says who is acting and `may` decides; `chmod` belongs
+to the owner and `chown` to root, so widening a file and then reading it is not a way in.
+`src/passwd.wac` reads `/etc/passwd` **out of the image**, because a host's idea of who is logged in
+cannot survive a file that is one blob owned by whoever ran the process. `packages/ssh`'s server sets
+the user from the key that authenticated, and design/0001 step 4's own criterion — two keys land in
+two homes and neither can read the other's private file — is a test.
+
+Every way of *changing what a directory holds* asks the directory: `writeFile` and `remove` had that
+from the start, which is exactly why `mkdir`, `mkdir -p` and `rename` were easy to miss. A rename is
+neither a read nor a write of the file — it is two directory changes — so checking neither end let a
+file be taken out of a private directory.
+
+**`Fs` has a `cwd`**, and resolves through it at every entry point, so a caller may pass a relative or
+an absolute path without knowing which. `Fs.onHost` starts at the host's own directory — `box cat f`
+run from `/tmp` is asking about `/tmp/f` — and `Fs.inMemory` at its own root. `resolvePath` moved here
+from `packages/sh`, which is the package that owns what a path is; a second copy of what `..` means is
+the kind of duplicate that agrees for a year and then does not.
+
+**`openOut`/`writeOut`/`closeOut`** are the streaming write. `writeFile` needs every byte at once and a
+redirection must not: `seq 1 2000000000 > out` builds twenty gigabytes and traps on one wasm array. It
+is mount-dispatched like everything else — append into the inode for a memory mount, delegate to the
+host capability for a host mount — which is what let `packages/sh` stop having **two implementations of
+`>`** that disagreed about which disk a redirection landed on.
+
+**`mountBin` and `mountSystem`.** `/bin` is synthesised from the applet list it is given, so it cannot
+disagree with what the shell wired in, and reading one gives a sentence saying the program is built
+into the binary rather than an executable-looking blob — which would be D6's "plausible rows" exactly.
+`mountSystem` is the three of them together, so an entry point builds a whole world or none of it.
+
 ## Coverage, and the three things it found on its first run
 
 `deno task coverage:fs`, through `test/wac/cov_probe.wac`. It did not exist until the package had doubled
@@ -158,21 +192,22 @@ nowhere and *tested* against the real filesystem, which is a better oracle than 
 The ratchet earned itself one tick later: `image.wac` grew `boot` and `save` — the shared "load an image
 or start an empty world, and write it back" that `imaged` and `sshd` had each written out — and the run
 went red with eight branches nobody had accounted for. They are recorded rather than driven, because
-driving them means fabricating a whole `Cli`, and `packages/sh/test/imaged.test.ts` and
+driving them means fabricating a whole `Cli`, and `packages/box/test/imaged.test.ts` and
 `packages/ssh/test/server.test.ts` already drive them against real files on a real disk.
 
 Host mounts are not driven here — they take a `Cli` that only a built program has — and are not recorded
-as gaps either: `test/host.test.ts` and `packages/sh/test/backings.test.ts` run every one of them against
+as gaps either: `test/host.test.ts` and `packages/box/test/backings.test.ts` run every one of them against
 the real filesystem, which is a better oracle than a probe could be.
 
 ## Not here yet
 
-- **`/proc/<pid>` is only `/proc/self`.** There are no other pids to answer for — the process table is
-  step 3 of design/0001 — so what exists is the one entry that can be true today.
-- **No permissions.** `mode` and `owner` are recorded on every node and enforced nowhere. Users arrive in
-  step 4; recording them now is what makes an image written today readable then — `chmod` and `chown` set
-  them, and refuse on a host mount in those words, because there is no such capability in
-  `packages/platform` and a mode silently not applied is worse than an error.
+- **No traversal check.** Permissions arrived with step 4 and are enforced — see below — but what is
+  enforced is the mode on the thing being touched, not on the path to it. A private file inside a
+  readable directory is protected by its own mode; one inside an *unreadable* directory is also
+  protected by its own mode, and not by the directory. That is less than POSIX, and design/0001 D6 is
+  why it is stated rather than approximated.
+- **No groups.** `may` compares owner bits or other bits, and there is no group table. Inventing one is
+  the faking D6 rules out.
 - **Incremental saves are not implemented.** `image.write` walks every reachable node and emits every
   byte. Cheaper incremental saves were half the argument for a format of our own; the layout leaves room
   for one and nothing does it yet.

@@ -514,7 +514,7 @@ resistance was never among its goals, and a version that had it would not be bcr
 
 Regenerate this table with `deno run -A packages/crypto/ct.ts`. It is generated rather
 than hand-written because published figures that cannot be reproduced go stale silently —
-which is what `issues/open/0007` is about.
+which is what `issues/closed/0007` was about.
 
 **What a uniform result does not mean.** The check is dynamic, so it covers the key pairs
 tested and no others; it is wasm-level, so identical operations can still take different

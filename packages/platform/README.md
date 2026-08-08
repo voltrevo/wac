@@ -125,7 +125,7 @@ enough — "was it merely absent?" could only be answered by matching English, w
 three operating systems, so `rm -f` asked `stat` first instead and raced with whoever else was
 deleting. The category answers it in the reply: `ok()`, `absent()`, and `fault` against `FAULT_DENIED`,
 `FAULT_EXISTS`, `FAULT_NOT_EMPTY`, `FAULT_OTHER`. The classification is one file,
-[`host/faults.ts`](host/faults.ts), shared by all three hosts — Deno's typed errors, Node's `code`s and
+[`host/faults.ts`](host/faults.ts), shared by the three JavaScript hosts — Deno's typed errors, Node's `code`s and
 the browser's `DOMException` names are three vocabularies for the same five facts, and `rm -f` must
 mean the same thing on all of them.
 
