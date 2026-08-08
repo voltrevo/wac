@@ -310,8 +310,33 @@ Widening to the second and third sets did not move spec coverage — the corpus'
 arithmetic — so this buys recall on real code rather than a number. Worth saying plainly, since a
 slice that moves no counter is easy to mistake for one that did nothing.
 
+### Where only a boolean will do
+
+Two of the reference's messages and one rule: *"'&&' requires bool operands, got i32"* and
+*"condition must be bool"*. Both say an expression is used where only a boolean can go, and nothing a
+caller does with the diagnostic would tell them apart, so they share a code. Conditions of `if`,
+`while`, `do`/`while` and `for` are checked as well as the two operators.
+
+A **literal counts** here, unlike in the same-type rule: `p && 1` is an error where `x + 1` is not,
+because the question is what each operand *is* rather than whether the two agree — and there is no
+other side for the literal to take its type from.
+
+**Spec coverage: 16 of 83**, from 15. `[§wac-boolreq-uj95exp]` was the very first case the extractor
+found, and is now caught.
+
+Adding it broke the operator test, correctly. That test filtered the reference's diagnostics for
+`type mismatch in`, which was right while the file knew only the same-type rule and became a lie the
+moment it knew another: `i32 && i32` is rejected with different wording, so the filter made a rejected
+program look accepted. **A filter on message text is a second opinion about which diagnostics count**,
+and a comparison against an oracle should not have one.
+
+Removing it exposed the other half. A single list asserting "the reference rejects this, so we must
+report it" folds two obligations into one, and a subset checker has two: what a rule *owns* must be
+caught, and what it does not own must be silent — where "the reference rejects this and we say
+nothing" is a pass. The operator test is now two lists for that reason.
+
 Next: more of rung 3 — the struct and generic families, which need types beyond primitives, and the
-`&&`/`||` and reference-type diagnostics, which are their own families rather than more of this one.
+reference-type diagnostics (`'==' not allowed on reference type`), which are their own family.
 
 ### What rung 3's oracle looks like, measured
 

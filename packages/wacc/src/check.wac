@@ -35,7 +35,7 @@
 import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
-  kLt, kLe, kGt, kGe, kEq, kNe,
+  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr,
 } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Program, Stmt, StmtKind, Ty, TyKind,
@@ -58,6 +58,15 @@ export i32 errInitTypeMismatch() { return 3; }
 export i32 errOperandMismatch() { return 4; }
 /** An argument that cannot be the parameter it is passed to. */
 export i32 errArgumentMismatch() { return 5; }
+/**
+ * An expression that has to be `bool` and is not.
+ *
+ * Two of the reference's messages, kept as one code because they are one rule in two positions:
+ * *"'&&' requires bool operands, got i32"* and *"condition must be bool"*. Both say the same thing —
+ * this expression is used where only a boolean can go — and nothing a caller does with the diagnostic
+ * would distinguish them.
+ */
+export i32 errNotBool() { return 6; }
 
 /**
  * The primitive types, as ids. `primNone` is "this slice does not know".
@@ -443,6 +452,15 @@ void checkExpr(C c, Expr e) {
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
       bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
                         k == kEq() || k == kNe();
+      // `&&` and `||` are the other rule: each operand must be a boolean on its own, which is a
+      // different question from whether the two agree. Reported at the operator, where the reference
+      // reports it, and a literal counts — `p && 1` is an error while `p && true` is not.
+      if (k == kAndAnd() || k == kOrOr()) {
+        if (notBool(c, left) || notBool(c, right)) {
+          c.report(errNotBool(), e.line, e.col);
+        }
+        return;
+      }
       if (!sameType && !comparison) { return; }
       // A literal operand takes the other side's type, so `x + 1` is legal for any numeric `x` and
       // demanding they agree would report the code everybody writes.
@@ -475,6 +493,14 @@ void checkExpr(C c, Expr e) {
     }
     else: { }
   }
+}
+
+/** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
+bool notBool(C c, Expr e) {
+  i32 lit = litKindOf(e);
+  if (lit != litNone()) { return lit != litBool(); }
+  i32 prim = primOfExpr(c, e);
+  return prim != primNone() && prim != primBool();
 }
 
 /**
@@ -536,6 +562,18 @@ void declareAll(C c, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
 }
 
+/**
+ * A condition, which must be a boolean.
+ *
+ * Reported at the condition itself rather than at the `if`, which is where the reference puts it —
+ * *"condition must be bool"* names the expression that is wrong, not the statement containing it.
+ * The condition is also walked as an ordinary expression, so a mismatch inside it is still found.
+ */
+void checkCond(C c, Expr cond) {
+  if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
+  checkExpr(c, cond);
+}
+
 /** Every `return` in a list of statements. */
 void checkAll(C c, Stmt[] body, Ty want) {
   for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], want); }
@@ -584,10 +622,17 @@ void checkStmt(C c, Stmt s, Ty want) {
     // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
     // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
     case Block(body): { checkAll(c, body, want); }
-    case If(cond, then, els): { checkAll(c, then, want); checkAll(c, els, want); }
-    case While(cond, body): { checkAll(c, body, want); }
-    case DoWhile(body, cond): { checkAll(c, body, want); }
-    case For(init, cond, update, body): { checkAll(c, body, want); }
+    case If(cond, then, els): {
+      checkCond(c, cond);
+      checkAll(c, then, want);
+      checkAll(c, els, want);
+    }
+    case While(cond, body): { checkCond(c, cond); checkAll(c, body, want); }
+    case DoWhile(body, cond): { checkCond(c, cond); checkAll(c, body, want); }
+    case For(init, cond, update, body): {
+      if (!(cond is null)) { checkCond(c, cond!); }
+      checkAll(c, body, want);
+    }
     case Switch(subject, cases): {
       for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
     }

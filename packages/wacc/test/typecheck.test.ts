@@ -479,40 +479,36 @@ Deno.test("rung 3: a variable's initialiser against its declared type", () => {
  * A literal operand is skipped rather than typed: `x + 1` is legal for any numeric `x`, because the
  * literal takes the other side's type. Demanding they agree would report the code everybody writes.
  */
-Deno.test("rung 3: arithmetic operands, and the operators deliberately left alone", () => {
-  const CASES = [
-    // Bitwise, which answers the same diagnostic as arithmetic.
-    "export void x1(i32 p, i64 q) { i32 r = p & q; }",
-    "export void x2(i32 p, f64 q) { i32 r = p | q; }",
-    // Comparisons, which answer it too — but not when an operand is a reference type, where the
-    // reference says `'==' not allowed on reference type` instead. A different family under one code
-    // is what this exclusion avoids.
-    "export void x3(i32 p, f64 q) { bool r = p < q; }",
-    "export void x4(i32 p, i64 q) { bool r = p >= q; }",
-    "export void x5(i32 p, string q) { bool r = p == q; }",
-    // `&&` and `||` never answer a mismatch: `1 && 2` is "requires bool operands", about each
-    // operand on its own rather than about the pair.
-    "export void x6(i32 p, i32 q) { bool r = p && q; }",
-    "export void x7(bool p, bool q) { bool r = p || q; }",
+Deno.test("rung 3: same-type operands, and the operators that answer something else", () => {
+  // Two lists, because a subset checker has two obligations and they are not the same one. What this
+  // rule owns must be caught, at the reference's position. What it does not own must be silent — and
+  // "the reference rejects this and we say nothing" is a *pass* there, not a failure.
+  //
+  // Splitting them was forced. A single list with "reference rejects it, so we must report" folded
+  // both obligations into one and made `i32 == string` a failure for being correctly quiet.
+  const CAUGHT = [
     "export f64 bad(i32 x, f64 y) { return x + y; }",
     "export void b2(i32 x, i64 y) { i32 r = x - y; }",
     "export void b3(f64 x, i32 y) { f64 r = x * y; }",
-    // Accepted, and each is a way this could be wrong in the other direction.
+    "export void x1(i32 p, i64 q) { i32 r = p & q; }",
+    "export void x2(i32 p, f64 q) { i32 r = p | q; }",
+    "export void x3(i32 p, f64 q) { bool r = p < q; }",
+    "export void x4(i32 p, i64 q) { bool r = p >= q; }",
+  ];
+  const QUIET = [
+    // Accepted outright.
     "export i32 ok(i32 x, i32 y) { return x + y; }",
     "export i32 lit(i32 x) { return x + 1; }",
     "export void sh(i64 a, i32 b) { i64 r = a << b; }",
     "export void sh2(i32 a, i32 b) { i32 r = a >> b; }",
+    "export void x7(bool p, bool q) { bool r = p || q; }",
+    // Rejected by the reference, under a family this rule does not own: a comparison against a
+    // reference type is `'==' not allowed on reference type`, not a mismatch between the two.
+    "export void x5(i32 p, string q) { bool r = p == q; }",
   ];
-  for (const src of CASES) {
-    const theirs = reference(src).filter((e) => e.message.includes("type mismatch in"));
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
     const mine = ours(src);
-    if (theirs.length === 0) {
-      if (mine.length !== 0) {
-        throw new Error(`the reference has no operand complaint about ${JSON.stringify(src)} ` +
-          `and we report ${mine.join(", ")}`);
-      }
-      continue;
-    }
     if (mine.length === 0) {
       throw new Error(`the reference rejects the operands of ${JSON.stringify(src)} and we said ` +
         "nothing: " + theirs.map((e) => `${e.at} ${e.message}`).join("; "));
@@ -522,6 +518,13 @@ Deno.test("rung 3: arithmetic operands, and the operators deliberately left alon
         throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
           theirs.map((e) => e.at).join(", "));
       }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src)} is not this rule's to report, and we said ` +
+        mine.join(", "));
     }
   }
 });
@@ -564,6 +567,54 @@ Deno.test("rung 3: a call's arguments against its parameters", () => {
           `report ${mine.join(", ")}`);
       }
       continue;
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src)}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+});
+
+/**
+ * Where only a boolean will do.
+ *
+ * Two of the reference's messages and one rule: *"'&&' requires bool operands, got i32"* and
+ * *"condition must be bool"*. Both say an expression is used where only a boolean can go, and
+ * nothing a caller does with the diagnostic would tell them apart, so they share a code.
+ *
+ * Different from the same-type rule above in a way worth stating: here a **literal counts**. `p && 1`
+ * is an error and `p && true` is not, because the question is what each operand *is* rather than
+ * whether the two agree — and unlike `x + 1`, there is no other side for the literal to take its type
+ * from.
+ */
+Deno.test("rung 3: operands and conditions that have to be boolean", () => {
+  const CASES = [
+    "export void a(i32 p, bool q) { bool r = p && q; }",
+    "export void b(bool p, i32 q) { bool r = p || q; }",
+    "export void c(bool p) { bool r = p && 1; }",
+    "export void d(i32 p) { if (p) { } }",
+    "export void e2(i32 p) { while (p) { } }",
+    "export i32 rejected(i32 x) { if (x) { return 1; } return 0; }",
+    // Accepted.
+    "export void f(bool p) { bool r = p && true; }",
+    "export void g(bool p, bool q) { bool r = p || q; }",
+    "export void h(bool p) { if (p) { } }",
+    "export void i(i32 p) { if (p > 0) { } }",
+  ];
+  for (const src of CASES) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (theirs.length === 0) {
+      if (mine.length !== 0) {
+        throw new Error(`the reference accepts ${JSON.stringify(src)} and we report ${mine.join(", ")}`);
+      }
+      continue;
+    }
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src)} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
     }
     for (const at of mine) {
       if (!theirs.some((e) => e.at === at)) {
