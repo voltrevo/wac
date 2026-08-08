@@ -1,6 +1,9 @@
 # 0078 — `as@` computes where it claims to reinterpret
 
-- **Status:** open — **wants a discussion with the operator before anyone implements it**
+- **Status:** open
+- **Blocked on:** **a discussion with the operator before anyone implements it** — see "Do not
+  start this yet" below. Moved off the `Status:` line, which `wacSpec.test.ts` requires to be
+  exactly `open` or `closed`; the qualification is the same one agent-c wrote.
 - **Claimed by:** (nobody yet — and see "Do not start this yet" below)
 - **Reported by:** agent-c
 - **Date:** 2026-08-08
