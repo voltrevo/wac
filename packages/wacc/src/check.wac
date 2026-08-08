@@ -36,7 +36,7 @@ import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
-  kAs, kAsBang, kAsTilde, kAsAt, kShrU,
+  kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde,
 } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt, StmtKind,
@@ -103,6 +103,18 @@ export i32 errBuiltinArity() { return 19; }
 export i32 errBuiltinArg() { return 20; }
 /** A name used where nothing declares it. */
 export i32 errUndefinedName() { return 35; }
+/** A `void` where a type is needed. */
+export i32 errVoidType() { return 36; }
+/** A `return` that disagrees with the function's own `void`ness, either way. */
+export i32 errReturnValueness() { return 37; }
+/** An operator given something it cannot work on. */
+export i32 errOperandKind() { return 38; }
+/** A field read from something that has no such field, or no fields at all. */
+export i32 errNoSuchField() { return 39; }
+/** A member reached through a nullable without unwrapping it. */
+export i32 errThroughNullable() { return 40; }
+/** An index into something that is not an array, or with something that is not an index. */
+export i32 errIndex() { return 41; }
 /** A method that hides a parent's without saying `override`. */
 export i32 errOverrideMissing() { return 21; }
 /** `override` on a method no parent declares. */
@@ -330,6 +342,11 @@ string dropLast(string s, i32 n) {
   u8[] out = u8[a.len() - n]();
   for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
   return string.fromBytes(out);
+}
+
+/** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
+bool isIntegerName(string n) {
+  return n == "i32" || n == "i64" || n == "u32" || n == "u64";
 }
 
 /** Whether a type is nullable, which is one of the ways to have a default value: null. */
@@ -1241,6 +1258,18 @@ void checkExpr(C c, Expr e) {
       if (arith && (typeOfExpr(c, left) == "bool" || typeOfExpr(c, right) == "bool")) {
         c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
       }
+      // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
+      // two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
+      // shift asks it of both sides separately — the value being shifted and the amount to shift by.
+      bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
+      bool shift = k == kShl() || k == kShr() || k == kShrU();
+      if (bitwise || shift) {
+        string lt2 = typeOfExpr(c, left);
+        string rt2 = typeOfExpr(c, right);
+        bool badL = lt2 != typeNone() && !isIntegerName(lt2);
+        bool badR = rt2 != typeNone() && !isIntegerName(rt2);
+        if (badL || badR) { c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op)); }
+      }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
       bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
@@ -1282,7 +1311,22 @@ void checkExpr(C c, Expr e) {
     case Ident(tok): {
       if (!nameExists(c, tokenText(c, tok))) { c.report(errUndefinedName(), e.line, e.col); }
     }
-    case Unary(op, operand): { checkExpr(c, operand); }
+    case Unary(op, operand): {
+      checkExpr(c, operand);
+      // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
+      // one node, all reported at the operator, and all of them silent on an unknown operand.
+      i32 uk = tokenKind(c, op);
+      string ut = typeOfExpr(c, operand);
+      if (ut != typeNone()) {
+        if (uk == kBang() && ut != "bool") {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        } else if (uk == kMinus() && (ut == "bool" || ut == "string" || c.isStruct(ut))) {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        } else if (uk == kTilde() && !isIntegerName(ut)) {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        }
+      }
+    }
     // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
     // the same shape reached through a different node, which is the third time that has happened.
     case Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
@@ -1333,8 +1377,15 @@ void checkExpr(C c, Expr e) {
       if (!(other is null)) { checkExpr(c, other!); }
     }
     case Ternary(cond, then, els): { checkExpr(c, cond); checkExpr(c, then); checkExpr(c, els); }
-    case Index(arr, index): { checkExpr(c, arr); checkExpr(c, index); }
-    case Member(obj, nameTok): { checkExpr(c, obj); }
+    case Index(arr, index): {
+      checkExpr(c, arr);
+      checkExpr(c, index);
+      checkIndex(c, e, arr, index);
+    }
+    case Member(obj, nameTok): {
+      checkExpr(c, obj);
+      checkMember(c, e, obj, tokenText(c, nameTok));
+    }
     // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
     // construction — `Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a
     // `Named` type for both and the resolver decides which later. A `case Call` never matches a
@@ -1368,11 +1419,18 @@ void checkExpr(C c, Expr e) {
     // A real `Call` is a method or a funcref. A method call is `Call(Member(receiver, name), args)`
     // and is checked; a funcref call has no name to look up and is not.
     case Call(callee, args): {
-      checkExpr(c, callee);
       for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
       match (callee.kind) {
-        case Member(obj, nameTok): { checkMethodCall(c, e, obj, tokenText(c, nameTok), args); }
-        else: { }
+        case Member(obj, nameTok): {
+          // The **object**, not the whole callee. Walking the callee as an expression would read
+          // `p.inc()` as a field access to `inc` and call it a missing field, which is the method it
+          // is about to check. The nullable rule still applies and is asked for separately, because
+          // *"cannot call method on nullable"* is its own diagnostic.
+          checkExpr(c, obj);
+          checkThroughNullable(c, e, obj);
+          checkMethodCall(c, e, obj, tokenText(c, nameTok), args);
+        }
+        else: { checkExpr(c, callee); }
       }
     }
     else: { }
@@ -1579,6 +1637,21 @@ void checkWrite(C c, Lvalue lv) {
       if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
     }
     case LIndex(base, index): {
+      string baseT = typeOfLvalue(c, base);
+      if (baseT != typeNone() && baseT != "" && !isArrayName(baseT) && baseT != "string") {
+        c.report(errIndex(), lv.line, lv.col);
+        return;
+      }
+      // Both index complaints land on the `LIndex` node — the bracket — where as an expression the
+      // "not an array" one names the operand and the "bad index" one names the index. An lvalue is
+      // one node with one position and the reference uses it for both.
+      i32 wlit = litKindOf(index);
+      if (wlit != litNone()) {
+        if (!acceptsLiteral("i32", wlit)) { c.report(errIndex(), lv.line, lv.col); }
+      } else {
+        string wit = typeOfExpr(c, index);
+        if (wit != typeNone() && !isIntegerName(wit)) { c.report(errIndex(), lv.line, lv.col); }
+      }
       Lvalue idxRoot = rootOf(lv);
       if (undefinedRoot(c, idxRoot)) {
         c.report(errUndefinedName(), idxRoot.line, idxRoot.col);
@@ -1835,6 +1908,62 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
 }
 
 /**
+ * Reaching through a nullable without unwrapping it.
+ *
+ * `p.x` on a `P?` is refused even though `P` has an `x`: the value might not be there, and the
+ * language wants that said with `!` rather than assumed. Its own diagnostic rather than a missing
+ * field, because the field is not missing.
+ */
+void checkThroughNullable(C c, Expr at, Expr obj) {
+  string t = typeOfExpr(c, obj);
+  if (t == typeNone()) { return; }
+  string inner = withoutNull(t);
+  if (inner != "" && c.isStruct(inner)) { c.report(errThroughNullable(), at.line, at.col); }
+}
+
+/**
+ * A field that the owner does not have — or that it could not have, being a primitive.
+ *
+ * Silent unless the owner is *known*: an unknown type has no fields to be missing. A name that is a
+ * method rather than a field is not missing either, which is why the method table is consulted before
+ * complaining — `c.get` without parentheses is the reference's own separate diagnostic.
+ */
+void checkMember(C c, Expr at, Expr obj, string name) {
+  string t = typeOfExpr(c, obj);
+  if (t == typeNone() || t == "") { return; }
+  if (withoutNull(t) != "") { checkThroughNullable(c, at, obj); return; }
+  if (isArrayName(t) || t == "string") { return; }
+  if (c.isStruct(t)) {
+    if (c.isGeneric(t)) { return; }
+    if (c.hasField(t, name) || c.methodAt(t, name) >= 0) { return; }
+    c.report(errNoSuchField(), at.line, at.col);
+    return;
+  }
+  // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
+  // value, so this cannot be one of those — `f64.toBits` has an `Ident` for an object, not a value.
+  if (isPrimitiveName(t) || t == "bool") { c.report(errNoSuchField(), at.line, at.col); }
+}
+
+/** An index expression: is the thing an array, and is the index one. */
+void checkIndex(C c, Expr at, Expr arr, Expr index) {
+  string t = typeOfExpr(c, arr);
+  if (t != typeNone() && t != "" && !isArrayName(t) && t != "string") {
+    // At the **operand**: it is the thing that is not an array. As an lvalue the same complaint lands
+    // on the bracket instead, because that is where an `LIndex` node sits — two node kinds, two
+    // positions, which is the second time this exact split has come up.
+    c.report(errIndex(), arr.line, arr.col);
+    return;
+  }
+  i32 lit = litKindOf(index);
+  if (lit != litNone()) {
+    if (!acceptsLiteral("i32", lit)) { c.report(errIndex(), index.line, index.col); }
+    return;
+  }
+  string it = typeOfExpr(c, index);
+  if (it != typeNone() && !isIntegerName(it)) { c.report(errIndex(), index.line, index.col); }
+}
+
+/**
  * A method call: does the struct have it, and may this receiver call it?
  *
  * Static and instance calls are the same syntax — `P.mk()` and `p.mk()` differ only in whether the
@@ -1981,6 +2110,9 @@ void checkParams(C c, Param[] params) {
     if (isPackedName(pt)) {
       c.report(errPackedPosition(), params[i].type.line, params[i].type.col);
     }
+    // `void` is what a function returns, not a value anything can hold, so it is not a type a
+    // parameter or a field can have.
+    if (pt == "void") { c.report(errVoidType(), params[i].type.line, params[i].type.col); }
     checkPackedNullable(c, pt, params[i].type);
     string a = tokenText(c, params[i].nameTok);
     for (i32 j = 0; j < i; j++) {
@@ -2074,7 +2206,24 @@ void checkStmt(C c, Stmt s, Ty want) {
       // Every assignment writes, compound or not — `n += 1` on a const is refused exactly as `n = 1`
       // is, so this comes before the plain-`=` gate below.
       checkWrite(c, target);
-      if (tokenKind(c, op) != kAssign()) { return; }
+      if (tokenKind(c, op) != kAssign()) {
+        // A compound assignment is the operator's rule and the assignment's at once: `x += 1.5` on an
+        // `i32` is refused for the same reason `x + 1.5` would be, but reported at the **target**
+        // rather than at the operator. Literals count here, unlike in a binary expression, because
+        // there is no other side for the literal to take its type from — the target settles it.
+        string ct = typeOfLvalue(c, target);
+        if (ct == typeNone() || isPackedName(ct)) { return; }
+        i32 clit = litKindOf(rhs);
+        if (clit != litNone()) {
+          if (!acceptsLiteral(ct, clit)) { c.report(errOperandMismatch(), target.line, target.col); }
+          return;
+        }
+        string cgot = typeOfExpr(c, rhs);
+        if (cgot != typeNone() && cgot != ct) {
+          c.report(errOperandMismatch(), target.line, target.col);
+        }
+        return;
+      }
       string wantTo = typeOfLvalue(c, target);
       if (wantTo == typeNone()) { return; }
       // A packed target is an array element by construction — nothing else can have that type — and
@@ -2116,8 +2265,20 @@ void checkStmt(C c, Stmt s, Ty want) {
       checkExpr(c, init);
     }
     case Return(value): {
+      // Before the types: whether there should be a value here at all. Both directions are errors and
+      // both name the `return` itself rather than what follows it — there is nothing to name in the
+      // second case, which is presumably why the reference settled on the statement for both.
+      string declared = typeOfTy(c, want);
+      if (declared == "void" && !(value is null)) {
+        c.report(errReturnValueness(), s.line, s.col);
+        return;
+      }
+      if ((value is null) && returnsAValue(declared)) {
+        c.report(errReturnValueness(), s.line, s.col);
+        return;
+      }
       if (value is null) { return; }
-      string expected = typeOfTy(c, want);
+      string expected = declared;
       if (!returnsAValue(expected)) { return; }
       Expr e = value!;
       i32 lit = litKindOf(e);
@@ -2305,6 +2466,11 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // construction anywhere in the file to hang the complaint on.
         for (i32 fi = 0; fi < fields.len(); fi++) {
           string ft = typeOfTy(c, fields[fi].type);
+          // The same two rules a parameter has, in the other declaration position that takes a type.
+          if (isPackedName(ft)) {
+            c.report(errPackedPosition(), fields[fi].type.line, fields[fi].type.col);
+          }
+          if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }
           if (isNullableName(ft) || isArrayName(ft) || !c.isStruct(ft)) { continue; }
           if (reachesStruct(c, ft, owner, 0)) {
             c.report(errRecursiveField(), fields[fi].type.line, fields[fi].type.col);

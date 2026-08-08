@@ -786,9 +786,12 @@ Deno.test("rung 3: member access, and fields inherited from a parent", () => {
     "export i32 e2(C q) { return q.b; }",
     "export f64 h(C q) { return q.c; }",
     "export string i(P p) { return p.s; }",
-    // An unknown field is the reference's own diagnostic and not this rule's.
-    "export i32 j(P p) { return p.nope; }",
   ];
+  // An unknown field used to sit in QUIET as "the reference's own diagnostic and not this rule's".
+  // It is this checker's now, so it moved to CAUGHT — and what it asserts here is that the two rules
+  // do not fight: a field that is missing is reported once, and not also as a type mismatch against
+  // the unknown type a missing field has.
+  CAUGHT.push("export i32 j(P p) { return p.nope; }");
   for (const t of CAUGHT) {
     const src = D + t;
     const theirs = reference(src);
