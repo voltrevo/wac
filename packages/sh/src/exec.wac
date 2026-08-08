@@ -521,7 +521,7 @@ void runStages(Shell sh, Pipeline pipeline) {
   u8[] carried = u8[0]();
   for (i32 i = 0; i < pipeline.stages.len(); i++) {
     bool last = i == pipeline.stages.len() - 1;
-    carried = runCommand(sh, pipeline.stages.get(i), carried, last);
+    carried = runCommand(sh, pipeline.stages.get(i), carried, last, i > 0);
     if (sh.exiting) { return; }
   }
 }
@@ -893,9 +893,9 @@ export bool isBuiltin(string name) {
  * *collected* rather than written — and the shell already has a flag for that, so this borrows
  * it and puts it back. Without this `{ echo a; } | rev` would print `a` and pipe nothing.
  */
-u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
+u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
   match (cmd.kind) {
-    case Plain: return runSimple(sh, cmd.simple, stdin, last);
+    case Plain: return runSimple(sh, cmd.simple, stdin, last, piped);
     else: {}
   }
 
@@ -911,7 +911,9 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last) {
   u8[] savedIn = sh.stdinBytes;
   i32 savedPos = sh.stdinPos;
   bool savedHeld = sh.heldInput;
-  bool ownInput = stdin.len() > 0;
+  // **`piped` rather than `stdin.len() > 0`.** A stage downstream of a pipe owns its input even when
+  // that input is empty, and length cannot tell "no pipe" from "a pipe that delivered nothing".
+  bool ownInput = piped;
   if (ownInput) {
     sh.stdinBytes = stdin;
     sh.stdinPos = 0;
@@ -1122,7 +1124,7 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
  * The exit status of a pipeline is its *last* command's, which is why only the last stage's
  * status is kept.
  */
-u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
+u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   sh.ranSub = false;
   Vec<string> argv = Vec.create();
   for (i32 i = 0; i < cmd.words.len(); i++) {
@@ -1163,8 +1165,14 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last) {
   // `hasInput` distinguishes "nothing came down a pipe" from "a pipe delivered nothing", because
   // in the first case the shell's own cursor is still the input — that is how a `read` inside
   // `while … done < file` sees the file rather than an empty stage.
+  //
+  // **It said so and then asked the wrong question.** `stdin.len() > 0` is exactly the test that cannot
+  // tell those two apart, so a stage after a first one that produced nothing — `: | cat`, `true | cat`,
+  // `false | wc -c` — decided it still owned the terminal and read it. At a prompt that never returns.
+  // wac-mono 0110 fixed this shape for a *spawned* first stage; this is the same mistake in the
+  // sequential path, and the comment above it has been describing the fix since before there was one.
   u8[] input = stdin;
-  bool hasInput = stdin.len() > 0;
+  bool hasInput = piped;
   for (i32 i = 0; i < cmd.redirs.len(); i++) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
@@ -2022,7 +2030,12 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   // `streamPipeline` uses for the first stage of a pipeline: nothing held, this shell owns its input,
   // and nothing has touched it yet. When it holds, the applet reads the real thing and the shell reads
   // nothing — which is what stops `seq 1 3` hanging a shell that cannot spawn (wac-mono 0110).
-  bool inheritIn = !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
+  //
+  // **Through `mayInherit`, which the caller worked out and this recomputed without it.** The caller
+  // knows one thing this cannot: whether the command is a *stage of a pipeline*, and a stage after one
+  // that produced nothing has an input — an empty one. Recomputing the rest and dropping that term made
+  // `: | cat` inherit the terminal and wait for a person who was not typing.
+  bool inheritIn = mayInherit && !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
   Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
                              inheritIn ? u8[0]() : sh.restOfStdin(), inheritIn);
   if (given.found) { return given; }
@@ -2307,7 +2320,7 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.localValues = Vec.create();
   sh.localExisted = Vec.create();
 
-  runCommand(sh, body, u8[0](), true);
+  runCommand(sh, body, u8[0](), true, false);
 
   for (i32 i = 0; i < sh.localNames.len(); i++) {
     if (sh.localExisted.get(i) == 1) { sh.setVar(sh.localNames.get(i), sh.localValues.get(i)); }
