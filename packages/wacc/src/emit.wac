@@ -18,7 +18,7 @@ import {
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
-  kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign,
+  kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
 } from "./kinds.wac";
 
 /**
@@ -62,6 +62,21 @@ export struct B {
       i32 low = rest & 127;
       rest = (rest as@ u32 >> 7) as@ i32;
       if (rest == 0) {
+        this.byte(low);
+        return;
+      }
+      this.byte(low | 128);
+    }
+  }
+
+  /** The same for an `i64`, which a wide constant needs and which cannot go through the 32-bit one. */
+  void i64leb(this, i64 v) {
+    i64 rest = v;
+    for (i32 guard = 0; guard < 10; guard++) {
+      i32 low = (rest & 127) as~ i32;
+      rest = rest >> 7;
+      bool signBit = (low & 64) != 0;
+      if ((rest == 0 && !signBit) || (rest == -1 && signBit)) {
         this.byte(low);
         return;
       }
@@ -169,6 +184,18 @@ export struct Env {
   string[] localTypes;
   i32 localCount;
   i32 paramCount;
+  /**
+   * How many wasm labels enclose the statement being emitted, and which of them a `break` leaves.
+   *
+   * wasm branches by *relative depth*, so `break` has to know how many blocks it sits inside since
+   * the one it means. `depth` counts every label pushed; `breakAt` and `continueAt` remember the
+   * depth at which the innermost loop's two labels were pushed, and the branch is the difference.
+   * Getting it wrong produces a module that validates and jumps somewhere else, which is the reason
+   * every one of these is tested by running it.
+   */
+  i32 depth;
+  i32 breakAt;
+  i32 continueAt;
   string[] funcs;
   /** Each function's return type, so a call has one without re-reading the declaration. */
   string[] funcReturns;
@@ -195,6 +222,24 @@ export struct Env {
       if (this.funcs[i] == name) { return i; }
     }
     return -1;
+  }
+
+  /**
+   * A local with no name, for a value that has to be used twice.
+   *
+   * A saturating cast reads its operand three times — once to compare against each bound and once to
+   * convert — and an expression is not a thing you can evaluate three times. So it is spilled. Named
+   * with a character no wac identifier can contain, which is how it cannot collide with a real one.
+   *
+   * Reused per type rather than allocated per site: the value is dead the moment the sequence that
+   * spilled it ends, and one scratch of each width is all any of them needs.
+   */
+  i32 scratch(this, string ty) {
+    string key = " scratch " + ty;
+    i32 at = this.localAt(key);
+    if (at >= 0) { return at; }
+    this.addLocal(key, ty);
+    return this.localCount - 1;
   }
 
   void addLocal(this, string name, string ty) {
@@ -266,7 +311,7 @@ export u8[] emitModule(u8[] src) {
 
   // Function names first, over the whole file: a call names one declared elsewhere and often further
   // down, which is the same argument the checker makes for collecting signatures before bodies.
-  Env env = Env(string[64](), string[64](), 0, 0, string[64](), string[64](), 0);
+  Env env = Env(string[64](), string[64](), 0, 0, 0, -1, -1, string[64](), string[64](), 0);
   for (i32 d = 0; d < prog.decls.len(); d++) {
     if (!emittable(prog.decls[d])) { continue; }
     match (prog.decls[d].kind) {
@@ -334,6 +379,14 @@ export u8[] emitModule(u8[] src) {
         env.paramCount = params.len();
         collectLocals(env, src, lexed, body);
 
+        // **The body first, then the declaration that precedes it.** A scratch local is allocated
+        // while emitting — a saturating cast needs one and nothing before the cast knows that — so
+        // the count is not final until the last instruction is written. Same shape as a section,
+        // whose length is only knowable once its contents are: build it apart, then write the header
+        // and splice it in.
+        B insns = B.create();
+        emitBody(insns, src, lexed, env, body);
+
         B fb = B.create();
         // One entry per local rather than runs of a repeated type. Both are legal, the runs form is
         // shorter, and a canonical module form flattens the difference — which is the same argument
@@ -344,7 +397,7 @@ export u8[] emitModule(u8[] src) {
           fb.u32leb(1);
           fb.byte(valType(env.localTypes[i]));
         }
-        emitBody(fb, src, lexed, env, body);
+        fb.bytes(insns);
         // Every wac function that returns a value returns on all paths — the checker says so — so the
         // fall-through is unreachable rather than missing. Saying it explicitly is what makes the
         // block well-typed without inventing a value for a path nothing takes.
@@ -448,27 +501,109 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       emitExpr(fb, src, lexed, env, cond);
       fb.byte(4);    // if
       fb.byte(64);   // blocktype: nothing
+      env.depth = env.depth + 1;
       emitBody(fb, src, lexed, env, then);
       if (els.len() > 0) {
         fb.byte(5);  // else
         emitBody(fb, src, lexed, env, els);
       }
       fb.byte(11);   // end
+      env.depth = env.depth - 1;
     }
     case While(cond, inner): {
+      emitLoop(fb, src, lexed, env, cond, inner, null);
+    }
+    case DoWhile(inner, cond): {
+      // The body runs before the condition is asked, so the test moves to the bottom: the loop
+      // branches back only while it holds, and there is no jump out at the top to write.
+      i32 savedB = env.breakAt;
+      i32 savedC = env.continueAt;
       fb.byte(2);
-      fb.byte(64);   // block
+      fb.byte(64);
+      env.depth = env.depth + 1;
+      env.breakAt = env.depth;
       fb.byte(3);
-      fb.byte(64);   // loop
-      emitExpr(fb, src, lexed, env, cond);
-      fb.byte(69);   // i32.eqz — leave when the condition fails
-      fb.byte(13);
-      fb.u32leb(1);  // br_if out of the block
+      fb.byte(64);
+      env.depth = env.depth + 1;
+      // The same inner block as `for`, so `continue` lands on the condition rather than skipping it.
+      fb.byte(2);
+      fb.byte(64);
+      env.depth = env.depth + 1;
+      env.continueAt = env.depth;
       emitBody(fb, src, lexed, env, inner);
+      fb.byte(11);
+      env.depth = env.depth - 1;
+      emitExpr(fb, src, lexed, env, cond);
+      fb.byte(13);
+      fb.u32leb(0);
+      fb.byte(11);
+      fb.byte(11);
+      env.depth = env.depth - 2;
+      env.breakAt = savedB;
+      env.continueAt = savedC;
+    }
+    case For(init, cond, update, inner): {
+      if (!(init is null)) { emitStmt(fb, src, lexed, env, init!); }
+      emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update);
+    }
+    case Break: {
       fb.byte(12);
-      fb.u32leb(0);  // br back to the loop
+      fb.u32leb(env.depth - env.breakAt);
+    }
+    case Continue: {
+      fb.byte(12);
+      fb.u32leb(env.depth - env.continueAt);
+    }
+    case Trap: { fb.byte(0); }
+    case Switch(subject, cases): {
+      // A chain of comparisons rather than a jump table. `br_table` is what the reference emits and
+      // is an optimisation of exactly this — the values a canonical form would have to normalise
+      // anyway, and the answers are what this rung compares.
+      i32 savedS = env.breakAt;
+      fb.byte(2);
+      fb.byte(64);
+      env.depth = env.depth + 1;
+      env.breakAt = env.depth;
+      string st = typeOfE(src, lexed, env, subject);
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { continue; }
+        emitExprAt(fb, src, lexed, env, subject, st);
+        emitExprAt(fb, src, lexed, env, cases[i].value!, st);
+        emitBinary(fb, kEq(), st);
+        fb.byte(4);
+        fb.byte(64);
+        env.depth = env.depth + 1;
+        emitBody(fb, src, lexed, env, cases[i].body);
+        env.depth = env.depth - 1;
+        fb.byte(11);
+      }
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (!(cases[i].value is null)) { continue; }
+        emitBody(fb, src, lexed, env, cases[i].body);
+      }
       fb.byte(11);
-      fb.byte(11);
+      env.depth = env.depth - 1;
+      env.breakAt = savedS;
+    }
+    case IncrStmt(target, op): {
+      // `i++` is the commonest `for` update in the language and had **no arm here at all**, so the
+      // update emitted nothing and the loop never advanced. It did not fail: it validated and span,
+      // and the test hung rather than reporting — which is the failure mode this rung's oracle was
+      // chosen to catch and the one it cannot report politely.
+      match (target.kind) {
+        case LIdent(tok): {
+          i32 at = env.localAt(tokenTextOf(src, lexed, tok));
+          if (at < 0) { return; }
+          string t = env.localTypes[at];
+          fb.byte(32);
+          fb.u32leb(at);
+          if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), t);
+          fb.byte(33);
+          fb.u32leb(at);
+        }
+        else: { }
+      }
     }
     case Block(inner): { emitBody(fb, src, lexed, env, inner); }
     case ExprStmt(e) : {
@@ -478,6 +613,50 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
     }
     else: { }
   }
+}
+
+/**
+ * The shape `while` and `for` share: a block wrapping a loop, the condition at the top.
+ *
+ * `for`'s update runs before the branch back, which is what makes `continue` land on it rather than
+ * skip it — the one place the two forms differ, and the reason they are one function.
+ */
+void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, Stmt? update) {
+  i32 savedB = env.breakAt;
+  i32 savedC = env.continueAt;
+  fb.byte(2);
+  fb.byte(64);   // block — what `break` leaves
+  env.depth = env.depth + 1;
+  env.breakAt = env.depth;
+  fb.byte(3);
+  fb.byte(64);   // loop — what `continue` returns to
+  env.depth = env.depth + 1;
+  env.continueAt = env.depth;
+  if (!(cond is null)) {
+    emitExpr(fb, src, lexed, env, cond!);
+    fb.byte(69);   // i32.eqz — leave when the condition fails
+    fb.byte(13);
+    fb.u32leb(1);
+  }
+  // **A third block, around the body.** `continue` has to reach the update rather than skip it, so it
+  // cannot branch to the loop's own label — it leaves an inner block whose end is where the update
+  // begins. Branching to the loop instead is a `for` that never advances: the module validates, the
+  // answer never comes, and the test *hangs* rather than failing. Which is what it did.
+  fb.byte(2);
+  fb.byte(64);
+  env.depth = env.depth + 1;
+  env.continueAt = env.depth;
+  emitBody(fb, src, lexed, env, inner);
+  fb.byte(11);
+  env.depth = env.depth - 1;
+  if (!(update is null)) { emitStmt(fb, src, lexed, env, update!); }
+  fb.byte(12);
+  fb.u32leb(0);
+  fb.byte(11);
+  fb.byte(11);
+  env.depth = env.depth - 2;
+  env.breakAt = savedB;
+  env.continueAt = savedC;
 }
 
 /** The operator of a compound assignment, which is the binary one with the `=` taken off. */
@@ -532,7 +711,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(src, lexed, target);
       emitExprAt(fb, src, lexed, env, operand, from == "" ? to : from);
-      emitConversion(fb, from == "" ? to : from, to);
+      emitConversion(fb, env, from == "" ? to : from, to);
     }
     case Ident(tok): {
       i32 at = env.localAt(tokenTextOf(src, lexed, tok));
@@ -765,7 +944,7 @@ i32 parseInt(string s) {
  * whole reason this emitter needed a type model — the conversion is a no-op and the *arithmetic* is
  * not.
  */
-void emitConversion(B fb, string from, string to) {
+void emitConversion(B fb, Env env, string from, string to) {
   if (from == to) { return; }
   if (valType(from) == valType(to) && !isFloat(from)) { return; }   // i32/u32, i64/u64
   if (valType(from) == 127 && valType(to) == 126) {
@@ -773,11 +952,32 @@ void emitConversion(B fb, string from, string to) {
     return;
   }
   if (valType(from) == 126 && valType(to) == 127) {
-    // **Known divergence.** wac's `as~` between integer widths *saturates* — `(2^32 + 7) as~ i32` is
-    // `i32` max, not 7 — and this is `i32.wrap_i64`, which agrees in range and not outside it.
-    // Clamping needs the operand twice and therefore a scratch local, which this slice has no
-    // mechanism for. Named here and in the README rather than emitted as if it were right.
-    fb.byte(167);   // i32.wrap_i64
+    // **Saturating**, which is what wac's `as~` means between integer widths: `(2^32 + 7) as~ i32` is
+    // `i32` max rather than 7. wasm has no saturating narrow, so the value is spilled to a scratch
+    // local and clamped against each bound in turn — the operand read three times, which is the whole
+    // reason a scratch local had to exist.
+    i32 tmp = env.scratch(from);
+    fb.byte(34);              // local.tee — keeps the value while storing it
+    fb.u32leb(tmp);
+    emitI64Const(fb, upperBound(to));
+    fb.byte(isUnsigned(from) ? 86 : 85);   // i64.gt_u / gt_s
+    fb.byte(4);
+    fb.byte(wasmI32());       // if (result i32)
+    emitI32Const(fb, upperBound(to));
+    fb.byte(5);
+    fb.byte(32);
+    fb.u32leb(tmp);
+    emitI64Const(fb, lowerBound(to));
+    fb.byte(isUnsigned(from) ? 84 : 83);   // i64.lt_u / lt_s
+    fb.byte(4);
+    fb.byte(wasmI32());
+    emitI32Const(fb, lowerBound(to));
+    fb.byte(5);
+    fb.byte(32);
+    fb.u32leb(tmp);
+    fb.byte(167);             // i32.wrap_i64
+    fb.byte(11);
+    fb.byte(11);
     return;
   }
   if (!isFloat(from) && to == "f64") {
@@ -847,4 +1047,35 @@ f64 parseFloat(string s) {
     if (neg) { v = v * 0.1; } else { v = v * 10.0; }
   }
   return v;
+}
+
+/** The largest value the target type holds, as the `i64` the comparison needs. */
+i64 upperBound(string t) {
+  if (t == "u32") { return 4294967295; }
+  return 2147483647;
+}
+
+/** The smallest, which is zero for an unsigned target. */
+i64 lowerBound(string t) {
+  if (t == "u32") { return 0; }
+  return -2147483648;
+}
+
+/** An `i64` constant, which the clamp needs on the wide side of each comparison. */
+void emitI64Const(B fb, i64 v) {
+  fb.byte(66);
+  fb.i64leb(v);
+}
+
+/**
+ * An `i32` constant, which the clamp needs on the narrow side.
+ *
+ * `as@` and not `as~`, and the difference is the bug this function had: `u32`'s upper bound is
+ * 4294967295, which does not fit an `i32`, and `as~` **saturates** — so the constant came out as
+ * `i32` max and the clamp pinned every large value there. The bit pattern is what is wanted, which is
+ * what the raw spelling means. This emitter's own new rule, met immediately from the other side.
+ */
+void emitI32Const(B fb, i64 v) {
+  fb.byte(65);
+  fb.i32leb(v as@ i32);
 }

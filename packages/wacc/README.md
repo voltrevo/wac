@@ -1183,6 +1183,39 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 4: the divergence closed, and a loop that hung instead of failing
+
+**74 programs, 115 calls, every answer agreeing.** The saturating cast is no longer a divergence, and
+control flow is complete: `for`, `do..while`, `break`, `continue`, `switch`, `trap`.
+
+**A scratch local** is what the cast needed. Saturating a narrowing conversion reads its operand three
+times — once against each bound and once to convert — and an expression is not a thing you can
+evaluate three times. So it is spilled to a nameless local, allocated on demand and reused per width.
+Which forced a second change: the locals *declaration* precedes the code, and the count is not final
+until the last instruction is written, so the body is now emitted apart and spliced in. That is the
+same shape as a section, whose length is only knowable once its contents are.
+
+Then the emitter's own new rule met it from the other side. `u32`'s upper bound is 4294967295, which
+does not fit an `i32`, and writing it with `as~` **saturated it to `i32` max** — so the clamp pinned
+every large value there. `as@` is the spelling that means the bit pattern. The rule this emitter had
+just learned to implement, got wrong in the code implementing it, one function away.
+
+**And a loop that hung rather than failed.** `i++` is the commonest `for` update in the language and
+had no arm in the statement emitter at all, so the update emitted nothing, the counter never advanced,
+and the module **validated and span**. The test did not report a wrong answer; it stopped. That is the
+failure mode named two sections above as the argument for running the code, met in the least
+convenient way: an oracle that runs things cannot politely report a program that never finishes.
+
+It is worth being plain that the test suite can therefore hang on a future emitter bug, and that no
+guard here prevents it — bounding wasm from the outside needs a worker and a timeout, which this slice
+does not have. The loop bounds in the cases are small so a mis-emitted loop is more often a wrong
+answer than an infinite one, and that is a mitigation rather than a fix.
+
+`continue` is the other thing worth writing down: it cannot branch to the loop's own label, because
+the update sits between the body's end and the back edge. It leaves a **third block** wrapped around
+the body, whose end is where the update begins. Branching to the loop instead is a `for` that never
+advances — the same hang, from the other direction.
+
 ### Rung 4 learns types, and the oracle corrects two assumptions
 
 **64 programs, 87 calls, every answer agreeing.** Unsigned opcodes, `i64`, `f32`, `f64`, and the

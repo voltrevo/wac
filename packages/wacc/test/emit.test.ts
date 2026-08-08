@@ -183,11 +183,28 @@ const CASES: [string, Call[]][] = [
   ["export i32 f(u32 a) { return a as@ i32; }", [{ name: "f", args: [4294967288] }]],
   ["export i64 f(i32 a) { return a as i64; }", [{ name: "f", args: [-5] }]],
   ["export i64 f(u32 a) { return a as i64; }", [{ name: "f", args: [4294967288] }]],
-  // In range only. `as~` from a wider integer **saturates** in wac — 2^32 + 7 gives `i32` max, not 7 —
-  // and this emitter writes `i32.wrap_i64`, which is the same answer in range and a different one
-  // outside it. Clamping needs the value twice and so needs a scratch local, which this slice has no
-  // mechanism for; the divergence is named in the README rather than papered over here.
-  ["export i32 f(i64 a) { return a as~ i32; }", [{ name: "f", args: [7n] }]],
+  // `as~` from a wider integer **saturates**, so the out-of-range cases are the whole point: both
+  // bounds, both directions, and the in-range value that must still pass straight through.
+  ["export i32 f(i64 a) { return a as~ i32; }", [
+    { name: "f", args: [7n] },
+    { name: "f", args: [-7n] },
+    { name: "f", args: [4294967303n] },
+    { name: "f", args: [-4294967303n] },
+    { name: "f", args: [2147483647n] },
+    { name: "f", args: [-2147483648n] },
+    { name: "f", args: [9223372036854775807n] },
+    { name: "f", args: [-9223372036854775808n] },
+  ]],
+  ["export u32 f(i64 a) { return a as~ u32; }", [
+    { name: "f", args: [7n] },
+    { name: "f", args: [-7n] },
+    { name: "f", args: [4294967295n] },
+    { name: "f", args: [4294967296n] },
+  ]],
+  ["export u32 f(u64 a) { return a as~ u32; }", [
+    { name: "f", args: [7n] },
+    { name: "f", args: [18446744073709551615n] },
+  ]],
   ["export f64 f(i32 a) { return a as f64; }", [{ name: "f", args: [-3] }]],
   ["export f64 f(u32 a) { return a as f64; }", [{ name: "f", args: [4294967288] }]],
   // Rounded, not truncated: `as~` reads like C's truncation and is not it. The ties are asked about
@@ -201,6 +218,29 @@ const CASES: [string, Call[]][] = [
   ]],
   ["export f64 f(f32 a) { return a as f64; }", [{ name: "f", args: [1.5] }]],
   ["export f32 f(f64 a) { return a as~ f32; }", [{ name: "f", args: [1.5] }]],
+
+  // ── The rest of control flow, where a wrong label validates and jumps elsewhere ──
+  ["export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { t = t + i; } return t; }",
+    [{ name: "f", args: [5] }, { name: "f", args: [0] }]],
+  ["export i32 f(i32 n) { i32 t = 0; i32 i = 0; do { t = t + i; i = i + 1; } while (i < n); return t; }",
+    // The body runs once even when the condition is false from the start, which is the whole
+    // difference between the two loops and the only case that tells them apart.
+    [{ name: "f", args: [5] }, { name: "f", args: [0] }]],
+  ["export i32 f(i32 n) { i32 t = 0; i32 i = 0; while (true) { if (i >= n) { break; } t = t + i; i = i + 1; } return t; }",
+    [{ name: "f", args: [5] }]],
+  ["export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { if (i % 2 == 0) { continue; } t = t + i; } return t; }",
+    // `continue` in a `for` must reach the update, or this never terminates.
+    [{ name: "f", args: [10] }]],
+  // Nested loops: the inner `break` leaves the inner loop only, which is what the relative depth is.
+  ["export i32 f(i32 n) { i32 t = 0; for (i32 i = 0; i < n; i++) { for (i32 j = 0; j < n; j++) { if (j > i) { break; } t = t + 1; } } return t; }",
+    [{ name: "f", args: [4] }]],
+  // A `break` under an `if` under a loop: one more label between it and what it means.
+  ["export i32 f(i32 n) { i32 i = 0; while (i < n) { if (i == 3) { break; } i = i + 1; } return i; }",
+    [{ name: "f", args: [10] }, { name: "f", args: [2] }]],
+  ["export i32 f(i32 a) { switch (a) { case 1: { return 10; } case 2: { return 20; } default: { return 0; } } }",
+    [{ name: "f", args: [1] }, { name: "f", args: [2] }, { name: "f", args: [7] }]],
+  ["export i32 f(i32 a) { i32 r = 0; switch (a) { case 1: { r = 10; break; } case 2: { r = 20; break; } default: { r = -1; } } return r; }",
+    [{ name: "f", args: [1] }, { name: "f", args: [2] }, { name: "f", args: [9] }]],
 ];
 
 Deno.test("rung 4: what wacc emits runs, and answers what the reference's does", () => {
