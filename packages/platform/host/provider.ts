@@ -504,11 +504,14 @@ export function cliOf(
 
     /*= pushChild */
     // Everything the child's world is, in one payload, so a push is one round trip.
-    (argv: string[], stdin: Uint8Array, cwd: string) =>
+    (argv: string[], stdin: Uint8Array, cwd: string, inheritInput: boolean) =>
       T.ok(submit(
         b,
         OP.PUSH_CHILD,
-        headed(i32le(argv.length), prefixed(str(argv.join("\u0000")), prefixed(str(cwd), stdin))),
+        headed(
+          i32le(argv.length),
+          headed(i32le(inheritInput ? 1 : 0), prefixed(str(argv.join("\u0000")), prefixed(str(cwd), stdin))),
+        ),
       )),
     /*= popChild */
     () => T.captured(submit(b, OP.POP_CHILD, EMPTY)));

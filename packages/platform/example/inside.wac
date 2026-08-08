@@ -31,7 +31,7 @@ export i32 main(Core core, Cli cli) {
   cli.writeFile(dir + "/note.txt", "from the file\n".toBytes()).wait();
 
   // The world the child sees: its name and arguments, its standard input, and where it stands.
-  cli.pushChild(string[]("shout", "-x", "note.txt"), "from stdin\n".toBytes(), dir).wait();
+  cli.pushChild(string[]("shout", "-x", "note.txt"), "from stdin\n".toBytes(), dir, false).wait();
   i32 status = shout(core, cli);
   Captured got = cli.popChild().wait();
 

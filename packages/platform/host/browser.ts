@@ -550,8 +550,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     },
 
     [OP.PUSH_CHILD]: (p) => {
-      const { argv, stdin, cwd } = unpackPush(p);
-      kids.push(argv, stdin, cwd);
+      const { argv, stdin, cwd, inheritInput } = unpackPush(p);
+      kids.push(argv, stdin, cwd, inheritInput);
       return EMPTY;
     },
     [OP.POP_CHILD]: () => {

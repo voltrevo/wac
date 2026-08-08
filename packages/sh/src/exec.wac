@@ -94,7 +94,7 @@ export struct Shell {
    * has to read the one the shell is talking to, or a session on an image lists one filesystem and reads
    * another (wac-mono 0109).
    */
-  fn[Output(Core, Cli, Fs, string, Vec<string>, u8[])] external;
+  fn[Output(Core, Cli, Fs, string, Vec<string>, u8[], bool)] external;
 
   /**
    * What `external` will answer to, for `help` to list.
@@ -1659,7 +1659,13 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   // could not until issue 0030, and something has to answer there.
   // The two in-process routes run *here*, so they need the bytes: reading the input now is what a
   // program reading it would have done.
-  Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv, sh.restOfStdin());
+  // **Only read the shell's own input if the applet is going to be given it.** The same condition
+  // `streamPipeline` uses for the first stage of a pipeline: nothing held, this shell owns its input,
+  // and nothing has touched it yet. When it holds, the applet reads the real thing and the shell reads
+  // nothing — which is what stops `seq 1 3` hanging a shell that cannot spawn (wac-mono 0110).
+  bool inheritIn = !sh.heldInput && sh.ownsStdin && !sh.triedStdin;
+  Output given = sh.external(sh.core, sh.cli, sh.fs, sh.cwd, argv,
+                             inheritIn ? u8[0]() : sh.restOfStdin(), inheritIn);
   if (given.found) { return given; }
   return run(sh.fs, sh.cli, sh.cwd, argv, sh.restOfStdin());
 }
@@ -1683,7 +1689,7 @@ export string[] builtinNames() {
 string[] noExternalNames() { return string[0](fill: ""); }
 
 /** The default `Shell.external`: nothing is wired in, so every name falls through. */
-Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin) {
+Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
   return Output.missing();
 }
 

@@ -295,7 +295,7 @@ string resolveRoot(i32 id) { return "/"; }
  * hook is never installed and these are reached only if something calls them directly. Answering
  * with two empty streams keeps that a no-op rather than a crash.
  */
-Pending<bool> fakePushChild(string[] argv, u8[] stdin, string cwd) {
+Pending<bool> fakePushChild(string[] argv, u8[] stdin, string cwd, bool inheritIn) {
   return Pending.of(1, resolveFromId, alwaysSettled, ignoreDrop);
 }
 Captured resolveNothing(i32 id) { return Captured.of(u8[0](), u8[0]()); }

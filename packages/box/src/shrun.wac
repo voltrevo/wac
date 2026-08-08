@@ -46,7 +46,7 @@ import { Fs } from "../../fs/src/fs.wac";
  * typo. The `UNKNOWN` sentinel exists for exactly this: an applet that ran and failed returns 1,
  * and one that does not exist has to be a different answer.
  */
-export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin) {
+export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
   if (argv.len() == 0) { return Output.missing(); }
 
   // The applet's own name is `argv[0]` here, where under `box` it is `argv[1]` — `box grep x` and
@@ -61,7 +61,11 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // between these two lines on purpose: a push left on the stack would capture the shell's own
   // output for ever afterwards, and the failure would appear as a terminal that has gone silent
   // rather than as anything to do with this function.
-  cli.pushChild(args, stdin, cwd).wait();
+  // `inheritIn` is the shell saying "this one may read the real standard input" — so it is not handed
+  // bytes and the shell never had to read any. Without it a shell that cannot spawn had to drain its own
+  // input before starting an applet that might never read one, and at a terminal that never finished
+  // (wac-mono 0110).
+  cli.pushChild(args, stdin, cwd, inheritIn).wait();
   i32 code = dispatch(core, cli, fs, a, name);
   Captured got = cli.popChild().wait();
 

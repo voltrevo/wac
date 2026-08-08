@@ -5,7 +5,6 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0110](open/0110-a-pipeline-hangs-when-the-shells-own-stdin-is-still-open.md) | a pipeline hangs when the shell's own standard input is still open — every test uses `stdin: null` | bug | hangs |
 | [0108](open/0108-a-sessions-writes-can-be-lost-if-the-server-stops-straight-after.md) | a session's writes can be lost if the server is stopped straight after | bug | wrong answer |
 | [0107](open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) | a C tor fetching from our onion service times out intermittently — likely the same fault as 0106 | bug | hangs |
 | [0106](open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md) | the onion-service test goes red under load, and its 30s timeout cannot tell busy from wedged | bug | wrong answer |

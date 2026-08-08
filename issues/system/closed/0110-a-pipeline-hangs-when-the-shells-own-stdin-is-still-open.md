@@ -1,6 +1,6 @@
 # 0110 — a pipeline hangs when the shell's own standard input is still open
 
-- **Status:** open — the spawning half is fixed; the in-process half needs `pushChild`
+- **Status:** closed, 2026-08-08
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
@@ -112,3 +112,20 @@ Then the parts outside that file:
 
 The test is the one shape that already exists: `stdin: "piped"` and never written, against
 `bin/sealedsh.wac`, which cannot spawn and therefore takes this route by construction.
+
+## Closed: both halves
+
+The in-process half went exactly where the scoping above said it would.
+
+`pushChild` takes a fourth argument — **the child reads the real standard input** — and `host/child.ts`
+implements it by answering `null` from `readChunk` and `readAll`, which is the answer it already gave for
+"no child running" and which sends the host to the process's own input. Output is still captured, which
+is what the frame is for. One field, two returns, and the payload gained an `i32`.
+
+`runExternal` computes the same condition `streamPipeline` uses — nothing held, this shell owns its
+input, nothing has touched it — and when it holds, hands the applet no bytes and never reads any.
+
+`packages/box/test/sealed.test.ts` has the case, against `bin/sealedsh.wac`, which cannot spawn and so
+takes this route by construction. Both new tests use `stdin: "piped"` and never write to it, which is the
+shape this issue is really about: a standard input that stays open, as a terminal's does, and as
+`stdin: "null"` — every other test in this repo — does not.

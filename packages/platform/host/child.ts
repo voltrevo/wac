@@ -44,6 +44,17 @@ type Frame = {
   /** What the child reads, and how far it has read. */
   stdin: Uint8Array;
   at: number;
+  /**
+   * Whether the child reads the *real* standard input rather than `stdin` above.
+   *
+   * A shell that runs a command in process has to hand it bytes, and to have bytes it must read its own
+   * input to the end — which at a terminal never comes, so `seq 1 3` hung a shell that could not spawn
+   * (wac-mono 0110). A child that will read the real thing needs no bytes read on its behalf, and this
+   * is how it says so: the reads below answer `null`, which already means "ask the host instead".
+   *
+   * Only the *input* is inherited. Output is still captured, which is the whole reason the frame exists.
+   */
+  inheritInput: boolean;
   /** Where its relative paths resolve from. Empty means "wherever the host already was". */
   cwd: string;
   out: Uint8Array[];
@@ -82,8 +93,8 @@ export class ChildStack {
     return this.frames[this.frames.length - 1];
   }
 
-  push(argv: string[], stdin: Uint8Array, cwd: string): void {
-    this.frames.push({ argv, stdin, at: 0, cwd, out: [], err: [], written: 0 });
+  push(argv: string[], stdin: Uint8Array, cwd: string, inheritInput = false): void {
+    this.frames.push({ argv, stdin, at: 0, cwd, inheritInput, out: [], err: [], written: 0 });
   }
 
   /** The child's arguments, or null when none is running. */
@@ -113,6 +124,8 @@ export class ChildStack {
   readChunk(): Uint8Array | null {
     const frame = this.top;
     if (frame === undefined) return null;
+    // Inheriting: the same answer as "no child", which sends the host to the real input.
+    if (frame.inheritInput) return null;
     const end = Math.min(frame.at + CHUNK, frame.stdin.length);
     const slice = frame.stdin.subarray(frame.at, end);
     frame.at = end;
@@ -123,6 +136,7 @@ export class ChildStack {
   readAll(): Uint8Array | null {
     const frame = this.top;
     if (frame === undefined) return null;
+    if (frame.inheritInput) return null;
     const rest = frame.stdin.subarray(frame.at);
     frame.at = frame.stdin.length;
     return rest;
@@ -191,22 +205,25 @@ export function packCaptured(out: Uint8Array, err: Uint8Array): Uint8Array {
 }
 
 /**
- * The payload `pushChild` sends: how many arguments, then the arguments NUL-separated and
- * length-prefixed, then the directory length-prefixed, then the input.
+ * The payload `pushChild` sends: how many arguments, whether the child inherits the real input, then
+ * the arguments NUL-separated and length-prefixed, then the directory length-prefixed, then the input.
  *
  * The count travels separately from the joined string because splitting cannot tell no arguments
  * from one empty argument — `"".split("\0")` is `[""]` either way.
  */
-export function unpackPush(p: Uint8Array): { argv: string[]; stdin: Uint8Array; cwd: string } {
+export function unpackPush(
+  p: Uint8Array,
+): { argv: string[]; stdin: Uint8Array; cwd: string; inheritInput: boolean } {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const count = dv.getInt32(0, true);
-  const argvLen = dv.getInt32(4, true);
+  const inheritInput = dv.getInt32(4, true) !== 0;
+  const argvLen = dv.getInt32(8, true);
   const dec = new TextDecoder();
-  const argv = count === 0 ? [] : dec.decode(p.subarray(8, 8 + argvLen)).split("\u0000");
-  const cwdAt = 8 + argvLen;
+  const argv = count === 0 ? [] : dec.decode(p.subarray(12, 12 + argvLen)).split("\u0000");
+  const cwdAt = 12 + argvLen;
   const cwdLen = dv.getInt32(cwdAt, true);
   const cwd = dec.decode(p.subarray(cwdAt + 4, cwdAt + 4 + cwdLen));
   // Copied: `p` is a view into the ring and will be overwritten by the next call, but the child
   // reads its input over many calls.
-  return { argv, stdin: p.slice(cwdAt + 4 + cwdLen), cwd };
+  return { argv, stdin: p.slice(cwdAt + 4 + cwdLen), cwd, inheritInput };
 }

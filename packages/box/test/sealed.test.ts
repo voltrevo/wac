@@ -157,3 +157,49 @@ Deno.test("the applets answer the same on an in-memory filesystem as the real to
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+/**
+ * The same hang, on the route a shell takes when it *cannot* spawn — wac-mono 0110's other half.
+ *
+ * `bin/sealedsh.wac` has no capabilities, so every applet runs in process through `pushChild`. That
+ * takes the child's input as a **value**, so the shell had to read its own input to the end before it
+ * could start an applet that might never read a byte of one: `seq 1 3` hung, with nothing waiting for
+ * those bytes but the shell.
+ *
+ * `pushChild` can now be told the child reads the *real* input, which is the same answer `host/child.ts`
+ * already gave for "no child running" — so the shell reads nothing and the applet reaches past the frame.
+ *
+ * `stdin: "piped"` and never written is the whole point of the harness: a standard input that stays
+ * open, which is what a terminal is and what `stdin: "null"` — every other test in this repo — is not.
+ */
+Deno.test("an applet runs when the shell cannot spawn and its own input stays open", async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const built = await Deno.makeTempFile({ prefix: "box-sealed-stdin-" });
+  try {
+    await buildApp(SEALED, built, {});
+    const open = async (script: string) => {
+      const child = new Deno.Command("timeout", {
+        args: ["10", built, "-c", script], stdin: "piped", stdout: "piped", stderr: "piped",
+      }).spawn();
+      const r = await child.output();
+      return { out: new TextDecoder().decode(r.stdout), code: r.code };   // 124 is the bug's shape
+    };
+
+    // A lone applet that reads nothing: the case that hung.
+    const lone = await open("seq 1 3");
+    assertEquals(lone.code, 0, "a lone applet finished");
+    assertEquals(lone.out, "1\n2\n3\n");
+
+    // A pipeline, on the sequential route rather than the spawning one.
+    const piped = await open("seq 1 3 | cat");
+    assertEquals(piped.code, 0, "a pipeline finished");
+    assertEquals(piped.out, "1\n2\n3\n");
+
+    // And one that writes and reads a file, so the filesystem is in the loop as well.
+    const both = await open(`printf 'b\\na\\n' > f; sort f`);
+    assertEquals(both.code, 0);
+    assertEquals(both.out, "a\nb\n");
+  } finally {
+    await Deno.remove(built).catch(() => {});
+  }
+});

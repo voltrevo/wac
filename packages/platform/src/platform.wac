@@ -1027,6 +1027,13 @@ export struct Cli {
    * `readChunk` returns `stdin` and then end of input, `Core.log`, `write` and `Core.warn`
    * accumulate, and every path is taken relative to `cwd`.
    *
+   * **The last argument says the child reads the *real* standard input** rather than the bytes handed
+   * over. A shell that runs a command in process has to have bytes to give it, and to have them it must
+   * read its own input to the end — which at a terminal never comes, so `seq 1 3` hung a shell that
+   * could not spawn (wac-mono 0110). With it set, `readChunk` and `readStdin` reach past the frame to
+   * the process's own input, exactly as they do when nothing is pushed; the output is still captured,
+   * which is what the frame is for.
+   *
    * `argv` is in the layout `box` uses — the program's own name first — because an applet that
    * reads its arguments positionally rather than through a parser is reading that layout already.
    * `Core.log` is captured along with `write` for the same kind of reason: it is where thirty of
@@ -1055,7 +1062,7 @@ export struct Cli {
    * still open any file the parent could. A real boundary is `spawn`, which is a separate worker
    * with its own grants — and which a browser cannot do yet.
    */
-  fn[Pending<bool>(string[], u8[], string)] pushChild;
+  fn[Pending<bool>(string[], u8[], string, bool)] pushChild;
   fn[Pending<Captured>()] popChild;
 
 
@@ -1089,7 +1096,7 @@ export struct Cli {
     fn[void(i32)] closeFeed,
     fn[Pending<i32>(i32)] exitCode,
     fn[Pending<string>()] cwd,
-    fn[Pending<bool>(string[], u8[], string)] pushChild,
+    fn[Pending<bool>(string[], u8[], string, bool)] pushChild,
     fn[Pending<Captured>()] popChild
   ) {
     return Cli(
