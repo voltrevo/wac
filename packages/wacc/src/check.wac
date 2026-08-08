@@ -123,6 +123,9 @@ export i32 errReferenceOp() { return 43; }
 export i32 errSwitchSubject() { return 44; }
 /** A named construction naming a field the struct does not have, or leaving one out. */
 export i32 errNamedField() { return 45; }
+/** A float literal too large for the type it is going into. */
+export i32 errFloatRange() { return 50; }
+
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
 /** Calling something that is not a function, or naming something that does not exist to call. */
@@ -1061,6 +1064,113 @@ export string typeOfTy(C c, Ty t) {
   }
 }
 
+/**
+ * Report a literal that does not fit, with the caller's own code — unless the problem is the range,
+ * which has a code of its own.
+ *
+ * Eight positions ask this question and the reference answers all of them the same way, so the choice
+ * is one function here or the same three lines eight times. `mismatch` is what the caller calls a
+ * wrong *family*; a float too large for an `f32` is a different complaint about a literal that was
+ * otherwise the right kind.
+ */
+void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
+  if (literalFits(c, want, e)) { return; }
+  if (!acceptsLiteral(want, litKindOf(e))) {
+    c.report(mismatch, line, col);
+    return;
+  }
+  // A range complaint names the **literal**, where a family mismatch names the whole expression:
+  // `i32 x = -1.5` is reported at the `-` and `f32 x = -1.0e40` at the `1`. Measured, and the pair is
+  // worth stating together, because either one alone reads as an off-by-one against the other.
+  Expr inner = innermostLiteral(e);
+  c.report(errFloatRange(), inner.line, inner.col);
+}
+
+/** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
+Expr innermostLiteral(Expr e) {
+  match (e.kind) {
+    case Unary(op, operand): { return innermostLiteral(operand); }
+    else: { return e; }
+  }
+}
+
+/**
+ * A float literal's value, read out of its text.
+ *
+ * Needed for one rule and no other: an `f32` slot refuses a literal too large to be one, and the
+ * boundary is the *value* rather than anything visible in the text — `3.4028235e38` fits and
+ * `3.4028236e38` does not, and f32's maximum written out in full with no exponent at all fits. An
+ * exponent check would have been wrong on both of those.
+ *
+ * Accumulated in `f64`, which has room to spare for the comparison. No sign: a leading `-` is a unary
+ * operator and never part of the token, which the reference's own column confirms.
+ */
+f64 floatLiteralValue(C c, i32 tok) {
+  u8[] a = tokenText(c, tok).toBytes();
+  f64 mantissa = 0.0;
+  i32 i = 0;
+  while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+    mantissa = mantissa * 10.0 + (a[i] - 48) as f64;
+    i = i + 1;
+  }
+  if (i < a.len() && a[i] == 46) {
+    i = i + 1;
+    f64 scale = 0.1;
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      mantissa = mantissa + (a[i] - 48) as f64 * scale;
+      scale = scale * 0.1;
+      i = i + 1;
+    }
+  }
+  i32 exp = 0;
+  bool negExp = false;
+  if (i < a.len() && (a[i] == 101 || a[i] == 69)) {
+    i = i + 1;
+    if (i < a.len() && (a[i] == 43 || a[i] == 45)) {
+      negExp = a[i] == 45;
+      i = i + 1;
+    }
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      exp = exp * 10 + (a[i] - 48);
+      i = i + 1;
+    }
+  }
+  // Applied by repeated multiplication, and capped: past 400 the answer is already infinity one way
+  // or zero the other, and the loop has nothing left to say.
+  if (exp > 400) { exp = 400; }
+  for (i32 e = 0; e < exp; e++) {
+    if (negExp) { mantissa = mantissa * 0.1; } else { mantissa = mantissa * 10.0; }
+  }
+  return mantissa;
+}
+
+/**
+ * Whether a literal fits the slot it is going into — the family question, plus `f32`'s range.
+ *
+ * One function so the range rule reaches every position at once. It applies in all of them, measured:
+ * an initialiser, a return, an argument, an array element, a field, an assignment. Only `f32` is
+ * checked — the reference accepts `f64 x = 1.0e400`, which is out of range for an `f64` too, and
+ * matching that is the job rather than improving on it.
+ */
+bool literalFits(C c, string want, Expr e) {
+  i32 lit = litKindOf(e);
+  if (!acceptsLiteral(want, lit)) { return false; }
+  string core = withoutNull(want);
+  string base = core == "" ? want : core;
+  if (base != "f32" || lit != litFloat()) { return true; }
+  match (e.kind) {
+    case FloatLit(tok): {
+      // f32's largest finite value plus half an ulp: anything above it rounds to infinity, and
+      // anything at or below it rounds to something an `f32` can hold.
+      return floatLiteralValue(c, tok) <= 3.4028235677973366e38;
+    }
+    // The sign is a unary operator and the magnitude is what the range is about, so this asks the
+    // same question one node down. The reference agrees: it reports at the literal, not at the `-`.
+    case Unary(op, operand): { return literalFits(c, want, operand); }
+    else: { return true; }
+  }
+}
+
 /** The family a literal expression belongs to, or `litNone` when the expression is not one. */
 export i32 litKindOf(Expr e) {
   match (e.kind) {
@@ -1069,6 +1179,13 @@ export i32 litKindOf(Expr e) {
     case StrLit(tok): { return litString(); }
     case BoolLit(value): { return litBool(); }
     case NullLit: { return litNull(); }
+    // `-1.0e40` is a float literal with a sign in front, and every rule that asks this means that.
+    // Left out, the whole literal path skipped a negated one — so `f32 x = -1.0e40;` went unchecked
+    // while `f32 x = 1.0e40;` did not, which is the sort of hole that only shows up beside its twin.
+    case Unary(op, operand): {
+      i32 inner = litKindOf(operand);
+      return inner == litInteger() || inner == litFloat() ? inner : litNone();
+    }
     else: { return litNone(); }
   }
 }
@@ -1816,9 +1933,7 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     if (want == typeNone()) { continue; }
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
-      if (!acceptsLiteral(want, lit)) {
-        c.report(errArgumentMismatch(), args[i].line, args[i].col);
-      }
+      reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
       continue;
     }
     string got = typeOfExpr(c, args[i]);
@@ -1862,9 +1977,7 @@ void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
     if (want == typeNone()) { continue; }
     i32 lit = litKindOf(args[i]);
     if (lit != litNone()) {
-      if (!acceptsLiteral(want, lit)) {
-        c.report(errFieldMismatch(), args[i].line, args[i].col);
-      }
+      reportLiteral(c, want, args[i], errFieldMismatch(), args[i].line, args[i].col);
       continue;
     }
     if (!assignable(c, want, typeOfExpr(c, args[i]))) {
@@ -2008,7 +2121,7 @@ bool constPath(C c, Lvalue lv) {
 void checkElement(C c, string want, Expr e) {
   i32 lit = litKindOf(e);
   if (lit != litNone()) {
-    if (!acceptsLiteral(want, lit)) { c.report(errArrayElement(), e.line, e.col); }
+    reportLiteral(c, want, e, errArrayElement(), e.line, e.col);
     return;
   }
   string got = typeOfExpr(c, e);
@@ -2219,7 +2332,7 @@ bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
   }
   i32 lit = litKindOf(args[0]);
   if (lit != litNone()) {
-    if (!acceptsLiteral(want, lit)) { c.report(errBuiltinArg(), args[0].line, args[0].col); }
+    reportLiteral(c, want, args[0], errBuiltinArg(), args[0].line, args[0].col);
     return true;
   }
   string got = typeOfExpr(c, args[0]);
@@ -2618,7 +2731,21 @@ void checkParams(C c, Param[] params) {
 void declareStmt(C c, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
-      c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), isConst);
+      // A local that **aliases** something const is const too. `Counter c = this; c.mutate();` inside
+      // a `const this` method looks like a way to launder the constness and is not one — the local
+      // and the receiver are the same object.
+      //
+      // Only for a type you can write **through**: a struct or an array. `i32 v = this.n;` is a copy
+      // and writing to it is nobody's business but the local's, and a `string` is a reference but an
+      // immutable one — assigning a new string to the local mutates nothing, which is why
+      // `string s = SOME_CONST; s = s + "x";` is ordinary and reported seven times before this said
+      // "reference" where it meant "writable".
+      string vt = typeOfTy(c, type);
+      string vcore = withoutNull(vt);
+      string vbase = vcore == "" ? vt : vcore;
+      bool writable = isArrayName(vbase) || c.isStruct(vbase);
+      bool aliasesConst = writable && constExpr(c, init);
+      c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst);
     }
     case Block(body): { declareAll(c, body); }
     case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
@@ -2747,7 +2874,7 @@ void checkStmt(C c, Stmt s, Ty want) {
         }
         i32 clit = litKindOf(rhs);
         if (clit != litNone()) {
-          if (!acceptsLiteral(ct, clit)) { c.report(errOperandMismatch(), target.line, target.col); }
+          reportLiteral(c, ct, rhs, errOperandMismatch(), target.line, target.col);
           return;
         }
         string cgot = typeOfExpr(c, rhs);
@@ -2764,9 +2891,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (isPackedName(wantTo)) { return; }
       i32 litTo = litKindOf(rhs);
       if (litTo != litNone()) {
-        if (!acceptsLiteral(wantTo, litTo)) {
-          c.report(errInitTypeMismatch(), rhs.line, rhs.col);
-        }
+        reportLiteral(c, wantTo, rhs, errInitTypeMismatch(), rhs.line, rhs.col);
         return;
       }
       string gotTo = typeOfExpr(c, rhs);
@@ -2783,9 +2908,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (wantVar == typeNone()) { return; }
       i32 litVar = litKindOf(init);
       if (litVar != litNone()) {
-        if (!acceptsLiteral(wantVar, litVar)) {
-          c.report(errInitTypeMismatch(), init.line, init.col);
-        }
+        reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
         return;
       }
       string gotVar = typeOfExpr(c, init);
@@ -2816,9 +2939,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       i32 lit = litKindOf(e);
       if (lit != litNone()) {
         // A literal: polymorphic over a family, so the question is whether the declared type is in it.
-        if (!acceptsLiteral(expected, lit)) {
-          c.report(errReturnTypeMismatch(), e.line, e.col);
-        }
+        reportLiteral(c, expected, e, errReturnTypeMismatch(), e.line, e.col);
         return;
       }
       // A name: a value of exactly one type, so the question is whether it is the declared one.

@@ -1100,6 +1100,40 @@ the ones that should have been accepted, which is why the accepted count never m
 prelude is a shared namespace**, and it is easy to forget when the thing being generated declares
 types of its own.
 
+### A value and an alias — and the two cases left are both inference
+
+**Spec coverage: 81 of 83**, from 79. Reference 124 of 124. Sweep 99%, no false alarms anywhere.
+
+**The float rule is the only one here that has to compute something.** `3.4028235e38` fits an `f32`,
+`3.4028236e38` does not, and f32's maximum written out in full with no exponent at all fits — so no
+amount of looking at the text answers it. The literal is parsed to an `f64` and compared against
+`3.4028235677973366e38`, the largest value that still rounds to something finite, and the arithmetic
+has room to spare at that width.
+
+Only `f32` is range-checked, which is the reference's choice and not an oversight of this one:
+`f64 x = 1.0e400` is out of range for an `f64` too and it is accepted. Matching that is the job.
+
+Two things the rule needed that were not about floats:
+
+- **A sign is a unary operator**, so the entire literal path skipped a negated one — `f32 x = 1.0e40`
+  was checked and `f32 x = -1.0e40` was not. `litKindOf` now sees through a sign, which is what every
+  rule asking it already meant.
+- **A range complaint names the literal where a family mismatch names the whole expression**:
+  `i32 x = -1.5` is reported at the `-`, `f32 x = -1.0e40` at the `1`. Measured, and worth stating as
+  a pair, because either alone reads as an off-by-one against the other.
+
+**The const rule is about aliasing.** `Counter c = this; c.mutate();` inside a `const this` method is
+refused: the local and the receiver are the same object, so the local is const too. What took a
+correction was *which* types carry it — a `string` is a reference and an immutable one, so assigning a
+new string to the local mutates nothing, and marking it const reported seven sites in one file. It
+carries for a type you can write **through**: a struct or an array.
+
+**Both remaining cases are target-type inference**, and they are the same machine seen twice:
+`Box(1.0)` is legal where a `Box<f64>` is expected and `Box(1).get()` is not, and nothing local to the
+expression distinguishes them. That is the one thing the reference does that this checker does not do
+at all — every rule here reads an expression and asks what it *is*, and inference asks what it is
+*required to be*, which is the other direction through the same tree.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,

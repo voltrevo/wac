@@ -2250,3 +2250,77 @@ Deno.test("rung 3: narrowing, and the guards that do not count", () => {
     }
   }
 });
+
+/**
+ * Two rules that needed a *value* and an *alias* — the last two spec cases that are not inference.
+ *
+ * The float one is the only rule in this checker that has to compute something. `3.4028235e38` fits
+ * an `f32` and `3.4028236e38` does not, and f32's maximum written out in full with no exponent at all
+ * fits — so no amount of looking at the text answers it, and the literal is parsed to an `f64` and
+ * compared against the largest value that still rounds to something finite.
+ *
+ * Only `f32` is checked, which is the reference's choice rather than an oversight of this one:
+ * `f64 x = 1.0e400` is out of range for an `f64` too and it is accepted. Matching that is the job.
+ *
+ * The const one is about **aliasing**: a local initialised from a const path is const too, because
+ * the local and the original are the same object — but only for a type you can write *through*.
+ */
+Deno.test("rung 3: a literal's value, and a local that aliases something const", () => {
+  const C = "struct Counter { i32 c; void mutate(this) { this.c = 9; } } ";
+  const CAUGHT = [
+    // Every position an f32 literal can appear in — the reference reports in all of them.
+    "export f32 f() { f32 x = 1.0e40; return x; }",
+    "export f32 f() { return 1.0e40; }",
+    "void g(f32 a) { } export void f() { g(1.0e40); }",
+    "export void f() { f32[] a = f32[](1.0e40); }",
+    "struct S { f32 v; } export void f() { S s = S(1.0e40); }",
+    "export void f(f32 x) { x = 1.0e40; }",
+    // The sign is a unary operator, so the whole literal path skipped this until it saw through one —
+    // and the range complaint names the literal where a family mismatch names the whole expression.
+    "export f32 f() { f32 x = -1.0e40; return x; }",
+    // One ulp past the boundary, which no amount of reading the exponent would catch.
+    "export f32 f() { f32 x = 3.4028236e38; return x; }",
+    // A local aliasing something const, through a parameter and through a field.
+    C + "export i32 f(const Counter p) { Counter a = p; a.mutate(); return 1; }",
+    C + "struct X { Counter c; i32 t(const this) { Counter a = this.c; a.mutate(); return 1; } }",
+    "export void f(const i32[] p) { i32[] a = p; a[0] = 1; }",
+  ];
+  const QUIET = [
+    // The boundary itself, and f32's maximum written without an exponent.
+    "export f32 f() { f32 x = 3.4028235e38; return x; }",
+    "export f32 f() { f32 x = 1.0e38; return x; }",
+    "export f32 f() { f32 x = 340282350000000000000000000000000000000.0; return x; }",
+    "export f32 f() { f32 x = 1.0e-50; return x; }",
+    // An f64 is not range-checked at all, even by a literal no f64 can hold.
+    "export f64 f() { f64 x = 1.0e400; return x; }",
+    "export f64 f() { f64 x = 1.0e40; return x; }",
+    // The same aliasing with nothing const about it.
+    C + "export i32 f(Counter p) { Counter a = p; a.mutate(); return 1; }",
+    C + "struct X { Counter c; i32 t(this) { Counter a = this.c; a.mutate(); return 1; } }",
+    // A **copy** of a primitive field is the local's own business, whatever the receiver was.
+    "struct X { i32 n; i32 t(const this) { i32 v = this.n; v = 5; return v; } }",
+    // A string is a reference and an immutable one: assigning a new string mutates nothing, so
+    // aliasing a const string carries no constness. Seven sites in one file said so.
+    'const string B = "x"; export void f() { string s = B; s = s + "y"; }',
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-58))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-58))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-58))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
