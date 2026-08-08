@@ -110,6 +110,23 @@ export function generate(): Cell[] {
     add("ok-loop", `export void f(${a} a) { for (i32 i = 0; i < 2; i++) { ${a} v = a; } }`);
     add("ok-shadow", `export void f(${a} a) { { ${a} v = a; } { ${a} v = a; } }`);
 
+    // **Narrowing**, both directions, because a guard is the only way a variant's payload becomes
+    // reachable — and because the rule that reports unnarrowed access was written with no cell in
+    // this file covering the *legal* half. The enum is declared per cell so the payload is of the
+    // type under test, which keeps this on the generated axis rather than a curated example.
+    // `NB`, not `B`: the prelude's `enum E { A, B }` already declares a variant of that name, and a
+    // variant is a type — so `e is B` resolved to the prelude's and every one of these cells came
+    // back rejected. A shared prelude is a shared namespace, which is easy to forget when the thing
+    // being generated declares types of its own.
+    const en = `enum EN { NA, NB(${a} p) } `;
+    add("ok-narrow", en + `export void f(EN e) { if (e is NB) { ${a} v = e.p; } }`);
+    add("ok-narrow-and", en + `export void f(EN e) { if ((e is NB) && true) { ${a} v = e.p; } }`);
+    add("ok-narrow-nested", en + `export void f(EN e) { if (e is NB) { if (true) { ${a} v = e.p; } } }`);
+    add("narrow-or", en + `export void f(EN e) { if ((e is NB) || true) { ${a} v = e.p; } }`);
+    add("narrow-after", en + `export void f(EN e) { if (e is NB) { } ${a} v = e.p; }`);
+    add("narrow-none", en + `export void f(EN e) { ${a} v = e.p; }`);
+    add("narrow-negated", en + `export void f(EN e) { if (!(e is NB)) { } else { ${a} v = e.p; } }`);
+
     for (const b of TYPES) {
       // Two types: the contexts that put one where the other is expected.
       add("init", `export void f(${a} a) { ${b} v = a; }`);

@@ -654,6 +654,19 @@ export struct C {
    * for a name that was never declared. The undefined-variable rule needs the distinction and nothing
    * else does, which is why this is separate rather than a change to the other.
    */
+  /**
+   * Retype an existing name, without the poisoning `declareConst` does on a redeclaration.
+   *
+   * Narrowing needs to say "for the length of this branch, `s` is a `Circle`" and then put it back.
+   * Declaring would mark the name unknown instead, which is the right answer for a *second*
+   * declaration and the wrong one for the same binding seen more precisely.
+   */
+  void setType(this, string name, string ty) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { this.types[i] = ty; return; }
+    }
+  }
+
   bool isDeclaredName(const this, string name) {
     for (i32 i = 0; i < this.nameCount; i++) {
       if (this.names[i] == name) { return true; }
@@ -2313,6 +2326,9 @@ void checkMember(C c, Expr at, Expr obj, string name) {
     c.report(errNoSuchField(), at.line, at.col);
     return;
   }
+  // An enum's value is one of its variants and the checker does not know which, so a payload field is
+  // not reachable through the enum type — only through a variant, which `is` narrowing produces.
+  if (c.isEnum(t)) { c.report(errNoSuchField(), at.line, at.col); return; }
   // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
   // value, so this cannot be one of those — `f64.toBits` has an `Ident` for an object, not a value.
   if (isPrimitiveName(t) || t == "bool") { c.report(errNoSuchField(), at.line, at.col); }
@@ -2641,6 +2657,40 @@ void declareAll(C c, Stmt[] body) {
 }
 
 /**
+ * How many names a condition narrows, and to what — written into `outNames` / `outTypes`.
+ *
+ * Purely syntactic, which is what the reference does and is measured rather than assumed: `x is T`
+ * narrows, `a && b` narrows with either side, and **`||` and `!` do not**. `(s is Circle) || true`
+ * leaves `s` a `Shape`, because the other arm may be the one that held; `!(s is Circle)` guarding an
+ * early return does not narrow what follows either, which is the reference declining to reason about
+ * control flow it could have.
+ *
+ * The narrowing lasts for the **then** branch and no further. Nothing here survives the `if`.
+ */
+i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
+  match (cond.kind) {
+    case Is(left, target, other, negated): {
+      if (negated || (target is null) || n >= outNames.len()) { return n; }
+      match (left.kind) {
+        case Ident(tok): {
+          string t = typeOfTy(c, target!);
+          if (t == typeNone()) { return n; }
+          outNames[n] = tokenText(c, tok);
+          outTypes[n] = t;
+          return n + 1;
+        }
+        else: { return n; }
+      }
+    }
+    case Binary(op, l, r): {
+      if (tokenKind(c, op) != kAndAnd()) { return n; }
+      return narrowingsOf(c, r, outNames, outTypes, narrowingsOf(c, l, outNames, outTypes, n));
+    }
+    else: { return n; }
+  }
+}
+
+/**
  * A condition, which must be a boolean.
  *
  * Reported at the condition itself rather than at the `if`, which is where the reference puts it —
@@ -2785,7 +2835,19 @@ void checkStmt(C c, Stmt s, Ty want) {
     case Block(body): { checkAll(c, body, want); }
     case If(cond, then, els): {
       checkCond(c, cond);
+      // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
+      // branch is walked with `s` retyped and the old type put back afterwards. Saved and restored
+      // rather than scoped, because this checker's names are one flat table per function.
+      string[] nNames = string[8]();
+      string[] nTypes = string[8]();
+      i32 nCount = narrowingsOf(c, cond, nNames, nTypes, 0);
+      string[] saved = string[nCount]();
+      for (i32 i = 0; i < nCount; i++) {
+        saved[i] = c.typeOfName(nNames[i]);
+        c.setType(nNames[i], nTypes[i]);
+      }
       checkAll(c, then, want);
+      for (i32 i = 0; i < nCount; i++) { c.setType(nNames[i], saved[i]); }
       checkAll(c, els, want);
     }
     // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
@@ -2897,6 +2959,18 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
     match (prog.decls[d].kind) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         c.declareEnum(tokenText(c, nameTok));
+        // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
+        // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
+        // be as much a struct as anything else here. Registered under its bare name, which is how
+        // `is` writes it; the qualified `Shape.Circle` is a construction and goes elsewhere.
+        for (i32 vi = 0; vi < variants.len(); vi++) {
+          string vname = tokenText(c, variants[vi].nameTok);
+          c.declareStruct(vname, "", string[0]());
+          for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
+            c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
+                                typeOfTy(c, variants[vi].fields[fi].type), false);
+          }
+        }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string name = tokenText(c, nameTok);

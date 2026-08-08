@@ -1058,6 +1058,48 @@ types; a deep-const alias (`Counter c = this; c.mutate();`) — also flow; an `f
 range, which needs the literal's *value* and not just its text; and target-type inference, which is
 two of them. None is a missing rule, and each is a different analysis from the one this rung is.
 
+### Narrowing, and a rule that arrived with its own blind spot
+
+**Spec coverage: 79 of 83**, from 78. Reference 124 of 124. Sweep 99%, no false alarms anywhere.
+
+An enum's value is one of its variants and the checker does not know which, so a payload field is not
+reachable through the enum type — `s.radius` on a `Shape` is an error. A **guard** is what makes it
+reachable, and this is the first rule here that depends on *where in the control flow* an expression
+sits rather than on what is around it.
+
+Which guards count is measured rather than reasoned about, because the reference declines to be as
+clever as it could be:
+
+- `x is T` narrows, and `&&` propagates it, because both sides must hold;
+- **`||` does not**, because the other arm may be the one that held;
+- **`!` does not**, so an early return under a negated guard leaves the rest unnarrowed even though a
+  reader can see it is safe;
+- and nothing survives the `if`.
+
+The last two matter more than they look. A checker that were *cleverer* here would be silent where the
+reference complains — a miss — and one less clever would complain where it is silent, which is a false
+alarm on working code. Matching a deliberate simplification exactly is as much the job as matching a
+rule.
+
+Each variant is registered as a **type of its own** with its payload as fields, which is what makes
+`s.radius` resolve once `s` is a `Circle`; the then branch is walked with the name retyped and the old
+type put back, because this checker's names are one flat table per function.
+
+**The rule arrived with its own blind spot, and that is the part worth keeping.** Reporting unnarrowed
+access is a *rejection*, and all three oracles are built from rejection programs — the spec corpus is
+rejections by construction, the reference corpus's accepted half had no such program, and the sweep
+had no cell for it. So `if (s is Circle) { s.radius }`, a perfectly legal program, was reported for
+several minutes with every guard green. The sweep gained one narrowing cell per type, both halves, and
+was then checked the only way that means anything: by disabling the narrowing and watching twelve
+cells go red.
+
+A generator bug on the way, worth recording because it is a shape that will recur: the new cells
+declared `enum EN { A, B(T p) }` while the shared prelude already declares `enum E { A, B }`. A variant
+is a type, so `e is B` resolved to the *prelude's* `B` and all 119 cells came back rejected — including
+the ones that should have been accepted, which is why the accepted count never moved. **A shared
+prelude is a shared namespace**, and it is easy to forget when the thing being generated declares
+types of its own.
+
 ### What rung 3's oracle looks like, measured
 
 The pipeline exists and works from outside: `wacLex` → `wacParse` → `wacResolve` → `wacTypeCheck`,
