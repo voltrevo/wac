@@ -360,6 +360,19 @@ string dropLast(string s, i32 n) {
   return string.fromBytes(out);
 }
 
+/**
+ * Whether a type is held *by value* — a number or a boolean.
+ *
+ * The concept `isPrimitiveName` keeps getting used for and is not: `string` is in that list, because
+ * the list is about how a type is **passed**, and a string is nonetheless a reference. It can be
+ * null, so `s is null` is a fair question; it can be cast to itself, so `s as string` is not
+ * redundant; it has methods, so `s.slice(…)` is not a call on something with none.
+ *
+ * Three rules have now been written with `isPrimitiveName` where they meant this, and each reported
+ * working code until it was corrected. Naming the distinction is cheaper than remembering it.
+ */
+bool isValueType(string n) { return isPrimitiveName(n) && n != "string"; }
+
 /** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
 bool isIntegerName(string n) {
   return n == "i32" || n == "i64" || n == "u32" || n == "u64";
@@ -1083,6 +1096,25 @@ export string typeOfExpr(C c, Expr e) {
     case Cast(op, operand, target): { return typeOfTy(c, target); }
     // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
     case Is(left, target, other, negated): { return "bool"; }
+    /**
+     * A binary expression, which had no arm here at all — every one of them typed as unknown, so a
+     * comparison used as a value, an arithmetic result returned, and an operand of an operand were
+     * all invisible to every rule that asks what an expression is.
+     *
+     * A comparison and the logical operators are always `bool`. Everything else is the type of its
+     * operands, taken from whichever side is not a literal: `x + 1` is an `i32` because `x` is, and
+     * the literal takes its type from the other side rather than giving one.
+     */
+    case Binary(op, left, right): {
+      i32 bk = tokenKind(c, op);
+      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe() ||
+          bk == kAndAnd() || bk == kOrOr()) {
+        return "bool";
+      }
+      string bl = litKindOf(left) != litNone() ? typeNone() : typeOfExpr(c, left);
+      if (bl != typeNone()) { return bl; }
+      return litKindOf(right) != litNone() ? typeNone() : typeOfExpr(c, right);
+    }
     case Unwrap(operand): {
       string inner = withoutNull(typeOfExpr(c, operand));
       return inner == "" ? typeNone() : inner;
@@ -1360,7 +1392,7 @@ void checkExpr(C c, Expr e) {
       // the negative form reported 27 files that were doing nothing wrong. The positive form only
       // ever fires on a type this checker can name, which is the direction to be wrong in.
       string lt3 = typeOfExpr(c, left);
-      if (isPrimitiveName(lt3) || lt3 == "bool") { c.report(errReferenceOp(), e.line, e.col); }
+      if (isValueType(lt3)) { c.report(errReferenceOp(), e.line, e.col); }
     }
     // `p!` on something that was never nullable: there is nothing to unwrap.
     case Unwrap(operand): {
@@ -2230,7 +2262,7 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   // that can be stated without the measurement: a number has no methods at all, which is a fact
   // rather than a list. `string` is in `isPrimitiveName` and has to be excluded by name, which is the
   // whole trap — the predicate is about how a type is *passed*, not about what it can do.
-  if ((isPrimitiveName(recv) && recv != "string") || recv == "bool") {
+  if (isValueType(recv)) {
     c.report(errNoMethod(), obj.line, obj.col);
     return;
   }
@@ -2329,7 +2361,10 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     }
     return;
   }
-  if (to == typeNone() || !isPrimitiveName(to) || isPackedName(to)) { return; }
+  // Only conversions between two **value** types from here on. A `string` reaches this point through
+  // `isPrimitiveName` and must not: casting one to itself is ordinary, where casting an `i32` to an
+  // `i32` is redundant.
+  if (to == typeNone() || !isValueType(to) || isPackedName(to)) { return; }
   string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
   // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
   // spelling that carries it, and every other one is a complaint at the operator.
@@ -2339,7 +2374,7 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
     }
     return;
   }
-  if (from == typeNone() || !isPrimitiveName(from) || isPackedName(from)) { return; }
+  if (from == typeNone() || !isValueType(from) || isPackedName(from)) { return; }
   i32 k = tokenKind(c, op);
   // A cast to the type it already is does nothing, and the language says so rather than allowing it
   // as a no-op. Only measured for plain `as`; the checked and truncating spellings say nothing here.
