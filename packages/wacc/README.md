@@ -20,7 +20,7 @@ them depends on the next being designed yet.
 | 1. lexer | `wacLex.ts` | token streams match | 366 |
 | 2. parser | `wacParse.ts` | ASTs match under a canonical serialization | 1651 |
 | 3. type checker | `wacTypeCheck.ts` | diagnostics match, including positions | 3189 |
-| 4. emitter | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
+| 4. emitter ▸ | `wacEmitFunc.ts` + `wasmBuildBin.ts` | modules agree under a canonical form, and the corpus runs | 6307 |
 | 5. bootstrap | itself | fixpoint: wacc's own output, compiled both ways, byte for byte | — |
 
 Corpus for every rung: every `.wac` file in wac-mono and `wac/spec/tour.wac`, plus
@@ -1133,6 +1133,87 @@ carries for a type you can write **through**: a struct or an array.
 expression distinguishes them. That is the one thing the reference does that this checker does not do
 at all — every rule here reads an expression and asks what it *is*, and inference asks what it is
 *required to be*, which is the other direction through the same tree.
+
+### Inference: the one thing that flows down the tree
+
+**Spec coverage: 82 of 83.** Reference 124 of 124. Sweep 99%, no false alarms anywhere.
+
+Every rule in this checker reads an expression and asks what it **is**. A bare `Box(1.0)` cannot be
+asked that: its type arguments come from wherever it is going. So the checker now carries one piece of
+information in the other direction — what the expression about to be walked is *required to be* — set
+by each context that has a slot, and **read and cleared** at the top of the walk so it reaches exactly
+one expression.
+
+The clearing is the part that does the work. `Box(1).get()` sits under a `return i32`, and the
+receiver must inherit nothing from it: with no slot of its own, a bare template is not a type, and the
+reference calls it undefined. Both remaining cases were the same fact from opposite sides —
+`Box(1.0)` assigned to a `Box<f64>` is ordinary and `Box(1).get()` is not, and the only difference is
+the slot.
+
+Carried on the checker's state rather than threaded through `checkExpr`, which forty call sites would
+otherwise have to pass along and forty chances to forget. The cost is that every context with a slot
+has to set it, and a context that forgets *false-alarms* rather than going quiet — which is the wrong
+direction, so each one was found by a guard rather than by reasoning: a nullable slot
+(`MapEntry<K, V>?` takes a `MapEntry<K, V>` — the target's nullability is not part of the question)
+by the repo, and an array element by the test written immediately after.
+
+### Rung 3 is done against every oracle it has
+
+**Spec 83 of 83. Reference 124 of 124.** Sweep 10,013 programs: 885 accepted with no false alarms,
+9,126 rejected with no contradictions. The repository is silent.
+
+The last case was the other half of inference, and the opposite source: a construction reads the
+**slot** it goes into, a call reads the **arguments** it is handed. A generic function's `Box<T>`
+matched against an actual `Box<f64>` binds `T` to `f64`, and the return type follows.
+
+That matching is string against string, which is only possible because **a type here is its canonical
+name** — the written form and the actual form are the same kind of thing, so unification is one
+function rather than a second representation of types. That decision was made in the first slice of
+this rung and is what made the last rule cheap.
+
+Anything that does not line up binds nothing, leaving the parameter open and the return unknown. That
+silent direction is why this could be turned on at all: these signatures had been recorded as *blank*
+for several slots, precisely because nothing could bind them.
+
+**What "done" means here, and what it does not.** It means: on every program in three corpora — one
+sampled from the spec, one the reference's own tests, one generated over the cross product of type
+against context — this checker reports a subset of the reference's diagnostics, at its exact
+positions, and never invents one. It does **not** mean the checker is complete: ~210 distinct message
+texts exist across 3,190 reference lines and this implements a fraction of them, and the sweep's own
+recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
+next move is a sharper oracle or rung 4.
+
+### Rung 4 has a skeleton that runs
+
+`emitModule` produces a wasm module, and the module **runs**. An exported `i32` function whose body is
+one `return` over literals, parameters and arithmetic — a fraction of the language, and the fraction is
+not the point. The point is that the shape is end to end, so the next rule the emitter learns is
+measured by running it rather than by reading it.
+
+**The oracle is the one this README argued for before there was anything to measure**: ask each
+program of both compilers, instantiate both modules, call the export with the same arguments, compare
+what comes back. Nine programs, thirteen calls, every answer agreeing. Nothing in the test asserts an
+expected answer — a hand-written `5` would be a *third* opinion, and the whole point of a differential
+test is that there are only two. Beside it, `WebAssembly.validate` on every module: a second opinion
+about the bytes that costs nothing and is not the reference's, because a module can run the one
+function a test calls and still be malformed elsewhere.
+
+Checked the only way that means anything, again: by emitting `i32.sub` where `i32.add` belonged and
+watching it report *"add(2, 3) is -1 from us and 5 from the reference"*.
+
+What the scaffolding is, since everything after builds on it:
+
+- **A growable byte buffer**, written locally rather than imported. `packages/wacc` has no
+  dependencies, and the whole value of a self-hosting compiler is that it needs none.
+- **LEB128, signed and unsigned.** The encoding is *not* canonical — `0` may be written as one byte or
+  five — which is the argument against byte identity restated as a fact about the format.
+- **A section is built in a buffer of its own and spliced in**, because its length has to be written
+  before its contents. That is why a wasm emitter is a tree of buffers rather than one.
+
+Three things the language pushed back on while writing it, all in the first ten minutes: `else if`
+does not chain here, `fn` is a keyword and cannot name a variable, and a packed array element takes an
+`i32` directly — `v as~ u8` is *"no valid cast"*, which is this checker's own rule seen from the other
+side.
 
 ### What rung 3's oracle looks like, measured
 
