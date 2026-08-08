@@ -7710,6 +7710,46 @@ Deno.test("[§wac-samename-struct-4jhq7wn] same-named structs in two modules sta
   eq(both.call("methods", []), 24, "and a method on each, which is where the wrong index showed");
 });
 
+// §wac-samename-method-8kv2ptr — a method call goes to the struct's own method
+Deno.test("[§wac-samename-method-8kv2ptr] a same-named struct's method is not another module's", async () => {
+  // Issue 0076, and the other half of the one above. The *type* was resolved per file after 0041 —
+  // and the **call** was not: a method's mangled name is `Struct$method`, so two packages with a
+  // `Writer` both produce `Writer$create`, and `ctx.funcIdx` answered with whichever registered
+  // first. The local was declared one type and filled from a function returning the other:
+  //
+  //   local.set[0] expected type (ref 51), found call of type (ref 268)
+  //
+  // The module built and was rejected at *instantiate*, which is the worst place for it — in
+  // wac-mono it surfaced as an ssh server that exited before accepting a connection, in a function
+  // nobody had touched, after adding one unrelated import three packages away.
+  //
+  // The entry the emitter has in hand came from the right struct and knows its own index; asking a
+  // global map for it by name was throwing that away.
+  const A = `export struct Writer { i32 n; Writer create() { return Writer(1); } i32 take(const this) { return this.n; } }
+             export i32 useA() { Writer w = Writer.create(); return w.take(); }`;
+  const B = `export struct Writer { i64 m; string tag; Writer create() { return Writer(2 as i64, "b"); }
+                                    i64 take(const this) { return this.m; } }
+             export i64 useB() { Writer w = Writer.create(); return w.take(); }`;
+
+  // Neither file mentions the other's `Writer`; the collision is entirely in what they pull in.
+  const m = await runMulti(new Map([["a.wac", A], ["b.wac", B], ["main.wac", `
+    import { useA } from "./a.wac";
+    import { useB } from "./b.wac";
+    export i32 statics() { return useA() + (useB() as! i32); }`]]));
+  eq(m.call("statics", []), 3, "each file's static method call reaches its own struct");
+
+  // The same for an *instance* call, which had the identical lookup one branch above.
+  const inst = await runMulti(new Map([["a.wac", A], ["b.wac", B], ["main.wac", `
+    import { Writer, useA } from "./a.wac";
+    import { Writer as WriterB, useB } from "./b.wac";
+    export i32 instances() {
+      Writer a = Writer.create();
+      WriterB b = WriterB.create();
+      return a.take() + (b.take() as! i32);
+    }`]]));
+  eq(inst.call("instances", []), 3, "and an instance method on each");
+});
+
 Deno.test("[§wac-samename-struct-4jhq7wn] the name may even be a struct in one module and an enum in another", async () => {
   const inst = await runMulti(new Map([
     ["a.wac", `export enum Dup { A(i32 v), B }

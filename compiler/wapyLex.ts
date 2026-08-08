@@ -225,9 +225,21 @@ function lexLine(
   return { tokens, comment, errs };
 }
 
+/**
+ * A string literal's escapes, undone.
+ *
+ * **`\uXXXX` is here because the printer writes it.** `wapyPrint` renders a string with
+ * `JSON.stringify`, which escapes every control character that way — so a wac string holding a NUL
+ * came back as the four letters `u0000`, silently, and only the round trip over wac-mono noticed
+ * (wac 0077's neighbour: `packages/fs`'s image magic is `"wacimg\u0000"`). Dropping the backslash
+ * from an escape nobody handled is the wrong default for exactly this reason: it turns a mistake into
+ * different text rather than into an error.
+ */
 function unescape(s: string): string {
-  return s.replace(/\\(.)/g, (_, c) =>
-    c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c === "0" ? "\0" : c);
+  return s.replace(/\\u([0-9a-fA-F]{4})|\\(.)/g, (_, hex: string | undefined, c: string) =>
+    hex !== undefined
+      ? String.fromCharCode(parseInt(hex, 16))
+      : c === "n" ? "\n" : c === "t" ? "\t" : c === "r" ? "\r" : c === "0" ? "\0" : c);
 }
 
 /**

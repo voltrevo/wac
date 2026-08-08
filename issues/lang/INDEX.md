@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0076](open/0076-a-wider-import-graph-makes-two-identical-struct-types-different-in-the-wasm.md) | a wider import graph makes two identical struct types different in the wasm | bug | invalid wasm |
+| [0077](open/0077-a-wac-local-named-self-has-no-wapy-rendering.md) | a wac local named `self` has no wapy rendering | bug | compile error |
 | [0075](open/0075-the-website-undersells-determinism-and-virtual-time.md) | the website undersells determinism and virtual time — **wants an operator decision** | missing feature | not implemented |
 | [0074](open/0074-values-with-no-identity-tuples-or-value-structs.md) | values with no identity: tuples, or value structs | missing feature | not implemented |
 | [0073](open/0073-named-re-export-so-a-library-can-have-one-entry-point.md) | named re-export, so a library can have one entry point | missing feature | not implemented |
@@ -23,7 +23,7 @@ has been fixed and why.
 
 ## Closed
 
-75 issues, 61 closed.
+77 issues, 62 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

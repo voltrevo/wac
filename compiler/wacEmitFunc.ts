@@ -2334,7 +2334,11 @@ class FuncEmitter {
         if (meth) {
           this.emitExpr(fe.expr, env); // push receiver
           this.emitArgs(e.args, funcParams(meth).map(p => p.type), env);
-          this.emit(0x10, ...uleb(this.ctx.funcIdx.get(meth.mangledName)!)); // call
+          // **The entry's own index, not its name.** A method's mangled name is `Struct$method`, and a
+          // struct name is only unique within its file — so two packages with a `Writer` both mangle to
+          // `Writer$create` and `ctx.funcIdx` answers with whichever registered first. The entry here
+          // came from the *right* struct, so it already knows which function it is (wac 0076).
+          this.emit(0x10, ...uleb(meth.funcIndex + this.ctx.funcBase)); // call
           return;
         }
       }
@@ -2373,7 +2377,8 @@ class FuncEmitter {
               resolvedTypeIndex: structEntry2!.typeIndex, line: 0, col: 0,
             };
             this.emitArgs(e.args, hasThis ? [thisT, ...declared] : declared, env);
-            this.emit(0x10, ...uleb(this.ctx.funcIdx.get(meth2.mangledName)!));
+            // The entry's own index rather than its mangled name — see the instance call above.
+            this.emit(0x10, ...uleb(meth2.funcIndex + this.ctx.funcBase));
             return;
           }
         }
