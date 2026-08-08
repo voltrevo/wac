@@ -51,6 +51,18 @@ pub enum Outcome {
     I32(i32),
     I64(i64),
     Bytes(Vec<u8>),
+    /// A wac `string`, which is bytes: nothing here validates UTF-8, because a name on the systems
+    /// being imitated is bytes and re-encoding one would change it (wac-mono 0065).
+    Str(Vec<u8>),
+    /// `u8[]?` — where **absent and empty are different answers**. An environment variable that is
+    /// set to nothing is not an environment variable that is unset, and the whole reason `env` has
+    /// this type rather than `string` is that the two used to be indistinguishable (wac-mono 0065).
+    BytesOpt(Option<Vec<u8>>),
+    Bool(bool),
+    /// What a child frame wrote: `Captured{out, err}`.
+    Captured(Vec<u8>, Vec<u8>),
+    /// `Change{fault, message}` — what happened to something that changes state.
+    Change(i32, String),
 }
 
 struct Inner {

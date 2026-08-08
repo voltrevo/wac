@@ -48,6 +48,11 @@ enum Kind {
     I32,
     I64,
     Bytes,
+    Str,
+    BytesOpt,
+    Bool,
+    Captured,
+    Change,
 }
 
 /// The three shared functions and the constructor that make one `Pending<T>`.
@@ -83,6 +88,16 @@ enum Cap {
     RandomBytes,
     ExitCode,
     WaitAny,
+    Cwd,
+    ReadStdin,
+    ReadChunk,
+    Env,
+    PushChild,
+    PopChild,
+    OpenInput,
+    OpenOutput,
+    OutputError,
+    CloseFeed,
     /// `Pending<T>.resolve`: collect the outcome, once.
     Resolve(Kind),
     /// `Pending<T>.settled`, shared by every kind because the question does not depend on `T`.
@@ -93,25 +108,63 @@ enum Cap {
     NotImplemented(String),
 }
 
+/// One `pushChild` frame: the world a program run *inside* this one sees.
+///
+/// Not isolation and it does not pretend to be — `platform.wac` says so, and it is the same wasm
+/// instance with the same authority. What the frame changes is four things: what `argCount`/`arg`
+/// answer, where `readChunk` and `readStdin` read from, where `log`/`warn`/`write`/`writeErr` go, and
+/// what `cwd` reports.
+struct Frame {
+    argv: Vec<Vec<u8>>,
+    stdin: Vec<u8>,
+    stdin_at: usize,
+    cwd: Vec<u8>,
+    /// The child reads the *process's* real input rather than the bytes handed over.
+    ///
+    /// Without this a shell that runs a command in process has to read its own input to the end to
+    /// have bytes to give it, and at a terminal that end never comes — wac-mono 0110, which is a hang
+    /// rather than a wrong answer. The output is still captured, which is what the frame is for.
+    inherit_input: bool,
+    out: Vec<u8>,
+    err: Vec<u8>,
+}
+
 struct Host {
     /// `caps[signature][slot]`, matching the module's per-signature funcref tables.
     caps: Vec<Vec<Cap>>,
     /// argv as bytes, since a program's arguments are bytes (wac-mono 0065).
     args: Vec<Vec<u8>>,
     tickets: Arc<Tickets>,
+    /// What the manifest says this program may reach. A capability outside them is not silently
+    /// weaker: it answers what "you may not" *means* for that capability, which differs by capability.
+    grants: manifest::Grants,
     pendings: HashMap<Kind, PendingHooks>,
+    /// Where `readChunk` reads when `openInput` has named a file. None is the process's own input,
+    /// which is what `openInput("")` means and what a program that never asked gets.
+    input: Option<std::fs::File>,
+    /// Where `write` goes when `openOutput` has named a file, and the reason it could not be opened.
+    output: Option<std::fs::File>,
+    output_error: String,
+    /// `pushChild` frames, innermost last. A stack, so a program that runs a program that runs a
+    /// program is fine.
+    frames: Vec<Frame>,
     /// Monotonic zero, so `monotonicNanos` measures from this program's start rather than the epoch.
     started: std::time::Instant,
     exit: i32,
 }
 
 impl Host {
-    fn new(signatures: usize, args: Vec<Vec<u8>>) -> Self {
+    fn new(signatures: usize, args: Vec<Vec<u8>>, grants: manifest::Grants) -> Self {
         Host {
             caps: vec![Vec::new(); signatures],
             args,
             tickets: Arc::new(Tickets::default()),
+            grants,
             pendings: HashMap::new(),
+            input: None,
+            output: None,
+            output_error: String::new(),
+            frames: Vec::new(),
             started: std::time::Instant::now(),
             exit: 0,
         }
@@ -222,6 +275,13 @@ fn read_i32_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<i32>, wa
         .collect())
 }
 
+fn make_string(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
+    to_staging(caller, bytes)?;
+    let from_mem = export_func(caller, "$bind$str_from_mem")?;
+    let out = call_dyn(caller, &from_mem, &[Val::I32(bytes.len() as i32)])?;
+    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("$bind$str_from_mem answered nothing"))
+}
+
 fn make_u8_array(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
     to_staging(caller, bytes)?;
     let from_mem = export_func(caller, "$bind$arr_u8_from_mem")?;
@@ -264,7 +324,7 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
     config.wasm_gc(true);
     let engine = Engine::new(&config)?;
     let module = Module::from_file(&engine, wasm_path)?;
-    let mut store = Store::new(&engine, Host::new(m.callbacks.len(), args));
+    let mut store = Store::new(&engine, Host::new(m.callbacks.len(), args, m.grants.clone()));
 
     // One dispatcher per signature, with the signature taken from the module rather than rebuilt from
     // the manifest: the module is the thing that has to be satisfied, and a type assembled from the
@@ -300,6 +360,11 @@ fn run(m: &Manifest, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmti
         (Kind::I32, "Pending<i32>"),
         (Kind::I64, "Pending<i64>"),
         (Kind::Bytes, "Pending<u8[]>"),
+        (Kind::Str, "Pending<string>"),
+        (Kind::BytesOpt, "Pending<u8[]?>"),
+        (Kind::Bool, "Pending<bool>"),
+        (Kind::Captured, "Pending<Captured>"),
+        (Kind::Change, "Pending<Change>"),
     ] {
         if let Some(hooks) = pending_hooks(&mut store, &instance, m, kind, wac_name)? {
             store.data_mut().pendings.insert(kind, hooks);
@@ -426,6 +491,16 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "write") => Cap::Write,
         ("Cli", "writeErr") => Cap::WriteErr,
         ("Cli", "exitCode") => Cap::ExitCode,
+        ("Cli", "cwd") => Cap::Cwd,
+        ("Cli", "readStdin") => Cap::ReadStdin,
+        ("Cli", "readChunk") => Cap::ReadChunk,
+        ("Cli", "env") => Cap::Env,
+        ("Cli", "pushChild") => Cap::PushChild,
+        ("Cli", "popChild") => Cap::PopChild,
+        ("Cli", "openInput") => Cap::OpenInput,
+        ("Cli", "openOutput") => Cap::OpenOutput,
+        ("Cli", "outputError") => Cap::OutputError,
+        ("Cli", "closeFeed") => Cap::CloseFeed,
         _ => Cap::NotImplemented(format!("{owner}.{field}")),
     }
 }
@@ -453,23 +528,29 @@ fn dispatch(
 
     match cap {
         Cap::Log => {
-            let bytes = read_string(caller, &params[1])?;
-            print_bytes(&bytes, false);
+            let mut bytes = read_string(caller, &params[1])?;
+            // The newline `log` adds. Added here rather than at the terminal so that a captured frame
+            // gets it too: `log` is where thirty of `packages/box`'s applets send their output, and a
+            // capture that dropped their line endings would join every line of `ls` into one.
+            bytes.push(b'\n');
+            emit(caller, &bytes, false);
         }
         Cap::Warn => {
-            let bytes = read_string(caller, &params[1])?;
-            print_bytes(&bytes, true);
+            let mut bytes = read_string(caller, &params[1])?;
+            bytes.push(b'\n');
+            emit(caller, &bytes, true);
         }
         Cap::Write | Cap::WriteErr => {
             let bytes = read_u8_array(caller, &params[1])?;
             let to_stderr = matches!(cap, Cap::WriteErr);
             // The answer is whether the write landed, which is what the wac side reads to notice a
-            // closed pipe. `write_all` failing is the only way it can be false here.
-            let ok = write_raw(&bytes, to_stderr);
+            // closed pipe. Into a frame it always lands.
+            let ok = emit(caller, &bytes, to_stderr);
             results[0] = Val::I32(if ok { 1 } else { 0 });
         }
         Cap::ArgCount => {
-            let n = caller.data().args.len() as i32;
+            let h = caller.data();
+            let n = h.frames.last().map(|f| f.argv.len()).unwrap_or(h.args.len()) as i32;
             return settle_now(caller, Kind::I32, Outcome::I32(n), results);
         }
         Cap::Arg => {
@@ -477,7 +558,9 @@ fn dispatch(
                 Val::I32(n) => n,
                 _ => 0,
             };
-            let bytes = caller.data().args.get(i as usize).cloned().unwrap_or_default();
+            let h = caller.data();
+            let from = h.frames.last().map(|f| &f.argv).unwrap_or(&h.args);
+            let bytes = from.get(i as usize).cloned().unwrap_or_default();
             return settle_now(caller, Kind::Bytes, Outcome::Bytes(bytes), results);
         }
         Cap::NowMillis => {
@@ -527,6 +610,171 @@ fn dispatch(
             caller.data_mut().exit = code;
             return settle_now(caller, Kind::I32, Outcome::I32(code), results);
         }
+        Cap::Cwd => {
+            // The *process's* directory, which is the one thing here that is a fact about the host
+            // rather than a capability over it. A sealed session immediately replaces it with its own.
+            let dir = match caller.data().frames.last() {
+                Some(f) if !f.cwd.is_empty() => f.cwd.clone(),
+                _ => std::env::current_dir()
+                    .map(|p| p.as_os_str().as_encoded_bytes().to_vec())
+                    .unwrap_or_else(|_| b"/".to_vec()),
+            };
+            return settle_now(caller, Kind::Str, Outcome::Str(dir), results);
+        }
+        Cap::ReadStdin => {
+            // Inside a frame that was handed bytes, this is those bytes and nothing blocks.
+            if let Some(f) = caller.data_mut().frames.last_mut() {
+                if !f.inherit_input {
+                    let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
+                    f.stdin_at = f.stdin.len();
+                    return settle_now(caller, Kind::Bytes, Outcome::Bytes(rest), results);
+                }
+            }
+            // Everything, which is what this capability means — `readChunk` is the bounded one. On a
+            // thread, because a pipe with nothing in it yet must not stop the program from doing
+            // anything else it had in flight.
+            let id = caller.data().tickets.submit();
+            let table = caller.data().tickets.clone();
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = std::io::stdin().read_to_end(&mut buf);
+                table.complete(id, Outcome::Bytes(buf));
+            });
+            return pending_for(caller, Kind::Bytes, id, results);
+        }
+        Cap::ReadChunk => {
+            // Inside a frame: the bytes it was given, then end of input. One chunk rather than a
+            // trickle, because the frame has all of them already and splitting would only invent a
+            // boundary the caller then has to reassemble.
+            let framed = {
+                let h = caller.data_mut();
+                match h.frames.last_mut() {
+                    Some(f) if !f.inherit_input => {
+                        let rest = f.stdin[f.stdin_at.min(f.stdin.len())..].to_vec();
+                        f.stdin_at = f.stdin.len();
+                        Some(rest)
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(bytes) = framed {
+                results[0] = if bytes.is_empty() {
+                    make_read_end(caller)?
+                } else {
+                    make_read_data(caller, &bytes)?
+                };
+                return Ok(());
+            }
+            // `fn[Read()]` — synchronous and not a ticket, because it is the *bounded* read: it
+            // answers with whatever is there, or that the input has ended.
+            let mut buf = [0u8; 65536];
+            let n = {
+                use std::io::Read;
+                match caller.data_mut().input.as_mut() {
+                    Some(f) => f.read(&mut buf),
+                    None => std::io::stdin().read(&mut buf),
+                }
+            };
+            results[0] = match n {
+                Ok(0) => make_read_end(caller)?,
+                Ok(n) => make_read_data(caller, &buf[..n])?,
+                Err(e) => make_read_failed(caller, &e.to_string())?,
+            };
+        }
+        Cap::Env => {
+            // **A grant, and the only capability here that has one so far.** Without `env` in the
+            // manifest this answers *absent* rather than reading the real environment — which is not
+            // a refusal but the honest answer to "what does this world's environment say", and it is
+            // what the Deno host does by handing the provider no reader at all.
+            let name = read_string(caller, &params[1])?;
+            let value = if caller.data().grants.env {
+                String::from_utf8(name.clone())
+                    .ok()
+                    .and_then(|n| std::env::var_os(n))
+                    .map(|v| v.as_encoded_bytes().to_vec())
+            } else {
+                None
+            };
+            return settle_now(caller, Kind::BytesOpt, Outcome::BytesOpt(value), results);
+        }
+        Cap::PushChild => {
+            let argv = read_string_array(caller, &params[1])?;
+            let stdin = read_u8_array(caller, &params[2])?;
+            let cwd = read_string(caller, &params[3])?;
+            let inherit_input = matches!(arg(4), Val::I32(n) if n != 0);
+            caller.data_mut().frames.push(Frame {
+                argv,
+                stdin,
+                stdin_at: 0,
+                cwd,
+                inherit_input,
+                out: Vec::new(),
+                err: Vec::new(),
+            });
+            return settle_now(caller, Kind::Bool, Outcome::Bool(true), results);
+        }
+        Cap::PopChild => {
+            // A pop with nothing pushed answers two empty arrays rather than failing: `platform.wac`
+            // says so, and the reason is that the caller has nothing to clean up either way.
+            let (out, err) = match caller.data_mut().frames.pop() {
+                Some(f) => (f.out, f.err),
+                None => (Vec::new(), Vec::new()),
+            };
+            return settle_now(caller, Kind::Captured, Outcome::Captured(out, err), results);
+        }
+        Cap::OpenInput => {
+            // `openInput("")` is standard input, which is what `packages/box` means by `-` and by an
+            // absent operand. It is a *redirect of this process's* input, so the state is here.
+            let path = read_string(caller, &params[1])?;
+            if path.is_empty() {
+                caller.data_mut().input = None;
+                return settle_now(caller, Kind::Change, Outcome::Change(FAULT_NONE, String::new()), results);
+            }
+            let change = match open_for_read(caller, &path) {
+                Ok(f) => {
+                    caller.data_mut().input = Some(f);
+                    Outcome::Change(FAULT_NONE, String::new())
+                }
+                Err(c) => c,
+            };
+            return settle_now(caller, Kind::Change, change, results);
+        }
+        Cap::OpenOutput => {
+            let path = read_string(caller, &params[1])?;
+            if path.is_empty() {
+                caller.data_mut().output = None;
+                return settle_now(caller, Kind::Change, Outcome::Change(FAULT_NONE, String::new()), results);
+            }
+            if !caller.data().grants.write {
+                return settle_now(
+                    caller,
+                    Kind::Change,
+                    Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted writing".into()),
+                    results,
+                );
+            }
+            let change = match std::fs::File::create(os_path(&path)) {
+                Ok(f) => {
+                    caller.data_mut().output = Some(f);
+                    Outcome::Change(FAULT_NONE, String::new())
+                }
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, change, results);
+        }
+        Cap::OutputError => {
+            // Empty means the output is fine, which is what a caller checks for. It is a separate
+            // capability rather than `write`'s answer because a buffered write fails *later* than the
+            // call that made it.
+            let why = caller.data().output_error.clone();
+            return settle_now(caller, Kind::Str, Outcome::Str(why.into_bytes()), results);
+        }
+        Cap::CloseFeed => {
+            // Ends a *spawned worker's* input, and nothing here spawns yet. A no-op rather than a
+            // refusal because the shape it belongs to does not exist: refusing would report a fault
+            // about a child that was never made.
+        }
         Cap::WaitAny => {
             let ids = read_i32_array(caller, &params[1])?;
             let millis = match arg(2) {
@@ -550,6 +798,12 @@ fn dispatch(
                 (Kind::I32, Outcome::I32(v)) => Val::I32(v),
                 (Kind::I64, Outcome::I64(v)) => Val::I64(v),
                 (Kind::Bytes, Outcome::Bytes(v)) => make_u8_array(caller, &v)?,
+                (Kind::Str, Outcome::Str(v)) => make_string(caller, &v)?,
+                (Kind::BytesOpt, Outcome::BytesOpt(None)) => Val::AnyRef(None),
+                (Kind::BytesOpt, Outcome::BytesOpt(Some(v))) => make_u8_array(caller, &v)?,
+                (Kind::Bool, Outcome::Bool(b)) => Val::I32(if b { 1 } else { 0 }),
+                (Kind::Captured, Outcome::Captured(out, err)) => make_captured(caller, &out, &err)?,
+                (Kind::Change, Outcome::Change(fault, msg)) => make_change(caller, fault, &msg)?,
                 (k, o) => {
                     return Err(wasmtime::Error::msg(format!(
                         "ticket {id} settled as {o:?}, which is not a {k:?}"
@@ -619,6 +873,35 @@ fn pending_for(
     Ok(())
 }
 
+// ── The `Read` enum ───────────────────────────────────────────────────────────
+//
+// `readChunk` answers `Read`, which is `Data(u8[]) | End | Failed(string)`. An enum crosses through
+// `$bind$e_<Enum>_<Case>_new`, so the three cases are three exports and there is nothing to encode.
+//
+// The three are separate on purpose and this runtime keeps them separate: "no bytes right now",
+// "there will never be any more", and "the read failed" are three different things, and a host that
+// collapsed the third into the second would make every reader treat a broken pipe as a clean end.
+
+fn make_read_data(caller: &mut Caller<'_, Host>, bytes: &[u8]) -> Result<Val, wasmtime::Error> {
+    let arr = make_u8_array(caller, bytes)?;
+    let f = export_func(caller, "$bind$e_Read_Data_new")?;
+    let out = call_dyn(caller, &f, &[arr])?;
+    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Data answered nothing"))
+}
+
+fn make_read_end(caller: &mut Caller<'_, Host>) -> Result<Val, wasmtime::Error> {
+    let f = export_func(caller, "$bind$e_Read_End_new")?;
+    let out = call_dyn(caller, &f, &[])?;
+    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.End answered nothing"))
+}
+
+fn make_read_failed(caller: &mut Caller<'_, Host>, why: &str) -> Result<Val, wasmtime::Error> {
+    let s = make_string(caller, why.as_bytes())?;
+    let f = export_func(caller, "$bind$e_Read_Failed_new")?;
+    let out = call_dyn(caller, &f, &[s])?;
+    out.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Read.Failed answered nothing"))
+}
+
 /// Bytes from the operating system's own generator.
 ///
 /// `/dev/urandom` rather than a crate: it is the kernel's CSPRNG on the platform this targets, and a
@@ -636,12 +919,100 @@ fn random_bytes(n: usize) -> Result<Vec<u8>, wasmtime::Error> {
     Ok(out)
 }
 
-/// A line, with the newline `log` and `warn` add. Bytes rather than a `String`: a wac string is bytes,
-/// and re-encoding it through UTF-8 validation would change what a program printed.
-fn print_bytes(bytes: &[u8], to_stderr: bool) {
-    let mut line = bytes.to_vec();
-    line.push(b'\n');
-    write_raw(&line, to_stderr);
+/// Where output goes: into the innermost frame if there is one, or to the terminal.
+///
+/// One place rather than four, because the routing rule is the same for `log`, `warn`, `write` and
+/// `writeErr` and the first version of `pushChild` in the JavaScript host captured only `write` — which
+/// lost most of `packages/box`'s applets silently, since thirty of them use `log`.
+fn emit(caller: &mut Caller<'_, Host>, bytes: &[u8], to_stderr: bool) -> bool {
+    if let Some(f) = caller.data_mut().frames.last_mut() {
+        if to_stderr { f.err.extend_from_slice(bytes) } else { f.out.extend_from_slice(bytes) }
+        return true;
+    }
+    if !to_stderr {
+        // A redirected output is only standard output's: the error stream is where a program says
+        // what went wrong, and sending that to the file being written would hide it.
+        let h = caller.data_mut();
+        if let Some(f) = h.output.as_mut() {
+            use std::io::Write;
+            return match f.write_all(bytes) {
+                Ok(()) => true,
+                Err(e) => {
+                    h.output_error = e.to_string();
+                    false
+                }
+            };
+        }
+    }
+    write_raw(bytes, to_stderr)
+}
+
+/// Faults, matching `FAULT_*` in `platform.wac` and `host/faults.ts`.
+const FAULT_NONE: i32 = 0;
+const FAULT_NOT_FOUND: i32 = 1;
+const FAULT_DENIED: i32 = 2;
+const FAULT_OTHER: i32 = 5;
+/// Not an operating-system failure at all: the program was built without the capability.
+const FAULT_NOT_GRANTED: i32 = 7;
+
+/// A path as the operating system takes it. Bytes, because a name is bytes (wac-mono 0065).
+fn os_path(bytes: &[u8]) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+fn fault_of(e: &std::io::Error) -> i32 {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
+        std::io::ErrorKind::PermissionDenied => FAULT_DENIED,
+        _ => FAULT_OTHER,
+    }
+}
+
+/// Open a file for reading, or the `Change` that says why not.
+fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::File, Outcome> {
+    if !caller.data().grants.read {
+        return Err(Outcome::Change(FAULT_NOT_GRANTED, "this program was not granted reading".into()));
+    }
+    std::fs::File::open(os_path(path)).map_err(|e| Outcome::Change(fault_of(&e), e.to_string()))
+}
+
+fn make_change(caller: &mut Caller<'_, Host>, fault: i32, message: &str) -> Result<Val, wasmtime::Error> {
+    let m = make_string(caller, message.as_bytes())?;
+    let f = export_func(caller, "$bind$sm_Change_of")?;
+    let built = call_dyn(caller, &f, &[Val::I32(fault), m])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Change.of answered nothing"))
+}
+
+/// A `string[]` as a list of byte strings.
+///
+/// Element by element through `$bind$arr_string_get`, because a string array is references and the
+/// staging buffer carries bytes: there is no `arr_string_to_mem` and there could not be a useful one.
+fn read_string_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u8>>, wasmtime::Error> {
+    let len_fn = export_func(caller, "$bind$arr_string_len")?;
+    let get = export_func(caller, "$bind$arr_string_get")?;
+    let out = call_dyn(caller, &len_fn, std::slice::from_ref(a))?;
+    let n = match out.first() {
+        Some(Val::I32(n)) => *n,
+        _ => return Err(wasmtime::Error::msg("$bind$arr_string_len did not answer an i32")),
+    };
+    let mut items = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        let got = call_dyn(caller, &get, &[a.clone(), Val::I32(i)])?;
+        let s = got.into_iter().next().unwrap_or(Val::I32(0));
+        items.push(read_string(caller, &s)?);
+    }
+    Ok(items)
+}
+
+fn make_captured(caller: &mut Caller<'_, Host>, out: &[u8], err: &[u8]) -> Result<Val, wasmtime::Error> {
+    // Both arrays before the constructor: each one uses the staging buffer, so building one while
+    // holding the other would overwrite it.
+    let o = make_u8_array(caller, out)?;
+    let e = make_u8_array(caller, err)?;
+    let f = export_func(caller, "$bind$sm_Captured_of")?;
+    let built = call_dyn(caller, &f, &[o, e])?;
+    built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Captured.of answered nothing"))
 }
 
 /// Exactly the bytes given, which is what `write` means. Answers whether they landed.

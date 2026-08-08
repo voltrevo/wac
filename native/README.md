@@ -61,7 +61,20 @@ type check and make every program that overlaps requests silently sequential; gu
 runtime makes the test say `native settled the two sleeps in submission order`, which is the failure
 0087 predicted.
 
-**The filesystem, the network and `spawn` are not implemented and trap by name.** A runtime that
+**`packages/sh` and all sixty of `packages/box`'s applets run on it.** `sealedsh` — a session whose
+filesystem is in memory and which is granted nothing — boots, and the first 25 of the shell's
+differential corpus answer byte-for-byte what the Deno host answers:
+
+```
+deno task corpus:hosts          # all 817, both hosts, compared
+```
+
+That took `cwd`, `readStdin`, `readChunk` with the `Read` enum, `env`, `pushChild`/`popChild`, and
+`openInput`/`openOutput`/`outputError`/`closeFeed`. `env` is the first capability with a **grant**
+behind it: without `env` in the manifest it answers *absent* rather than reading the real environment,
+which is not a refusal but the honest answer to "what does this world's environment say".
+
+**The host filesystem, the network and `spawn` are not implemented and trap by name.** A runtime that
 answered an empty file or a closed socket would make every program that used it wrong in a way nothing
 could see, which is design/0001 D6.
 

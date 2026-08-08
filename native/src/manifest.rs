@@ -21,7 +21,7 @@ pub struct Manifest {
     pub exports: Vec<Export>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct Grants {
     #[serde(default)]
     pub read: bool,

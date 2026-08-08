@@ -240,3 +240,37 @@ Both were mine, and both were found by running one program on both hosts rather 
 
 Neither is a bug in the interface, which is the point worth taking: the contract was written down and
 the second host is what made me read it.
+
+## Progress — 2026-08-08 (third tick), agent-a
+
+**`packages/sh` and all sixty of `packages/box`'s applets run on the native host**, and answer what the
+Deno host answers. `sealedsh` — a session whose filesystem is in memory and which is granted nothing —
+boots, runs pipelines, loops, functions, redirections, `/dev`, `/proc` and `ps`.
+
+The remaining capabilities of item 6, added by following the refusals: `cwd`, `readStdin`, `readChunk`
+with the `Read` enum, `env` (the first one with a **grant** behind it — without `env` in the manifest
+it answers *absent* rather than reading the real environment), `pushChild`/`popChild` with the frame
+that redirects argv, stdin, output and the working directory, and `openInput`/`openOutput`/
+`outputError`/`closeFeed`.
+
+**The evidence.** `packages/platform/test/native_shell.test.ts` runs the first 25 of `packages/sh`'s
+differential corpus through both hosts and compares bytes and status; `deno task corpus:hosts` runs all
+817. A hand run of the first 250 agreed on every one. The corpus is imported rather than copied, so
+these hosts are compared on the cases somebody wrote because bash caught us out, not on scripts chosen
+to pass.
+
+That is design/0001's arrival test in substance for **shell behaviour and installed programs**. What is
+left of the arrival test proper is *an image*: `imaged` needs the filesystem capabilities, which are
+`std::fs` and a grant check, and are the obvious next tick.
+
+### Still not implemented
+
+`spawn` — the third criterion — the network, and the host filesystem (`readFile`, `writeFile`, `stat`,
+`readDir`, `mkdir`, `remove`, `rename`). All trap by name.
+
+### Worth recording
+
+`pushChild` is the piece that makes the applets work, and getting it slightly wrong is invisible: the
+JavaScript host's first version captured only `write` and lost `Core.log`, which is where thirty of the
+applets send their output. Both hosts now route `log`, `warn`, `write` and `writeErr` through one
+function for that reason.
