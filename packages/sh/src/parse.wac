@@ -123,6 +123,14 @@ export struct Command {
 
 export struct Pipeline {
   Vec<Command> stages;
+  /**
+   * `! cmd` — the status of the pipeline, inverted.
+   *
+   * A *prefix on a pipeline* rather than a builtin, which is the whole reason it needed the parser:
+   * read as a command word it was a name, and this shell answered `!: command not found` and 127. It
+   * negates the whole pipeline, so `! a | b` inverts `b`'s status and not `a`'s.
+   */
+  bool negated;
 }
 
 export enum AndOrOp {
@@ -200,7 +208,7 @@ i32 parseAndOr(Vec<Token> toks, i32 at, AndOr out) {
   AndOrOp op = AndOrOp.First;
   i32 p = at;
   while (true) {
-    Pipeline pipeline = Pipeline(Vec.create());
+    Pipeline pipeline = Pipeline(Vec.create(), false);
     i32 next = parsePipeline(toks, p, pipeline);
     if (next < 0) { return -1; }
     out.items.push(Item(op, pipeline));
@@ -247,7 +255,7 @@ string reservedWord(Token t) {
   if (w == "if" || w == "then" || w == "elif" || w == "else" || w == "fi"
       || w == "while" || w == "until" || w == "do" || w == "done"
       || w == "for" || w == "in" || w == "{" || w == "}"
-      || w == "case" || w == "esac") {
+      || w == "case" || w == "esac" || w == "!") {
     return w;
   }
   return "";
@@ -309,6 +317,16 @@ i32 parseListUntil(Vec<Token> toks, i32 at, Vec<AndOr> out, string a, string b, 
 /** One pipeline. Returns the position after it, or -1. */
 i32 parsePipeline(Vec<Token> toks, i32 at, Pipeline out) {
   i32 p = at;
+  // `!` is a reserved word in the position a command would start, and only there: `echo !` is a word,
+  // and `[ ! -f x ]` is `test`'s own argument. Asking here rather than in the lexer is what keeps
+  // those two working.
+  // A loop rather than one test: POSIX allows a single `!`, and bash accepts a run of them and toggles
+  // — `! ! true` is 0 there and was a syntax error here. Measured, like the rest of this.
+  while (p < toks.len() && reservedWord(toks.get(p)) == "!") {
+    out.negated = !out.negated;
+    p++;
+    while (p < toks.len() && isNewline(toks.get(p))) { p++; }
+  }
   while (true) {
     Command stage = emptyCommand();
     i32 next = parseCommand(toks, p, stage);
@@ -558,7 +576,7 @@ i32 parseFunction(Vec<Token> toks, i32 at, Command out) {
   if (next < 0) { return -1; }
   // The body is a command, and a command is not a list — so it is kept as the single item of a
   // one-item pipeline, which is what the executor already knows how to run.
-  Pipeline pipeline = Pipeline(Vec.create());
+  Pipeline pipeline = Pipeline(Vec.create(), false);
   pipeline.stages.push(body);
   AndOr list = AndOr(Vec.create(), false);
   list.items.push(Item(AndOrOp.First, pipeline));

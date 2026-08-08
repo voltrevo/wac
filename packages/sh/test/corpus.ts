@@ -917,6 +917,23 @@ esac`,
   `f() { return 2; }; if f; then echo yes; else echo no; fi`,
   `for i in 1 2; do break; done; for j in a b; do echo $j; done`,
   `for i in 1 2 3; do case $i in 2) break;; *) echo $i;; esac; done; echo end`,
+
+  // ── `!` before a pipeline ──────────────────────────────────────────────────
+  //
+  // A prefix on a pipeline rather than a builtin: read as a command word it was a name, and this shell
+  // answered `!: command not found` and 127. It is reserved only in the position a command starts, so
+  // `echo !` and `[ ! -f x ]` still mean what they meant.
+  `! false; echo $?`,
+  `! true; echo $?`,
+  `! (exit 3); echo $?`,
+  `if ! false; then echo yes; fi`,
+  `i=0; while ! [ $i = 2 ]; do i=$((i+1)); done; echo $i`,
+  `echo !`,
+  `echo "!"`,
+  `[ ! -f /nosuchfile ]; echo $?`,
+  `! false && echo and`,
+  `! test -f /nosuchfile; echo $?`,
+  `! ! true; echo $?`,
 ];
 
 /**

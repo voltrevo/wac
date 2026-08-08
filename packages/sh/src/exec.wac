@@ -493,6 +493,14 @@ void runAndOr(Shell sh, AndOr list) {
  * unchanged and still correct.
  */
 void runPipeline(Shell sh, Pipeline pipeline) {
+  runStages(sh, pipeline);
+  // `! cmd` inverts the *pipeline's* status, after everything it did — including a refusal, which is
+  // why this is here rather than beside each `return` above: `! false` is 0 and `! true` is 1, and
+  // anything non-zero inverts to exactly 0 rather than to its complement.
+  if (pipeline.negated) { sh.status = sh.status == 0 ? 1 : 0; }
+}
+
+void runStages(Shell sh, Pipeline pipeline) {
   // **Before any stage runs**, and for the whole pipeline rather than per stage. `N>&M` is parsed and
   // not implemented, and refusing it inside a stage left the *pipeline's* status at whatever the last
   // stage returned — `echo hi 2>&1 | cat` printed the refusal and exited 0, which is the same "said no
