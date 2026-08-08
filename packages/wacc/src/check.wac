@@ -589,6 +589,19 @@ export struct C {
   i32[] funcParamAt;
   i32[] funcParamCount;
   string[] funcParamTypes;
+  /**
+   * Whether each function takes type parameters, and what they are called.
+   *
+   * A generic function's signature is written in its own parameters, which mean nothing at a call
+   * site until they are bound. Recorded **as written** now rather than blanked, because binding them
+   * is exactly what inference does — and the flag is what keeps the ordinary argument check from
+   * reading `Box<T>` as a type nobody has.
+   */
+  bool[] funcGenerics;
+  string[] funcTypeParamNames;
+  i32[] funcTypeParamAt;
+  i32[] funcTypeParamCount;
+  i32 funcTypeParamTotal;
   i32 funcCount;
   i32 funcParamTotal;
   /**
@@ -625,7 +638,8 @@ export struct C {
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](), 0, 0,
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
-             string[capacity](), 0, 0,
+             string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
+             i32[capacity](), 0, 0, 0,
              0, "",
              i32[capacity * 3](), 0);
   }
@@ -705,7 +719,8 @@ export struct C {
    * its own diagnostic — so there is no ambiguity to be conservative about, only a program this
    * slice will not reach.
    */
-  void declareFunc(this, string name, string ret, string[] paramTypes, i32 count) {
+  void declareFunc(this, string name, string ret, string[] paramTypes, i32 count,
+                   string[] typeParams) {
     for (i32 i = 0; i < this.funcCount; i++) {
       if (this.funcNames[i] == name) { return; }
     }
@@ -715,6 +730,14 @@ export struct C {
     this.funcReturns[this.funcCount] = ret;
     this.funcParamAt[this.funcCount] = this.funcParamTotal;
     this.funcParamCount[this.funcCount] = count;
+    this.funcGenerics[this.funcCount] = typeParams.len() > 0;
+    this.funcTypeParamAt[this.funcCount] = this.funcTypeParamTotal;
+    this.funcTypeParamCount[this.funcCount] = typeParams.len();
+    for (i32 i = 0; i < typeParams.len(); i++) {
+      if (this.funcTypeParamTotal >= this.funcTypeParamNames.len()) { break; }
+      this.funcTypeParamNames[this.funcTypeParamTotal] = typeParams[i];
+      this.funcTypeParamTotal = this.funcTypeParamTotal + 1;
+    }
     for (i32 i = 0; i < count; i++) {
       this.funcParamTypes[this.funcParamTotal + i] = paramTypes[i];
     }
@@ -1368,7 +1391,9 @@ export string typeOfExpr(C c, Expr e) {
       // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
       if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
       i32 at = c.funcAt(name);
-      return at < 0 ? typeNone() : c.funcReturns[at];
+      if (at < 0) { return typeNone(); }
+      if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
+      return c.funcReturns[at];
     }
     else: { return typeNone(); }
   }
@@ -1982,6 +2007,9 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     c.report(errCallArity(), call.line, call.col);
     return;
   }
+  // Arity applies to a generic function; the *types* do not, until the parameters are bound, and
+  // binding them is the caller's job rather than this rule's.
+  if (c.funcGenerics[at]) { return; }
   for (i32 i = 0; i < args.len(); i++) {
     string want = c.funcParamTypes[c.funcParamAt[at] + i];
     if (want == typeNone()) { continue; }
@@ -2435,6 +2463,78 @@ string receiverType(C c, Expr obj) {
 }
 
 /**
+ * Bind a generic function's type parameters by matching its written parameter against an actual type.
+ *
+ * `Box<T>` against `Box<f64>` binds `T` to `f64`; `T` against anything binds it to that; `T[]` against
+ * `f64[]` looks one level down. Anything that does not line up binds nothing, which leaves the
+ * parameter unbound and the return type unknown — silence, as everywhere.
+ *
+ * String against string, because in this checker a type *is* its canonical name and the written form
+ * and the actual form are both one.
+ */
+void bindTypeParams(C c, string written, string actual, string[] names, string[] bound) {
+  if (written == "" || actual == "" || written == typeNone() || actual == typeNone()) { return; }
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] == written) {
+      if (bound[i] == "") { bound[i] = actual; }
+      return;
+    }
+  }
+  if (endsWith(written, "[]") && endsWith(actual, "[]")) {
+    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound);
+    return;
+  }
+  if (endsWith(written, "?") && endsWith(actual, "?")) {
+    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound);
+    return;
+  }
+  string wb = genericBase(written);
+  if (wb == "" || wb != genericBase(actual)) { return; }
+  string[] wargs = genericArgs(written);
+  string[] aargs = genericArgs(actual);
+  if (wargs.len() != aargs.len()) { return; }
+  for (i32 i = 0; i < wargs.len(); i++) { bindTypeParams(c, wargs[i], aargs[i], names, bound); }
+}
+
+/** A written type with the bound parameters put in, or unknown when any of them is still open. */
+string applyBindings(string written, string[] names, string[] bound) {
+  string core = written;
+  string suffix = "";
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    else { break; }
+  }
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] != core) { continue; }
+    if (bound[i] == "") { return typeNone(); }
+    return bound[i] + suffix;
+  }
+  return written;
+}
+
+/**
+ * The return type of a call to a generic function, with its type parameters inferred from the
+ * arguments — or unknown when the arguments do not settle them.
+ */
+string genericCallReturn(C c, i32 at, Expr[] args) {
+  i32 n = c.funcTypeParamCount[at];
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = "";
+  }
+  i32 count = c.funcParamCount[at];
+  if (args.len() != count) { return typeNone(); }
+  for (i32 i = 0; i < count; i++) {
+    string got = litKindOf(args[i]) != litNone() ? typeNone() : typeOfExpr(c, args[i]);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+  }
+  return applyBindings(c.funcReturns[at], names, bound);
+}
+
+/**
  * What the `i`th argument of a call or construction is required to be, or unknown.
  *
  * A struct's `i`th field or a function's `i`th parameter — the two shapes share the syntax, so this
@@ -2446,7 +2546,7 @@ string argumentSlot(C c, string name, string spelled, i32 i) {
     return substituteType(c, spelled, c.constructFieldAt(spelled, i));
   }
   i32 at = c.funcAt(name);
-  if (at < 0 || i >= c.funcParamCount[at]) { return typeNone(); }
+  if (at < 0 || c.funcGenerics[at] || i >= c.funcParamCount[at]) { return typeNone(); }
   return c.funcParamTypes[c.funcParamAt[at] + i];
 }
 
@@ -3208,13 +3308,14 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // nothing at a call site: `Box<T>` accepts every `Box<…>`, and `T` accepts everything. Its
         // arity is still worth having — that does not depend on the types — so the parameters are
         // recorded as unknown rather than the function being left out.
-        bool generic = typeParams.len() > 0;
+        // Recorded **as written**, generics included: `Box<T>` and `T` are what a call site binds
+        // against. An earlier version blanked them, which was right when nothing could bind them and
+        // is now the thing standing between a generic call and its return type.
         string[] prims = string[params.len()]();
-        for (i32 i = 0; i < params.len(); i++) {
-          prims[i] = generic ? typeNone() : typeOfTy(c, params[i].type);
-        }
-        c.declareFunc(tokenText(c, nameTok), generic ? typeNone() : typeOfTy(c, returnType),
-                      prims, params.len());
+        for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
+        string[] ftps = string[typeParams.len()]();
+        for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
+        c.declareFunc(tokenText(c, nameTok), typeOfTy(c, returnType), prims, params.len(), ftps);
       }
       else: { }
     }

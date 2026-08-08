@@ -2385,3 +2385,65 @@ Deno.test("rung 3: a bare generic takes its arguments from the slot it goes into
     }
   }
 });
+
+/**
+ * A generic function's type arguments, inferred from what it is *given*.
+ *
+ * The other half of inference, and the opposite source: a construction reads the slot it goes into, a
+ * call reads the arguments it is handed. `Box<T>` matched against `Box<f64>` binds `T` to `f64`, and
+ * the return type follows.
+ *
+ * String against string, which is only possible because a type in this checker **is** its canonical
+ * name — the written form and the actual form are the same kind of thing, so matching them is one
+ * function rather than a second representation.
+ *
+ * Anything that does not line up binds nothing, which leaves the parameter open and the return type
+ * unknown. That is the silent direction, and it is why this could be turned on at all: the signatures
+ * had been recorded as blank precisely because nothing could bind them.
+ */
+Deno.test("rung 3: a generic function's arguments say what its parameters are", () => {
+  const BOX = "struct Box<T> { T v; } T unbox<T>(Box<T> b) { return b.v; } ";
+  const ID = "T id<T>(T x) { return x; } ";
+  const CAUGHT = [
+    // The inferred return, landing somewhere it does not fit.
+    BOX + "export i32 f() { Box<f64> b = Box(1.0); i32 x = unbox(b); return x; }",
+    BOX + "export void f(Box<f64> b) { string s = unbox(b); }",
+    ID + "export void f(f64 a) { string s = id(a); }",
+    // Arity still applies to a generic function, even where the types do not.
+    ID + "export void f(f64 a) { f64 x = id(a, a); }",
+  ];
+  const QUIET = [
+    // The inferred return landing where it does fit.
+    BOX + "export f64 f(Box<f64> b) { return unbox(b); }",
+    BOX + "export i32 f(Box<i32> b) { return unbox(b); }",
+    ID + "export f64 f(f64 a) { return id(a); }",
+    ID + "export string f(string a) { return id(a); }",
+    // A parameter the arguments do not settle leaves the return unknown, and unknown is silence.
+    ID + "export i32 f() { return id(1); }",
+    // Through a suffix: `T[]` against `f64[]` looks one level down.
+    "T first<T>(T[] xs) { return xs[0]; } export f64 f(f64[] a) { return first(a); }",
+    // A generic function whose parameter types cannot be checked is still not an excuse to complain
+    // about the arguments — binding them is inference's job, not the argument rule's.
+    BOX + "export f64 f(Box<f64> b) { return unbox(b); }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-52))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-52))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-52))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});

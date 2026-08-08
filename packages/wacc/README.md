@@ -1157,10 +1157,31 @@ direction, so each one was found by a guard rather than by reasoning: a nullable
 (`MapEntry<K, V>?` takes a `MapEntry<K, V>` — the target's nullability is not part of the question)
 by the repo, and an array element by the test written immediately after.
 
-**One case left**, and it is inference of a different kind: a generic *function*'s type arguments,
-inferred by matching its declared parameter against the argument's actual type. A call to an
-`unbox`-shaped function on a `Box<f64>` binds `T` to `f64` and returns one. Construction inference reads the slot; function
-inference reads the argument — the same direction, a different source.
+### Rung 3 is done against every oracle it has
+
+**Spec 83 of 83. Reference 124 of 124.** Sweep 10,013 programs: 885 accepted with no false alarms,
+9,126 rejected with no contradictions. The repository is silent.
+
+The last case was the other half of inference, and the opposite source: a construction reads the
+**slot** it goes into, a call reads the **arguments** it is handed. A generic function's `Box<T>`
+matched against an actual `Box<f64>` binds `T` to `f64`, and the return type follows.
+
+That matching is string against string, which is only possible because **a type here is its canonical
+name** — the written form and the actual form are the same kind of thing, so unification is one
+function rather than a second representation of types. That decision was made in the first slice of
+this rung and is what made the last rule cheap.
+
+Anything that does not line up binds nothing, leaving the parameter open and the return unknown. That
+silent direction is why this could be turned on at all: these signatures had been recorded as *blank*
+for several slots, precisely because nothing could bind them.
+
+**What "done" means here, and what it does not.** It means: on every program in three corpora — one
+sampled from the spec, one the reference's own tests, one generated over the cross product of type
+against context — this checker reports a subset of the reference's diagnostics, at its exact
+positions, and never invents one. It does **not** mean the checker is complete: ~210 distinct message
+texts exist across 3,190 reference lines and this implements a fraction of them, and the sweep's own
+recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
+next move is a sharper oracle or rung 4.
 
 ### What rung 3's oracle looks like, measured
 
