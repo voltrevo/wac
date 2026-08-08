@@ -1738,7 +1738,9 @@ Decl parseStructDecl(P p, bool exported) {
   MethodList methods = MethodList.create();
 
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
+    i32 overrideTok = p.at;
     bool isOverride = p.eat(kOverride());
+    if (!isOverride) { overrideTok = -1; }
     // `const type name;` is a const field; `const this` is a method receiver.
     bool fieldConst = !isOverride && p.at1(kConst()) && p.kindAt(1) != kThis();
     if (fieldConst) { p.advance(); }
@@ -1772,7 +1774,7 @@ Decl parseStructDecl(P p, bool exported) {
       }
       p.expect(kRparen());
       methods.push(Method(memberTok, memberType, params.take(), parseBlock(p),
-        isOverride, hasThis, thisConst));
+        isOverride, overrideTok, hasThis, thisConst));
     } else {
       p.fail(perrExpected());
       while (!p.at1(kRbrace()) && !p.at1(kSemi()) && !p.at1(kEof())) { p.advance(); }
@@ -1851,7 +1853,7 @@ Decl parseEnumDecl(P p, bool exported) {
     // A static method would be spelled `Shape.make()`, which is already how a variant is constructed,
     // so one is refused until that ambiguity is decided deliberately.
     if (!hasThis) { p.fail(perrMethodName()); }
-    methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, hasThis, thisConst));
+    methods.push(Method(mTok, returnType, params.take(), parseBlock(p), false, -1, hasThis, thisConst));
   }
 
   p.expect(kRbrace());

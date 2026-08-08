@@ -237,6 +237,14 @@ export struct Method {
   Param[] params;
   Stmt[] body;
   bool isOverride;
+  /**
+   * The `override` keyword's own token, or -1 when there is none.
+   *
+   * A method has no position of its own — a diagnostic about one names its return type, which is
+   * where the declaration starts. `override` is the exception: *"'override' on 'foo' but no parent
+   * method to override"* names the keyword, because the keyword is the part that is wrong.
+   */
+  i32 overrideTok;
   /** A method without `this` is static. */
   bool hasThis;
   bool thisConst;

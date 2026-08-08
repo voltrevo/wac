@@ -36,7 +36,7 @@ import { lex, tokenStride } from "./lex.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
-  kAs, kAsBang, kAsTilde, kAsAt,
+  kAs, kAsBang, kAsTilde, kAsAt, kShrU,
 } from "./kinds.wac";
 import {
   Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt, StmtKind,
@@ -101,6 +101,26 @@ export i32 errArrayElement() { return 18; }
 export i32 errBuiltinArity() { return 19; }
 /** A builtin argument of the wrong type. */
 export i32 errBuiltinArg() { return 20; }
+/** A method that hides a parent's without saying `override`. */
+export i32 errOverrideMissing() { return 21; }
+/** `override` on a method no parent declares. */
+export i32 errOverrideSpurious() { return 22; }
+/** `++` or `--` on something that is not an integer. */
+export i32 errIncrType() { return 23; }
+/** `>>>` on a type where it says nothing, or on a non-integer. */
+export i32 errShiftOp() { return 24; }
+/** Positional construction with the wrong number of arguments. */
+export i32 errCtorArity() { return 25; }
+/** A packed type in a position that has no slot for one. */
+export i32 errPackedPosition() { return 26; }
+/** A write through a string index — strings are immutable. */
+export i32 errStringIndexWrite() { return 27; }
+/** A default construction of something that has no default value. */
+export i32 errNoDefault() { return 28; }
+/** A non-null field that refers back to its own struct. */
+export i32 errRecursiveField() { return 29; }
+/** `as` where the conversion is a downcast and may fail. */
+export i32 errDowncast() { return 30; }
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -193,6 +213,9 @@ string dropLast(string s, i32 n) {
   return string.fromBytes(out);
 }
 
+/** Whether a type is nullable, which is one of the ways to have a default value: null. */
+bool isNullableName(string n) { return endsWith(n, "?"); }
+
 /** The type inside a `T?`, or `""` when it is not one. */
 string withoutNull(string n) {
   if (!endsWith(n, "?")) { return ""; }
@@ -284,6 +307,9 @@ export struct C {
   /** Whether each name was declared `const`. */
   bool[] nameConsts;
   i32 nameCount;
+  /** Enum names. An enum has no default value, which is the only thing recorded about one here. */
+  string[] enumNames;
+  i32 enumCount;
   /** How many of `names` are module-level and outlive a function. */
   i32 globalCount;
   /**
@@ -347,7 +373,8 @@ export struct C {
   i32 errorCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0, 0,
+    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
+             string[capacity](), 0, 0,
              string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), bool[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
@@ -631,6 +658,20 @@ export struct C {
    */
   void clearScope(this) { this.nameCount = this.globalCount; }
 
+  void declareEnum(this, string name) {
+    if (this.enumCount >= this.enumNames.len()) { return; }
+    this.enumNames[this.enumCount] = name;
+    this.enumCount = this.enumCount + 1;
+  }
+
+  /** An enum has no default value, which is the only thing this pass records about one. */
+  bool isEnum(const this, string name) {
+    for (i32 i = 0; i < this.enumCount; i++) {
+      if (this.enumNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
   void report(this, i32 code, i32 line, i32 col) {
     if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
     this.errors[this.errorCount * 3] = code;
@@ -652,6 +693,12 @@ i32 tokenKind(C c, i32 t) {
   if (t < 0) { return -1; }
   return c.toks[t * tokenStride()];
 }
+
+/** A token's line, for the diagnostics that name a keyword rather than a node. */
+i32 tokenLine(C c, i32 t) { return c.toks[t * tokenStride() + 3]; }
+
+/** A token's column, paired with `tokenLine`. */
+i32 tokenCol(C c, i32 t) { return c.toks[t * tokenStride() + 4]; }
 
 /** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
 string tokenText(C c, i32 t) {
@@ -962,6 +1009,15 @@ void checkExpr(C c, Expr e) {
       checkExpr(c, left);
       checkExpr(c, right);
       i32 k = tokenKind(c, op);
+      // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
+      // does not — the language calls that redundant rather than harmless. On a float it has no
+      // meaning at all. Both name the operator, so both are one code here.
+      if (k == kShrU()) {
+        string st = typeOfExpr(c, left);
+        if (st == "u32" || st == "u64" || st == "f32" || st == "f64") {
+          c.report(errShiftOp(), tokenLine(c, op), tokenCol(c, op));
+        }
+      }
       bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
                       k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
       bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
@@ -996,6 +1052,9 @@ void checkExpr(C c, Expr e) {
       c.report(errOperandMismatch(), e.line, e.col);
     }
     case Unary(op, operand): { checkExpr(c, operand); }
+    // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
+    // the same shape reached through a different node, which is the third time that has happened.
+    case Incr(target, op, prefix): { checkIncr(c, target, op); }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
     case ArrNew(elem, size, fill, elements): {
@@ -1004,6 +1063,10 @@ void checkExpr(C c, Expr e) {
       for (i32 i = 0; i < elements.len(); i++) { checkExpr(c, elements[i]); }
       if (!(fill is null)) { checkExpr(c, fill!); }
       if (want == typeNone()) { return; }
+      // `E[2]()` with nothing to fill it asks every element for a default, and an enum has none.
+      if (elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
+        c.report(errNoDefault(), e.line, e.col);
+      }
       // A packed element is an `i32` at this position, the way `bytes[i] = 5` is: the width is the
       // array's business, not the element expression's.
       if (isPackedName(want)) { want = "i32"; }
@@ -1030,7 +1093,20 @@ void checkExpr(C c, Expr e) {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
           string name = tokenText(c, tok);
-          if (c.isStruct(name)) { checkConstruct(c, name, args, named); }
+          if (c.isStruct(name)) {
+            checkConstruct(c, name, args, named);
+            // Two questions a construction asks that the field types do not. With arguments, the
+            // count has to match — parents included, since a child is constructed with the whole
+            // chain's fields. With none, it is a *default* construction, and the struct has to have
+            // a default at all.
+            if (!c.isGeneric(name)) {
+              if (args.len() > 0 && named.len() == 0 && args.len() != fieldArity(c, name)) {
+                c.report(errCtorArity(), e.line, e.col);
+              } else if (args.len() == 0 && named.len() == 0 && !hasDefault(c, name, 0)) {
+                c.report(errNoDefault(), e.line, e.col);
+              }
+            }
+          }
           else { checkCall(c, name, args); }
         }
         else: { }
@@ -1047,6 +1123,22 @@ void checkExpr(C c, Expr e) {
       }
     }
     else: { }
+  }
+}
+
+/**
+ * `x++` and `--x`, which are a write and an arithmetic operation at once.
+ *
+ * Two rules, and they land in different places: the write is refused at the **operand**, which is
+ * where every other const complaint goes, and a type that cannot be incremented is refused at the
+ * **operator**. Unsigned types are fine despite the wording of the reference's message — only the
+ * floats are refused, which is measured rather than read off the text.
+ */
+void checkIncr(C c, Lvalue target, i32 op) {
+  checkWrite(c, target);
+  string t = typeOfLvalue(c, target);
+  if (t == "f32" || t == "f64") {
+    c.report(errIncrType(), tokenLine(c, op), tokenCol(c, op));
   }
 }
 
@@ -1147,6 +1239,13 @@ void checkWrite(C c, Lvalue lv) {
       if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
     }
     case LIndex(base, index): {
+      // A string is not an array with a store: indexing one reads a byte and there is nowhere to put
+      // one back. Reported at the index itself rather than at the root, which is where every other
+      // complaint in this function goes — the immutability is the string's, not the path's.
+      if (typeOfLvalue(c, base) == "string") {
+        c.report(errStringIndexWrite(), lv.line, lv.col);
+        return;
+      }
       Lvalue r = rootOf(lv);
       if (constPath(c, base)) { c.report(errConstReference(), r.line, r.col); }
     }
@@ -1216,6 +1315,74 @@ bool constExpr(C c, Expr e) {
     case Unwrap(operand): { return constExpr(c, operand); }
     else: { return false; }
   }
+}
+
+/**
+ * Whether a type can be produced out of nothing — `P p = P();` and `P[2]()` both ask this.
+ *
+ * Primitives have a zero, arrays and strings have an empty one, a nullable has null. A struct has a
+ * default when every field does, so this recurses; an **enum has none at all**, even one whose every
+ * variant is payload-free, because there is no variant the language would pick for you.
+ *
+ * `depth` is the cycle guard, and returning `false` at the bottom of it is not a fallback: a struct
+ * that reaches itself through non-null fields genuinely has no default, since building one would
+ * require building one first. That is the same fact the recursive-field rule reports, seen from the
+ * construction rather than from the declaration.
+ *
+ * Unknown is `true` — silence, as everywhere else here. A type this pass cannot see is not a type it
+ * gets to complain about.
+ */
+bool hasDefault(C c, string t, i32 depth) {
+  if (t == typeNone() || t == "") { return true; }
+  if (depth > 16) { return false; }
+  if (isNullableName(t) || isArrayName(t)) { return true; }
+  if (c.isEnum(t)) { return false; }
+  if (!c.isStruct(t) || c.isGeneric(t)) { return true; }
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != t) { continue; }
+    if (!hasDefault(c, c.fieldTypes[i], depth + 1)) { return false; }
+  }
+  string parent = c.parentOf(t);
+  if (parent != "") { return hasDefault(c, parent, depth + 1); }
+  return true;
+}
+
+/** Whether `from`'s non-null fields can reach `target`, which is what makes a reference recursive. */
+bool reachesStruct(C c, string from, string target, i32 depth) {
+  if (depth > 16 || !c.isStruct(from) || c.isGeneric(from)) { return false; }
+  if (from == target) { return true; }
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != from) { continue; }
+    string ft = c.fieldTypes[i];
+    if (isNullableName(ft) || isArrayName(ft)) { continue; }
+    if (reachesStruct(c, ft, target, depth + 1)) { return true; }
+  }
+  return false;
+}
+
+/** How many fields a positional construction of this struct takes, parents included. */
+i32 fieldArity(C c, string t) {
+  i32 n = 0;
+  string at = t;
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (at == "") { return n; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] == at) { n = n + 1; }
+    }
+    at = c.parentOf(at);
+  }
+  return n;
+}
+
+/** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
+bool descendsFrom(C c, string sub, string sup) {
+  string at = c.parentOf(sub);
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (at == "") { return false; }
+    if (at == sup) { return true; }
+    at = c.parentOf(at);
+  }
+  return false;
 }
 
 /**
@@ -1366,6 +1533,17 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
  */
 void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   string to = typeOfTy(c, target);
+  // A cast down a struct hierarchy is the one cast that can *fail* rather than lose precision, so it
+  // takes `as!` — the checked spelling — and plain `as` is refused. Upcasting is silent: a `Circle`
+  // is a `Shape` with nothing to check. Reported at the operator, like every other wrong-spelling
+  // complaint in this family.
+  if (c.isStruct(to)) {
+    string sf = typeOfExpr(c, operand);
+    if (c.isStruct(sf) && descendsFrom(c, to, sf) && tokenKind(c, op) == kAs()) {
+      c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op));
+    }
+    return;
+  }
   if (to == typeNone() || !isPrimitiveName(to) || isPackedName(to)) { return; }
   string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
   if (from == typeNone() || !isPrimitiveName(from) || isPackedName(from)) { return; }
@@ -1402,6 +1580,11 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
  */
 void checkParams(C c, Param[] params) {
   for (i32 i = 0; i < params.len(); i++) {
+    // A packed type has no slot of its own — it exists as an array element and nowhere else — so it
+    // cannot be a parameter. Reported at the type, which is the same position a duplicate name uses.
+    if (isPackedName(typeOfTy(c, params[i].type))) {
+      c.report(errPackedPosition(), params[i].type.line, params[i].type.col);
+    }
     string a = tokenText(c, params[i].nameTok);
     for (i32 j = 0; j < i; j++) {
       if (tokenText(c, params[j].nameTok) == a) {
@@ -1483,7 +1666,7 @@ void checkStmt(C c, Stmt s, Ty want) {
      * would report the literal cases that rule deliberately skips.
      */
     // `n++` writes as much as `n = n + 1` does.
-    case IncrStmt(target, op): { checkWrite(c, target); }
+    case IncrStmt(target, op): { checkIncr(c, target, op); }
     // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
     // expressions that were part of something else: a return, an initialiser, a condition. A
     // statement that is just a call is the commonest shape in the language and had no rule applied
@@ -1607,6 +1790,9 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   // further down. The same argument as collecting locals before walking a body, one scope up.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        c.declareEnum(tokenText(c, nameTok));
+      }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string name = tokenText(c, nameTok);
         c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), typeParams.len() > 0);
@@ -1619,8 +1805,10 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         // until instantiation is modelled.
         if (typeParams.len() == 0) {
           for (i32 i = 0; i < fields.len(); i++) {
+            // `const struct Config { … }` makes every field const without any of them saying so,
+            // which is the whole point of the spelling: one word instead of one per field.
             c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
-                                typeOfTy(c, fields[i].type), fields[i].isConst);
+                                typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
           }
           for (i32 i = 0; i < methods.len(); i++) {
             c.declareMethod(name, tokenText(c, methods[i].nameTok),
@@ -1649,7 +1837,30 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string owner = tokenText(c, nameTok);
+        // A non-null field that reaches its own struct: `struct Node { Node next; }` cannot be built
+        // at all, because building one needs one first. Reported at the field's type, which is the
+        // only place it *can* be reported — a struct like this is refused on sight, with no
+        // construction anywhere in the file to hang the complaint on.
+        for (i32 fi = 0; fi < fields.len(); fi++) {
+          string ft = typeOfTy(c, fields[fi].type);
+          if (isNullableName(ft) || isArrayName(ft) || !c.isStruct(ft)) { continue; }
+          if (reachesStruct(c, ft, owner, 0)) {
+            c.report(errRecursiveField(), fields[fi].type.line, fields[fi].type.col);
+          }
+        }
+        string parent = c.parentOf(owner);
         for (i32 mi = 0; mi < methods.len(); mi++) {
+          // `override` is a claim about a parent, and the language checks it both ways: a method that
+          // hides one without saying so, and a method that says so with nothing to hide. The first is
+          // reported at the return type — where a method's declaration starts, as with a missing
+          // return — and the second at the keyword itself, which is the part that is wrong.
+          bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
+          if (methods[mi].isOverride && !hides) {
+            c.report(errOverrideSpurious(), tokenLine(c, methods[mi].overrideTok),
+                     tokenCol(c, methods[mi].overrideTok));
+          } else if (!methods[mi].isOverride && hides) {
+            c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
+          }
           c.clearScope();
           // A method without `this` is static, and `this` means nothing in it.
           // A `const this` method may not write through the receiver, which is the same rule as a

@@ -661,9 +661,61 @@ exactly as `f64 x = 1` is a mismatch. The checker was right and the test was wro
 direction for a disagreement to run and worth writing down: the QUIET list is an assertion about the
 reference, not a place to record what I expect.
 
-Next: more of rung 3 — `switch` and `match` subjects, generics properly (`Box<Base>` from `Box<Sub>`
-is the one variance case in the corpus), `override` agreeing with a parent, and the remaining
-scattered type-mismatch cases.
+### Rules about declarations, and two about operators
+
+**Spec coverage: 70 of 83**, from 55. Thirteen uncaught, and the list is short enough to name below.
+
+Everything up to the last slot was a rule about a *use* — an expression in a position, checked against
+what that position wants. These are mostly not that. A struct is refused for what its fields say, a
+method for what its parent declares, a parameter for the type it was written with. Nothing had to be
+used for any of them to be wrong.
+
+- **`override` is checked in both directions.** A method hiding a parent's without saying `override`
+  is an error, and `override` with no parent method to override is also an error. A checker that did
+  one and not the other would look right on half the cases. The first names the child's **return
+  type** — where a method's declaration starts, the same position a missing return uses — and the
+  second names the **keyword**, which is the part that is wrong. A `Method` carries no position of
+  its own, so the parser now records the `override` token: the only diagnostic here that names a
+  keyword rather than a node.
+- **Default values, which are a property of a type rather than of an expression.** `P()` asks whether
+  `P` can be built out of nothing. Primitives have a zero, arrays and strings an empty one, a
+  nullable has null — and an **enum has none at all**, even one whose every variant is payload-free,
+  because there is no variant the language would pick for you. A struct has one when every field
+  does, so `hasDefault` recurses with a depth guard, and hitting that guard is not a fallback: a
+  struct that reaches itself through non-null fields genuinely has no default, since building one
+  would need one first.
+- **The same fact, seen from the declaration.** `struct Node { Node next; }` is refused on sight,
+  with no construction anywhere in the file to hang the complaint on — which is exactly why the
+  field rule has to exist separately from the construction rule rather than being derivable from it.
+- **A `const struct` makes every field const** without any of them saying so. One word instead of one
+  per field, and the existing const-field machinery then does the rest.
+- **Positional construction counts inherited fields.** `B : A` with one field each takes two
+  arguments. Measured, and it also settles that a wrong count is reported *once*, at the
+  construction, rather than also as a field mismatch.
+- **A packed type has no slot of its own**, so it cannot be a parameter — it exists as an array
+  element and nowhere else.
+- **A downcast can fail**, which no other cast can: `s as Circle` needs the checked `as!`. Upcasting
+  is silent, because a `Circle` is a `Shape` with nothing to check.
+- **Strings are immutable**, so `s[0] = "H"` is refused — and at the index rather than at the root of
+  the path, unlike every other write complaint, because the immutability is the string's rather than
+  the path's.
+
+The two operator rules are worth stating because **the reference's message is not the rule**. `++` on
+a `u32` is fine even though the message reads *"requires i32 or i64"* — only floats are refused, which
+is measured rather than read off the text. And `>>>` is refused on an unsigned type not because it is
+wrong but because it is **redundant**: on a type that is already unsigned it says nothing `>>` does
+not, and the language would rather you wrote the shorter one.
+
+The expression form of `++` was the fourth node kind nothing walked. `IncrStmt` had the statement
+case, so `p.n++;` was checked and `return x++;` was not. Every previous instance of this had the same
+tell — one member of a family failing while its siblings passed — and it has now cost enough that the
+reachability grid should be extended to expression *positions of statements*, not just statement kinds.
+
+**What is left, all thirteen:** a call arity case and a `bool` operand case; `break`/`continue`
+outside a loop; a bare field name used as a variable; two deep-const cases, one of which needs flow
+analysis (`Counter c = this; c.mutate();`); an `f32` literal out of range; a `const` initialiser that
+is not compile-time; generics properly, which is two of them — a construction of `Box` with no type argument,
+and `Box<Base>` from `Box<Sub>`; narrowing after `is` in a condition; and nullable packed types.
 
 ### What rung 3's oracle looks like, measured
 

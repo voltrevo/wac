@@ -1004,13 +1004,15 @@ Deno.test("rung 3: struct construction against field types", () => {
     "export void g() { C q = C(1.0, 2.0); }",
     'export void k(i64 n) { P p = P(n, "y"); }',
     "export void l(string t) { C q = C(1, t); }",
+    // Arity is a family of its own rather than this rule, but it is implemented now, so these are no
+    // longer silent — and what they assert here is that the two rules do not fight: a wrong count is
+    // reported once, at the construction, and not also as a field mismatch.
+    "export void c() { P p = P(1); }",
+    'export void m() { P p = P(1, "y", 3); }',
   ];
   const QUIET = [
     'export void a() { P p = P(1, "y"); }',
     "export void f() { C q = C(1, 2.0); }",
-    // Arity is the reference's own family and not this rule's.
-    "export void c() { P p = P(1); }",
-    'export void m() { P p = P(1, "y", 3); }',
   ];
   for (const t of CAUGHT) {
     const src = D + t;
@@ -1412,6 +1414,94 @@ Deno.test("rung 3: builtin statics and methods on primitive types", () => {
     "export i32 ok() { return \"hi\".toBytes().len(); }",
     // A local of that name is a variable, not a type: the scope is consulted before the surface.
     "export i32 ok(i32 f64) { return f64; }",
+  ];
+  for (const src of CAUGHT) {
+    const theirs = reference(src);
+    const mine = ours(src);
+    if (mine.length === 0) {
+      throw new Error(`the reference rejects ${JSON.stringify(src.slice(-60))} and we said nothing: ` +
+        theirs.map((e) => `${e.at} ${e.message}`).join("; "));
+    }
+    for (const at of mine) {
+      if (!theirs.some((e) => e.at === at)) {
+        throw new Error(`${JSON.stringify(src.slice(-60))}: we report ${at}, the reference reports ` +
+          theirs.map((e) => e.at).join(", "));
+      }
+    }
+  }
+  for (const src of QUIET) {
+    const mine = ours(src);
+    if (mine.length !== 0) {
+      throw new Error(`${JSON.stringify(src.slice(-60))} is accepted and we said ${mine.join(", ")}`);
+    }
+  }
+});
+
+/**
+ * Four families about declarations rather than uses, and two about operators.
+ *
+ * The `override` pair is the shape worth naming: the language checks the claim in *both* directions,
+ * so a method that hides a parent's without saying so and a method that says so with nothing to hide
+ * are both errors. A checker that implemented one and not the other would look right on half the
+ * cases and be silently wrong on the rest.
+ */
+Deno.test("rung 3: override, increments, construction arity and default values", () => {
+  const CAUGHT = [
+    // override, both directions.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+      "struct BadRect : Shape { i32 w; i32 name(const this) { return 2; } }",
+    "struct BadShape { override i32 foo(const this) { return 0; } }",
+    // `++` on a const, at the operand; on a float, at the operator. Both spellings of the second.
+    "export i32 g() { const i32 x = 1; return x++; }",
+    "export f64 h() { f64 x = 1.5; return x++; }",
+    "export f64 h2() { f64 x = 1.5; return ++x; }",
+    // `>>>` where it says nothing, and where it means nothing.
+    "export u32 bad(u32 x) { return x >>> 1; }",
+    "export u64 bad2(u64 x) { return x >>> 1; }",
+    "export f64 bad3(f64 x) { return x >>> 1.0; }",
+    // Positional construction, parents included in the count.
+    "struct Point { i32 x; i32 y; } export void bad() { Point p = Point(3); }",
+    "struct A { i32 a; } struct B : A { i32 b; } export void bad() { B x = B(1); }",
+    // Nothing to default-construct from: a recursive struct, an enum, a struct containing one.
+    "struct Node { i32 v; Node next; } export void bad() { Node n = Node(); }",
+    "struct Node { Node next; }",
+    "enum E { A(i32 v), B } export i32 f() { E[] a = E[2](); return a.len(); }",
+    "enum E { A, B } struct S { E e; } export i32 f() { S s = S(); return 1; }",
+    // A packed type where there is no slot for one.
+    "export i32 process(i8 val) { return 0; }",
+    // A const struct makes every field const without any of them saying so.
+    "const struct Config { i32 w; i32 h; } export void bad() { Config c = Config(8, 6); c.w = 1; }",
+    // Immutable strings, and a downcast that can fail.
+    "export void bad() { string s = \"hello\"; s[0] = \"H\"; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+      "export void bad(Shape s) { Circle c = s as Circle; }",
+  ];
+  const QUIET = [
+    // `override` that is correct, and a method that hides nothing.
+    "struct Shape { i32 x; i32 name(const this) { return 1; } } " +
+      "struct R : Shape { i32 w; override i32 name(const this) { return 2; } }",
+    "struct Shape { i32 x; } struct R : Shape { i32 w; i32 other(const this) { return 2; } }",
+    // Unsigned increments are fine, whatever the reference's message says, and so are packed
+    // elements — the rule is about floats.
+    "export void f(u32 x) { x++; }",
+    "export void f(u8[] b) { b[0]++; }",
+    "export void f(i64 x) { x--; }",
+    // `>>>` on a signed type is the whole point of it.
+    "export i32 ok(i32 x) { return x >>> 1; }",
+    "export i64 ok2(i64 x) { return x >>> 1; }",
+    // The right number of arguments, parents first.
+    "struct A { i32 a; } struct B : A { i32 b; } export void f() { B x = B(1, 2); }",
+    // Defaults that do exist: primitives, a nullable recursive field, an enum with a fill.
+    "struct P { i32 v; } export void f() { P p = P(); }",
+    "struct Node { i32 v; Node? next; } export void f() { Node n = Node(); }",
+    "enum E { A, B } export i32 f() { E[] a = E[2](fill: E.A); return a.len(); }",
+    // Reading a string index is ordinary; only writing is refused.
+    "export i32 ok() { string s = \"hi\"; return s[0]; }",
+    // Upcasting is silent, and a checked downcast is what `as!` is for.
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+      "export void ok(Circle c) { Shape s = c as Shape; }",
+    "struct Shape { f64 x; } struct Circle : Shape { f64 r; } " +
+      "export void ok(Shape s) { Circle c = s as! Circle; }",
   ];
   for (const src of CAUGHT) {
     const theirs = reference(src);
