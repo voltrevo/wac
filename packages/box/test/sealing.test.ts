@@ -24,6 +24,21 @@
 // `packages/box/src/bin/sh.wac` is the exception that proves it — its world *is* the host's.
 //
 // A comment saying so is what was there before, and a comment is what somebody edits. This is the test.
+//
+// ## The rest of the file is D4, checked one capability at a time
+//
+// design/0001 D4 says a session gets "a `Cli` whose `readFile`, `writeFile`, `readDir`, `stat`,
+// `remove` and `rename` are the VFS's, whose `arg`/`env` are the session's, and whose `spawn` goes
+// through the process table". Each of those is a way the machine could get in, and each is asked here
+// rather than assumed — because two of them were not true when the question was first asked:
+//
+//   - **`env` was the server's.** A session sealed in an image reported `HOME=/home/claude` and a
+//     `$PATH` from the machine, because an unset variable fell back to `cli.env`. Fixed by
+//     `Shell.hostEnv`, which `Shell.onFs` turns off.
+//   - **`spawn` is 0116**, and the reason a sealed session does not spawn at all.
+//
+// The others held, and two of them held because somebody had already thought about it: `ownsStdin` is
+// false unless an entry point *is* a shell, and its doc names this server by name.
 
 import { buildApp } from "../../platform/build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
@@ -42,6 +57,19 @@ const sealed = `${tmp}/sealedsh`;
 const imaged = `${tmp}/imaged`;
 await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {});
 await buildApp("packages/box/src/bin/imaged.wac", imaged, { read: true, write: true });
+/**
+ * The same session shell, built **with the environment grant**.
+ *
+ * The environment test below needs it, and the reason is the whole of why it exists. `sealedsh` is
+ * built with no grants and `imaged` with read and write, so `cli.env` answers *absent* in both
+ * whatever the shell does — and the first version of that test passed with `Shell.hostEnv` forced
+ * back on, because the grants were withholding the environment rather than the rule under test.
+ *
+ * A test that cannot fail when the thing it checks is removed is checking nothing. So: one binary
+ * that can read the machine's environment, and a shell that will not.
+ */
+const withEnv = `${tmp}/imaged-env`;
+await buildApp("packages/box/src/bin/imaged.wac", withEnv, { read: true, write: true, env: true });
 
 function assertEquals<T>(got: T, want: T, msg?: string): void {
   const a = JSON.stringify(got), b = JSON.stringify(want);
@@ -119,6 +147,50 @@ Deno.test("a sealed session cannot read the machine, by any route", () => {
       }
     }
   }
+});
+
+Deno.test("a sealed session's environment is its own, not the machine's", () => {
+  // D4: `env` is the session's. It was the server's — an unset variable fell back to `cli.env`, so a
+  // session in an image reported the machine's `HOME` and `PATH`.
+  for (const [name, cmd, extra] of [
+    ["sealed", sealed, []],
+    ["image", imaged, [`${tmp}/env.wacimg`]],
+    // The one that can actually reach the machine's environment, and so the only one of the three
+    // that is testing `Shell.hostEnv` rather than the absence of a grant.
+    ["image with the env grant", withEnv, [`${tmp}/granted.wacimg`]],
+  ] as const) {
+    const r = run(cmd, [...extra], "echo HOME=[$HOME] PATHLEN=${#PATH} USER=[$USER]");
+    assertEquals(r.out, "HOME=[] PATHLEN=0 USER=[]\n", `${name} read the machine's environment`);
+  }
+  // And this machine *has* those variables, so an empty answer means they were withheld rather than
+  // that there was nothing to withhold.
+  assertEquals((Deno.env.get("HOME") ?? "").length > 0, true, "this machine has no HOME to leak");
+});
+
+Deno.test("a sealed session's arguments and input are its own", () => {
+  // D4: `arg` is the session's. A session started by a program with a command line of its own must
+  // not see it — `sealedsh -c 'script'` has `-c` and the script in *its* argv, and the script's `$0`
+  // and `$#` are the shell's own, which are empty.
+  const args = run(sealed, [], "echo count=[$#] zero=[$0] one=[$1]");
+  assertEquals(args.out, "count=[0] zero=[] one=[]\n", args.err);
+
+  // And standard input: a shell embedded in something else does not own the process's. `ownsStdin`
+  // is false unless an entry point *is* a shell — `shellMain` sets it — and `sealedsh` is one, so
+  // this asks the question the other way round: what it reads is what it was given, and nothing else.
+  const child = new Deno.Command("timeout", {
+    args: ["20", sealed, "-c", "cat; echo done"],
+    cwd: tmp,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const w = child.stdin.getWriter();
+  w.write(new TextEncoder().encode("given\n"));
+  w.close();
+  const out = child.output();
+  return out.then((r) => {
+    assertEquals(new TextDecoder().decode(r.stdout), "given\ndone\n");
+  });
 });
 
 Deno.test("the shell over the real filesystem is the exception, and really is one", async () => {
