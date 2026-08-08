@@ -331,5 +331,58 @@ export function generateEmit(): Cell[] {
     add("string index of a computed string",
       `export i32 f() { string s = ${s2} + "z"; return s[s.len() - 1].len(); }`);
   }
+
+  // Function references: obtained by name, called through a value. Every cell exists in a version
+  // that calls one function and a version that calls another through the same reference, because a
+  // `call_ref` that always reaches the same place is indistinguishable from a direct call.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const decls = `${t} inc(${t} x) { return x + ${v}; }\n${t} dbl(${t} x) { return x + x; }\n`;
+    add(`funcref ${t} local`,
+      decls + `export ${t} f() { fn[${t}(${t})] g = inc; return g(${v}); }`);
+    add(`funcref ${t} reassigned`,
+      decls + `export ${t} f() { fn[${t}(${t})] g = inc; g = dbl; return g(${v}); }`);
+    add(`funcref ${t} as a parameter`,
+      decls + `${t} apply(fn[${t}(${t})] g, ${t} x) { return g(x); }\n` +
+      `export ${t} f() { return apply(inc, ${v}) + apply(dbl, ${v}); }`);
+    add(`funcref ${t} returned`,
+      decls + `fn[${t}(${t})] pick(bool b) { if (b) { return inc; } return dbl; }\n` +
+      `export ${t} f() { return pick(true)(${v}) + pick(false)(${v}); }`);
+    add(`funcref ${t} in a struct`,
+      decls + `struct H { fn[${t}(${t})] cb; }\n` +
+      `export ${t} f() { H h = H(inc); H j = H(dbl); return h.cb(${v}) + j.cb(${v}); }`);
+    add(`funcref ${t} in an array`,
+      decls + `export ${t} f() { fn[${t}(${t})][] fs = fn[${t}(${t})][](inc, dbl); ` +
+      `return fs[0](${v}) + fs[1](${v}); }`);
+    add(`funcref ${t} nullable`,
+      decls + `export bool f() { fn[${t}(${t})]? g = null; fn[${t}(${t})]? h = inc; ` +
+      `return (g is null) && !(h is null) && h!(${v}) == inc(${v}); }`);
+    add(`funcref ${t} two arguments`,
+      `${t} add(${t} a, ${t} b) { return a + b; }\n${t} sub(${t} a, ${t} b) { return a - b; }\n` +
+      `export ${t} f() { fn[${t}(${t},${t})] g = add; ${t} n = g(${v}, ${v}); g = sub; ` +
+      `return n + g(${v}, ${v}); }`);
+    add(`funcref ${t} void`,
+      `struct C { ${t} n; }\nvoid bump(C c, ${t} by) { c.n += by; }\n` +
+      `export ${t} f() { C c = C(${v}); fn[void(C,${t})] g = bump; g(c, ${v}); g(c, ${v}); ` +
+      `return c.n; }`);
+    add(`funcref ${t} through a chain`,
+      decls + `fn[${t}(${t})] idOf(fn[${t}(${t})] g) { return g; }\n` +
+      `export ${t} f() { return idOf(dbl)(${v}); }`);
+  }
+  // A reference to a function that takes and returns references, which is where the signature's own
+  // parameter types have to have been registered before the type section was written.
+  add("funcref over references",
+    `u8[] head(u8[] xs) { return xs; }\n` +
+    `export i32 f() { fn[u8[](u8[])] g = head; return g(u8[3]()).len(); }`);
+  add("funcref over a struct",
+    `struct P { i32 x; }\nP mk(i32 v) { return P(v); }\n` +
+    `export i32 f() { fn[P(i32)] g = mk; return g(7).x; }`);
+  add("funcref over a string",
+    `string tail(string s) { return s + "!"; }\n` +
+    `export i32 f() { fn[string(string)] g = tail; return g("ab").len(); }`);
+  add("funcref of a funcref",
+    `i32 one(i32 x) { return x + 1; }\n` +
+    `fn[i32(i32)] outer(fn[i32(i32)] g) { return g; }\n` +
+    `export i32 f() { fn[fn[i32(i32)](fn[i32(i32)])] h = outer; return h(one)(41); }`);
   return out;
 }

@@ -1183,6 +1183,48 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Function references, and a type that is the right shape and the wrong type
+
+The largest feature the emitter lacked: `ref.func` to obtain one, `call_ref` to invoke it, and a
+`fn[R(A,B)]` type in between. All of it works now — a reference taken by name, passed as a parameter,
+returned, stored in a struct field or an array, compared against null, and called through every one
+of those.
+
+**The interesting failure was type identity.** Each function used to get a type of its own in the
+type section — "one type per function, never deduplicated", which this README said was fine because
+the reference pools them and a canonical form makes that difference invisible. It is not fine here.
+wasm compares two type indices *in one rec group* by position, not by shape, so:
+
+```
+local.set[0] expected type (ref null 12), found ref.func of type (ref 27)
+```
+
+Type 27 was that function's private copy of exactly the shape type 12 describes. A function and a
+reference to it have to name **one** index, so every function's type is now its entry in the shared
+signature table — the same table the `fn[...]` types the source writes go into. The five string
+helpers share it too.
+
+Three smaller things the feature needed:
+
+- **A declarative element segment.** `ref.func` naming a function that no element segment mentions is
+  *"undeclared function reference"* — a rule that exists so an engine knows which functions can
+  escape. One segment listing them all.
+- **`g(5)` is a `Construct`, not a `Call`.** The parser cannot tell a call to a function named `g`
+  from a call through a local named `g`; only the scope can, and the local wins, as it does
+  everywhere else here.
+- **`null` in a signature slot.** The emitter asked *"is this an array, a string or a struct"* inline
+  instead of asking `isRefType`, so it was one kind of reference short the moment a new one existed —
+  and a `null` that emits nothing is an argument that never arrives.
+
+The sweep has 94 cells for it, and every one exists in two versions — calling one function and then
+another through the same reference — because **a `call_ref` that always reaches the same place is
+indistinguishable from a direct call**. 3,494 programs, 3,139 compared, 0 mismatched.
+
+The whole-file count did not move: the 34 files stop at the next thing now, which is mostly a name
+more than one file declares (43) and a constant that is not a constant expression (37). What did move
+is the last of the language's *type system* — after this, every type wac has is a type this emitter
+can name.
+
 ### A string is not an array of bytes — 108 to 118
 
 Two features, both reached by fixing the one above and reading what the corpus then said. That is the
