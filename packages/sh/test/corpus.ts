@@ -979,6 +979,26 @@ esac`,
   `[ \( -n x \) -a \( -z "" \) ]; echo $?`,
   `[ a b c d e ]; echo $?`,
   `test ! -f /nosuch; echo $?`,
+
+  // ── `test`'s diagnostics carry the name it was called by ───────────────────
+  //
+  // `[ x y ]` says `[: …` and `test x y` says `test: …`. This said `test:` for both, which named a
+  // command the caller had not typed in every message from `[` — the spelling a script actually uses.
+  // And GNU's wording says *where* it wanted an operator: `[ a b c ]` is `b: binary operator expected`,
+  // `[ x y ]` is `x: unary operator expected`. "unknown operator" said less. Found by a generative
+  // differential, which writes `[` far more often than anyone writing cases by hand.
+  "[ x y = n ]; echo st=$?",
+  "test x y = n; echo st=$?",
+  "[ a b c ]; echo st=$?",
+  "test a b c; echo st=$?",
+  "[ -f x y ]; echo st=$?",
+  "[ x y ]; echo st=$?",
+  "[ -q x ]; echo st=$?",
+  "[ a = ]; echo st=$?",
+  "[ = a ]; echo st=$?",
+  "[ ! ]; echo st=$?",
+  "test; echo st=$?",
+  "[ a b c d e ]; echo st=$?",
   `[ /etc/passwd -nt /nosuchfile ]; echo $?`,
   `[ /nosuchfile -ot /etc/passwd ]; echo $?`,
 

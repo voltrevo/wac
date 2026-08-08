@@ -299,7 +299,14 @@ export struct Shell {
    * it saw everything, which is neither the old behaviour nor bash's.
    */
   void ensureStdin(this) {
-    if (this.ownsStdin && !this.triedStdin && this.stdinPos >= this.stdinBytes.len()) {
+    // **`heldInput` first, and it was missing.** "The buffer is spent" and "the shell was never given an
+    // input" look identical here — `stdinPos >= stdinBytes.len()` is true of an empty held input — so a
+    // command handed *nothing* by a pipe or by `< /dev/null` went and read the real standard input, and
+    // at a terminal that never ends. `: | cat` and `cat < /dev/null` both hung on this line (wac-mono
+    // 0113). The flag saying "these bytes are the shell's, and they are all there is" already existed;
+    // this is the one place that decided without asking it.
+    if (this.ownsStdin && !this.triedStdin && !this.heldInput
+        && this.stdinPos >= this.stdinBytes.len()) {
       this.triedStdin = true;
       this.stdinBytes = this.cli.readStdin().wait();
       this.stdinPos = 0;
@@ -2363,6 +2370,11 @@ Output echo(Vec<string> argv) {
  * `test -z "$x" && echo empty` read correctly, and is the thing to keep straight.
  */
 Output test(Shell sh, Vec<string> argv) {
+  // **The name in a diagnostic is the one it was called by.** `[ x y ]` says `[: …` and `test x y` says
+  // `test: …`, and this said `test:` for both — a small thing that makes every message from `[`, which
+  // is how a script actually writes it, name a command the caller did not type. Found by a generative
+  // differential, which produced `[` far more often than anyone writing cases by hand.
+  string me = argv.get(0);
   Vec<string> a = Vec.create();
   for (i32 i = 1; i < argv.len(); i++) {
     // `[` requires a closing `]`, which is an argument and not syntax.
@@ -2381,17 +2393,17 @@ Output test(Shell sh, Vec<string> argv) {
   // with a diagnostic, which is the part a script can act on; imitating the wording would mean
   // imitating an error recovery rather than a rule.
   if (a.len() > 3 || (a.len() == 3 && a.get(0) == "(")) {
-    return testExpr(sh, a, 0, a.len());
+    return testExpr(sh, me, a, 0, a.len());
   }
   bool result = false;
   if (a.len() == 0) { result = false; }
   else if (a.len() == 1) { result = a.get(0) != ""; }
-  else if (a.len() == 2) { return unaryTest(sh, a.get(0), a.get(1)); }
+  else if (a.len() == 2) { return unaryTest(sh, me, a.get(0), a.get(1)); }
   else if (a.len() == 3 && a.get(0) == "!") {
     // `! -f x` and `! -z "$x"`: the negation of a unary test, which is how a script asks whether a
     // file is *missing*. Without this the `!` was read as the left operand of a binary operator and
     // `-f` as the operator, so the most ordinary use of `test` reported "unknown operator".
-    Output inner = unaryTest(sh, a.get(1), a.get(2));
+    Output inner = unaryTest(sh, me, a.get(1), a.get(2));
     if (!inner.found || inner.status == 2) { return inner; }
     return testResult(inner.status != 0);
   } else if (a.len() == 3) {
@@ -2417,11 +2429,14 @@ Output test(Shell sh, Vec<string> argv) {
     else if (op == "-gt") { result = atoiOr(l, 0) > atoiOr(r, 0); }
     else if (op == "-ge") { result = atoiOr(l, 0) >= atoiOr(r, 0); }
     else if (gnuBinaryOperator(op)) {
-      return Output.fail(("test: " + op + " is not implemented\n").toBytes(), 2);
+      return Output.fail((me + ": " + op + " is not implemented\n").toBytes(), 2);
     }
-    else { return Output.fail(("test: unknown operator " + op + "\n").toBytes(), 2); }
+    // GNU's wording, which names the word it wanted an operator in: `[ a b c ]` is
+    // `[: b: binary operator expected`. "unknown operator b" was ours and said less — it does not say
+    // *where* the parser was looking, which for a three-word test is the whole question.
+    else { return Output.fail((me + ": " + op + ": binary operator expected\n").toBytes(), 2); }
   } else {
-    return Output.fail("test: too many arguments\n".toBytes(), 2);
+    return Output.fail((me + ": too many arguments\n").toBytes(), 2);
   }
   return testResult(result);
 }
@@ -2436,50 +2451,51 @@ Output test(Shell sh, Vec<string> argv) {
  * The arity ladder in `test` stays as it is and handles what this hands it, so the two-word and
  * three-word forms have exactly one implementation.
  */
-Output testExpr(Shell sh, Vec<string> a, i32 from, i32 to) {
-  return testOr(sh, a, from, to);
+Output testExpr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
+  return testOr(sh, me, a, from, to);
 }
 
-Output testOr(Shell sh, Vec<string> a, i32 from, i32 to) {
+Output testOr(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 at = topLevel(a, from, to, "-o");
-  if (at < 0) { return testAnd(sh, a, from, to); }
-  Output left = testOr(sh, a, from, at);
+  if (at < 0) { return testAnd(sh, me, a, from, to); }
+  Output left = testOr(sh, me, a, from, at);
   if (left.status == 2) { return left; }
   if (left.status == 0) { return testResult(true); }
-  return testOr(sh, a, at + 1, to);
+  return testOr(sh, me, a, at + 1, to);
 }
 
-Output testAnd(Shell sh, Vec<string> a, i32 from, i32 to) {
+Output testAnd(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 at = topLevel(a, from, to, "-a");
-  if (at < 0) { return testPrimary(sh, a, from, to); }
-  Output left = testAnd(sh, a, from, at);
+  if (at < 0) { return testPrimary(sh, me, a, from, to); }
+  Output left = testAnd(sh, me, a, from, at);
   if (left.status == 2) { return left; }
   if (left.status != 0) { return testResult(false); }
-  return testAnd(sh, a, at + 1, to);
+  return testAnd(sh, me, a, at + 1, to);
 }
 
-Output testPrimary(Shell sh, Vec<string> a, i32 from, i32 to) {
+Output testPrimary(Shell sh, string me, Vec<string> a, i32 from, i32 to) {
   i32 n = to - from;
-  if (n <= 0) { return Output.fail("test: expected an expression\n".toBytes(), 2); }
+  if (n <= 0) { return Output.fail((me + ": expected an expression\n").toBytes(), 2); }
   if (a.get(from) == "!" && n > 1) {
-    Output inner = testPrimary(sh, a, from + 1, to);
+    Output inner = testPrimary(sh, me, a, from + 1, to);
     if (inner.status == 2) { return inner; }
     return testResult(inner.status != 0);
   }
   if (a.get(from) == "(") {
-    if (a.get(to - 1) != ")") { return Output.fail("test: missing `)'\n".toBytes(), 2); }
-    return testExpr(sh, a, from + 1, to - 1);
+    if (a.get(to - 1) != ")") { return Output.fail((me + ": missing `)'\n").toBytes(), 2); }
+    return testExpr(sh, me, a, from + 1, to - 1);
   }
   // **Four or more words that are not an expression are `test`'s own error**, and handing them back to
   // `test` would be handing them straight back here: it sends anything longer than three words to the
   // grammar, and the grammar with nothing to fold sends it back. That was an infinite recursion and a
   // blown stack — `[ a b c d e ]` exited 70 with "Maximum call stack size exceeded" where bash says
   // "too many arguments". A recursion whose base case is another function's default is not a base case.
-  if (n > 3) { return Output.fail("test: too many arguments\n".toBytes(), 2); }
+  if (n > 3) { return Output.fail((me + ": too many arguments\n").toBytes(), 2); }
   // Whatever is left is one of the plain forms, which `test` itself already knows how to answer. It is
   // handed a fresh argv rather than indices because that is the shape it takes.
   Vec<string> one = Vec.create();
-  one.push("test");
+  // `me` rather than "test": the diagnostics below it name the command the caller wrote.
+  one.push(me);
   for (i32 i = from; i < to; i++) { one.push(a.get(i)); }
   return test(sh, one);
 }
@@ -2531,7 +2547,7 @@ Output testResult(bool v) { return Output(u8[0](), u8[0](), v ? 0 : 1, true); }
  * `-r`, `-w` and `-x` are *not* here and still refuse: `Stat` carries no mode bits, and a shell that
  * answered "yes, readable" from the mere existence of a file would be wrong exactly when it matters.
  */
-Output unaryTest(Shell sh, string op, string operand) {
+Output unaryTest(Shell sh, string me, string op, string operand) {
   if (op == "-z") { return testResult(operand == ""); }
   if (op == "-n") { return testResult(operand != ""); }
   if (op == "!") { return testResult(operand == ""); }
@@ -2548,7 +2564,7 @@ Output unaryTest(Shell sh, string op, string operand) {
     // this host, or because this program was given no read capability — is a wrong answer that a script
     // then acts on, and it is the last thing wac-mono 0065 left lying.
     if (!st.answered()) {
-      return Output.fail(("test: " + operand + ": " + statReason(st) + "\n").toBytes(), 2);
+      return Output.fail((me + ": " + operand + ": " + statReason(st) + "\n").toBytes(), 2);
     }
     if (op == "-e") { return testResult(st.exists); }
     if (op == "-f") { return testResult(st.isFile); }
@@ -2560,9 +2576,12 @@ Output unaryTest(Shell sh, string op, string operand) {
   // command is wrong when this program is merely incomplete. Anything GNU has not got either keeps the
   // original wording.
   if (gnuTestOperator(op)) {
-    return Output.fail(("test: " + op + " is not implemented\n").toBytes(), 2);
+    return Output.fail((me + ": " + op + " is not implemented\n").toBytes(), 2);
   }
-  return Output.fail(("test: unknown operator " + op + "\n").toBytes(), 2);
+  // GNU's wording for a two-word test whose first word is not a unary operator: `[ x y ]` is
+  // `[: x: unary operator expected`, and `[ -q x ]` names `-q` the same way. It says which word the
+  // parser wanted an operator in, which "unknown operator" does not.
+  return Output.fail((me + ": " + op + ": unary operator expected\n").toBytes(), 2);
 }
 
 /**
