@@ -33,7 +33,7 @@ export i32 main(Core core, Cli cli) {
     // An interrupt kills `cat`, and the pty stops being read: whatever was typed after it is lost. The
     // test does not compare that case byte for byte, because which bytes survive is a race between two
     // processes; it asserts the interrupt itself instead.
-    if (t.interrupt) { break; }
+    if (t.interrupted()) { break; }
     if (t.eof) { break; }
   }
   cli.write(out.take());

@@ -23,6 +23,12 @@
 // - **A control character is echoed as a caret pair and still delivered**: `a^Ab` echoes `a^Ab` and
 //   hands the program `a\x01b`. The echo is a rendering; the line is the bytes.
 // - **`^C` echoes `^C` and nothing more** — no newline. The newline you see at a prompt is the shell's.
+// - **`^\` is the other signalling key**, and it is not `^C`: it asks for `SIGQUIT` rather than
+//   `SIGINT`. It throws the line away exactly as `^C` does, which is why `Typed` carries a signal
+//   *number* rather than a flag — a flag can only say that one of the two happened.
+// - **`^R` reprints the line**: it echoes `^R`, breaks the line, and draws what has been typed again.
+//   It is what you reach for when a program's output has scribbled over what you were editing.
+// - **DEL renders as `^?`**, which is the one caret pair that goes *down* sixty-four rather than up.
 // - **`^D` on a non-empty line is not end of input.** It delivers what has been typed *without* a
 //   newline, and the next `^D` — now on an empty line — is the end. That is why `cat` needs two of them
 //   after a line that has no `\n`.
@@ -36,6 +42,11 @@
 // **No terminal modes.** Canonical with echo, always: there is no `stty`, no `ICANON` off, no `raw`.
 // A program that wants a keystroke at a time — an editor, a pager — needs that switch, and it is the
 // next thing this module wants rather than something it pretends to have.
+//
+// **No `^S`/`^Q` flow control and no `^O` discard.** Those stop and start the *output*, which is
+// something a terminal does to a stream this module never sees — it edits input. `^O` is delivered as
+// an ordinary control character, which is what the pty comparison shows the kernel doing to the input
+// side of it too.
 //
 // **No cursor movement.** Left arrow, `^A`, `^E` and the rest are control characters and escape
 // sequences, and the kernel does not handle them either: readline does, in the program. Erase is
@@ -55,6 +66,14 @@ i32 INTR() { return 3; }
 i32 EOFC() { return 4; }
 /** `^V`, take the next character literally however it would otherwise be read. */
 i32 LNEXT() { return 22; }
+/** `^\`, quit — like `^C` but a different signal, and traditionally the one that dumps core. */
+i32 QUIT() { return 28; }
+/** `^R`, reprint: echo the line again, so you can see what you have after something scribbled on it. */
+i32 REPRINT() { return 18; }
+
+/** POSIX's numbers for the two signals a terminal can ask for. `proc.wac`'s `SIGNALS` names them too. */
+i32 SIGINT() { return 2; }
+i32 SIGQUIT() { return 3; }
 
 /**
  * What one keystroke did.
@@ -71,11 +90,26 @@ export struct Typed {
   bool hasLine;
   /** `^D` on an empty line: the program's read should answer end of input. */
   bool eof;
-  /** `^C`: whatever was being typed is gone, and the program should be interrupted. */
-  bool interrupt;
+  /**
+   * The signal this keystroke asks for, or 0 — and whatever was being typed is gone when it is not 0.
+   *
+   * **A number rather than the `bool interrupt` this was**, because there are two of them and they are
+   * not the same signal: `^C` is `SIGINT` and `^\` is `SIGQUIT`, which a program may handle
+   * differently and which a core dump traditionally depends on. A flag could only say "one of them
+   * happened", so `^\` was delivered as an ordinary control character — the line kept it, and the
+   * kernel had thrown the line away and signalled.
+   *
+   * POSIX's numbering, which is also `packages/fs/src/proc.wac`'s `signalNumber`. Named there rather
+   * than imported from there: a line discipline knowing about a process table would be the wrong way
+   * round, and these two numbers are a standard rather than a decision either module owns.
+   */
+  i32 signal;
 
-  Typed nothing() { return Typed(u8[0](), u8[0](), false, false, false); }
-  Typed echoed(u8[] echo) { return Typed(echo, u8[0](), false, false, false); }
+  Typed nothing() { return Typed(u8[0](), u8[0](), false, false, 0); }
+  Typed echoed(u8[] echo) { return Typed(echo, u8[0](), false, false, 0); }
+
+  /** Whether a signal was asked for at all, which is what most callers want. */
+  bool interrupted(const this) { return this.signal != 0; }
 }
 
 /**
@@ -127,7 +161,7 @@ export struct Line {
       Buf line = Buf.create();
       line.pushAll(this.held.take());
       line.push(10);
-      return Typed(crlf(), line.take(), true, false, false);
+      return Typed(crlf(), line.take(), true, false, 0);
     }
     if (b == ERASE()) {
       if (this.held.len == 0) { return Typed.nothing(); }
@@ -156,13 +190,30 @@ export struct Line {
     if (b == INTR()) {
       this.held = Buf.create();
       // `^C` and no newline: what follows it belongs to whoever is interrupted.
-      return Typed("^C".toBytes(), u8[0](), false, false, true);
+      return Typed("^C".toBytes(), u8[0](), false, false, SIGINT());
+    }
+    if (b == QUIT()) {
+      this.held = Buf.create();
+      // **The line goes, exactly as `^C`'s does.** This was an ordinary control character until now, so
+      // `ab^\z` delivered `ab\x1cz` where the kernel delivers `z` and signals — measured through the
+      // pty, which is the oracle this module claims and which nothing had asked about `^\`.
+      return Typed("^\\".toBytes(), u8[0](), false, false, SIGQUIT());
+    }
+    if (b == REPRINT()) {
+      // `^R` echoes itself, breaks the line, and **draws what you have typed again**. It is what you
+      // reach for when a program's output has scribbled over the line you were editing, and it was
+      // being delivered as a `\x12` in the middle of the line instead.
+      Buf out = Buf.create();
+      out.pushAll("^R".toBytes());
+      out.pushAll(crlf());
+      for (i32 i = 0; i < this.held.len; i++) { out.pushAll(render(this.held.get(i))); }
+      return Typed.echoed(out.take());
     }
     if (b == EOFC()) {
-      if (this.held.len == 0) { return Typed(u8[0](), u8[0](), false, true, false); }
+      if (this.held.len == 0) { return Typed(u8[0](), u8[0](), false, true, 0); }
       // A line without a newline on it. The program sees exactly what was typed, and the terminal shows
       // nothing, because nothing was typed *at* the terminal.
-      return Typed(u8[0](), this.held.take(), true, false, false);
+      return Typed(u8[0](), this.held.take(), true, false, 0);
     }
     this.held.push(b);
     return Typed.echoed(render(b));
@@ -242,6 +293,17 @@ i32 columns(i32 b) {
  * Everything below space becomes `^` and a letter, except tab, which the terminal expands itself.
  */
 u8[] render(i32 b) {
+  // **DEL is a caret pair too, and this said it was one column of itself.** `columns` has always
+  // answered 2 for 0x7f and this answered a bare DEL byte, so the two halves of the same module
+  // disagreed about the same character: a `^V DEL` echoed one raw byte where the kernel echoes `^?`,
+  // and the erase arithmetic then rubbed out two columns for something that had drawn one. Measured
+  // against the pty, which is what the whole module is for and what nothing had asked about DEL.
+  if (b == 127) {
+    u8[] del = u8[2](fill: '^');
+    // `^?`, not `^` plus sixty-four along — DEL is the one that goes the other way, 127 - 64.
+    del[1] = 63;
+    return del;
+  }
   if (b == 9 || b >= 32) { return u8[1](fill: b); }
   u8[] out = u8[2](fill: '^');
   // `^@` for NUL through `^_` for 0x1f: the character sixty-four along, which is the pair the terminal
