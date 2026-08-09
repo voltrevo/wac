@@ -48,13 +48,15 @@ order — and **the ticket table** (`tickets.rs`), with the capabilities that ne
 beyond a clock and a thread: `argCount`, `arg`, `write`, `writeErr`, `nowMillis`, `monotonicNanos`,
 `sleepMillis`, `randomBytes`, `exitCode` and `waitAny`.
 
-**Two of 0087's three criteria are met**, and `example/wacland.wac` is what demonstrates them:
+**All three of 0087's criteria are met**, and `example/wacland.wac` is what demonstrates them:
 
 1. ✅ two requests completing out of order, each resolving its own value — two sleeps, the longer one
    submitted first, and `waitAny` answers the *second*;
 2. ✅ a `waitAny` with neither ready returning on its timeout;
-3. ❌ a spawned child, waited for alongside one of the parent's own tickets. `spawn` is not
-   implemented.
+3. ✅ a spawned child, waited for alongside one of the parent's own tickets — `spawnSelf`, which is
+   the form of spawning this host has (see below). This line said ❌ and "`spawn` is not implemented"
+   for as long as it took someone to read it next to the paragraph four below, which says all three
+   are met.
 
 The first one is not decoration. A host that resolved every ticket as it was submitted would pass every
 type check and make every program that overlaps requests silently sequential; gutting the sleep in this
@@ -95,7 +97,15 @@ with the other's private file refused.
 
 Where the interface has a value for "not here", this answers it rather than trapping — `Child.handle
 == -2` means "this world has no `spawn` at all", and a negative `Socket` handle carries its reason. The
-trap is the thing a caller cannot act on. Nothing traps now. A runtime that
+trap is the thing a caller cannot act on. Nothing traps by accident.
+
+**One thing traps on purpose**, and it is the only one: a child whose parent called `closeSocket`.
+The engine runs with `epoch_interruption`, a ticker advances the epoch every 5 ms, and each child's
+store has a deadline callback that turns its stop flag into a trap wherever the guest is. That is
+what terminating a program means for wasm — a guest leaves a loop when it decides to — and it is what
+the JavaScript hosts were already doing by terminating a worker. The parent sees -1 from `exitCode`,
+which is what a terminated worker answers there too; it does not see a trap, because it asked for it
+([0123](../issues/system/closed/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md)). A runtime that
 answered an empty file or a closed socket would make every program that used it wrong in a way nothing
 could see, which is design/0001 D6.
 
