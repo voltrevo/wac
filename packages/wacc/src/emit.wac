@@ -1326,6 +1326,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     idx[0] = "string";
     idx[1] = "i32";
     env.addFunc(" str_idx", "string", idx);
+    string[] one3 = string[1]();
+    one3[0] = "i32";
+    env.addFunc(" str_fromcp", "string", one3);
   }
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
@@ -1423,7 +1426,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
-  i32 helpers = (needsStrings ? 5 : 0) + (startNeeded ? 1 : 0);
+  i32 helpers = (needsStrings ? 6 : 0) + (startNeeded ? 1 : 0);
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
@@ -1455,6 +1458,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     env.sigType("fn[u8[](string)]");
     env.sigType("fn[string(u8[])]");
     env.sigType("fn[string(string,i32)]");
+    env.sigType("fn[string(i32)]");
   }
 
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
@@ -1544,6 +1548,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
     emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
     emitStringIndex(types, funcs, code, env, index + 4, declTypes);
+    emitStringFromCp(funcs, code, env);
   }
 
   B out = B.create();
@@ -1583,7 +1588,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   if (startNeeded) {
     env.localCount = 0;
     env.paramCount = 0;
-    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 5 : 0), declTypes);
+    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 6 : 0), declTypes);
   }
 
   section(out, 1, types);
@@ -1592,7 +1597,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 5 : 0));
+    st.u32leb(count + (needsStrings ? 6 : 0));
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -2537,6 +2542,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             return;
           }
           // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
+          if (isStringTypeName(src, lexed, env, obj) && mname == "fromCodepoint" && args.len() == 1) {
+            i32 cp = env.funcAt(" str_fromcp");
+            if (cp < 0 || env.funcIndex[cp] < 0) { return; }
+            emitExprAt(fb, src, lexed, env, args[0], "i32");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[cp]);
+            return;
+          }
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
             i32 fb2 = env.funcAt(" str_from_bytes");
             if (fb2 < 0 || env.funcIndex[fb2] < 0) { return; }
@@ -2809,6 +2822,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string pst = primStaticType(primTypeName(env, src, lexed, obj), mn);
           if (pst != "") { return pst; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
             i32 si = env.funcAt(sown + "." + mn);
@@ -3747,8 +3761,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (vcall != "") {
             i32 cvi = env.variantAt(vcall);
             if (args.len() != env.variantArity[cvi]) { return "a variant with the wrong count"; }
+            // The payload slots are known here, so a `null` among them can be asked about rather
+            // than refused — `ExprKind.Is(e, null, null, negated)` is why `parse.wac` could not be
+            // compiled by the compiler it is part of.
+            string ven = env.variantOwners[cvi];
             for (i32 i = 0; i < args.len(); i++) {
-              string a2 = unsupportedValue(src, lexed, env, args[i]);
+              string a2 = unsupportedValueAt(src, lexed, env, args[i],
+                                             env.fieldTypeAt(ven, env.variantSlot[cvi] + i));
               if (a2 != "") { return a2; }
             }
             return "";
@@ -3758,6 +3777,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // struct name unresolved — which is what three corpus files were saying.
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes" && args.len() == 1) {
             return unsupportedValue(src, lexed, env, args[0]);
+          }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint" && args.len() == 1) {
+            return unsupportedValueAt(src, lexed, env, args[0], "i32");
           }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
@@ -4640,6 +4662,104 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
   code.bytes(b);
 }
 
+/**
+ * `string str_fromcp(i32 cp)` — the one-character string whose scalar is `cp`, UTF-8 encoded.
+ *
+ * The only way to reach a character that is not already written down somewhere, and the reason a
+ * codepoint arithmetic routine can be written in wac at all. It **traps** rather than substituting a
+ * replacement character, which is what the language says, and which makes the range tests below a
+ * decision rather than a guess.
+ */
+void emitStringFromCp(B funcs, B code, Env env) {
+  i32 at = env.arrayType("i8[]");
+  funcs.u32leb(env.sigType("fn[string(i32)]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(1); b.byte(99); b.i32leb(at);   // local 1: the result
+
+  // Out of range, or half of a surrogate pair, which is not a scalar value.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(1114111); b.byte(74);   // i32.gt_s
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(0); b.byte(72);         // i32.lt_s
+  b.byte(114);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(55296); b.byte(79);     // >= 0xD800
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(57344); b.byte(73);     // <  0xE000
+  b.byte(113);
+  b.byte(114);
+  b.byte(4); b.byte(64);
+  b.byte(0);                                                            // unreachable
+  b.byte(11);
+
+  // One byte: 0xxxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(128); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(1); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0); b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Two bytes: 110xxxxx 10xxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(2048); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(2); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);        // i32.shr_u
+  b.byte(65); b.i32leb(192); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Three bytes: 1110xxxx 10xxxxxx 10xxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(65536); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(3); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(12); b.byte(118);
+  b.byte(65); b.i32leb(224); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(2);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Four bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
+  b.byte(65); b.i32leb(4); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(18); b.byte(118);
+  b.byte(65); b.i32leb(240); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(12); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(2);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(3);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
 /**
  * `string str_idx(string s, i32 i)` — the codepoint starting at byte `i`, as a one-character string.
  *

@@ -448,5 +448,18 @@ export function generateEmit(): Cell[] {
     `for (i64 i = 0; i < 3; i++) { n = n + (i as~ i32); } return n; }`);
   add("scope a name declared after a block that had it",
     `export i32 f() { { i32 k = 5; } i64 k = 7; return k as~ i32; }`);
+
+  // `string.fromCodepoint`, whose answer is a *number of bytes* as much as a character — so the
+  // cells straddle every boundary in UTF-8's encoding, and the two that must trap are here too.
+  for (const cp of [0, 65, 127, 128, 233, 2047, 2048, 8364, 65535, 65536, 128512, 1114111]) {
+    add(`fromCodepoint ${cp}`, `export i32 f() { return string.fromCodepoint(${cp}).len(); }`);
+    add(`fromCodepoint ${cp} round trip`,
+      `export bool f() { string s = string.fromCodepoint(${cp}); return s[0] == s; }`);
+    add(`fromCodepoint ${cp} concatenated`,
+      `export i32 f() { return ("x" + string.fromCodepoint(${cp})).len(); }`);
+  }
+  for (const bad of [55296, 57343, 1114112]) {
+    add(`fromCodepoint ${bad} traps`, `export i32 f() { return string.fromCodepoint(${bad}).len(); }`);
+  }
   return out;
 }

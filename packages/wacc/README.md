@@ -1183,6 +1183,31 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Seven of wacc's own eight files
+
+A question worth asking directly, since rung 5 is the ladder's last: **how much of `wacc` can `wacc`
+compile?** The answer turned out to be five of its eight files already, blocked by two things and not
+by a hundred.
+
+`ExprKind.Is(e, null, null, negated)` — the walk approved a `null` only where it could name the slot,
+and a **variant's payload** was not among the places it looked, though the slot is right there in the
+variant table. `parse.wac` is eight functions of nothing else, and it compiles whole now.
+
+`string.fromCodepoint` is the other: a UTF-8 encoder, and the only way to reach a character that is
+not already written down somewhere. It is a synthesized helper like the rest — four ranges, and a
+**trap** for a value that is not a scalar, which is what the language says rather than the
+replacement character a forgiving encoder would substitute. `emit.wac` uses it, which is how it
+turned up: this compiler could not compile the function it uses to name its own scope keys.
+
+| | before | after |
+|---|---|---|
+| whole files | 244 | **245** |
+| wacc's own | 5 of 8 | **7 of 8** |
+
+The eighth is `api.wac` — and `emit.wac` with it — waiting on `string.slice` and `string.indexOf`,
+which the linker written two slots ago uses. That is the whole distance left to a compiler that can
+read itself.
+
 ### A block is a scope — 230 to 244
 
 `two types for the local k` was a decline with a good reason: wasm has one flat frame per function
