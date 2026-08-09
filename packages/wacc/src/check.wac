@@ -684,6 +684,15 @@ export struct C {
   /** Whether diagnostics are being discarded — see `report`. */
   bool quiet;
   /**
+   * The type parameters of the generic function being checked, which are **unknown types**.
+   *
+   * `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error `spec/spec/generics.md` names, and
+   * the error has nothing to do with `T` — so the body is checked, and every question about `T`
+   * answers the way this checker answers every question it cannot resolve: with nothing.
+   */
+  string[] activeParams;
+  i32 activeParamCount;
+  /**
    * Which enum each variant belongs to, and how many payload fields it has.
    *
    * A variant is *also* declared as a struct under its bare name, because that is how `is Circle`
@@ -710,7 +719,7 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), 0, false,
+             i32[capacity * 3](), 0, false, string[16](), 0,
              string[capacity](), string[capacity](), i32[capacity](), 0);
   }
 
@@ -1167,6 +1176,13 @@ export string typeOfTy(C c, Ty t) {
       // an earlier version returned unknown for all of them, which made every generic invisible.
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
       string base = tokenText(c, tok);
+      // **A type parameter of the function being checked is an unknown type**, not a name. `T` in
+      // `T oops<T>(T a)` stands for whatever a call site binds, so every question about it has an
+      // answer this checker cannot compute — and answering with the letter itself made `return a;` a
+      // mismatch against a type nobody declared.
+      for (i32 i = 0; i < c.activeParamCount; i++) {
+        if (c.activeParams[i] == base) { return typeNone(); }
+      }
       // Spelled as identifiers and declared by nobody, so resolution would hunt for a declaration
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
@@ -4227,17 +4243,23 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        // **A generic function's body is not checked**, for the same reason a generic struct's
-        // fields are not recorded: every type in it is written in terms of parameters this checker
-        // does not substitute, so every question it asks about one has an answer it cannot compute.
-        // What it did instead was answer anyway — `Opt.Some(f(v))` inside `mapOpt<T, U>` came out as
-        // a call with the wrong argument count — and a confident wrong answer is the one thing this
-        // checker may never give. The instances are ordinary functions and are checked as such.
-        if (typeParams.len() > 0) { continue; }
+        // **A generic function's body is checked**, with its type parameters left unknown.
+        //
+        // It was skipped entirely once, because answering questions about `T` produced wrong answers.
+        // But `spec/spec` says `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error, and it is
+        // — the mistake in it has nothing to do with `T`. Leaving the parameters unknown is what
+        // separates the two: everything involving one is silent by the same rule that keeps this
+        // checker quiet about anything it cannot name, and everything concrete is checked as usual.
         // Declarations first, in a pass of their own over the whole body, so a `return` that reads a
         // name declared later still resolves it. A checker that declared as it walked would treat a
         // forward reference as unknown for no reason — the reference has the whole function in hand
         // and so does this.
+        c.activeParamCount = 0;
+        for (i32 i = 0; i < typeParams.len(); i++) {
+          if (c.activeParamCount >= c.activeParams.len()) { continue; }
+          c.activeParams[c.activeParamCount] = tokenText(c, typeParams[i]);
+          c.activeParamCount = c.activeParamCount + 1;
+        }
         c.clearScope();
         checkParams(c, params);
         for (i32 i = 0; i < params.len(); i++) {
@@ -4246,6 +4268,7 @@ export void checkModule(C c, Program prog) {
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
+        c.activeParamCount = 0;
         // Reported at the declaration rather than at the closing brace, which is where the reference
         // puts it: the fault is the function's, not any one statement's.
         if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(body)) {

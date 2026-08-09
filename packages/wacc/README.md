@@ -163,13 +163,26 @@ and `linkEmit` for what linking can get wrong.
 **Rung 5 (bootstrap) reaches a fixed point.** wacc compiles its own nine sources, the module that
 comes out compiles them again, and the two are byte-identical — `fixpointEmit` and `selfHostEmit`.
 
-**Rung 3 (type checker) is the open one.** It implements roughly sixty of the reference's ~190
-diagnostics, at the reference's exact positions, and the discipline is that it may report *less* and
-may never report *differently*. Four oracles hold it to that, and each was added because the one
-before it had run out of things to say:
+**Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
+
+**The spec is the contract; the reference is a guide.** `spec/spec` states what the language is, and
+`specCheck.test.ts` holds this checker to it: every program the spec calls illegal, refused — 98 of
+101, with the three exceptions named per case rather than counted. The TypeScript compiler is
+evidence about the language and a cheap source of cases, not an authority: where the two disagree the
+spec decides, and the reference has been the one in the wrong before —
+`issues/lang/0085`, where `as! i31ref` truncates there and traps here because `casts.md` says
+*checked*.
+
+That is a change of aim, not of method. A disagreement with the reference is now a question —
+*which of us is right?* — rather than a defect report against this checker, and a program wacc
+refuses because the spec forbids it is a feature even when the reference compiles it happily.
+
+The reference-shaped oracles below stay, because they are the widest supply of cases there is and
+they find real rules cheaply. What they no longer are is a definition of correct:
 
 | oracle | input | what it asserts |
 |---|---|---|
+| `specCheck.test.ts` | the spec's own 101 illegal programs | **the contract** — each is refused |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
 | `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
@@ -2056,6 +2069,39 @@ certainty.
 
 The wider set's queue is short and specific: three `expected string, got i32`, two `expected i64, got
 string`, one arity, one `is not callable`.
+
+### The spec is the contract now, and it had something to say
+
+The direction changed: implement the spec, treat the reference as a guide, and where the two
+disagree decide which is right rather than deferring. So the first question worth asking is one this
+package had never asked — **what does the language itself say this checker must refuse?**
+
+`spec/spec` answers it directly: 101 `err(…)` programs, each carrying the tag of the clause that
+governs it. wacc refuses 97. The four it allowed are the only real gaps this rung has, and one of
+them was self-inflicted:
+
+**`T oops<T>(T a) { i32 x = "hello"; return a; }`** is illegal, and the mistake in it has nothing to
+do with `T`. This checker had stopped looking at generic function bodies altogether, because looking
+produced wrong answers about the type parameters — a decision taken to keep a reference-shaped oracle
+quiet. The right rule is narrower and was always available: **check the body, and let the type
+parameters be unknown types.** Then everything involving `T` is silent by the same rule that keeps
+this checker quiet about anything it cannot name, and `i32 x = "hello"` is as concrete as it looks.
+
+Measuring it also corrected the measurement. A first pass asked only the type checker and reported
+three misses; the committed test asks the *compiler* — a program the parser refuses is a program this
+compiler refuses, and which phase says so is not the language's business. Then the count moved again,
+because a spec **tag governs more than one program**: keying the known-miss list by tag let a refused
+case stand in for an allowed one, and the same two programs came back as both caught and missed on
+consecutive runs. Keyed per case, the answer is stable.
+
+| | |
+|---|---|
+| spec rejections refused | **98 of 101** |
+| still allowed | `from cor` (module identity), a generic struct that instantiates itself for ever, an enum method named after a variant |
+| the reference-shaped oracles | unchanged — 0 false alarms, 95% and 99% recall |
+
+The three that remain are named per case in `specCheck.test.ts`, and the list fails in both
+directions: a new miss breaks it, and fixing one breaks it too.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
