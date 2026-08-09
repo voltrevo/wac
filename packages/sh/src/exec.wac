@@ -39,6 +39,34 @@ import { resolvePath } from "../../fs/src/path.wac";
 import { Arith, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
+/**
+ * One background job — design/0001 step 3's `jobs` and `&`.
+ *
+ * A *job* is the shell's notion and a *process* is the system's, and they are deliberately separate
+ * structs: `packages/fs`'s `Procs` knows pids, parents and exit statuses for everything running, and
+ * this knows the small number of them a **user** has a name for. `%1` is a job; `1` is a pid; `kill`
+ * takes both and they are not the same number.
+ *
+ * `handle` and `errHandle` are the child's two streams, kept because a background job's output has to
+ * go somewhere and the shell is not running while the job is. They are drained when it is waited for.
+ */
+struct Job {
+  /** `%1`, `%2` — allocated from 1 and never reused within a shell, as bash does. */
+  i32 num;
+  i32 pid;
+  /** The child's handle, or -1 once it has been waited for and closed. */
+  i32 handle;
+  i32 errHandle;
+  /** The command as written, which is what `jobs` prints. */
+  string cmd;
+  bool done;
+  i32 code;
+
+  Job of(i32 num, i32 pid, i32 handle, i32 errHandle, string cmd) {
+    return Job(num, pid, handle, errHandle, cmd, false, 0);
+  }
+}
+
 export struct Shell {
   Core core;
   Cli cli;
@@ -265,6 +293,17 @@ export struct Shell {
   i32 pid;
 
   /**
+   * The background jobs this shell started, oldest first.
+   *
+   * Held by the shell rather than by `Procs` because a job number is a *user interface*: it exists so
+   * a person can say `%1`, and it means nothing to the system. The pid inside it is the system's.
+   */
+  Vec<Job> jobs;
+
+  /** `$!` — the pid of the most recent `&`, or 0 before there has been one. */
+  i32 lastBgPid;
+
+  /**
    * Put this shell in its own process table and remember where.
    *
    * A shell is a process, and it was the one process this system did not know about: `mountSystem`
@@ -320,7 +359,7 @@ export struct Shell {
                  false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
-                 cli.cwd().wait(), true, 0);
+                 cli.cwd().wait(), true, 0, Vec.create(), 0);
   }
 
   /**
@@ -451,6 +490,9 @@ export struct Shell {
     // `$?` and `$#` always have a value. `$@` and `$*` do *not* — with no positional parameters
     // they are unset, which is why `${@-x}` substitutes and `${#-x}` does not.
     if (name == "?" || name == "#" || name == "$") { return true; }
+    // `$!` is *unset* until there has been a background command, which is why it is not with the
+    // three above: `${!-none}` substitutes in a fresh shell and does not after a `&`.
+    if (name == "!") { return this.lastBgPid != 0; }
     if (name == "@" || name == "*") { return this.params.len() > 0; }
     if (name.len() == 1) {
       u8[] b = name.toBytes();
@@ -469,6 +511,9 @@ export struct Shell {
     // `$$`, which the lexer already reads as a parameter named `$` — it simply had no value, so
     // `echo $$` printed an empty line where every other shell prints a number.
     if (name == "$") { return itoa(this.pid); }
+    // `$!`, the most recent background pid. Empty rather than 0 before there has been one, which is
+    // what bash answers — `echo [$!]` in a fresh shell prints `[]`.
+    if (name == "!") { return this.lastBgPid == 0 ? "" : itoa(this.lastBgPid); }
     if (name == "#") { return itoa(this.params.len()); }
     if (name == "@" || name == "*") {
       string all = "";
@@ -508,6 +553,13 @@ export i32 runScript(Shell sh, string src) {
     return 2;
   }
   runList(sh, script.lists);
+  // **Outstanding background jobs are waited for**, and that is a difference from bash rather than an
+  // omission. There, a job holds the terminal's descriptor and keeps writing after the shell exits;
+  // here the shell owns the child's pipes, so exiting would throw away whatever it had not read. The
+  // choice is between losing a job's output and waiting for it, and waiting is the one that does not
+  // silently discard something the user asked for. `reapJob` is idempotent, so a script that already
+  // said `wait` pays nothing.
+  for (i32 i = 0; i < sh.jobs.len(); i++) { reapJob(sh, i); }
   // **A signal from the *last* command still counts.** `unwinding` is asked before each command, so a
   // script whose final line is `kill -INT $$` set the row and then ran out of places to be asked:
   // it exited 0 where bash exits 130. One more ask, after the list, is where a shell finds out that
@@ -635,15 +687,23 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
   i32 status = 0;
   for (i32 k = i; k < argv.len(); k++) {
     string given = argv.get(k);
-    if (!isAllDigits(given)) {
-      // bash's wording, and it names job ids because bash has them. Ours does not — `jobs` and `&`
-      // are what step 3 has left — so a `%1` here reaches this line and gets bash's sentence, which
-      // is true of it: it is not a process id.
+    // `%1` is a job, and there are jobs now. bash takes both spellings here and so does this.
+    i32 pid = -1;
+    if (given.len() > 0 && given.slice(0, 1) == "%") {
+      i32 index = jobIndex(sh, given);
+      if (index < 0) {
+        err.pushAll(("kill: " + given + ": no such job\n").toBytes());
+        status = 1;
+        continue;
+      }
+      pid = sh.jobs.get(index).pid;
+    } else if (!isAllDigits(given)) {
       err.pushAll(("kill: " + given + ": arguments must be process or job IDs\n").toBytes());
       status = 1;
       continue;
+    } else {
+      pid = atoiOr(given, -1);
     }
-    i32 pid = atoiOr(given, -1);
     if (!sh.fs.procs.has(pid)) {
       err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
       status = 1;
@@ -722,6 +782,236 @@ bool isAllDigits(string s) {
   return true;
 }
 
+/**
+ * `cmd &` — design/0001 step 3's `&`, and the first thing in this shell that runs while it does not.
+ *
+ * A background job is a **real child**: `spawnSelf` gives it its own instance, its own grants and, on
+ * the host with no JavaScript in it, its own thread. That is the only honest way to do it here —
+ * running it in the foreground and calling it background is what the refusal this replaces was
+ * avoiding, and there is no in-process concurrency to fake it with.
+ *
+ * ## What is backgrounded, and what is refused by name
+ *
+ * One simple command. bash backgrounds a whole list in a subshell — `{ a; b; } &` and `a | b &` are
+ * both jobs there — and this cannot, because a subshell here is a `Shell.fork` running in *this*
+ * instance and there is nothing to run it on. So a compound or a pipeline says so rather than running
+ * in the foreground and reporting a job number for something that has already finished.
+ *
+ * A world with no `spawn` at all — a sealed session, a page — says that instead, which is a different
+ * sentence about a different thing: nothing is wrong with the command.
+ */
+void runBackground(Shell sh, AndOr list) {
+  if (list.items.len() != 1) {
+    sh.err(("sh: `&` on a list is not implemented: it needs a subshell to run in, and this shell's "
+          + "subshells run in this instance\n").toBytes());
+    sh.status = 2;
+    return;
+  }
+  Pipeline p = list.items.get(0).pipeline;
+  if (p.stages.len() != 1) {
+    sh.err("sh: `&` on a pipeline is not implemented: only a single command can be backgrounded\n"
+           .toBytes());
+    sh.status = 2;
+    return;
+  }
+  Command cmd = p.stages.get(0);
+  Vec<string> argv = Vec.create();
+  bool simple = false;
+  match (cmd.kind) {
+    case Plain: {
+      // `cmd.words` is `for`'s list and `case`'s subject; a plain command's are in `cmd.simple`.
+      simple = true;
+      for (i32 i = 0; i < cmd.simple.words.len(); i++) {
+        expandInto(sh, cmd.simple.words.get(i), argv);
+      }
+      // A redirection on a background command would have to be applied inside the child, which has
+      // its own streams — said rather than silently dropped, which is what ignoring it would be.
+      if (cmd.simple.redirs.len() > 0 || cmd.redirs.len() > 0) { simple = false; }
+    }
+    else: {}
+  }
+  if (!simple || argv.len() == 0) {
+    sh.err(("sh: `&` needs a simple command with no redirection: a compound one has no child to run "
+          + "in, and a redirection would have to be applied inside it\n").toBytes());
+    sh.status = 2;
+    return;
+  }
+
+  Child kid = spawnStage(sh, argv, false);
+  if (kid.unavailable()) {
+    // Not the command's fault and not a refusal of `&` as an idea: this world has no `spawn`. A
+    // sealed session is the case, and it is 0116 rather than anything here.
+    sh.err("sh: `&` needs a world that can spawn, and this one cannot\n".toBytes());
+    sh.status = 2;
+    return;
+  }
+  if (kid.handle < 0) {
+    sh.err(("sh: " + argv.get(0) + ": " + kid.error + "\n").toBytes());
+    sh.status = 126;
+    return;
+  }
+  // Nothing feeds a background job's input, and one that waited for a line would wait for ever —
+  // `init` learned the same thing about a service. bash gives a background job the terminal's stdin
+  // and lets it be stopped for reading it; there is no job control here to stop it with.
+  sh.cli.closeFeed(kid.handle);
+
+  i32 pid = sh.fs.procs.start(sh.pid, argv, sh.fs.now);
+  i32 num = sh.jobs.len() + 1;
+  string text = argv.get(0);
+  for (i32 i = 1; i < argv.len(); i++) { text = text + " " + argv.get(i); }
+  sh.jobs.push(Job.of(num, pid, kid.handle, kid.errHandle, text));
+  sh.lastBgPid = pid;
+  // bash announces a job at the moment it starts, on *stderr* — `[1] 3353553` — and only when the
+  // shell is interactive. A `-c` script gets nothing, which is what this matches.
+  sh.status = 0;
+}
+
+/** The job `%n` names, or -1. `%` and `%+` are the most recent, `%-` the one before it. */
+i32 jobIndex(Shell sh, string spec) {
+  if (sh.jobs.len() == 0) { return -1; }
+  if (spec == "%" || spec == "%+") { return sh.jobs.len() - 1; }
+  if (spec == "%-") { return sh.jobs.len() >= 2 ? sh.jobs.len() - 2 : -1; }
+  string digits = spec.slice(1, spec.len());
+  if (!isAllDigits(digits)) { return -1; }
+  i32 want = atoiOr(digits, -1);
+  for (i32 i = 0; i < sh.jobs.len(); i++) {
+    if (sh.jobs.get(i).num == want) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * Drain a job's two streams, take its status, and mark it done. Idempotent.
+ *
+ * The output arrives **here** rather than as the job produces it, and that is a real difference from
+ * bash: there, a background job holds the terminal's descriptor and writes to it directly, so its
+ * output interleaves with the shell's. Here the shell owns the child's pipes and is not running while
+ * the child is, so nothing can relay them until it asks. Said rather than approximated — the
+ * alternative was to claim live output by draining at each check point, which would still not be live
+ * and would reorder the shell's own writes around it.
+ */
+void reapJob(Shell sh, i32 index) {
+  Job j = sh.jobs.get(index);
+  if (j.done) { return; }
+  Buf out = Buf.create();
+  bool reading = true;
+  while (reading) {
+    match (sh.cli.recv(j.handle).wait()) {
+      case Data(bytes): { out.pushAll(bytes); }
+      case End: { reading = false; }
+      case Failed(why): { reading = false; }
+    }
+  }
+  Buf err = Buf.create();
+  bool complaining = j.errHandle >= 0;
+  while (complaining) {
+    match (sh.cli.recv(j.errHandle).wait()) {
+      case Data(bytes): { err.pushAll(bytes); }
+      case End: { complaining = false; }
+      case Failed(why): { complaining = false; }
+    }
+  }
+  j.code = sh.cli.exitCode(j.handle).wait();
+  sh.cli.closeSocket(j.handle);
+  if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
+  j.done = true;
+  j.handle = -1;
+  // Where a foreground command's output goes: collected when the shell is capturing — inside `$(…)`,
+  // or a session that sends it over a channel — and written straight out otherwise. `outBuf` alone
+  // was wrong for the ordinary case and the job's output simply vanished.
+  u8[] said = out.bytes();
+  if (said.len() > 0) {
+    if (sh.capture) { sh.outBuf.pushAll(said); } else { sh.cli.write(said); }
+  }
+  sh.err(err.bytes());
+  sh.fs.procs.exited(j.pid, j.code);
+  sh.fs.procs.reap(j.pid);
+}
+
+/**
+ * Forget every job that has finished.
+ *
+ * bash drops a job once it has been *accounted for* — waited for, or reported `Done` by `jobs` — and
+ * both spellings matter: `seq 1 2 & jobs; wait; jobs` lists it once and then lists nothing. A table
+ * that kept every job a script ever started would grow without bound and would make `%1` mean
+ * something different from what a person had just read.
+ */
+void dropFinished(Shell sh) {
+  Vec<Job> left = Vec.create();
+  for (i32 i = 0; i < sh.jobs.len(); i++) {
+    if (!sh.jobs.get(i).done) { left.push(sh.jobs.get(i)); }
+  }
+  sh.jobs = left;
+}
+
+/** `jobs` — what is running, in bash's own columns. */
+Output jobsBuiltin(Shell sh, Vec<string> argv) {
+  if (argv.len() > 1) {
+    return Output.fail(("jobs: " + argv.get(1) + ": options are not implemented\n").toBytes(), 2);
+  }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < sh.jobs.len(); i++) {
+    Job j = sh.jobs.get(i);
+    // bash's marks: `+` on the most recent job, `-` on the one before it, a space on the rest.
+    string mark = i == sh.jobs.len() - 1 ? "+" : (i == sh.jobs.len() - 2 ? "-" : " ");
+    // And bash's columns: `[N]M` then two spaces, then the state in a 24-wide field, then the
+    // command with the `&` it was written with. Measured from bash rather than guessed.
+    string state = j.done ? "Done" : "Running";
+    string pad = state;
+    while (pad.len() < 24) { pad = pad + " "; }
+    out.pushAll(("[" + itoa(j.num) + "]" + mark + "  " + pad + j.cmd + " &\n").toBytes());
+  }
+  // **A finished job is reported once and then forgotten**, which is bash: `seq 1 2 & jobs; wait;
+  // jobs` lists it, then lists nothing. A table that kept every job a script ever started would grow
+  // without bound and would make `%1` mean something different from what a person had just read.
+  dropFinished(sh);
+  return Output.ok(out.take());
+}
+
+/**
+ * `wait` — for one job, one pid, or all of them.
+ *
+ * bash's statuses exactly, and they are not what a reader guesses: bare `wait` is **always 0**, even
+ * when a job failed, while `wait $!` and `wait %1` answer the job's own status. A pid that is not a
+ * child of this shell is 127 with a message, and so is a job number there is no job for.
+ */
+Output waitBuiltin(Shell sh, Vec<string> argv) {
+  if (argv.len() == 1) {
+    for (i32 i = 0; i < sh.jobs.len(); i++) { reapJob(sh, i); }
+    dropFinished(sh);
+    // Always 0. `false & wait; echo $?` is 0 in bash — the status of the *wait*, which succeeded.
+    return Output.ok(u8[0]());
+  }
+  i32 status = 0;
+  for (i32 k = 1; k < argv.len(); k++) {
+    string spec = argv.get(k);
+    i32 index = -1;
+    if (spec.len() > 0 && spec.slice(0, 1) == "%") {
+      index = jobIndex(sh, spec);
+      if (index < 0) {
+        return Output.fail(("wait: " + spec + ": no such job\n").toBytes(), 127);
+      }
+    } else {
+      if (!isAllDigits(spec)) {
+        return Output.fail(("wait: " + spec + ": not a pid or valid job spec\n").toBytes(), 2);
+      }
+      i32 pid = atoiOr(spec, -1);
+      for (i32 i = 0; i < sh.jobs.len(); i++) {
+        if (sh.jobs.get(i).pid == pid) { index = i; }
+      }
+      if (index < 0) {
+        return Output.fail(("wait: pid " + spec + " is not a child of this shell\n").toBytes(), 127);
+      }
+    }
+    reapJob(sh, index);
+    status = sh.jobs.get(index).code;
+    // Taken before it is forgotten: a waited-for job is gone, so a second `wait %1` is "no such job"
+    // exactly as it is in bash.
+    dropFinished(sh);
+  }
+  return status == 0 ? Output.ok(u8[0]()) : Output(u8[0](), u8[0](), status, true);
+}
+
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
 void runList(Shell sh, Vec<AndOr> lists) {
   for (i32 i = 0; i < lists.len(); i++) {
@@ -731,12 +1021,7 @@ void runList(Shell sh, Vec<AndOr> lists) {
 }
 
 void runAndOr(Shell sh, AndOr list) {
-  if (list.background) {
-    // Refused rather than run in the foreground, which would look like it worked.
-    sh.err("sh: background commands are not implemented\n".toBytes());
-    sh.status = 2;
-    return;
-  }
+  if (list.background) { runBackground(sh, list); return; }
   for (i32 i = 0; i < list.items.len(); i++) {
     if (unwinding(sh)) { return; }
     Item item = list.items.get(i);
@@ -1174,7 +1459,7 @@ export bool isBuiltin(string name) {
       || name == "read" || name == "shift" || name == "set"
       || name == "break" || name == "continue" || name == "return" || name == "local"
       || name == "test" || name == "[" || name == "help" || name == "printf"
-      || name == "kill";
+      || name == "kill" || name == "jobs" || name == "wait";
 }
 
 /**
@@ -2370,6 +2655,8 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
     return Output.ok(u8[0]());
   }
   if (name == "kill") { return killBuiltin(sh, argv); }
+  if (name == "jobs") { return jobsBuiltin(sh, argv); }
+  if (name == "wait") { return waitBuiltin(sh, argv); }
   if (name == "set") { return setBuiltin(sh, argv); }
   if (name == "test" || name == "[") { return test(sh, argv); }
   if (name == "help") { return help(sh); }
