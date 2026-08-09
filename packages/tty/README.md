@@ -58,6 +58,32 @@ with `$COLUMNS` and `$LINES` following a `window-change`. A session with *no* pt
 than a guessed one, which is what lets a program tell "no terminal" from "a terminal I have never heard
 of".
 
-**The browser's `keydown` loop is not wired**, and that is the other half of step 5. The step's own
-criterion — `^C` ends a running `yes` — also needs something able to interrupt a running program: the
-process table exists now (step 3), so what is missing is the delivery half rather than the table.
+**The browser's `keydown` loop now speaks this module's language**, which was the thing in the way: a
+`keydown` used to reach a program as the browser's `ev.key` — "a", "Enter", "ArrowUp" — and `feed` takes
+a *byte*. `host/entryBrowser.ts` translates at the edge now, so `Ctrl-C` is 3 and Backspace is DEL, and
+`platform/test/keydown.test.ts` asserts that every byte this module branches on is producible from a
+keystroke. What is still not wired is the *editing*: `box/example/term.wac` uses an `<input>` and the
+browser does it, and taking that over costs the block caret, IME composition and paste — a decision
+with a price, written up beside the loop there.
+
+**Delivery is done and the criterion is still not met, and those are two different sentences.** `^C`
+sets a signal on a row and `packages/sh` collects it before every command and on every turn of a loop,
+so `kill -INT $$` ends a script with 130 and `kill %1` ends a background job. The step's own criterion —
+`^C` ends a running `yes` — needs something *else*: the keystroke has to be **read while the command is
+running**, and nothing does.
+
+That is not one blocker. It is two, and they want different answers:
+
+- **Over ssh it needs concurrency.** `sshd`'s session loop calls `runScript`, which blocks, so nothing
+  reads the channel until the command has finished — and nothing else can read it, because the bytes
+  are encrypted and `Conn` holds the cipher state. No poll fixes that; a second thread or worker
+  reading the channel does.
+- **In a page it needs a capability an applet can reach.** The event queue is the host's, not an
+  encrypted stream, so it *can* be polled — `Pending.isDone` is exactly that and needs no closures. But
+  a running `yes` is inside `dispatch`, so the shell's own check points are not reached, and an applet
+  is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page`. The seam therefore belongs on the
+  **capability** — something every applet already holds — rather than on the shell.
+
+Worth stating because the obvious plan is to give `Shell` a `Page` and poll at its check points. That
+would make `^C` work at the prompt, which it already does, and do nothing at all for a running command,
+which is the whole criterion.

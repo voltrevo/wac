@@ -43,6 +43,14 @@
 // A program that wants a keystroke at a time — an editor, a pager — needs that switch, and it is the
 // next thing this module wants rather than something it pretends to have.
 //
+// What is in the way is the *oracle*, not the code. Every rule above was measured through a pty, and
+// the harness for that is `script -qec cat`, which will not hold an `stty`: `stty -echo; cat` echoes
+// anyway, and `-icanon` leaves the oracle waiting for an EOF that raw mode does not deliver. Deno
+// cannot allocate a pty itself, which is why `script` is there at all. Modes could be written from the
+// termios manual in an afternoon — and then this module's own claim, that it was measured rather than
+// remembered, would stop being true of a third of it. That trade is design/0001's to make, and it is
+// in its open questions rather than settled here.
+//
 // **No `^S`/`^Q` flow control and no `^O` discard.** Those stop and start the *output*, which is
 // something a terminal does to a stream this module never sees — it edits input. `^O` is delivered as
 // an ordinary control character, which is what the pty comparison shows the kernel doing to the input
