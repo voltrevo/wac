@@ -241,14 +241,16 @@ export function cliOf(
       // A handle, then — when the handle is negative — why it never started. The host waits for the
       // source to load before answering, so "it is not a worker bundle" arrives here as a `Child`
       // with a reason rather than as an error that killed this program. wac-mono issue 0021.
-      // Two handles, then — when they are negative — why there is nothing to read. The output stream
-      // and the error stream are separate because a program has two of them; see `Child`.
+      // Three handles, then — when they are negative — why there is nothing to read. The output
+      // stream and the error stream are separate because a program has two of them, and the third is
+      // the filesystem channel a child asks its parent on; see `Child`.
       const out = collect(b, unpack(id));
       const handle = readI32le(out);
       const errHandle = readI32le(out.subarray(4));
-      return cls.Child.of(handle, errHandle, handle < 0 ? unstr(out.subarray(8)) : "");
+      const fsHandle = readI32le(out.subarray(8));
+      return cls.Child.of(handle, errHandle, fsHandle, handle < 0 ? unstr(out.subarray(12)) : "");
     } catch (e) {
-      return cls.Child.of(-1, -1, e instanceof Error ? e.message : String(e));
+      return cls.Child.of(-1, -1, -1, e instanceof Error ? e.message : String(e));
     }
   };
   const captured = (id: number) => {
@@ -473,7 +475,14 @@ export function cliOf(
     (handle: number) => { hostCall(b, OP.CLOSE_SOCKET, i32le(handle)); },
 
     /*= spawn */
-    (source: string, args: Uint8Array[], grants: number, cwd: string, inheritIn: boolean) =>
+    (
+      source: string,
+      args: Uint8Array[],
+      grants: number,
+      cwd: string,
+      inheritIn: boolean,
+      serveFs: boolean,
+    ) =>
       // The grant flags, then the source length-prefixed, then the arguments length-prefixed and
       // NUL-separated — the same shape `readDir` answers with, for the same reason: a filename or an
       // argument may contain anything but a NUL — and then the child's directory.
@@ -485,7 +494,10 @@ export function cliOf(
             i32le(grants),
             prefixed(
               str(source),
-              headed(argvBytes(args), prefixed(str(cwd), flag(inheritIn))),
+              headed(
+                argvBytes(args),
+                prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs))),
+              ),
             ),
           ),
         ),
@@ -493,14 +505,20 @@ export function cliOf(
     /*= spawnSelf */
     // No source: the host has this program's own bundle, because it is what started it. The payload
     // is the grants and the arguments, in the shape `spawn` uses minus the part that is already here.
-    (args: Uint8Array[], grants: number, cwd: string, inheritIn: boolean) =>
+    (
+      args: Uint8Array[],
+      grants: number,
+      cwd: string,
+      inheritIn: boolean,
+      serveFs: boolean,
+    ) =>
       T.child(
         submit(
           b,
           OP.SPAWN_SELF,
           headed(
             i32le(grants),
-            headed(argvBytes(args), prefixed(str(cwd), flag(inheritIn))),
+            headed(argvBytes(args), prefixed(str(cwd), headed(flag(inheritIn), flag(serveFs)))),
           ),
         ),
       ),

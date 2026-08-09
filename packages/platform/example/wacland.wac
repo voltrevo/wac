@@ -85,7 +85,7 @@ export i32 main(Core core, Cli cli) {
   // own, so asking for more than this program has would not widen it anyway.
   u8[][] childArgv = u8[][1](fill: u8[0]());
   childArgv[0] = "--child".toBytes();
-  Child kid = cli.spawnSelf(childArgv, GRANT_NONE, "", false).wait();
+  Child kid = cli.spawnSelf(childArgv, GRANT_NONE, "", false, false).wait();
   if (kid.unavailable()) {
     core.log("wacland: stage 5 no spawn in this world");
     core.log("wacland: reached the end of what is implemented");
@@ -127,7 +127,7 @@ export i32 main(Core core, Cli cli) {
 string childSays(Core core, Cli cli, i32 grants) {
   u8[][] argv = u8[][1](fill: u8[0]());
   argv[0] = "--canread".toBytes();
-  Child kid = cli.spawnSelf(argv, grants, "", false).wait();
+  Child kid = cli.spawnSelf(argv, grants, "", false, false).wait();
   if (kid.handle < 0) { return "no child"; }
   string said = "";
   while (true) {

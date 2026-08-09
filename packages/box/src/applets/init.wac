@@ -98,7 +98,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // say what it should be given. That is a gap rather than a decision — an `/etc/init` that could
     // name grants per service is the next thing this file wants — and `GRANT_NONE` is the honest
     // floor rather than handing every service everything this program has.
-    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false).wait();
+    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false, false).wait();
     if (kid.unavailable()) {
       core.warn("init: this world cannot spawn, so no service can start");
       return 1;

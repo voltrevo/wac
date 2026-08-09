@@ -281,7 +281,7 @@ Node? startNode(Core core, Cli cli, Directive d) {
     return null;
   }
   Child kid = cli.spawn(string.fromBytes(prog.bytes), d.args,
-                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false).wait();
+                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false, false).wait();
   if (kid.handle < 0) {
     core.warn("network: " + d.name + ": " + kid.error);
     return null;
@@ -444,7 +444,7 @@ i32 runOnce(Core core, Cli cli, Directive d) {
     return 1;
   }
   Child kid = cli.spawn(string.fromBytes(prog.bytes), d.args,
-                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false).wait();
+                        GRANT_READ | GRANT_WRITE | GRANT_NET, "", false, false).wait();
   if (kid.handle < 0) {
     core.warn("network: " + d.name + ": " + kid.error);
     return 1;

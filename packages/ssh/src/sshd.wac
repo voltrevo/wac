@@ -57,7 +57,8 @@ import { AuthRequest, authFailure, authSuccess, channelClose, channelData, chann
          byApplication, disconnect } from "./server.wac";
 import { equal } from "../../bytes/src/slice.wac";
 import { User, authorizedKeysOf, parsePasswd, userNamed } from "../../fs/src/passwd.wac";
-import { boxNames, boxRun } from "../../box/src/shrun.wac";
+import { boxApplet, boxNames, boxRun } from "../../box/src/shrun.wac";
+import { UNKNOWN } from "../../box/src/box.wac";
 
 i32 defaultPort() { return 2222; }
 i32 windowSize() { return 2 * 1024 * 1024; }
@@ -81,6 +82,13 @@ u8[] serverVersionLine() {
 }
 
 export i32 main(Core core, Cli cli) {
+  // **This program is also `packages/box`'s applets**, so that a session can spawn its pipeline
+  // stages: a stage re-enters `main` with the applet's name first. Without it a spawned `sort` would
+  // start a second sshd and hand it a script called `sort`. See `sessionShell` for what the stage
+  // then reads, which is the session's filesystem rather than this machine's.
+  i32 asApplet = boxApplet(core, cli);
+  if (asApplet != UNKNOWN) { return asApplet; }
+
   Options o = parseArgs(core, cli);
   if (o.exitCode >= 0) { return o.exitCode; }
 
@@ -176,30 +184,25 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
   // untouched function fail to compile, because two packages declare a `Writer` and the emitter picked
   // whichever registered first.
   //
-  // **Not `externalSpawnable`, and the reason is the seal rather than the entry point.**
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  // **Spawnable when this session has a filesystem of its own** — wac-mono 0116, and design/0001
+  // step 3's criterion, "`ps` shows the pipeline you are running".
   //
-  // The old comment here said `sshd` is not a multi-call binary, so a spawn would start another
-  // server. That was true and it was fixable in three lines — `boxApplet` first, as `sealedsh` does —
-  // so it was tried, and the result is the reason this line is a `//` and not an assignment:
+  // It was not, and the note here used to explain why at length. Making the server multi-call took
+  // three lines and worked, and unsealed the session:
   //
   //     echo inimage > /f; cat /f        ->  cat: /f: No such file or directory
   //     cat /etc/hostname                ->  13f160bf57e5
   //
-  // A spawned stage is a **fresh instance**, and `boxApplet` gives a fresh instance `Fs.onHost` — the
-  // host's filesystem, which is what `box` run as a program should have. So a stage of a *sealed*
-  // session could not see the image it was sealed in and could see the machine it was running on.
-  // That is precisely what design/0001 exists to prevent, and it fails silently: the pipeline works,
-  // the answers are wrong, and nothing says so.
+  // because a spawned stage was a fresh instance and a fresh instance built `Fs.onHost`. It asks its
+  // parent now, so a stage of a session booted on an image sees that image and nothing else, and the
+  // criterion is met over ssh: `seq 1 200000 | ps` lists the session, `seq` and `ps`.
   //
-  // So a session whose filesystem is the system's own cannot spawn its stages. `sealedsh` and
-  // `imaged` are the same and say so more briefly. `packages/box/src/bin/sh.wac` spawns freely
-  // because its world *is* the host's, which is the whole difference.
-  //
-  // The cost is design/0001 step 3's criterion: `ps` here shows the session and itself and never the
-  // pipeline, because the stages ran one at a time. Paying it is right — a `ps` that showed more by
-  // reading the wrong disk would be worse than one that shows less.
-  sh.external = boxRun;
-  sh.externalNames = boxNames;
+  // Only with an image. A session with none is `Shell.capturing` over the host's own filesystem,
+  // where `serveFsFor` correctly declines to serve — a stage of one builds the same `Fs.onHost` its
+  // parent has, which is the same disk with the same grants.
+  if (o.image != "") { sh.externalSpawnable = true; }
   // **What terminal the client says it has** — design/0001 step 5's "a `TERM` worth setting".
   //
   // Set only when the client asked for a pty and said so: `ssh -T host` sends no `pty-req`, and a

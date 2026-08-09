@@ -1,6 +1,6 @@
 # 0116 — a spawned stage gets the host's world, not the session's
 
-- **Status:** open
+- **Status:** closed, 2026-08-09
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** missing feature
@@ -35,7 +35,55 @@ Actual: a stage read the machine the server is running on.
 
 The pipeline works; the answers come from the wrong disk; nothing says so.
 
-## Why this is filed rather than fixed
+## Fixed, 2026-08-09 — option 4, which was not on the list
+
+**A spawned child does not get a filesystem. It gets a channel to its parent's.**
+
+`packages/fs/src/remote.wac` and `serve.wac`: a fourth `Backing`, whose every operation is a request
+on a handle, and a server that applies one to an ordinary `Fs`. `spawnSelf` grew a third stream
+(`Child.fsHandle`) and a `serveFs` flag — a promise to answer, not a grant — and `packages/sh` serves
+its children with `waitAny` alongside their output, because a stage blocked on `readFile` writes
+nothing and a parent that waited for output first would be waiting for a child waiting for it.
+
+What that buys over each of the three options below: nothing is duplicated, so there is no second
+filesystem to diverge, no copy to write back, and no permission check to reimplement. A child's writes
+are its parent's writes. A question is answered **as the process that asked it**, which is what
+`/proc/self` means — `cat /proc/self/cmdline` in a spawned `cat` prints `cat\0/proc/self/cmdline\0`,
+as bash does, and printed the session's command line until the server set `procs.current`.
+
+The two lines in the reproduction now answer `inimage` and "No such file or directory".
+
+### What it unblocked
+
+- **design/0001 step 3's criterion**, which this cost: `seq 1 200000 | ps` over ssh on an image lists
+  the session, `seq` and `ps`. `packages/ssh/test/server.test.ts`.
+- **Sealed sessions spawn.** `sealedsh`, `imaged` and `sshd -i` are all `externalSpawnable` now, so a
+  pipeline streams instead of running a stage at a time. `imaged`'s "a redirection lands in the image"
+  is a property of the code rather than of which grants it was built with.
+- **`&` in a sealed session**, including a background job that reads the session's files — served at
+  the shell's own check points, so it makes progress before anything waits for it.
+- **The browser terminal is the same system in a tab.** `term.wac` mounts `/dev`, `/proc` and `/bin`;
+  it deliberately mounted none of them because the shell would have had a world its programs could
+  not see. `browser_live.test.ts` asks a real Chromium `ls /bin | wc -l` **through a pipe** and gets
+  63.
+
+### What checked it
+
+The 817-script shell corpus, through memory, image and a host mount, with the memory and image ends
+spawning every stage over the channel: 817 of 817 agree (`deno task corpus:backings`). That is the
+differential for the eighteen `case Remote` arms, and it was the reason not to write a hand-made list
+of them — `fs.wac`'s matches all end in `else`, so a forgotten arm compiles and answers out of an
+empty local tree.
+
+Two live regressions it caught, both in `ps`: a stage's parent was the shell rather than the running
+frame, and `/proc/self` was the session.
+
+### Not fixed by this
+
+A signal to a stage of a running pipeline. The stages are real children with handles now, so one
+*could* arrive; `kill` reaches the row this shell keeps, and a child has a process table of its own.
+
+## Why this was filed rather than fixed (the state before the above)
 
 The fix is a decision about what `spawnSelf` means, and there are at least three answers:
 
@@ -49,8 +97,11 @@ The fix is a decision about what `spawnSelf` means, and there are at least three
    criterion: `ps` in the ssh demo shows the session and itself and never the pipeline, because the
    stages ran one at a time.
 
-Option 3 is the current behaviour and is *safe*; the criterion it fails is real. Choosing between 1 and
-2 is a change to the capability layer, which is `packages/platform` and shared.
+Option 3 was the behaviour for a year and is *safe*; the criterion it failed is real. Choosing between
+1 and 2 is a change to the capability layer, which is `packages/platform` and shared.
+
+What the list got wrong, worth keeping: all three treat the filesystem as a **thing to be handed
+over**, and argue about the form. The answer was that it does not have to move at all.
 
 ## Notes
 
@@ -79,8 +130,9 @@ So the shell had a world its programs could not see. Both ways out were tried:
 - **keep the half world**, which leaves a system that answers differently depending on which route the
   shell took — the quiet-wrong-answer shape.
 
-So a tab has no `/dev`, `/proc` or `/bin`, the browser test **asserts their absence**, and design/0001's
-"the same system in a tab" waits on this issue. When it is decided, those assertions turn positive.
+So a tab had no `/dev`, `/proc` or `/bin` and the browser test **asserted their absence**. Those
+assertions are positive now, and asked through a pipe — which is the spawning route, and the only way
+to ask the question that was broken.
 
 
 ## A second thing that lands with this: `>` has two implementations

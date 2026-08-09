@@ -20,7 +20,9 @@ import {
   failedChild,
   noSpawnHere,
   spawnChild,
-  twoHandles,
+  childHandles,
+  FIRST_FREE_HANDLE,
+  PARENT_FS_HANDLE,
   unpackSpawn,
   unpackSpawnSelf,
   want,
@@ -121,6 +123,8 @@ export type NodeWorldOptions = {
   fs?: { read?: boolean; write?: boolean };
   net?: boolean;
   env?(name: string): string | undefined;
+  /** The channel to this program's parent's filesystem, when it is a spawned child — see `deno.ts`. */
+  parentFs?: { req: ByteQueue; rep: ByteQueue };
 };
 
 const EMPTY = new Uint8Array(0);
@@ -213,7 +217,9 @@ export function nodeWorld(
    * socket in one call.
    */
   const errStreams = new Map<number, ByteQueue>();
-  let nextHandle = 1;
+  /** A child's filesystem channel, by its own handle — see the note in `deno.ts`. */
+  const fsChannels = new Map<number, { req: ByteQueue; rep: ByteQueue }>();
+  let nextHandle = FIRST_FREE_HANDLE;
 
   /**
    * Start a child on `source`, with `want` narrowed to this world's own authority.
@@ -227,6 +233,7 @@ export function nodeWorld(
     wanted: number,
     childCwd: string,
     inheritIn: boolean,
+    serveFs: boolean,
   ): Promise<Uint8Array> => {
     const makeWorker = opts.makeWorker;
     if (makeWorker === undefined) {
@@ -239,7 +246,7 @@ export function nodeWorld(
       env: (wanted & GRANT_ENV) !== 0 && opts.env !== undefined,
     };
     const h = nextHandle++;
-    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr) => {
+    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs) => {
       const enc = new TextEncoder();
       // The child's stdio is the parent's queues. Everything else about its world — files, sockets,
       // the clock — is this world's, narrowed by `give`.
@@ -269,11 +276,20 @@ export function nodeWorld(
         log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
         warn: async (l: string) => { await cerr.push(enc.encode(l + "\n")); },
         makeWorker,
+        // Its parent's filesystem, on a handle of its own — wac-mono 0116, and see `deno.ts` for
+        // why this is passed unconditionally rather than as a grant.
+        parentFs,
         selfSource: opts.selfSource,
         cwd: childCwd === "" ? opts.cwd : childCwd,
       }));
     }, newBridge, makeWorker, graceEnv());
 
+    // **A parent that will not serve says so before the child runs.** Ending the reply queue is
+    // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,
+    // reads end-of-channel, and falls back to the host. Every spawner that predates the channel
+    // passes false, so nothing that used to work now waits on a parent that was never going to
+    // answer. See `spawnSelf` in platform.wac.
+    if (!serveFs) child.fsRep.end();
     const why = await child.loaded;
     if (why !== "") {
       child.kill();
@@ -282,9 +298,11 @@ export function nodeWorld(
     // Two handles for one child: its output and its error stream. Numbered from the same counter, so
     // `waitAny` can watch both beside a socket without knowing which is which.
     const eh = nextHandle++;
+    const fh = nextHandle++;
     children.set(h, child);
     errStreams.set(eh, child.err);
-    return twoHandles(h, eh, "");
+    fsChannels.set(fh, { req: child.fsReq, rep: child.fsRep });
+    return childHandles(h, eh, fh, "");
   };
   // `Faulted`, so a withheld capability arrives as its own category rather than as an `EACCES` lookalike:
   // `FAULT_DENIED` is the file saying no, and this is the program never having been given the file.
@@ -425,8 +443,8 @@ export function nodeWorld(
      * act on: -2, "there is no spawn here", which is not a fact about the program.
      */
     [OP.SPAWN]: (p) => {
-      const { source, args, cwd, inheritIn } = unpackSpawn(p);
-      return startChild(source, args, want(p), cwd, inheritIn);
+      const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
+      return startChild(source, args, want(p), cwd, inheritIn, serveFs);
     },
 
     /** This same program again, with different arguments. See `spawnSelf` in platform.wac. */
@@ -436,8 +454,8 @@ export function nodeWorld(
           noSpawnHere("this launcher did not pass the program its own source"),
         );
       }
-      const { args, cwd, inheritIn } = unpackSpawnSelf(p);
-      return startChild(opts.selfSource, args, want(p), cwd, inheritIn);
+      const { args, cwd, inheritIn, serveFs } = unpackSpawnSelf(p);
+      return startChild(opts.selfSource, args, want(p), cwd, inheritIn, serveFs);
     },
     [OP.CLOSE_FEED]: (p) => {
       children.get(readI32le(p))?.in.end();
@@ -579,6 +597,16 @@ export function nodeWorld(
         const said = await complaint.next();
         return said.length === 0 ? END : data(said);
       }
+      // The two ends of a child's filesystem channel — see the note in `deno.ts`.
+      if (h === PARENT_FS_HANDLE && opts.parentFs !== undefined) {
+        const answer = await opts.parentFs.rep.next();
+        return answer.length === 0 ? END : data(answer);
+      }
+      const asking = fsChannels.get(h);
+      if (asking !== undefined) {
+        const request = await asking.req.next();
+        return request.length === 0 ? END : data(request);
+      }
       const c = sockets.get(h);
       if (c === undefined) return failed("not an open socket");
       try {
@@ -591,6 +619,15 @@ export function nodeWorld(
     [OP.SEND]: async (p) => {
       const kid = children.get(readI32le(p));
       if (kid !== undefined) { kid.in.push(p.slice(4)); return EMPTY; }
+      if (readI32le(p) === PARENT_FS_HANDLE && opts.parentFs !== undefined) {
+        await opts.parentFs.req.push(p.slice(4));
+        return EMPTY;
+      }
+      const answering = fsChannels.get(readI32le(p));
+      if (answering !== undefined) {
+        await answering.rep.push(p.slice(4));
+        return EMPTY;
+      }
       const c = sockets.get(readI32le(p));
       if (c === undefined) throw new Error("not an open socket");
       await c.send(p.subarray(4));
@@ -603,10 +640,14 @@ export function nodeWorld(
       // A child's handle ends its input and stops it, as in every host: `closeFeed` is the one that
       // ends the input alone.
       try { children.get(h)?.in.end(); children.get(h)?.kill(); } catch { /* gone */ }
+      // Ending a filesystem channel is how a child parked on a request learns nobody will answer.
+      const channel = fsChannels.get(h);
+      if (channel !== undefined) { channel.req.end(); channel.rep.end(); }
       sockets.delete(h);
       listeners.delete(h);
       children.delete(h);
       errStreams.delete(h);
+      fsChannels.delete(h);
       return EMPTY;
     },
 

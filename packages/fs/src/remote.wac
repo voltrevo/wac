@@ -1,0 +1,445 @@
+// A filesystem that lives in another process: the child's end, and the parent's.
+//
+// This is wac-mono 0116. A spawned child is a separate instance with its own memory — that
+// separation is what `spawnSelf` exists to provide, and it is also why a child could not see its
+// parent's *filesystem*. A session booted on an image holds that image as a wac value, and there is
+// no route from one instance's memory to another's. So a spawned stage got `Fs.onHost` — the actual
+// machine — and the consequences ran the whole length of the system: a sealed session could not
+// spawn at all without unsealing itself, `ps` over ssh never showed a live pipeline, `&` was refused
+// in an image, and the browser terminal deliberately mounted *less* than it could because a shell's
+// `/proc` would not be its applets' `/proc`.
+//
+// ## Not a copy. A question and an answer
+//
+// The obvious fix is to hand a child the image at spawn. It is wrong, and worth saying why, because
+// it is the version somebody will propose again: two copies of a filesystem are two filesystems. A
+// child's `sort -o out` would write into its own and the file would vanish when it exited; two
+// stages of one pipeline would disagree about a file the first had just written; and the parent's
+// `user` and permission checks would be duplicated into a process that could simply not do them.
+//
+// So the child holds no filesystem at all. It holds a **channel**, and every operation is a question
+// its parent answers out of the one filesystem there is. That is what a kernel is, and the
+// properties that follow are the ones that matter: the child's writes are its parent's writes, its
+// permission checks run against its parent's `user`, and what it can see is whatever its parent has
+// mounted — `/proc`, `/bin`, `/dev` and the image — without any of it being described twice.
+//
+// ## What it is not
+//
+// **It is not a grant, and it is not confinement.** Every child gets a channel whether or not it
+// asks; what it can *do* on it is exactly what its parent is willing to answer, and a parent that
+// never serves leaves the child's first question unanswered. The confinement question — which files
+// a child may see — is the parent's `Fs`, and is unchanged by any of this.
+//
+// **It is not concurrent.** A request occupies the child until its parent answers, so a child that
+// asks while its parent is not serving is parked, and a parent serving one child is not serving
+// another. `packages/sh` serves with `waitAny` for that reason, alongside the child's output.
+//
+// ## The wire
+//
+// A frame is `u32 length` then that many bytes, in both directions — the child's questions and the
+// parent's answers alternate on one channel, so a length is what tells them apart from whatever the
+// transport chose to chunk. `recv` gives arbitrary pieces of a stream and the four hosts chunk
+// differently, so a protocol that trusted a read to be a message would work on three of them.
+//
+// A request is an opcode byte and its arguments; an answer is the encoding of whatever that
+// operation returns. Both use `wire.wac`, which is `image.wac`'s codec — one set of conventions for
+// every format this package writes.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Read } from core;
+import { Change, Cli, FAULT_OTHER, FileResult, Pending, Stat }
+  from "../../platform/src/platform.wac";
+import { Reader, putI64, putString } from "./wire.wac";
+
+// ── What a child can ask ──────────────────────────────────────────────────────
+//
+// One per operation `Fs` dispatches on its backing. **`linkStat` is not one of them**, and that is
+// not an omission: `Fs.linkStat` is `this.stat(path)` on every backing there is, so a remote mount
+// that asked a question of its own would be answering something its own filesystem does not
+// distinguish. When `Fs` grows a real `linkStat`, this grows an opcode with it.
+// They are numbered rather than derived, and
+// `test/remote.test.ts` is what holds this list to `Fs`'s: it drives every method of an `Fs` over a
+// channel against the same method of the `Fs` serving it, so an operation with no opcode here shows
+// up as an answer that disagrees rather than as a smaller list nobody counted.
+
+export i32 ASK_READ_FILE() { return 1; }
+export i32 ASK_READ_SOME() { return 2; }
+export i32 ASK_STAT() { return 3; }
+export i32 ASK_READ_DIR() { return 4; }
+export i32 ASK_WRITE_FILE() { return 5; }
+export i32 ASK_MKDIR() { return 6; }
+export i32 ASK_REMOVE() { return 7; }
+export i32 ASK_CHMOD() { return 8; }
+export i32 ASK_CHOWN() { return 9; }
+export i32 ASK_RENAME() { return 10; }
+export i32 ASK_OPEN_OUT() { return 11; }
+export i32 ASK_WRITE_OUT() { return 12; }
+export i32 ASK_CLOSE_OUT() { return 13; }
+export i32 ASK_IS_HOST_PATH() { return 14; }
+
+/**
+ * The channel to a filesystem in another process.
+ *
+ * Held by a `Backing.Remote`, and by nothing else: a program does not talk to this, it holds an `Fs`
+ * that does.
+ */
+export struct Chan {
+  Cli cli;
+  /**
+   * Which handle. `PARENT_FS` in a child; whatever `spawnSelf` answered in a parent.
+   *
+   * A field rather than the constant, because the *server* side is the same code with a different
+   * number — a parent serving three children has three of these, and one of them is not `PARENT_FS`.
+   */
+  i32 handle;
+  /**
+   * Bytes read from the channel that are not yet a whole frame.
+   *
+   * A stream, not a message queue: one `recv` can answer with half a frame or with two of them, and
+   * this is where the remainder waits. Without it the second question of a pair would read the tail
+   * of the first answer as a length.
+   */
+  Buf held;
+  /**
+   * How far into `held` the next unread byte is.
+   *
+   * An offset rather than dropping consumed bytes, because a `Buf` cannot cheaply lose its front and
+   * a channel that copied its backlog on every message would be quadratic in a directory listing.
+   * `compact` is what stops it growing without bound.
+   */
+  i32 at;
+  /**
+   * Whether the far end has gone.
+   *
+   * **Every answer after this is a fault rather than a wait.** A child whose parent has exited must
+   * not park for ever on a question nobody will read, and the caller of a filesystem operation
+   * cannot be told "the channel broke" in any language but a fault — so it is `FAULT_OTHER` with a
+   * sentence saying which end went, and a program prints it the way it prints any other failure.
+   */
+  bool broken;
+  /**
+   * The read that is always outstanding on this handle.
+   *
+   * **One, and owned here**, because two reads on one handle is a bug that only appears under load:
+   * a shell serving a child *and* watching it with `waitAny` needs a ticket to wait on, and if it
+   * issued that ticket itself there would be a second `recv` in flight whenever the channel read a
+   * frame in more than one piece. So the channel holds the ticket and lends its id — `armed` is
+   * what says whether the one in `pending` has been collected yet.
+   *
+   * Armed from construction, so a caller can put `pending.id` into a `waitAny` before anything has
+   * been asked. That costs one call slot per channel, which is what a shell serving its children
+   * spends and is bounded by how many children it has.
+   */
+  Pending<Read> pending;
+  bool armed;
+
+  Chan of(Cli cli, i32 handle) {
+    return Chan(cli, handle, Buf.create(), 0, false, cli.recv(handle), true);
+  }
+
+  /** The ticket a `waitAny` should watch to know this channel has something to say. */
+  i32 waitId(this) {
+    this.rearm();
+    return this.pending.id;
+  }
+
+  /** Put a read back in flight if the last one has been collected. */
+  void rearm(this) {
+    if (!this.armed && !this.broken) {
+      this.pending = this.cli.recv(this.handle);
+      this.armed = true;
+    }
+  }
+}
+
+/**
+ * Ask, and wait for the answer.
+ *
+ * Returns a `Reader` positioned at the answer's first byte, or one that is `bad` when the channel
+ * has gone — every decoder below checks `bad` first and answers with a fault, so a broken channel
+ * becomes a failed operation rather than a trap or a hang.
+ */
+Reader ask(Chan c, Buf request) {
+  if (c.broken) { return Reader(u8[0](), 0, 0, true, "the filesystem channel is closed"); }
+  u8[] body = request.bytes();
+  Buf framed = Buf.create();
+  framed.pushU32(body.len() as@ u32);
+  framed.pushAll(body);
+  if (!c.cli.send(c.handle, framed.bytes()).wait()) {
+    c.broken = true;
+    return Reader(u8[0](), 0, 0, true, "the filesystem channel would not take the request");
+  }
+  return answer(c);
+}
+
+/** One whole frame from the channel, reading as many chunks as it takes. */
+export Reader answer(Chan c) {
+  while (true) {
+    // A frame is knowable as soon as its length and its body are both here. Checked before every
+    // read as well as after, since the previous answer may have brought this one with it.
+    i32 have = c.held.len - c.at;
+    if (have >= 4) {
+      i32 want = frameLength(c);
+      if (want < 0) {
+        c.broken = true;
+        return Reader(u8[0](), 0, 0, true, "a filesystem answer longer than two gigabytes");
+      }
+      if (have >= 4 + want) {
+        u8[] all = c.held.bytes();
+        i32 from = c.at + 4;
+        c.at = c.at + 4 + want;
+        compact(c);
+        return Reader(all, from + want, from, false, "");
+      }
+    }
+    c.rearm();
+    // Collected, so the next turn of this loop arms a fresh one. A read is in flight exactly when
+    // `armed` says it is, which is what lets a `waitAny` elsewhere hold this channel's ticket.
+    c.armed = false;
+    match (c.pending.wait()) {
+      case Data(bytes): { c.held.pushAll(bytes); }
+      // The far end has gone. Not an error in itself — a parent that has finished with a child
+      // closes the channel — but every question still outstanding is now unanswerable.
+      case End: {
+        c.broken = true;
+        return Reader(u8[0](), 0, 0, true, "the filesystem channel ended");
+      }
+      case Failed(why): {
+        c.broken = true;
+        return Reader(u8[0](), 0, 0, true, why);
+      }
+    }
+  }
+  return Reader(u8[0](), 0, 0, true, "unreachable");
+}
+
+/** The length prefix at the cursor, or -1 if it does not fit in a signed i32. */
+i32 frameLength(Chan c) {
+  u8[] all = c.held.bytes();
+  i32 v = all[c.at] | (all[c.at + 1] << 8) | (all[c.at + 2] << 16) | (all[c.at + 3] << 24);
+  return v;
+}
+
+/**
+ * Drop what has been consumed, once there is enough of it to be worth the copy.
+ *
+ * Nothing outstanding is the common case — a request and its answer, then nothing — so the usual
+ * effect is to empty the buffer entirely.
+ */
+void compact(Chan c) {
+  if (c.at == 0) { return; }
+  u8[] all = c.held.bytes();
+  Buf rest = Buf.create();
+  for (i32 i = c.at; i < all.len(); i++) { rest.push(all[i]); }
+  c.held = rest;
+  c.at = 0;
+}
+
+// ── Asking ────────────────────────────────────────────────────────────────────
+
+Buf request(i32 op) {
+  Buf b = Buf.create();
+  b.push(op);
+  return b;
+}
+
+export FileResult remoteReadFile(Chan c, string path) {
+  Buf b = request(ASK_READ_FILE());
+  putString(b, path);
+  return decodeFileResult(ask(c, b));
+}
+
+export FileResult remoteReadSome(Chan c, string path, i32 n) {
+  Buf b = request(ASK_READ_SOME());
+  putString(b, path);
+  b.pushU32(n as@ u32);
+  return decodeFileResult(ask(c, b));
+}
+
+export Stat remoteStat(Chan c, string path) {
+  Buf b = request(ASK_STAT());
+  putString(b, path);
+  return decodeStat(ask(c, b));
+}
+
+export string[]? remoteReadDir(Chan c, string path) {
+  Buf b = request(ASK_READ_DIR());
+  putString(b, path);
+  return decodeNames(ask(c, b));
+}
+
+export Change remoteWriteFile(Chan c, string path, u8[] data) {
+  Buf b = request(ASK_WRITE_FILE());
+  putString(b, path);
+  b.pushU32(data.len() as@ u32);
+  b.pushAll(data);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteMkdir(Chan c, string path, bool parents) {
+  Buf b = request(ASK_MKDIR());
+  putString(b, path);
+  b.push(parents ? 1 : 0);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteRemove(Chan c, string path, bool recursive) {
+  Buf b = request(ASK_REMOVE());
+  putString(b, path);
+  b.push(recursive ? 1 : 0);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteChmod(Chan c, string path, i32 mode) {
+  Buf b = request(ASK_CHMOD());
+  putString(b, path);
+  b.pushU32(mode as@ u32);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteChown(Chan c, string path, string owner) {
+  Buf b = request(ASK_CHOWN());
+  putString(b, path);
+  putString(b, owner);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteRename(Chan c, string from, string to) {
+  Buf b = request(ASK_RENAME());
+  putString(b, from);
+  putString(b, to);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteOpenOut(Chan c, string path) {
+  Buf b = request(ASK_OPEN_OUT());
+  putString(b, path);
+  return decodeChange(ask(c, b));
+}
+
+export bool remoteWriteOut(Chan c, u8[] bytes) {
+  Buf b = request(ASK_WRITE_OUT());
+  b.pushU32(bytes.len() as@ u32);
+  b.pushAll(bytes);
+  Reader r = ask(c, b);
+  return !r.bad && r.byte() == 1;
+}
+
+export Change remoteCloseOut(Chan c) {
+  return decodeChange(ask(c, request(ASK_CLOSE_OUT())));
+}
+
+/**
+ * Whether there is a parent on the other end that is going to answer.
+ *
+ * One real question — the cheapest one — rather than a handshake byte, because a question is the
+ * thing that has to work anyway and a handshake would be a second protocol to keep in step. Three
+ * answers, and each is a fact the caller needs: an answer means a parent serving this child; end of
+ * channel means a parent that said at spawn time it would not serve (`serveFs` false, which ends the
+ * reply queue before the child runs); and a failure means this program was not spawned at all, so
+ * `PARENT_FS` names nothing.
+ *
+ * The `Chan` is left usable, so the caller keeps the channel it just proved rather than paying for a
+ * second one.
+ */
+export bool parentAnswers(Chan c) {
+  Buf b = request(ASK_IS_HOST_PATH());
+  putString(b, "/");
+  Reader r = ask(c, b);
+  return !r.bad;
+}
+
+export bool remoteIsHostPath(Chan c, string path) {
+  Buf b = request(ASK_IS_HOST_PATH());
+  putString(b, path);
+  Reader r = ask(c, b);
+  return !r.bad && r.byte() == 1;
+}
+
+// ── The encodings ─────────────────────────────────────────────────────────────
+//
+// One per return type rather than per operation, since `Fs` has five: `FileResult`, `Stat`,
+// `Change`, `string[]?` and `bool`. Each decoder answers a *fault* when the frame is short or the
+// channel is gone, so a caller never has to ask whether the channel is working — it asks the
+// filesystem a question and gets an answer or a reason, exactly as it does on any other mount.
+
+export void encodeFileResult(Buf out, FileResult f) {
+  out.push(f.ok ? 1 : 0);
+  out.pushU32(f.fault as@ u32);
+  putString(out, f.error);
+  out.pushU32(f.bytes.len() as@ u32);
+  out.pushAll(f.bytes);
+}
+
+FileResult decodeFileResult(Reader r) {
+  bool ok = r.byte() == 1;
+  i32 fault = r.u32();
+  string error = r.string();
+  u8[] bytes = r.bytes(r.u32());
+  if (r.bad) { return FileResult.of(false, u8[0](), channelGone(r), FAULT_OTHER()); }
+  return FileResult.of(ok, bytes, error, fault);
+}
+
+export void encodeStat(Buf out, Stat s) {
+  out.push(s.exists ? 1 : 0);
+  out.push(s.isFile ? 1 : 0);
+  out.push(s.isDir ? 1 : 0);
+  out.push(s.isSymlink ? 1 : 0);
+  putI64(out, s.size);
+  putI64(out, s.modifiedMillis);
+  out.pushU32(s.fault as@ u32);
+}
+
+Stat decodeStat(Reader r) {
+  bool exists = r.byte() == 1;
+  bool isFile = r.byte() == 1;
+  bool isDir = r.byte() == 1;
+  bool isSymlink = r.byte() == 1;
+  i64 size = r.i64();
+  i64 mtime = r.i64();
+  i32 fault = r.u32();
+  if (r.bad) { return Stat.of(false, false, false, 0 as i64, 0 as i64, false, FAULT_OTHER()); }
+  return Stat.of(exists, isFile, isDir, size, mtime, isSymlink, fault);
+}
+
+export void encodeChange(Buf out, Change c) {
+  out.pushU32(c.fault as@ u32);
+  putString(out, c.message);
+}
+
+Change decodeChange(Reader r) {
+  i32 fault = r.u32();
+  string message = r.string();
+  if (r.bad) { return Change.of(FAULT_OTHER(), channelGone(r)); }
+  return Change.of(fault, message);
+}
+
+/**
+ * `string[]?`, where **null is "not a directory" and empty is "an empty one"**.
+ *
+ * The distinction `Fs.readDir` keeps and that `ls` reads to tell a missing directory from an empty
+ * one, so a wire format that collapsed them would make `ls nosuch` print nothing and succeed.
+ */
+export void encodeNames(Buf out, string[]? names) {
+  if (names is null) { out.push(0); return; }
+  string[] have = names!;
+  out.push(1);
+  out.pushU32(have.len() as@ u32);
+  for (i32 i = 0; i < have.len(); i++) { putString(out, have[i]); }
+}
+
+string[]? decodeNames(Reader r) {
+  i32 present = r.byte();
+  if (r.bad || present == 0) { return null; }
+  i32 n = r.u32();
+  if (r.bad) { return null; }
+  string[] out = string[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = r.string(); }
+  if (r.bad) { return null; }
+  return out;
+}
+
+/** Why an answer could not be read, in words a program can print. */
+string channelGone(Reader r) {
+  return r.why == "" ? "the filesystem channel gave a short answer" : r.why;
+}

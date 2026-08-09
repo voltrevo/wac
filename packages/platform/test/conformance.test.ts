@@ -106,7 +106,11 @@ const COVERAGE: Record<string, Cover> = {
   },
 
   // ── The system a session is ──
-  SPAWN_SELF: { where: "native_hostfs: `kill %1` ends a background job on both" },
+  SPAWN_SELF: {
+    where: "native_hostfs: `kill %1` ends a background job on both; native_shell runs a sealed " +
+      "session whose every command is a spawned child, so all three of a child's handles are " +
+      "exercised rather than only its output",
+  },
   EXIT_CODE: { where: "native_hostfs: the status of every AGREED script" },
   CLOSE_SOCKET: { where: "native_hostfs: `kill %1` is delivered by closing the child" },
   CLOSE_FEED: { where: "native_shell: pipelines in the corpus slice" },
@@ -146,8 +150,13 @@ const COVERAGE: Record<string, Cover> = {
   CONNECT: { gap: "the network is exercised end-to-end by `arrival_users` over ssh, but only on the native host as the *server*; no opcode-level comparison" },
   LISTEN: { gap: "as CONNECT" },
   ACCEPT: { gap: "as CONNECT" },
-  RECV: { gap: "as CONNECT" },
-  SEND: { gap: "as CONNECT" },
+  RECV: {
+    where: "native_shell: every filesystem operation of every spawned stage. `sealedsh` spawns its " +
+      "stages and serves their filesystem over a handle (wac-mono 0116), so a corpus script that " +
+      "reads a file is `send` and `recv` in both directions on both hosts — which is why this " +
+      "stopped being a gap without a test being written for it",
+  },
+  SEND: { where: "native_shell: as RECV, and the same traffic" },
   SPAWN: {
     gap: "only `spawnSelf` is compared. `spawn` of a *foreign* program has no two-host test, and it " +
       "is the one whose grant intersection differs most between runtimes",
@@ -212,7 +221,7 @@ Deno.test("the ledger says how much of the surface is actually compared", async 
   // that takes it *down* — a comparison deleted, an opcode added with a gap entry and forgotten —
   // has to be deliberate.
   assertEquals(
-    covered.length >= 20,
+    covered.length >= 22,
     true,
     `only ${covered.length} opcodes are compared across hosts; this was 19 when the ledger was written`,
   );

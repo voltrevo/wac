@@ -33,6 +33,8 @@ import { Sink } from "../../platform/src/stream.wac";
 import { isNumber, printf } from "./printf.wac";
 import { SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, signalStops }
   from "../../fs/src/proc.wac";
+import { Chan } from "../../fs/src/remote.wac";
+import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
@@ -61,9 +63,55 @@ struct Job {
   string cmd;
   bool done;
   i32 code;
+  /**
+   * The job's filesystem channel, where this shell serves one — wac-mono 0116.
+   *
+   * Null in a shell whose filesystem is the machine's, since a background job of one builds its own
+   * and has nothing to ask. Where it is not null it has to be **served while the job runs**, not
+   * only when the job is waited for: a background `sort -o out big` blocked on its first `readFile`
+   * would sit there until something reaped it, which is a job that is not running in the background
+   * at all. `serveJobs` is what turns the shell's check points into that.
+   */
+  Chan? chan;
 
-  Job of(i32 num, i32 pid, i32 handle, i32 errHandle, string cmd) {
-    return Job(num, pid, handle, errHandle, cmd, false, 0);
+  Job of(i32 num, i32 pid, i32 handle, i32 errHandle, string cmd, Chan? chan) {
+    return Job(num, pid, handle, errHandle, cmd, false, 0, chan);
+  }
+}
+
+/**
+ * Answer whatever any background job is asking, and no more.
+ *
+ * **Non-blocking, which is the whole of it.** `waitAny(ids, 0)` is "which of these is ready right
+ * now", so a shell at a check point serves the questions that have already arrived and returns to
+ * what it was doing. Blocking here would mean a shell that stops at its own prompt whenever a
+ * background job is quiet.
+ *
+ * Called where the shell already asks whether it has been signalled, because those are exactly the
+ * points at which it is between two things and can afford to look.
+ */
+void serveJobs(Shell sh) {
+  while (true) {
+    i32 live = 0;
+    for (i32 i = 0; i < sh.jobs.len(); i++) {
+      if (!sh.jobs.get(i).done && !(sh.jobs.get(i).chan is null)) { live++; }
+    }
+    if (live == 0) { return; }
+    i32[] ids = i32[live](fill: 0);
+    i32[] which = i32[live](fill: 0);
+    i32 at = 0;
+    for (i32 i = 0; i < sh.jobs.len(); i++) {
+      Job j = sh.jobs.get(i);
+      if (!j.done && !(j.chan is null)) { ids[at] = j.chan!.waitId(); which[at] = i; at++; }
+    }
+    i32 ready = sh.core.waitAny(ids, 0);
+    if (ready < 0) { return; }
+    Job j = sh.jobs.get(which[ready]);
+    i32 was = sh.fs.procs.current;
+    sh.fs.procs.current = j.pid;
+    bool alive = serveOn(j.chan!, sh.fs);
+    sh.fs.procs.current = was;
+    if (!alive) { j.chan = null; }
   }
 }
 
@@ -335,6 +383,10 @@ export struct Shell {
    * `kill -TERM $$` leaves 143 and `kill -INT $$` leaves 130, both compared against bash.
    */
   bool takeSignal(this) {
+    // Background jobs get a turn wherever this shell asks whether it has been signalled: both are
+    // "I am between two things", and a job with a question outstanding is not running until it is
+    // answered. See `serveJobs`.
+    serveJobs(this);
     i32 sig = this.fs.procs.takeSignal(this.pid);
     if (sig == 0) { return false; }
     this.exiting = true;
@@ -872,7 +924,8 @@ void runBackground(Shell sh, AndOr list) {
   i32 num = sh.jobs.len() + 1;
   string text = argv.get(0);
   for (i32 i = 1; i < argv.len(); i++) { text = text + " " + argv.get(i); }
-  sh.jobs.push(Job.of(num, pid, kid.handle, kid.errHandle, text));
+  sh.jobs.push(Job.of(num, pid, kid.handle, kid.errHandle, text,
+                      serveFsFor(sh) && kid.fsHandle >= 0 ? Chan.of(sh.cli, kid.fsHandle) : null));
   sh.lastBgPid = pid;
   // bash announces a job at the moment it starts, on *stderr* — `[1] 3353553` — and only when the
   // shell is interactive. A `-c` script gets nothing, which is what this matches.
@@ -942,24 +995,50 @@ i32 jobIndex(Shell sh, string spec) {
 void reapJob(Shell sh, i32 index) {
   Job j = sh.jobs.get(index);
   if (j.done) { return; }
+  // All three at once, for the reason `collectChild` gives: a job blocked on a question this shell
+  // has not answered writes nothing, so waiting for its output first would be waiting for a job that
+  // is waiting for this loop.
   Buf out = Buf.create();
-  bool reading = true;
-  while (reading) {
-    match (sh.cli.recv(j.handle).wait()) {
-      case Data(bytes): { out.pushAll(bytes); }
-      case End: { reading = false; }
-      case Failed(why): { reading = false; }
-    }
-  }
   Buf err = Buf.create();
+  bool reading = true;
   bool complaining = j.errHandle >= 0;
-  while (complaining) {
-    match (sh.cli.recv(j.errHandle).wait()) {
-      case Data(bytes): { err.pushAll(bytes); }
-      case End: { complaining = false; }
-      case Failed(why): { complaining = false; }
+  Pending<Read> outT = sh.cli.recv(j.handle);
+  Pending<Read> errT = complaining ? sh.cli.recv(j.errHandle) : outT;
+  bool asking = !(j.chan is null);
+  while (reading || complaining || asking) {
+    i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
+    i32[] ids = i32[live](fill: 0);
+    i32[] what = i32[live](fill: 0);
+    i32 at = 0;
+    if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
+    if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
+    if (asking) { ids[at] = j.chan!.waitId(); what[at] = 2; at++; }
+    i32 which = sh.core.waitAny(ids, -1);
+    if (which < 0) { break; }
+    i32 kind = what[which];
+    if (kind == 2) {
+      // As the job, not as the shell — see the note in `streamPipeline`.
+      i32 was = sh.fs.procs.current;
+      sh.fs.procs.current = j.pid;
+      bool alive = serveOn(j.chan!, sh.fs);
+      sh.fs.procs.current = was;
+      if (!alive) { asking = false; }
+    } else if (kind == 0) {
+      match (outT.wait()) {
+        case Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(j.handle); }
+        case End: { reading = false; }
+        case Failed(why): { reading = false; }
+      }
+    } else {
+      match (errT.wait()) {
+        case Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(j.errHandle); }
+        case End: { complaining = false; }
+        case Failed(why): { complaining = false; }
+      }
     }
+    if (!reading && !complaining) { asking = false; }
   }
+  j.chan = null;
   j.code = sh.cli.exitCode(j.handle).wait();
   sh.cli.closeSocket(j.handle);
   if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
@@ -1210,6 +1289,8 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   // Spawn them all, first to last, expanding each stage's arguments as it goes. Expansion happens
   // exactly once and in order, which is what a command substitution in an argument requires.
   i32[] outH = i32[n](fill: -1);
+  i32[] fsH = i32[n](fill: -1);
+  i32[] pids = i32[n](fill: -1);
   i32[] errH = i32[n](fill: -1);
   bool inherited = false;
   for (i32 i = 0; i < n; i++) {
@@ -1257,6 +1338,15 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
     }
     outH[i] = kid.handle;
     errH[i] = kid.errHandle;
+    fsH[i] = kid.fsHandle;
+    // **A row for the stage, for as long as it runs** — design/0001 step 3's criterion, "`ps` shows
+    // the pipeline you are running". It could not be met while stages ran one at a time, because by
+    // the time `ps` was the last of them the earlier ones had finished; these are real children
+    // running at once, so the table can say so. Reaped where the status is collected, below.
+    // **`procs.current`, not `sh.pid`.** The parent of a command is whatever is running right now,
+    // which inside `f() { ps; }` is `f` and not the shell — the rule the sequential path already
+    // keeps, and the one column of `ps` that says the table is a tree rather than a list.
+    pids[i] = sh.fs.procs.start(sh.fs.procs.current, argv, sh.fs.now);
   }
 
   // **The redirection, opened once every stage is running.** `openOutput` makes a file the destination
@@ -1307,10 +1397,19 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   // A stage stopped for want of a reader is *gone*: its handles are closed, so its exit code cannot
   // be asked for afterwards. `head -1` ending `seq` is the ordinary case, not an error.
   bool[] stopped = bool[n](fill: false);
+  // **A channel per stage, whether or not this shell serves one.** Built only where it does, so a
+  // shell on a plain host mount neither holds the tickets nor watches the handles — see `serveFsFor`.
+  Vec<Chan> fsC = Vec.create();
+  // Which stage each channel belongs to, so that a question can be answered **as the stage that
+  // asked it**. Not the same as the position in `fsC`, since a stage without a channel is skipped.
+  Vec<i32> fsPid = Vec.create();
+  bool serving = serveFsFor(sh);
   for (i32 i = 0; i < n; i++) {
     outT.push(sh.cli.recv(outH[i]));
     errT.push(sh.cli.recv(errH[i]));
+    if (serving && fsH[i] >= 0) { fsC.push(Chan.of(sh.cli, fsH[i])); fsPid.push(pids[i]); }
   }
+  bool[] fsOpen = bool[fsC.len()](fill: true);
 
   while (true) {
     // The ids of every stream still open, and what each position in that list means. Rebuilt each
@@ -1320,19 +1419,46 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       if (outOpen[i]) { live++; }
       if (errOpen[i]) { live++; }
     }
+    // **The stages' questions are watched beside their output**, which is the whole of how a shell
+    // can both relay a pipeline and be its filesystem: a stage blocked on `readFile` is not writing,
+    // so a loop that waited only on output would wait for a stage that is waiting for this loop.
+    // Counted into `live` on purpose — a stage that has closed its output may still be asking, and
+    // dropping the channel then is what would leave it parked on its last question.
+    for (i32 k = 0; k < fsC.len(); k++) { if (fsOpen[k]) { live++; } }
     if (live == 0) { break; }
     i32[] ids = i32[live](fill: 0);
     i32[] stage = i32[live](fill: 0);
     bool[] isErr = bool[live](fill: false);
+    bool[] isFs = bool[live](fill: false);
     i32 at = 0;
     for (i32 i = 0; i < n; i++) {
       if (outOpen[i]) { ids[at] = outT.get(i).id; stage[at] = i; isErr[at] = false; at++; }
       if (errOpen[i]) { ids[at] = errT.get(i).id; stage[at] = i; isErr[at] = true; at++; }
     }
+    for (i32 k = 0; k < fsC.len(); k++) {
+      if (fsOpen[k]) { ids[at] = fsC.get(k).waitId(); stage[at] = k; isFs[at] = true; at++; }
+    }
 
     i32 which = sh.core.waitAny(ids, -1);
     if (which < 0) { break; }
     i32 i = stage[which];
+
+    if (isFs[which]) {
+      // One question, answered out of this shell's own filesystem — the same `Fs` its builtins use,
+      // so a stage sees the session's mounts, the session's `/proc` and the session's user rather
+      // than the machine. False is the channel ending, which is a stage that has exited.
+      //
+      // **Answered as the stage that asked**, which is what `/proc/self` means. Without this,
+      // `cat /proc/self/cmdline` in a spawned `cat` printed the *session's* command line, because
+      // `procs.current` was still the shell — right for a shell running its commands one at a time
+      // and wrong the moment it runs several at once. bash prints `cat\0/proc/self/cmdline\0`.
+      i32 asking = sh.fs.procs.current;
+      sh.fs.procs.current = fsPid.get(i);
+      bool alive = serveOn(fsC.get(i), sh.fs);
+      sh.fs.procs.current = asking;
+      if (!alive) { fsOpen[i] = false; }
+      continue;
+    }
 
     if (isErr[which]) {
       match (errT.get(i).wait()) {
@@ -1392,9 +1518,15 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
   // ones that ran to their own end are collected.
   i32 status = 0;
   for (i32 i = 0; i < n; i++) {
-    if (stopped[i]) { continue; }
+    if (stopped[i]) {
+      // Stopped for want of a reader, so it has no status to ask for — but it did run, and its row
+      // has to go or the table grows a process per `head` for the life of the session.
+      if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], 0); sh.fs.procs.reap(pids[i]); }
+      continue;
+    }
     i32 code = sh.cli.exitCode(outH[i]).wait();
     if (i == n - 1) { status = code < 0 ? 126 : code; }
+    if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], code < 0 ? 126 : code); sh.fs.procs.reap(pids[i]); }
     sh.cli.closeSocket(outH[i]);
     if (errH[i] >= 0) { sh.cli.closeSocket(errH[i]); }
   }
@@ -1415,7 +1547,21 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
  * A `$WACPATH` file that cannot be read falls through to the shell's own, as `trySpawn` does; one that
  * reads and will not start is returned as the failed child it is, and the caller reports 126.
  */
+/**
+ * Whether this shell will answer its children's filesystem questions — wac-mono 0116.
+ *
+ * Yes for every session whose filesystem is not simply the machine's: an image, a memory mount, a
+ * `/proc` and a `/bin` that exist in this program's memory. Those are the sessions whose children
+ * used to see the host instead, which is what made a sealed session unable to spawn at all.
+ *
+ * No for a shell on a plain host mount, and that is not a shortcut. A child of one builds its own
+ * `Fs.onHost` with the same grants against the same disk, so the answers are identical and the only
+ * difference serving could make is a round trip through the parent for every byte read.
+ */
+bool serveFsFor(Shell sh) { return !sh.fs.isPlainHost(); }
+
 Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
+  bool serveFs = serveFsFor(sh);
   i32 grants = GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV;
   string name = argv.get(0);
   string where = containsSlash(name) ? name : searchWacPath(sh, name);
@@ -1427,13 +1573,13 @@ Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
       u8[][] outer = u8[][argv.len() - 1](fill: u8[0]());
       for (i32 i = 1; i < argv.len(); i++) { outer[i - 1] = argv.get(i).toBytes(); }
       Child external = sh.cli
-        .spawn(string.fromBytes(prog.bytes), outer, grants, sh.cwd, inheritIn).wait();
+        .spawn(string.fromBytes(prog.bytes), outer, grants, sh.cwd, inheritIn, serveFs).wait();
       if (!external.unavailable()) { return external; }
     }
   }
   u8[][] args = u8[][argv.len()](fill: u8[0]());
   for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i).toBytes(); }
-  return sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn).wait();
+  return sh.cli.spawnSelf(args, grants, sh.cwd, inheritIn, serveFs).wait();
 }
 
 /** Stop one stage and stop reading it: it has nowhere to write, so it is finished whether or not it agrees. */
@@ -2832,7 +2978,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
   Child child = sh.cli.spawn(
     string.fromBytes(prog.bytes), args,
-    GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit).wait();
+    GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit, serveFsFor(sh)).wait();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets
   // working in the browser terminal, where a page cannot spawn — before this, setting `$WACPATH` to
@@ -2873,31 +3019,59 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   }
 
   Buf out = Buf.create();
-  bool reading = true;
-  string broke = "";
-  while (reading) {
-    match (sh.cli.recv(child.handle).wait()) {
-      case Data(bytes): { out.pushAll(bytes); }
-      case End: { reading = false; }
-      // A child whose pipe failed is not a child that finished quietly. Reported as 126 below,
-      // beside "could not execute", because both mean the shell cannot vouch for the output.
-      case Failed(why): { reading = false; broke = why; }
-    }
-  }
-
-  // Its error stream, which is a *different handle*: a shell has to keep the two apart, or
-  // `cat nosuch | wc -c` counts the complaint. Read after the output rather than interleaved with it
-  // because both are queues that the host has already collected — nothing is lost by the order, and
-  // a pipeline that wants them interleaved wants `2>&1`, which is a redirection this shell refuses
-  // outright rather than approximating.
   Buf err = Buf.create();
+  string broke = "";
+
+  // **Both streams and the filesystem channel, together.** The two output streams used to be read
+  // one after the other — the child's output to its end, then its error stream — which was fine
+  // while both were queues the host had already filled. It stopped being fine when a child could
+  // *ask this shell a question*: a stage blocked on `readFile` writes nothing, so a parent waiting
+  // for output would be waiting for a child that is waiting for the parent. Neither would move
+  // again. `waitAny` over all three is what makes the two directions independent.
+  //
+  // The error stream is still gathered separately from the output rather than interleaved into it,
+  // which is the property that keeps `cat nosuch | wc -c` from counting the complaint.
+  bool reading = true;
   bool complaining = child.errHandle >= 0;
-  while (complaining) {
-    match (sh.cli.recv(child.errHandle).wait()) {
-      case Data(bytes): { err.pushAll(bytes); }
-      case End: { complaining = false; }
-      case Failed(why): { complaining = false; }
+  Pending<Read> outT = sh.cli.recv(child.handle);
+  Pending<Read> errT = complaining ? sh.cli.recv(child.errHandle) : outT;
+  // Built only where this shell serves, because building one starts a read: a shell on a plain host
+  // mount would otherwise spend a host call per command on a channel it is never going to answer.
+  Chan? fsC = serveFsFor(sh) && child.fsHandle >= 0 ? Chan.of(sh.cli, child.fsHandle) : null;
+  bool asking = !(fsC is null);
+  while (reading || complaining || asking) {
+    i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0) + (asking ? 1 : 0);
+    i32[] ids = i32[live](fill: 0);
+    i32[] what = i32[live](fill: 0);
+    i32 at = 0;
+    if (reading) { ids[at] = outT.id; what[at] = 0; at++; }
+    if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
+    if (asking) { ids[at] = fsC!.waitId(); what[at] = 2; at++; }
+
+    i32 which = sh.core.waitAny(ids, -1);
+    if (which < 0) { break; }
+    i32 kind = what[which];
+
+    if (kind == 2) {
+      if (!serveOn(fsC!, sh.fs)) { asking = false; }
+    } else if (kind == 0) {
+      match (outT.wait()) {
+        case Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(child.handle); }
+        case End: { reading = false; }
+        // A child whose pipe failed is not a child that finished quietly. Reported as 126 below,
+        // beside "could not execute", because both mean the shell cannot vouch for the output.
+        case Failed(why): { reading = false; broke = why; }
+      }
+    } else {
+      match (errT.wait()) {
+        case Data(bytes): { err.pushAll(bytes); errT = sh.cli.recv(child.errHandle); }
+        case End: { complaining = false; }
+        case Failed(why): { complaining = false; }
+      }
     }
+    // Both streams closed means the child is finished, so it will ask nothing more. Waiting for the
+    // channel to end as well would wait for the host to notice the worker had gone.
+    if (!reading && !complaining) { asking = false; }
   }
 
   i32 code = sh.cli.exitCode(child.handle).wait();
@@ -2942,7 +3116,8 @@ Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   // process had the shell's whole authority implicitly; asking for it explicitly is the same
   // authority said out loud, and a shell granted nothing hands its children nothing.
   Child child = sh.cli
-    .spawnSelf(args, GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit).wait();
+    .spawnSelf(args, GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit,
+               serveFsFor(sh)).wait();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
     return Output.fail(("sh: " + name + ": " + child.error + "\n").toBytes(), 126);

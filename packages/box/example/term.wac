@@ -73,6 +73,8 @@ import { Shell, runScript } from "../../sh/src/exec.wac";
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
 import { itoa } from "../../fmt/src/itoa.wac";
 import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
+import { mountSystem } from "../../fs/src/fs.wac";
+import { Vec } from "../../std/src/vec.wac";
 
 /**
  * The bytes a terminal sends for the three keys this loop reads.
@@ -213,16 +215,20 @@ export i32 page(Core core, Cli cli, Page page) {
   // the page's log rather than the screen being drawn.
   Shell sh = Shell.create(core, cli);
   sh.capture = true;
-  // **No `mountSystem` here, and it is a gap rather than an oversight.** design/0001 wants the
-  // browser terminal to be "the *same system* in a tab", which means the `/dev`, `/proc` and `/bin`
-  // every other session has. Mounting them was tried this tick and had to come out: the shell got
-  // them and its *programs* did not, because a spawned stage is a fresh instance and `shrun.wac`
-  // gives a fresh instance `Fs.onHost`. So `ls /bin` listed sixty-three programs — `ls` is a builtin,
-  // on the session's own filesystem — and `cat /dev/null` failed, because `cat` was spawned.
+  // **`mountSystem`, which this could not have until wac-mono 0116.** design/0001 wants the browser
+  // terminal to be "the *same system* in a tab", which means the `/dev`, `/proc` and `/bin` every
+  // other session has. Mounting them was tried once before and had to come out: the shell got them
+  // and its *programs* did not, because a spawned stage was a fresh instance and `shrun.wac` gave a
+  // fresh instance `Fs.onHost`. `ls /bin` listed sixty-three programs — `ls` is a builtin, on the
+  // session's own filesystem — and `cat /dev/null` failed, because `cat` was spawned. A consistent
+  // poorer world beat an inconsistent richer one, so a tab had none of it.
   //
-  // A consistent poorer world beats an inconsistent richer one: a system that answers differently
-  // depending on which route the shell took is the quiet-wrong-answer shape this repo keeps removing.
-  // wac-mono 0116 is what unblocks it, and it is a decision about what `spawnSelf` hands a child.
+  // A spawned stage has no filesystem of its own now: it asks this page's shell, which holds the one
+  // there is. So the two routes cannot disagree — there is nothing for them to disagree about — and
+  // `browser_live.test.ts` asks a real Chromium rather than taking that on trust.
+  Vec<string> argv = Vec.create();
+  argv.push("term");
+  mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
 
   // Every `box` applet, as a command you can type — `sort`, `sha256sum`, `gzip`, `cut`, `shuf` and
   // fifty more, the same code `box` runs on a command line. This is the *fallback* now: the shell

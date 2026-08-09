@@ -96,9 +96,35 @@ export i32 boxApplet(Core core, Cli cli) {
   string[] args = string[n](fill: "");
   for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
   string name = args[0];
-  // `boxApplet` is the multi-call entry — this program run *as* an applet — so the filesystem is the
-  // host's, exactly as it is for `box` itself. A shell hands its own in through `boxRun` above.
-  return dispatch(core, cli, Fs.onHost(cli, 0), parseList(args, 1, name), name);
+  // **`boxApplet` is the multi-call entry — this program run *as* an applet — so its filesystem is
+  // whichever one it actually has**: its parent's if something spawned it and promised to answer,
+  // and the host's otherwise. It used to be `Fs.onHost` unconditionally, and said so, which is
+  // wac-mono 0116: a stage spawned by a session booted on an image could not see that image and
+  // could read the machine the session was running on, so such a session did not spawn at all.
+  //
+  // The question is asked here rather than passed in because nothing can pass it in. This is `main`
+  // for a multi-call binary, reached identically whether a person typed `box sort` on a command line
+  // or a sealed shell spawned a pipeline stage; the arguments are the same and only the channel
+  // differs. `Fs.fromParentOrHost` is one round trip on a channel that is either answered, ended or
+  // absent, and each of the three is a different situation with the same two possible answers.
+  // **The name is checked before the channel is**, so a program that is not an applet at all — this
+  // same binary invoked as a shell, which is how `sealedsh` and `sh` start — does not pay a round
+  // trip to a parent it does not have. `dispatch` would answer `UNKNOWN` a moment later either way;
+  // the difference is that building the filesystem is the expensive half.
+  if (!isApplet(name)) { return UNKNOWN; }
+  return dispatch(core, cli, Fs.fromParentOrHost(cli, 0), parseList(args, 1, name), name);
+}
+
+/**
+ * Whether `dispatch` has a program of this name.
+ *
+ * Asked from the one list `appletNames` is, so this cannot drift from what `dispatch` will actually
+ * run — a second list of names would be the thing that decides whether a filesystem gets built.
+ */
+bool isApplet(string name) {
+  string[] names = appletNames();
+  for (i32 i = 0; i < names.len(); i++) { if (names[i] == name) { return true; } }
+  return false;
 }
 
 /**

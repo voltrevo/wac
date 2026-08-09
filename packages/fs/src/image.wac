@@ -60,6 +60,7 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
+import { Reader, putI64, putString } from "./wire.wac";
 import { Cli, Core, FAULT_NOT_FOUND, FileResult } from "../../platform/src/platform.wac";
 import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
 import { Backing, Fs, Inode, Mount, mountSystem, sortNames } from "./fs.wac";
@@ -322,103 +323,9 @@ void putNode(Buf out, Fs fs, i32 node) {
   }
 }
 
-void putString(Buf out, string s) {
-  u8[] b = s.toBytes();
-  out.pushU32(b.len() as@ u32);
-  out.pushAll(b);
-}
-
-void putI64(Buf out, i64 v) {
-  for (i32 i = 0; i < 8; i++) { out.push(((v >> (i * 8)) & 255 as i64) as! i32); }
-}
 
 // ── Reading ───────────────────────────────────────────────────────────────────
 
-/**
- * A position in the bytes, and whether it has already run off the end.
- *
- * `bad` rather than a trap: an image is a file somebody hands you, and a program that reads one should be
- * able to say what was wrong with it. Every read checks `bad` first, so one overrun does not become a
- * cascade of nonsense reads before anybody notices.
- */
-struct Reader {
-  u8[] data;
-  /**
-   * One past the last byte of the *body* — the checksum's four bytes are not content.
-   *
-   * This was `data.len()`, so a malformed image could read its own checksum as payload: the first thing
-   * a hand-built short body did was take those four bytes as a string length and report "a length above
-   * two gigabytes". Harmless there, and not harmless in general — four bytes that happened to complete a
-   * structure would have been *accepted* as part of it. The checksum proves the bytes are the ones that
-   * were written; it is not one of them.
-   */
-  i32 end;
-  i32 at;
-  bool bad;
-  /**
-   * What was wrong, when it was something more specific than running out.
-   *
-   * Empty means "the bytes ended", which is what an overrun is and what every caller assumed. It was not
-   * always true: a node whose kind byte is neither 0 nor 1 was reported as "the image ends inside a
-   * node", and the image had not ended — somebody's *writer* had produced a byte nothing means. Telling
-   * them the file was truncated sends them to look at the wrong end of the problem.
-   */
-  string why;
-
-  i32 byte(this) {
-    if (this.bad || this.at >= this.end) { this.bad = true; return 0; }
-    i32 v = this.data[this.at];
-    this.at++;
-    return v;
-  }
-
-  i32 u32(this) {
-    i32 a = this.byte();
-    i32 b = this.byte();
-    i32 c = this.byte();
-    i32 d = this.byte();
-    // A length is read as a signed i32 and then refused if it is negative: a u32 above 2^31 cannot be a
-    // real length here, and letting it wrap would turn "an enormous count" into "a negative one" and then
-    // into a loop that never runs. Refusing is the point.
-    i32 v = a | (b << 8) | (c << 16) | (d << 24);
-    if (v < 0) {
-      this.bad = true;
-      if (this.why == "") { this.why = "a length above two gigabytes, which cannot be one"; }
-      return 0;
-    }
-    return v;
-  }
-
-  i64 i64(this) {
-    i64 v = 0 as i64;
-    for (i32 i = 0; i < 8; i++) { v = v | ((this.byte() as i64) << (i * 8)); }
-    return v;
-  }
-
-  string string(this) {
-    i32 n = this.u32();
-    if (this.bad || this.at + n > this.end) { this.bad = true; return ""; }
-    u8[] b = u8[n]();
-    b.copyFrom(this.data, this.at, 0, n);
-    this.at = this.at + n;
-    return string.fromBytes(b);
-  }
-
-  /** Mark a specific failure and answer -1, which is what every node reader returns for one. */
-  i32 wrong(this, string why) {
-    this.bad = true;
-    if (this.why == "") { this.why = why; }
-    return -1;
-  }
-
-  u8[] bytes(this, i32 n) {
-    if (this.bad || n < 0 || this.at + n > this.end) { this.bad = true; return u8[0](); }
-    u8[] b = u8[n]();
-    b.copyFrom(this.data, this.at, 0, n);
-    this.at = this.at + n;
-    return b;
-  }
-}
 
 /** One node and everything under it, pushed into `fs.nodes`; returns its index. */
 i32 getNode(Reader r, Fs fs, i64 now) {

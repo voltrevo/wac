@@ -41,7 +41,9 @@ import {
   failedChild,
   noSpawnHere,
   spawnChild,
-  twoHandles,
+  childHandles,
+  FIRST_FREE_HANDLE,
+  PARENT_FS_HANDLE,
   unpackSpawn,
   unpackSpawnSelf,
   want,
@@ -146,6 +148,8 @@ export type BrowserWorldOptions = {
    * the first line of it.
    */
   readStdinChunk?(): Promise<Uint8Array>;
+  /** The channel to this program's parent's filesystem, when it is a spawned child — see `deno.ts`. */
+  parentFs?: { req: ByteQueue; rep: ByteQueue };
   /**
    * This program's own worker bundle, for `spawnSelf`.
    *
@@ -263,7 +267,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
    * socket in one call.
    */
   const errStreams = new Map<number, ByteQueue>();
-  let nextHandle = 1;
+  /** A child's filesystem channel, by its own handle — see the note in `deno.ts`. */
+  const fsChannels = new Map<number, { req: ByteQueue; rep: ByteQueue }>();
+  let nextHandle = FIRST_FREE_HANDLE;
 
   /**
    * Start a child on `source`, with `want` narrowed to what this page itself was given.
@@ -278,19 +284,27 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     wanted: number,
     childCwd: string,
     inheritIn: boolean,
+    serveFs: boolean,
   ): Promise<Uint8Array> => {
     const give = {
       read: (wanted & GRANT_READ) !== 0 && opts.root !== undefined,
       write: (wanted & GRANT_WRITE) !== 0 && opts.root !== undefined && opts.writable === true,
     };
     const h = nextHandle++;
-    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr) => {
+    const child = spawnChild(source, childArgs, (sab, cargs, out, input, cerr, parentFs) => {
       const enc = new TextEncoder();
       return serveHostCalls(bridgeOf(sab), browserWorld({
         args: cargs,
         // Not `dom` — see `askInterrupt` above. A child may learn that the user interrupted and may
         // not draw, and those are two authorities rather than one.
         askInterrupt: asked,
+        // **Its parent's filesystem, on a handle of its own** — wac-mono 0116. A third authority
+        // beside those two and separate from both: a child may learn that the user interrupted, may
+        // not draw, and may ask its parent about files. In a page this is the one that matters
+        // most, because a page has no filesystem of its own at all — the browser terminal's `/etc`,
+        // `/proc` and `/bin` live in the shell's memory, and until this a spawned applet could not
+        // see them.
+        parentFs,
         // A line of output is bytes on the handle, with the newline `log` implies. The parent cannot
         // tell `log` from `write`, and neither can a pipe — which is the point.
         log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
@@ -337,6 +351,12 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       }));
     }, newBridge);
 
+    // **A parent that will not serve says so before the child runs.** Ending the reply queue is
+    // what makes `Fs.overParent` answer immediately instead of waiting: a child asks one question,
+    // reads end-of-channel, and falls back to the host. Every spawner that predates the channel
+    // passes false, so nothing that used to work now waits on a parent that was never going to
+    // answer. See `spawnSelf` in platform.wac.
+    if (!serveFs) child.fsRep.end();
     const why = await child.loaded;
     if (why !== "") {
       child.kill();
@@ -345,9 +365,11 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     // Two handles for one child: its output and its error stream. Numbered from the same counter, so
     // `waitAny` can watch both beside a socket without knowing which is which.
     const eh = nextHandle++;
+    const fh = nextHandle++;
     children.set(h, child);
     errStreams.set(eh, child.err);
-    return twoHandles(h, eh, "");
+    fsChannels.set(fh, { req: child.fsReq, rep: child.fsRep });
+    return childHandles(h, eh, fh, "");
   };
   const writeErr = opts.writeErr ??
     ((b: Uint8Array) => warn(new TextDecoder().decode(b)));
@@ -674,8 +696,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * a place to put a canvas.
      */
     [OP.SPAWN]: (p) => {
-      const { source, args, cwd, inheritIn } = unpackSpawn(p);
-      return startChild(source, args, want(p), cwd, inheritIn);
+      const { source, args, cwd, inheritIn, serveFs } = unpackSpawn(p);
+      return startChild(source, args, want(p), cwd, inheritIn, serveFs);
     },
 
     /**
@@ -690,8 +712,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       if (opts.selfSource === undefined) {
         return noSpawnHere("this page did not pass the program its own source");
       }
-      const { args, cwd, inheritIn } = unpackSpawnSelf(p);
-      return startChild(opts.selfSource, args, want(p), cwd, inheritIn);
+      const { args, cwd, inheritIn, serveFs } = unpackSpawnSelf(p);
+      return startChild(opts.selfSource, args, want(p), cwd, inheritIn, serveFs);
     },
 
     [OP.CLOSE_FEED]: (p) => {
@@ -857,14 +879,35 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         const said = await complaint.next();
         return said.length === 0 ? END : data(said);
       }
+      // The two ends of a child's filesystem channel — see the note in `deno.ts`. A page has no
+      // sockets, so these are the *only* other handles it can hold, and they matter more here than
+      // anywhere: every applet in the browser terminal is a child.
+      if (h === PARENT_FS_HANDLE && opts.parentFs !== undefined) {
+        const answer = await opts.parentFs.rep.next();
+        return answer.length === 0 ? END : data(answer);
+      }
+      const asking = fsChannels.get(h);
+      if (asking !== undefined) {
+        const request = await asking.req.next();
+        return request.length === 0 ? END : data(request);
+      }
       return failed("network access is not granted");
     },
     // A child's standard input. Sockets are a page's other missing capability, and asking for one
     // is still a denial — but a handle that names a child is not a socket, and the check has to come
     // first or a page could spawn a program it can never feed.
-    [OP.SEND]: (p) => {
+    [OP.SEND]: async (p) => {
       const kid = children.get(readI32le(p));
       if (kid !== undefined) { kid.in.push(p.slice(4)); return EMPTY; }
+      if (readI32le(p) === PARENT_FS_HANDLE && opts.parentFs !== undefined) {
+        await opts.parentFs.req.push(p.slice(4));
+        return EMPTY;
+      }
+      const answering = fsChannels.get(readI32le(p));
+      if (answering !== undefined) {
+        await answering.rep.push(p.slice(4));
+        return EMPTY;
+      }
       return deny("network access");
     },
     [OP.CLOSE_SOCKET]: (p) => {
@@ -875,6 +918,13 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       if (kid !== undefined) {
         try { kid.in.end(); kid.kill(); } catch { /* already gone */ }
         children.delete(h);
+      }
+      // Ending a filesystem channel is how a child parked on a request learns nobody will answer.
+      const channel = fsChannels.get(h);
+      if (channel !== undefined) {
+        channel.req.end();
+        channel.rep.end();
+        fsChannels.delete(h);
       }
       return EMPTY;
     },

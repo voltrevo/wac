@@ -33,9 +33,12 @@ import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
   FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
-  Pending, Stat }
+  PARENT_FS, Pending, Stat }
   from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { Chan, parentAnswers, remoteChmod, remoteChown, remoteCloseOut, remoteIsHostPath, remoteMkdir,
+  remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
+  remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
 import { resolvePath } from "./path.wac";
 import { PROC_RUN, Proc, Procs } from "./proc.wac";
 
@@ -63,6 +66,20 @@ export enum Backing {
    * is what lets `sealed` mount `/dev` without stopping being sealed.
    */
   Synth(fn[Pending<u8[]>(i32)] randomBytes),
+  /**
+   * **Another process's filesystem**, reached by asking it — see `remote.wac`, and wac-mono 0116.
+   *
+   * What a spawned child gets. Nothing is stored and nothing is duplicated: every operation on this
+   * mount is a question its parent answers out of the one filesystem there is, so a child's writes
+   * are its parent's writes and a child's permission checks are its parent's `user`'s.
+   *
+   * **Every dispatch on `Backing` needs an arm for this one**, and the compiler will not say so:
+   * the matches in this file end in `else`, which is the memory backing, so a missing arm is a
+   * remote mount quietly answering out of an empty local tree. `test/remote.test.ts` is the check —
+   * it drives every method of an `Fs` over a channel against the `Fs` on the other end of it, so a
+   * forgotten arm is an answer that disagrees rather than a list nobody counted.
+   */
+  Remote(Chan chan),
 }
 
 /** One mounted filesystem, at a path. */
@@ -194,6 +211,52 @@ export struct Fs {
   }
 
   /**
+   * **This program's parent's filesystem**, mounted at the root: what a spawned child gets.
+   *
+   * One mount and nothing else, so every path resolves to a question. `cwd` is passed in rather than
+   * asked for because a child is *told* where it stands when it is spawned — `spawnSelf` takes it —
+   * and asking the host would answer with the machine's directory, which is the whole class of bug
+   * this exists to end.
+   *
+   * A program that was not spawned has no channel: `PARENT_FS` names nothing, the first question
+   * fails, and every operation answers with a fault saying the channel is closed. That is the honest
+   * answer and it is not a useful filesystem — a program that might be either should ask its caller,
+   * which is what `packages/box`'s `boxApplet` does.
+   */
+  Fs overParent(Cli cli, i64 now) { return Fs.overChan(Chan.of(cli, PARENT_FS), cli, now); }
+
+  /**
+   * The same, on a channel already proved — see `fromParentOrHost`, which is what callers want.
+   *
+   * `cwd` is the host's answer, which for a spawned child is what its parent passed to `spawnSelf`.
+   * Asking rather than being told keeps this the same shape as `onHost`, and there is only one place
+   * a child's directory can come from.
+   */
+  Fs overChan(Chan chan, Cli cli, i64 now) {
+    Vec<Mount> mounts = Vec.create();
+    Vec<Inode> nodes = Vec.create();
+    mounts.push(Mount("", Backing.Remote(chan), -1));
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(),
+              cli.cwd().wait(), "", -1);
+  }
+
+  /**
+   * **What a program that might be a spawned child should build**: its parent's filesystem if there
+   * is one, and the host's if there is not.
+   *
+   * One question decides it, and it has to be a question rather than an argument: a multi-call
+   * binary like `packages/box` is the same `main` whether a person typed its name or a shell spawned
+   * it, and nothing in its arguments distinguishes the two. `parentAnswers` is that question, and
+   * each of its three outcomes is a real situation — served, spawned by a parent that declined to
+   * serve, or not spawned at all. The last two both mean the host.
+   */
+  Fs fromParentOrHost(Cli cli, i64 now) {
+    Chan chan = Chan.of(cli, PARENT_FS);
+    if (!parentAnswers(chan)) { return Fs.onHost(cli, now); }
+    return Fs.overChan(chan, cli, now);
+  }
+
+  /**
    * Mount the synthesised files at `at` — `/dev` or `/proc`.
    *
    * Two mounts rather than one because mounts are longest-prefix and the two trees are unrelated; what
@@ -238,12 +301,34 @@ export struct Fs {
    * Exposed rather than a `read` method that decides, because the decision is about which capability
    * the caller may use afterwards, and only the caller knows what it is going to do with it.
    */
+  /**
+   * Whether this filesystem is *exactly* the host's, and so nothing a child could not reproduce.
+   *
+   * One mount, at the root, on the host. That is the filesystem a spawned child gets by building its
+   * own `Fs.onHost` — same capabilities, same disk, same answers — so a parent holding one has
+   * nothing to serve and should not offer to. Anything else, an image, a memory mount, `/proc`,
+   * `/bin`, a host mount that is not at the root, is a view that exists only in this program's
+   * memory, and a child that is not served sees the machine instead of it. That is wac-mono 0116,
+   * and this predicate is where a shell decides which of the two situations it is in.
+   */
+  bool isPlainHost(const this) {
+    if (this.mounts.len() != 1) { return false; }
+    Mount only = this.mounts.get(0);
+    if (only.at != "") { return false; }
+    match (only.backing) {
+      case Host(cli): { return true; }
+      else: { return false; }
+    }
+  }
+
   bool isHostPath(const this, string path) {
     path = this.at(path);
     i32 mi = this.mountOf(path);
     if (mi < 0) { return false; }
     match (this.mounts.get(mi).backing) {
       case Host(cli): { return true; }
+      // The parent knows: a child's own mount table says nothing about which disk the path is on.
+      case Remote(chan): { return remoteIsHostPath(chan, path); }
       else: { return false; }
     }
   }
@@ -325,6 +410,9 @@ export struct Fs {
       // A host mount streams the only way the capability offers: by redirecting this process's
       // output, which is what the shell was doing directly before this existed.
       case Host(cli): { return cli.openOutput(full).wait(); }
+      // The parent holds the cursor, because the parent holds the file. A child streaming a
+      // redirection is the case `packages/sh` reaches on every `>` inside a spawned stage.
+      case Remote(chan): { return remoteOpenOut(chan, full); }
       else: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
@@ -335,6 +423,7 @@ export struct Fs {
     if (this.outPath == "") { return false; }
     match (this.mounts.get(this.outMount).backing) {
       case Host(cli): { return cli.write(bytes); }
+      case Remote(chan): { return remoteWriteOut(chan, bytes); }
       else: {
         i32 node = this.find(this.mounts.get(this.outMount), this.outPath);
         if (node < 0) { return false; }
@@ -354,6 +443,7 @@ export struct Fs {
     match (this.mounts.get(mi).backing) {
       // `openOutput("")` is how a program says it has finished writing — see `platform.wac`.
       case Host(cli): { return cli.openOutput("").wait(); }
+      case Remote(chan): { return remoteCloseOut(chan); }
       else: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
@@ -404,6 +494,7 @@ export struct Fs {
       // which a `readFile` returning one array cannot do — so it refuses and says which read to use
       // instead, rather than inventing a length or hanging.
       case Synth(rand): { return synthRead(this, m, path, rand, -1); }
+      case Remote(chan): { return remoteReadFile(chan, path); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -437,6 +528,10 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Synth(rand): { return synthRead(this, m, path, rand, n); }
+      // Asked rather than trimmed from a whole read, for the same reason the synthesised backing has
+      // its own arm: `/dev/zero` has no whole, and `head -c 10 /dev/zero` in a spawned applet would
+      // otherwise ask its parent for all of it.
+      case Remote(chan): { return remoteReadSome(chan, path, n); }
       else: {}
     }
     FileResult whole = this.readFile(path);
@@ -456,6 +551,7 @@ export struct Fs {
     match (m.backing) {
       case Host(cli): { return cli.stat(path).wait(); }
       case Synth(rand): { return synthStat(this, m, path); }
+      case Remote(chan): { return remoteStat(chan, path); }
       else: {}
     }
     i32 node = this.find(m, path);
@@ -490,6 +586,7 @@ export struct Fs {
     match (m.backing) {
       case Host(cli): { own = cli.readDir(path).wait(); }
       case Synth(rand): { own = synthDir(this, m, path); }
+      case Remote(chan): { own = remoteReadDir(chan, path); }
       else: {
         i32 node = this.find(m, path);
         // Null rather than empty for "not a directory" or "not there", which is what the capability
@@ -520,13 +617,18 @@ export struct Fs {
     // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
     // this correctly already, and asking it twice would cost a round trip to be told what it just said.
     match (m.backing) {
+      // Neither of these checks anything here: the host does its own, and a remote mount's checks
+      // belong to whoever holds the files. Doing it locally would ask the parent for a `stat` and
+      // then ignore what it said in favour of a rule the parent is about to apply anyway.
       case Host(cli): {}
+      case Remote(chan): {}
       else: {
         if (this.stat(path).isDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
       }
     }
     match (m.backing) {
       case Host(cli): { return cli.writeFile(path, data).wait(); }
+      case Remote(chan): { return remoteWriteFile(chan, path, data); }
       case Synth(rand): {
         // `/dev/null` accepts anything and keeps none of it, which is the whole of what it is for.
         // Every other synthesised file is read-only, and says so rather than appearing to have taken
@@ -581,6 +683,7 @@ export struct Fs {
     // this correctly already, and asking it twice would cost a round trip to be told what it just said.
     match (m.backing) {
       case Host(cli): {}
+      case Remote(chan): {}
       else: {
         if (this.stat(path).isDir) {
           // `-p` is the flag that means "and say nothing if it is already there", so an existing
@@ -594,6 +697,7 @@ export struct Fs {
     }
     match (m.backing) {
       case Host(cli): { return cli.mkdir(path, parents).wait(); }
+      case Remote(chan): { return remoteMkdir(chan, path, parents); }
       case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
@@ -648,6 +752,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.remove(path, recursive).wait(); }
+      case Remote(chan): { return remoteRemove(chan, path, recursive); }
       case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
@@ -696,6 +801,9 @@ export struct Fs {
       // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
       // message below is what a caller prints. wac-mono 0117.
       case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
+      // Asked, and therefore implemented wherever the parent's own mount implements it — a child
+      // that `chmod`s a file in an image changes the same inode its parent would have changed.
+      case Remote(chan): { return remoteChmod(chan, path, mode); }
       case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
@@ -718,6 +826,7 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
+      case Remote(chan): { return remoteChown(chan, path, owner); }
       case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
@@ -741,6 +850,22 @@ export struct Fs {
     if (fromIndex < 0 || toIndex < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     Mount fromMount = this.mounts.get(fromIndex);
     Mount toMount = this.mounts.get(toIndex);
+    // **Both ends on the same remote is one rename**, asked as one — which is what makes `mv` work
+    // inside a spawned stage. A child has exactly one mount, so this is every rename it can attempt;
+    // the cross-mount refusals below are about a filesystem with several, which a child does not have.
+    match (fromMount.backing) {
+      case Remote(chan): {
+        match (toMount.backing) {
+          case Remote(chan2): { return remoteRename(chan, from, to); }
+          else: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+        }
+      }
+      else: {}
+    }
+    match (toMount.backing) {
+      case Remote(chan): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+      else: {}
+    }
     match (fromMount.backing) {
       case Host(cli): {
         // A rename across mounts is a copy and a delete, and no host does it for you. Not implemented

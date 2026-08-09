@@ -241,13 +241,14 @@ void fakeCloseSocket(i32 handle) {}
 Child resolveChild(i32 id) {
   // The error stream is a handle of its own; this fake answers end-of-input on every handle, so one
   // more of them changes nothing here and keeps the shape honest.
-  if (id > 0) { return Child(id, id + 100, ""); }
-  if (id == -2) { return Child(-2, -2, "no spawn in this world"); }
-  return Child(-1, -1, "spawn not available");
+  if (id > 0) { return Child(id, id + 100, id + 200, ""); }
+  if (id == -2) { return Child(-2, -2, -2, "no spawn in this world"); }
+  return Child(-1, -1, -1, "spawn not available");
 }
 i32 resolveId(i32 id) { return id; }
 
-Pending<Child> fakeSpawn(string source, u8[][] argv, i32 grants, string cwd, bool inheritIn) {
+Pending<Child> fakeSpawn(string source, u8[][] argv, i32 grants, string cwd, bool inheritIn,
+                         bool serveFs) {
   i32 handle = -1;
   if (source == "runnable") { handle = 7; }
   // Starts, then never reports a status — `exitCode` answers negative for it. The shell calls that
@@ -263,7 +264,7 @@ Pending<Child> fakeSpawn(string source, u8[][] argv, i32 grants, string cwd, boo
  * -2 is "there is no `spawn` here", the answer every world that cannot gives, and the one a caller is
  * expected to have another route for.
  */
-Pending<Child> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, bool inheritIn) {
+Pending<Child> fakeSpawnSelf(u8[][] argv, i32 grants, string cwd, bool inheritIn, bool serveFs) {
   return Pending.of(-2, resolveChild, alwaysSettled, ignoreDrop);
 }
 void fakeCloseFeed(i32 handle) {}
