@@ -528,5 +528,36 @@ export function generateEmit(): Cell[] {
         K + `export i32 f() { K k = ${v}; return match (k) { ${varms.join(", ")} }; }`);
     }
   }
+
+  // Templates. `Box<T>` is not a type and `Box<i32>` is, so a template is compiled once per
+  // instantiation — and the cells that matter are the ones with *two* instantiations in one module,
+  // since a single one cannot tell a substitution from a rename.
+  const BOX = `struct Box<T> { T v; Box<T> of(T x) { return Box(x); } T get(const this) { return this.v; } ` +
+    `void set(this, T x) { this.v = x; } }\n`;
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    add(`template ${t}`, BOX + `export ${t} f() { Box<${t}> b = Box.of(${v}); return b.get(); }`);
+    add(`template ${t} mutated`,
+      BOX + `export ${t} f() { Box<${t}> b = Box.of(${v}); b.set(${w}); return b.get(); }`);
+    add(`template ${t} beside another`,
+      BOX + `export ${t} f() { Box<${t}> a = Box.of(${v}); Box<bool> b = Box.of(true); ` +
+      `return b.get() ? a.get() : ${w}; }`);
+    add(`template ${t} nested`,
+      BOX + `export ${t} f() { Box<${t}> inner = Box.of(${v}); Box<Box<${t}>> outer = Box.of(inner); ` +
+      `return outer.get().get(); }`);
+    add(`template ${t} of an array`,
+      BOX + `export i32 f() { Box<${t}[]> b = Box.of(${t}[](${v}, ${w})); return b.get().len(); }`);
+    add(`template ${t} in a field`,
+      BOX + `struct H { Box<${t}> b; }\nexport ${t} f() { H h = H(Box.of(${v})); return h.b.get(); }`);
+    add(`template ${t} through a call`,
+      BOX + `${t} peek(Box<${t}> b) { return b.get(); }\n` +
+      `export ${t} f() { return peek(Box.of(${v})); }`);
+  }
+  add("template with a string",
+    BOX + `export i32 f() { Box<string> b = Box.of("hello"); return b.get().len(); }`);
+  add("template beside the string helpers",
+    BOX + `export i32 f() { Box<string> b = Box.of("a" + "b"); Box<i32> n = Box.of(3); ` +
+    `return b.get().len() + n.get(); }`);
   return out;
 }

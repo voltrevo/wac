@@ -331,6 +331,85 @@ string signatureOf(Env env, i32 at) {
   return out + ")]";
 }
 
+/** The `i`th type argument in `Vec<i32>` or `Map<string,Vec<i32>>` — by depth, since they nest. */
+string typeArgAt(string inst, i32 want) {
+  i32 depth = 0;
+  i32 from = -1;
+  i32 n = 0;
+  for (i32 i = 0; i < inst.len(); i++) {
+    string c = inst[i];
+    if (c == "<") {
+      depth = depth + 1;
+      if (depth == 1) { from = i + 1; }
+      continue;
+    }
+    if (c == "[") { depth = depth + 1; }
+    if (c == "]") { depth = depth - 1; }
+    if (c == ">") {
+      depth = depth - 1;
+      if (depth == 0) { return n == want ? inst.slice(from, i) : ""; }
+    }
+    if (c == "," && depth == 1) {
+      if (n == want) { return inst.slice(from, i); }
+      n = n + 1;
+      from = i + 1;
+    }
+  }
+  return "";
+}
+
+/** Whether a name is an instantiation rather than a plain type. */
+bool isInstance(string t) {
+  return t.indexOf("<") > 0;
+}
+
+/** The template an instantiation is of: `Vec` from `Vec<i32>`. */
+string templateOf(string inst) {
+  i32 at = inst.indexOf("<");
+  return at < 0 ? "" : inst.slice(0, at);
+}
+
+/**
+ * The owner a static call means when it is written on a **template**: `Vec.create()`.
+ *
+ * The instantiation is not in the call — it is in the slot the answer goes into, which is the
+ * language's own spelling: `Vec<i32> w = Vec.create();`. So this takes the wanted type, and
+ * `typeOfE`, which has no slot to consult, cannot answer this shape at all.
+ */
+string templateStatic(Env env, u8[] src, Lexed lexed, Expr obj, string want) {
+  if (!isInstance(want)) { return ""; }
+  match (obj.kind) {
+    case Ident(tok): {
+      return tokenTextOf(src, lexed, tok) == templateOf(want) ? want : "";
+    }
+    else: { return ""; }
+  }
+}
+
+/**
+ * Bring a template's parameters into scope as its arguments, and say how many were pushed.
+ *
+ * The caller pops exactly that many, which is the whole protocol: a template's members are
+ * registered and emitted with this in force, and nothing else about them changes.
+ */
+i32 pushSubstitution(Env env, u8[] src, Lexed lexed, i32[] typeParams, string inst, string of) {
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (env.subCount >= env.subFrom.len()) { return i; }
+    env.subFrom[env.subCount] = tokenTextOf(src, lexed, typeParams[i]);
+    env.subTo[env.subCount] = typeArgAt(inst, i);
+    env.subCount = env.subCount + 1;
+  }
+  env.curInst = inst;
+  env.curGeneric = of;
+  return typeParams.len();
+}
+
+void popSubstitution(Env env, i32 n) {
+  env.subCount = env.subCount - n;
+  env.curInst = "";
+  env.curGeneric = "";
+}
+
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
   return t.len() > 3 && t.slice(0, 3) == "fn[";
@@ -478,6 +557,25 @@ export struct Env {
    */
   string[] sigTypes;
   i32 sigCount;
+  /**
+   * The type arguments in force while a template is registered or emitted, and which template.
+   *
+   * `Vec<T>` is not a type — `Vec<i32>` is — so a template is compiled once **per instantiation**,
+   * with `T` standing for its argument throughout. The substitution lives here because
+   * `typeOfTyName` already takes the environment, so every place a type can be named goes through
+   * it without a parameter being threaded to any of them.
+   */
+  string[] subFrom;
+  string[] subTo;
+  i32 subCount;
+  /** The instance being built, and the template it is of — `Vec(…)` inside `Vec<T>` means it. */
+  string curInst;
+  string curGeneric;
+  /** Every instantiation the module names, the template each is of, and whether one is new. */
+  string[] instName;
+  string[] instOf;
+  i32 instCount;
+  bool instDirty;
   /**
    * The structs, in the order their type indices were handed out, and their fields flat beside them.
    *
@@ -692,6 +790,29 @@ export struct Env {
     return this.arrayCount - 1;
   }
 
+  /** What a type parameter stands for right now, or `""` — the innermost binding wins. */
+  string substituted(const this, string name) {
+    for (i32 i = this.subCount - 1; i >= 0; i--) {
+      if (this.subFrom[i] == name) { return this.subTo[i]; }
+    }
+    return "";
+  }
+
+  /** Record an instantiation. New ones set `instDirty`, which is what makes registration settle. */
+  void instantiate(this, string inst, string of) {
+    for (i32 i = 0; i < this.instCount; i++) {
+      if (this.instName[i] == inst) { return; }
+    }
+    if (this.instCount >= this.instName.len()) {
+      this.full = true;
+      return;
+    }
+    this.instName[this.instCount] = inst;
+    this.instOf[this.instCount] = of;
+    this.instCount = this.instCount + 1;
+    this.instDirty = true;
+  }
+
   /**
    * A signature's type index, which follows the structs — added on first sighting, like an array's.
    *
@@ -829,7 +950,9 @@ export struct Env {
    * here cost three edits each and one of them was found by a type error rather than by reading.
    */
   Env create() {
-    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[1024](), 0, "", "",
+    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[1024](), 0,
+               string[256](), string[256](), 0, "", "", string[512](), string[512](), 0, false,
+               "", "",
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
                string[1024](), 0,
                string[16384](), string[16384](), string[16384](), 0,
@@ -1237,6 +1360,16 @@ i32 declCountOf(string source) {
 export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1](), string[1]()); }
 
 /**
+ * Whether emitting would register a type the section was already sized without.
+ *
+ * Asked by running the emitter and looking at what came back: a module of eight bytes with nothing
+ * else wrong is that case and no other, since every other reason has already been reported by name.
+ */
+bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
+  return emitModuleOf(src, entryDecls, starts, edges, names).len() == 8;
+}
+
+/**
  * One module from many files: the entry, everything it imports, and nothing else.
  *
  * The caller supplies the files because this compiler is a wasm module and has no filesystem — which
@@ -1435,6 +1568,30 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
+  // The instances, in the order `collectInstances` registered them: after every declaration and
+  // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
+  // bug — every call after the first helper reaches the wrong function — and it is why the last
+  // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
+  // case, which had no strings and so no helpers, passed.
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    for (i32 di = 0; di < prog.decls.len(); di++) {
+      match (prog.decls[di].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                        env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+            countAt = countAt + 1;
+          }
+          popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
+
   i32 helpers = (needsStrings ? 8 : 0) + (startNeeded ? 1 : 0);
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
@@ -1460,6 +1617,30 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
       else: { }
     }
   }
+  // The instances, in the order `collectInstances` registered them: after every declaration and
+  // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
+  // bug — every call after the first helper reaches the wrong function — and it is why the last
+  // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
+  // case, which had no strings and so no helpers, passed.
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    for (i32 di = 0; di < prog.decls.len(); di++) {
+      match (prog.decls[di].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                        env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                   methods[m].hasThis ? env.instName[ii] : ""));
+          }
+          popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
+
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
     env.sigType("fn[bool(string,string)]");
@@ -1552,6 +1733,37 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
+  // The instances, in the order `collectInstances` registered them: after every declaration and
+  // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
+  // bug — every call after the first helper reaches the wrong function — and it is why the last
+  // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
+  // case, which had no strings and so no helpers, passed.
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    for (i32 di = 0; di < prog.decls.len(); di++) {
+      match (prog.decls[di].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                        env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcIndex[emitAt] < 0) {
+              emitAt = emitAt + 1;
+              continue;
+            }
+            emitAt = emitAt + 1;
+            emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                         "", methods[m].returnType, methods[m].params, methods[m].body,
+                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes);
+            index = index + 1;
+          }
+          popSubstitution(env, pushed);
+        }
+        else: { }
+      }
+    }
+  }
+
   // The helper, last, so every index the source could name is already assigned.
   if (needsStrings) {
     emitStringEquals(types, funcs, code, env, index, declTypes);
@@ -1604,6 +1816,12 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 8 : 0), declTypes);
   }
 
+  // **The type section is written before the code that names types.** If emitting a body registered
+  // one more — an array, a struct, a signature — every index after it is a lie, and the module names
+  // a type it does not have: *"no signature at index 353 (353 types)"*. Rather than emit that, the
+  // module is declined, which is the same answer the walk gives for everything it cannot do.
+  if (env.arrayCount + env.structCount + env.sigCount != declTypes) { return bareModule(); }
+
   section(out, 1, types);
   section(out, 3, funcs);
   if (globalCount > 0) { section(out, 6, globals); }
@@ -1648,10 +1866,31 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     case Prim(tok): {
       return tokenTextOf(src, lexed, tok);
     }
-    // **The key, not the name.** Two linked files may each declare a `K`, and what tells them
-    // apart is the line this one is written on.
     case Named(tok, typeArgs): {
-      return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
+      string raw = tokenTextOf(src, lexed, tok);
+      // A **type parameter** stands for its argument wherever it appears — a field's type, a
+      // method's parameter, an array's element, a local inside a body.
+      string bound = env.substituted(raw);
+      if (bound != "") { return bound; }
+      // Spelled with arguments, a name is an **instantiation**: registered on sight, compiled once.
+      if (typeArgs.len() > 0) {
+        string inst = raw + "<";
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          string at = typeOfTyName(env, src, lexed, typeArgs[i]);
+          if (at == "") { return ""; }
+          if (i > 0) { inst = inst + ","; }
+          inst = inst + at;
+        }
+        inst = inst + ">";
+        env.instantiate(inst, raw);
+        return inst;
+      }
+      // Inside a template's own body its bare name is the instance being compiled: `Vec(T[](), 0)`
+      // in `Vec<T>.create` builds a `Vec<i32>` when `T` is `i32`.
+      if (raw == env.curGeneric && env.curInst != "") { return env.curInst; }
+      // **The key, not the name.** Two linked files may each declare a `K`, and what tells them
+      // apart is the line this one is written on.
+      return env.keyAt(raw, tokenLine(lexed, tok));
     }
     // An array spells itself from the element out, exactly as the checker's `typeOfTy` does. Left
     // out, every array type came back as the empty string — the type section had no array entry, the
@@ -2533,7 +2772,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             fb.u32leb(env.sigType(lty));
             return;
           }
-          string cname = nameKeyOf(env, src, lexed, tok);
+          // Through `typeOfTyName`, so a construction inside a template builds the instance being
+          // compiled, and one written with arguments builds the instance it names.
+          string cname = typeOfTyName(env, src, lexed, ctype);
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
           if (env.isStructName(cname)) {
@@ -2675,6 +2916,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
               fb.u32leb(env.sigType(fty2));
               return;
             }
+          }
+          string towner = templateStatic(env, src, lexed, obj, want);
+          if (towner != "") {
+            i32 ta = env.funcAt(towner + "." + mname);
+            if (ta < 0 || env.funcIndex[ta] < 0) { return; }
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(ta, i));
+            }
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[ta]);
+            return;
           }
           string sowner = staticOwner(src, lexed, env, obj);
           if (sowner != "") {
@@ -2991,7 +3243,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
         case Named(tok, typeArgs): {
           string lt3 = env.localType(tokenTextOf(src, lexed, tok));
           if (isFuncrefType(lt3)) { return sigReturn(lt3); }
-          string n2 = nameKeyOf(env, src, lexed, tok);
+          string n2 = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n2)) { return n2; }
           i32 at = env.funcAt(n2);
           return at < 0 ? "" : env.funcReturns[at];
@@ -3689,6 +3941,27 @@ bool isRefType(Env env, string t) {
  */
 string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
+    // A static on a template takes its instantiation from the slot, so it can only be asked about
+    // where there is one — `typeOfE` has none and would call the whole call untyped.
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          string tw = templateStatic(env, src, lexed, obj, want);
+          if (tw == "") { return unsupportedValue(src, lexed, env, e); }
+          string tn = tokenTextOf(src, lexed, nameTok);
+          i32 ta = env.funcAt(tw + "." + tn);
+          if (ta < 0) { return "no static " + tw + "." + tn; }
+          if (!env.funcOk[ta]) { return "a static " + tw + "." + tn + ", declined"; }
+          if (env.funcParamCount[ta] != args.len()) { return "a static with the wrong count"; }
+          for (i32 i = 0; i < args.len(); i++) {
+            string a6 = unsupportedValueAt(src, lexed, env, args[i], env.paramTypeAt(ta, i));
+            if (a6 != "") { return a6; }
+          }
+          return "";
+        }
+        else: { return unsupportedValue(src, lexed, env, e); }
+      }
+    }
     case NullLit: {
       if (isRefType(env, want)) { return ""; }
       // Named, not categorised: which slot it is, is the whole of what a reader needs — and where
@@ -3869,7 +4142,6 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       if (named.len() > 0) { return "named construction"; }
       match (ctype.kind) {
         case Named(tok, typeArgs): {
-          if (typeArgs.len() > 0) { return "a generic"; }
           string lraw2 = tokenTextOf(src, lexed, tok);
           string lty2 = env.localType(lraw2);
           if (isFuncrefType(lty2)) {
@@ -3880,7 +4152,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             }
             return "";
           }
-          string n = nameKeyOf(env, src, lexed, tok);
+          string n = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n)) {
             i32 want = env.fieldCountOf(n);
             if (args.len() != 0 && args.len() != want) { return "a construction with the wrong count"; }
@@ -4138,7 +4410,9 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
         canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
-        if (typeParams.len() > 0) { return "a generic struct"; }
+        // A **template emits nothing** — `Vec<T>` is not a type. Its instances are structs of
+        // their own and their methods functions like any other, so there is nothing to refuse here.
+        if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
         for (i32 m = 0; m < methods.len(); m++) {
           canEmit(src, lexed, env, methods[m].params, methods[m].body,
@@ -4180,6 +4454,9 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
   // out to be a guess when something reaches for it.
   if (env.ambiguous) { return "a name more than one file declares"; }
   if (env.full) { return "more declarations than this emitter has room for"; }
+  if (env.blocked == "" && grewTypesWhileEmitting(src, entryDecls, starts, edges, names)) {
+    return "a type this emitter names only while emitting";
+  }
   return env.blocked;
 }
 
@@ -4191,6 +4468,61 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
  * receiver is a struct, an array type can be named by a field, and a call site has only a name.
  * Extracted so `emitBlocked` can ask the same questions without emitting anything.
  */
+/**
+ * Register the members of every instantiation, until naming one stops naming another.
+ *
+ * A template is compiled once per instantiation, so this is where `Vec<i32>` becomes a struct with
+ * an `i32[] data` and a `Vec<i32>.push`. It is a fixed point because a field can name one: a
+ * `Map<string, Vec<i32>>` names a `Vec<i32>` that nothing else in the module mentions.
+ *
+ * **The order it registers in is the order every other loop must walk**, since a function's index is
+ * its position in this table and nothing else.
+ */
+void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
+  for (i32 round = 0; round < 8; round++) {
+    env.instDirty = false;
+    for (i32 i = 0; i < env.instCount; i++) {
+      string inst = env.instName[i];
+      if (env.isStructName(inst)) { continue; }
+      for (i32 d = 0; d < prog.decls.len(); d++) {
+        match (prog.decls[d].kind) {
+          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+            if (typeParams.len() == 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
+            i32 pushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
+            if (env.structCount >= env.structNames.len()) { env.full = true; }
+            if (env.structCount < env.structNames.len()) {
+              env.structNames[env.structCount] = inst;
+              env.structCount = env.structCount + 1;
+            }
+            for (i32 f = 0; f < fields.len(); f++) {
+              if (env.fieldCount >= env.fieldNames.len()) {
+                env.full = true;
+                break;
+              }
+              env.fieldOwners[env.fieldCount] = inst;
+              env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[f].nameTok);
+              env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[f].type);
+              env.fieldCount = env.fieldCount + 1;
+            }
+            for (i32 m = 0; m < methods.len(); m++) {
+              string[] mpts = string[methods[m].params.len()]();
+              for (i32 a = 0; a < methods[m].params.len(); a++) {
+                mpts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
+              }
+              env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
+                          typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
+            }
+            popSubstitution(env, pushed);
+          }
+          else: { }
+        }
+      }
+    }
+    if (!env.instDirty) { return; }
+  }
+}
+
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
   // **A string literal names the `i8[]` type**, and nothing else in the file need mention it: a bare
   // `"hello".len()` declares no `string` anywhere. Scanning the tokens is complete by construction,
@@ -4337,6 +4669,26 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
     }
   }
 
+
+  // **Every type a body can name**, before anything is emitted: an instantiation written only as a
+  // local's type is still one the module has to build. The array pre-pass walks the same ground
+  // later and registering a type twice is free, which is why this can be the blunt version.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        collectArrayTypes(env, src, lexed, body);
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          collectArrayTypes(env, src, lexed, methods[m].body);
+        }
+      }
+      else: { }
+    }
+  }
+  collectInstances(env, src, lexed, prog);
 }
 
 /**
@@ -4382,6 +4734,30 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
           }
         }
         else: { }
+      }
+    }
+    for (i32 ii = 0; ii < env.instCount; ii++) {
+      for (i32 di = 0; di < prog.decls.len(); di++) {
+        match (prog.decls[di].kind) {
+          case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+            if (typeParams.len() == 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+            i32 pushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                          env.instOf[ii]);
+            for (i32 m = 0; m < methods.len(); m++) {
+              if (env.funcOk[at] &&
+                  !canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                           methods[m].hasThis ? env.instName[ii] : "",
+                           typeOfTyName(env, src, lexed, methods[m].returnType))) {
+                env.funcOk[at] = false;
+                changed = true;
+              }
+              at = at + 1;
+            }
+            popSubstitution(env, pushed);
+          }
+          else: { }
+        }
       }
     }
     if (!changed) { break; }

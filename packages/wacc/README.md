@@ -1183,6 +1183,39 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Monomorphisation, second attempt: the ordering was the bug
+
+The last attempt compiled the corpus into 57 invalid modules and was reverted. The cause was in the
+notes it left rather than in the design: **instance methods were registered before the string helpers
+and emitted after them**, so every function index from the first helper onwards was wrong. Every
+hand-written case passed because none of them used a string, and a module with no strings has no
+helpers to be out of order with.
+
+A template is now compiled once per instantiation. `Vec<T>` is not a type and `Vec<i32>` is: the
+arguments are substituted throughout, the substitution lives in the environment because
+`typeOfTyName` already takes one, and registration is a fixed point because a field can name an
+instantiation nothing else mentions. `Vec.create()` — the language's own spelling — resolves through
+the **slot the answer goes into**, which is why only the walk's slot-aware path can approve it.
+
+**And a guard that would have caught the first attempt in a second.** The type section is written
+before the code that names types, so if emitting a body registers one more — an array, a struct, a
+signature — every index after it is a lie, and the module says *"no signature at index 353 (353
+types)"*. That is now checked directly: if the count moved, the module is declined by name rather
+than emitted. It is the third time this rung has been bitten by a table that grew after it was
+written, and the first time it is asked about rather than reasoned about.
+
+| | |
+|---|---|
+| corpus | 248 whole, **0 invalid** |
+| what stopped `Vec` | *was* `unresolved name Vec`; now the layer behind it |
+| sweep | 3,773 programs, 3,374 compared, 0 mismatched — 44 of them templates |
+
+The whole-file count did not move, and the reason is worth stating: `std`'s `Vec.get` returns an
+`Option<T>`, and `Option<T>` is a generic **enum**. So the corpus's blockers are now `a generic enum`
+(22) and `no method Option<i32>.isNone` (10) where they were `unresolved name Vec` (27). The
+machinery is the same one; what it needs is variant lookup scoped by the instance, since `Some` in
+`Option<i32>` and `Some` in `Option<string>` are two variants with one name.
+
 ### Monomorphisation: what an attempt established, and where it stops
 
 Generics are 51 of the 89 files left, so a slot went at them. **The result is not in the tree** — the
