@@ -4,224 +4,187 @@
 
 # wac
 
-A C-family language for WebAssembly GC, and a systems stack written in it.
+A C-family language for WebAssembly GC, and the systems stack written in it.
 
-**[Website](https://voltrevo.github.io/wac/)** · **[Language spec](spec/)** · **[Packages](packages/)**
+**[Website](https://voltrevo.github.io/wac/)** · **[Language](spec/)** · **[Packages](packages/)** ·
+**[Docs](docs/)** · **[Design](design/)**
 
-## What is in here
+## Meet wacland: userland written in wac
 
-This was two repositories — `wac`, the language and its compiler, and `wac-mono`, the packages
-written in it — merged because the seam between them had started costing more than it bought. A
-change spanning both was two pushes that could not be atomic, the packages pinned a compiler commit
-and went red when a checkout was stale, and the website quoted numbers from the other tree that were
-wrong within a week.
+A shell, 65 applets and a filesystem — and all of it is wac. Not busybox compiled to wasm, not a
+libc port, not wac glue around somebody else's binaries: it is `packages/sh` itself, the same program
+that runs on a command line, and the only thing underneath it is the compiler.
 
 ```
-spec/          the language: definition, tour, cli documentation
-compiler/      the compiler — lexer to WasmGC emitter, in TypeScript with no dependencies
-packages/      34 packages written in wac, including `wacc`, the compiler ported to wac
-native/        a host with no JavaScript in it: Rust on wasmtime
-harness/       the test harness the packages share
-site/          the website
-tools/         repo-wide tooling
-design/        design notes: `lang/` and `system/`
-issues/        issues: `lang/` and `system/`
+$ seq 1 20 | grep 7 | wc -l
+2
+$ echo 'a whole new stack' | gzip -c | wc -c
+41
+$ echo hello | sha256sum
+5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  -
 ```
 
-`issues/` and `design/` keep that split because both trees numbered from 0001 and 79 numbers
-collide. A reference to "wac 0076" is `issues/lang/`, and "wac-mono 0103" is `issues/system/`.
+Those three lines are not a screenshot. `tools/frontpage.test.ts` runs them through
+`packages/box/example/boxsh.wac` and fails if the output ever stops matching.
 
-## Pure TypeScript. Zero dependencies.
+It runs [in a browser tab](https://voltrevo.github.io/wac/) over a filesystem that survives a reload,
+on Deno and Node, and on a host with no JavaScript in it at all — Rust on wasmtime, in `native/`.
+Log in over real OpenSSH and you land in that shell, with a process table you can `ps` and `kill` and
+a `^C` that interrupts. None of it touches the machine it happens to be running on.
 
-The compiler — lexer, parser, resolver, type checker, WasmGC emitter, binary builder — is pure
-TypeScript with no native code, no LLVM, no binaryen and no wasm toolchain. It runs in a browser
-and in Deno or Node, and totals about 16,000 lines.
+The goal it is being built against is [`design/system/0001`](design/system/0001-a-self-contained-system.md):
+the same image loaded in two substantially different hosts, showing the same users, files, programs,
+shell behaviour and services in both. Seven of its eight steps are done; the eighth, a desktop, has
+started.
 
-It is also being replaced by itself: `packages/wacc` is that compiler written in wac, and it
-already reproduces its own output byte for byte. The TypeScript compiler is the seed.
-
-## Example
+## And this is the language it is written in
 
 ```wac
-export struct Point {
-  f64 x;
-  f64 y;
+export string main() {
+  Option<string> name = Option.None;
+  // Option<string> name = Option.Some("Alice and Bob");
 
-  Point create(f64 x, f64 y) {
-    return Point(x, y);
-  }
-
-  f64 distanceSq(const this, Point other) {
-    f64 dx = this.x - other.x;
-    f64 dy = this.y - other.y;
-    return dx * dx + dy * dy;
-  }
+  return "Hello, " + match (name) {
+    case Some(v): v,
+    case None: "world"
+  } + "!";
 }
 
-export f64 run() {
-  Point a = Point.create(0.0, 0.0);
-  Point b = Point.create(3.0, 4.0);
-  return a.distanceSq(b);  // 25.0
+/// A value that might not be there. Declared after it is used — wac has no
+/// forward declarations, because a file is a set of declarations rather than
+/// a sequence of them.
+enum Option<T> {
+  Some(T value),
+  None
 }
 ```
 
-## Language features
+Structs with methods and subtyping, monomorphised generics, enums with payloads and exhaustive
+`match`, nullable references, GC arrays, function references, and four cast modes that say what they
+cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
 
-- Primitive types: `i32` `i64` `f32` `f64` `bool` `string`, and packed `u8`/`i8`/`u16`/`i16` in arrays
-- Structs with methods, `const this`, static methods
-- Struct subtyping via `struct Rect : Shape`
-- Generics: `struct Vec<T>`, monomorphised — `Vec<i32>` and `Vec<Shape>` in one program
-- Enums with payloads, and `match` over them — `enum Option<T> { Some(T v), None }`
-- Nullable references with `?`, `!` unwrap, `is null` / `is not null`
-- GC arrays: `i32[5]()`, `i32[](1,2,3)`, `.len()`
-- Function references: `fn[i32(i32, i32)]`
-- File-based imports with `import { x } from "./file.wac"`, plus `core` — the one module the
-  compiler ships, written unquoted because it is not a file
-- Full control flow: if/else, while, for, do-while, switch, ternary
-- Four cast modes: `as` (lossless), `as!` (checked), `as~` (lossy), `as@` (raw)
-- Two surfaces: `.wac` above, or `.wapy` below — the same language either way
+The collector owns the heap, so there is no allocator to write and no linear memory in the artifact.
+The compiler is about 16,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
+and it runs in a browser as readily as on a command line.
 
-## Two surfaces
+[`spec/tour.wac`](spec/tour.wac) is the whole language in one annotated file that compiles and
+self-tests — much faster than reading the specification, and the right starting point before writing
+any wac.
 
-The same language, the same compiler, and two ways to lay a file out. `.wapy` is
-Python-flavoured — `def`, `class`, indentation, `and`/`or`/`not`, `None`, `self` — and is not
-Python: it does not accept Python, and copying Python into it is an explicit anti-goal.
+There is a second surface. `.wapy` is Python-flavoured — `def`, `class`, indentation, `and`/`or`/`not`
+— and is *not* Python: it does not accept Python, and copying Python into it is an explicit
+anti-goal. A `.wac` file may import a `.wapy` file and the reverse, and nothing after parsing can
+tell which produced a given declaration. See [`spec/spec/wapy.md`](spec/spec/wapy.md).
 
-```wapy
-@export
-class Point:
-    x: f64
-    y: f64
+## The compiler, written in wac
 
-    def create(x: f64, y: f64) -> Point:
-        return Point(x, y)
+The compiler above is TypeScript. It is being replaced by itself. `packages/wacc` is that compiler
+written in wac — lexer, parser, type checker, emitter — and a compiler is the program shape this
+language is worst at: syntax trees want sum types, symbol tables want generics, everything wants
+strings. Writing one is how the language finds out what it is missing, with a real consumer rather
+than by argument.
 
-    def distanceSq(const self, other: Point) -> f64:
-        dx: f64 = self.x - other.x
-        dy: f64 = self.y - other.y
-        return dx * dx + dy * dy
+```
+stage A   wacc, built by the TypeScript compiler
+stage B   wacc, built by stage A
+stage C   wacc, as stage B compiles it
 
-@export
-def run() -> f64:
-    a: Point = Point.create(0.0, 0.0)
-    b: Point = Point.create(3.0, 4.0)
-    return a.distanceSq(b)  # 25.0
+B == C    10 sources, 173,946 bytes, identical
 ```
 
-Neither is special. A `.wac` file may import a `.wapy` file and the reverse, in any mixture in
-one program, and nothing after parsing can tell which produced a given declaration. Converting
-wac to wapy and parsing the result gives the same syntax tree as parsing the original — checked
-against every file in this repo and in wac-mono, which is what keeps the two from drifting.
+Every rung was checked against the TypeScript compiler before the next was started — token streams,
+syntax trees, then diagnostics at exact positions. The type checker was finished against four
+independent corpora, the newest being this repository's own 341 wac files, with no false alarm among
+them.
 
-See [spec/spec/wapy.md](spec/spec/wapy.md) for the correspondence in full.
+It is not finished. The emitter compiles 334 of those 341 files whole, and that number goes down as
+well as up, because the corpus is the live repository and code written for other reasons arrives
+using things the emitter has not reached yet. Everything here is still built with the TypeScript
+compiler today: it is the seed, and the self-hosted one is not yet the compiler of record.
 
-## TypeScript bindgen
+## Tor
 
-`wacBindgen` produces a self-contained `.ts` file with the wasm binary base64-encoded inline and typed wrapper functions. Zero runtime dependencies. Primitive arrays (`i32[]`, `f64[]`, etc.) automatically marshal between JS typed arrays and WasmGC arrays, and structs and enums cross as generated classes.
+A client that verifies a consensus and builds circuits; a SOCKS5 proxy; a relay; a directory
+authority; onion services. On this repository's own TLS 1.3, on its own crypto, with nothing borrowed
+from the C implementation but the specification.
 
-An export may take a JavaScript function — `export i32 fold(fn[i32(i32,i32)] f, i32[] xs)` is called as `fold((a, b) => a + b, [1, 2, 3])`. Passing it is the only way a host function becomes reachable. wac's `import` reads other wac source and does nothing else — a file beside it, or `core`, which is inside the compiler. There is no `extern`, no declaration form, no way to write down the name of a function that lives outside the program — so a module that takes no `fn[…]` parameter has no wasm imports at all and cannot call out. Note which way round that is: there is no ambient authority to opt out of. Most sandboxes are a list of things taken away; here the import section is empty unless a parameter put something in it.
+The strongest evidence is somebody else's client — an unmodified `curl`, through our SOCKS proxy,
+fetching a page from an onion service we host. And it works the other way round: a real C tor
+bootstraps from our directory authority, builds a three-hop circuit through our relays and carries a
+stream over it, reaching *Bootstrapped 100%* having accepted our descriptor, certificate, vote and
+both consensus flavours through its own parsers.
 
-Arrays of references (`string[]`, arrays of structs, nested arrays), nullable primitives (`number | null`), static methods, and functions returned from wac all cross too — enough that `std`'s generic `Map` can be built and driven entirely from JavaScript:
+## Ethereum
 
-```ts
-const m = Map_i32_i32.create((k) => hash(k), (a, b) => a === b);
-m.set(1, 99);
-m.get(1).toObject();     // { tag: "Some", v: 99 }
-```
+Ask a node who owns a name, or what a balance is, and you believe what it tells you. There is no way
+to check — you are trusting whoever runs the endpoint, and a wrong answer looks exactly like a right
+one.
 
-## Building a program
+This checks. It follows the chain's headers itself and verifies the committee signatures on them, so
+a header it accepts is one that was signed rather than one a server asserted. Every answer is then
+proved against that header: a node returns the value *and* the path through the trie that leads to
+it, and a value somebody altered cannot produce a path that still hashes to the root. Worked all the
+way through, that is `vitalik.eth` resolving without trust.
 
-`wacx build prog.wac` writes an executable file with a shebang: the wasm base64 inside it, the bindgen wrappers, and a runner that turns argv into the export's parameters.
+## 34 packages, 89k lines of wac, no dependencies
+
+In dependency order, nothing importing anything above it. No C, no libc, no runtime library, and no
+third-party code in any package's `src/`.
+
+TLS 1.3 interoperating with OpenSSL and rustls. SSH at both ends — a client that runs commands on
+OpenSSH, and a server that serves OpenSSH's own client. SHA-2, SHA-3, HMAC, HKDF, AES-GCM,
+ChaCha20-Poly1305, X25519, Ed25519, P-256, P-384, RSA, ML-KEM-768, and BLS12-381 pairings. gzip and
+Zstandard, both compressing at or under the reference tools. A capability world so a program can read
+files and open sockets with no TypeScript of its own.
+
+[`MAP.md`](MAP.md) is generated from the tree and lists every package and every program, with its
+size and test count.
+
+## How it is checked
+
+Almost nothing here is tested against an expectation somebody typed. The applets are compared against
+GNU coreutils, the shell against bash script for script, the regex engine against GNU grep byte by
+byte, the crypto against test vectors, TLS against OpenSSL, Tor against C tor, and the wac compiler
+against the TypeScript one. Where a differential found a disagreement and *we* were right, the other
+side got an issue rather than us getting a workaround.
 
 ```sh
-wacx build fizz.wac -o fizz
-./fizz 15          # 1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz
+deno task test        # seven to ten minutes, depending on the machine
 ```
 
-5K, no toolchain at run time, nothing bundled — Deno reads TypeScript from a file with no extension, so the generated module *is* the program. `--call` picks the export when there is more than one and no `main`; a parameter a command line cannot carry, such as an array, is refused at build rather than at run time.
+## Where things are
 
-That is the whole of it for a program that only computes. Anything wanting a clock, a filesystem or a socket needs capabilities passed in, which is [wac-mono's `platform` package](https://github.com/) rather than the compiler's business.
-
-## Integer overflow
-
-Integer arithmetic wraps, because half of what wac is used for requires it: SHA-256's `h0 += a` is addition mod 2³² by specification, and so are CRC-32, ChaCha20 and FNV-1a.
-
-`wacx --checked` compiles a module that traps on overflow in `+`, `-` and `*` instead. It is a whole-module switch and experimental — the point is to find out what your own code depends on. Measured over wac-mono: 68 of 503 tests depend on wrapping, nearly all in `crypto`, while json, gzip, url, http, fmt and std pass with it on. The cost with nothing opted out was 5% on a JSON parse and 27% on gzip.
-
-## Constant-time checking
-
-`wacCompile(files, entry, { ctTrace: true })` records an ordered trace of every branch taken and every memory *index* used, with each event mapped to a source line. Run a routine twice with the same public input and different secrets, compare the traces, and the first divergence is where the secret became observable.
-
-The index half is the part branch coverage cannot do: `SBOX[secret]` has no branch, so a counter-based tool reports it as uniform while the address bus does not. Applied to wac-mono's crypto package it confirmed two documented leaks, located them to the line, found a third that was not documented, and showed x25519's ladder uniform across 1.6 million events.
-
-## What a wac module requires
-
-MVP plus non-trapping float→int conversions, reference types, typed function references, and
-garbage collection — Chrome 119+, Firefox 120+, Safari 18.2+, Node 22+, Deno. All shipped, none
-behind a flag.
-
-That is the floor, and it is deliberate: nothing is emitted from a proposal that is not broadly
-supported. There are no bulk-memory, exception-handling, tail-call or SIMD opcodes in the emitter.
-A feature that would cross this line — JSPI, for instance, which the callback design happens to
-make available to a host that wants it — is a decision to take explicitly, not a convenience to
-adopt because an engine you have to hand supports it.
-
-## What WebAssembly is missing
-
-[WASM-WISHLIST.md](WASM-WISHLIST.md) is a running list of things wac wanted from WebAssembly and
-could not have, each with the code that works around it and what the workaround costs.
-
-It exists because this project sits in an unusual corner. WasmGC's rough edges get reported by
-object-graph languages; linear memory's get reported by C and Rust. A GC-first language doing
-byte-heavy systems work — TLS, SSH, Tor, compression, pairings — hits gaps neither of them would,
-starting with the fact that **nothing in WebAssembly copies between a GC array and linear memory**,
-which is enough on its own to lock a GC-first language out of SIMD.
-
-## What has been built with it
-
-[**wac-mono**](https://github.com/voltrevo/wac-mono) is the other half of this project: things
-written in wac. It is the evidence that the language is finished enough to be boring — 24
-packages, 41,000 lines of wac, 897 tests, and no TypeScript in any package's `src/`.
-
-- **A busybox**: 59 applets in one program, each differential-tested against the real tool.
-- **A shell**, checked against GNU bash script for script.
-- **SSH, both ends** — a client that runs commands on OpenSSH, and a server that serves
-  OpenSSH's own client, hosting that shell.
-- **TLS 1.3**, interoperating with OpenSSL and rustls, and a **Tor client** with a SOCKS proxy
-  on top of it.
-- **Crypto**: SHA-2, SHA-3, HMAC, HKDF, AES-GCM, ChaCha20-Poly1305, X25519, Ed25519, P-256,
-  P-384, RSA verification, ML-KEM-768.
-- **gzip and Zstandard**, both compressing at or under the reference tools.
-- **A capability world** — so a program can be an application, reading files and opening
-  sockets, with no TypeScript of its own — which also targets **the browser**: the shell above
-  runs in a tab, over a filesystem that survives a reload.
-- **The wac compiler, in wac**, being ported so it can eventually compile itself.
-
-Its [MAP.md](https://github.com/voltrevo/wac-mono/blob/master/MAP.md) is generated from the
-tree and lists every package and every program.
-
-Three of them run on the [website](https://voltrevo.github.io/wac/) — the shell in a tab, a
-hash-and-compress playground, and a Mandelbrot set with the escape count under your pointer.
-Those are whole applications on a worker, so they need `SharedArrayBuffer`, which needs two
-headers GitHub Pages will not set; the site registers a service worker that supplies them.
-
-## Development
-
-```sh
-npm install
-npm run dev      # dev server with playground
-npm run build    # production build
-deno test -A     # run compiler tests (bindgen tests write to a temp dir)
-
-deno run -A tools/syncDemos.ts ../wac-mono   # build the three demo pages into public/
-deno run -A tools/syncMap.ts ../wac-mono     # refresh the package table's numbers
+```
+spec/          the language: definition, tour, CLI documentation
+compiler/      the compiler — lexer to WasmGC emitter, in TypeScript, no dependencies
+packages/      the packages written in wac, including wacc, the compiler ported to wac
+native/        the host with no JavaScript in it: Rust on wasmtime
+harness/       the test harness the packages share
+site/          the website — the only npm subtree
+tools/         repo-wide tooling
+docs/          detail that is not the language and not a package
+design/lang/   design/system/
+issues/lang/   issues/system/
 ```
 
-The demo pages are build output from `wac-mono` and are **not** committed:
-`.github/workflows/pages.yml` checks that repository out beside this one and builds them on every
-deploy, so what the site serves is built from both repositories at the moment it is deployed. A
-checkout that has not run `syncDemos` links to three pages that are not there, which is the honest
-state of it — run the command above and `npm run dev` serves them.
+`issues/` and `design/` split by category rather than provenance because both trees numbered from
+0001 and 79 numbers collide. "wac 0076" means [`issues/lang/`](issues/lang/), "wac-mono 0103" means
+[`issues/system/`](issues/system/).
+
+**This repository was two repositories until 2026-08-09** — `wac`, the language and its compiler, and
+`wac-mono`, the packages written in it. See [`MERGE.md`](MERGE.md) if anything about the layout
+surprises you.
+
+## More
+
+| | |
+| --- | --- |
+| [`docs/`](docs/) | Integer overflow, constant-time checking, the wasm floor, development |
+| [`spec/`](spec/) | The language, [the tour](spec/tour.wac), [bindgen](spec/spec/bindgen.md), [the CLI](spec/cli/main.md) |
+| [`design/`](design/) | Why things are the way they are |
+| [`issues/`](issues/) | What is known to be wrong |
+| [`WASM-WISHLIST.md`](WASM-WISHLIST.md) | What wac wanted from WebAssembly and could not have |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Read before touching `compiler/` |
 
 ## License
 

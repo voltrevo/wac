@@ -1,0 +1,22 @@
+# What a wac module requires
+
+MVP plus non-trapping float→int conversions, reference types, typed function references, and garbage
+collection — Chrome 119+, Firefox 120+, Safari 18.2+, Node 22+, Deno. All shipped, none behind a
+flag.
+
+That is the floor, and it is deliberate: nothing is emitted from a proposal that is not broadly
+supported. There are no bulk-memory, exception-handling, tail-call or SIMD opcodes in the emitter. A
+feature that would cross this line — JSPI, for instance, which the callback design happens to make
+available to a host that wants it — is a decision to take explicitly, not a convenience to adopt
+because an engine you have to hand supports it.
+
+## The other direction
+
+[`WASM-WISHLIST.md`](../WASM-WISHLIST.md) is a running list of what wac wanted from WebAssembly and
+could not have, each with the code that works around it and what the workaround costs.
+
+It exists because this project sits in an unusual corner. WasmGC's rough edges get reported by
+object-graph languages; linear memory's get reported by C and Rust. A GC-first language doing
+byte-heavy systems work — TLS, SSH, Tor, compression, pairings — hits gaps neither of them would,
+starting with the fact that **nothing in WebAssembly copies between a GC array and linear memory**,
+which is enough on its own to lock a GC-first language out of SIMD.
