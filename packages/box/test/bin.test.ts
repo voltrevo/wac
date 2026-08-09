@@ -95,15 +95,50 @@ Deno.test("a path into /bin runs the program, however it is spelled", async () =
   // Relative, from inside `/bin` — the same program by another spelling, which a shell that matched
   // on the text of the word rather than the resolved path would get wrong.
   assertEquals((await sh("cd /bin; echo x y | ./wc -w")).out, "2\n");
-  // And through a link that is not there: `/bin/nosuch` is not a program, so it is not found rather
-  // than refused for some other reason.
+  // And a name that is not one of the programs. **`command not found` is what a shell says about a
+  // *name*** — bash says `No such file or directory` about a path, and 127 either way. This asserted
+  // the wrong half of that sentence until the two hosts were compared against GNU on paths.
   const nope = await sh("/bin/nosuch; echo status=$?");
   assertEquals(nope.out, "status=127\n", nope.err);
-  assertEquals(nope.err.includes("command not found"), true, nope.err);
+  assertEquals(nope.err.includes("No such file or directory"), true, nope.err);
 
   // A directory that merely looks like it: `/binary/wc` must not be treated as `/bin`'s.
   const near = await sh("mkdir /binary; /binary/wc; echo status=$?");
   assertEquals(near.out.includes("status=127"), true, `${near.out} / ${near.err}`);
+});
+
+Deno.test("...and it is the same program down every route a command can take", async () => {
+  // **Three routes reach a program and only one of them consulted `/bin`.** `dispatched` rewrote the
+  // path before looking at any bytes; the streaming pipeline and `&` both went to `spawnStage`, which
+  // read the file — and what is in `/bin` is a *sentence* about the program, so the same command
+  // answered "not a wac worker bundle" behind an `&` and worked without one. Now one function decides
+  // what a path into `/bin` means and every route asks it.
+  const bg = await sh("echo a b c > w; /bin/wc -w w & wait");
+  assertEquals(bg.out, "3 w\n", `background: ${bg.err}`);
+  const piped = await sh("seq 1 5 | /bin/wc -l | /bin/cat");
+  assertEquals(piped.out, "5\n", `pipeline: ${piped.err}`);
+
+  // The two path failures in a pipeline, because they were the other half of the same bug: a stage
+  // that is a directory was spawned as this bundle with its own path for an argv[0] and came back as
+  // a name nothing knows. Both answers are bash's, checked against it: the *last* stage decides the
+  // status, so a failing stage in front of a working one leaves the pipeline at 0 while still
+  // complaining — which is why the first of these asserts a zero it would be easy to call a bug.
+  const first = await sh("/bin | cat; echo status=$?");
+  assertEquals(first.err.includes("Is a directory"), true, first.err);
+  assertEquals(first.out, "status=0\n", first.out);
+  const last = await sh("cat /etc/hostname | /bin; echo status=$?");
+  assertEquals(last.err.includes("Is a directory"), true, last.err);
+  assertEquals(last.out, "status=126\n", last.out);
+  const gone = await sh("cat /etc/hostname | /bin/nosuch; echo status=$?");
+  assertEquals(gone.err.includes("No such file or directory"), true, gone.err);
+  assertEquals(gone.out, "status=127\n", gone.out);
+
+  // **And a `/bin` path streams**, which is the same statement about a fourth route: `canStream`
+  // refused every word with a slash in it, so this stage's pipeline ran sequentially and buffered
+  // `yes` until the array grew past what wasm will allocate — about eleven seconds, then the shell
+  // died. Issue 0127 is the general case; this is the spelling that had no reason to be in it.
+  const streamed = await sh("yes | /bin/head -2");
+  assertEquals(streamed.out, "y\ny\n", `${streamed.out} / ${streamed.err}`);
 });
 
 Deno.test("a build with no programs has no /bin at all", async () => {

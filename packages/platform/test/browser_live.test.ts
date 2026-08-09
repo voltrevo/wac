@@ -714,6 +714,13 @@ Deno.test({
       await desk(2, "pwd", "\n/\n");
       await desk(0, "echo from-the-first > /shared", "$ echo from-the-first > /shared");
       await desk(2, "cat /shared", "from-the-first");
+      // **A file that is not a program, in the third host.** Written to check what a page says when it
+      // cannot run something — the guess being that a page cannot spawn at all and would need a
+      // sentence of its own. It spawns: this is the *same* answer Deno gives, from the worker route,
+      // which makes the browser and Deno one host for this purpose and the native runtime the odd one
+      // out (`native_hostfs` pins both of those). The guess was wrong and the code written for it is
+      // gone; this line is what the run actually said.
+      await desk(2, "./shared", "not a wac worker bundle");
       assertEquals(
         ((await page2.textContent("#scr2")) ?? "").includes("from-the-first"),
         true,

@@ -22,7 +22,7 @@ import { Option } from "../../std/src/option.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from core;
-import { Change, Child, Cli, Core, FAULT_UNSUPPORTED, faultWords, FileResult,
+import { Change, Child, Cli, Core, FAULT_NONE, FAULT_UNSUPPORTED, faultWords, FileResult,
   GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending, Stat, readReason, reasonOf }
   from "../../platform/src/platform.wac";
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
@@ -986,6 +986,13 @@ void runBackground(Shell sh, AndOr list) {
     return;
   }
 
+  PathFault badBg = pathFault(sh, argv.get(0));
+  if (badBg.status != 0) {
+    sh.err(("sh: " + argv.get(0) + ": " + badBg.why + "\n").toBytes());
+    sh.status = badBg.status;
+    return;
+  }
+
   Child kid = spawnStage(sh, argv, false);
   if (kid.unavailable()) {
     // Not the command's fault and not a refusal of `&` as an idea: this world has no `spawn`. A
@@ -1710,6 +1717,17 @@ i32 stageGrants(Shell sh) {
 Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   bool serveFs = serveFsFor(sh);
   i32 grants = stageGrants(sh);
+  // **`/bin/wc` is this build's `wc` here too.** `dispatched` rewrites it before looking at any bytes;
+  // this route did not, so the same command answered "not a wac worker bundle" behind `&` — the file
+  // in `/bin` is a sentence about the program, and reading it is what that refusal is about. One place
+  // decides what a path into `/bin` means, and both routes ask it.
+  string inBin = binProgram(sh, argv.len() > 0 ? argv.get(0) : "");
+  if (inBin != "") {
+    Vec<string> renamed = Vec.create();
+    renamed.push(inBin);
+    for (i32 i = 1; i < argv.len(); i++) { renamed.push(argv.get(i)); }
+    argv = renamed;
+  }
   string name = argv.get(0);
   string where = containsSlash(name) ? name : searchWacPath(sh, name);
   if (where != "") {
@@ -1766,8 +1784,17 @@ string binProgram(Shell sh, string name) {
   return "";
 }
 
-/** Whether this name would reach `trySelf` — not a function, not a builtin, and one of ours. */
+/**
+ * Whether this name would reach `trySelf` — not a function, not a builtin, and one of ours.
+ *
+ * **A path into `/bin` is the program it names**, so it answers for the leaf. Without that, a stage
+ * spelled `/bin/head` made the whole pipeline non-streamable and `yes | /bin/head -2` buffered `yes`
+ * until the array grew past what wasm will allocate — where `yes | head -2` streams and stops. Every
+ * other spelling of a path stays false, because it is a file this shell cannot know how to start.
+ */
 bool spawnableName(Shell sh, string name) {
+  string inBin = binProgram(sh, name);
+  if (inBin != "") { name = inBin; }
   if (name == "" || containsSlash(name)) { return false; }
   if (sh.funcs.has(name)) { return false; }
   if (isBuiltin(name)) { return false; }
@@ -3185,6 +3212,35 @@ Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] 
 }
 
 /**
+ * What a *path* that cannot be run is, when it is one of the two things the filesystem can settle on
+ * its own — with a zero status when it is not.
+ *
+ * A name with a slash is a path and nothing else: bash does not search for it, does not fall back to a
+ * builtin of the same name, and answers about the path itself. This shell used to answer about it only
+ * after trying to *run* it, so a directory and a missing file both arrived at the end of `dispatched`
+ * as "command not found" and 127 — where bash says `Is a directory` and 126 for the first, and `No
+ * such file or directory` for the second. Both were measured against GNU on both hosts before this
+ * existed, and both were wrong on both.
+ *
+ * Only the two the filesystem answers. A file that exists and is not a directory may still be
+ * unrunnable, but *why* is the runtime's to say — a JavaScript host wants a worker bundle and the
+ * native one cannot spawn a foreign program at all — and there is no execute bit here to check first,
+ * because a program is a file whose contents the host is willing to run.
+ */
+struct PathFault { i32 status; string why; }
+
+PathFault pathFault(Shell sh, string name) {
+  if (name == "" || !containsSlash(name)) { return PathFault(0, ""); }
+  Stat st = sh.fs.stat(sh.resolve(name));
+  // A `stat` that could not be *reached* says so in its own words rather than being read as absence:
+  // a session with no read grant would otherwise report every path as missing.
+  if (st.fault != FAULT_NONE()) { return PathFault(126, statReason(st)); }
+  if (!st.exists) { return PathFault(127, "No such file or directory"); }
+  if (st.isDir) { return PathFault(126, "Is a directory"); }
+  return PathFault(0, "");
+}
+
+/**
  * Run `argv` as a spawned worker, if `$WACPATH` names one.
  *
  * **`$WACPATH` and not `$PATH`.** What `spawn` starts is a wac program built as a worker bundle,
@@ -3202,6 +3258,11 @@ Output noExternal(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] 
 Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   string name = argv.get(0);
   if (name == "") { return Output.missing(); }
+  // The path cases, before anything tries to run it — see `pathFault`.
+  PathFault bad = pathFault(sh, name);
+  if (bad.status != 0) {
+    return Output.fail(("sh: " + name + ": " + bad.why + "\n").toBytes(), bad.status);
+  }
   // A name with a slash is a path already, as in bash — `./prog` is not searched for.
   string where = containsSlash(name) ? name : searchWacPath(sh, name);
   if (where == "") { return Output.missing(); }
