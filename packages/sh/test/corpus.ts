@@ -1029,6 +1029,16 @@ esac`,
   `ls /nosuchfile 2> e; echo "[$(cat e)]"; rm -f e`,
   `ls /nosuchfile 2> e; ls /nosuchother 2>> e; wc -l < e; rm -f e`,
   `echo hi >&2`,
+  // **Writing *to* a synthesised path, which nothing here did.** Nine scripts mentioned `/dev/null`
+  // and every one of them read from it or sent standard *error* to it — neither of which reaches the
+  // shell's streaming write. So `seq 1 3 > /dev/null` was a shape the corpus had never run, and it
+  // trapped the whole session with "unreachable" on every backing but the host: `Fs.openOut` had no
+  // arm for a synthesised mount, so the write fell through to a memory lookup on a mount whose node
+  // pool is empty. Found by hand, which is the argument for these lines.
+  `seq 1 3 > /dev/null; echo $?`,
+  `seq 1 3 | cat > /dev/null; echo $?`,
+  `seq 1 5 | sort -nr > /dev/null; echo $?`,
+  `echo x > /dev/null; cat /dev/null | wc -c`,
   `echo hi 1>&2 2>/dev/null; echo done`,
   `ls /nosuchfile 2>&-; echo st=$?`,
   `ls /nosuchfile 2>/dev/null; echo st=$?`,

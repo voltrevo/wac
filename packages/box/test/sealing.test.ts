@@ -291,3 +291,59 @@ Deno.test("a program nobody spawned still gets the host, and says nothing about 
   const d = new TextDecoder();
   assertEquals(d.decode(r.stdout), "on the host\n", d.decode(r.stderr));
 });
+
+Deno.test("what a session's file *is* does not depend on what the machine has at that path", async () => {
+  // **The leak this closes.** `tar` asks whether a name is a symbolic link before it archives it,
+  // because a ustar header cannot describe one. It asked `cli.linkStat` — the *capability* — because
+  // `Fs.linkStat` was `return this.stat(path)` on every backing and so could not tell it anything.
+  //
+  // In a session on an image that asks the **machine** about a path in the image. So the same image,
+  // the same session and the same file were archived or refused depending on whether this computer
+  // happened to have a symbolic link at that absolute path. Nothing in the session could see the
+  // difference; the answer simply came from the wrong disk.
+  //
+  // `Fs.linkStat` dispatches now, so the question goes to whichever filesystem the path is on: a host
+  // mount asks the host, and every other backing answers `stat`, because there is no way to make a
+  // link in one. The test is that the two runs below agree.
+  //
+  // **Two things hold it, and canarying either alone does not fail.** The second is that a session
+  // with no host mount spawns its stages with *no filesystem grants*, so a capability call that gets
+  // past `Fs` is refused rather than answered — `stageGrants` in `packages/sh/src/exec.wac`. That is
+  // deliberate defence in depth, and it is worth knowing here because it makes this test look
+  // insensitive: reverting `tar` alone leaves it green. Reverting both gives
+  // `with: 1024` — an empty archive and a refusal — against `without: 2048`.
+  const image = `${tmp}/link.wacimg`;
+  const collide = `${tmp}/collide`;
+  // The same absolute path in both worlds, which is what makes them able to collide: the session
+  // makes it inside the image, and the machine either has a symlink there or does not.
+  const script = `mkdir -p ${tmp}; echo mine > ${collide}; tar ${collide} | wc -c`;
+
+  await Deno.remove(image).catch(() => {});
+  await Deno.symlink("/etc/hostname", collide).catch(() => {});
+  const withLink = run(imaged, [image], script);
+
+  await Deno.remove(image).catch(() => {});
+  await Deno.remove(collide).catch(() => {});
+  const without = run(imaged, [image], script);
+
+  assertEquals(
+    withLink.out,
+    without.out,
+    `the machine's symlink changed what the session's own file is:\n  with: ${withLink.out}${withLink.err}\n  without: ${without.out}${without.err}`,
+  );
+  // And the answer is the *file's*, not an empty archive: a pair that agreed by both failing would
+  // pass the comparison above while saying nothing.
+  assertEquals(without.out.trim(), "2048", `${without.out}${without.err}`);
+
+  // The other direction, so this reads as a distinction rather than as "links are ignored now": on a
+  // filesystem that really is the host's, a symbolic link is still refused.
+  const host = `${tmp}/wacsh-link`;
+  await buildApp("packages/box/src/bin/sh.wac", host, { read: true, write: true, env: true });
+  await Deno.symlink("/etc/hostname", `${tmp}/alink`).catch(() => {});
+  const real = run(host, [], `tar ${tmp}/alink | wc -c`);
+  assertEquals(
+    real.err.includes("symbolic link"),
+    true,
+    `wacsh should still refuse a real symlink: ${real.out}${real.err}`,
+  );
+});

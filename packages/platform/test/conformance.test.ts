@@ -86,9 +86,11 @@ const COVERAGE: Record<string, Cover> = {
   WRITE_FILE: { where: "native_hostfs: `touch`, and write-only grants" },
   STAT: { where: "native_hostfs: `stat f`" },
   LINK_STAT: {
-    gap: "the only caller is `test -h` in the shell, and no two-host script uses it. `find .` is " +
-      "compared on both hosts and does *not* reach this — it calls `stat`, which I had assumed " +
-      "otherwise when first writing this ledger",
+    gap: "two callers now — `test -h` in the shell and `tar`, both through `Fs.linkStat`, which " +
+      "dispatches rather than answering `stat` everywhere (that is what let `tar` ask the *host* " +
+      "about a path in an image). Still no two-host script reaches it: the corpus has no `tar` and " +
+      "no `test -h`. `find .` is compared on both hosts and does *not* reach this — it calls " +
+      "`stat`, which I had assumed otherwise when first writing this ledger",
   },
   READ_DIR: { where: "native_hostfs: `ls`" },
   MKDIR: { where: "native_hostfs: `mkdir d2; ls; rmdir d2`" },

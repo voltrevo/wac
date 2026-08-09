@@ -51,7 +51,13 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   // like the directory: this walked into it, stored its contents under the link's name, and a cycle
   // grew the path until something trapped. The header of this file has always said links are
   // refused; `linkStat` is what made saying so possible. GitHub wac-mono#25.
-  Stat link = cli.linkStat(path).wait();
+  //
+  // **Through the filesystem, not the capability.** This asked `cli.linkStat` while `Fs.linkStat`
+  // was `stat` on every backing, so in a session on an image it asked the *machine* about a path in
+  // the image: the same file was archived or refused depending on whether this computer happened to
+  // have a symlink at that path. `Fs.linkStat` dispatches now, so the question goes to whichever
+  // filesystem the path is actually on.
+  Stat link = fs.linkStat(path);
   if (link.exists && link.isSymlink) {
     core.warn(name + ": " + path + ": symbolic link, which a ustar header cannot describe");
     return false;
