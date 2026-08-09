@@ -66,7 +66,7 @@ keystroke. What is still not wired is the *editing*: `box/example/term.wac` uses
 browser does it, and taking that over costs the block caret, IME composition and paste — a decision
 with a price, written up beside the loop there.
 
-**Modes have an oracle now.** `tools/discipline.py` is a pty with `termios` set before the child
+**Modes are implemented, measured against a pty in each setting.** `Line.create()`, `Line.noEcho()` and `Line.cbreak()` — one `Line` with two flags, which is what `test/modes.test.ts` asserts by running the same program in all three. And the oracle: `tools/discipline.py` is a pty with `termios` set before the child
 starts, so the comparison this module lives by extends to `noecho` and `cbreak` — which `script -qec
 cat` could not hold. `test/modes.test.ts` pins that it reproduces the existing oracle byte for byte in
 canonical mode, and records what the kernel does in the other two. The module still implements one

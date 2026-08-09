@@ -17,7 +17,11 @@ import { Buf } from "../../bytes/src/buf.wac";
 
 export i32 main(Core core, Cli cli) {
   u8[] typed = cli.readStdin().wait();
-  Line l = Line.create();
+  // The mode to run in, so the same program can be compared against the same pty in each of them.
+  // Nothing but the constructor differs — which is the claim worth testing, since a mode that needed
+  // its own loop would be a second implementation of the discipline rather than a setting on one.
+  string mode = cli.argCount().wait() > 0 ? string.fromBytes(cli.arg(0).wait()) : "canonical";
+  Line l = mode == "cbreak" ? Line.cbreak() : (mode == "noecho" ? Line.noEcho() : Line.create());
   Buf out = Buf.create();
   for (i32 i = 0; i < typed.len(); i++) {
     Typed t = l.feed(typed[i]);

@@ -12,10 +12,11 @@
 // language that has one, and Deno's inability to allocate one is a fact about Deno rather than about
 // the problem. `tools/discipline.py` is that pty.
 //
-// ## What this file asserts, and what it deliberately does not
+// ## What this file asserts
 //
-// It does **not** test `packages/tty` — the module has no modes yet, and a test asserting behaviour
-// nothing implements would be a plan wearing a test's clothes. It tests the *oracle*, on two counts:
+// `packages/tty` has the modes now, and the third test below is the differential that matters: the
+// same `Line`, in each mode, against the same pty in that mode. The first two are about the *oracle*,
+// because a differential is worth what its reference is worth:
 //
 //   1. **It is a drop-in for the one already trusted.** In canonical mode it must reproduce
 //      `script -qec cat` byte for byte, on the cases `line.test.ts` already compares. Without that,
@@ -126,5 +127,46 @@ Deno.test({
       await inMode("cbreak", "ab\x7fc\n"),
     ]);
     assertEquals(answers.size, 3, "the modes are not distinct — the harness is reading zero");
+  },
+});
+
+// Built once for the three mode runs below.
+const ttycat = await (async () => {
+  const { buildApp } = await import("../../platform/build.ts");
+  const out = await Deno.makeTempFile({ prefix: "wac-ttycat-modes-" });
+  globalThis.addEventListener("unload", () => {
+    try {
+      Deno.removeSync(out);
+    } catch {
+      // Already gone.
+    }
+  });
+  await buildApp("packages/tty/example/ttycat.wac", out, {});
+  return out;
+})();
+
+Deno.test({
+  name: "`Line` answers what the kernel answers, in every mode it has",
+  ignore: !haveTools,
+  fn: async () => {
+    // The point of the whole exercise: one implementation, three settings, compared against the same
+    // discipline in the same three settings. A mode that needed its own loop would be a second
+    // implementation of the rules rather than a switch on one, and this is what says it is not.
+    const cases: Record<string, string> = {
+      ...CASES,
+      // Two the modes disagree about most sharply, kept here rather than in `CASES` because they are
+      // about the *difference*: `^U` is a kill in two modes and a byte in the third, and `^R` is a
+      // redraw in one, a byte in the other two.
+      "kill in canonical, a byte in cbreak": "abc\x15xy\n",
+      "word erase, which cbreak does not do": "one two\x17z\n",
+    };
+    for (const mode of ["canonical", "noecho", "cbreak"]) {
+      for (const [name, text] of Object.entries(cases)) {
+        const input = enc(text);
+        const theirs = await ours(mode, input);
+        const mine = await pipeThrough(ttycat, [mode], input);
+        assertEquals(show(mine), show(theirs), `${mode}: ${name}`);
+      }
+    }
   },
 });
