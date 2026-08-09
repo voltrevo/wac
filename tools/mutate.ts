@@ -526,10 +526,39 @@ async function stageProject(dest: string): Promise<void> {
   //
   // Root files are a handful of kilobytes, so copying all of them is cheaper than maintaining a
   // list of which ones some test happens to read.
-  for (const entry of ["packages", "harness"]) {
-    const cmd = new Deno.Command("cp", { args: ["-r", entry, `${dest}/`] });
+  //
+  // **The same argument applies to the directories, and it took the tool going dead to notice.** The
+  // list was `packages` and `harness`. Then:
+  //
+  //   - the 2026-08-09 repository merge moved the compiler *inside* this repo. It used to be reached
+  //     through a `wac/` alias pointing at `../…`, which the rewrite below turns into a real path
+  //     outside the staging directory, so not copying it was correct; afterwards the alias became
+  //     `./compiler/` and the directory was simply never staged.
+  //   - `tools/` was never staged, and tests import from it: `shellFuzz.ts`, and since the standard
+  //     error sweep, `corpusStderr.ts` from two of them.
+  //
+  // Both produced `Module not found`, a red baseline, and a run that correctly reported **nothing is
+  // measurable** — which is the right answer and reads like somebody else's problem. A red baseline
+  // looks like a broken suite; the suite was green. The tool had withdrawn itself from the
+  // repository's measurements and said so in a sentence nobody had reason to disbelieve.
+  //
+  // So: every directory, minus the ones that are not source. A list of what to *exclude* is short and
+  // its entries are obvious; a list of what to include is a list that drifts, and this one drifted
+  // twice without anybody seeing it.
+  const notSource = new Set([".git", "node_modules", ".cache"]);
+  for await (const e of Deno.readDir(".")) {
+    if (!e.isDirectory || notSource.has(e.name)) continue;
+    // `tar` rather than `cp`, for one reason: `native/target` is 567 MB of Rust build output that
+    // nothing here reads, and this `cp` has no `--exclude`. Piping one `tar` into another is the
+    // portable way to copy a tree minus a subdirectory, and it is what the exclusion costs.
+    const cmd = new Deno.Command("bash", {
+      args: [
+        "-c",
+        `tar -c --exclude=target --exclude=node_modules -f - ${e.name} | tar -x -f - -C ${dest}`,
+      ],
+    });
     const { code, stderr } = await cmd.output();
-    if (code !== 0) throw new Error(`copy ${entry} failed: ${new TextDecoder().decode(stderr)}`);
+    if (code !== 0) throw new Error(`copy ${e.name} failed: ${new TextDecoder().decode(stderr)}`);
   }
   for await (const e of Deno.readDir(".")) {
     if (!e.isFile) continue;
@@ -789,6 +818,21 @@ try {
         const out = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
         const why = out.split("\n").find((l) => l.includes("FAILED") || l.includes("error")) ?? "";
         console.log(`  BASELINE RED: ${dirs.join(" ")} — ${why.trim().slice(0, 100)}`);
+        // **A module missing from inside the staging directory is *this tool's* bug, not the
+        // suite's**, and saying so is the whole of why this branch exists.
+        //
+        // The staging list was `packages` and `harness` for a long time. The repository merge moved
+        // the compiler inside the repo and it stopped being copied; `tools/` was never copied and
+        // tests import from it. Both produced a red baseline and the honest, useless conclusion
+        // "fix the suite before trusting any number from here" — pointing at a suite that was green.
+        // Nobody looked at the tool for weeks, because its message was about somebody else.
+        const missing = out.match(/Module not found "file:\/\/([^"]+)"/);
+        if (missing !== null && missing[1].startsWith(workDirs[0].split("/").slice(0, 3).join("/"))) {
+          console.log(
+            `    ...and that path is inside the staged copy, so this is a staging bug rather than a` +
+              ` broken suite: ${missing[1]} was not copied. See stageProject.`,
+          );
+        }
       }
     }
     const clean = scopes.size - redScopes.size;

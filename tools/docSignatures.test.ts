@@ -35,6 +35,7 @@
 // gives: a specifier — or here a signature — inside a comment or a string is not a declaration, and
 // a regex cannot tell.
 
+import { KEYWORDS } from "../compiler/wacLex.ts";
 import { CORE } from "wac/wacCore.ts";
 import { wacLex } from "wac/wacLex.ts";
 import { wacParse } from "wac/wacParse.ts";
@@ -189,7 +190,7 @@ Deno.test("docs: an `export` signature in a README is the signature in the sourc
         const written = norm(m[1]);
         const name = written.match(/^export\s+\S+\s+([A-Za-z_]\w*)\s*\(/)?.[1];
         if (name === undefined) continue;             // not a function signature
-        if (FOREIGN.has(name) || isJavaScripts(name)) continue;
+        if (KEYWORDS.has(name) || FOREIGN.has(name) || isJavaScripts(name)) continue;
         const real = decls.signatures.get(name);
         const line = text.slice(0, text.indexOf(m[1])).split("\n").length;
         if (real === undefined) {
@@ -210,6 +211,14 @@ Deno.test("docs: a README's `name(…)` names something that exists", async () =
     for (const m of text.matchAll(/`([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\([^`]*\)`/g)) {
       const written = m[1];
       const name = written.split(".").pop()!;
+      // **A keyword in prose is the language being discussed, not a call.** `packages/wacc`'s README
+      // says "**`null()` is not callable**" beside the same point about `7()` — both are examples of
+      // invalid code, and `7()` slipped through only because it does not look like a name.
+      //
+      // Asked of `KEYWORDS` in the compiler's own lexer rather than listed here: the language's
+      // reserved words are a fact the compiler already holds, and a second copy would be a list to
+      // maintain in the same way `isJavaScripts` replaced one.
+      if (KEYWORDS.has(name) || KEYWORDS.has(written)) continue;
       if (decls.names.has(name) || FOREIGN.has(name) || FOREIGN.has(written)) continue;
       // JavaScript's own, asked of the runtime — see `isJavaScripts`. This is the check that
       // `parseFloat` and `Date.UTC` reached, and the one that was being kept current by hand.
