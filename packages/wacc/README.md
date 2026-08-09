@@ -1682,9 +1682,50 @@ literal counts as unknown, and unknown is silence.
 | false alarms on the emitter's corpus | 0 | 0 |
 | generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
 
-What the wider set names next is `undefined variable` (7 of 145) and `'…' outside loop` (6 of 157) —
-both mostly caught, which is what a queue looks like when the categories that were absent have been
-filled in.
+### The repository's own code, checked for the first time
+
+Rung 3 had three oracles and every one of them fed it programs that exist to be fed to it: a
+generated cross product, the emitter's corpus, and mutations of that corpus. All synthetic, all
+single-file, all written by the hands that wrote the checker. **The packages had never been put to
+it** — a Tor relay, an SSH server, a shell, a JSON parser, the compiler itself.
+
+The two sides are not given the same thing, and that is what makes the question fair. The reference
+gets the whole corpus as its file map, so its imports resolve; this checker gets the one file, with
+nothing resolved. It sees strictly *less* — which can make it miss a diagnostic and cannot make it
+invent one, so "the reference compiles this cleanly and we said nothing" is answerable even though
+the pair is asymmetric.
+
+341 files, and **one false alarm**: `items[0] = 7 as! i31ref;` in `spec/tour.wac`. Chasing it went
+through three wrong fixes before the right one, and the wrong ones are the interesting part:
+
+- Making `anyref` and `i31ref` *unknown* silenced it — and lost a diagnostic the checker already
+  had, which a hand-written case caught within the minute. Unknown is safe and it is not free.
+- Adding `i31ref` to `isReferenceType` silenced it too, and broke two casts: that predicate also
+  decides which casts are *reference* casts, and `i31ref as i32` is a conversion rather than a
+  downcast.
+- The rule that was actually one name short is **assignability**: an integer packed into a reference
+  is a reference, so it goes into an `anyref` like everything else held that way.
+
+And the last of it was a cast rule that knew `i31ref` pairs with `i32` and nothing else. Coming *out
+of* `anyref` is the other way in — the shape the tour is written around, an `anyref[]` holding
+unboxed numbers beside heap objects — and it is a downcast, so `as!` carries it.
+
+**Every skip-list in rung 3 is gone.** `checkSweep` and the mutation sweep both excluded `anyref` by
+name while the checker had no answer for it; both now run those programs, and the emitter's corpus
+went from 4,097 checked to 4,104 with nothing set aside.
+
+| | before | after |
+|---|---|---|
+| the repository's own code | never asked | **341 files, 0 false alarms** |
+| the emitter's corpus | 4,097 checked, 7 skipped | **4,104 checked, 0 skipped** |
+| mutation recall | 94% of 978 | 94% of 980 |
+| contradictions | 0 | 0 |
+
+One practical note for whoever adds the next oracle: asking the reference about all 341 files costs
+**four and a half minutes**, because each compile re-reads the whole map. Asking *ours* first and the
+reference only where ours reported something costs **282 milliseconds** and answers the same
+question — a file this checker says nothing about cannot be a false alarm whatever the reference
+thinks.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

@@ -132,10 +132,6 @@ Deno.test("rung 3: valid programs broken one way each — no contradiction", () 
   let broken = 0;
   let caught = 0;
   for (let i = 0; i < cells.length; i++) {
-    // `anyref` and `i31ref` are unmodelled by rung 3 and skipped by name in `checkSweep.test.ts`
-    // for the same reason: what this checker says about them is neither right nor wrong, it is
-    // absent, and a mutation of a program built on them measures the gap rather than the checker.
-    if (/\banyref\b/.test(cells[i].src)) continue;
     const [, mutate] = MUTATIONS[i % MUTATIONS.length];
     const mutated = mutate(cells[i].src);
     if (mutated === null) continue;

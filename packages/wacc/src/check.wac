@@ -447,7 +447,14 @@ export bool assignable(C c, string want, string got) {
   if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
   // `anyref` holds any **reference**: a struct, an array, a string, a nullable one of those. Not a
   // primitive — `anyref r = someI32` is a mismatch — so this is not simply "accepts everything".
-  if (want == "anyref") { return isReferenceType(c, got); }
+  //
+  // **And an `i31ref`**, which is the one name that was missing: an integer packed *into* a
+  // reference is a reference, and that is the entire reason the type exists — it is how an unboxed
+  // number and a heap object share one container. `items[0] = 7 as! i31ref;` in `spec/tour.wac` was
+  // reported as a mismatch until the repository's own code was put to this checker for the first
+  // time. Answered here rather than in `isReferenceType`, which also decides which *casts* are
+  // reference casts — and `i31ref as i32` is a conversion, not a downcast.
+  if (want == "anyref") { return got == "i31ref" || isReferenceType(c, got); }
   return false;
 }
 
@@ -1133,12 +1140,10 @@ export string typeOfTy(C c, Ty t) {
       // an earlier version returned unknown for all of them, which made every generic invisible.
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
       string base = tokenText(c, tok);
-      // **`anyref` and `i31ref` are spelled as identifiers and declared by nobody**, so they arrive
-      // here looking like a type to resolve. This checker models neither the top of the reference
-      // hierarchy nor an integer inside a reference — what may be assigned to what, or which casts
-      // between them are checked — so naming them is the only thing it could do wrongly. Unknown
-      // is the answer that asks no further questions.
-      if (base == "anyref" || base == "i31ref") { return typeNone(); }
+      // Spelled as identifiers and declared by nobody, so resolution would hunt for a declaration
+      // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
+      // `isReferenceType` answers.
+      if (base == "anyref" || base == "i31ref") { return base; }
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {
@@ -3168,6 +3173,16 @@ void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
   if (to == "i31ref") {
     string i31from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
     if (i31from == typeNone() || i31from == "i31ref") { return; }
+    // **Out of `anyref` is the other way in**, and it is the shape `spec/tour.wac` uses: an
+    // `anyref[]` holds unboxed numbers beside heap objects, and getting one back out is a downcast
+    // that can fail — so `as!` carries it and the other three spellings do not. This block knew
+    // only the `i32` pairing and called the tour's own line a cast with no conversion.
+    if (i31from == "anyref") {
+      if (tokenKind(c, op) != kAsBang()) {
+        c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op));
+      }
+      return;
+    }
     if (i31from != "i32") {
       c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
       return;

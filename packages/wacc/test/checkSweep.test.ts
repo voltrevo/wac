@@ -38,17 +38,15 @@ function referenceAccepts(src: string): boolean {
 }
 
 /**
- * The two type names rung 3 does not model at all, and says so by name rather than by a tolerated
- * count.
+ * Nothing is skipped any more.
  *
- * `anyref` is the top of the reference hierarchy and `i31ref` an integer packed into a reference.
- * The emitter learned both; the checker knows neither what may be assigned to what across them nor
- * which casts between them are checked, and three programs here use them through an `anyref[]`,
- * where the array's element type resolves before the exclusion can apply. Skipping them is a
- * statement about coverage — these programs are not checked by rung 3 — where a "no more than three
- * false alarms" ceiling would be a statement about noise, and would quietly absorb the fourth.
+ * `anyref` and `i31ref` were excluded by name while this checker had no answer for them: they
+ * reached it as a *primitive* through one door and a *named type* through the other, and only one
+ * door was guarded, so a declaration written `anyref a = …` compared two types it does not model.
+ * Both doors answer unknown now — the repository's own corpus found the second one — and unknown is
+ * silence, which is what the exclusion was standing in for.
  */
-const UNMODELLED = /\banyref\b/;
+const UNMODELLED = /$^/;   // matches nothing
 
 Deno.test("rung 3: the emitter's corpus, put to the checker — no false alarm", () => {
   const cells = generateEmit();
@@ -77,7 +75,7 @@ Deno.test("rung 3: the emitter's corpus, put to the checker — no false alarm",
     }
   }
   console.log(`    rung 3 on rung 4's corpus: ${checked} valid programs checked, ` +
-    `${alarms.length} false alarms, ${skipped} skipped (anyref/i31ref are unmodelled)`);
+    `${alarms.length} false alarms, ${skipped} skipped`);
   if (alarms.length > 0) {
     throw new Error(`the checker reported ${alarms.length} valid program(s):\n  ` + alarms.join("\n  "));
   }
