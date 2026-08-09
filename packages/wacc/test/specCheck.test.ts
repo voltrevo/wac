@@ -34,11 +34,7 @@ const enc = new TextEncoder();
  * language's business, and asking one phase is how a compiler gets credited with a gap it does not
  * have.
  */
-const KNOWN_MISSES = new Set([
-  "wac-core-unquoted-3nqk7vd#0",
-  "wac-generic-struct-9tkq4wm#1",
-  "wac-narrow-if-2mkq8vp#3",
-]);
+const KNOWN_MISSES = new Set<string>([]);
 
 Deno.test("rung 3: every program the spec calls illegal, refused", () => {
   const cases = specRejections();
