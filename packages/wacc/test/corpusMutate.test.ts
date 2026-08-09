@@ -46,6 +46,27 @@ const MUTATIONS: [string, (s: string) => string | null][] = [
   ["a return loses its value", (s) => sub(s, /return [^;]+;/, "return;")],
   ["a condition that is not a bool", (s) => sub(s, /\bif \(([^()]{1,40})\)/, "if (1)")],
   ["a call to something that is not one", (s) => sub(s, /(?<=return )(\w+);/, "$1();")],
+  // **A second dozen, for the same reason the generated set has one.** Seven kinds of breakage is
+  // seven facts about this checker, and the widening that took the generated set from thirteen to
+  // twenty-six found two categories it had missed entirely. These break what real code has that
+  // generated programs do not: methods, `const`, casts between named types, enums with variants,
+  // loops that go somewhere.
+  ["a string becomes an integer", (s) => sub(s, /"[^"\\]{2,}"/, "1")],
+  ["an integer becomes a string", (s) => sub(s, /(?<=[=(,] )\d+(?![\w.])/, '"s"')],
+  ["bool becomes i32", (s) => sub(s, /\bbool (\w+) =/, "i32 $1 =")],
+  ["an unwrap goes missing", (s) => sub(s, /!(?=\.)/, "")],
+  ["a method that is not there", (s) => sub(s, /\.len\(\)/, ".nope()")],
+  ["an argument too few", (s) => sub(s, /\(([^()]+), ([^(),]+)\);/, "($1);")],
+  ["a lossless cast becomes plain", (s) => sub(s, /\bas!\s/, "as ")],
+  ["a truncating cast becomes plain", (s) => sub(s, /\bas~\s/, "as ")],
+  ["a break with nothing to leave", (s) => sub(s, /^(\s*)return ([^;]+);/m, "$1break;\n$1return $2;")],
+  ["a continue with nothing to repeat", (s) => sub(s, /^(\s*)return ([^;]+);/m, "$1continue;\n$1return $2;")],
+  ["a while that is not a bool", (s) => sub(s, /\bwhile \(([^()]{1,30})\)/, 'while ("s")')],
+  ["an index that is not an integer", (s) => sub(s, /\[(\w+)\](?!\()/, '["s"]')],
+  ["a variant that is not there", (s) => sub(s, /(?<=case )(\w+)(?=[(:])/, "Nope")],
+  ["a parameter declared twice", (s) => sub(s, /\((i32 \w+)\)/, "($1, $1)")],
+  ["a const is written to", (s) => sub(s, /\bconst (\w+) (\w+) = ([^;]+);/, "const $1 $2 = $3;\n$2 = $3;")],
+  ["a field on a number", (s) => sub(s, /(?<=return )(\d+);/, "$1.nofield;")],
 ];
 
 Deno.test("rung 3: the repository's own code, broken one way each", async () => {

@@ -1978,6 +1978,7 @@ void checkExpr(C c, Expr e) {
       // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
       // value is walked immediately afterwards, and leaving them in scope for the rest of the
       // function is over-permissive in the silent direction, which is the one to err in.
+      checkArmVariants(c, subject, arms);
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
@@ -3811,6 +3812,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       c.loopDepth = c.loopDepth - 1;
     }
     case Match(subject, arms): {
+      checkArmVariants(c, subject, arms);
       c.loopDepth = c.loopDepth + 1;
       for (i32 i = 0; i < arms.len(); i++) {
         // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
@@ -4073,6 +4075,40 @@ export void declareModule(C c, Program prog, string[] only) {
       }
       else: { }
     }
+  }
+}
+
+/**
+ * Every arm names a variant the subject's enum actually has.
+ *
+ * Reported at the **`case`**, which is the token before the name — the reference's position, and one
+ * this checker can reach because the tokens are a flat array and the arm knows its own index.
+ *
+ * Asked of the enum the subject *is*: a variant belonging to some other enum is not this one's, and
+ * an instantiation asks its template, since `Opt<i32>` and `Opt` have the same variants by
+ * construction.
+ */
+void checkArmVariants(C c, Expr subject, Arm[] arms) {
+  string t = typeOfExpr(c, subject);
+  if (t == typeNone() || t == "") { return; }
+  string base = genericBase(t);
+  string owner = base == "" ? t : base;
+  if (!c.isEnum(owner)) { return; }
+  // **Reported only for a name that is nobody's variant.** Belonging to *this* enum is the question
+  // the reference answers, and answering it needs to know which file the subject's type came from —
+  // the provenance this checker does not keep, and the reason `case Match:` in `packages/ssh` was
+  // refused while being perfectly correct. A name no enum anywhere declares is wrong under every
+  // reading, and that is the half worth reporting.
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok <= 0) { continue; }
+    string vn = tokenText(c, arms[i].variantTok);
+    bool anywhere = false;
+    for (i32 k = 0; k < c.variantCount; k++) {
+      if (c.variantNames[k] == vn) { anywhere = true; }
+    }
+    if (anywhere) { continue; }
+    c.report(errNoVariant(), tokenLine(c, arms[i].variantTok - 1),
+             tokenCol(c, arms[i].variantTok - 1));
   }
 }
 

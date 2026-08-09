@@ -2025,6 +2025,38 @@ down here so the fifth attempt is a decision rather than a rediscovery.
 The two that remain are both `.wait(1)` on a `Pending<…>` a file never names — the reaching case, and
 now the only one.
 
+### Breaking real code in more ways, and what `case` names
+
+The corpus harness broke files seven ways while the generated one broke programs twenty-six. Widening
+it to twenty-three — casts, `const`, `break` outside a loop, an index that is not an integer, a
+`case` naming a variant that is not there — found a category missed **entirely**, and it is one only
+real code has in this shape: `case Nope(v):` on a `match`.
+
+The reference reports it at the **`case`**, which is the token before the name — reachable here
+because the tokens are a flat array and an arm knows its own index.
+
+Making it *right* took two goes at the same wall this checker keeps hitting. Asking "is this a
+variant of the subject's enum" refuses `case Match:` in `packages/ssh`, which is correct code: the
+file imports the *function* whose return type that enum is, the enum's own declaration never came
+with it, and an enum whose members were never read answers "not a variant" to everything. Adding
+"…and its variants are known" did not help either, because the file imports a **different** `Match`
+from another package, and this checker cannot tell one from the other — provenance again.
+
+So the rule reports what it can know: **a name that is nobody's variant anywhere**. `Nope` is wrong
+under every reading; `Match` might be right under one. That is half the diagnostic and all of the
+certainty.
+
+| | |
+|---|---|
+| corpus mutation kinds | 7 → **23** |
+| recall, on the wider set | **179 of 189 (95%)** — a different set from the 248 of 250 above |
+| generated mutation sweep | 928 of 980, unchanged |
+| false alarms | 0 |
+| mutants that crash the reference | 1 — `issues/lang/0087`, still open |
+
+The wider set's queue is short and specific: three `expected string, got i32`, two `expected i64, got
+string`, one arity, one `is not callable`.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
