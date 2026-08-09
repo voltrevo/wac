@@ -3690,7 +3690,10 @@ bool isRefType(Env env, string t) {
 string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
     case NullLit: {
-      return isRefType(env, want) ? "" : "a null in a slot that is not a reference";
+      if (isRefType(env, want)) { return ""; }
+      // Named, not categorised: which slot it is, is the whole of what a reader needs — and where
+      // the slot has no type at all, that is a different problem wearing the same message.
+      return want == "" ? "a null in a slot of no known type" : "a null in a " + want + " slot";
     }
     else: { return unsupportedValue(src, lexed, env, e); }
   }

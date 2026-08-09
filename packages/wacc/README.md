@@ -1210,9 +1210,25 @@ in the world to write:
 - And stage B's bytes must equal what the **harness** gets from `emitFiles` directly — the number
   every other test in this package has been measuring all along.
 
-The ladder is climbed. What remains is not the ladder: generics (27 files), a capability import (22,
-which needs a host to import *from*), and whatever the next thing this compiler cannot yet do turns
-out to be — with three oracles now watching it, one of which is the compiler itself.
+The ladder is climbed. What remains is not the ladder, and it is mostly **one thing**: making the
+decline name the slot — *"a null in a `Map` slot"* rather than "a null in a slot that is not a
+reference" — showed that the eight `null` files are `Map<K,V>` files. Counted honestly, generics is
+51 of the 89 that are left:
+
+| what stops the remaining 89 | files |
+|---|---|
+| generics — `Vec<T>`, `Map<K,V>`, `Pending<T>` | **51** |
+| a capability import, which needs a host to import *from* | 22 |
+| a scattering of single files | 16 |
+
+So the next step is monomorphisation, and the shape it wants is already visible from here: a
+`Named` type with type arguments spells an **instantiation** (`Vec<i32>`), which registers a struct
+whose fields are the generic's with a substitution applied; the substitution lives in the
+environment, since `typeOfTyName` already takes it; and registering one can discover another, so it
+settles by iteration exactly as emittability does. The emission loops then walk (generic, instance)
+pairs where they now walk declarations.
+
+Three oracles will be watching it, one of which is the compiler itself.
 
 ### The fixed point, and an `else` that ran first
 
