@@ -162,6 +162,30 @@ export i32 errCallArity() { return 32; }
 export i32 errPackedNullable() { return 33; }
 /** A module-level `const` whose value cannot be computed at compile time. */
 export i32 errNotCompileTime() { return 34; }
+/** Two declarations of one name at file scope. */
+export i32 errDuplicateName() { return 35; }
+/** Two fields, two methods, or a field and a method of one name in one struct. */
+export i32 errDuplicateMember() { return 36; }
+/** A character literal holding none or more than one character. */
+export i32 errCharLiteral() { return 37; }
+/** A `switch` with two `default` clauses. */
+export i32 errTwoDefaults() { return 38; }
+
+/**
+ * How many bytes the first character of `s` takes, read from its lead byte.
+ *
+ * The same four ranges `str_idx` decodes with, and here for the same reason: "one character" is a
+ * question about an encoding, not about a length.
+ */
+i32 utf8Width(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return 0; }
+  i32 lead = b[0];
+  if (lead < 128) { return 1; }
+  if (lead < 224) { return 2; }
+  if (lead < 240) { return 3; }
+  return 4;
+}
 
 /**
  * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
@@ -1006,6 +1030,16 @@ export struct C {
 
   void report(this, i32 code, i32 line, i32 col) {
     if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
+    // **The same complaint twice is one complaint.** A literal is now checked on two paths — the
+    // one that types it and the one that only asks whether it fits — and an assignment takes both.
+    // The reference reports it once, and a diagnostic list that says it twice is a list that
+    // disagrees about how many things are wrong.
+    if (this.errorCount > 0 &&
+        this.errors[(this.errorCount - 1) * 3] == code &&
+        this.errors[(this.errorCount - 1) * 3 + 1] == line &&
+        this.errors[(this.errorCount - 1) * 3 + 2] == col) {
+      return;
+    }
     this.errors[this.errorCount * 3] = code;
     this.errors[this.errorCount * 3 + 1] = line;
     this.errors[this.errorCount * 3 + 2] = col;
@@ -1109,7 +1143,35 @@ export string typeOfTy(C c, Ty t) {
  * wrong *family*; a float too large for an `f32` is a different complaint about a literal that was
  * otherwise the right kind.
  */
+/**
+ * A character literal holds exactly one character.
+ *
+ * Called from two places because a literal reaches the checker two ways: through `checkExpr`, and
+ * through the fast path that asks only whether it *fits* a wanted type — `return 'ab'` and
+ * `i32 x = 'ab'` take the second and never touched the first.
+ */
+void checkCharLiteral(C c, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): {
+      string lit = tokenText(c, tok);
+      if (lit.len() < 2 || lit[0] != "'") { return; }
+      string inner = lit.slice(1, lit.len() - 1);
+      if (inner == "") {
+        c.report(errCharLiteral(), e.line, e.col);
+        return;
+      }
+      // An escape is one character by construction; anything else is one only if its first
+      // character's encoding covers the whole of what is between the quotes.
+      if (inner[0] != "\\" && utf8Width(inner) != inner.len()) {
+        c.report(errCharLiteral(), e.line, e.col);
+      }
+    }
+    else: { }
+  }
+}
+
 void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
+  checkCharLiteral(c, e);
   if (literalFits(c, want, e)) { return; }
   if (!acceptsLiteral(want, litKindOf(e))) {
     c.report(mismatch, line, col);
@@ -1532,6 +1594,10 @@ bool breaksOutOf(Stmt s) {
 void checkExpr(C c, Expr e) {
   string want = c.expected;
   c.expected = typeNone();
+  // A **character literal** arrives as an integer literal wearing quotes, and how many characters
+  // are inside is a question only its text can answer: `''` holds none and `'ab'` holds two. Both
+  // are reported at the literal, which is where the reference reports them.
+  checkCharLiteral(c, e);
   match (e.kind) {
     case Binary(op, left, right): {
       checkExpr(c, left);
@@ -3185,6 +3251,14 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (subT != typeNone() && subT != "" && subT != "i32" && subT != "u32") {
         c.report(errSwitchSubject(), subject.line, subject.col);
       }
+      // **One `default` at most**, reported at the second one's own keyword — the first is the
+      // arm that works and the second is the mistake.
+      bool sawDefault = false;
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (!(cases[i].value is null)) { continue; }
+        if (sawDefault) { c.report(errTwoDefaults(), cases[i].line, cases[i].col); }
+        sawDefault = true;
+      }
       // A case value is compared against the subject with `==`, so it is an `i32` like the subject.
       // At the `case` keyword rather than at the value, which is why a `Case` now carries a position:
       // the complaint is about the arm rather than about the expression in it.
@@ -3217,8 +3291,98 @@ void checkStmt(C c, Stmt s, Ty want) {
 }
 
 /** Check one program, and return `(code, line, col)` triples in source order. */
+/**
+ * Two declarations of one name, at file scope and inside a struct.
+ *
+ * The **positions are the reference's**, and they are not where a reader would guess: a duplicate
+ * *declaration* is reported at the declaration's own start — the `i32` of `i32 foo()`, not the
+ * `foo` — and a duplicate *member* at its type's start for the same reason. This slice reports a
+ * subset of the reference and never a superset, so a position that is merely reasonable is a
+ * contradiction; these were read off the reference one case at a time.
+ */
+void checkDuplicates(C c, Program prog) {
+  string[] names = string[512]();
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    string name = "";
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        name = tokenText(c, nameTok);
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        name = tokenText(c, nameTok);
+        // A struct's members share one namespace: two fields, two methods, or one of each.
+        string[] members = string[256]();
+        i32 m = 0;
+        for (i32 f = 0; f < fields.len(); f++) {
+          string fname = tokenText(c, fields[f].nameTok);
+          bool dup = false;
+          for (i32 k = 0; k < m; k++) {
+            if (members[k] == fname) { dup = true; }
+          }
+          if (dup) { c.report(errDuplicateMember(), fields[f].type.line, fields[f].type.col); }
+          if (m < members.len()) {
+            members[m] = fname;
+            m = m + 1;
+          }
+        }
+        for (i32 t = 0; t < methods.len(); t++) {
+          string mn = tokenText(c, methods[t].nameTok);
+          bool dup2 = false;
+          for (i32 k = 0; k < m; k++) {
+            if (members[k] == mn) { dup2 = true; }
+          }
+          if (dup2) {
+            c.report(errDuplicateMember(), methods[t].returnType.line, methods[t].returnType.col);
+          }
+          if (m < members.len()) {
+            members[m] = mn;
+            m = m + 1;
+          }
+        }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        name = tokenText(c, nameTok);
+        // A variant's payload fields are named like a struct's, and collide like them.
+        for (i32 v = 0; v < variants.len(); v++) {
+          string[] payload = string[64]();
+          i32 pn = 0;
+          for (i32 f = 0; f < variants[v].fields.len(); f++) {
+            string pname = tokenText(c, variants[v].fields[f].nameTok);
+            bool dup3 = false;
+            for (i32 k = 0; k < pn; k++) {
+              if (payload[k] == pname) { dup3 = true; }
+            }
+            if (dup3) {
+              c.report(errDuplicateMember(), variants[v].fields[f].type.line,
+                       variants[v].fields[f].type.col);
+            }
+            if (pn < payload.len()) {
+              payload[pn] = pname;
+              pn = pn + 1;
+            }
+          }
+        }
+      }
+      case ConstDecl(nameTok, type, init, exported): { name = tokenText(c, nameTok); }
+      else: { }
+    }
+    if (name == "") { continue; }
+    bool seen = false;
+    for (i32 k = 0; k < n; k++) {
+      if (names[k] == name) { seen = true; }
+    }
+    if (seen) { c.report(errDuplicateName(), prog.decls[d].line, prog.decls[d].col); }
+    if (n < names.len()) {
+      names[n] = name;
+      n = n + 1;
+    }
+  }
+}
+
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount);
+  checkDuplicates(c, prog);
   // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
   // imported is in scope for the whole file, so these sit with the module-level constants.
   for (i32 d = 0; d < prog.decls.len(); d++) {

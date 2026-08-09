@@ -1183,6 +1183,44 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Every rejection the spec asks for — 72 of 84 to 84 of 84
+
+wacc is to become the primary compiler, and the number that stood between it and that was not the
+emitter: **twelve programs the spec says must be refused, that wacc accepted.** They are all refused
+now.
+
+Reading them first was the whole of the work. Seven were **duplicate names** — two functions, two
+structs, a struct and a function, two fields, two methods, a field and a method, two payload fields
+of one variant — and the reference's *positions* for those are not where a reader would guess: a
+duplicate declaration is reported at the declaration's **start**, the `i32` of `i32 foo()` rather
+than the `foo`, and a duplicate member at its type's start. This slice reports a subset of the
+reference and never a superset, so a position that is merely reasonable is a contradiction. Each one
+was read off the reference before a line was written.
+
+Two were **character literals**: `''` holds none and `'ab'` holds two, and "one character" is a
+question about an encoding rather than a length, so it is the same four lead-byte ranges `str_idx`
+decodes with. They needed the check in two places, because a literal reaches the checker two ways —
+through `checkExpr`, and through the path that asks only whether it *fits* a wanted type. `return
+'ab'` takes the second and had never touched the first. With both wired, an assignment reported the
+same complaint twice, so `report` now drops a diagnostic identical to the one before it: the
+reference says it once, and a list that says it twice disagrees about how many things are wrong.
+
+One was a second `default` in a `switch`, at the second one's own keyword.
+
+The last two were already refused — by wacc's **parser**, not its checker — and the measurement was
+counting only type errors. The spec's own harness accepts any diagnostic, so now this does too.
+
+| | before | after |
+|---|---|---|
+| spec rejections wacc also makes | 72/84 | **84/84** |
+| spec answers agreeing | 246/249 | 246/249 |
+| rung 3: false alarms, contradictions | 0, 0 | **0, 0** |
+
+The checker gained four diagnostics and lost none of its subset property, which is the only thing
+that lets a partial checker be compared against a complete one at all. What remains between wacc and
+the reference is the rest of that distance: **54 diagnostics against roughly 190**, now measured
+against the spec's own suite on every run.
+
 ### The spec's own tests, and the nineteen answers nobody had asked about
 
 wacc is meant to become the primary compiler, so the question stopped being *how much of the corpus
@@ -1203,8 +1241,8 @@ of which 337 corpus files and 3,853 generated programs had caught:
   returned 10. The init is emitted outside the body, so the loop's `i` stayed in the enclosing scope
   and `localAt` found it afterwards — it searches backwards. This one was a **regression** from the
   slot that introduced block scoping, and the spec had a case for it all along.
-- **Defaults are values, not nulls.** `S()` fills a `string` field with `""` and `string[3]()` is
-  three empty strings; this emitter used `struct.new_default` and `array.new_default`, which fill
+- **Defaults are values, not nulls.** A struct built with no arguments fills a `string` field with
+  `""`, and `string[3]()` is three empty strings; this emitter used `struct.new_default` and `array.new_default`, which fill
   references with null — typechecks, then traps on the first `.len()`. Defaults are now built
   field by field, with a guard for a struct that reaches itself, and `null` written in the *source*
   is a separate question from a slot nobody wrote into. Which is exactly the distinction that made

@@ -25,6 +25,7 @@ const mod = await wacBind("packages/wacc/src/api.wac");
 const emit = mod.emit as (src: Uint8Array) => Uint8Array;
 const blocked = mod.blocked as (src: Uint8Array) => string;
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
+const dumpErrors = mod.dumpErrors as (src: Uint8Array) => Int32Array;
 const enc = new TextEncoder();
 
 /** The single-file cases, by tag. Multi-file ones need a surface this test does not have. */
@@ -97,8 +98,14 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
     }
   }
 
+  // A rejection is a rejection wherever it comes from: the spec's own harness accepts any
+  // diagnostic, and two of these programs are refused by wacc's *parser* — `5++` and an `override`
+  // on an enum method — which counting only type errors called a miss.
   let rejected = 0;
-  for (const [, src] of reject) if (dumpTypeErrors(enc.encode(src)).length > 0) rejected++;
+  for (const [, src] of reject) {
+    const bytes = enc.encode(src);
+    if (dumpTypeErrors(bytes).length > 0 || dumpErrors(bytes).length > 0) rejected++;
+  }
 
   console.log(`    spec: ${agreed}/${compared} answers agree (${whole} of ${accept.length} ` +
     `programs emitted whole), ${rejected}/${reject.length} rejections are also wacc's`);
@@ -110,8 +117,8 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
   if (agreed < 246) {
     throw new Error(`${compared - agreed} spec answers differ, was 3:\n  ` + differ.join("\n  "));
   }
-  if (rejected < 72) {
+  if (rejected < 84) {
     throw new Error(`wacc rejects only ${rejected} of ${reject.length} programs the reference ` +
-      `rejects, was 72 — rung 3 went backwards`);
+      `rejects, was all of them — rung 3 went backwards`);
   }
 });
