@@ -141,13 +141,20 @@ const COVERAGE: Record<string, Cover> = {
       "rather than a difference",
   },
   RANDOM_BYTES: {
-    gap: "random by definition; the comparable claims are length and that a sealed session gets one " +
-      "without a grant, neither of which is checked across hosts",
+    where: "native_shell: `head -c 16 /dev/urandom | wc -c` on both hosts, and `head -c 1` beside " +
+      "it. The bytes are random by definition and are not compared; the two claims that *are* " +
+      "comparable are the length and that a sealed session gets a CSPRNG **without a grant** — " +
+      "`Backing.Synth` carries `randomBytes` and nothing else — and both are now asked on both",
   },
   LOG: { gap: "no comparison: `log` goes to the host's own stream, which the two hosts frame differently" },
   WARN: { gap: "as LOG" },
   ENV: {
-    gap: "`sealing.test.ts` checks a session cannot read the machine's environment, on one host only",
+    where: "native_shell: the seal, on both hosts. `sealing.test.ts` had asked it on one, which is " +
+      "half a claim about a design whose whole point is that the same system appears on two — and " +
+      "the two runtimes reach the environment by completely different routes. Both binaries are " +
+      "built **with** the env grant and a session still sees none of it, with a canary that the " +
+      "grant is live on each: an unsealed shell prints the machine's `$HOME` on both, or the seal " +
+      "below would be passing against a runtime that never reads the environment for anybody",
   },
   CONNECT: { gap: "the network is exercised end-to-end by `arrival_users` over ssh, but only on the native host as the *server*; no opcode-level comparison" },
   LISTEN: { gap: "as CONNECT" },
@@ -164,8 +171,11 @@ const COVERAGE: Record<string, Cover> = {
       "is the one whose grant intersection differs most between runtimes",
   },
   PUSH_CHILD: {
-    gap: "exercised constantly — every applet run in process — but never compared as itself; a " +
-      "difference would surface as a wrong answer somewhere else entirely",
+    gap: "**no longer exercised constantly**, which is what this entry used to say. wac-mono 0116 " +
+      "turned spawning on for every session binary, so an applet is a child rather than a frame " +
+      "and this route is now only `packages/box/example/boxsh.wac` and any world that cannot " +
+      "spawn. `packages/box/test/routes.test.ts` compares the two routes against each other — 821 " +
+      "of 821 corpus scripts agree — but on **one host**, so this is still a two-host gap",
   },
   POP_CHILD: { gap: "as PUSH_CHILD" },
   ASK_INTERRUPT: {
@@ -223,7 +233,7 @@ Deno.test("the ledger says how much of the surface is actually compared", async 
   // that takes it *down* — a comparison deleted, an opcode added with a gap entry and forgotten —
   // has to be deliberate.
   assertEquals(
-    covered.length >= 22,
+    covered.length >= 24,
     true,
     `only ${covered.length} opcodes are compared across hosts; this was 19 when the ledger was written`,
   );
