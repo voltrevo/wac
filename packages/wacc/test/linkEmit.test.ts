@@ -63,6 +63,23 @@ const cases: [string, Record<string, string>][] = [
     "/main.wac": `import { g } from "./lib.wac";\nstruct P { i32 a; }\nexport i32 f() { P p = P(3); return p.a * 10 + g(); }`,
     "/lib.wac": `struct P { i32 b; i32 c; }\nexport i32 g() { P p = P(4, 5); return p.c; }`,
   }],
+  // An import says *which name* it brings in, so a file that imports one of two `enc`s gets the one
+  // it asked for. Before this the import list was read as "which files", and two files with the name
+  // meant the module was declined.
+  ["one of two names with the same spelling", {
+    "/main.wac": `import { enc } from "./a.wac";\nimport { q } from "./b.wac";\nexport i32 f() { return enc(10) + q(); }`,
+    "/a.wac": `export i32 enc(i32 x) { return x + 1; }`,
+    "/b.wac": `export i32 enc(i32 x) { return x + 100; }\nexport i32 q() { return enc(5); }`,
+  }],
+  // `import { decode as b64decode }` — the caller writes a name no file declares.
+  ["an aliased import", {
+    "/main.wac": `import { decode as b64decode } from "./a.wac";\nexport i32 f() { return b64decode(20); }`,
+    "/a.wac": `export i32 decode(i32 x) { return x * 2; }`,
+  }],
+  ["an aliased type", {
+    "/main.wac": `import { P as Point } from "./a.wac";\nexport i32 f() { Point p = Point(3, 4); return p.x * p.y; }`,
+    "/a.wac": `export struct P { i32 x; i32 y; }`,
+  }],
   ["three deep", {
     "/main.wac": `import { b } from "./b.wac";\nexport i32 f() { return b(); }`,
     "/b.wac": `import { c } from "./c.wac";\nexport i32 b() { return c() * 2; }`,

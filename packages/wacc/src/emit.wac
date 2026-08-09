@@ -210,6 +210,11 @@ void writeValType(B out, Env env, string t) {
     out.i32leb(env.structType(t));
     return;
   }
+  if (isFuncrefType(t)) {
+    out.byte(99);
+    out.i32leb(env.sigType(t));
+    return;
+  }
   out.byte(valType(t));
 }
 
@@ -285,6 +290,127 @@ i32 storageType(string elem) {
 }
 
 /** Whether a wac type is one of the unsigned integers, which decides `_s` from `_u`. */
+/**
+ * Register a type that a declaration *names*, whichever kind it is.
+ *
+ * The array pre-pass has been found one declaration short four times, and each time the rule was the
+ * same — *every place a type can be named* — so signatures join it here rather than in a fifth list
+ * of the same places.
+ */
+void registerNamed(Env env, string t) {
+  if (isArrayType(t)) { env.arrayType(t); }
+  if (isFuncrefType(t)) { env.sigType(t); }
+}
+
+/**
+ * The signature a function is **emitted** with, which is not quite the one it is declared with: a
+ * method's receiver is its first wasm parameter, and `void` is no result rather than one.
+ *
+ * Every function's wasm type is now this signature's entry in the shared table, rather than one type
+ * per function. That is what makes `ref.func f` storable in a `fn[...]` local: wasm compares two
+ * type *indices* in one rec group by position, not by shape, so a function whose type is a private
+ * copy of the right shape is not the right type.
+ */
+string emittedSig(Env env, u8[] src, Lexed lexed, Ty returnType, Param[] params, string receiver) {
+  string out = "fn[" + typeOfTyName(env, src, lexed, returnType) + "(";
+  if (receiver != "") { out = out + receiver; }
+  for (i32 i = 0; i < params.len(); i++) {
+    if (i > 0 || receiver != "") { out = out + ","; }
+    out = out + typeOfTyName(env, src, lexed, params[i].type);
+  }
+  return out + ")]";
+}
+
+/** The signature a registered function has, spelled the way a `fn[...]` type is. */
+string signatureOf(Env env, i32 at) {
+  string out = "fn[" + env.funcReturns[at] + "(";
+  for (i32 i = 0; i < env.funcParamCount[at]; i++) {
+    if (i > 0) { out = out + ","; }
+    out = out + env.paramTypeAt(at, i);
+  }
+  return out + ")]";
+}
+
+/** Whether a type is a function reference, which is decided by its spelling. */
+bool isFuncrefType(string t) {
+  return t.len() > 3 && t.slice(0, 3) == "fn[";
+}
+
+/**
+ * The return type inside `fn[R(A,B)]`, and the `i`th parameter — by scanning rather than splitting.
+ *
+ * A signature nests: `fn[i32[](fn[i32(i32)])]` has brackets and parentheses inside both halves, so
+ * the split has to count depth. Getting this wrong is a type index that does not exist rather than a
+ * wrong answer, but it is the kind of wrong that surfaces four functions away.
+ */
+string sigReturn(string t) {
+  i32 depth = 0;
+  for (i32 i = 3; i < t.len(); i++) {
+    string c = t[i];
+    if (c == "[") { depth = depth + 1; }
+    if (c == "]") { depth = depth - 1; }
+    if (c == "(" && depth == 0) { return t.slice(3, i); }
+  }
+  return "";
+}
+
+/** How many parameters a signature has, and the `i`th of them. */
+i32 sigParamCount(string t) {
+  i32 depth = 0;
+  i32 start = -1;
+  i32 n = 0;
+  bool any = false;
+  for (i32 i = 3; i < t.len(); i++) {
+    string c = t[i];
+    if (c == "[") { depth = depth + 1; }
+    if (c == "]") { depth = depth - 1; }
+    if (c == "(" && depth == 0 && start < 0) {
+      start = i;
+      depth = depth + 1;
+      continue;
+    }
+    if (start < 0) { continue; }
+    if (c == "(") { depth = depth + 1; }
+    if (c == ")") {
+      depth = depth - 1;
+      if (depth == 0) { return any ? n + 1 : 0; }
+    }
+    if (c == "," && depth == 1) { n = n + 1; }
+    if (c != " ") { any = true; }
+  }
+  return 0;
+}
+
+string sigParamAt(string t, i32 want) {
+  i32 depth = 0;
+  i32 from = -1;
+  i32 n = 0;
+  for (i32 i = 3; i < t.len(); i++) {
+    string c = t[i];
+    if (c == "[") { depth = depth + 1; }
+    if (c == "]") { depth = depth - 1; }
+    if (c == "(" && depth == 0 && from < 0) {
+      from = i + 1;
+      depth = depth + 1;
+      continue;
+    }
+    if (from < 0) { continue; }
+    if (c == "(") { depth = depth + 1; }
+    if (c == ")") {
+      depth = depth - 1;
+      if (depth == 0) {
+        return n == want ? t.slice(from, i) : "";
+      }
+    }
+    if (c == "," && depth == 1) {
+      if (n == want) { return t.slice(from, i); }
+      n = n + 1;
+      from = i + 1;
+    }
+  }
+  return "";
+}
+
 bool isUnsigned(string t) { return t == "u32" || t == "u64"; }
 
 /** Whether a wac type is a float, which decides a whole family of opcodes rather than a suffix. */
@@ -342,6 +468,16 @@ export struct Env {
    */
   string[] arrayTypes;
   i32 arrayCount;
+  /**
+   * Every function *signature* the module names, and the wasm type index each was given.
+   *
+   * A third kind of declared type, after the arrays and the structs. A function reference's value
+   * type is `(ref null $sig)`, so the signature has to be a declared type of its own — separate from
+   * the per-function types the code section already emits, which are indexed by function rather than
+   * by shape.
+   */
+  string[] sigTypes;
+  i32 sigCount;
   /**
    * The structs, in the order their type indices were handed out, and their fields flat beside them.
    *
@@ -440,6 +576,14 @@ export struct Env {
    */
   i32[] importFrom;
   i32[] importTo;
+  /**
+   * The name each edge brings in, and the name the other file declares it under.
+   *
+   * The two differ under `import { decode as b64decode }`: the caller writes `b64decode` and no file
+   * declares one. Nineteen corpus files are that import.
+   */
+  string[] importNames;
+  string[] importDecls;
   i32 importCount;
   string[] declNames;
   i32[] declFiles;
@@ -546,6 +690,35 @@ export struct Env {
     this.arrayTypes[this.arrayCount] = t;
     this.arrayCount = this.arrayCount + 1;
     return this.arrayCount - 1;
+  }
+
+  /**
+   * A signature's type index, which follows the structs — added on first sighting, like an array's.
+   *
+   * The parameter and return types are registered first and transitively: a signature that mentions
+   * `u8[]` is a type that mentions a type, and the inner one has to exist before the section that
+   * declares them both is written.
+   */
+  i32 sigType(this, string t) {
+    for (i32 i = 0; i < this.sigCount; i++) {
+      if (this.sigTypes[i] == t) { return this.arrayCount + this.structCount + i; }
+    }
+    if (this.sigCount >= this.sigTypes.len()) {
+      this.full = true;
+      return 0;
+    }
+    this.sigTypes[this.sigCount] = t;
+    this.sigCount = this.sigCount + 1;
+    i32 mine = this.sigCount - 1;
+    string r = sigReturn(t);
+    if (isArrayType(r)) { this.arrayType(r); }
+    if (isFuncrefType(r)) { this.sigType(r); }
+    for (i32 i = 0; i < sigParamCount(t); i++) {
+      string pt = sigParamAt(t, i);
+      if (isArrayType(pt)) { this.arrayType(pt); }
+      if (isFuncrefType(pt)) { this.sigType(pt); }
+    }
+    return this.arrayCount + this.structCount + mine;
   }
 
   /** A struct's type index, which follows the arrays. */
@@ -656,13 +829,13 @@ export struct Env {
    * here cost three edits each and one of them was found by a type error rather than by reading.
    */
   Env create() {
-    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, "", "",
+    return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[1024](), 0, "", "",
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
                string[1024](), 0,
                string[16384](), string[16384](), string[16384](), 0,
                string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
                bool[4096](), i32[4096](), 0,
-               i32[512](), 0, i32[4096](), i32[4096](), 0,
+               i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false);
   }
@@ -714,10 +887,20 @@ export struct Env {
     for (i32 i = 0; i < this.declCount; i++) {
       if (this.declNames[i] == name && this.declFiles[i] == f) { return this.declKeys[i]; }
     }
-    // Then a file this one imports — **and only if exactly one of them has it.** A file that
-    // imports two files declaring `encode` is a question this cannot answer: the import list says
-    // which files, not which names came from which, and picking the first is how a call reached a
-    // `pemBlock` with a different signature and pushed a literal where a reference belonged.
+    // Then **the import that names it**. `import { p } from "./a.wac"` says where `p` comes from,
+    // exactly, and using it is the difference between resolving a name and guessing at it — this is
+    // the language's own rule rather than an approximation of it.
+    for (i32 e = 0; e < this.importCount; e++) {
+      if (this.importFrom[e] != f || this.importNames[e] != name) { continue; }
+      for (i32 i = 0; i < this.declCount; i++) {
+        if (this.declNames[i] == this.importDecls[e] && this.declFiles[i] == this.importTo[e]) {
+          return this.declKeys[i];
+        }
+      }
+    }
+    // Then a file this one imports, whatever it named — a type reached through another type is not
+    // in anybody's import list, and **only if exactly one of them has it**, since the file-level
+    // answer is a guess whenever two of them do.
     string imported = "";
     i32 importedCandidates = 0;
     for (i32 i = 0; i < this.declCount; i++) {
@@ -808,7 +991,7 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
     match (body[i].kind) {
       case Var(type, nameTok, init, isConst): {
         string t = typeOfTyName(env, src, lexed, type);
-        if (isArrayType(t)) { env.arrayType(t); }
+        registerNamed(env, t);
       }
       case Block(inner): { collectArrayTypes(env, src, lexed, inner); }
       case If(cond, then, els): {
@@ -945,13 +1128,15 @@ i32 countLines(string s) {
   return n;
 }
 
-string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges) {
+string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges,
+                 string[] names) {
   string[] queue = string[256]();
   string[] seen = string[256]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
   // as they are read and turned into indices once every file has one.
   string[] fromPath = string[1024]();
   string[] toPath = string[1024]();
+  string[] edgeName = string[1024]();
   i32 en = 0;
   i32 qn = 1;
   i32 sn = 0;
@@ -991,9 +1176,22 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
           qn = qn + 1;
           // The edge is recorded by *path*, and turned into file indices once every file has one:
           // an import often names a file this walk has not reached yet.
+          // One edge per *name*, plus one for the file itself, so a type reached through another
+          // file's declaration still resolves.
           if (en < fromPath.len()) {
             fromPath[en] = path;
             toPath[en] = target;
+            edgeName[en] = "";
+            en = en + 1;
+          }
+          for (i32 it = 0; it < items.len(); it++) {
+            if (en >= fromPath.len()) { continue; }
+            fromPath[en] = path;
+            toPath[en] = target;
+            // The alias and the declared name travel together, separated by a space that no
+            // identifier can contain — the same trick the synthesized helpers' names use.
+            edgeName[en] = tokenTextOf(b, lexed, items[it].aliasTok) + " " +
+                           tokenTextOf(b, lexed, items[it].nameTok);
             en = en + 1;
           }
         }
@@ -1015,6 +1213,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     if (ec * 2 + 2 >= edges.len()) { continue; }
     edges[ec * 2 + 1] = a;
     edges[ec * 2 + 2] = b;
+    if (ec < names.len()) { names[ec] = edgeName[e]; }
     edges[0] = ec + 1;
   }
   return out;
@@ -1035,7 +1234,7 @@ i32 declCountOf(string source) {
  * none of which an `i32` calculation needs, and each of which is a section that can be added when
  * something needs it rather than because a real module usually has one.
  */
-export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]()); }
+export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1](), string[1]()); }
 
 /**
  * One module from many files: the entry, everything it imports, and nothing else.
@@ -1047,9 +1246,10 @@ export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]
 export u8[] emitLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   if (blob == "") { return bareModule(); }
-  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
+  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -1070,7 +1270,7 @@ u8[] bareModule() {
  * way. The count is the only thing that has to survive the join — an imported file's `export` means
  * "visible to the file that imported me", not "visible to JavaScript".
  */
-u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
+u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -1088,6 +1288,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     if (env.importCount >= env.importFrom.len()) { continue; }
     env.importFrom[env.importCount] = edges[e * 2 + 1];
     env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
   collectDeclarations(env, src, lexed, prog);
@@ -1122,7 +1326,15 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     idx[0] = "string";
     idx[1] = "i32";
     env.addFunc(" str_idx", "string", idx);
+    string[] one3 = string[1]();
+    one3[0] = "i32";
+    env.addFunc(" str_fromcp", "string", one3);
   }
+  // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
+  // and the answer can change once the functions it calls have settled. Cheap, and the alternative
+  // is a global assigned from a function that was skipped.
+  bool startNeeded = needsStartFunction(env, src, lexed);
+  if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
   if (env.full) { return bareModule(); }
   settleEmittable(env, src, lexed, prog);
   // Settling walked every function, so an ambiguous name has been reached by now if there is one.
@@ -1163,10 +1375,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string rt = typeOfTyName(env, src, lexed, returnType);
-        if (isArrayType(rt)) { env.arrayType(rt); }
+        registerNamed(env, rt);
         for (i32 i = 0; i < params.len(); i++) {
           string pt = typeOfTyName(env, src, lexed, params[i].type);
-          if (isArrayType(pt)) { env.arrayType(pt); }
+          registerNamed(env, pt);
         }
         collectArrayTypes(env, src, lexed, body);
       }
@@ -1175,7 +1387,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
       // the rule is *every place a type can be named*, and the list is longer than it looks.
       case ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);
-        if (isArrayType(ct)) { env.arrayType(ct); }
+        registerNamed(env, ct);
         collectArrayTypesOfExpr(env, src, lexed, init);
       }
       // A struct's **fields** name types too, and an array among them has to be registered before the
@@ -1190,7 +1402,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
         for (i32 v = 0; v < variants.len(); v++) {
           for (i32 i = 0; i < variants[v].fields.len(); i++) {
             string vt = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
-            if (isArrayType(vt)) { env.arrayType(vt); }
+            registerNamed(env, vt);
           }
         }
       }
@@ -1198,14 +1410,14 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
         if (typeParams.len() > 0) { continue; }
         for (i32 i = 0; i < fields.len(); i++) {
           string ft2 = typeOfTyName(env, src, lexed, fields[i].type);
-          if (isArrayType(ft2)) { env.arrayType(ft2); }
+          registerNamed(env, ft2);
         }
         for (i32 m = 0; m < methods.len(); m++) {
           string mrt = typeOfTyName(env, src, lexed, methods[m].returnType);
-          if (isArrayType(mrt)) { env.arrayType(mrt); }
+          registerNamed(env, mrt);
           for (i32 i = 0; i < methods[m].params.len(); i++) {
             string mpt = typeOfTyName(env, src, lexed, methods[m].params[i].type);
-            if (isArrayType(mpt)) { env.arrayType(mpt); }
+            registerNamed(env, mpt);
           }
           collectArrayTypes(env, src, lexed, methods[m].body);
         }
@@ -1214,12 +1426,42 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     }
   }
 
-  i32 helpers = needsStrings ? 5 : 0;
+  i32 helpers = (needsStrings ? 6 : 0) + (startNeeded ? 1 : 0);
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
 
-  i32 declTypes = env.arrayCount + env.structCount;
+  // **Every function's signature, before the section is sized.** They share the table with the
+  // `fn[...]` types the source writes, which is the whole point: a function and a reference to it
+  // have to name one type index, not two identical ones.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        env.sigType(emittedSig(env, src, lexed, returnType, params, ""));
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string owner2 = nameKeyOf(env, src, lexed, nameTok);
+        for (i32 m = 0; m < methods.len(); m++) {
+          env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                 methods[m].hasThis ? owner2 : ""));
+        }
+      }
+      else: { }
+    }
+  }
+  if (startNeeded) { env.sigType("fn[void()]"); }
+  if (needsStrings) {
+    env.sigType("fn[bool(string,string)]");
+    env.sigType("fn[string(string,string)]");
+    env.sigType("fn[u8[](string)]");
+    env.sigType("fn[string(u8[])]");
+    env.sigType("fn[string(string,i32)]");
+    env.sigType("fn[string(i32)]");
+  }
+
+  i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
   // **One recursive group holding every type.** Outside a rec group a type may only refer to one
   // defined *before* it, and an array of a struct refers forward the moment the struct is declared
   // later — which wasm reports as "type index out of bounds" from the type section itself, with no
@@ -1227,7 +1469,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
   // reference emits exactly one for the same reason.
   types.u32leb(1);
   types.byte(78);   // rec
-  types.u32leb(count + declTypes + helpers);
+  types.u32leb(declTypes);
   for (i32 i = 0; i < env.arrayCount; i++) {
     types.byte(94);   // array
     // A **storage type** is a value type or one of the two packed widths — and a value type can be a
@@ -1251,6 +1493,22 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
       writeValType(types, env, env.fieldTypes[f]);
       types.byte(1);   // mutable
     }
+  }
+
+  // The signatures, after the structs and before the per-function types. A function reference's
+  // value type points here; the type the *code section* gives each function is a different entry
+  // with the same shape, and wasm's structural equality is what lets a `ref.func` of one be stored
+  // in a local declared as the other.
+  for (i32 i = 0; i < env.sigCount; i++) {
+    string sig = env.sigTypes[i];
+    types.byte(96);
+    types.u32leb(sigParamCount(sig));
+    for (i32 pi = 0; pi < sigParamCount(sig); pi++) {
+      writeValType(types, env, sigParamAt(sig, pi));
+    }
+    string r = sigReturn(sig);
+    types.u32leb(r == "void" ? 0 : 1);
+    if (r != "void") { writeValType(types, env, r); }
   }
 
   i32 index = 0;
@@ -1290,6 +1548,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     emitBytesCopy(types, funcs, code, env, index + 2, declTypes, "u8[]", "i8[]");
     emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
     emitStringIndex(types, funcs, code, env, index + 4, declTypes);
+    emitStringFromCp(funcs, code, env);
   }
 
   B out = B.create();
@@ -1312,18 +1571,47 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     for (i32 i = 0; i < env.constCount; i++) {
       if (env.constGlobal[i] != g) { continue; }
       writeValType(globals, env, env.constTypes[i]);
-      globals.byte(0);   // immutable, which is what a `const` is
-      if (!(env.constInits[i] is null)) {
+      bool here = !(env.constInits[i] is null) && isConstExpr(src, lexed, env, env.constInits[i]!);
+      // Immutable is what a `const` is, and what it can be only when its value can be written here.
+      // The rest are mutable and null until the start function has run, which is the one moment
+      // anything is allowed to write them.
+      globals.byte(here ? 0 : 1);
+      if (here) {
         emitExprAt(globals, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
       }
+      if (!here) { emitDefault(globals, env, env.constTypes[i]); }
       globals.byte(11);  // end of the initialiser expression
     }
+  }
+
+  // The start function goes last, so every index the constants can name is already assigned.
+  if (startNeeded) {
+    env.localCount = 0;
+    env.paramCount = 0;
+    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 6 : 0), declTypes);
   }
 
   section(out, 1, types);
   section(out, 3, funcs);
   if (globalCount > 0) { section(out, 6, globals); }
   section(out, 7, exports);
+  if (startNeeded) {
+    B st = B.create();
+    st.u32leb(count + (needsStrings ? 6 : 0));
+    section(out, 8, st);
+  }
+  // **Every function declared as referenceable.** `ref.func` on a function that no element segment
+  // mentions is *"undeclared function reference"* — a rule that exists so an engine knows which
+  // functions can escape, and that costs one segment listing them all.
+  if (count + helpers > 0) {
+    B elems = B.create();
+    elems.u32leb(1);
+    elems.byte(3);    // declarative
+    elems.byte(0);    // elemkind: funcref
+    elems.u32leb(count + helpers);
+    for (i32 i = 0; i < count + helpers; i++) { elems.u32leb(i); }
+    section(out, 9, elems);
+  }
   section(out, 10, code);
 
   u8[] result = u8[out.len]();
@@ -1364,13 +1652,27 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     // every reference this emitter writes is the nullable `0x63`, so a type that admits null and one
     // that does not are already the same wasm type and the difference is the checker's to keep. A
     // nullable *primitive* is not — there is no null `i32` — and comes back unspelled.
+    // `fn[i32(i32, u8[])]` — spelled canonically, since the string *is* the identity: two spellings
+    // of one signature have to reach the same type index or a value of one cannot be called as the
+    // other.
+    case Funcref(ret, params): {
+      string r = typeOfTyName(env, src, lexed, ret);
+      if (r == "") { return ""; }
+      string out = "fn[" + r + "(";
+      for (i32 i = 0; i < params.len(); i++) {
+        string pt = typeOfTyName(env, src, lexed, params[i]);
+        if (pt == "") { return ""; }
+        if (i > 0) { out = out + ","; }
+        out = out + pt;
+      }
+      return out + ")]";
+    }
     case Nullable(inner): {
       match (inner.kind) {
         case Prim(tok): { return ""; }
         else: { return typeOfTyName(env, src, lexed, inner); }
       }
     }
-    else: { return ""; }
   }
 }
 
@@ -1428,6 +1730,7 @@ void emitDefault(B fb, Env env, string t) {
   if (t == "string") { fb.byte(208); fb.i32leb(env.arrayType("i8[]")); return; }
   if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
   if (env.isStructName(t)) { fb.byte(208); fb.i32leb(env.structType(t)); return; }
+  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
   i32 v = valType(t);
   if (v == 126) { fb.byte(66); fb.i64leb(0); return; }
   if (v == 125) { fb.byte(67); fb.f32bits(0.0); return; }
@@ -1612,8 +1915,21 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   }
 }
 
+/**
+ * A statement list, which is exactly a **scope**.
+ *
+ * The locals a block declares are added as its `var`s are emitted and retired when it ends — by
+ * renaming rather than by dropping, since the slot they claimed still has to be declared in the
+ * function's header. That is the whole of block scoping: two blocks declaring `k` at two types are
+ * two locals, `localAt` searches backwards so the inner one shadows, and neither can see the other.
+ *
+ * It replaces a pre-pass that collected every local in the function by name, which could not tell
+ * the two `k`s apart and declined the function rather than get it wrong.
+ */
 void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
+  i32 saved = env.localCount;
   for (i32 i = 0; i < body.len(); i++) { emitStmt(fb, src, lexed, env, body[i]); }
+  retireFrom(env, saved);
 }
 
 /**
@@ -1628,9 +1944,13 @@ void emitBody(B fb, u8[] src, Lexed lexed, Env env, Stmt[] body) {
 void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
   match (s.kind) {
     case Var(type, nameTok, init, isConst): {
-      emitExprAt(fb, src, lexed, env, init, typeOfTyName(env, src, lexed, type));
+      string vt = typeOfTyName(env, src, lexed, type);
+      emitExprAt(fb, src, lexed, env, init, vt);
+      // **Declared here, not in a pre-pass.** The slot belongs to this statement, so a second `var`
+      // of the same name is a second slot rather than a collision.
+      env.addLocal(tokenTextOf(src, lexed, nameTok), vt);
       fb.byte(33);   // local.set
-      fb.u32leb(env.localAt(tokenTextOf(src, lexed, nameTok)));
+      fb.u32leb(env.localCount - 1);
     }
     case Assign(target, op, rhs): {
       match (target.kind) {
@@ -1997,6 +2317,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         fb.u32leb(at);
         return;
       }
+      // A function's **name**, used as a value, is a reference to it. Nothing else in the language
+      // spells this — there is no `&f` — so a bare name that is neither a local nor a constant and
+      // *is* a function is the whole of the syntax.
+      if (env.constAt(nm) < 0) {
+        i32 fr = env.funcAt(nm);
+        if (fr >= 0 && env.funcIndex[fr] >= 0) {
+          fb.byte(210);   // ref.func
+          fb.u32leb(env.funcIndex[fr]);
+          return;
+        }
+      }
       // A module-level constant, substituted. A local wins a name clash because it is nearer, which
       // is why this is asked second.
       i32 ci = env.constAt(nm);
@@ -2098,6 +2429,21 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
+          // A **local** of function-reference type, called: `g(5)` is spelled exactly like a call to
+          // a function named `g`, and only the scope can tell them apart. The local wins, as it does
+          // everywhere else in this emitter.
+          string lraw = tokenTextOf(src, lexed, tok);
+          string lty = env.localType(lraw);
+          if (isFuncrefType(lty)) {
+            for (i32 i = 0; i < args.len(); i++) {
+              emitExprAt(fb, src, lexed, env, args[i], sigParamAt(lty, i));
+            }
+            fb.byte(32);
+            fb.u32leb(env.localAt(lraw));
+            fb.byte(20);   // call_ref
+            fb.u32leb(env.sigType(lty));
+            return;
+          }
           string cname = nameKeyOf(env, src, lexed, tok);
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
@@ -2196,6 +2542,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             return;
           }
           // A static takes no receiver: the owner came from the *name*, so there is nothing to push.
+          if (isStringTypeName(src, lexed, env, obj) && mname == "fromCodepoint" && args.len() == 1) {
+            i32 cp = env.funcAt(" str_fromcp");
+            if (cp < 0 || env.funcIndex[cp] < 0) { return; }
+            emitExprAt(fb, src, lexed, env, args[0], "i32");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[cp]);
+            return;
+          }
           if (isStringTypeName(src, lexed, env, obj) && mname == "fromBytes" && args.len() == 1) {
             i32 fb2 = env.funcAt(" str_from_bytes");
             if (fb2 < 0 || env.funcIndex[fb2] < 0) { return; }
@@ -2212,6 +2566,26 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             if (pown == "f32" && mname == "fromBits") { fb.byte(190); }   // f32.reinterpret_i32
             if (pown == "f64" && mname == "fromBits") { fb.byte(191); }   // f64.reinterpret_i64
             return;
+          }
+          // A **field** that holds a reference, called: `h.cb()` is a member and a call, and the
+          // member is not a method. The field is read and then `call_ref`ed, which is the same
+          // sequence a local takes with a `struct.get` in front of it.
+          string fot = typeOfE(src, lexed, env, obj);
+          if (env.isStructName(fot)) {
+            string fty2 = env.fieldType(fot, mname);
+            if (isFuncrefType(fty2)) {
+              for (i32 i = 0; i < args.len(); i++) {
+                emitExprAt(fb, src, lexed, env, args[i], sigParamAt(fty2, i));
+              }
+              emitExpr(fb, src, lexed, env, obj);
+              fb.byte(251);
+              fb.u32leb(2);
+              fb.u32leb(env.structType(fot));
+              fb.u32leb(env.fieldIndex(fot, mname));
+              fb.byte(20);   // call_ref
+              fb.u32leb(env.sigType(fty2));
+              return;
+            }
           }
           string sowner = staticOwner(src, lexed, env, obj);
           if (sowner != "") {
@@ -2270,7 +2644,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           fb.byte(16);
           fb.u32leb(env.funcIndex[at]);
         }
-        else: { }
+        // A call through a **value** rather than a name: the arguments, then the reference, then
+        // `call_ref` with the signature's type index. The reference goes last because that is the
+        // order the instruction pops in, and the reverse of how the call reads.
+        else: {
+          string ct = typeOfE(src, lexed, env, callee);
+          if (!isFuncrefType(ct)) { return; }
+          for (i32 i = 0; i < args.len(); i++) {
+            emitExprAt(fb, src, lexed, env, args[i], sigParamAt(ct, i));
+          }
+          emitExpr(fb, src, lexed, env, callee);
+          fb.byte(20);   // call_ref
+          fb.u32leb(env.sigType(ct));
+        }
       }
     }
     case Member(obj, nameTok): {
@@ -2334,9 +2720,10 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitMatchExpr(fb, src, lexed, env, subject, arms, want);
     }
     case NullLit: {
-      if (isArrayType(want) || want == "string" || env.isStructName(want)) {
-        emitDefault(fb, env, want);
-      }
+      // The same question `isRefType` answers everywhere else. Asked inline here, it was one kind of
+      // reference short the moment a new one existed, and a `null` that emits nothing is an argument
+      // that never arrives.
+      if (isRefType(env, want)) { emitDefault(fb, env, want); }
     }
     // `x!` asserts and **traps** where the assertion fails. Emitting nothing would be the same value
     // with the same type — our references are all nullable — and a different answer: the reference
@@ -2389,7 +2776,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       string lt = env.localType(nm);
       if (lt != "") { return lt; }
-      i32 ci = env.constAt(nameKeyOf(env, src, lexed, tok));
+      string key2 = nameKeyOf(env, src, lexed, tok);
+      // A function used as a value has the type of its own signature.
+      i32 fi2 = env.funcAt(key2);
+      if (fi2 >= 0 && env.constAt(key2) < 0) { return signatureOf(env, fi2); }
+      i32 ci = env.constAt(key2);
       return ci < 0 ? "" : env.constTypes[ci];
     }
     case Cast(op, operand, target): { return typeOfTyName(env, src, lexed, target); }
@@ -2420,6 +2811,10 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     }
     case Call(callee, args): {
       match (callee.kind) {
+        else: {
+          string ct2 = typeOfE(src, lexed, env, callee);
+          return isFuncrefType(ct2) ? sigReturn(ct2) : "";
+        }
         case Member(obj, nameTok): {
           string mn = tokenTextOf(src, lexed, nameTok);
           string vn4 = variantOfMember(src, lexed, env, obj, nameTok);
@@ -2427,6 +2822,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string pst = primStaticType(primTypeName(env, src, lexed, obj), mn);
           if (pst != "") { return pst; }
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes") { return "string"; }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint") { return "string"; }
           string sown = staticOwner(src, lexed, env, obj);
           if (sown != "") {
             i32 si = env.funcAt(sown + "." + mn);
@@ -2436,10 +2832,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ot == "string" && mn == "toBytes") { return "u8[]"; }
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
+          string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
+          if (isFuncrefType(fft)) { return sigReturn(fft); }
           i32 mi = env.funcAt(ot + "." + mn);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
-        else: { return ""; }
       }
     }
     case Unary(op, operand): {
@@ -2482,6 +2879,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
     case Construct(ctype, args, named): {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
+          string lt3 = env.localType(tokenTextOf(src, lexed, tok));
+          if (isFuncrefType(lt3)) { return sigReturn(lt3); }
           string n2 = nameKeyOf(env, src, lexed, tok);
           if (env.isStructName(n2)) { return n2; }
           i32 at = env.funcAt(n2);
@@ -2864,20 +3263,12 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
 void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, Env env, Program prog,
                   string exportName, Ty returnType, Param[] params, Stmt[] body, string receiver,
                   i32 index, i32 declTypes) {
-  // One type per function, never deduplicated. The reference pools them, and a canonical form
-  // resolves types by structure precisely so that difference is not a mismatch.
-  types.byte(96);
-  types.u32leb(params.len() + (receiver == "" ? 0 : 1));
-  if (receiver != "") { writeValType(types, env, receiver); }
-  for (i32 i = 0; i < params.len(); i++) {
-    writeValType(types, env, typeOfTyName(env, src, lexed, params[i].type));
-  }
+  // The **shared** signature type, registered in the pre-pass. Pooling them is not an optimisation
+  // here: a private type per function is a different type from the one a `fn[...]` value declares,
+  // however identical it looks.
   string ret = typeOfTyName(env, src, lexed, returnType);
   bool returnsValue = ret != "void";
-  types.u32leb(returnsValue ? 1 : 0);
-  if (returnsValue) { writeValType(types, env, ret); }
-
-  funcs.u32leb(index + declTypes);
+  funcs.u32leb(env.sigType(emittedSig(env, src, lexed, returnType, params, receiver)));
   if (exportName != "") {
     exports.name(exportName);
     exports.byte(0);
@@ -2892,7 +3283,6 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
                  typeOfTyName(env, src, lexed, params[i].type));
   }
   env.paramCount = env.localCount;
-  collectLocals(env, src, lexed, body);
 
   // **The body first, then the declaration that precedes it.** A scratch local is allocated while
   // emitting — a saturating cast needs one and nothing before the cast knows that — so the count is
@@ -2933,10 +3323,18 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
  * language features, ordered by how much they would buy.
  */
 string unsupportedIn(u8[] src, Lexed lexed, Env env, Stmt[] body) {
+  // The **same scope the emitter will have**, which is the point: this walk decides whether a name
+  // is a local, and it has to decide that the same way twice or it approves a body the emitter
+  // cannot resolve — or declines one it can.
+  i32 saved = env.localCount;
   for (i32 i = 0; i < body.len(); i++) {
     string r = unsupportedStmt(src, lexed, env, body[i]);
-    if (r != "") { return r; }
+    if (r != "") {
+      env.localCount = saved;
+      return r;
+    }
   }
+  env.localCount = saved;
   return "";
 }
 
@@ -2991,6 +3389,9 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       string t = typeOfTyName(env, src, lexed, type);
       if (t == "") { return "local of an unspelled type"; }
       string r0 = unsupportedValueAt(src, lexed, env, init, t);
+      // The name comes into scope **after** its initialiser, which is where it comes into scope in
+      // the language too.
+      env.addLocal(tokenTextOf(src, lexed, nameTok), t);
       if (r0 != "") { return r0; }
       // Two known types that differ. wac has struct inheritance and this emitter has no notion of a
       // subtype, so `Base b = aSub;` is a `local.set` of the wrong reference type — and there is no
@@ -3124,7 +3525,7 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
  */
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
-  return isArrayType(t) || t == "string" || env.isStructName(t);
+  return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t);
 }
 
 /**
@@ -3215,6 +3616,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       string nm = tokenTextOf(src, lexed, tok);
       if (env.localAt(nm) >= 0) { return ""; }
       i32 ci = env.constAt(nm);
+      // A **function's name as a value** is a reference to it, which is only emittable if the
+      // function is: a reference to something this emitter skipped would be a `ref.func` naming an
+      // index that is not there.
+      if (ci < 0) {
+        i32 fr2 = env.funcAt(nm);
+        if (fr2 >= 0) {
+          return env.funcOk[fr2] ? "" : "a reference to " + nm + ", declined";
+        }
+      }
       if (ci < 0) { return "unresolved name " + nm; }
       // A constant is inlined, so whatever its initialiser needs, the *use site* needs. An array
       // constant would be allocated afresh at each use, which is a different program — declined until
@@ -3303,6 +3713,16 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       match (ctype.kind) {
         case Named(tok, typeArgs): {
           if (typeArgs.len() > 0) { return "a generic"; }
+          string lraw2 = tokenTextOf(src, lexed, tok);
+          string lty2 = env.localType(lraw2);
+          if (isFuncrefType(lty2)) {
+            if (sigParamCount(lty2) != args.len()) { return "a call with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a4 = unsupportedValueAt(src, lexed, env, args[i], sigParamAt(lty2, i));
+              if (a4 != "") { return a4; }
+            }
+            return "";
+          }
           string n = nameKeyOf(env, src, lexed, tok);
           if (env.isStructName(n)) {
             i32 want = env.fieldCountOf(n);
@@ -3341,8 +3761,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (vcall != "") {
             i32 cvi = env.variantAt(vcall);
             if (args.len() != env.variantArity[cvi]) { return "a variant with the wrong count"; }
+            // The payload slots are known here, so a `null` among them can be asked about rather
+            // than refused — `ExprKind.Is(e, null, null, negated)` is why `parse.wac` could not be
+            // compiled by the compiler it is part of.
+            string ven = env.variantOwners[cvi];
             for (i32 i = 0; i < args.len(); i++) {
-              string a2 = unsupportedValue(src, lexed, env, args[i]);
+              string a2 = unsupportedValueAt(src, lexed, env, args[i],
+                                             env.fieldTypeAt(ven, env.variantSlot[cvi] + i));
               if (a2 != "") { return a2; }
             }
             return "";
@@ -3352,6 +3777,9 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           // struct name unresolved — which is what three corpus files were saying.
           if (isStringTypeName(src, lexed, env, obj) && mn == "fromBytes" && args.len() == 1) {
             return unsupportedValue(src, lexed, env, args[0]);
+          }
+          if (isStringTypeName(src, lexed, env, obj) && mn == "fromCodepoint" && args.len() == 1) {
+            return unsupportedValueAt(src, lexed, env, args[0], "i32");
           }
           string owner = staticOwner(src, lexed, env, obj);
           if (owner != "") {
@@ -3380,6 +3808,15 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             return "";
           }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return ""; }
+          string ffty = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
+          if (isFuncrefType(ffty)) {
+            if (sigParamCount(ffty) != args.len()) { return "a call with the wrong count"; }
+            for (i32 i = 0; i < args.len(); i++) {
+              string a5 = unsupportedValueAt(src, lexed, env, args[i], sigParamAt(ffty, i));
+              if (a5 != "") { return a5; }
+            }
+            return "";
+          }
           i32 ma = env.funcAt(ot + "." + mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return "a method " + ot + "." + mn + ", declined"; }
@@ -3391,7 +3828,21 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           return "";
         }
-        else: { return "a call through something other than a member"; }
+        // A call through a value is a `call_ref`, and what it needs is a signature this emitter can
+        // name: the arguments are checked against the *signature's* parameters rather than a
+        // declaration's, since there is no declaration at a call site like this.
+        else: {
+          string cv = unsupportedValue(src, lexed, env, callee);
+          if (cv != "") { return cv; }
+          string cty = typeOfE(src, lexed, env, callee);
+          if (!isFuncrefType(cty)) { return "a call through something that is not a function"; }
+          if (sigParamCount(cty) != args.len()) { return "a call with the wrong count"; }
+          for (i32 i = 0; i < args.len(); i++) {
+            string a3 = unsupportedValueAt(src, lexed, env, args[i], sigParamAt(cty, i));
+            if (a3 != "") { return a3; }
+          }
+          return "";
+        }
       }
     }
     case Incr(target, op, prefix): { return "increment as an expression"; }
@@ -3400,8 +3851,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         string nl = unsupportedValue(src, lexed, env, left);
         if (nl != "") { return nl; }
         string nt = typeOfE(src, lexed, env, left);
-        return isArrayType(nt) || nt == "string" || env.isStructName(nt) ? ""
-                                                                        : "a null test on a value";
+        return isRefType(env, nt) ? "" : "a null test on a value";
       }
       if (!(other is null)) {
         string il2 = unsupportedValue(src, lexed, env, left);
@@ -3459,20 +3909,11 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
     env.addLocal(tokenTextOf(src, lexed, params[i].nameTok), pt);
   }
   env.paramCount = env.localCount;
-  collectLocals(env, src, lexed, body);
   // **Two locals of one name.** wasm has a single flat frame per function and the language has block
   // scopes, so `for (i32 k = …)` in one block and `i64 k = …` in another are two different locals
   // with one name — and a name-to-index lookup cannot tell them apart. Searching from the end gives
   // the *later* one to the earlier block, which is an `i32.const` going into an `i64` slot and a
   // module that does not validate. Declined until there is a scope stack to resolve them properly.
-  string dup = duplicateLocal(env);
-  if (dup != "") {
-    if (env.blocked == "") { env.blocked = "two types for the local " + dup; }
-    env.localCount = savedCount;
-    env.paramCount = savedParams;
-    env.returnType = savedRet;
-    return false;
-  }
   string why = unsupportedIn(src, lexed, env, body);
   if (why != "" && env.blocked == "") { env.blocked = why; }
   env.localCount = savedCount;
@@ -3488,18 +3929,19 @@ bool canEmit(u8[] src, Lexed lexed, Env env, Param[] params, Stmt[] body, string
  * wac has no tuple — and because a corpus harness asking "why not" is a different caller from one
  * asking "what did you produce". It re-parses, which costs a millisecond and keeps the two honest.
  */
-export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1]()); }
+export string emitBlocked(u8[] src) { return emitBlockedOf(src, -1, i32[1](), i32[1](), string[1]()); }
 
 /** Why a linked module was not emitted in full, over the same file set `emitLinked` takes. */
 export string blockedLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   if (blob == "") { return "an import of a file that was not supplied"; }
-  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges);
+  return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
 }
 
-string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
+string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -3515,6 +3957,10 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges) {
     if (env.importCount >= env.importFrom.len()) { continue; }
     env.importFrom[env.importCount] = edges[e * 2 + 1];
     env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
     env.importCount = env.importCount + 1;
   }
   collectDeclarations(env, src, lexed, prog);
@@ -3811,7 +4257,8 @@ void emitAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
 export string namesLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges);
+  string[] names = string[4096]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names);
   return blob == "" ? "" : emitNames(blob.toBytes());
 }
 
@@ -3888,13 +4335,67 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
  * whose initialiser is not a constant expression gets neither — it is declined by name, which is the
  * only honest answer when the language allows something the format does not.
  */
+/**
+ * Whether any constant has to be filled in at instantiation rather than declared with its value.
+ *
+ * `const u8[] TAG = "x".toBytes();` is a constant in wac and a *call* in wasm, and a call is not a
+ * constant expression. The global exists either way; this asks whether something has to run to put
+ * a value in it.
+ */
+bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (env.constGlobal[i] < 0) { continue; }
+    if (env.constInits[i] is null) { continue; }
+    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The function that assigns them, run by wasm's `start` section at instantiation.
+ *
+ * In declaration order, which is the order a file reads and the order one constant may refer to
+ * another in.
+ */
+void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 index, i32 declTypes) {
+  funcs.u32leb(env.sigType("fn[void()]"));
+
+  B insns = B.create();
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (env.constGlobal[i] < 0) { continue; }
+    if (env.constInits[i] is null) { continue; }
+    if (isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
+    emitExprAt(insns, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
+    insns.byte(36);   // global.set
+    insns.u32leb(env.constGlobal[i]);
+  }
+
+  B fb = B.create();
+  // The locals declaration, which is where `scratch` ends up if an initialiser needed one — so the
+  // body is built first and the header written around it, as every other function here is.
+  i32 extra = env.localCount - env.paramCount;
+  fb.u32leb(extra);
+  for (i32 i = env.paramCount; i < env.localCount; i++) {
+    fb.u32leb(1);
+    writeValType(fb, env, env.localTypes[i]);
+  }
+  fb.bytes(insns);
+  fb.byte(11);
+  code.u32leb(fb.len);
+  code.bytes(fb);
+}
+
 void assignGlobals(Env env, u8[] src, Lexed lexed) {
   i32 next = 0;
   for (i32 i = 0; i < env.constCount; i++) {
     string t = env.constTypes[i];
     if (!isArrayType(t) && !env.isStructName(t)) { continue; }
     if (env.constInits[i] is null) { continue; }
-    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
+    // **Not only the constant expressions.** wasm's sense of one is far narrower than wac's — no
+    // arithmetic, no call, no concatenation — and a constant it cannot express is not a constant it
+    // cannot *have*: the global is declared mutable and assigned at instantiation instead. What
+    // still has to hold is that the initialiser is an expression this emitter can emit at all.
+    if (unsupportedValueAt(src, lexed, env, env.constInits[i]!, env.constTypes[i]) != "") { continue; }
     env.constGlobal[i] = next;
     next = next + 1;
   }
@@ -4058,16 +4559,7 @@ bool knownEscapes(u8[] src, Lexed lexed, i32 tok) {
 void emitStringEquals(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
   i32 at = env.arrayType("i8[]");
 
-  types.byte(96);
-  types.u32leb(2);
-  types.byte(99);
-  types.u32leb(at);
-  types.byte(99);
-  types.u32leb(at);
-  types.u32leb(1);
-  types.byte(127);   // -> i32, which is what a bool is
-
-  funcs.u32leb(index + declTypes);
+  funcs.u32leb(env.sigType("fn[bool(string,string)]"));
 
   B b = B.create();
   b.u32leb(1);
@@ -4133,14 +4625,7 @@ bool hasStringType(Env env) {
 void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
   i32 at = env.arrayType("i8[]");
 
-  types.byte(96);
-  types.u32leb(2);
-  types.byte(99); types.i32leb(at);
-  types.byte(99); types.i32leb(at);
-  types.u32leb(1);
-  types.byte(99); types.i32leb(at);
-
-  funcs.u32leb(index + declTypes);
+  funcs.u32leb(env.sigType("fn[string(string,string)]"));
 
   B b = B.create();
   b.u32leb(2);
@@ -4178,6 +4663,104 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
 }
 
 /**
+ * `string str_fromcp(i32 cp)` — the one-character string whose scalar is `cp`, UTF-8 encoded.
+ *
+ * The only way to reach a character that is not already written down somewhere, and the reason a
+ * codepoint arithmetic routine can be written in wac at all. It **traps** rather than substituting a
+ * replacement character, which is what the language says, and which makes the range tests below a
+ * decision rather than a guess.
+ */
+void emitStringFromCp(B funcs, B code, Env env) {
+  i32 at = env.arrayType("i8[]");
+  funcs.u32leb(env.sigType("fn[string(i32)]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(1); b.byte(99); b.i32leb(at);   // local 1: the result
+
+  // Out of range, or half of a surrogate pair, which is not a scalar value.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(1114111); b.byte(74);   // i32.gt_s
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(0); b.byte(72);         // i32.lt_s
+  b.byte(114);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(55296); b.byte(79);     // >= 0xD800
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(57344); b.byte(73);     // <  0xE000
+  b.byte(113);
+  b.byte(114);
+  b.byte(4); b.byte(64);
+  b.byte(0);                                                            // unreachable
+  b.byte(11);
+
+  // One byte: 0xxxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(128); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(1); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0); b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Two bytes: 110xxxxx 10xxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(2048); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(2); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);        // i32.shr_u
+  b.byte(65); b.i32leb(192); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Three bytes: 1110xxxx 10xxxxxx 10xxxxxx.
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(65536); b.byte(73);
+  b.byte(4); b.byte(64);
+  b.byte(65); b.i32leb(3); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(12); b.byte(118);
+  b.byte(65); b.i32leb(224); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(2);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(15);
+  b.byte(11);
+
+  // Four bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
+  b.byte(65); b.i32leb(4); b.byte(251); b.u32leb(7); b.u32leb(at);
+  b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(18); b.byte(118);
+  b.byte(65); b.i32leb(240); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(12); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(2);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(6); b.byte(118);
+  b.byte(65); b.i32leb(63); b.byte(113); b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(3);
+  b.byte(32); b.u32leb(0); b.byte(65); b.i32leb(63); b.byte(113);
+  b.byte(65); b.i32leb(128); b.byte(114);
+  b.byte(251); b.u32leb(14); b.u32leb(at);
+  b.byte(32); b.u32leb(1);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+/**
  * `string str_idx(string s, i32 i)` — the codepoint starting at byte `i`, as a one-character string.
  *
  * Indexing a string is a **decode**, not a read: the lead byte says how many bytes the character is,
@@ -4187,14 +4770,7 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
 void emitStringIndex(B types, B funcs, B code, Env env, i32 index, i32 declTypes) {
   i32 at = env.arrayType("i8[]");
 
-  types.byte(96);
-  types.u32leb(2);
-  types.byte(99); types.i32leb(at);
-  types.byte(127);
-  types.u32leb(1);
-  types.byte(99); types.i32leb(at);
-
-  funcs.u32leb(index + declTypes);
+  funcs.u32leb(env.sigType("fn[string(string,i32)]"));
 
   B b = B.create();
   b.u32leb(2);
@@ -4277,13 +4853,7 @@ void emitBytesCopy(B types, B funcs, B code, Env env, i32 index, i32 declTypes, 
   i32 dst = env.arrayType(to);
   i32 srcT = env.arrayType(from);
 
-  types.byte(96);
-  types.u32leb(1);
-  types.byte(99); types.i32leb(srcT);
-  types.u32leb(1);
-  types.byte(99); types.i32leb(dst);
-
-  funcs.u32leb(index + declTypes);
+  funcs.u32leb(env.sigType(to == "u8[]" ? "fn[u8[](string)]" : "fn[string(u8[])]"));
 
   B b = B.create();
   b.u32leb(2);

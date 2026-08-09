@@ -1183,6 +1183,163 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Seven of wacc's own eight files
+
+A question worth asking directly, since rung 5 is the ladder's last: **how much of `wacc` can `wacc`
+compile?** The answer turned out to be five of its eight files already, blocked by two things and not
+by a hundred.
+
+`ExprKind.Is(e, null, null, negated)` — the walk approved a `null` only where it could name the slot,
+and a **variant's payload** was not among the places it looked, though the slot is right there in the
+variant table. `parse.wac` is eight functions of nothing else, and it compiles whole now.
+
+`string.fromCodepoint` is the other: a UTF-8 encoder, and the only way to reach a character that is
+not already written down somewhere. It is a synthesized helper like the rest — four ranges, and a
+**trap** for a value that is not a scalar, which is what the language says rather than the
+replacement character a forgiving encoder would substitute. `emit.wac` uses it, which is how it
+turned up: this compiler could not compile the function it uses to name its own scope keys.
+
+| | before | after |
+|---|---|---|
+| whole files | 244 | **245** |
+| wacc's own | 5 of 8 | **7 of 8** |
+
+The eighth is `api.wac` — and `emit.wac` with it — waiting on `string.slice` and `string.indexOf`,
+which the linker written two slots ago uses. That is the whole distance left to a compiler that can
+read itself.
+
+### A block is a scope — 230 to 244
+
+`two types for the local k` was a decline with a good reason: wasm has one flat frame per function
+and the language has block scopes, so `for (i32 k …)` in one block and `i64 k = …` in another are two
+locals with one name, and a name-to-slot table cannot hold both. Searching from the end gave the
+*later* one to the earlier block — an `i32.const` into an `i64` slot — so the function was declined.
+
+The table was the problem. Locals are no longer collected by a pre-pass at all: a `var` **claims its
+slot where it is written**, and the block retires its names when it ends — by renaming rather than
+dropping, since the slot still has to be declared in the function's header. Two `k`s are then two
+slots, `localAt` searches backwards so the inner one shadows, and neither block can see the other's.
+
+This is the mechanism the enum arms already used for their bindings, which is the argument for it:
+one way of introducing a name, used by every construct that introduces one.
+
+The walk does the same thing, and has to. It is the pass that decides whether a name is a local, and
+if it decided that differently from the emitter it would approve a body the emitter cannot resolve.
+Both now push at the `var` and pop at the end of the block.
+
+| | before | after |
+|---|---|---|
+| whole files | 230 | **244** |
+| invalid | 0 | 0 |
+
+**244 of 336.** What remains is generics (27), a capability import (22 — it needs a host to import
+*from*), a method on a struct this emitter skipped (12), and a scattering of single files.
+
+### A constant wasm cannot write down — 173 to 230
+
+The largest decline left was *"a constant whose value is not a constant expression"*, 59 files, and
+the message was accurate about wasm and wrong about what follows from it. wasm's idea of a constant
+expression is narrow — literals, `ref.null`, `ref.func`, and the GC allocations — and wac's is not:
+
+```wac
+const string S = "ab" + "cd";       // a call
+const u8[] T = mk(5);               // a call
+const i32[] A = i32[](0 - 5, 3);    // arithmetic
+```
+
+None of those can be written in a global's initialiser. All of them can be **assigned** to one. So a
+constant this emitter cannot express as a constant expression now gets a mutable global holding
+null, and a synthesized **start function** — wasm's `start` section, which runs at instantiation —
+fills them in declaration order. The value arrives a moment later and no observer can tell, which is
+the whole of the trick.
+
+Two things fell out of it that are worth naming:
+
+- **The question changed from "is it a constant expression" to "can this emitter emit it at all"**,
+  which is the question the rest of the emitter already answers. `assignGlobals` asks
+  `unsupportedValueAt` now, and the answer can change once the functions an initialiser calls have
+  settled — so the pair of passes runs twice.
+- The start function is a function like any other: it needs its signature in the shared table, a
+  slot in the element segment, and its own locals header, because an initialiser that needs a
+  scratch local gets one.
+
+| | before | after |
+|---|---|---|
+| whole files | 173 | **230** |
+| invalid | 0 | 0 |
+| blocked by a constant | 59 | 0 |
+
+**230 of 336 files, and two thirds of the corpus now compiles whole.** What is left is four things
+and not a long tail: generics (27), a capability import (22, which needs a host to import *from*),
+block scoping (14), and a method on a struct this emitter skipped (12).
+
+### An import says which name — 118 to 173
+
+Two slots ago a name a file reached that two of its imports declared was declined, because "the
+import list says which files, not which names came from which". That was wrong, and it was wrong in
+the reading rather than in the data: `import { p } from "./a.wac"` says *exactly* which name comes
+from which file, and the parser had the items all along.
+
+Resolving through the named import — this file's own declaration, then **the import that names it**,
+then a file it imports, then anyone — cleared 44 files at a stroke, and it is the language's own rule
+instead of an approximation of it.
+
+Then the eleven behind it: `import { decode as b64decode }`, where the caller writes a name **no file
+declares**. The alias and the declared name travel together through the link, separated by a space no
+identifier can contain — the same trick the synthesized helpers' names use.
+
+| | before | after |
+|---|---|---|
+| whole files | 118 | **173** |
+| invalid | 0 | 0 |
+| blocked by a shared name | 43 | 0 |
+
+What is left is mostly not about names any more: a constant whose initialiser is not a constant
+expression (59), generics (26), a capability import (22, and it needs a host to import *from*), and
+block scoping (14).
+
+### Function references, and a type that is the right shape and the wrong type
+
+The largest feature the emitter lacked: `ref.func` to obtain one, `call_ref` to invoke it, and a
+`fn[R(A,B)]` type in between. All of it works now — a reference taken by name, passed as a parameter,
+returned, stored in a struct field or an array, compared against null, and called through every one
+of those.
+
+**The interesting failure was type identity.** Each function used to get a type of its own in the
+type section — "one type per function, never deduplicated", which this README said was fine because
+the reference pools them and a canonical form makes that difference invisible. It is not fine here.
+wasm compares two type indices *in one rec group* by position, not by shape, so:
+
+```
+local.set[0] expected type (ref null 12), found ref.func of type (ref 27)
+```
+
+Type 27 was that function's private copy of exactly the shape type 12 describes. A function and a
+reference to it have to name **one** index, so every function's type is now its entry in the shared
+signature table — the same table the `fn[...]` types the source writes go into. The five string
+helpers share it too.
+
+Three smaller things the feature needed:
+
+- **A declarative element segment.** `ref.func` naming a function that no element segment mentions is
+  *"undeclared function reference"* — a rule that exists so an engine knows which functions can
+  escape. One segment listing them all.
+- **`g(5)` is a `Construct`, not a `Call`.** The parser cannot tell a call to a function named `g`
+  from a call through a local named `g`; only the scope can, and the local wins, as it does
+  everywhere else here.
+- **`null` in a signature slot.** The emitter asked *"is this an array, a string or a struct"* inline
+  instead of asking `isRefType`, so it was one kind of reference short the moment a new one existed —
+  and a `null` that emits nothing is an argument that never arrives.
+
+The sweep has 94 cells for it, and every one exists in two versions — calling one function and then
+another through the same reference — because **a `call_ref` that always reaches the same place is
+indistinguishable from a direct call**. 3,494 programs, 3,139 compared, 0 mismatched.
+
+The whole-file count did not move: the 34 files stop at the next thing now, which is mostly a name
+more than one file declares (43) and a constant that is not a constant expression (37). What did move
+is the last of the language's *type system* — after this, every type wac has is a type this emitter
+can name.
+
 ### A string is not an array of bytes — 108 to 118
 
 Two features, both reached by fixing the one above and reading what the corpus then said. That is the

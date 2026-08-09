@@ -331,5 +331,135 @@ export function generateEmit(): Cell[] {
     add("string index of a computed string",
       `export i32 f() { string s = ${s2} + "z"; return s[s.len() - 1].len(); }`);
   }
+
+  // Function references: obtained by name, called through a value. Every cell exists in a version
+  // that calls one function and a version that calls another through the same reference, because a
+  // `call_ref` that always reaches the same place is indistinguishable from a direct call.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const decls = `${t} inc(${t} x) { return x + ${v}; }\n${t} dbl(${t} x) { return x + x; }\n`;
+    add(`funcref ${t} local`,
+      decls + `export ${t} f() { fn[${t}(${t})] g = inc; return g(${v}); }`);
+    add(`funcref ${t} reassigned`,
+      decls + `export ${t} f() { fn[${t}(${t})] g = inc; g = dbl; return g(${v}); }`);
+    add(`funcref ${t} as a parameter`,
+      decls + `${t} apply(fn[${t}(${t})] g, ${t} x) { return g(x); }\n` +
+      `export ${t} f() { return apply(inc, ${v}) + apply(dbl, ${v}); }`);
+    add(`funcref ${t} returned`,
+      decls + `fn[${t}(${t})] pick(bool b) { if (b) { return inc; } return dbl; }\n` +
+      `export ${t} f() { return pick(true)(${v}) + pick(false)(${v}); }`);
+    add(`funcref ${t} in a struct`,
+      decls + `struct H { fn[${t}(${t})] cb; }\n` +
+      `export ${t} f() { H h = H(inc); H j = H(dbl); return h.cb(${v}) + j.cb(${v}); }`);
+    add(`funcref ${t} in an array`,
+      decls + `export ${t} f() { fn[${t}(${t})][] fs = fn[${t}(${t})][](inc, dbl); ` +
+      `return fs[0](${v}) + fs[1](${v}); }`);
+    add(`funcref ${t} nullable`,
+      decls + `export bool f() { fn[${t}(${t})]? g = null; fn[${t}(${t})]? h = inc; ` +
+      `return (g is null) && !(h is null) && h!(${v}) == inc(${v}); }`);
+    add(`funcref ${t} two arguments`,
+      `${t} add(${t} a, ${t} b) { return a + b; }\n${t} sub(${t} a, ${t} b) { return a - b; }\n` +
+      `export ${t} f() { fn[${t}(${t},${t})] g = add; ${t} n = g(${v}, ${v}); g = sub; ` +
+      `return n + g(${v}, ${v}); }`);
+    add(`funcref ${t} void`,
+      `struct C { ${t} n; }\nvoid bump(C c, ${t} by) { c.n += by; }\n` +
+      `export ${t} f() { C c = C(${v}); fn[void(C,${t})] g = bump; g(c, ${v}); g(c, ${v}); ` +
+      `return c.n; }`);
+    add(`funcref ${t} through a chain`,
+      decls + `fn[${t}(${t})] idOf(fn[${t}(${t})] g) { return g; }\n` +
+      `export ${t} f() { return idOf(dbl)(${v}); }`);
+  }
+  // A reference to a function that takes and returns references, which is where the signature's own
+  // parameter types have to have been registered before the type section was written.
+  add("funcref over references",
+    `u8[] head(u8[] xs) { return xs; }\n` +
+    `export i32 f() { fn[u8[](u8[])] g = head; return g(u8[3]()).len(); }`);
+  add("funcref over a struct",
+    `struct P { i32 x; }\nP mk(i32 v) { return P(v); }\n` +
+    `export i32 f() { fn[P(i32)] g = mk; return g(7).x; }`);
+  add("funcref over a string",
+    `string tail(string s) { return s + "!"; }\n` +
+    `export i32 f() { fn[string(string)] g = tail; return g("ab").len(); }`);
+  add("funcref of a funcref",
+    `i32 one(i32 x) { return x + 1; }\n` +
+    `fn[i32(i32)] outer(fn[i32(i32)] g) { return g; }\n` +
+    `export i32 f() { fn[fn[i32(i32)](fn[i32(i32)])] h = outer; return h(one)(41); }`);
+
+  // Module-level constants with identity. A scalar constant is inlined and has none; an array or a
+  // struct is one value shared by every use, which is why it lives in a global — and why the cells
+  // below ask *which* value as well as what it holds.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    add(`const ${t} array`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\nexport ${t} f() { return A[0] + A[1]; }`);
+    add(`const ${t} array is one array`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\n${t}[] g() { return A; }\n` +
+      `export bool f() { return g() is A; }`);
+    add(`const ${t} array through a function`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\n${t} sum(${t}[] xs) { return xs[0] + xs[1]; }\n` +
+      `export ${t} f() { return sum(A); }`);
+    add(`const ${t} struct`,
+      `struct P { ${t} x; }\nconst P Q = P(${v});\nexport ${t} f() { return Q.x; }`);
+    add(`const ${t} computed`,
+      `const ${t}[] A = ${t}[2](fill: ${v});\nexport ${t} f() { return A[0] + A[1]; }`);
+  }
+  // The ones wasm cannot write in a global at all — a concatenation and a call are not constant
+  // expressions, so the value arrives when the start function runs rather than when the module is
+  // declared, and the only way to tell is to read it.
+  add("const built by a call",
+    `u8[] mk(i32 n) { return u8[n](); }\nconst u8[] T = mk(5);\nexport i32 f() { return T.len(); }`);
+  add("const built by concatenation",
+    `const string S = "ab" + "cd";\nexport i32 f() { return S.len(); }`);
+  add("const built from another const",
+    `const string A = "xy";\nconst string B = A + A;\nexport i32 f() { return B.len(); }`);
+  add("const built by arithmetic",
+    `const i32[] A = i32[](0 - 5, 3 * 4);\nexport i32 f() { return A[0] + A[1]; }`);
+  add("const struct built by a call",
+    `struct P { i32 x; }\nP mk() { return P(9); }\nconst P Q = mk();\nexport i32 f() { return Q.x; }`);
+  add("const array of a computed length",
+    `i32 n() { return 3; }\nconst i32[] A = i32[n()]();\nexport i32 f() { return A.len(); }`);
+  add("const read before and after",
+    `const string S = "a" + "b";\ni32 first() { return S.len(); }\n` +
+    `export i32 f() { return first() + S.len(); }`);
+
+  // Block scoping. A name declared in two blocks is two locals, and the pair that matters is two
+  // blocks declaring it at two *types* — which is exactly what a name-to-slot table cannot hold, and
+  // what this emitter used to decline the whole function for.
+  for (const [a, b] of [["i32", "i64"], ["i32", "f64"], ["u8[]", "i32"], ["string", "i32"]] as const) {
+    const av = a === "u8[]" ? "u8[](1, 2)" : a === "string" ? '"ab"' : VALUES[a][1];
+    const bv = VALUES[b][1];
+    const asize = a === "u8[]" || a === "string" ? "k.len()" : "k as~ i32";
+    add(`scope ${a} then ${b}`,
+      `export i32 f() { i32 n = 0; { ${a} k = ${av}; n = n + ${asize}; } ` +
+      `{ ${b} k = ${bv}; n = n + (k as~ i32); } return n; }`);
+    add(`scope ${a} shadowed by ${b}`,
+      `export i32 f() { ${a} k = ${av}; i32 n = ${asize}; { ${b} k = ${bv}; n = n + (k as~ i32); } ` +
+      `return n + ${asize}; }`);
+    add(`scope ${a} in a loop then ${b}`,
+      `export i32 f() { i32 n = 0; for (i32 i = 0; i < 2; i++) { ${a} k = ${av}; n = n + ${asize}; } ` +
+      `{ ${b} k = ${bv}; n = n + (k as~ i32); } return n; }`);
+    add(`scope ${a} in both arms`,
+      `export i32 f() { i32 n = 0; if (n == 0) { ${a} k = ${av}; n = ${asize}; } ` +
+      `else { ${b} k = ${bv}; n = k as~ i32; } return n; }`);
+  }
+  add("scope two loops one name",
+    `export i32 f() { i32 n = 0; for (i32 i = 0; i < 3; i++) { n = n + i; } ` +
+    `for (i64 i = 0; i < 3; i++) { n = n + (i as~ i32); } return n; }`);
+  add("scope a name declared after a block that had it",
+    `export i32 f() { { i32 k = 5; } i64 k = 7; return k as~ i32; }`);
+
+  // `string.fromCodepoint`, whose answer is a *number of bytes* as much as a character — so the
+  // cells straddle every boundary in UTF-8's encoding, and the two that must trap are here too.
+  for (const cp of [0, 65, 127, 128, 233, 2047, 2048, 8364, 65535, 65536, 128512, 1114111]) {
+    add(`fromCodepoint ${cp}`, `export i32 f() { return string.fromCodepoint(${cp}).len(); }`);
+    add(`fromCodepoint ${cp} round trip`,
+      `export bool f() { string s = string.fromCodepoint(${cp}); return s[0] == s; }`);
+    add(`fromCodepoint ${cp} concatenated`,
+      `export i32 f() { return ("x" + string.fromCodepoint(${cp})).len(); }`);
+  }
+  for (const bad of [55296, 57343, 1114112]) {
+    add(`fromCodepoint ${bad} traps`, `export i32 f() { return string.fromCodepoint(${bad}).len(); }`);
+  }
   return out;
 }
