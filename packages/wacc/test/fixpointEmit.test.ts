@@ -22,7 +22,11 @@ import { wacBind } from "../../../harness/wacBind.ts";
 const mod = await wacBind("packages/wacc/src/api.wac");
 const emitFiles = mod.emitFiles as (p: string[], s: string[], e: string) => Uint8Array;
 
-/** The sources put through both stages — the two that this emitter compiles whole. */
+/**
+ * Two sources put through both stages. They were once the only two this emitter compiled whole; it
+ * compiles almost the whole repository now, and they stay because two files are enough to make this
+ * test's point cheaply — `selfHostEmit.test.ts` is the one that puts the entire compiler through.
+ */
 const TARGETS = ["packages/wacc/src/kinds.wac", "packages/wacc/src/ast.wac"];
 const DRIVER = "packages/wacc/test/wac/fixpoint_generated.wac";
 

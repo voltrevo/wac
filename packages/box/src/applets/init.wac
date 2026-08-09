@@ -26,8 +26,11 @@
 // either it belongs in step 7's definition of done or it is a ninth step" — and this does not settle
 // it. What is here is start, wait, report, reap.
 //
-// **No signals.** `init` cannot stop a service, because nothing can: `kill` needs step 3's delivery
-// half, which does not exist. When a service ends, this reports how; it never ends one.
+// **No signals.** `init` cannot stop a service. It is no longer that nothing can — step 3's delivery
+// half landed, and `kill` reaches a process through the shell's process table — but that table is the
+// shell's, and an applet is handed `Core`, `Cli`, `Fs` and `Args` and no way to signal a child it
+// spawned. So the gap moved rather than closed: it is a missing seam on `Cli` now, not a missing
+// mechanism. When a service ends, this reports how; it never ends one.
 //
 // The distinction matters because a "supervisor" that quietly did neither would look like the real
 // thing until the first service died.

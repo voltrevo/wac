@@ -463,7 +463,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>248 of 337 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>338 of 341 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -491,12 +491,14 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is not finished — the emitter compiles 248 of the repository&rsquo;s 337 wac files
-          whole, and what blocks the rest is named rather than counted: an import from a capability,
-          a generic function, a few narrower shapes. But <em>none of the 337 produces an invalid
-          module</em>, which is the property that had to hold before the fixpoint meant anything: a
-          walk that approves a function the emitter cannot actually emit would reach a fixpoint on
-          garbage.
+          It is nearly finished — the emitter compiles <Lead>338 of the repository&rsquo;s 341 wac
+          files</Lead> whole, and the three that remain are blocked on the harness not supplying a
+          file's import rather than on anything the language does. Every answer it gives for the
+          specification&rsquo;s own cases agrees — 322 of 322, from the 235 of 275 programs it emits
+          whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 341
+          produces an invalid module</em>, which is the property that had to hold before the
+          fixpoint meant anything: a walk that approves a function the emitter cannot actually emit
+          would reach a fixpoint on garbage.
         </P>
         <Sub id="wacc-emitter" title="Why the emitter is not checked on its bytes">
           <P>

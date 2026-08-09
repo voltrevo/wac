@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    9 sources, 148,402 bytes, identical`;
+B == C    10 sources, 169,692 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -197,10 +197,13 @@ export default function Home() {
           Saving, reopening and logging back in all work now — a session&rsquo;s filesystem is a
           file, {m({ children: "sshd -i" })} serves sessions from one, and two keys land in two
           homes where neither can read the other&rsquo;s private file. What is missing is smaller
-          and more specific: a spawned pipeline stage still gets the host&rsquo;s filesystem rather
-          than the session&rsquo;s, so the strongest sealing holds only where nothing spawns, and
-          there is no way to stop a running service once{" "}
-          {m({ children: "init" })} has started it.
+          and more specific. A spawned stage used to read the machine rather than the session, so
+          sealing held only where nothing spawned; it asks its parent now, over a channel, and a
+          child&rsquo;s writes are its parent&rsquo;s writes. What is left is above that:{" "}
+          {m({ children: "init" })} starts services and never stops one — signals deliver now, and
+          nothing has been wired to use them — and there is no restart policy, no dependency order
+          and no readiness, which is the difference between starting services and supervising
+          them.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
@@ -250,12 +253,13 @@ export default function Home() {
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>.
         </P>
         <Caveat title="not finished">
-          The emitter compiles 248 of the repository&rsquo;s 337 wac files whole; the rest are
-          blocked on named things — an import from a capability, a generic function — rather than on
-          unknown ones. What matters more than the 248 is that <em>none</em> of the 337 produces an
-          invalid module: a walk that approved what the emitter cannot emit would reach a fixpoint
-          on garbage. Everything here is still built with the TypeScript compiler today. It is the
-          seed, and the self-hosted one is not yet the compiler of record.
+          The emitter compiles <Lead>338 of the repository&rsquo;s 341 wac files</Lead> whole, and
+          the three left are a limit of the harness rather than of the language — a file whose
+          import was not supplied to it. None of the 341 produces an invalid module, which is the
+          property that had to hold before a fixpoint meant anything: a walk that approved what the
+          emitter cannot emit would reach one on garbage. Everything here is still built with the
+          TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
+          of record.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
