@@ -226,6 +226,16 @@ i32 frameLength(Chan c) {
  *
  * Nothing outstanding is the common case — a request and its answer, then nothing — so the usual
  * effect is to empty the buffer entirely.
+ *
+ * **Nothing tests this, and that is measured rather than assumed.** Replacing the body with an
+ * immediate `return` leaves every test in the repository passing: the offset keeps rising, `held`
+ * keeps growing, and `answer` still finds each frame because it reads from `at`. What changes is
+ * memory — a child that made a million requests would hold every byte of every answer — and no test
+ * here can observe that, because the harness measures output and status rather than bytes retained.
+ *
+ * Left as a stated gap rather than approximated with a proxy assertion: a test that ran a large
+ * number of requests and checked it *finished* would pass with or without this, which is the kind of
+ * test that reads like coverage and is not.
  */
 void compact(Chan c) {
   if (c.at == 0) { return; }
