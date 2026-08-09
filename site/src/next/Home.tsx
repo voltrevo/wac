@@ -199,7 +199,9 @@ export default function Home() {
           homes where neither can read the other&rsquo;s private file. What is missing is smaller
           and more specific. A spawned stage used to read the machine rather than the session, so
           sealing held only where nothing spawned; it asks its parent now, over a channel, and a
-          child&rsquo;s writes are its parent&rsquo;s writes. What is left is above that:{" "}
+          child&rsquo;s writes are its parent&rsquo;s writes — though turning spawning on is still turning up
+          latent leaks, two of them the day this was written, so the sealing is better tested than
+          finished. Above it sits the plainer gap:{" "}
           {m({ children: "init" })} starts services and never stops one — signals deliver now, and
           nothing has been wired to use them — and there is no restart policy, no dependency order
           and no readiness, which is the difference between starting services and supervising
