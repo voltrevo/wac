@@ -15,13 +15,13 @@
 import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
 import { BUILT, TOTALS } from "../data/built";
-import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Table } from "./ui";
+import { TREE, A, Caveat, Code, Facts, Lead, m, P, Page, Section, Table } from "./ui";
 import { ASSETS, c, font, space } from "./tokens";
 
 /**
  * The commands the terminal shows, and what they print.
  *
- * Hardcoded, because a page cannot run a shell to render itself — but wac-mono's
+ * Hardcoded, because a page cannot run a shell to render itself — but the repository's
  * `tools/frontpage.test.ts` runs these exact lines through `packages/box/example/boxsh.wac` and
  * fails if the output ever stops matching. So this is a claim with a test behind it rather than a
  * plausible-looking screenshot.
@@ -57,12 +57,12 @@ enum Option<T> {
   None
 }`;
 
-const MONO_SRC = "https://github.com/voltrevo/wac-mono/tree/master/packages";
+
 
 /**
  * Whether the browser demos are built beside this page.
  *
- * `tools/syncDemos.ts` writes them into `public/` from wac-mono, and CI runs it — but a plain
+ * `site/tools/syncDemos.ts` writes them into `site/public/`, and CI runs it — but a plain
  * checkout has none, and a dev server answers a missing `shell.html` with `index.html`, which
  * renders the entire site inside the iframe. `demos.json` is written next to them, so its presence
  * is the honest signal, and its absence gets a link instead of a nested copy of this page.
@@ -151,7 +151,7 @@ export default function Home() {
             )
             : (
               // No demos in this checkout, so the session is printed rather than run. It is the
-              // same list the terminal opens on, and tools/frontpage.test.ts in wac-mono fails if
+              // same list the terminal opens on, and tools/frontpage.test.ts fails if
               // this stops being what the shell answers.
               <div style={{ padding: "18px 16px", fontFamily: font.mono, fontSize: 13, lineHeight: 1.65, color: "#d7dde6" }}>
                 <pre style={{ margin: 0, overflowX: "auto" }}>
@@ -165,7 +165,7 @@ export default function Home() {
                   ))}
                 </pre>
                 <div style={{ color: c.faint, marginTop: 12, fontSize: 12 }}>
-                  not built in this checkout — tools/syncDemos.ts builds it from wac-mono, and CI
+                  not built in this checkout — site/tools/syncDemos.ts builds it, and CI
                   runs that on every deploy. <A href={`${ASSETS}shell.html`}>open it directly</A>
                 </div>
               </div>
@@ -315,7 +315,7 @@ export default function Home() {
           align={["left", "left", "right", "right"]}
           rows={[
             ...BUILT.map((p) => [
-              <a href={`${MONO_SRC}/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
+              <a href={`${TREE}/packages/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
               <span style={{ color: c.dim }}>{p.what}</span>,
               <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.lines.toLocaleString()}</span>,
               <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.tests}</span>,

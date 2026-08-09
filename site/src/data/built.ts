@@ -26,13 +26,13 @@ export const TOTALS = {
   programs: 48,
   pages: 4,
   /**
-   * Both suites: wac-mono's packages (1527), its harness and tools (95),
-   * and this repo's compiler (19).
+   * The whole repository: the packages (1527), and the compiler, harness and tooling
+   * around them (1319).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 1641,
+  testsAll: 2846,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 817,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */

@@ -11,10 +11,10 @@
 // the evidence is internal.
 
 import { TOTALS } from "../data/built";
-import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
+import { BLOB, A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
 import { c, font } from "./tokens";
 
-const MONO_REPO = "https://github.com/voltrevo/wac-mono";
+
 
 const EX_INTERLEAVE = `// packages/platform/test/bridge_model.test.ts
 /** Walk every interleaving of the two agents' moves to \`depth\`. */
@@ -187,7 +187,7 @@ export default function Checked() {
         <P>
           <Lead>434 of 497 mutants killed</Lead> in the packages measured so far. The interesting
           number is the other 63: each one is a line whose behaviour nothing checks, and they are
-          written down as <A href={`${MONO_REPO}/blob/master/issues/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
+          written down as <A href={`${BLOB}/issues/system/open/0005-mutation-testing-found-54-untested-behaviours.md`} external>an open issue</A>{" "}
           rather than quietly tolerated.
         </P>
       </Section>
