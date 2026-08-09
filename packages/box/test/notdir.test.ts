@@ -114,6 +114,11 @@ const CASES: string[] = [
   "mkdir f/g",
   "touch f/g",
   "stat f/g",
+  // The two that walk a tree rather than touching one path, and the two that were reporting a *denial*
+  // as absence: both said `du: nosuch: not found` — a phrase no real tool prints — for every kind of
+  // nothing, so a path with no read grant and a path that is missing were one answer.
+  "du f/g",
+  "find f/g",
   // And the same tools on a path that is simply absent, so the two absences are compared side by side.
   // Every one of these printed the *same* sentence as its `f/g` neighbour before there was a category,
   // which is the whole defect: `ls nosuch` and `ls f/g` are different mistakes.
@@ -124,6 +129,8 @@ const CASES: string[] = [
   "mkdir nosuch/x",
   "touch nosuch/x",
   "stat nosuch",
+  "du nosuch",
+  "find nosuch",
 ];
 
 Deno.test({

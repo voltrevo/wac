@@ -13,7 +13,7 @@
 // Ephemeral keys come from `randomBytes`, so the world's one unprivileged source of
 // entropy is what a handshake's secrecy rests on. Worth knowing.
 
-import { Cli, Core, FileResult, Socket } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult, readReason, Socket } from "../../../platform/src/platform.wac";
 import { Args, has } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
@@ -51,7 +51,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   i32 port = a.hasNum ? a.num : 443;
 
   FileResult rootFile = fs.readFile(a.rest[2]);
-  if (!rootFile.ok) { core.warn(a.name + ": " + a.rest[2] + ": " + rootFile.error); return 1; }
+  if (!rootFile.ok) { core.warn(a.name + ": " + a.rest[2] + ": " + readReason(rootFile)); return 1; }
   u8[] root = rootFile.bytes;
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.
   i32[] offsets = i32[](0, root.len());

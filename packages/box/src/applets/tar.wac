@@ -12,7 +12,7 @@
 // names longer than 100 bytes. Each of those is refused rather than truncated — a tar
 // that quietly writes half a path is worse than one that says it cannot.
 
-import { Cli, Core, FileResult, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, FileResult, readReason, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa, itoa64 } from "../../../fmt/src/itoa.wac";
@@ -58,7 +58,12 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   }
 
   Stat st = fs.stat(path);
-  if (!st.exists) { core.warn(name + ": " + path + ": not found"); return false; }
+  // GNU's: `tar: nosuch: Cannot stat: No such file or directory`. The doubled reason is tar's own
+  // shape and is copied rather than tidied, because the point of these lines is to be the real tool's.
+  if (!st.exists) {
+    core.warn(name + ": " + path + ": Cannot stat: " + st.words("No such file or directory"));
+    return false;
+  }
 
   // A name that does not fit is refused, which is what this file has always said it does — there
   // was no check, so the header writer copied the first 100 bytes and archived the entry under a
@@ -91,7 +96,7 @@ bool addAt(Core core, Cli cli, Fs fs, string path, string name, i32 depth) {
   }
 
   FileResult f = fs.readFile(path);
-  if (!f.ok) { core.warn(name + ": " + path + ": " + f.error); return false; }
+  if (!f.ok) { core.warn(name + ": " + path + ": " + readReason(f)); return false; }
   cli.write(header(path, f.bytes.len(), st.modifiedMillis, '0'));
   cli.write(f.bytes);
   // Pad the contents to a block. A file that is already a multiple gets nothing, which is

@@ -68,10 +68,10 @@ function fixture(): void {
 
 type Run = { code: number; out: string; err: string };
 
-function runIt(cmd: string, args: string[]): Run {
+function runIt(cmd: string, args: string[], cwd: string = tmp): Run {
   const r = new Deno.Command("timeout", {
     args: ["20", cmd, ...args],
-    cwd: tmp,
+    cwd,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
@@ -210,19 +210,97 @@ Deno.test("the two hosts agree where the real tool prints more than this system 
   assertEquals(stat.out.startsWith("f file 6 "), true, stat.out);
 });
 
-Deno.test("a capability the build did not grant is refused, not quietly absent", async () => {
+/**
+ * Every operation that needs a grant, refused the same way on both hosts.
+ *
+ * **This was one operation.** `cat f` was the whole of it, out of the fourteen places `native/src` has
+ * a grant check and the dozen `host/deno.ts` has — so thirteen capabilities could have been ungated on
+ * one host, or refused in different words, and the suite would have said nothing. That is the arrival
+ * test's own claim ("no implicit access to either host") tested at one point of entry.
+ *
+ * Two things are asserted per script and they are different claims:
+ *
+ *   - **the refusal happened** — the operation did not go through, and the status says so;
+ *   - **the two hosts said the same thing** — the wac above the boundary is byte-identical, so any
+ *     difference is the capability layer's, which is where a second host is most likely to diverge.
+ *
+ * The second is what found the two that were wrong: `du .` and `find .` reported a path they were not
+ * granted as `not found` — a denial arriving as absence, which is what `Stat.fault` exists to prevent
+ * — and `cat < f` printed the host's own sentence, which differs per runtime ("filesystem read not
+ * granted to this application" against "this program was not granted reading") *and* named the
+ * resolved absolute path of a machine the program is not supposed to be able to see.
+ */
+Deno.test("every capability that needs a grant is refused, the same way, on both hosts", async () => {
   const native = await nativeBinary();
   if (native === null) return;
 
   // The same program with no grants at all. A shell that could still read would mean the manifest's
   // grants were decoration; one that trapped would mean a program could not find out.
   await buildNative(ENTRY, `${tmp}/nogrant`, {});
+  await buildApp(ENTRY, `${tmp}/nogrant-deno`, {});
+
+  // One per grant-gated capability the shell can reach from a script. `stat`, `readDir`, `readFile`,
+  // `writeFile`, `mkdir`, `remove`, `rename`, `openInput` and `openOutput` — read and write both.
+  const SCRIPTS = [
+    "cat f",              // readFile
+    "cat < f",            // openInput, through a redirection rather than an operand
+    "ls",                 // readDir
+    "stat f",             // stat
+    "du .",               // stat, then a walk
+    "find .",             // the same, by the other applet
+    "echo x > out",       // openOutput
+    "mkdir new",          // mkdir
+    "rm f",               // remove
+    "mv f g",             // rename
+    "touch t",            // writeFile
+    "cp f copy",          // read and write in one command
+  ];
+
+  for (const script of SCRIPTS) {
+    // **Started *in* the fixture rather than `cd`-ing into it**, and that is not tidiness. With
+    // `cd tree; …` in front, `cd` fails first — it has no read grant either — and puts its own
+    // "Not granted to this application" on stderr. Every assertion below that looks for that phrase
+    // was then satisfied by `cd`'s line whatever the script did, and the test could not fail: putting
+    // `du`'s old `not found` back left it green. Found by canarying it, which is the only way this
+    // kind of pass shows up.
+    const where = `${tmp}/tree`;
+    fixture();
+    const rs = runIt(native, [`${tmp}/nogrant.json`, "-c", `${script}; echo status=$?`], where);
+    fixture();
+    const js = runIt(`${tmp}/nogrant-deno`, ["-c", `${script}; echo status=$?`], where);
+
+    // It did not happen. `status=0` would mean the operation went through; the file contents are
+    // checked separately because a read that succeeded prints rather than failing.
+    assertEquals(rs.out.includes("status=0"), false, `native: \`${script}\` succeeded: ${rs.out}`);
+    assertEquals(js.out.includes("status=0"), false, `deno: \`${script}\` succeeded: ${js.out}`);
+    assertEquals(rs.out.includes("a\nb\nc\n"), false, `native: \`${script}\` read the file: ${rs.out}`);
+    assertEquals(js.out.includes("a\nb\nc\n"), false, `deno: \`${script}\` read the file: ${js.out}`);
+
+    // And said the same thing about it. This is the comparison that matters: the wasm is identical, so
+    // a difference here is the capability layer's.
+    assertEquals(rs.err, js.err, `the hosts word \`${script}\` differently`);
+    assertEquals(rs.out, js.out, `the hosts answer \`${script}\` differently`);
+
+    // In the words `platform.wac` keeps for `FAULT_NOT_GRANTED`, which it holds apart from the
+    // operating system's own denial so that "this build cannot" and "this file will not" are different
+    // sentences. A host's raw message here would be a runtime leaking through the boundary.
+    assertEquals(
+      rs.err.includes("Not granted to this application"),
+      true,
+      `\`${script}\` did not say which kind of no: ${rs.err}`,
+    );
+    // Nothing about the machine underneath, either. `cat < f` named the resolved absolute path.
+    assertEquals(rs.err.includes(tmp), false, `\`${script}\` leaked a host path: ${rs.err}`);
+  }
+
+  // The canary: a *granted* build must actually do these, or every assertion above holds because the
+  // shell cannot do anything at all.
   fixture();
-  const r = runIt(native, [`${tmp}/nogrant.json`, "-c", "cd tree; cat f; echo status=$?"]);
-  assertEquals(r.out.includes("a\nb\nc\n"), false, `it read the file anyway: ${r.out}`);
-  assertEquals(r.out.includes("status=1"), true, `${r.out} / ${r.err}`);
-  // And it says which kind of "no" it was in the words `packages/box` already uses for
-  // `FAULT_NOT_GRANTED` — which platform.wac keeps apart from the operating system's own denial so
-  // that "this build cannot" and "this file will not" are different sentences.
-  assertEquals(r.err.includes("Not granted to this application"), true, r.err);
+  const granted = runIt(deno, ["-c", "cat f"], `${tmp}/tree`);
+  assertEquals(granted.out, "a\nb\nc\n", `the granted build could not read either: ${granted.err}`);
+  // And one that the *stderr* comparison is not comparing two empties: a refusal really did say
+  // something. Without this, a shell that failed silently would pass every line above.
+  fixture();
+  const said = runIt(`${tmp}/nogrant-deno`, ["-c", "cat f"], `${tmp}/tree`);
+  assertEquals(said.err.trim().length > 0, true, "a refused read said nothing at all");
 });

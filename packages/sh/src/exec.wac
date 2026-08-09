@@ -23,7 +23,7 @@ import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Read } from core;
 import { Change, Child, Cli, Core, FAULT_UNSUPPORTED, faultWords, FileResult,
-  GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending, Stat, reasonOf }
+  GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, Pending, Stat, readReason, reasonOf }
   from "../../platform/src/platform.wac";
 import { Part, PartKind, Token, lexQuotedText, tokenize } from "./lex.wac";
 import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeline, Redir,
@@ -1214,10 +1214,15 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
       case In: {
-        string path = sh.resolve(joinWord(sh, r.target));
+        // The word the user wrote, kept beside the path it resolves to: the diagnostic names the
+        // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
+        // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
+        // in the redirection nobody looked at because the two are separate code.
+        string given = joinWord(sh, r.target);
+        string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
-          sh.err(("sh: " + path + ": " + f.error + "\n").toBytes());
+          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
           sh.status = 1;
           sh.stdinBytes = savedIn;
           sh.stdinPos = savedPos;
@@ -1475,10 +1480,15 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     Redir r = cmd.redirs.get(i);
     match (r.kind) {
       case In: {
-        string path = sh.resolve(joinWord(sh, r.target));
+        // The word the user wrote, kept beside the path it resolves to: the diagnostic names the
+        // first and the read uses the second. Reporting the resolved one leaks an absolute *host*
+        // path — `cat < nosuch` answered `sh: /tmp/…/nosuch:` — which is the same leak `> f/g` had,
+        // in the redirection nobody looked at because the two are separate code.
+        string given = joinWord(sh, r.target);
+        string path = sh.resolve(given);
         FileResult f = sh.fs.readFile(path);
         if (!f.ok) {
-          sh.err(("sh: " + path + ": " + f.error + "\n").toBytes());
+          sh.err(("sh: " + given + ": " + readReason(f) + "\n").toBytes());
           sh.status = 1;
           return u8[0]();
         }

@@ -35,7 +35,7 @@
 import { Child, Cli, Core, GRANT_NONE } from "../../../platform/src/platform.wac";
 import { argvOf } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
-import { FileResult } from "../../../platform/src/platform.wac";
+import { FileResult, readReason } from "../../../platform/src/platform.wac";
 import { Vec } from "../../../std/src/vec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Args } from "../lib/args.wac";
@@ -84,7 +84,7 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // Absent is not a failure: a system with no services is a system. Said out loud, because a boot
     // that started nothing in silence is indistinguishable from one that started everything and lost
     // the output.
-    core.warn("init: " + path + ": " + f.error + "; nothing to start");
+    core.warn("init: " + path + ": " + readReason(f) + "; nothing to start");
     return 0;
   }
 
