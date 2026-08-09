@@ -1415,9 +1415,30 @@ export string typeOfExpr(C c, Expr e) {
           bk == kAndAnd() || bk == kOrOr()) {
         return "bool";
       }
-      string bl = litKindOf(left) != litNone() ? typeNone() : typeOfExpr(c, left);
+      bool lLit = litKindOf(left) != litNone();
+      bool rLit = litKindOf(right) != litNone();
+      string bl = lLit ? typeNone() : typeOfExpr(c, left);
+      string br = rLit ? typeNone() : typeOfExpr(c, right);
+      // **Unknown from a literal and unknown from an error are the same value and not the same
+      // thing.** `x + 1` takes its type from `x`, because the literal has none of its own; `(s * 2) +
+      // t` has an operand that was *reported* and therefore has no type to offer, and answering with
+      // the other side made the enclosing `return` complain a second time about a chain the
+      // reference had already finished with.
+      if (!lLit && bl == typeNone()) { return typeNone(); }
+      if (!rLit && br == typeNone()) { return typeNone(); }
+      // **Two known operands that disagree make the result unknown**, which is how the reference
+      // behaves and why it reports `t.a + t.b + t.c` once rather than twice: the first `+` is an
+      // error, so what it produces is not a `string` for the second `+` to complain about. Answering
+      // with the left operand's type instead made this checker report every operator in the chain,
+      // and every one after the first was a position the reference never mentions.
+      if (bl != typeNone() && br != typeNone() && bl != br) { return typeNone(); }
+      // **And an operator that has nothing to do to its operand produces nothing.** `t.a * 1000` on
+      // a `string` is reported at the `*`; answering "string" for it as well made the enclosing
+      // `return` complain a second time, at a position the reference never mentions because it had
+      // already said what was wrong.
+      if (bk != kPlus() && (bl == "string" || br == "string")) { return typeNone(); }
       if (bl != typeNone()) { return bl; }
-      return litKindOf(right) != litNone() ? typeNone() : typeOfExpr(c, right);
+      return br;
     }
     case Unwrap(operand): {
       string inner = withoutNull(typeOfExpr(c, operand));
@@ -1603,6 +1624,26 @@ bool breaksOutOf(Stmt s) {
  * literal takes the other side's type, so demanding they agree would report exactly the code
  * everybody writes.
  */
+/** Whether a type is one of the language's references, which `==` may not be asked about. */
+bool isReferenceName(C c, string t) {
+  return t == "string" || isArrayName(t) || c.isStruct(t) || c.isEnum(t) || startsWithFn(t);
+}
+
+/**
+ * An expression's type, **with a literal's own family filled in**.
+ *
+ * A literal is polymorphic over its family and takes the type of the slot it fills, which is why
+ * `typeOfExpr` answers unknown for one. A comparison is not a slot: `1 == "hello"` has nothing to
+ * take a type from, and the whole complaint is that the two sides cannot be the same type.
+ */
+string naturalTypeOf(C c, Expr e) {
+  i32 lk = litKindOf(e);
+  if (lk == litInteger()) { return "i32"; }
+  if (lk == litFloat()) { return "f64"; }
+  if (lk == litBool()) { return "bool"; }
+  if (lk == litString()) { return "string"; }
+  return typeOfExpr(c, e);
+}
 void checkExpr(C c, Expr e) {
   string want = c.expected;
   c.expected = typeNone();
@@ -1610,6 +1651,7 @@ void checkExpr(C c, Expr e) {
   // are inside is a question only its text can answer: `''` holds none and `'ab'` holds two. Both
   // are reported at the literal, which is where the reference reports them.
   checkCharLiteral(c, e);
+
   match (e.kind) {
     case Binary(op, left, right): {
       checkExpr(c, left);
@@ -1633,6 +1675,35 @@ void checkExpr(C c, Expr e) {
       string art = typeOfExpr(c, right);
       if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
         c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
+      }
+      // **A `string` is a number for exactly one operator.** `+` concatenates and the comparisons
+      // order it, and the rest of the arithmetic family has nothing to do to one — *"'*' requires
+      // numeric type, got string"*, at the operator. Read off the reference rather than assumed:
+      // `==`, `<` and `+` are all accepted on two strings, so the rule is about the operator and not
+      // about the type being a reference.
+      if (arith && k != kPlus() && (alt == "string" || art == "string")) {
+        c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+      }
+      // **A comparison between a reference and something else** is the same complaint, and it is by
+      // far the commonest one in the corpus: `1 == "hello"` is *"'==' not allowed on reference type
+      // string — use 'is' for identity"*. Two strings compare fine, so the rule is about the two
+      // sides *disagreeing* while one of them is a reference — which is why the literal's own type
+      // has to be filled in here rather than left unknown.
+      bool cmp = k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() || k == kGe();
+      string cl = naturalTypeOf(c, left);
+      string cr = naturalTypeOf(c, right);
+      if (cmp && cl != typeNone() && cr != typeNone() && cl != cr &&
+          (isReferenceName(c, cl) || isReferenceName(c, cr))) {
+        c.report(errReferenceOp(), tokenLine(c, op), tokenCol(c, op));
+      }
+      // **Equality on a struct or an array asks the wrong question.** Two references are equal when
+      // they are the same object, which the language spells `is` — *"'==' not allowed on reference
+      // type P — use 'is' for identity"*. A `string` is a reference too and is exempt: its `==`
+      // compares bytes, which is a helper the emitter one rung up already generates.
+      if ((k == kEq() || k == kNe()) &&
+          ((alt != typeNone() && alt != "string" && (c.isStruct(alt) || isArrayName(alt))) ||
+           (art != typeNone() && art != "string" && (c.isStruct(art) || isArrayName(art))))) {
+        c.report(errReferenceOp(), tokenLine(c, op), tokenCol(c, op));
       }
       // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
       // two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
@@ -2733,6 +2804,14 @@ void checkIndex(C c, Expr at, Expr arr, Expr index) {
  *
  * Reported at the call, which is the receiver's own position and where the reference puts all three.
  */
+/** Whether an expression is a bare identifier, which is the only receiver whose position is settled. */
+bool isPlainName(Expr e) {
+  match (e.kind) {
+    case Ident(tok): { return true; }
+    else: { return false; }
+  }
+}
+
 void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   string recv = "";
   bool isStatic = false;
@@ -2779,6 +2858,11 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   // rather than a list. `string` is in `isPrimitiveName` and has to be excluded by name, which is the
   // whole trap — the predicate is about how a type is *passed*, not about what it can do.
   if (isValueType(recv)) {
+    // At the receiver, which is where the reference puts it — for a *name*. For anything else it
+    // puts it at the dot instead, and this checker has no node there to name: `xs[0].len()` came out
+    // at the `[`, three columns early, which is a position the reference never mentions. Reported
+    // only where it can be placed exactly, as the missing-method rule below is.
+    if (!isPlainName(obj)) { return; }
     c.report(errNoMethod(), obj.line, obj.col);
     return;
   }
@@ -2796,6 +2880,12 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   // Statics are looked up on the struct itself; instance methods inherit.
   i32 at = isStatic ? c.ownMethodAt(recv, name) : c.methodAt(recv, name);
   if (at < 0) {
+    // **Only when the receiver is a plain name.** The reference puts this diagnostic at the start of
+    // the receiver for `n.len()` and at the *dot* for `xs[0].len()`, and nothing here can tell which
+    // it will choose without guessing. A position that is merely reasonable is a position the
+    // reference never mentions, which this rung counts as a contradiction — so the case it cannot
+    // place exactly is one it does not report at all. The mutation sweep prints what that costs.
+    if (!isPlainName(obj)) { return; }
     c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
     return;
   }
