@@ -1594,6 +1594,60 @@ is exactly the size of thing that gets committed on the strength of the number m
 | false alarms on the emitter's corpus | 0 | 0 |
 | generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
 
+### The table that could not tell two `Ok`s apart — 91% to 92%
+
+The variant-arity rule was reverted last slot for a false alarm, and the false alarm was the real
+finding: a variant is declared as a **struct under its bare name**, because that is how `is Circle`
+and `case Circle:` write it and how a narrowed value finds its payload. That spelling cannot tell
+two enums apart. `enum Opened { Ok(i32 fd) }` beside `enum Found { Ok(i32 at) }` is *one* `Ok` in
+the struct table holding both payloads — so asking it how many arguments `Ok` takes answers two, and
+the answer belongs to neither.
+
+The fix is a second table that records what the first one de-duplicates: owner, variant, arity, one
+row per declaration and no merging, because the duplication is the fact being recorded. `Found.Ok`
+is asked for with both names and answers one whatever `Opened.Ok` holds. The rule that wanted it
+lands with **no false alarm** where the same rule cost one before, and the program that exposed it is
+in the corpus this is measured against.
+
+**Two literals of different families** went in beside it — `1 + "é"`, the one case where neither
+side can take its type from the other, so there is nothing to infer and the mismatch is certain
+whatever the slot wants. The grid was measured rather than assumed: ten pairs, and an integer with a
+float, a string with a bool and the rest all answer the same way. Same family stays silent, including
+`true + false`, which is the numeric rule's business and not this one's.
+
+| | before | after |
+|---|---|---|
+| mutation recall | 91% of 1,274 | **92%** |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
+### A rule that was there, asked about something with no type — 92% to 93%
+
+`return: expected string, found i32` was missed twenty-one times of seventy, and the rule that
+reports it has been in this checker since its first slice. What was missing is the *found*: every one
+of the twenty-one returns a **builtin call** — `return a.len();` — and `typeOfExpr` had no answer for
+one, so the comparison had nothing to be wrong about. Four names and their answers is the whole fix,
+written against the same closed surface the missing-method rule uses.
+
+Then `"abc".len()`, still silent, for the reason that has now come up three slots running: **the
+receiver is a literal**, and a literal has no type of its own by design. `-"s"`, `1 == "hello"`,
+`1 + "é"`, and now `"abc".len()` — four rules, one cause, and the fix each time is that this
+position is not a slot for the literal to take a type from. It is worth stating as a rule of thumb
+for whoever works this queue next: **when a diagnostic is missing and the rule looks present, ask
+what the expression's type came back as before asking what the rule does.**
+
+| | before | after |
+|---|---|---|
+| mutation recall | 92% of 1,274 | **93%** |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
+The queue's tail is now `undefined variable` (10 of 298) and the remainder of the argument-count and
+method families — all partial, all in the same shape: the rule fires where the type is known and is
+silent where it is not.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
