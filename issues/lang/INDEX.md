@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0087](open/0087-break-after-an-infinite-loop-crashes-the-compiler.md) | `break` after an infinite loop crashes the compiler with an uncaught TypeError | bug | compile error |
 | [0086](open/0086-a-template-instance-named-only-by-a-generic-functions-return-type-has-no-methods.md) | a template instance named only by a generic function's return type has no methods | bug | compile error |
 | [0085](open/0085-as-i31ref-truncates-where-the-spec-says-it-traps.md) | `as! i31ref` truncates where the spec says it is checked | bug | wrong answer |
 | [0084](open/0084-increment-as-a-value-on-a-packed-array-element.md) | `++` as a *value* on a packed array element emits `array.get`, so the module is invalid | bug | invalid wasm |
@@ -32,7 +33,7 @@ has been fixed and why.
 
 ## Closed
 
-86 issues, 62 closed.
+87 issues, 62 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

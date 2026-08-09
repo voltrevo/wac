@@ -145,53 +145,41 @@ free function's parameter, so the read-only intent of the lookahead helpers here
 
 ## Status
 
-**Rung 2 (parser) passes.** The AST it builds agrees with the reference node for node, positions
-included, on all 326 `.wac` files in the repo plus the language tour — nothing is skipped any more —
-and on 74 hand-written cases a working corpus cannot contain (every precedence level, every cast,
-`else if` chains, bare-statement `switch` bodies, trailing commas everywhere, char and string escapes,
-malformed types, a nested `>>>` close, a funcref inside a type argument, and the comparisons that must
-*not* be read as type arguments).
+**All five rungs are climbed, and every one is still measured on every suite run.** The numbers below
+are printed by the tests rather than copied here — what follows says which test prints them.
 
-**Rung 1 (lexer) passes.** Token for token, position for position, against the reference on the same
-326 files plus 32 adversarial cases the corpus cannot cover (unterminated everything, every escape,
-greedy operator runs, non-ASCII columns).
+**Rung 1 (lexer) and rung 2 (parser) pass** against the reference, token for token and node for node,
+positions included, on every `.wac` file in the repository plus the language tour, and on
+hand-written cases a working corpus cannot contain: unterminated everything, every escape, every
+precedence level, `else if` chains, trailing commas, a nested `>>>` close, and the comparisons that
+must *not* be read as type arguments.
 
-**Rung 3 (type checker) has started.** One diagnostic of ~210: a `return` whose literal cannot be the
-declared return type. `src/check.wac`, `test/typecheck.test.ts`, and positions that match the
-reference exactly — `export i32 main() { return "x"; }` is reported at 1:28, the `"`, which is where
-the reference puts it and not where the `return` is.
+**Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
+for any of them.** The three that are left import files the corpus does not contain, and no compiler
+change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep
+of 4,460 programs whose answers must agree with the reference's, the spec suite's own 322 answers,
+and `linkEmit` for what linking can get wrong.
 
-It catches **every** literal-return mismatch across the primitive grid — 32 of 40 (type, literal)
-pairs are rejections, and all 32 are found. The rule was derived from the reference rather than
-assumed, by generating the grid and asking:
+**Rung 5 (bootstrap) reaches a fixed point.** wacc compiles its own nine sources, the module that
+comes out compiles them again, and the two are byte-identical — `fixpointEmit` and `selfHostEmit`.
 
-| declared | accepts |
-|---|---|
-| `i32` `i64` `u32` `u64` | an integer literal |
-| `f32` `f64` | a float literal |
-| `bool` / `string` | a boolean / a string literal |
-| `u8` `u16` | nothing — a packed type cannot be a return type at all |
+**Rung 3 (type checker) is the open one.** It implements roughly sixty of the reference's ~190
+diagnostics, at the reference's exact positions, and the discipline is that it may report *less* and
+may never report *differently*. Four oracles hold it to that, and each was added because the one
+before it had run out of things to say:
 
-The grid is regenerated on every suite run rather than tabulated here, because a table copied into a
-test is a second implementation of the language's assignability and drifts the first time the
-reference changes its mind.
+| oracle | input | what it asserts |
+|---|---|---|
+| `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
+| `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
+| `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
+| `corpusCheck.test.ts` | the repository's own 341 files | no false alarm |
+| `corpusMutate.test.ts` | those files, broken seven ways | no contradiction where the reference says one thing; 85% recall printed |
 
-It also types a returned **name**, against the function's parameters and locals — the first symbol
-table in the package. That needed a second rule rather than a wider one:
-
-- a returned **name** must have the declared type *exactly*: `i64` from an `i32` function is an
-  error, and so is `f32` from `f64`;
-- a returned **literal** is polymorphic over a family, and any of `i32 i64 u32 u64` accepts an
-  integer literal.
-
-Modelling only the family caught 58 of the 72 rejections in the (return type × parameter type) grid,
-and the fourteen it missed were all *within* a family. Both grids run on every suite invocation.
-
-A name declared twice in one function is **poisoned** to unknown rather than resolved. wac scopes by
-block and this slice does not track blocks, so a local shadowing a parameter would otherwise make a
-lookup confidently wrong — and a confident wrong answer is the one thing a subset checker may never
-give. Declarations are collected in a pass of their own before the body is walked, so a `return`
-above a declaration still resolves it.
+Recall is printed and never asserted. A number that must never fall makes every refactor a
+negotiation, and this checker has traded recall for the no-false-alarm invariant on purpose three
+times: an enum's fields while arm narrowing was unmodelled, a method whose position it could not
+place exactly, and an integer literal too wide to call an `i32`.
 
 ### A second oracle: the spec, not just the implementation
 
@@ -1726,6 +1714,53 @@ One practical note for whoever adds the next oracle: asking the reference about 
 reference only where ours reported something costs **282 milliseconds** and answers the same
 question — a file this checker says nothing about cannot be a false alarm whatever the reference
 thinks.
+
+### Breaking the repository's own code, and a crash nobody had written
+
+`corpusCheck` asks whether this checker invents diagnostics on real code. The other half — whether it
+*notices* anything wrong with real code — needed the same files mutated, and that is the widest
+recall input the package has: 341 files of Tor, SSH, shell and compiler, rather than programs written
+to be tested.
+
+It named a gap immediately, and the gap is the kind only real code has. **A method called with the
+wrong number of arguments** was seventeen of twenty misses. Nobody writes `b.trim(1)` on purpose, so
+no generated program ever had — but every codebase acquires one the moment a signature changes, and
+this checker had arity rules for a function, for a constructor and for a variant, and none for a
+method. One comparison fixed it.
+
+It also crashed the compiler it is measured against. `issues/lang/0087`:
+
+```wac
+export i32 f() { while (true) { } break; return 1; }
+```
+
+`while (false)` in that program is *"'break' outside loop or switch"*. `while (true)` is an uncaught
+`TypeError` out of the emitter — the statements after an infinite loop are still inside it as far as
+the checker is concerned, so the emitter is reached with no loop to break out of. It is a crash
+rather than a wrong answer, which means it escapes the diagnostic channel entirely. Found because
+`packages/crypto/src/keccak.wac` has a `while (true)` squeeze loop with an unreachable `return` after
+it, and the mutation put a `break` in front of that return.
+
+**Two things about the harness are worth copying.** The contradiction rule is narrower here than in
+the other sweeps, and deliberately: a mutated real file has *consequences* — change one declaration
+and the reference reports the three uses it can see while this checker reports a fourth further down
+that its list stopped short of. Neither side is wrong, and treating the reference's cut-off as a rule
+would make the oracle lie. So the assertion is exact where the comparison is exact: on a mutant the
+reference answers with **one** diagnostic, every position we report must be that one — zero of those
+across the corpus.
+
+And the cost. Asking the reference about a mutant with the whole corpus as its file map is a re-read
+of all 341 sources per call: two minutes twenty for the sweep. Handing it the file's **import
+closure** instead — five files for most of this corpus — is nine seconds for the same answers. The
+first version of this test sampled every third file to afford itself; the closure made the sampling
+unnecessary, which is the better way to make a test cheap.
+
+| | |
+|---|---|
+| the repository's own code, broken | 250 files the reference refuses, **212 reported (85%)** |
+| contradictions where the reference says one thing | **0** |
+| mutation recall on generated programs | 94%, unchanged |
+| false alarms, everywhere | 0 |
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
