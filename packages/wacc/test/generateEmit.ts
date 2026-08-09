@@ -478,5 +478,33 @@ export function generateEmit(): Cell[] {
       `export i32 f() { string s = "hello world"; i32 at = s.indexOf(${n}); ` +
       `return at < 0 ? -1 : s.slice(at, s.len()).len(); }`);
   }
+
+  // Character literals, which are integer literals wearing quotes — and which every literal in this
+  // generator had been a number instead of, so `' '` compiled to 0 and `isSpace(c)` asked whether a
+  // byte was NUL. The bootstrap found it; these keep it found.
+  const CHARS = ["' '", "'a'", "'Z'", "'0'", "'~'", "'\\n'", "'\\t'", "'\\r'", "'\\\\'", "'\\''", "'\u00e9'", "'\u20ac'"];
+  for (const c of CHARS) {
+    add(`char ${c}`, `export i32 f() { return ${c}; }`);
+    add(`char ${c} compared`, `export bool f() { i32 x = 32; return x == ${c}; }`);
+    add(`char ${c} in a chain`,
+      `export bool f() { i32 x = ${c}; return x == ' ' || x == '\\t' || x == '\\n' || x == ${c}; }`);
+    add(`char ${c} as an i64`, `export i64 f() { i64 x = ${c}; return x + 1; }`);
+    add(`char ${c} indexed against`,
+      `export i32 f() { u8[] b = "a b"; i32 n = 0; for (i32 i = 0; i < 3; i++) ` +
+      `{ if (b[i] == ${c}) { n++; } } return n; }`);
+  }
+  // Incrementing something that is not a local, which is what `lex.wac`'s cursor does and what
+  // emitted nothing at all until the bootstrap ran.
+  for (const t of ["i32", "u32", "f64"]) {
+    add(`increment a field ${t}`,
+      `struct P { ${t} x; }\nexport ${t} f() { P p = P(1); p.x++; p.x++; p.x--; return p.x; }`);
+    add(`increment an element ${t}`,
+      `export ${t} f() { ${t}[] a = ${t}[](1, 2); a[1]++; a[0]--; return a[0] + a[1]; }`);
+    add(`increment a field in a loop ${t}`,
+      `struct C { ${t} n; }\nexport ${t} f() { C c = C(0); while (c.n < 4) { c.n++; } return c.n; }`);
+    add(`increment through a method ${t}`,
+      `struct C { ${t} n; void bump(this) { this.n++; } }\n` +
+      `export ${t} f() { C c = C(0); for (i32 i = 0; i < 5; i++) { c.bump(); } return c.n; }`);
+  }
   return out;
 }
