@@ -1398,10 +1398,32 @@ exists. All nine compare, none mismatch.
 | invalid | 0 | 0 |
 | sweep | 4,434 programs, 4,025 compared | **4,443 programs, 4,034 compared, 0 mismatched** |
 
-Five files left. Three import files the corpus does not contain, and the last two are the same
-feature from two sides: **`Option.Some(v)` whose type argument comes from the return type**, and
-**`mapOption(some, double)`**, a generic function whose `T` comes from an argument and whose `U`
-comes from a callback. Generic *types* are instantiated here; generic *functions* are not.
+### A slot a ternary forgot to pass on — 333 to 334
+
+`return at < 0 ? Option.None : Option.Some(v);` was *"unresolved name Option"*, and the name was
+never the problem. Which instance of a template `Option.None` builds comes from the slot it fills,
+and a ternary is a slot that has to hand one on rather than have one of its own. The walk had arms
+for a member, a call and a null — every node whose meaning depends on where it is going — and no arm
+for a ternary, so the question fell through to the version with no slot to give, and the answer came
+back about the name.
+
+The emitter had the rule already: the branches' own type first, and the wanted type only when they
+have none. Two walks of the same program disagreeing about what is emittable is the recurring shape
+here, and it is always the walk that is behind.
+
+| | before | after |
+|---|---|---|
+| whole files | 333 | **334 of 338** |
+| invalid | 0 | 0 |
+| sweep | 4,443 programs, 4,034 compared | **4,449 programs, 4,040 compared, 0 mismatched** |
+
+**One fixable file left**, and it is the largest remaining feature: `mapOption(some, double)` — a
+generic *function*, whose `T` comes from an argument's type and whose `U` comes from a callback's
+return type. Generic types are instantiated here because the source writes `Vec<i32>` and the
+instantiation can be read off the page; a generic function is never written with its arguments, so
+this one needs inference — match the declared parameter types against the actual ones, bind the
+parameters, and compile a copy per binding. The other three files import files the corpus does not
+contain, and no feature will fix those.
 
 ### One reader, because two disagreed
 

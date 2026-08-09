@@ -943,6 +943,31 @@ export function generateEmit(): Cell[] {
       `export i32 f() { fn[i32(Base)] g = Base.get; return g(Derived(6, 7)); }`);
   }
 
+  // **A ternary whose branches know nothing on their own.** Which instance of a template
+  // `Opt.None` builds comes from the slot, and a ternary is a slot that has to pass one on rather
+  // than have one of its own.
+  {
+    const O = `enum Opt<T> { Some(T v), None\n  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }\n}\n`;
+    add("a ternary of variants in a return slot",
+      `${O}Opt<i32> pick(bool c) { return c ? Opt.None : Opt.Some(3); }\n` +
+      `export i32 f() { return pick(false).orElse(9) * 10 + pick(true).orElse(9); }`);
+    add("a ternary of variants in a local's slot",
+      `${O}export i32 f() { Opt<i32> o = false ? Opt.None : Opt.Some(4); return o.orElse(9); }`);
+    add("a ternary of variants in an argument slot",
+      `${O}i32 take(Opt<i32> o) { return o.orElse(9); }\n` +
+      `export i32 f() { return take(true ? Opt.None : Opt.Some(5)); }`);
+    add("a ternary of variants at two instantiations",
+      `${O}Opt<i32> a(bool c) { return c ? Opt.None : Opt.Some(1); }\n` +
+      `Opt<bool> b(bool c) { return c ? Opt.None : Opt.Some(true); }\n` +
+      `export i32 f() { return a(false).orElse(9) + (b(false).orElse(false) ? 10 : 0); }`);
+    add("a nested ternary of variants",
+      `${O}Opt<i32> pick(i32 n) { return n < 0 ? Opt.None : (n == 0 ? Opt.Some(0) : Opt.Some(n)); }\n` +
+      `export i32 f() { return pick(-1).orElse(7) * 100 + pick(0).orElse(7) * 10 + pick(3).orElse(7); }`);
+    add("a ternary of a null and a struct in a slot",
+      `struct P { i32 v; }\nP? pick(bool c) { return c ? null : P(6); }\n` +
+      `export i32 f() { return (pick(true) is null) ? pick(false)!.v : 0; }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);

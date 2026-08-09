@@ -4714,6 +4714,21 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
         else: { return unsupportedValue(src, lexed, env, e); }
       }
     }
+    // **A ternary in a slot hands that slot to both branches.** `return c ? Option.None :
+    // Option.Some(v);` has arms that know nothing on their own — which instance of a template they
+    // build comes from the return type — and this walk had no arm for one, so the question reached
+    // the version that has no slot to give and came back as "unresolved name Option". The order is
+    // the emitter's: the branches' own type first, and the slot only when they have none.
+    case Ternary(cond, then, els): {
+      string tc = unsupportedValue(src, lexed, env, cond);
+      if (tc != "") { return tc; }
+      string tw2 = typeOfE(src, lexed, env, then);
+      if (tw2 == "") { tw2 = typeOfE(src, lexed, env, els); }
+      if (tw2 == "") { tw2 = want; }
+      string t2 = unsupportedValueAt(src, lexed, env, then, tw2);
+      if (t2 != "") { return t2; }
+      return unsupportedValueAt(src, lexed, env, els, tw2);
+    }
     case NullLit: {
       if (isRefType(env, want)) { return ""; }
       // Named, not categorised: which slot it is, is the whole of what a reader needs — and where
