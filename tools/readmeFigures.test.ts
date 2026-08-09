@@ -37,7 +37,10 @@ async function mapFigures(): Promise<{ packages: number; wacLines: number }> {
   let packages = 0;
   let wacLines = 0;
   for (const line of map.split("\n")) {
-    // A package row: `| [`name`](packages/name/) | what it is | 1,234 | 56 | uses |`
+    // A package row, whose shape is: a link to `packages/<name>/`, a description, the wac line
+    // count, the test count, then what it uses. Written with angle brackets rather than a sample
+    // path, because `links.test.ts` scans source comments too and a plausible-looking one is a
+    // link it will go looking for — which is how this file first turned the suite red.
     const m = /^\| \[`[^`]+`\]\(packages\/[^)]+\) \|[^|]*\| *([\d,]+) *\|/.exec(line);
     if (m === null) continue;
     packages++;
