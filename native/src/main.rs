@@ -35,11 +35,12 @@ mod tickets;
 use manifest::{Manifest, SUPPORTED_VERSION};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use streams::{Exit, Stream};
 use tickets::{Outcome, Tickets};
-use wasmtime::{Caller, Config, Engine, Extern, ExternType, Linker, Module, Store, Val};
+use wasmtime::{Caller, Config, Engine, Extern, ExternType, Linker, Module, Store, UpdateDeadline, Val};
 
 /// Which `Pending<T>` a capability answers with.
 ///
@@ -171,6 +172,14 @@ struct ChildProc {
     /// The parent's **answers**, which the child reads. The other direction of the same channel.
     fsrep: Arc<Stream>,
     exit: Arc<Exit>,
+    /// Set by `closeSocket`, read by the child's own epoch callback: **stop wherever you are**.
+    ///
+    /// Ending the queues is not enough and issue 0123 is why. A child that writes finds out on its
+    /// next write; a child that only computes never asks, and `closeSocket` promised termination —
+    /// which is what it does on the JavaScript hosts, where a worker is terminated outright. The
+    /// engine ticks an epoch, every guest loop back-edge checks it, and the callback below turns
+    /// this flag into a trap. That is what termination is for wasm.
+    stop: Arc<AtomicBool>,
 }
 
 /// A socket, as this runtime holds it.
@@ -493,18 +502,62 @@ struct World {
     manifest: Arc<Manifest>,
 }
 
+/// How often the engine's epoch advances, and so the coarsest a stop can be.
+///
+/// A child checks the counter constantly and cheaply; what costs is this thread waking. 5 ms is
+/// under the round trip of any capability call — every opcode parks the worker — so a stop is
+/// indistinguishable from immediate to anything that could observe it, and the thread wakes 200
+/// times a second whether or not anything is running. It is one thread for the whole process.
+const EPOCH_TICK: Duration = Duration::from_millis(5);
+
+/// Advance the engine's epoch for as long as the process lives.
+///
+/// Detached deliberately: there is nothing to join, and a process exiting with this thread asleep is
+/// the ordinary case. `increment_epoch` is the only thing that makes a deadline arrive, so a run
+/// without this would set deadlines nothing ever reaches — which is worse than not enabling
+/// interruption at all, because the code would read as if it worked.
+fn tick_epochs(engine: &Engine) {
+    let engine = engine.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(EPOCH_TICK);
+        engine.increment_epoch();
+    });
+}
+
+/// Let this store run until `stop` says otherwise, checking once per epoch.
+///
+/// `None` is the process's own store, which nothing stops: it still needs a deadline, because a
+/// store under epoch interruption traps at once without one.
+fn run_until_stopped(store: &mut Store<Host>, stop: Option<Arc<AtomicBool>>) {
+    store.set_epoch_deadline(1);
+    store.epoch_deadline_callback(move |_| match &stop {
+        Some(flag) if flag.load(Ordering::Relaxed) => Err(wasmtime::Error::msg(STOPPED)),
+        _ => Ok(UpdateDeadline::Continue(1)),
+    });
+}
+
+/// What a child's trap says when it was stopped rather than broken. Matched, not shown to anyone.
+const STOPPED: &str = "wacland: stopped by its parent";
+
 fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
     // proposals that carry them are not optional here.
     config.wasm_function_references(true);
     config.wasm_gc(true);
+    // **What makes a child stoppable.** Compiled code checks a counter at every loop back-edge and
+    // function entry; when it is past the store's deadline the store's callback decides. Without
+    // this the only way out of a guest loop is for the guest to return, and `closeSocket` could not
+    // keep the promise it makes in platform.wac (issue 0123).
+    config.epoch_interruption(true);
     let engine = Engine::new(&config)?;
+    tick_epochs(&engine);
     let module = Module::from_file(&engine, wasm_path)?;
     let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
     let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
     host.world = Some(world);
     let mut store = Store::new(&engine, host);
+    run_until_stopped(&mut store, None);
 
     let linker = wire(&engine, &module, &m)?;
 
@@ -598,7 +651,14 @@ fn wire(engine: &Engine, module: &Module, m: &Manifest) -> Result<Linker<Host>, 
 /// anything. Here the child gets a `Host` built with the grants its parent chose and a fresh `Store`,
 /// and there is no route from one store to another — a `Val` is not `Send`, which is the type system
 /// saying the same thing. wac-mono 0015.
-fn run_child(world: Arc<World>, argv: Vec<Vec<u8>>, grants: manifest::Grants, cwd: Vec<u8>, streams: AsChild) -> i32 {
+fn run_child(
+    world: Arc<World>,
+    argv: Vec<Vec<u8>>,
+    grants: manifest::Grants,
+    cwd: Vec<u8>,
+    streams: AsChild,
+    stop: Arc<AtomicBool>,
+) -> i32 {
     let m = world.manifest.clone();
     let mut host = Host::new(m.callbacks.len(), argv, grants);
     host.world = Some(world.clone());
@@ -611,10 +671,16 @@ fn run_child(world: Arc<World>, argv: Vec<Vec<u8>>, grants: manifest::Grants, cw
     // spawned program inherited the *host's* directory instead of the shell's.
     host.cwd = cwd;
     let mut store = Store::new(&world.engine, host);
+    run_until_stopped(&mut store, Some(stop.clone()));
     let code = match wire(&world.engine, &world.module, &m)
         .and_then(|linker| enter(&mut store, &world.module, &linker, &m))
     {
         Ok(code) => code,
+        // **A child its parent stopped is not a child that failed.** The trap is one this runtime
+        // asked for, so it says nothing on the error stream and answers -1 — which is what a
+        // terminated worker answers on the JavaScript hosts, and what `packages/sh` reads as "this
+        // one has no status of its own to report".
+        Err(_) if stop.load(Ordering::Relaxed) => -1,
         Err(e) => {
             // The child's own error stream, so a parent that reads it sees what went wrong rather
             // than a status with no sentence attached.
@@ -1312,13 +1378,20 @@ fn dispatch(
         }
         Cap::CloseSocket => {
             // **Stops the child outright**, which is what `closeSocket` means and what `closeFeed`
-            // deliberately does not: `head -1` ending `seq` is the ordinary case. Every queue is
-            // finished, so the child's next write answers false and it is written to notice.
+            // deliberately does not: `head -1` ending `seq` is the ordinary case.
+            //
+            // Two halves, and both are needed. The **flag** traps the guest wherever it is, at the
+            // next epoch — that is termination, and it is what the JavaScript hosts do by
+            // terminating the worker. Ending every **queue** is what the child's *parent* needs: a
+            // reader parked on its output has to find out, and it must find out whether the child
+            // was stopped here or had already exited on its own. Ending the queues alone was this
+            // runtime's whole answer, and issue 0123 is the difference it left.
             let h = match arg(1) {
                 Val::I32(n) => n,
                 _ => -1,
             };
             if let Some(c) = child_of(caller, h) {
+                c.stop.store(true, Ordering::Relaxed);
                 c.stdin.finish();
                 c.stdout.finish();
                 c.stderr.finish();
@@ -1327,8 +1400,13 @@ fn dispatch(
                 // Both directions, which is what closing a socket means: a peer blocked on a read
                 // must find out rather than wait for a process that has finished with it.
                 let _ = s.shutdown(std::net::Shutdown::Both);
+                caller.data().handles.lock().unwrap().close(h);
             }
-            caller.data().handles.lock().unwrap().close(h);
+            // **A child's handle stays.** Its status is still a question worth asking — a parent that
+            // stops a service and wants to know it is gone asks `exitCode` next — and the JavaScript
+            // hosts keep theirs for exactly that. Clearing the slot here made `exitCode` on a stopped
+            // child fall through to the *other* meaning of that capability, which is "set this
+            // program's own exit status", so a supervisor asking after its child silently set its own.
         }
 
         // ── The filesystem ───────────────────────────────────────────────────
@@ -2040,6 +2118,7 @@ fn spawn_instance(
         fsrep.finish();
     }
     let exit = Arc::new(Exit::default());
+    let stop = Arc::new(AtomicBool::new(false));
     if inherit_input {
         // The child reads the *process's* input rather than what its parent sends, so nothing will
         // arrive on this queue and a reader must not wait for it. Ending it here is what stops a
@@ -2054,6 +2133,7 @@ fn spawn_instance(
         fsreq: fsreq.clone(),
         fsrep: fsrep.clone(),
         exit: exit.clone(),
+        stop: stop.clone(),
     };
     let handle = keep(caller, Handle::Main(child.clone()));
     let err_handle = keep(caller, Handle::Err(child.clone()));
@@ -2061,7 +2141,7 @@ fn spawn_instance(
 
     let streams = AsChild { stdin, stdout, stderr, fsreq, fsrep, inherits: inherit_input };
     std::thread::spawn(move || {
-        let code = run_child(world, argv, grants, cwd, streams);
+        let code = run_child(world, argv, grants, cwd, streams, stop);
         exit.set(code);
     });
 

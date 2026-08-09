@@ -26,11 +26,20 @@
 // either it belongs in step 7's definition of done or it is a ninth step" — and this does not settle
 // it. What is here is start, wait, report, reap.
 //
-// **No signals.** `init` cannot stop a service. It is no longer that nothing can — step 3's delivery
-// half landed, and `kill` reaches a process through the shell's process table — but that table is the
-// shell's, and an applet is handed `Core`, `Cli`, `Fs` and `Args` and no way to signal a child it
-// spawned. So the gap moved rather than closed: it is a missing seam on `Cli` now, not a missing
-// mechanism. When a service ends, this reports how; it never ends one.
+// **No shutdown.** `init` never stops a service, and what is missing is now a *trigger* rather than
+// a mechanism. The mechanism is `Cli.closeSocket` on the child's handle, which this program already
+// holds for every service it started: since issue 0123 that stops the child on every host — a
+// wasmtime guest is trapped through an epoch deadline, a worker is terminated — and `exitCode` on
+// the stopped handle answers -1 rather than throwing, so a supervisor can stop something and find
+// out it is gone. This paragraph said the seam did not exist, which was true when it was written and
+// stopped being true one issue later.
+//
+// What there is no answer for is *when*. A real init shuts down when it is told to, and nothing
+// tells this one: it is spawned with no signal to receive, and its own standard input is not a
+// channel anybody speaks on. Inventing a trigger — a deadline, a failing service taking the others
+// down — would be inventing a policy, which is design/0001's open question below and not this
+// program's to settle. So: start, wait, report, reap, and say plainly that shutting down is not
+// implemented.
 //
 // The distinction matters because a "supervisor" that quietly did neither would look like the real
 // thing until the first service died.

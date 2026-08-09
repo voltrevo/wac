@@ -120,6 +120,11 @@ const CASES: Case[] = [
   { name: "twin", args: [], stdin: "", grants: {} },
   { name: "inside", args: ["."], stdin: "", grants: { read: true, write: true } },
   { name: "crowd", args: ["4"], stdin: "", grants: {}, mask: /elapsed \d+ms/g },
+  // **A child that only computes**, stopped by its parent, on both hosts. Nothing else here needs a
+  // host to *terminate* anything: every other program writes, so ending its queues is enough to make
+  // it notice. Issue 0123 said this had no reproduction in the repository — it does now, and what
+  // makes it one is that the child never writes again after its first line.
+  { name: "stop", args: [], stdin: "", grants: {} },
   {
     name: "overlap",
     args: ["in.txt", "in.txt"],

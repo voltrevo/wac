@@ -1,6 +1,6 @@
 # 0123 — `closeSocket` stops a child outright on one host and cooperatively on the other
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-09
 - **Kind:** bug
@@ -50,3 +50,30 @@ Found while making `kill %1` end a background job (design/0001 step 3's criterio
 route could not reach a job at all — a spawned child is a separate instance with its own process
 table, so the row this shell writes on is one nothing over there reads — and `closeSocket` is what
 does reach it. Looking at what "stops it" means on each host is what turned this up.
+
+## Closed — 2026-08-09
+
+**The runtime interrupts the child now**, which is what the JavaScript hosts were already doing by
+terminating a worker. `Config::epoch_interruption`, one ticker thread advancing the engine's epoch
+every 5 ms, and a per-store deadline callback that turns a `stop` flag into a trap. `closeSocket`
+sets the flag and finishes the queues: the flag is termination, and the queues are still what the
+child's *parent* needs, since a reader parked on its output has to find out either way.
+
+**The reproduction this said did not exist, exists** — `packages/platform/example/stop.wac`, in the
+two-host differential. A child says one line, so the parent knows it reached the loop, and then
+computes for ever without writing; the parent stops it and asks for its status. Both hosts print
+`stopped: -1`. Reverting the flag alone leaves the native host spinning until the test's timeout,
+which is what the canary run showed before this was committed.
+
+**And a second half nobody had asked about**, found while writing the reproduction: *every* host
+dropped the child at `closeSocket`, so the status could not be asked for afterwards. Deno and Node
+threw "not a spawned worker" — which takes the parent down, on a call platform.wac describes as
+ordinary — and the native runtime read the now-unknown handle as the *other* meaning of `exitCode`
+and silently set the caller's own exit status to the handle number. All four hosts keep the child
+now, and answer -1: "no status of its own". Stopping something and finding out it is gone is one
+operation in two halves, and a supervisor needs both.
+
+The trapped child's status is **-1**, the same as a terminated worker's, so nothing had to learn a
+new number. What is still true: a *trap* and a clean return are not distinguishable to the parent,
+because -1 is what both a killed worker and a stopped instance answer. That is deliberate — the
+parent asked for the stop.

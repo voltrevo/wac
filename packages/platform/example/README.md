@@ -100,10 +100,14 @@ Each is here because it is the smallest program that exercises one thing.
 | `inetd.wac` | a network service whose per-connection handler is another wac program |
 | `probe.wac` | reports what it is allowed to do — for checking what a spawned child was granted |
 | `crowd.wac` | how many calls may be in flight at once, and what exceeding that looks like |
+| `stop.wac` | stopping a child that only computes, and asking what became of it |
 
-The ones that spawn (`runner`, `pipe`, `inetd`) are Deno-only: a page cannot spawn. A child gets
-the grants its parent chose intersected with what the parent itself holds, so a program can hand
-out one capability and can never hand out one it lacks — `probe.wac` is how that is checked.
+The ones that spawn from a **file** (`runner`, `pipe`, `inetd`) need a filesystem to read the bundle
+out of, so they are for the hosts that have one; a page spawns too, but has no directory of programs
+to point at, which is why `spawnSelf` exists and why `twin.wac` and `stop.wac` run anywhere. (This
+paragraph said "a page cannot spawn" until someone opened `host/browser.ts`.) A child gets the
+grants its parent chose intersected with what the parent itself holds, so a program can hand out one
+capability and can never hand out one it lacks — `probe.wac` is how that is checked.
 
 See [`../README.md`](../README.md) for the capability world itself, and `../src/platform.wac` for
 the whole surface in one file.

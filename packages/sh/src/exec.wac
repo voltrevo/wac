@@ -3290,8 +3290,13 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
     stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets
-  // working in the browser terminal, where a page cannot spawn — before this, setting `$WACPATH` to
-  // a directory holding a file called `wc` hid the `wc` that works behind exit 126.
+  // working in a world that answers -2 — before this, setting `$WACPATH` to a directory holding a
+  // file called `wc` hid the `wc` that works behind exit 126.
+  //
+  // **The browser is not that world**, which this comment said for as long as it took someone to
+  // open `host/browser.ts`: a page implements `spawn` and `spawnSelf`, and every applet in the
+  // browser terminal is a real child. What a page has not got is a *directory of programs* to read a
+  // bundle out of, so `$WACPATH` finds nothing there and this call is never reached with a path.
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
     // It exists and would not start: that is 126, distinct from the 127 of not existing. One

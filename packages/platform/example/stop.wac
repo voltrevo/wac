@@ -1,0 +1,69 @@
+// Stopping a child that is not going to stop itself.
+//
+//   stop        ->  the child's line, then the status the parent got for it
+//   stop spin   ->  says one line and then computes for ever
+//
+// **What this is for.** `closeSocket` on a child's handle is the only thing in this capability layer
+// that stops a *running* program — `packages/sh`'s `kill %1` is this call, and an `init` that could
+// stop a service would be too. platform.wac says it stops the child. Whether that was true depended
+// on the host: a JavaScript host terminates the worker, and the native runtime finished the child's
+// queues and left the thread running, which stops any child that *writes* and no child that only
+// computes (issue 0123). That is the difference this example exists to make visible, and the reason
+// the child says one line before it starts: without it the parent would be stopping something that
+// might never have run, and a stop that races the start proves nothing.
+//
+// The loop is `x >= 0` rather than `true` so that nothing has to decide whether code after an
+// endless loop is reachable. It ends after 2^63 additions, which is not a duration.
+import { Child, Cli, Core, GRANT_NONE } from "../src/platform.wac";
+import { Read } from core;
+import { argvOf } from "../src/stream.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "spin") {
+    cli.write("spinning\n".toBytes());
+    i64 x = 0;
+    while (x >= 0) { x = x + 1; }
+    return 0;
+  }
+
+  Child kid = cli.spawnSelf(argvOf(string[]("spin", "stop")), GRANT_NONE, "", false, false).wait();
+  if (kid.unavailable()) {
+    core.warn("stop: this world cannot spawn: " + kid.error);
+    return 2;
+  }
+  if (kid.handle < 0) {
+    core.warn("stop: the child would not start: " + kid.error);
+    return 2;
+  }
+
+  // Its first line, which is also the proof it reached the loop.
+  match (cli.recv(kid.handle).wait()) {
+    case Data(bytes): { cli.write(("child said: " + string.fromBytes(bytes)).toBytes()); }
+    case End: { core.warn("stop: the child said nothing at all"); return 2; }
+    case Failed(why): { core.warn("stop: reading the child failed: " + why); return 2; }
+  }
+
+  cli.closeSocket(kid.handle);
+
+  // **And then the question a supervisor asks.** A stopped child has a status; asking for it is what
+  // says the stop landed rather than merely that the call returned. A host that only ended the
+  // child's queues never answers this, because a child that does not write never finds out.
+  i32 code = cli.exitCode(kid.handle).wait();
+  cli.write(("stopped: " + itoa(code) + "\n").toBytes());
+  return 0;
+}
+
+// Its own, as every example here has one: `example/` imports the capability layer and nothing else,
+// so that each file reads as the whole of what it demonstrates.
+string itoa(i32 v) {
+  if (v == 0) { return "0"; }
+  if (v == -2147483648) { return "-2147483648"; }
+  i32 x = v < 0 ? 0 - v : v;
+  string out = "";
+  while (x > 0) {
+    out = string.fromCodepoint('0' + (x % 10)) + out;
+    x = x / 10;
+  }
+  return (v < 0 ? "-" : "") + out;
+}

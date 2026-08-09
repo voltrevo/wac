@@ -1196,6 +1196,19 @@ export struct Cli {
    * `send(handle, bytes)` carries becomes its standard input; `closeSocket(handle)` stops
    * it. `exitCode(handle)` waits for it to finish.
    *
+   * **`closeSocket` stops it wherever it is**, and this is a guarantee rather than a request: a
+   * child that is computing and not writing stops too. That took a runtime change on the host with
+   * no JavaScript in it — a wasm guest leaves a loop only when it decides to, so the engine ticks an
+   * epoch and the child traps on the next check (issue 0123). Before it, the three JavaScript hosts
+   * terminated a worker and the native one finished the child's queues and let the thread run, which
+   * is the same thing for every program that writes and nothing at all for one that does not.
+   *
+   * **And the handle stays askable afterwards.** `exitCode` on a stopped child answers **-1** — "no
+   * status of its own" — on every host, because stopping something and then finding out it is gone
+   * is one operation in two halves and a supervisor needs both. All four hosts used to drop the
+   * child at `closeSocket`: two threw, one silently read the call as the *other* meaning of
+   * `exitCode` and set the caller's own status to the handle number.
+   *
    * **What "stops it" means differs between the hosts, and the weaker one is the contract.** The
    * JavaScript host terminates the worker outright; the native runtime finishes all three of the
    * child's queues, so the child stops at its *next write*, which answers false. Every program in this
