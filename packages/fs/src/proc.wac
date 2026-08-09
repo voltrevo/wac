@@ -31,14 +31,28 @@
 // same reason. `/proc` is how this is read, `Fs` is what a session already threads everywhere, and a
 // package of its own would be one import to hold one table that only `/proc` renders.
 //
-// ## What is not here
+// ## Signal delivery, and what of it is here
 //
-// **Signal delivery.** `signal` records a request on the row; nothing polls it yet, so `kill` can say
-// what it did to a table and not that it ended anything. In-process, delivery has to be cooperative —
-// a function call cannot be interrupted from outside in wasm — which means the running program checks,
-// and giving it something to check is the next step rather than this one. `SIGKILL` against an
-// in-process row cannot be honoured at all, and had better say so rather than mark the row dead and
-// leave the code running.
+// `signal` records a request on the row and `takeSignal` collects it. **Something polls it now**:
+// `packages/sh` asks before every command and on every turn of a loop — `unwinding` in `exec.wac` — so
+// `kill $$` ends a script with 143 and `kill -INT $$` inside `while true` ends it with 130, both
+// compared against bash. Delivery is cooperative because it has to be: a function call cannot be
+// interrupted from outside in wasm, so the running program checks, and the design is that it is asked
+// often enough.
+//
+// What that leaves, said plainly rather than approximated:
+//
+//   - **`SIGKILL` is not special.** On a real system it cannot be caught or ignored because the kernel
+//     does the killing; here the only thing that can end a process is the process itself, so `kill -9`
+//     on something that never reaches a check point does nothing. Marking the row dead and leaving the
+//     code running would be worse than saying so.
+//   - **A signal to a *stage* of a running pipeline cannot arrive**, because the stage is a function
+//     call inside the shell and nothing else in this system is running to send one. That is the half
+//     of design/0001 step 3's criterion still open, and it wants either real concurrency or the route
+//     step 5 wants for `^C` — a way for the thing that owns the terminal to reach a shell that is
+//     already busy.
+//   - **The stopping signals** — `STOP`, `TSTP`, `TTIN`, `TTOU` — are refused by name rather than
+//     treated as termination, because there is no job control here to resume from.
 
 import { Vec } from "../../std/src/vec.wac";
 
@@ -56,6 +70,69 @@ export i32 PROC_DONE() { return 1; }
 export i32 SIGINT() { return 2; }
 export i32 SIGKILL() { return 9; }
 export i32 SIGTERM() { return 15; }
+
+/**
+ * The signal names, 1 to 31, in Linux's order — `SIGNALS[n - 1]` is signal `n`.
+ *
+ * Data rather than behaviour, which is why it is a table and why it is complete: the numbering is
+ * fixed by Linux, `kill -TERM` has to mean 15 whether or not anything here can deliver it, and a
+ * partial table would make `kill -l` disagree with the `kill -l` a person has used for thirty years.
+ * The three constants above are the ones code refers to by name; these are for talking to a user.
+ *
+ * Stopping at 31 is where Linux stops the *named* signals: 32 and up are the real-time ones, which
+ * `kill -l` numbers and does not name, and which nothing here has any use for.
+ */
+export string[] SIGNALS() {
+  return string[](
+    "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE",
+    "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT",
+    "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG", "XCPU",
+    "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS");
+}
+
+/** The number for a name, with or without its `SIG`, or 0 for one this system has never heard of. */
+export i32 signalNumber(string name) {
+  string want = name.len() > 3 && name.slice(0, 3) == "SIG" ? name.slice(3, name.len()) : name;
+  string[] all = SIGNALS();
+  for (i32 i = 0; i < all.len(); i++) {
+    if (all[i] == want) { return i + 1; }
+  }
+  return 0;
+}
+
+/** The name for a number, without its `SIG`, or "" for one outside the table. */
+export string signalName(i32 sig) {
+  string[] all = SIGNALS();
+  if (sig < 1 || sig > all.len()) { return ""; }
+  return all[sig - 1];
+}
+
+/**
+ * What a process that has not asked otherwise does when this arrives.
+ *
+ * Linux's own defaults, and the distinction is the whole reason `kill -CHLD $$` leaves bash running
+ * while `kill -TERM $$` does not. Four are ignored — `CHLD`, `CONT`, `URG` and `WINCH` — so delivering
+ * them is *correctly* a no-op rather than an unimplemented case, which is the only reason this system
+ * can claim to honour them at all.
+ *
+ * The four that **stop** a process — `STOP`, `TSTP`, `TTIN`, `TTOU` — are neither: see
+ * `SIGNAL_STOPS`. There is no job control here to resume from, so stopping is not implemented and
+ * says so rather than terminating, which would be a different thing wearing its name.
+ */
+export bool signalTerminates(i32 sig) {
+  if (sig < 1 || sig > SIGNALS().len()) { return false; }
+  return !signalIgnored(sig) && !signalStops(sig);
+}
+
+/** Ignored by default: `CHLD`, `CONT`, `URG`, `WINCH`. Arriving changes nothing, which is correct. */
+export bool signalIgnored(i32 sig) {
+  return sig == 17 || sig == 18 || sig == 23 || sig == 28;
+}
+
+/** Stops the process by default: `STOP`, `TSTP`, `TTIN`, `TTOU`. Not implemented — there are no jobs. */
+export bool signalStops(i32 sig) {
+  return sig == 19 || sig == 20 || sig == 21 || sig == 22;
+}
 
 /** One process. */
 export struct Proc {

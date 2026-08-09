@@ -164,6 +164,10 @@ export i32 main(Core core, Cli cli) {
  */
 Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
   Shell sh = o.image == "" ? Shell.capturing(core, cli) : Shell.onFs(core, cli, fs);
+  // A session's shell is a process in the session's own table, which is what `$$` answers and what
+  // `kill` reaches. `shellMain` does this for every other entry point; a session does not go through
+  // it, so it says so here rather than inheriting pid 0.
+  sh.enterSelf("sh");
   sh.capture = true;
   if (o.image != "") { sh.cwd = "/"; }
   // **The commands are `packages/box`'s applets, over this session's filesystem.** Sixty of them
@@ -586,10 +590,19 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  * - **The shell's output needs `\r\n`.** A terminal in raw mode does not return the cursor on a bare
  *   newline, so output written with `\n` stair-steps down the screen. That translation is `ONLCR`, and
  *   it belongs here rather than in the shell, which is writing bytes rather than talking to a terminal.
- * - **`^C` cannot interrupt anything yet.** Nothing is running while this waits for a keystroke — the
- *   shell runs a line and returns — so `^C` throws away what has been typed and starts a fresh line,
- *   which is right, and it cannot end a running `yes`, which is design/0001 step 5's own criterion and
- *   needs step 3's process table. Not approximated: there is no signal here to deliver.
+ * - **`^C` still cannot interrupt a running command, and the reason has moved.** It is no longer that
+ *   there is nothing to deliver: step 3's delivery half is in, and `kill -INT $$` ends a script here
+ *   with 130. It is this loop's shape. `runScript` below is a blocking call, so while a line runs
+ *   nothing reads the channel, and the `^C` the client sends sits in the socket until the command it
+ *   was meant to end has finished. `^C` at a prompt throws away what has been typed and starts a fresh
+ *   line, which is right and is all this can do.
+ *
+ *   What it wants is a way for a shell that is already busy to ask whether a keystroke has arrived.
+ *   The machinery exists — `Core.waitAny(ids, 0)` is "which is ready right now", and standard input
+ *   has a handle precisely so `waitAny` can watch it — but the channel is *this* function's socket
+ *   rather than the shell's input, and wac has no closures, so handing the shell a way to ask means a
+ *   funcref plus a token rather than a bound method. That is a design decision and it is not made
+ *   here. Not approximated: `^C` does nothing to a running command, and says nothing either.
  */
 Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
                           Terminal terminal) {

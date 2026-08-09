@@ -31,6 +31,8 @@ import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeli
 import { Output, optionRefusal } from "./refusal.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { isNumber, printf } from "./printf.wac";
+import { SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, signalStops }
+  from "../../fs/src/proc.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
@@ -250,6 +252,57 @@ export struct Shell {
    */
   bool hostEnv;
 
+  /**
+   * This shell's own process id — what `$$` answers, and who a signal is delivered to.
+   *
+   * Held rather than read from `fs.procs.current`, because `current` is *whatever is running now*:
+   * the shell sets it to each command's pid for the length of that command, so a builtin asking
+   * `current` would get its own. It is also what makes `$$` behave in a subshell — `fork` copies this,
+   * and bash's `$$` is famously the *parent's* pid inside `( … )`.
+   *
+   * 0 until `enterSelf` runs, which every entry point does before it reads a line.
+   */
+  i32 pid;
+
+  /**
+   * Put this shell in its own process table and remember where.
+   *
+   * A shell is a process, and it was the one process this system did not know about: `mountSystem`
+   * enters the *program*, which for `sealedsh` is the same thing, and for `wacsh` — which deliberately
+   * builds no system, see `box/src/bin/sh.wac` — is nothing at all. So `ps` showed every command and
+   * never the shell running them, and `$$` had nothing to answer with.
+   *
+   * Idempotent by way of `current`: an entry point that has already been entered by `mountSystem` is
+   * adopted rather than entered twice, because a program and the shell it runs are one process here.
+   */
+  void enterSelf(this, string name) {
+    if (this.fs.procs.current != 0) { this.pid = this.fs.procs.current; return; }
+    Vec<string> argv = Vec.create();
+    argv.push(name);
+    this.pid = this.fs.procs.start(0, argv, this.fs.now);
+    this.fs.procs.current = this.pid;
+  }
+
+  /**
+   * Take any signal sent to this shell, and start dying if there was one.
+   *
+   * **This is the delivery half of design/0001 step 3**, and the reason `kill` could only ever say
+   * what it had written down. In wasm a function call cannot be interrupted from outside, so delivery
+   * is cooperative: something running has to *ask*. This is that ask, and the shell calls it between
+   * commands and on every turn of a loop — the same points that already check `exiting`, because a
+   * signal and an `exit` end a script the same way.
+   *
+   * The status is `128 + signal`, which is what every shell reports for a process a signal ended:
+   * `kill -TERM $$` leaves 143 and `kill -INT $$` leaves 130, both compared against bash.
+   */
+  bool takeSignal(this) {
+    i32 sig = this.fs.procs.takeSignal(this.pid);
+    if (sig == 0) { return false; }
+    this.exiting = true;
+    this.exitCode = 128 + sig;
+    return true;
+  }
+
   Shell onFs(Core core, Cli cli, Fs fs) {
     Shell sh = Shell.create(core, cli);
     sh.fs = fs;
@@ -267,7 +320,7 @@ export struct Shell {
                  false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
-                 cli.cwd().wait(), true);
+                 cli.cwd().wait(), true, 0);
   }
 
   /**
@@ -351,6 +404,11 @@ export struct Shell {
    */
   Shell fork(this) {
     Shell out = Shell.create(this.core, this.cli);
+    // **The same pid**, because a subshell is not a new process here and `$$` is the parent's in bash
+    // even where it is: `echo $$; ( echo $$ )` prints one number twice. A signal sent to `$$` from
+    // inside a subshell therefore reaches the shell that will read it, which is the behaviour that
+    // makes `kill $$` mean anything at all.
+    out.pid = this.pid;
     for (i32 i = 0; i < this.varNames.len(); i++) {
       string name = this.varNames.get(i);
       Option<string> v = this.vars.get(name);
@@ -392,7 +450,7 @@ export struct Shell {
   bool isSet(const this, string name) {
     // `$?` and `$#` always have a value. `$@` and `$*` do *not* — with no positional parameters
     // they are unset, which is why `${@-x}` substitutes and `${#-x}` does not.
-    if (name == "?" || name == "#") { return true; }
+    if (name == "?" || name == "#" || name == "$") { return true; }
     if (name == "@" || name == "*") { return this.params.len() > 0; }
     if (name.len() == 1) {
       u8[] b = name.toBytes();
@@ -408,6 +466,9 @@ export struct Shell {
 
   string lookUp(const this, string name) {
     if (name == "?") { return itoa(this.status); }
+    // `$$`, which the lexer already reads as a parameter named `$` — it simply had no value, so
+    // `echo $$` printed an empty line where every other shell prints a number.
+    if (name == "$") { return itoa(this.pid); }
     if (name == "#") { return itoa(this.params.len()); }
     if (name == "@" || name == "*") {
       string all = "";
@@ -447,6 +508,11 @@ export i32 runScript(Shell sh, string src) {
     return 2;
   }
   runList(sh, script.lists);
+  // **A signal from the *last* command still counts.** `unwinding` is asked before each command, so a
+  // script whose final line is `kill -INT $$` set the row and then ran out of places to be asked:
+  // it exited 0 where bash exits 130. One more ask, after the list, is where a shell finds out that
+  // the thing it just did ended it.
+  sh.takeSignal();
   return sh.exiting ? sh.exitCode : sh.status;
 }
 
@@ -486,8 +552,174 @@ bool caughtBreak(Shell sh) {
  * statement still the thing to run?" — and four flags, because what *catches* each of them differs: a
  * loop catches `break`, a function call catches `return`, and nothing catches `exit`.
  */
+/**
+ * Whether this shell should stop what it is doing — and **the point at which a signal is delivered**.
+ *
+ * Taking the signal here rather than in a separate call is deliberate: this predicate is already asked
+ * before every command in a list, and a signal that has arrived is exactly "should we stop". Splitting
+ * the two would mean two lists of places to remember, and the second would fall behind the first.
+ *
+ * Delivery is cooperative because it has to be — a wasm function call cannot be interrupted from
+ * outside — so "asked often enough" is the whole design, and *before every command* is as often as a
+ * shell can be asked without the signal arriving mid-builtin. `while true; do :; done` is checked once
+ * per turn, which is what `kill` from anywhere else in the script needs.
+ */
 bool unwinding(Shell sh) {
+  sh.takeSignal();
   return sh.exiting || sh.returning || sh.breaking > 0 || sh.continuing > 0;
+}
+
+/**
+ * `kill` — design/0001 step 3's other half, and the first thing in this system that ends a process.
+ *
+ *     kill 12          kill -TERM 12      kill -15 12     kill -s TERM 12
+ *     kill -0 12       # does it exist, and may I signal it
+ *     kill -l          kill -l 9          kill -l TERM
+ *
+ * A builtin because it is one in bash, which matters: `kill $$` has to reach *this* shell, and a
+ * `kill` that was a separate program would be signalling a pid that is about to go away anyway.
+ *
+ * **What it does and does not do.** It writes the signal on the row and the receiver picks it up at
+ * its next check — see `unwinding`, which is where delivery happens. That means a signal to a process
+ * that is *not currently running* sits on the row until it runs again, and a signal to a process that
+ * has already exited is refused, both of which match a real system closely enough to be unremarkable.
+ * What does not match: **`SIGKILL` is not special here.** On a real system it cannot be caught or
+ * ignored because the kernel does the killing; here the only thing that can end a process is the
+ * process itself, so `kill -9` on something in a loop that never reaches a check point does nothing.
+ * Said rather than approximated — pretending otherwise would be design/0001 D6's "plausible rows".
+ *
+ * The messages and statuses are bash's, compared against it in `packages/sh/test/differential.test.ts`.
+ */
+Output killBuiltin(Shell sh, Vec<string> argv) {
+  string usage = "kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ... "
+               + "or kill -l [sigspec]\n";
+  i32 sig = SIGTERM();
+  i32 i = 1;
+  bool list = false;
+
+  while (i < argv.len()) {
+    string a = argv.get(i);
+    if (a.len() < 2 || a.slice(0, 1) != "-") { break; }
+    // `--` ends the options, and a bare `-` is not one. Neither is a negative *pid*, which is a
+    // process group on a real system and is not implemented here — it is refused below rather than
+    // read as a signal, because reading `-1` as `SIGHUP` when the caller meant "every process" is
+    // the kind of near-miss that is worse than a refusal.
+    if (a == "--") { i = i + 1; break; }
+    if (a == "-l") { list = true; i = i + 1; continue; }
+    if (a == "-s" || a == "-n") {
+      if (i + 1 >= argv.len()) { return Output.fail(usage.toBytes(), 2); }
+      string spec = argv.get(i + 1);
+      i32 n = a == "-n" ? atoiOr(spec, -1) : signalNumber(spec);
+      if (n <= 0 || signalName(n) == "") {
+        return Output.fail(("kill: " + spec + ": invalid signal specification\n").toBytes(), 1);
+      }
+      sig = n;
+      i = i + 2;
+      continue;
+    }
+    string spec = a.slice(1, a.len());
+    // `-0` is the "is it there" probe and is not a signal, so it is read before the table.
+    if (spec == "0") { sig = 0; i = i + 1; continue; }
+    i32 n = isAllDigits(spec) ? atoiOr(spec, -1) : signalNumber(spec);
+    if (n <= 0 || signalName(n) == "") {
+      return Output.fail(("kill: " + spec + ": invalid signal specification\n").toBytes(), 1);
+    }
+    sig = n;
+    i = i + 1;
+  }
+
+  if (list) { return killList(sh, argv, i); }
+  if (i >= argv.len()) { return Output.fail(usage.toBytes(), 2); }
+
+  Buf err = Buf.create();
+  i32 status = 0;
+  for (i32 k = i; k < argv.len(); k++) {
+    string given = argv.get(k);
+    if (!isAllDigits(given)) {
+      // bash's wording, and it names job ids because bash has them. Ours does not — `jobs` and `&`
+      // are what step 3 has left — so a `%1` here reaches this line and gets bash's sentence, which
+      // is true of it: it is not a process id.
+      err.pushAll(("kill: " + given + ": arguments must be process or job IDs\n").toBytes());
+      status = 1;
+      continue;
+    }
+    i32 pid = atoiOr(given, -1);
+    if (!sh.fs.procs.has(pid)) {
+      err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
+      status = 1;
+      continue;
+    }
+    // `-0` asks and does not send, which is the whole of what it is for.
+    if (sig == 0) { continue; }
+    if (signalIgnored(sig)) {
+      // Ignored *by default* is what a process with no handler does, so doing nothing is honouring
+      // the signal rather than failing to. bash agrees: `kill -CHLD $$` leaves it running, status 0.
+      continue;
+    }
+    if (signalStops(sig)) {
+      err.pushAll(("kill: " + signalName(sig) + " is not implemented: there is no job control here "
+                 + "to resume a stopped process\n").toBytes());
+      status = 1;
+      continue;
+    }
+    if (!sh.fs.procs.signal(pid, sig)) {
+      // Present in the table but not running: a row that has exited and not been reaped.
+      err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
+      status = 1;
+    }
+  }
+  return Output(u8[0](), err.take(), status, true);
+}
+
+/** `kill -l`: the whole table, or the other spelling of the ones named. */
+Output killList(Shell sh, Vec<string> argv, i32 from) {
+  Buf out = Buf.create();
+  if (from >= argv.len()) {
+    // bash's layout exactly: right-aligned number, `) `, `SIG` and the name, five to a line separated
+    // by tabs, and the last column ends the line rather than carrying a trailing tab.
+    string[] all = SIGNALS();
+    for (i32 i = 0; i < all.len(); i++) {
+      string n = itoa(i + 1);
+      string cell = (n.len() < 2 ? " " + n : n) + ") SIG" + all[i];
+      out.pushAll(cell.toBytes());
+      out.pushAll(((i % 5 == 4 || i == all.len() - 1) ? "\n" : "\t").toBytes());
+    }
+    return Output.ok(out.take());
+  }
+  i32 status = 0;
+  Buf err = Buf.create();
+  for (i32 k = from; k < argv.len(); k++) {
+    string spec = argv.get(k);
+    // Each spelling answers with the other: a number gives the name, a name gives the number.
+    if (isAllDigits(spec)) {
+      string name = signalName(atoiOr(spec, -1));
+      if (name == "") {
+        err.pushAll(("kill: " + spec + ": invalid signal specification\n").toBytes());
+        status = 1;
+        continue;
+      }
+      out.pushAll((name + "\n").toBytes());
+      continue;
+    }
+    i32 n = signalNumber(spec);
+    if (n == 0) {
+      err.pushAll(("kill: " + spec + ": invalid signal specification\n").toBytes());
+      status = 1;
+      continue;
+    }
+    out.pushAll((itoa(n) + "\n").toBytes());
+  }
+  return Output(out.take(), err.take(), status, true);
+}
+
+/** Every byte a digit, and at least one — `atoiOr` alone cannot tell `0` from a word. */
+bool isAllDigits(string s) {
+  if (s.len() == 0) { return false; }
+  u8[] b = s.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < 0x30 || b[i] > 0x39) { return false; }
+  }
+  return true;
 }
 
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
@@ -928,7 +1160,7 @@ bool spawnableName(Shell sh, string name) {
  * builtin and a `box` applet, has to be listed.
  */
 export bool isBuiltin(string name) {
-  // Exactly the eighteen `dispatch` answers above, in the order it asks — nothing more, so that a
+  // Exactly the `dispatch` answers above, in the order it asks — nothing more, so that a
   // name added there and forgotten here would be *spawned* and reported not found rather than
   // silently changing meaning. `echo` is the one worth noticing: it is a builtin here and an applet
   // in `box`, and the builtin wins.
@@ -941,7 +1173,8 @@ export bool isBuiltin(string name) {
       || name == "mkdir" || name == "rm" || name == "chmod" || name == "chown"
       || name == "read" || name == "shift" || name == "set"
       || name == "break" || name == "continue" || name == "return" || name == "local"
-      || name == "test" || name == "[" || name == "help" || name == "printf";
+      || name == "test" || name == "[" || name == "help" || name == "printf"
+      || name == "kill";
 }
 
 /**
@@ -1055,6 +1288,8 @@ u8[] runCommand(Shell sh, Command cmd, u8[] stdin, bool last, bool piped) {
       // a failure as 1, and this said 0. So the zero is only for the empty case.
       if (items.len() == 0) { sh.status = 0; }
       for (i32 i = 0; i < items.len() && !sh.exiting && !sh.returning; i++) {
+        sh.takeSignal();
+        if (sh.exiting) { break; }
         sh.setVar(cmd.varName, items.get(i));
         runList(sh, cmd.clauses.get(0).body);
         if (caughtBreak(sh)) { break; }
@@ -1162,6 +1397,9 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
   // never ran leaves 0, which is what this starts at.
   i32 body = 0;
   for (i32 i = 0; i < limit; i++) {
+    // Explicit, because the two conditions below are read directly rather than through `unwinding`:
+    // this loop deliberately does *not* stop for a `break` or `continue` it has not caught yet.
+    sh.takeSignal();
     if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
     runList(sh, c.cond);
     if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
@@ -2121,6 +2359,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
     sh.params = rest;
     return Output.ok(u8[0]());
   }
+  if (name == "kill") { return killBuiltin(sh, argv); }
   if (name == "set") { return setBuiltin(sh, argv); }
   if (name == "test" || name == "[") { return test(sh, argv); }
   if (name == "help") { return help(sh); }

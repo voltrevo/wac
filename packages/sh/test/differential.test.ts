@@ -788,3 +788,133 @@ Deno.test({
     }
   },
 });
+
+/**
+ * `kill`, against bash — design/0001 step 3's delivery half.
+ *
+ * The table has held pids, parents and exit statuses since step 3 started, and `kill` could only ever
+ * *write a signal down*: nothing read it, so `proc.wac`'s own header said so and called giving a
+ * running program something to check "the next step rather than this one". This is that step.
+ *
+ * Delivery is cooperative because it has to be — a wasm function call cannot be interrupted from
+ * outside — so the shell asks before every command and on every turn of a loop, which is where
+ * `unwinding` already looked. Everything below is what bash answers, including the statuses, which are
+ * `128 + signal` and were the thing most likely to be a plausible guess: 143, 130, 137, 129.
+ *
+ * **`$$` is not compared by value**, because two shells have different pids. What is compared is that
+ * it is a number, that it does not change inside a subshell — bash's rule, and the one that makes
+ * `kill $$` from inside `( … )` mean anything — and that `kill -0` on it succeeds.
+ */
+Deno.test({
+  name: "`kill` says and does what bash's does",
+  ignore: !haveBash,
+  fn: () => {
+    const cases = [
+      // Ending the shell, and the status for each signal.
+      "kill $$; echo not-reached",
+      "kill -TERM $$; echo no",
+      "kill -INT $$",
+      "kill -9 $$",
+      "kill -HUP $$",
+      "kill -s TERM $$; echo no",
+      "echo a; kill -INT $$; echo b",
+      // A loop, which is the case the check inside `runLoop` is for: without it the signal sits on the
+      // row until the loop ends, which for `while true` is never.
+      "i=0; while true; do i=$((i+1)); if [ $i = 3 ]; then kill -INT $$; fi; done; echo no",
+      "for x in 1 2 3; do echo $x; kill -TERM $$; done; echo no",
+      // Ignored by default is not unimplemented: a process with no handler does nothing, so doing
+      // nothing is honouring it. bash agrees.
+      "kill -CHLD $$; echo alive=$?",
+      "kill -WINCH $$; echo alive=$?",
+      // The probe, and every way of getting it wrong.
+      "kill -0 $$; echo probe=$?",
+      "kill -0 999999; echo st=$?",
+      "kill 999999; echo st=$?",
+      "kill; echo st=$?",
+      "kill -QQ 1; echo st=$?",
+      "kill abc; echo st=$?",
+      "kill -l 9",
+      "kill -l TERM",
+      "kill -l INT KILL 15",
+    ];
+    for (const script of cases) {
+      const run = (cmd: string) =>
+        new Deno.Command(cmd, {
+          args: ["-c", script],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+          env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+          clearEnv: true,
+        }).outputSync();
+      const dec = new TextDecoder();
+      const theirs = run("bash");
+      const ours = run(wacshBinary);
+      // bash prefixes a *builtin's* failure with `bash: line N: ` and ours has no line number to give
+      // — the same deliberate difference the `cd` test above strips, and for the same reason.
+      const strip = (t: string) => t.replace(/^\S*bash: line \d+: /gm, "").trim();
+      assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);
+      assertEquals(strip(dec.decode(ours.stderr)), strip(dec.decode(theirs.stderr)), `${script}: stderr`);
+      assertEquals(ours.code, theirs.code, `${script}: status`);
+    }
+  },
+});
+
+Deno.test({
+  name: "`kill -l` names the signals bash names, for every signal this system has",
+  ignore: !haveBash,
+  fn: () => {
+    const run = (cmd: string) =>
+      new TextDecoder().decode(
+        new Deno.Command(cmd, {
+          args: ["-c", "kill -l"],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "null",
+          env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+          clearEnv: true,
+        }).outputSync().stdout,
+      );
+    // **The first six rows, and the reason is stated rather than the case chosen to pass.** bash lists
+    // 1–31 and then the *real-time* signals, 34 to 64, which are `SIGRTMIN+n` and `SIGRTMAX-n` — names
+    // for numbers, queued rather than collapsed, and nothing here has any use for them. `SIGNALS` in
+    // `proc.wac` stops at 31 and says so. Rows 1–6 are every named signal Linux has, and those are
+    // compared byte for byte, tabs and column widths and all.
+    const theirs = run("bash").split("\n").slice(0, 6).join("\n");
+    const ours = run(wacshBinary).split("\n").slice(0, 6).join("\n");
+    assertEquals(ours, theirs);
+    // And the canary: bash really did print a table, so the slice above is not comparing two empties.
+    assertEquals(theirs.includes("15) SIGTERM"), true, "bash did not list the signals");
+  },
+});
+
+Deno.test({
+  name: "`$$` is this shell's pid, and a subshell does not get a new one",
+  ignore: !haveBash,
+  fn: () => {
+    const ours = (script: string) =>
+      new TextDecoder().decode(
+        new Deno.Command(wacshBinary, {
+          args: ["-c", script],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "null",
+          env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+          clearEnv: true,
+        }).outputSync().stdout,
+      );
+    // Not compared with bash's *number* — two shells have different pids — but with its shape and its
+    // rule. `echo $$` printed an empty line before this: the lexer read `$$` as a parameter named `$`
+    // all along, and nothing gave it a value.
+    const pid = ours("echo $$").trim();
+    assertEquals(/^[1-9][0-9]*$/.test(pid), true, `\`$$\` is not a pid: ${JSON.stringify(pid)}`);
+    // bash's rule, which is the one that makes `kill $$` inside `( … )` reach the shell that will
+    // notice it: a subshell reports its parent's.
+    assertEquals(ours("( echo $$ )").trim(), pid, "a subshell invented a new pid");
+    // Joined, because this file's `assertEquals` compares with `!==` — two equal arrays are two
+    // objects and it would fail on identity while printing them as identical, which it did.
+    assertEquals(ours("echo $$; echo $$").trim().split("\n").join(","), `${pid},${pid}`, "the pid changed");
+    // And `${$-x}` must not substitute, which is `isSet` rather than `lookUp`.
+    assertEquals(ours("echo ${$-unset}").trim(), pid, "`$$` reads as unset");
+  },
+});

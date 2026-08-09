@@ -20,6 +20,11 @@ import { Shell, runScript } from "./exec.wac";
  * choice and the standard-error flush rather than reimplementing them and drifting.
  */
 export i32 shellMain(Core core, Cli cli, Shell sh, i32 first) {
+  // **A shell is a process too**, and it was the one this system did not know about: `mountSystem`
+  // enters the *program*, which for `sealedsh` is this same thing and for `wacsh` — which builds no
+  // system on purpose — is nothing at all. So `$$` had no number to answer with and a signal had
+  // nowhere to be delivered. Adopted rather than entered twice where a program is already there.
+  sh.enterSelf("sh");
   string src = "";
 
   i32 n = cli.argCount().wait() - first;
