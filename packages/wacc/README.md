@@ -1960,6 +1960,37 @@ Four left: `JsonValue.nofield`, `("…" + "…").toBytes(1)` — whose receiver 
 and is still silent, so the next trace starts at `receiverType` — and two `.wait(1)`s on a call inside
 a call.
 
+### Two receiver rules that disagreed — 99% of real code
+
+The trace did start at `receiverType`, and found it innocent: it answers `string` for
+`("a" + "b")` exactly as it should. **`checkMethodCall` had grown its own copy** — `typeOfExpr`, plus
+a special case for a string *literal* — and a concatenation of two is not a literal, so the receiver
+was nothing and the call went unremarked. One rule in one place now, and four shapes reported at
+once.
+
+**A call through a funcref field has an arity too.** `sh.externalNames()` calls a field rather than a
+method, and the check returned there without counting anything — so a call through a field was the
+one call shape this checker never counted. The count is written in the field's own type.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 246 of 250 (98%) | **247 of 250 (99%)** |
+| generated mutation sweep | 924 | **926** of 980 |
+| false alarms | 0 | 0 |
+
+**A third attempt at reaching, and the same answer as before.** `dird.wac` imports `Cli` and never
+writes `Pending`, so `cli.argCount().wait(1)` has a receiver this checker cannot name — the last
+`.wait` case, and it needs the type an imported declaration is *made of*. Restricted to the same
+file, and refusing any name the importing file declares itself, it reaches 248 and costs **fourteen**
+false alarms: `Decoded d = decode(raw);` in five files, where a struct reached in from one file
+stands in for the same-named one from another. Reverted for the third time. The rule that would work
+has to be per-(file, name) the way the *import* filter is, and reaching has no import statement to
+read that from — which is the real reason this keeps failing, and is worth writing down rather than
+attempting a fourth time without it.
+
+Three left: that `.wait(1)` pair, and `JsonValue.nofield` — a member that is no variant of an
+imported enum.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
