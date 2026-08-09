@@ -80,7 +80,7 @@ Deno.test("[§wac-wapy-switch-w9pk2hs] a match statement destructures", () => {
 // ── §wac-wapy-words-p2vm9kx — the respelled words ───────────────────────────
 
 Deno.test("[§wac-wapy-words-p2vm9kx] wapy.md's respelling list matches the lexer", async () => {
-  const md = await Deno.readTextFile(new URL("../../spec/spec/wapy.md", import.meta.url));
+  const md = await Deno.readTextFile(new URL("../spec/spec/wapy.md", import.meta.url));
   const m = md.match(/### Words\n[\s\S]*?```\n([\s\S]*?)```/);
   if (!m) throw new Error("could not find the respelling block in wapy.md");
   const documented = m[1].split(/\s+/).filter(Boolean).sort();

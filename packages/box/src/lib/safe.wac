@@ -1,0 +1,91 @@
+// Writing a file without a window where it is half-written.
+//
+// `writeFile` truncates and then fills, so a reader arriving in between sees a partial
+// file and a crash leaves one. Writing beside the target and renaming avoids both: on
+// every filesystem this runs on, a rename within a directory is atomic — the old contents
+// or the new, never a mixture.
+//
+// This is why the mutation tier exists at all, and `cp` uses it.
+
+import { Change, Cli, Core, FAULT_OTHER } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
+
+// There was a `writeAtomic(core, cli, path, bytes)` here — the whole-buffer form of the same
+// dance — and nothing ever called it. `cp` and `sponge` both stream, which is the point of the
+// mutation tier: a copy that has to fit in memory first is the thing `openOutput` exists to avoid.
+// Deleted rather than kept for a caller that has not appeared in the life of the package (issue 0009).
+// The temporary name is random for the reason `streamAtomic` gives below: two copies of this program
+// running at once must not pick the same one.
+
+/**
+ * Everything left of the current input, to `path`, atomically and a chunk at a time.
+ *
+ * The streaming form, for a copy that must not be bounded by memory. `openOutput` is what
+ * makes it possible: the bytes go straight to the temporary file rather than being
+ * gathered first, and the rename still happens only once all of them are there.
+ */
+export Change streamAtomic(Core core, Cli cli, Fs fs, Feed fed, string path) {
+  // **The host streams; anything else is written whole.** `openOutput` redirects this process's standard
+  // output to a file — the state is in the capability — and a memory image has no such thing. Writing
+  // the bytes in one call is not a compromise there: an image is already in memory, and the
+  // write-beside-and-rename that makes this atomic on a disk is not what makes it atomic in a value.
+  if (!fs.isHostPath(path)) {
+    u8[] all = fed.rest();
+    if (fed.why != "") { return Change.of(FAULT_OTHER(), fed.why); }
+    return fs.writeFile(path, all);
+  }
+  string tmp = tempName(core, path);
+  // The `Change` is returned as it came: it used to be flattened to `FAULT_OTHER` because `openOutput`
+  // answered a bare string, so a caller could not tell "no such directory" from "not permitted".
+  Change opened = cli.openOutput(tmp).wait();
+  if (!opened.ok()) { return opened; }
+  bool copying = true;
+  string broke = "";
+  while (copying) {
+    match (cli.readChunk()) {
+      case Data(bytes): {
+        if (!cli.write(bytes)) {
+          copying = false;
+          broke = cli.outputError().wait();
+          if (broke == "") { broke = "could not write " + tmp; }
+        }
+      }
+      case End: { copying = false; }
+      // Half a file renamed over the original is the worst outcome available here, so a failed read
+      // abandons the temporary and leaves the target alone.
+      case Failed(why): { copying = false; broke = why; }
+    }
+  }
+  if (broke != "") {
+    cli.openOutput("").wait();
+    fs.remove(tmp, false);
+    return Change.of(FAULT_OTHER(), broke);
+  }
+  // Back to standard output, which closes the temporary file — a rename over a file still
+  // open would move it half-written.
+  cli.openOutput("").wait();
+  return finish(cli, fs, tmp, path);
+}
+
+/** The rename, and the cleanup if it fails. */
+Change finish(Cli cli, Fs fs, string tmp, string path) {
+  Change moved = fs.rename(tmp, path);
+  if (moved.ok()) { return moved; }
+  // The rename is the only step that can leave litter, so clean up after it and not
+  // before: until it succeeds, the temporary file is the only copy of the new contents.
+  fs.remove(tmp, false);
+  return moved;
+}
+
+/** A sibling of `path` that no concurrent copy of this program will also pick. */
+string tempName(Core core, string path) {
+  u8[] r = core.randomBytes(6).wait();
+  u8[] out = u8[12](fill: '0');
+  u8[] digits = "0123456789abcdef".toBytes();
+  for (i32 i = 0; i < 6; i++) {
+    out[i * 2] = digits[(r[i] >> 4) & 15];
+    out[i * 2 + 1] = digits[r[i] & 15];
+  }
+  return path + ".tmp" + string.fromBytes(out);
+}

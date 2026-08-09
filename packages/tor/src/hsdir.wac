@@ -1,0 +1,485 @@
+// The HSDir hash ring: which directories hold a v3 onion service's descriptor right now.
+//
+// A service does not publish to a fixed set of directories. Each time period, the service and every
+// client independently compute the same ring position from the blinded key, and the descriptor lives
+// on the few relays that follow it. Nobody is told where to look; everybody derives it.
+//
+//     hs_service_index(replica) = H("store-at-idx" | blinded_key | INT_8(replica)
+//                                                 | INT_8(period_length) | INT_8(period_num))
+//     hs_relay_index(node)      = H("node-idx"     | node_ed25519_id | shared_random_value
+//                                                 | INT_8(period_num) | INT_8(period_length))
+//
+// Both are SHA3-256, so both are points on the same 256-bit circle. The responsible directories for a
+// replica are the `hsdir_spread` relays whose index immediately follows the service index, wrapping
+// around the end. rend-spec-v3 §2.2.3.
+//
+// **The trailing pair is in the opposite order in the two formulas.** `store-at-idx` ends with
+// length then number; `node-idx` ends with number then length. That is what the specification says.
+// It looks like a transcription error and is not, and normalising the two to match — which is the
+// natural thing to do while tidying — produces indices that are wrong in a way nothing local detects.
+//
+// ## Why the shared random value is in there
+//
+// Without it the ring positions would be computable years ahead, and an adversary who wanted to be
+// the directory for a particular service could generate identity keys until it landed in the right
+// place. The SRV is agreed by the authorities once per period and is not known in advance, so the
+// grinding window shrinks to one period.
+//
+// Which SRV to use is not simply "the current one" — see `packages/tor/src/hsblind.wac` on time
+// periods and rend-spec-v3 §2.2.4.1. A client in the segment between a new SRV and a new time period
+// uses the *previous* SRV with the current period. Observed directly: on a live chutney network the
+// current time period's uploads reproduce under `shared-rand-previous-value` and the next period's
+// under `shared-rand-current-value`.
+
+import { sha3_256 } from "../../crypto/src/keccak.wac";
+import { Relay, base64NoPad } from "./directory.wac";
+import { findFrom } from "./consensus.wac";
+import { timeOf } from "./dirclient.wac";
+import { decode as b64decode } from "../../codec/src/base64.wac";
+import {
+  SHARED_RANDOM_N_PHASES, SHARED_RANDOM_N_ROUNDS, timePeriodLength, timePeriodNum,
+  rotationOffsetMinutes,
+} from "./hsblind.wac";
+
+/** `hsdir_n_replicas`, consensus parameter, default 2. */
+export const i32 HSDIR_N_REPLICAS_DEFAULT = 2;
+/** `hsdir_spread_fetch` — how many of the following relays a *client* may pick from. Default 3. */
+export const i32 HSDIR_SPREAD_FETCH_DEFAULT = 3;
+/** `hsdir_spread_store` — how many a *service* uploads to. Default 4, and larger than fetch on
+ *  purpose: a descriptor is stored more widely than it is looked for, so the system tolerates an
+ *  HSDir disappearing between the upload and the fetch. */
+export const i32 HSDIR_SPREAD_STORE_DEFAULT = 4;
+
+/** A big-endian u64, which is how every field of both indices is written. */
+u8[] u64be(i64 v) {
+  u8[] b = u8[8]();
+  for (i32 i = 0; i < 8; i++) {
+    b[i] = ((v >> (((7 - i) * 8) as@ u32)) & 0xFF) as~ i32;
+  }
+  return b;
+}
+
+void put(u8[] dst, i32 at, u8[] src) {
+  for (i32 i = 0; i < src.len(); i++) { dst[at + i] = src[i]; }
+}
+
+/**
+ * `hs_service_index(replica)` — where on the ring this replica of the descriptor belongs.
+ *
+ * Note the field order: replica, **period length, period number**. `hsRelayIndex` ends with those
+ * last two the other way round.
+ */
+export u8[] hsServiceIndex(u8[] blindedKey, i32 replica, i64 periodLength, i64 periodNum) {
+  if (blindedKey.len() != 32) { return u8[0](); }
+  u8[] tag = "store-at-idx".toBytes();
+  u8[] buf = u8[tag.len() + 32 + 24]();
+  i32 at = 0;
+  put(buf, at, tag);        at = at + tag.len();
+  put(buf, at, blindedKey); at = at + 32;
+  put(buf, at, u64be(replica as i64)); at = at + 8;
+  put(buf, at, u64be(periodLength));   at = at + 8;
+  put(buf, at, u64be(periodNum));
+  return sha3_256(buf);
+}
+
+/**
+ * `hs_relay_index(node)` — where a directory sits on the ring.
+ *
+ * The identity is the relay's **ed25519** master identity, not the RSA fingerprint the consensus's
+ * `r` line carries. On a microdescriptor consensus that means the ed25519 key has to come from the
+ * microdescriptor, which is a real dependency and not a detail: computing the ring from the RSA
+ * digest produces a complete, consistent, wrong ring.
+ *
+ * Note the field order: **period number, period length** — the reverse of `hsServiceIndex`'s.
+ */
+export u8[] hsRelayIndex(u8[] ed25519Identity, u8[] sharedRandom, i64 periodNum, i64 periodLength) {
+  if (ed25519Identity.len() != 32) { return u8[0](); }
+  u8[] tag = "node-idx".toBytes();
+  u8[] buf = u8[tag.len() + 32 + sharedRandom.len() + 16]();
+  i32 at = 0;
+  put(buf, at, tag);              at = at + tag.len();
+  put(buf, at, ed25519Identity);  at = at + 32;
+  put(buf, at, sharedRandom);     at = at + sharedRandom.len();
+  put(buf, at, u64be(periodNum)); at = at + 8;
+  put(buf, at, u64be(periodLength));
+  return sha3_256(buf);
+}
+
+/**
+ * The disaster shared random value, for when the consensus carries none.
+ *
+ *     SRV = H("shared-random-disaster" | INT_8(period_length) | INT_8(period_num))
+ *
+ * Entirely predictable, which defeats the point of an SRV — and that is the right trade rather than a
+ * flaw: with no agreed value, a *deterministic* fallback at least keeps clients and services on the
+ * same ring, where a random one would partition them. rend-spec-v3 §2.3.1.
+ */
+export u8[] disasterSrv(i64 periodLength, i64 periodNum) {
+  u8[] tag = "shared-random-disaster".toBytes();
+  u8[] buf = u8[tag.len() + 16]();
+  put(buf, 0, tag);
+  put(buf, tag.len(), u64be(periodLength));
+  put(buf, tag.len() + 8, u64be(periodNum));
+  return sha3_256(buf);
+}
+
+/** −1, 0 or 1 comparing two indices as big-endian unsigned numbers. */
+export i32 compareIndex(u8[] a, u8[] b) {
+  i32 n = (a.len() < b.len()) ? a.len() : b.len();
+  for (i32 i = 0; i < n; i++) {
+    if (a[i] != b[i]) { return (a[i] < b[i]) ? -1 : 1; }
+  }
+  if (a.len() == b.len()) { return 0; }
+  return (a.len() < b.len()) ? -1 : 1;
+}
+
+/**
+ * The relays responsible for a descriptor, as indices into `relayIndices`.
+ *
+ * `relayIndices` is one `hsRelayIndex` per candidate directory, in the caller's own order — this
+ * does not require them sorted, and sorts a permutation internally, because the caller's order is
+ * the consensus's and it needs that order back to look anything up.
+ *
+ * The algorithm: for each replica in turn, walk the ring from that replica's service index and take
+ * the first `spread` relays, **skipping any already chosen for an earlier replica**. That skip is
+ * why this cannot be two independent lookups — with few relays the replicas overlap heavily, and
+ * without it a service would upload twice to one directory and reach fewer than it believes.
+ *
+ * Empty if anything does not add up, rather than a short list: a caller that silently got three
+ * directories where it asked for eight would look like it had succeeded.
+ */
+export i32[] responsibleHsdirs(
+  u8[] blindedKey, u8[][] relayIndices, i32 replicas, i32 spread,
+  i64 periodLength, i64 periodNum
+) {
+  i32 n = relayIndices.len();
+  if (n == 0 || replicas <= 0 || spread <= 0) { return i32[0](); }
+
+  // A permutation of 0..n-1 ordered by ring position, by insertion sort — n is the number of HSDirs
+  // in the consensus, which is thousands on the real network and a dozen here, and this runs once
+  // per descriptor fetch rather than per cell.
+  i32[] order = i32[n]();
+  for (i32 i = 0; i < n; i++) { order[i] = i; }
+  for (i32 i = 1; i < n; i++) {
+    i32 key = order[i];
+    i32 j = i - 1;
+    while (j >= 0 && compareIndex(relayIndices[order[j]], relayIndices[key]) > 0) {
+      order[j + 1] = order[j];
+      j = j - 1;
+    }
+    order[j + 1] = key;
+  }
+
+  i32 want = replicas * spread;
+  i32[] chosen = i32[want]();
+  bool[] taken = bool[n]();
+  i32 count = 0;
+
+  for (i32 replica = 1; replica <= replicas; replica++) {
+    u8[] target = hsServiceIndex(blindedKey, replica, periodLength, periodNum);
+    if (target.len() != 32) { return i32[0](); }
+
+    // The first ring position at or after `target`; `n` if there is none, which the modulo below
+    // turns into 0 — the wrap.
+    //
+    // Two mutations here survive and both are equivalent rather than untested, which is worth saying
+    // so nobody hunts them again: `start = 0` is the same value as `start = n` once `% n` is applied,
+    // and relaxing `>= 0` to `> 0` differs only when a relay's index equals the target exactly, which
+    // is a 256-bit coincidence.
+    i32 start = n;
+    for (i32 i = n - 1; i >= 0; i--) {
+      if (compareIndex(relayIndices[order[i]], target) >= 0) { start = i; }
+    }
+
+    i32 got = 0;
+    for (i32 step = 0; step < n && got < spread; step++) {
+      i32 at = (start + step) % n;
+      i32 relay = order[at];
+      if (taken[relay]) { continue; }
+      taken[relay] = true;
+      chosen[count] = relay;
+      count = count + 1;
+      got = got + 1;
+    }
+    // Fewer candidates than the spread asks for is not an error — a small network simply has fewer
+    // directories than the parameters want — but it must not silently overlap with the next replica,
+    // which the `taken` check above already prevents.
+  }
+
+  if (count == want) { return chosen; }
+  i32[] out = i32[count]();
+  for (i32 i = 0; i < count; i++) { out[i] = chosen[i]; }
+  return out;
+}
+
+// ── Choosing directories from a consensus ─────────────────────────────────────
+
+/**
+ * The relays a client should ask for a descriptor, as indices into `relays`.
+ *
+ * This is the form a client actually has: a parsed consensus with microdescriptors attached, rather
+ * than a list of ed25519 keys. The two differences from `responsibleHsdirs` are both real:
+ *
+ *   - **only relays with the `HSDir` flag are candidates.** A relay without it is not in the ring at
+ *     all, and including it shifts every position after it.
+ *   - **a relay whose microdescriptor has not been attached has no ed25519 identity**, so it cannot
+ *     be placed. Those are skipped, and skipping them is not free — it silently changes the ring, so
+ *     `hsdirCandidates` returns the count and a caller with too few should fetch the missing
+ *     microdescriptors rather than proceed.
+ *
+ * Uses `spread` directly so a caller can pass `HSDIR_SPREAD_FETCH_DEFAULT` when fetching and
+ * `HSDIR_SPREAD_STORE_DEFAULT` when checking what a service would have done.
+ */
+export i32[] hsdirsForDescriptor(
+  Relay[] relays, u8[] blindedKey, u8[] sharedRandom, i64 periodNum, i64 periodLength,
+  i32 replicas, i32 spread
+) {
+  i32[] candidates = hsdirCandidates(relays);
+  if (candidates.len() == 0) { return i32[0](); }
+
+  u8[][] indices = u8[][candidates.len()]();
+  for (i32 i = 0; i < candidates.len(); i++) {
+    indices[i] = hsRelayIndex(relays[candidates[i]].ed25519Identity, sharedRandom,
+                              periodNum, periodLength);
+  }
+  i32[] picked = responsibleHsdirs(blindedKey, indices, replicas, spread, periodLength, periodNum);
+  i32[] out = i32[picked.len()]();
+  for (i32 i = 0; i < picked.len(); i++) { out[i] = candidates[picked[i]]; }
+  return out;
+}
+
+/** The indices of relays that can be placed on the ring: `HSDir` flagged, with an ed25519 identity. */
+export i32[] hsdirCandidates(Relay[] relays) {
+  i32 n = 0;
+  for (i32 i = 0; i < relays.len(); i++) {
+    if (isHsdir(relays[i])) { n = n + 1; }
+  }
+  i32[] out = i32[n]();
+  i32 at = 0;
+  for (i32 i = 0; i < relays.len(); i++) {
+    if (isHsdir(relays[i])) {
+      out[at] = i;
+      at = at + 1;
+    }
+  }
+  return out;
+}
+
+bool isHsdir(Relay r) {
+  if (r.ed25519Identity.len() != 32) { return false; }
+  for (i32 i = 0; i < r.flags.len(); i++) {
+    if (r.flags[i] == "HSDir") { return true; }
+  }
+  return false;
+}
+
+/** `/tor/hs/3/<z>`, where `z` is the blinded key in unpadded base64. rend-spec-v3 §2.2.6. */
+export string descriptorPath(u8[] blindedKey) {
+  if (blindedKey.len() != 32) { return ""; }
+  return "/tor/hs/3/" + base64NoPad(blindedKey);
+}
+
+/**
+ * Where a service uploads: `/tor/hs/3/publish`, for every descriptor and every directory.
+ *
+ * There is no key in it, unlike the fetch path — and that asymmetry is the whole of how publication
+ * works. The uploader does not get to say what the descriptor is called. An HSDir reads the blinded
+ * key out of the descriptor's own signing-key certificate and files it under that
+ * (`cache_store_v3_as_dir` in tor), so the name a client later asks for is decided by what was
+ * signed, not by what was claimed. A service whose upload path and blinded key disagreed would still
+ * publish successfully — into a slot nobody looks in.
+ */
+export string publishPath() { return "/tor/hs/3/publish"; }
+
+// ── Reading the ring's inputs out of a consensus ──────────────────────────────
+
+/**
+ * A `shared-rand-current-value` or `shared-rand-previous-value`, decoded, or empty.
+ *
+ * **Which one to use is not "the current one".** A client synchronises its time period with the
+ * shared random value that was published *for* that period, so in the stretch between a new SRV and
+ * a new time period it uses the previous value with the current period (rend-spec-v3 §2.2.4.1). This
+ * was confirmed on a live network rather than taken on trust: the current period's uploads reproduce
+ * under `shared-rand-previous-value` and the next period's under `shared-rand-current-value`.
+ *
+ * A consensus that carries neither is not an error — `disasterSrv` is the documented fallback — so
+ * this returns empty rather than refusing, and the caller decides.
+ */
+export u8[] consensusSharedRandom(u8[] consensus, bool current) {
+  string field = current ? "shared-rand-current-value" : "shared-rand-previous-value";
+  i32 at = findFrom(consensus, "\n" + field + " ", 0);
+  if (at < 0) { return u8[0](); }
+  i32 from = at + field.len() + 2;
+  // The line is `<field> SP NUM_REVEALS SP VALUE`, so skip the reveal count.
+  while (from < consensus.len() && consensus[from] != ' ' && consensus[from] != '\n') { from++; }
+  if (from >= consensus.len() || consensus[from] != ' ') { return u8[0](); }
+  from++;
+  i32 end = from;
+  while (end < consensus.len() && consensus[end] != '\n' && consensus[end] != '\r') { end++; }
+  u8[] value = u8[end - from]();
+  for (i32 i = 0; i < value.len(); i++) { value[i] = consensus[from + i]; }
+  u8[]? decoded = b64decode(value);
+  if (decoded is null) { return u8[0](); }
+  return (decoded!.len() == 32) ? decoded! : u8[0]();
+}
+
+/**
+ * The time period a client should fetch for, and the shared random value that goes with it.
+ *
+ * Returns `[periodNum, periodLength]`, or `[-1, -1]` if the consensus does not carry the timings.
+ * `testingNetwork` is the caller's, because nothing in a consensus says so — the give-away is a
+ * voting interval of seconds rather than an hour, and guessing from that would be a heuristic in the
+ * one place a wrong answer is silent.
+ */
+export i64[] consensusTimePeriod(u8[] consensus, bool testingNetwork, i64 hsdirInterval) {
+  i64 validAfter = timeOf(consensus, "valid-after");
+  i64 freshUntil = timeOf(consensus, "fresh-until");
+  if (validAfter < 0 || freshUntil <= validAfter) { return i64[](-1, -1); }
+  i64 voting = freshUntil - validAfter;
+  i64 length = timePeriodLength(testingNetwork, voting, hsdirInterval);
+  i64 num = timePeriodNum(validAfter, length, rotationOffsetMinutes(voting));
+  return i64[](num, length);
+}
+
+// ── What a *service* publishes for, which is not what a client fetches for ────
+//
+// A client fetches one descriptor. A service publishes **two**, under two different time periods with
+// two different shared random values, and to two different sets of directories. That is not
+// redundancy: it is what keeps a service reachable across the moment the ring rotates, when some
+// clients have moved to the new period and some have not.
+//
+// tor computes this in `node_set_hsdir_index` (`nodelist.c`) and the rule has two halves:
+//
+//   - **which two periods**, which depends on where the consensus sits between a new time period and
+//     a new shared random value — `hs_in_period_between_tp_and_srv`;
+//   - **which SRV goes with each**, which does not depend on anything: the first descriptor always
+//     uses the *previous* shared random value and the second always uses the *current* one.
+//
+// Getting either wrong produces a descriptor filed under a name no client computes — the same silent
+// failure as a wrong blinded key, and equally invisible to every party involved.
+
+/** One of the two descriptors a service publishes: which period, and which shared random value. */
+export struct StorePeriod {
+  i64 periodNum;
+  i64 periodLength;
+  /** True for `shared-rand-current-value`, false for `shared-rand-previous-value`. */
+  bool useCurrentSrv;
+}
+
+/**
+ * Whether the consensus sits between a new time period and a new shared random value.
+ *
+ * tor's diagram, which is clearer than any restatement:
+ *
+ *      00:00      12:00       00:00       12:00
+ *      SRV#1      TP#1        SRV#2       TP#2
+ *       $==========|-----------$===========|
+ *                  ^^^^^^^^^^^^
+ *
+ * True in the marked stretch. The computation is entirely from the consensus: the current shared
+ * random protocol run started at the beginning of the round the consensus falls in, rounded back by
+ * however many rounds have elapsed, and the next time period starts one phase after the period
+ * boundary that follows it.
+ */
+export bool betweenTimePeriodAndSrv(u8[] consensus, bool testingNetwork, i64 hsdirInterval) {
+  i64 validAfter = timeOf(consensus, "valid-after");
+  i64 freshUntil = timeOf(consensus, "fresh-until");
+  if (validAfter <= 0 || freshUntil <= validAfter) { return false; }
+  i64 voting = freshUntil - validAfter;
+  i64 length = timePeriodLength(testingNetwork, voting, hsdirInterval);
+  i64 offset = rotationOffsetMinutes(voting);
+
+  // The protocol run's start: step back by however many rounds of this run have already happened.
+  i64 totalRounds = (SHARED_RANDOM_N_ROUNDS * SHARED_RANDOM_N_PHASES) as i64;
+  i64 slot = (validAfter / voting) % totalRounds;
+  i64 srvStart = validAfter - slot * voting;
+
+  // And the start of the next time period after that, offset by one phase — the same offset that
+  // makes periods line up with SRV publication rather than with midnight.
+  i64 nextPeriod = timePeriodNum(srvStart, length, offset) + 1;
+  if (nextPeriod <= 0) { return false; }
+  i64 tpStart = nextPeriod * length * 60 + (SHARED_RANDOM_N_ROUNDS as i64) * voting;
+
+  return !(validAfter >= srvStart && validAfter < tpStart);
+}
+
+/**
+ * The two descriptors a service should publish, in tor's order.
+ *
+ * Empty if the consensus carries no timings, so a caller cannot publish against a period it invented.
+ * The two entries are `store_first` and `store_second`, and they are always consecutive periods —
+ * what moves is *which* consecutive pair, and that is the half the predicate above decides.
+ */
+export StorePeriod[] serviceStorePeriods(u8[] consensus, bool testingNetwork, i64 hsdirInterval) {
+  i64[] now = consensusTimePeriod(consensus, testingNetwork, hsdirInterval);
+  if (now[0] < 0) { return StorePeriod[0](fill: StorePeriod(0, 0, false)); }
+  i64 current = now[0];
+  i64 length = now[1];
+
+  // Between a new period and a new SRV, a service is still publishing for the period that is ending
+  // as well as the one that has begun; outside that stretch it publishes for the current period and
+  // the one about to begin.
+  i64 first = betweenTimePeriodAndSrv(consensus, testingNetwork, hsdirInterval)
+    ? current - 1 : current;
+
+  // The SRV assignment is fixed and does not follow the predicate: the older descriptor always uses
+  // the previous shared random value and the newer one the current value. tor says so in one line
+  // and it is the kind of line that reads like a comment rather than a rule.
+  StorePeriod[] out = StorePeriod[2](fill: StorePeriod(first, length, false));
+  out[1] = StorePeriod(first + 1, length, true);
+  return out;
+}
+
+/**
+ * One of the two uploads a service makes: where it goes, and what it was computed from.
+ *
+ * `srv` is here rather than left implicit because which shared random value was used is not
+ * recoverable from the result. Two plans that picked different values produce different directories
+ * and nothing about the directory list says which value produced it — so a service that fell back to
+ * the disaster SRV when the consensus had one, or the reverse, would look exactly like a service that
+ * did not.
+ */
+export struct Publication {
+  i64 periodNum;
+  i64 periodLength;
+  bool useCurrentSrv;
+  u8[] srv;            // the value actually used — the consensus's, or the disaster fallback
+  i32[] hsdirs;        // indices into `relays`, in the order tor would upload
+}
+
+/**
+ * The two uploads a service should make, from a consensus and its blinded keys.
+ *
+ * `blindedKeys` is index-matched to `serviceStorePeriods`: the caller derives each from its identity
+ * key and the period, which is `blindingFactor` and is pinned separately. It is a parameter rather
+ * than derived here because deriving it needs the identity key, and a function that takes an identity
+ * key to answer a question about directories is a function that will one day be handed a secret it
+ * did not need.
+ *
+ * Empty if the consensus carries no timings — the caller cannot be given a plan built on a period
+ * nobody agreed on.
+ */
+export Publication[] servicePlan(
+  u8[] consensus, Relay[] relays, u8[][] blindedKeys, bool testingNetwork, i64 hsdirInterval
+) {
+  StorePeriod[] periods = serviceStorePeriods(consensus, testingNetwork, hsdirInterval);
+  if (periods.len() != 2 || blindedKeys.len() != 2) {
+    return Publication[0](fill: Publication(0, 0, false, u8[0](), i32[0]()));
+  }
+
+  Publication[] out = Publication[2](fill: Publication(0, 0, false, u8[0](), i32[0]()));
+  for (i32 i = 0; i < 2; i++) {
+    StorePeriod sp = periods[i];
+    // The consensus's value if it carries one, and the disaster SRV if it does not. rend-spec-v3
+    // makes this a documented fallback rather than an error: a network whose authorities have not
+    // agreed on a value still has to be usable, and every party computes the same substitute from the
+    // period alone, so they still agree on the ring.
+    u8[] srv = consensusSharedRandom(consensus, sp.useCurrentSrv);
+    if (srv.len() != 32) { srv = disasterSrv(sp.periodLength, sp.periodNum); }
+    out[i] = Publication(sp.periodNum, sp.periodLength, sp.useCurrentSrv, srv,
+                         hsdirsForDescriptor(relays, blindedKeys[i], srv, sp.periodNum,
+                                             sp.periodLength, HSDIR_N_REPLICAS_DEFAULT,
+                                             HSDIR_SPREAD_STORE_DEFAULT));
+  }
+  return out;
+}

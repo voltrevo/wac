@@ -2,19 +2,17 @@ name: Deploy to GitHub Pages
 
 # The demos are built here, from source, on every deploy.
 #
-# They are whole wac applications — `public/*.html`, each a self-contained page with the wasm inside
-# it — and they live in the *other* repository, `voltrevo/wac-mono`. They used to be committed to this
-# one, because Pages builds this repo alone: a megabyte of generated HTML in git, refreshed whenever
-# somebody remembered, which is to say usually stale.
+# They are whole wac applications — `site/public/*.html`, each a self-contained page with the wasm
+# inside it — built from `packages/box` and `packages/platform`. They used to be committed: a
+# megabyte of generated HTML in git, refreshed whenever somebody remembered, which is to say
+# usually stale.
 #
-# So both repositories are checked out side by side and `tools/syncDemos.ts` builds them. The layout
-# matters: wac-mono's import map points `wac/` at `../wac/atoms/wac/`, so the two must be siblings
-# under the workspace, and every step for this repo therefore names `wac` as its directory.
+# This used to check out two repositories side by side, because the packages and the compiler lived
+# apart and the import map pointed at a sibling checkout. They are one repository now, so the two
+# sync steps take no path and every step runs from the root.
 #
 # **A demo that will not build fails the deploy.** A site that advertises three demos and serves
-# three 404s is worse than a site that did not deploy. The likeliest cause is the two mirrors being
-# out of step: wac-mono pins the oldest compiler it works with and names the commit when a checkout
-# is older, so read the message before assuming the demo itself is broken.
+# three 404s is worse than a site that did not deploy.
 
 on:
   push:
@@ -35,50 +33,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: wac
-          # Full history: wac-mono checks that this checkout *contains* the compiler commit it pins,
-          # with `git merge-base --is-ancestor`, which a shallow clone cannot answer.
-          fetch-depth: 0
-      - uses: actions/checkout@v4
-        with:
-          repository: voltrevo/wac-mono
-          path: wac-mono
 
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Build the demos from wac-mono
-        working-directory: wac
-        run: deno run -A tools/syncDemos.ts ../wac-mono
-      # `src/data/built.ts` is committed so a checkout without wac-mono still builds, but the
-      # numbers in it go stale the same way the demos used to. wac-mono is right there, so
-      # refresh them — the committed copy is the fallback, not the source.
-      - name: Refresh the package table from wac-mono's MAP.md
-        working-directory: wac
-        run: deno run -A tools/syncMap.ts ../wac-mono
+      # The demos are build output from `packages/box` and `packages/platform`, not source, so they
+      # are built here rather than committed — a megabyte of generated HTML in git was stale by the
+      # next day. Both of these used to take the path of a sibling checkout; the merge made them
+      # local.
+      - name: Build the demos
+        run: deno run -A site/tools/syncDemos.ts
+      # `site/src/data/built.ts` is committed so a checkout can build the site without running this,
+      # but the numbers in it go stale the same way the demos used to. Refresh them: the committed
+      # copy is the fallback, not the source.
+      - name: Refresh the package table from MAP.md
+        run: deno run -A site/tools/syncMap.ts
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: wac/package-lock.json
-      - working-directory: wac
+          cache-dependency-path: site/package-lock.json
+      - working-directory: site
         run: npm ci
-      - working-directory: wac
+      - working-directory: site
         run: npx tsc -b
-      - working-directory: wac
+      - working-directory: site
         run: BASE_URL="/${{ github.event.repository.name }}/" npx vite build
       # After the build, because one of these talks to the *emitted* worker chunk rather than to
       # the TypeScript. The rest compile and run every snippet the page shows, which is the same
       # reasoning as building the demos here: a page that advertises working code and serves
       # broken code is worse than a page that did not deploy.
       - name: Check the site's own code
-        working-directory: wac
-        run: deno test -A tools/site.test.ts
+        run: deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: wac/dist
+          path: site/dist
 
   deploy:
     needs: build

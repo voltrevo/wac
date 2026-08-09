@@ -1,0 +1,17 @@
+// Byte-array helpers shared by every applet.
+
+import { slice } from "../../../bytes/src/slice.wac";
+
+export u8[] concat(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()](fill: 0);
+  out.copyFrom(a, 0, 0, a.len());
+  out.copyFrom(b, 0, a.len(), b.len());
+  return out;
+}
+
+
+export u8[] withNewline(u8[] a) {
+  u8[] out = u8[a.len() + 1](fill: '\n');
+  out.copyFrom(a, 0, 0, a.len());
+  return out;
+}

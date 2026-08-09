@@ -1,0 +1,113 @@
+// A driver that puts the whole of `wacc` behind one no-argument export.
+//
+// Rung 5 is the bootstrap, and the oracle for it is the same one every rung below uses: **run what
+// both compilers emit and compare the answers**. What makes that awkward here is the surface —
+// `dump(u8[]) -> string` traffics in references, and a reference cannot cross the JavaScript
+// boundary without bindgen's glue, which a module this test emits by hand does not have.
+//
+// So the crossing is moved inside. This file calls `wacc` on a program written into it and returns a
+// checksum of the answer, which is an `i32` and crosses anywhere. Compiled by the reference it
+// reports one number; compiled by `wacc` it reports the same number, and the second module is
+// `wacc`'s own lexer, parser, printer and checker as emitted by `wacc`.
+
+import { dump, dumpErrors, dumpTypeErrors, emit, blocked } from "../../src/api.wac";
+import { lex, Lexed } from "../../src/lex.wac";
+import { P, parseProgram } from "../../src/parse.wac";
+
+/**
+ * A checksum, so a difference anywhere in a long answer arrives as one number.
+ *
+ * Not a hash with any properties — this needs to change when the input changes and nothing else.
+ */
+i32 sum(string s) {
+  u8[] b = s.toBytes();
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) {
+    h = (h * 31 + b[i]) & 2147483647;
+  }
+  return h;
+}
+
+/** The program `wacc` is asked about — small, and touching a little of everything. */
+string subject() {
+  return "struct P { i32 x; i32 y; }\n" +
+         "i32 area(P p) { return p.x * p.y; }\n" +
+         "export i32 main() { P p = P(3, 4); i32 n = 0;\n" +
+         "  for (i32 i = 0; i < 3; i++) { n = n + area(p); }\n" +
+         "  return n > 30 ? n : 0 - n; }\n";
+}
+
+/** The AST `wacc` reads out of it, as one number. */
+export i32 dumpSum() {
+  return sum(dump(subject().toBytes()));
+}
+
+/** How many diagnostics its parser and its type checker have to say about it — both should be 0. */
+export i32 errorCount() {
+  return dumpErrors(subject().toBytes()).len() + dumpTypeErrors(subject().toBytes()).len();
+}
+
+/** And the same three questions of a program that is wrong, where the answer is not zero. */
+export i32 badErrorCount() {
+  return dumpTypeErrors("export i32 f() { return \"x\"; }".toBytes()).len();
+}
+
+/** Lexing only — the first stage, and the smallest thing that can be asked of it. */
+export i32 tokenCount() {
+  return lex(subject().toBytes()).tokenCount;
+}
+
+/** Lexing and parsing, stopping before anything is printed. */
+export i32 declCount() {
+  u8[] b = subject().toBytes();
+  Lexed lexed = lex(b);
+  P p = P.create(b, lexed.tokens, lexed.tokenCount);
+  return parseProgram(p).decls.len();
+}
+
+/** The subject's own length, before anything looks at it — a string built by concatenation. */
+export i32 subjectLen() {
+  return subject().len();
+}
+
+/** And as bytes, which is what every stage actually reads. */
+export i32 subjectBytes() {
+  return subject().toBytes().len();
+}
+
+/** One literal, unconcatenated, to tell a `+` problem from a `toBytes` problem. */
+export i32 literalBytes() {
+  return "struct P { i32 x; }".toBytes().len();
+}
+
+// ── The fixed point ───────────────────────────────────────────────────────────
+//
+// Reading is half a compiler. These ask the other half: the module `wacc` *emits* for the subject,
+// as a length and as a checksum over every byte. Compiled by the reference this is stage A emitting
+// it; compiled by `wacc` it is stage B — `wacc` as emitted by `wacc` — emitting the same thing. Two
+// equal checksums are the two stages agreeing byte for byte, which is what a bootstrap claims and
+// what running the lexer alone cannot show.
+
+/** A checksum over bytes, the same shape as the one over text. */
+i32 sumBytes(u8[] b) {
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) {
+    h = (h * 31 + b[i]) & 2147483647;
+  }
+  return h;
+}
+
+/** How many bytes the module for the subject is. */
+export i32 emitLen() {
+  return emit(subject().toBytes()).len();
+}
+
+/** And every one of them, as one number. */
+export i32 emitSum() {
+  return sumBytes(emit(subject().toBytes()));
+}
+
+/** Whether the emitter declines any of the subject — `0` when it emits the whole of it. */
+export i32 emitBlockedLen() {
+  return blocked(subject().toBytes()).len();
+}

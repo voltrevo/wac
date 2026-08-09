@@ -1,6 +1,6 @@
 import { type Diagnostic } from "@codemirror/lint";
 import { type EditorView } from "@codemirror/view";
-import { wacCompile, type CompileDiagnostic } from "../../atoms/wac/wacCompile.ts";
+import { wacCompile, type CompileDiagnostic } from "../../../compiler/wacCompile.ts";
 import type { FileMap } from "./file-store";
 
 /** Convert a CompileDiagnostic (1-indexed line/col) to a CM Diagnostic (char offset). */

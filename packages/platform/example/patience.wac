@@ -1,0 +1,124 @@
+// Bounding how long a call may take.
+//
+//   patience <host> <port> <millis>
+//
+// Connect, then wait that long for the peer to say something. A peer that completes the
+// handshake and then says nothing used to stop the application permanently — no error, no log
+// line, no way to notice (wac-mono issue 0018).
+//
+// The deadline is a parameter of the wait:
+//
+//   i32 which = core.waitAny(i32[](r.id), ms);   // -1 when the time ran out
+//
+// Not a `recvWithin`, and not a timer in the list. `waitAny` already parks on this worker's own
+// memory and `Atomics.wait` takes a timeout, so the deadline costs no opcode, no ring slot and
+// nothing to clean up — and the same parameter bounds `connect`, `accept`, `readFile` or a
+// child's `exitCode` without any of them knowing what a deadline is.
+//
+// The first version of this file passed a `core.sleepMillis` ticket in the list instead. It
+// worked, and it made every round allocate a ticket that had to be cancelled on every path;
+// forgetting one held a ring slot for good, and four of those stopped the program somewhere
+// else entirely. That is why the deadline moved onto the wait. What survives is the part that
+// is genuinely the caller's problem, because it is about the call rather than the clock:
+//
+//   * wait more — wait on the **same** ticket again. Do not issue a second `recv`: two reads
+//                 on one socket, and the byte order is anyone's guess.
+//   * give up   — cancel *and* close the handle. Cancelling discards the answer; closing is
+//                 what makes the read finish, which is what returns its slot.
+//
+// Six rounds, deliberately more than the ring has slots, so a version that leaked would stall
+// rather than finish:
+//
+//   patience 127.0.0.1 9000 100
+//   waited 100ms, nothing yet
+//   ...
+//   giving up after 600ms
+
+import { Cli, Core, Pending, Socket } from "../src/platform.wac";
+import { Read } from core;
+
+const i32 ROUNDS = 6;   // more than SLOTS, so a leaked ticket would show up as a stall
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 3) {
+    core.warn("usage: patience <host> <port> <millis>");
+    return 2;
+  }
+  string host = string.fromBytes(cli.arg(0).wait());
+  i32 port = atoi(string.fromBytes(cli.arg(1).wait()));
+  i32 ms = atoi(string.fromBytes(cli.arg(2).wait()));
+
+  // Even connecting is bounded, and the shape is identical — which is the point of putting the
+  // deadline on the waiter rather than on each capability.
+  Pending<Socket> pc = cli.connect(host, port);
+  if (core.waitAny(i32[](pc.id), ms) < 0) {
+    core.warn("patience: connect to " + host + " did not answer within " + itoa(ms) + "ms");
+    // The connect is still in flight and there is no handle to close, so its slot comes back
+    // only when the host's own attempt finishes — cancelling says "discard the answer", not
+    // "stop trying". Worth knowing before doing this in a loop.
+    pc.cancel();
+    return 1;
+  }
+  Socket s = pc.wait();
+  if (s.handle < 0) {
+    core.warn("patience: " + s.error);
+    return 1;
+  }
+
+  // One read, waited on more than once. Re-issuing `recv` per round instead would be the bug
+  // the header warns about, and it would not look like one.
+  Pending<Read> r = cli.recv(s.handle);
+  i32 waited = 0;
+
+  for (i32 round = 0; round < ROUNDS; round++) {
+    i32 which = core.waitAny(i32[](r.id), ms);
+    waited = waited + ms;
+
+    if (which == 0) {
+      // Three outcomes, and a deadline is exactly the situation where they differ: a peer that
+      // closed, a connection that broke, and bytes that arrived all used to be two cases.
+      match (r.wait()) {
+        case Data(bytes): {
+          core.log("peer sent " + itoa(bytes.len()) + " bytes after " + itoa(waited) + "ms");
+        }
+        case End: { core.log("peer closed after " + itoa(waited) + "ms"); }
+        case Failed(why): { core.log("connection failed after " + itoa(waited) + "ms: " + why); }
+      }
+      cli.closeSocket(s.handle);
+      return 0;
+    }
+
+    if (round + 1 < ROUNDS) {
+      core.log("waited " + itoa(waited) + "ms, nothing yet");
+    }
+  }
+
+  core.log("giving up after " + itoa(waited) + "ms");
+  // Giving up for real. Cancelling says the answer is unwanted; closing the socket is what
+  // makes the read finish, and the slot returns when it does. Without the close, the ring is
+  // short a slot for as long as the peer keeps the connection open.
+  r.cancel();
+  cli.closeSocket(s.handle);
+  return 1;
+}
+
+i32 atoi(string s) {
+  u8[] b = s.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return n; }
+    n = n * 10 + (b[i] - '0');
+  }
+  return n;
+}
+
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  i32 v = n < 0 ? 0 - n : n;
+  u8[] digits = u8[12](fill: 0);
+  i32 at = 12;
+  while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
+  u8[] used = u8[12 - at](fill: 0);
+  used.copyFrom(digits, at, 0, 12 - at);
+  return (n < 0 ? "-" : "") + string.fromBytes(used);
+}

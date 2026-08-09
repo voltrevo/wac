@@ -1,0 +1,244 @@
+// POSIX **basic** regular expressions, as `grep` without `-E` takes them.
+//
+// The engine next door has JavaScript's semantics and says so. `grep` does not: with no `-E` it reads
+// *basic* regular expressions, in which the six characters `| + ? { ( )` are **literals** and their
+// backslashed forms are the operators — exactly the opposite of every other dialect anyone writes today.
+//
+//     grep 'a|b'     matches the three characters a, |, b
+//     grep 'a\|b'    matches a or b
+//     grep 'a+'      matches a followed by +
+//     grep 'a\+'     matches one or more a
+//
+// Both of this repo's greps compiled their pattern as if it were extended, so every one of those gave the
+// wrong answer *silently* — `grep 'a|b'` found five lines where GNU finds one. Nothing was refused and
+// nothing was reported; the pattern simply meant something else. Found by reading `packages/regex` end to
+// end after wiring it into `packages/sh`'s grep, and then asking which dialect each side thought it was
+// speaking (wac-mono 0104).
+//
+// ## A rewrite rather than a second engine
+//
+// Basic and extended differ only in *which* spelling of those six is the operator, so a basic pattern
+// becomes the equivalent extended one by swapping the escaping — and nothing about matching changes. One
+// engine, one set of semantics, and a translation small enough to read.
+//
+// What is deliberately not translated, because in basic these are ordinary characters and stay so:
+//
+//   - `\b`, `\w`, `\s` and the rest of the class escapes. POSIX basic has no such thing; GNU adds `\w`
+//     and `\b` as extensions and this passes them through unchanged, which is what GNU does with them.
+//
+// Two rules that a first draft of this file got wrong, both found by comparing against `/bin/grep`
+// directly rather than through a `grep`:
+//
+//   - **A quantifier with nothing to repeat is a literal**, and that is true of `\+` and `\?` and
+//     `\{n\}` as well as of `*`. GNU matches nothing for `\+` at the start of a pattern rather than
+//     refusing it, so translating it to a bare `+` — which the engine rejects — turned "no match" into
+//     "invalid pattern".
+//   - **A `]` first in a bracket expression is a member**, which is POSIX and is *not* this engine's
+//     rule: `compile.wac` says so in as many words, "that is Perl and POSIX, not JavaScript". So
+//     `[]a]` has to become `[\]a]` on the way through, or the engine reads an empty class. That rule and
+//     the rest of the bracket — `[[:digit:]]`, `[.x.]`, `[=x=]` — live in `posix.wac` now, because they
+//     are the same in basic and extended and this file was the only one applying them.
+//   - `^` and `$` in the middle, which are literal in POSIX basic. GNU treats them as anchors anyway in
+//     some positions; this follows POSIX, and the difference is noted in the README rather than guessed
+//     at, because a test that disagrees with GNU here would be testing GNU's extensions.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Program } from "./program.wac";
+import { Compiled, compileFlags } from "./compile.wac";
+import { Rewritten, bracketReason, bufferAnchor, copyBracket, writeAny } from "./posix.wac";
+
+/** Compile a basic regular expression. Null when it will not compile. */
+export Compiled compileBasic(u8[] pattern) {
+  Rewritten r = toExtended(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, false, true);
+}
+
+/** As `compileBasic`, with the `i` flag. */
+export Compiled compileBasicIgnoreCase(u8[] pattern) {
+  Rewritten r = toExtended(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, true, true);
+}
+
+/**
+ * A basic pattern as the extended one that means the same thing.
+ *
+ * Exported because it is the whole of the difference between the two dialects, and a caller comparing
+ * against `grep -E` should be able to see what its pattern became.
+ */
+export Rewritten toExtended(u8[] pattern) {
+  Buf out = Buf.create();
+  i32 i = 0;
+  // Where the last quantifiable unit began in `out`, so a *second* quantifier can be made to apply to
+  // the first rather than to modify it. `a\{2\}\?` is "optionally two a" in basic; written straight
+  // through it becomes `a{2}?`, which in this engine's dialect is a *lazy* `{2}` — a different pattern
+  // that compiles, matches, and is wrong. Wrapped, it is `(?:a{2})?`.
+  i32 unitStart = 0;
+  bool lastWasQuantifier = false;
+  // Whether the last thing emitted can be quantified — the one rule that needs memory. False at the
+  // start and directly after `\(` or `\|`, where there is nothing to repeat and a quantifier is instead
+  // the character itself. True after an atom *and after another quantifier*: GNU reads `a*\+` as one or
+  // more of "zero or more a", so it matches the empty string. Getting that backwards made `[ab]*\+` a
+  // literal plus, which is a different pattern that happens to look reasonable.
+  bool quantifiable = false;
+  while (i < pattern.len()) {
+    i32 c = pattern[i];
+
+    // A bracket expression is a POSIX bracket expression in both dialects — none of the six operators is
+    // special inside one, and `[|]` must not become `[\|]` — so it is handed to `posix.wac` whole. That
+    // is where `[]a]`, `[[:digit:]]` and `[.x.]` are turned into what this engine understands, and having
+    // the rule in one place is the point: basic and extended differ in their operators and nowhere else.
+    // `.` is POSIX's, not JavaScript's — see `writeAny`. Basic and extended agree about this one.
+    if (c == '.') {
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      writeAny(out);
+      quantifiable = true;
+      i++;
+      continue;
+    }
+    if (c == '[') {
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      i32 next = copyBracket(out, pattern, i);
+      if (next < 0) { return Rewritten(null, bracketReason(next)); }
+      i = next;
+      quantifiable = true;
+      continue;
+    }
+
+    if (c == '\\' && i + 1 < pattern.len()) {
+      i32 next = pattern[i + 1];
+      i32 anchor = bufferAnchor(next);
+      if (anchor >= 0) {
+        unitStart = out.len;
+        lastWasQuantifier = false;
+        out.push(anchor);
+        quantifiable = true;
+        i = i + 2;
+        continue;
+      }
+      if (isSpecialWhenEscaped(next)) {
+        // `\(` `\)` `\|` `\+` `\?` `\{` `\}` — the operators, which extended spells bare.
+        //
+        // Except a *quantifier* with nothing to repeat, which GNU reads as the character itself: `\+` at
+        // the start of a pattern matches nothing rather than being refused. Emitting a bare `+` there
+        // made the engine reject the whole pattern, turning one of grep's two answers into neither.
+        if (!quantifiable && (next == '+' || next == '?' || next == '{')) {
+          unitStart = out.len;
+          lastWasQuantifier = false;
+          out.push('\\');
+          out.push(next);
+          quantifiable = true;
+          i = i + 2;
+          continue;
+        }
+        if (lastWasQuantifier && (next == '+' || next == '?' || next == '{')) { wrapLast(out, unitStart); }
+        if (next == '{') {
+          // **The whole interval, in one go.** Its digits and comma are not atoms, and treating them as
+          // such moved `unitStart` inside the braces — so wrapping `a\{2\}\?` produced `a{(?:2})?`,
+          // which compiles and is nonsense. Copied through to the closing `\}`.
+          out.push('{');
+          i = i + 2;
+          while (i < pattern.len() && !(pattern[i] == '\\' && i + 1 < pattern.len() && pattern[i + 1] == '}')) {
+            out.push(pattern[i]);
+            i++;
+          }
+          if (i + 1 < pattern.len()) {
+            out.push('}');
+            i = i + 2;
+          }
+          quantifiable = true;
+          lastWasQuantifier = true;
+          continue;
+        }
+        if (next == '(') { unitStart = out.len; }
+        out.push(next);
+        // Everything but an opening group or an alternation leaves something to quantify.
+        quantifiable = next != '(' && next != '|';
+        lastWasQuantifier = next == '+' || next == '?';
+        i = i + 2;
+        continue;
+      }
+      // Anything else keeps its backslash: `\.` is a literal dot in both, `\w` is GNU's extension in
+      // both, and `\\` is a backslash in both.
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      out.push(c);
+      out.push(next);
+      quantifiable = true;
+      i = i + 2;
+      continue;
+    }
+
+    if (isSpecialWhenBare(c)) {
+      // `(`, `)`, `|`, `+`, `?`, `{`, `}` written bare are *characters* in basic. Escaped so the engine
+      // reads them as such.
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      out.push('\\');
+      out.push(c);
+      quantifiable = true;
+      i++;
+      continue;
+    }
+
+    if (c == '*' && !quantifiable) {
+      // Nothing to repeat, so it is an asterisk. POSIX says so and GNU agrees.
+      unitStart = out.len;
+      lastWasQuantifier = false;
+      out.push('\\');
+      out.push(c);
+      i++;
+      continue;
+    }
+
+    if (c == '*') {
+      if (lastWasQuantifier) { wrapLast(out, unitStart); }
+      out.push(c);
+      lastWasQuantifier = true;
+      quantifiable = true;
+      i++;
+      continue;
+    }
+
+    unitStart = out.len;
+    lastWasQuantifier = false;
+    out.push(c);
+    // `^` and `$` are assertions and cannot be quantified; everything else can, including a `*` that has
+    // just been emitted.
+    quantifiable = c != '^' && c != '$';
+    i++;
+  }
+  return Rewritten(out.take(), "");
+}
+
+/**
+ * Wrap what has been emitted since `at` in a non-capturing group, in place.
+ *
+ * `Buf` has no insert, so this rebuilds the tail — which is fine for a pattern and happens only when one
+ * quantifier follows another. Non-capturing rather than capturing so the group numbers a caller sees are
+ * the ones its pattern asked for.
+ */
+void wrapLast(Buf out, i32 at) {
+  u8[] all = out.bytes();
+  i32 n = all.len() - at;
+  u8[] unit = u8[n]();
+  unit.copyFrom(all, at, 0, n);
+  // Truncate by length: `Buf` holds its logical end in `len`, and everything past it is unread capacity.
+  out.len = at;
+  out.pushAll("(?:".toBytes());
+  out.pushAll(unit);
+  out.push(')');
+}
+
+/** The seven whose *escaped* form is the operator in basic. */
+bool isSpecialWhenEscaped(i32 c) {
+  return c == '(' || c == ')' || c == '|' || c == '+' || c == '?' || c == '{' || c == '}';
+}
+
+/** The same seven, which written bare are ordinary characters in basic. */
+bool isSpecialWhenBare(i32 c) {
+  return c == '(' || c == ')' || c == '|' || c == '+' || c == '?' || c == '{' || c == '}';
+}

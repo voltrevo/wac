@@ -1,0 +1,475 @@
+// RSA: PKCS#1 v1.5 and PSS verification, and PKCS#1 v1.5 signing.
+//
+// Verification handles only public values, so its timing exposure is nil. **Signing does not**, and
+// the section at the bottom of this file states exactly what that costs and where the result may
+// safely be used — read it before calling `rsaSignPkcs1`. The short version: testnet keys only.
+//
+// Both padding schemes are here because TLS 1.3 needs both and for different things.
+// RFC 8446 §4.4.3 forbids PKCS#1 v1.5 in CertificateVerify — a peer must use PSS — but
+// §4.4.2.2 allows it for the signatures *inside* a certificate chain, and the world's
+// certificates are overwhelmingly signed that way. A client that implements only one of
+// them cannot complete a handshake with most of the web.
+//
+// ## Why this can be short
+//
+// `bignum` already has multiply and divmod, so modular exponentiation is square-and-
+// multiply with a reduction after each step. A public exponent is small — 65537 has
+// seventeen bits and two of them set — so a verification is about eighteen modular
+// multiplications, and the naive method is fast enough that Montgomery form would be
+// added complexity for no visible gain.
+
+import { sha256 } from "./sha256.wac";
+import { sha512, sha384 } from "./sha512.wac";
+import {
+  Big, DivMod, add, bitLen, cmp, divmod, isZero, mul,
+} from "../../bignum/src/big.wac";
+
+/** A big integer from big-endian bytes, which is how RSA writes everything. */
+export Big fromBytes(u8[] b) {
+  // Build by repeated shift-and-add through the existing API rather than by poking
+  // limbs: `bignum` owns its representation, and reaching into it here would be a second
+  // place that has to know about normalisation.
+  Big acc = Big.zero();
+  Big base = Big.fromU64(256);
+  for (i32 i = 0; i < b.len(); i++) {
+    acc = mul(acc, base);
+    acc = addSmall(acc, b[i]);
+  }
+  return acc;
+}
+
+/** a + v, for a small non-negative addend. */
+Big addSmall(Big a, i32 v) { return add(a, Big.fromU64(v as! u64)); }
+
+/** Big-endian bytes of `a`, left-padded to `len`. Traps if it does not fit. */
+export u8[] toBytes(Big a, i32 len) {
+  u8[] out = u8[len]();
+  Big cur = a;
+  Big base = Big.fromU64(256);
+  for (i32 i = len - 1; i >= 0; i--) {
+    DivMod d = divmod(cur, base);
+    out[i] = smallValue(d.r);
+    cur = d.q;
+  }
+  if (!isZero(cur)) { trap; }   // the value needed more than `len` bytes
+  return out;
+}
+
+/** The value of a Big known to be below 256. */
+i32 smallValue(Big a) {
+  if (isZero(a)) { return 0; }
+  return (a.limbs[0] & 255) as@ i32;
+}
+
+/** Bit `i` of a non-negative Big, counting from the least significant. */
+i32 bitAt(Big a, i32 i) {
+  i32 limb = i / 32;
+  if (limb >= a.n) { return 0; }
+  return ((a.limbs[limb] >> ((i % 32) as@ u32)) & 1) as@ i32;
+}
+
+/**
+ * base^exp mod m, by square-and-multiply over the exponent's bits.
+ *
+ * The exponent is public — it is part of the public key — so branching on its bits leaks
+ * nothing. That is the one place in this package where the non-constant-time caveat does
+ * not apply, and it is worth saying because everywhere else it does.
+ */
+export Big modPow(Big base, Big exp, Big m) {
+  Big result = Big.fromU64(1);
+  Big b = divmod(base, m).r;
+  i32 bits = bitLen(exp);
+  for (i32 i = bits - 1; i >= 0; i--) {
+    result = divmod(mul(result, result), m).r;
+    if (bitAt(exp, i) == 1) {
+      result = divmod(mul(result, b), m).r;
+    }
+  }
+  return result;
+}
+
+/**
+ * The DigestInfo prefix PKCS#1 v1.5 puts in front of a hash.
+ *
+ * A fixed DER header naming the hash algorithm. It is fixed per algorithm, so it is
+ * written out rather than encoded — and it has to be compared, not parsed: a verifier
+ * that parses the DER here rather than matching bytes accepts alternative encodings of
+ * the same structure, which is the Bleichenbacher '06 signature forgery.
+ */
+u8[] digestInfoPrefix(i32 hashLen) {
+  if (hashLen == 32) {
+    return u8[](0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20);
+  }
+  if (hashLen == 48) {
+    return u8[](0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30);
+  }
+  if (hashLen == 64) {
+    return u8[](0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65,
+                0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40);
+  }
+  trap;
+}
+
+u8[] digest(u8[] msg, i32 hashLen) {
+  if (hashLen == 32) { return sha256(msg); }
+  if (hashLen == 48) { return sha384(msg); }
+  if (hashLen == 64) { return sha512(msg); }
+  trap;
+}
+
+/**
+ * Verify an RSASSA-PKCS1-v1_5 signature.
+ *
+ * The recovered block must be exactly
+ *
+ *   0x00 || 0x01 || 0xFF...FF || 0x00 || DigestInfo || Hash
+ *
+ * with at least eight 0xFF bytes. Every byte is checked. The historical forgeries here
+ * all come from verifiers that searched for the structure instead of requiring it —
+ * accepting trailing garbage, or a short padding run, turns a signature check into a
+ * pattern match that an attacker can satisfy without the private key.
+ */
+export bool rsaVerifyPkcs1(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen) {
+  if (sig.len() != n.len()) { return false; }
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return false; }
+  Big s = fromBytes(sig);
+  if (cmp(s, modulus) >= 0) { return false; }
+
+  Big m = modPow(s, fromBytes(e), modulus);
+  u8[] em = toBytes(m, n.len());
+
+  u8[] prefix = digestInfoPrefix(hashLen);
+  u8[] h = digest(msg, hashLen);
+  i32 tLen = prefix.len() + hashLen;
+  // At least eight padding bytes, plus the two leading bytes and the separator.
+  if (n.len() < tLen + 11) { return false; }
+
+  i32 diff = 0;
+  diff = diff | (em[0] ^ 0x00);
+  diff = diff | (em[1] ^ 0x01);
+  i32 padEnd = n.len() - tLen - 1;
+  for (i32 i = 2; i < padEnd; i++) { diff = diff | (em[i] ^ 0xFF); }
+  diff = diff | (em[padEnd] ^ 0x00);
+  for (i32 i = 0; i < prefix.len(); i++) { diff = diff | (em[padEnd + 1 + i] ^ prefix[i]); }
+  for (i32 i = 0; i < hashLen; i++) { diff = diff | (em[padEnd + 1 + prefix.len() + i] ^ h[i]); }
+  return diff == 0;
+}
+
+/**
+ * Recover the payload from a PKCS#1 v1.5 signature block, or an empty array if it is
+ * malformed.
+ *
+ *   0x00 || 0x01 || 0xFF...FF || 0x00 || payload
+ *
+ * `rsaVerifyPkcs1` above is the right function for almost everything, because almost
+ * everything puts a DER DigestInfo in the payload and comparing against a fixed prefix is
+ * what stops Bleichenbacher '06. This is for the protocols that do not — Tor signs a bare
+ * digest with no DigestInfo at all, so there is nothing to match and the caller has to
+ * compare the recovered bytes itself.
+ *
+ * That makes this the more dangerous of the two, and the danger is entirely in what the
+ * caller does next: it must compare the whole payload against a value of known length, not
+ * search within it. Returning the payload rather than a boolean is deliberate — a function
+ * that took an expected value and returned a boolean would look interchangeable with
+ * `rsaVerifyPkcs1`, and it is not.
+ *
+ * The padding itself is still checked strictly: at least eight 0xFF bytes, no shortcuts,
+ * every byte required rather than sought.
+ */
+export u8[] rsaRecoverPkcs1(u8[] n, u8[] e, u8[] sig) {
+  if (sig.len() != n.len()) { return u8[0](); }
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return u8[0](); }
+  Big s = fromBytes(sig);
+  if (cmp(s, modulus) >= 0) { return u8[0](); }
+
+  u8[] em = toBytes(modPow(s, fromBytes(e), modulus), n.len());
+  if (em[0] != 0x00 || em[1] != 0x01) { return u8[0](); }
+
+  // Walk the 0xFF run to its terminator. Anything other than 0xFF or the single 0x00 that
+  // ends it is malformed, so the loop rejects rather than stopping early and hoping.
+  i32 at = 2;
+  while (at < em.len() && em[at] == 0xFF) { at++; }
+  if (at >= em.len()) { return u8[0](); }
+  if (em[at] != 0x00) { return u8[0](); }
+  if (at - 2 < 8) { return u8[0](); }
+  at++;
+
+  u8[] out = u8[em.len() - at]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = em[at + i]; }
+  return out;
+}
+
+/**
+ * MGF1, the mask generation function PSS uses.
+ *
+ * A counter-mode hash: H(seed || 0), H(seed || 1), ... truncated to the length wanted.
+ */
+u8[] mgf1(u8[] seed, i32 length, i32 hashLen) {
+  u8[] out = u8[length]();
+  i32 at = 0;
+  i32 counter = 0;
+  while (at < length) {
+    u8[] input = u8[seed.len() + 4]();
+    for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
+    input[seed.len()] = (counter >> 24) & 0xFF;
+    input[seed.len() + 1] = (counter >> 16) & 0xFF;
+    input[seed.len() + 2] = (counter >> 8) & 0xFF;
+    input[seed.len() + 3] = counter & 0xFF;
+    u8[] block = digest(input, hashLen);
+    for (i32 i = 0; i < hashLen && at < length; i++) {
+      out[at] = block[i];
+      at++;
+    }
+    counter++;
+  }
+  return out;
+}
+
+/**
+ * Verify an RSASSA-PSS signature, RFC 8017 §9.1.2.
+ *
+ * PSS is what TLS 1.3 requires in CertificateVerify. The structure is inverted relative
+ * to PKCS#1: rather than a fixed block to compare, the signature carries a masked salt
+ * that has to be unmasked and then used to recompute the hash. So this cannot be one
+ * byte comparison — it is a sequence of checks, and each is load-bearing.
+ *
+ * `saltLen` is the salt length the signer used, which for TLS is always the hash length.
+ */
+export bool rsaVerifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 saltLen) {
+  if (sig.len() != n.len()) { return false; }
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return false; }
+  Big s = fromBytes(sig);
+  if (cmp(s, modulus) >= 0) { return false; }
+
+  i32 emBits = bitLen(modulus) - 1;
+  i32 emLen = (emBits + 7) / 8;
+  if (emLen < hashLen + saltLen + 2) { return false; }
+
+  Big m = modPow(s, fromBytes(e), modulus);
+  u8[] em = toBytes(m, emLen);
+
+  if (em[emLen - 1] != 0xBC) { return false; }
+
+  i32 dbLen = emLen - hashLen - 1;
+  u8[] maskedDb = u8[dbLen]();
+  for (i32 i = 0; i < dbLen; i++) { maskedDb[i] = em[i]; }
+  u8[] hSeed = u8[hashLen]();
+  for (i32 i = 0; i < hashLen; i++) { hSeed[i] = em[dbLen + i]; }
+
+  // The unused leading bits of the first byte must be zero. Skipping this lets a
+  // signature be malleable in those bits.
+  i32 unusedBits = 8 * emLen - emBits;
+  if (unusedBits > 0 && (maskedDb[0] >> (8 - unusedBits)) != 0) { return false; }
+
+  u8[] dbMask = mgf1(hSeed, dbLen, hashLen);
+  u8[] db = u8[dbLen]();
+  for (i32 i = 0; i < dbLen; i++) { db[i] = maskedDb[i] ^ dbMask[i]; }
+  if (unusedBits > 0) { db[0] = db[0] & (0xFF >> unusedBits); }
+
+  // db must be zeros, then 0x01, then the salt.
+  i32 zeroEnd = dbLen - saltLen - 1;
+  i32 diff = 0;
+  for (i32 i = 0; i < zeroEnd; i++) { diff = diff | db[i]; }
+  diff = diff | (db[zeroEnd] ^ 0x01);
+  if (diff != 0) { return false; }
+
+  u8[] salt = u8[saltLen]();
+  for (i32 i = 0; i < saltLen; i++) { salt[i] = db[zeroEnd + 1 + i]; }
+
+  // H' = Hash(00 00 00 00 00 00 00 00 || mHash || salt), and the eight zero bytes are
+  // not decoration: they are what stops a PSS signature being reinterpreted as a
+  // signature over a different structure.
+  u8[] mHash = digest(msg, hashLen);
+  u8[] mPrime = u8[8 + hashLen + saltLen]();
+  for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
+  for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
+  u8[] hPrime = digest(mPrime, hashLen);
+
+  i32 diff2 = 0;
+  for (i32 i = 0; i < hashLen; i++) { diff2 = diff2 | (hPrime[i] ^ hSeed[i]); }
+  return diff2 == 0;
+}
+
+// ── Signing ───────────────────────────────────────────────────────────────────
+//
+// The header of this file used to say "verification only", with the reason: a private-key RSA in a
+// language with no constant-time story is a worse idea than the rest of this package already is.
+// That reason has not gone away, and the functions below do not answer it. They exist because
+// `design/0002` needs to *be* Tor infrastructure rather than talk to it — a relay signs its identity
+// crosscert and a directory authority signs a consensus, both with RSA-1024, and neither is
+// negotiable by us because the other end checks them.
+//
+// ## What the exposure actually is
+//
+// `modPowSecret` below equalises the *operation count*: it multiplies on every bit rather than only
+// on the set ones, so the number of big-integer operations no longer reveals the exponent's Hamming
+// weight. That removes the textbook square-and-multiply leak and it is the cheap, real improvement.
+//
+// It is **not constant time**, and the gap is worth naming precisely rather than hedging about:
+// `bignum`'s `mul` and `divmod` take time that depends on their operands' magnitudes, and the select
+// at the end of each round branches on a bit of the exponent. An attacker who can measure many
+// signatures on the same key can still learn from that. This is the same standing of claim as the
+// binary-GCD inversion in `packages/bls`, which is documented as unsafe for secrets and used only
+// where nothing secret is inverted.
+//
+// **So: use these with keys whose compromise does not matter.** A testnet relay's identity, a
+// throwaway authority. Not a key that protects anything, and not on a machine where somebody else is
+// timing you. If real keys ever matter here, the answer is blinding plus a Montgomery ladder plus a
+// constant-time `bignum`, which is a direction rather than a patch.
+//
+// There is no CRT. It would be roughly four times faster and needs p, q, dP, dQ and qInv threaded
+// through every caller; a testnet signs rarely, and the speed is not what is scarce. Noted as the
+// obvious optimisation if that ever stops being true.
+
+/**
+ * base^exp mod m with the operation count independent of the exponent's bits.
+ *
+ * The multiply happens on every round and its result is discarded when the bit is clear, so a
+ * 1024-bit exponent costs 1024 squarings and 1024 multiplications whatever it contains — where
+ * `modPow` costs 1024 and about 512. Twice the work, and the trade is deliberate: `modPow`'s own
+ * comment says its exponent is public and that branching on it leaks nothing, which stops being true
+ * the moment a private exponent is passed to it.
+ *
+ * `bits` is passed rather than measured, so that a `d` which happens to have a short bit length does
+ * not announce that fact by running faster. Callers pass the modulus's bit length.
+ */
+export Big modPowSecret(Big base, Big exp, Big m, i32 bits) {
+  Big result = Big.fromU64(1);
+  Big b = divmod(base, m).r;
+  for (i32 i = bits - 1; i >= 0; i--) {
+    result = divmod(mul(result, result), m).r;
+    Big multiplied = divmod(mul(result, b), m).r;
+    result = (bitAt(exp, i) == 1) ? multiplied : result;
+  }
+  return result;
+}
+
+/** `EM = 0x00 || 0x01 || 0xFF…FF || 0x00 || payload`, or empty if it will not fit. */
+u8[] padPkcs1(u8[] payload, i32 emLen) {
+  // Eight 0xFF bytes minimum, plus the two leading bytes and the separator. Below that the padding
+  // stops being padding, and PKCS#1 says so rather than leaving it to taste.
+  if (emLen < payload.len() + 11) { return u8[0](); }
+  u8[] em = u8[emLen]();
+  em[0] = 0x00;
+  em[1] = 0x01;
+  i32 padEnd = emLen - payload.len() - 1;
+  for (i32 i = 2; i < padEnd; i++) { em[i] = 0xFF; }
+  em[padEnd] = 0x00;
+  for (i32 i = 0; i < payload.len(); i++) { em[padEnd + 1 + i] = payload[i]; }
+  return em;
+}
+
+/** `s = EM^d mod n`, big-endian and left-padded to the modulus's width. Empty if `em` is empty. */
+u8[] rawSign(u8[] n, u8[] d, u8[] em) {
+  if (em.len() == 0) { return u8[0](); }
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return u8[0](); }
+  Big m = fromBytes(em);
+  if (cmp(m, modulus) >= 0) { return u8[0](); }
+  return toBytes(modPowSecret(m, fromBytes(d), modulus, bitLen(modulus)), n.len());
+}
+
+/**
+ * An RSASSA-PKCS1-v1_5 signature over `msg`, with the DER `DigestInfo` its verifier expects.
+ *
+ * The inverse of `rsaVerifyPkcs1`, and the one to reach for by default — the DigestInfo is what names
+ * the hash algorithm inside the signature, and a scheme without it cannot distinguish a SHA-256
+ * signature from a SHA-512 one over a colliding input.
+ *
+ * Empty if the key is too small for the digest plus its prefix plus eleven bytes.
+ */
+export u8[] rsaSignPkcs1(u8[] n, u8[] d, u8[] msg, i32 hashLen) {
+  u8[] prefix = digestInfoPrefix(hashLen);
+  u8[] h = digest(msg, hashLen);
+  u8[] t = u8[prefix.len() + hashLen]();
+  for (i32 i = 0; i < prefix.len(); i++) { t[i] = prefix[i]; }
+  for (i32 i = 0; i < hashLen; i++) { t[prefix.len() + i] = h[i]; }
+  return rawSign(n, d, padPkcs1(t, n.len()));
+}
+
+/**
+ * A PKCS#1 v1.5 signature over `payload` **with no DigestInfo** — the inverse of `rsaRecoverPkcs1`.
+ *
+ * For the protocols that sign a bare digest, which is what Tor does throughout: a router descriptor's
+ * signature, a consensus signature and an RSA crosscert are all a raw SHA-1 or SHA-256 digest inside
+ * PKCS#1 padding with nothing naming the algorithm. `rsaRecoverPkcs1` exists on the verifying side for
+ * the same reason and says the same thing about the danger.
+ *
+ * The danger here is the mirror of the one there. Because nothing in the block says what was hashed,
+ * a caller that signs one kind of digest with a key used for another kind has produced a signature
+ * that is valid for both. Whatever domain separation exists has to come from the caller.
+ */
+export u8[] rsaSignRawPkcs1(u8[] n, u8[] d, u8[] payload) {
+  return rawSign(n, d, padPkcs1(payload, n.len()));
+}
+
+/**
+ * An RSASSA-PSS signature, RFC 8017 §9.1.1 — the inverse of `rsaVerifyPss`.
+ *
+ * What TLS 1.3 requires in CertificateVerify for an RSA certificate: `rsa_pss_rsae_sha256` and its
+ * siblings are the only RSA schemes it will accept there, PKCS#1 v1.5 having been removed from 1.3
+ * for signing. So a server that presents an RSA certificate cannot complete a handshake without this.
+ *
+ * **`salt` is a parameter rather than drawn here**, for the reason every other salt and ephemeral key
+ * in this repository is: a function that reached for randomness could not be checked against a stated
+ * vector at all, and PSS is precisely the algorithm where a wrong salt still verifies — the verifier
+ * recovers whatever salt the signer used, so a signer that passed the same bytes every time would
+ * produce signatures that pass every check here and leak across signatures in a way nothing local can
+ * see. A caller draws `saltLen` fresh bytes per signature. `saltLen` is the hash length for TLS.
+ *
+ * Empty if the key is too small to hold the encoding, which is the condition RFC 8017 states as
+ * "encoding error" and is not something a caller can recover from by retrying.
+ */
+export u8[] rsaSignPss(u8[] n, u8[] d, u8[] msg, i32 hashLen, u8[] salt) {
+  Big modulus = fromBytes(n);
+  if (isZero(modulus)) { return u8[0](); }
+
+  // emBits is one *less* than the modulus bit length, so the encoded value is always numerically
+  // below the modulus without a comparison. That off-by-one is the whole reason PSS has a
+  // "clear the leading bits" step at the end.
+  i32 emBits = bitLen(modulus) - 1;
+  i32 emLen = (emBits + 7) / 8;
+  i32 saltLen = salt.len();
+  if (emLen < hashLen + saltLen + 2) { return u8[0](); }
+
+  // M' = eight zero bytes || mHash || salt. The zeros are not padding: they are what stops a PSS
+  // signature being reinterpreted as a signature over some other structure that happens to start
+  // with a hash.
+  u8[] mHash = digest(msg, hashLen);
+  u8[] mPrime = u8[8 + hashLen + saltLen]();
+  for (i32 i = 0; i < hashLen; i++) { mPrime[8 + i] = mHash[i]; }
+  for (i32 i = 0; i < saltLen; i++) { mPrime[8 + hashLen + i] = salt[i]; }
+  u8[] h = digest(mPrime, hashLen);
+
+  // DB = zeros || 0x01 || salt, masked by MGF1 over H.
+  i32 dbLen = emLen - hashLen - 1;
+  u8[] db = u8[dbLen]();
+  db[dbLen - saltLen - 1] = 0x01;
+  for (i32 i = 0; i < saltLen; i++) { db[dbLen - saltLen + i] = salt[i]; }
+  u8[] dbMask = mgf1(h, dbLen, hashLen);
+
+  u8[] em = u8[emLen]();
+  for (i32 i = 0; i < dbLen; i++) { em[i] = db[i] ^ dbMask[i]; }
+  for (i32 i = 0; i < hashLen; i++) { em[dbLen + i] = h[i]; }
+  em[emLen - 1] = 0xBC;
+
+  // Clear the bits the modulus does not have room for. Without this the encoded integer can exceed
+  // the modulus, and `rawSign` would refuse the signature rather than produce a wrong one — which is
+  // the good failure, but it would happen for about half of all keys.
+  i32 unusedBits = 8 * emLen - emBits;
+  if (unusedBits > 0) { em[0] = em[0] & (0xFF >> unusedBits); }
+
+  // A modulus whose top byte is zero makes emLen one short of the modulus length; `rawSign` wants a
+  // block it can turn into an integer, and a leading zero is what an integer does not mind.
+  if (emLen < n.len()) {
+    u8[] padded = u8[n.len()]();
+    for (i32 i = 0; i < emLen; i++) { padded[n.len() - emLen + i] = em[i]; }
+    return rawSign(n, d, padded);
+  }
+  return rawSign(n, d, em);
+}

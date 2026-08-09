@@ -1,0 +1,333 @@
+// Serving the directory: the HTTP side of being an authority.
+//
+// Routing only — no sockets. A request target goes in, a `Response` comes out, which is what makes the
+// awkward parts of the protocol testable without a client attached.
+//
+// ## The `.z` a client appends is a request, not a filename
+//
+// A bootstrapping tor builds
+//
+//     /tor/status-vote/current/consensus[-<flavour>]/<fp>+<fp>+....z
+//
+// and the `.z` asks for a zlib-compressed body. The suffix has to be stripped before the path is
+// matched or every request 404s. We answer **uncompressed**: tor's client guesses the encoding from the
+// body (`detect_compression_method`) and accepts an identity-encoded directory document, complaining in
+// its log and carrying on. `packages/gzip` is here if that complaint ever needs to stop.
+//
+// ## The fingerprint list is a filter, and we are one authority
+//
+// Those `<fp>+<fp>` digests name the authorities whose signatures the client already trusts. A real
+// cache uses them to decide whether the consensus it holds is worth sending. With one authority the
+// answer is always the same, so they are parsed and ignored — deliberately, and said here rather than
+// left looking like an oversight, because a multi-authority network would have to honour them.
+//
+// And when that day comes: **they arrive abbreviated.** An observed request from tor 0.4.7.13 was
+//
+//     /tor/status-vote/current/consensus/F4748D.z
+//
+// for an authority whose v3 identity digest is F4748D52B8375DB5B1E705F3DBEC2814CDAEC884 — six hex
+// characters, not forty. Code that honours the list by comparing whole digests would match nothing.
+// `/tor/keys/fp/` is different: tor sends the full forty there, which is why `mentions` compares
+// full-length and works today.
+
+import { Response, write } from "../../http/src/response.wac";
+import { decode, digitValue, encodeUpper } from "../../codec/src/hex.wac";
+import { b64Unpadded } from "./routerdesc.wac";
+import { clamped, slice } from "../../bytes/src/slice.wac";
+
+/** The documents an authority can hand out. Empty means "not produced", which answers 404. */
+export struct DirDocuments {
+  u8[] consensus;              // the ns-flavoured consensus
+  u8[] consensusMicrodesc;     // the microdesc flavour, if one is produced
+  u8[] certificate;            // this authority's key certificate
+  u8[] descriptors;            // every descriptor this authority holds, concatenated
+  u8[][] descriptorDigests;    // the digest an `r` line carries, one per descriptor
+  u8[] fingerprint;            // 20 bytes: this authority's identity digest
+  u8[] microdescriptors;       // every microdescriptor, concatenated, if any
+  u8[][] microdescDigests;     // the 32-byte digest an `m` line carries, one per microdescriptor
+  u8[][] hsDescriptors;        // onion service descriptors uploaded here, one per entry
+  u8[][] hsBlindedKeys;        // the 32-byte blinded key each was filed under
+}
+
+/** A document response, `text/plain` as tor's own cache sends these. */
+Response document(u8[] body) {
+  Response res = Response.create(200);
+  res.set("Content-Type", "text/plain");
+  return Response(200, res.headers, body);
+}
+
+Response notFound() {
+  Response res = Response.create(404);
+  res.set("Content-Type", "text/plain");
+  return Response(404, res.headers, "Not found\n".toBytes());
+}
+
+/**
+ * The response for a request target.
+ *
+ * 404 rather than 500 for a document we do not hold: to a client the two are the same event — this
+ * cache cannot serve it — and 500 would suggest retrying here rather than asking elsewhere.
+ */
+export Response dirRoute(u8[] target, DirDocuments docs) {
+  u8[] path = stripDotZ(target);
+
+  if (startsWith(path, "/tor/status-vote/current/consensus-microdesc")) {
+    return docs.consensusMicrodesc.len() == 0 ? notFound() : document(docs.consensusMicrodesc);
+  }
+  if (startsWith(path, "/tor/status-vote/current/consensus")) {
+    return docs.consensus.len() == 0 ? notFound() : document(docs.consensus);
+  }
+
+  // `/tor/keys/all` and `/tor/keys/authority` both mean "the certificates you have", and with one
+  // authority that is one certificate.
+  if (equals(path, "/tor/keys/all") || equals(path, "/tor/keys/authority")) {
+    return docs.certificate.len() == 0 ? notFound() : document(docs.certificate);
+  }
+  if (startsWith(path, "/tor/keys/fp/")) {
+    if (docs.certificate.len() == 0) { return notFound(); }
+    return mentions(rest(path, "/tor/keys/fp/"), docs.fingerprint)
+      ? document(docs.certificate) : notFound();
+  }
+
+  // `/tor/micro/d/<d1>-<d2>-...`, and the separator is a **hyphen** where every other batched path in
+  // the protocol uses `+`. The digests are base64 of SHA-256, in which `+` is a data character — so a
+  // route that split on `+` here would cut digests in half. Same batching, different delimiter, for a
+  // reason rather than by accident.
+  if (startsWith(path, "/tor/micro/d/")) {
+    if (docs.microdescriptors.len() == 0) { return notFound(); }
+    u8[] asked = rest(path, "/tor/micro/d/");
+    for (i32 i = 0; i < docs.microdescDigests.len(); i++) {
+      if (mentionsBase64(asked, docs.microdescDigests[i])) { return document(docs.microdescriptors); }
+    }
+    return notFound();
+  }
+
+  // `/tor/hs/3/<z>` — one descriptor, by the blinded key it was filed under. Unlike the directory
+  // documents above, a batch would be meaningless: two descriptors concatenated is not a descriptor,
+  // and a client asks for exactly the one service it is trying to reach.
+  if (startsWith(path, "/tor/hs/3/")) {
+    u8[] asked = rest(path, "/tor/hs/3/");
+    for (i32 i = 0; i < docs.hsBlindedKeys.len(); i++) {
+      if (equalBytes(asked, b64Unpadded(docs.hsBlindedKeys[i]).toBytes())) {
+        return document(docs.hsDescriptors[i]);
+      }
+    }
+    return notFound();
+  }
+
+  if (equals(path, "/tor/server/authority") || equals(path, "/tor/server/all")) {
+    return docs.descriptors.len() == 0 ? notFound() : document(docs.descriptors);
+  }
+  if (startsWith(path, "/tor/server/d/")) {
+    // A client asks for several digests at once — `/tor/server/d/<d1>+<d2>` — and every descriptor we
+    // hold goes back if any of them is named. Sending the whole set where a subset was asked for is
+    // what tor's own cache does: a descriptor is public, and splitting the response by digest would
+    // mean parsing our own documents to reassemble them.
+    if (docs.descriptors.len() == 0) { return notFound(); }
+    u8[] asked = rest(path, "/tor/server/d/");
+    for (i32 i = 0; i < docs.descriptorDigests.len(); i++) {
+      if (mentions(asked, docs.descriptorDigests[i])) { return document(docs.descriptors); }
+    }
+    return notFound();
+  }
+
+  return notFound();
+}
+
+/** The response bytes for a GET, framing headers included. */
+export u8[] dirResponse(u8[] target, DirDocuments docs) {
+  return write(dirRoute(target, docs), "GET".toBytes(), false);
+}
+
+// ── Publication ───────────────────────────────────────────────────────────────
+//
+// A service POSTs its descriptor rather than an authority collecting it, and the request is a
+// different shape from everything above: a body, and a target with no key in it.
+//
+// The version is parsed out of the *middle* of the path rather than matched whole, which is worth
+// following exactly, because `/tor/hs/3/publish` and `/tor/hs/3/<z>` differ only after that point and
+// one is a POST target while the other is a GET target. tor's `parse_hs_version_from_post` takes the
+// prefix `/tor/hs/`, reads a number, and then requires the remainder to start with `/publish` — so
+// `/tor/hs/003/publish` is a v3 publish and `/tor/hs/3publish` is not a publish at all. Matching the
+// literal string instead would agree on every request tor sends today and disagree on the first one
+// it does not.
+
+/**
+ * The onion service version this target publishes, or -1 if it is not a publish target at all.
+ *
+ * Mirrors `parse_hs_version_from_post` in tor's `dircache.c`, including its tolerance of leading
+ * zeros, and its refusal of a version that is not followed by `/publish`.
+ */
+export i32 hsPublishVersion(u8[] target) {
+  if (!startsWith(target, "/tor/hs/")) { return -1; }
+  i32 i = "/tor/hs/".toBytes().len();
+  i32 start = i;
+  i32 version = 0;
+  while (i < target.len() && target[i] >= '0' && target[i] <= '9') {
+    version = version * 10 + (target[i] - '0');
+    if (version > 65535) { return -1; }   // a version this large is a malformed request, not a v65536
+    i++;
+  }
+  if (i == start) { return -1; }          // `tor_parse_long` fails when there is no number at all
+  if (!startsWith(rest(target, sliceString(target, 0, i)), "/publish")) { return -1; }
+  return version;
+}
+
+/**
+ * tor's two answers to a publish, and its status codes.
+ *
+ * 400 rather than 404 for a descriptor an HSDir will not have: the request reached the right place
+ * and said something wrong, and a service that got 404 would go looking for another directory when
+ * the problem is its own document. The reason phrases are tor's, though nothing reads them — its
+ * uploader matches on the status alone.
+ *
+ * We answer HTTP/1.1 where tor's cache answers 1.0. tor's response parser reads `HTTP/1.%d` and does
+ * not care which, and every other route here answers 1.1 already; one route disagreeing would be the
+ * surprising thing.
+ */
+export Response hsPublishResponse(bool accepted) {
+  i32 status = accepted ? 200 : 400;
+  Response res = Response.create(status);
+  res.set("Content-Type", "text/plain");
+  return Response(status, res.headers,
+                  (accepted ? "HS descriptor stored successfully.\n"
+                            : "Invalid HS descriptor. Rejected.\n").toBytes());
+}
+
+/** The response bytes for a publish, framing headers included. */
+export u8[] hsPublishResponseBytes(bool accepted) {
+  return write(hsPublishResponse(accepted), "POST".toBytes(), false);
+}
+
+/** The first `n` bytes of `s`, as a string, for prefix arithmetic on a target. */
+string sliceString(u8[] s, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = from; i < to; i++) { out[i - from] = s[i]; }
+  return string.fromBytes(out);
+}
+
+bool equalBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+/**
+ * The target without a trailing `.z`.
+ *
+ * Only the suffix, not every `.z` in the path: a fingerprint list cannot contain one, but stripping by
+ * search rather than by position is the kind of shortcut that breaks the first time a path does.
+ */
+export u8[] stripDotZ(u8[] target) {
+  i32 n = target.len();
+  if (n >= 2 && target[n - 2] == 46 && target[n - 1] == 122) {
+    u8[] out = u8[n - 2]();
+    for (i32 i = 0; i < n - 2; i++) { out[i] = target[i]; }
+    return out;
+  }
+  return target;
+}
+
+/**
+ * Whether a `-`-separated list of **base64** digests names `digest`.
+ *
+ * Case-sensitive, unlike the hex form: base64 distinguishes `a` from `A`, so folding case here would
+ * make two different digests compare equal. The comparison is exact for the same reason the separator
+ * is a hyphen — everything about this path is base64's constraints rather than the hex path's habits.
+ */
+bool mentionsBase64(u8[] list, u8[] digest) {
+  if (digest.len() == 0) { return false; }
+  u8[] want = b64Unpadded(digest).toBytes();
+  i32 at = 0;
+  while (at <= list.len()) {
+    i32 end = at;
+    while (end < list.len() && list[end] != 45) { end = end + 1; }   // '-'
+    if (end - at == want.len() && exactly(list, at, want)) { return true; }
+    if (end >= list.len()) { return false; }
+    at = end + 1;
+  }
+  return false;
+}
+
+bool exactly(u8[] list, i32 at, u8[] want) {
+  for (i32 i = 0; i < want.len(); i++) { if (list[at + i] != want[i]) { return false; } }
+  return true;
+}
+
+/** Whether a `+`-separated list of hex digests names `digest`, case-insensitively. */
+bool mentions(u8[] list, u8[] digest) {
+  if (digest.len() == 0) { return false; }
+  u8[] want = encodeUpper(digest);
+  i32 at = 0;
+  while (at <= list.len()) {
+    i32 end = at;
+    while (end < list.len() && list[end] != 43) { end = end + 1; }   // '+'
+    if (end - at == want.len() && sameFold(list, at, want)) { return true; }
+    if (end >= list.len()) { return false; }
+    at = end + 1;
+  }
+  return false;
+}
+
+/** Compare `want` against `list[at..]`, upper-casing the list's letters as it goes. */
+bool sameFold(u8[] list, i32 at, u8[] want) {
+  for (i32 i = 0; i < want.len(); i++) {
+    i32 c = list[at + i];
+    if (c >= 97 && c <= 122) { c = c - 32; }
+    if (c != want[i]) { return false; }
+  }
+  return true;
+}
+
+bool startsWith(u8[] s, string prefix) {
+  u8[] p = prefix.toBytes();
+  if (s.len() < p.len()) { return false; }
+  for (i32 i = 0; i < p.len(); i++) { if (s[i] != p[i]) { return false; } }
+  return true;
+}
+
+bool equals(u8[] s, string text) {
+  u8[] t = text.toBytes();
+  if (s.len() != t.len()) { return false; }
+  for (i32 i = 0; i < t.len(); i++) { if (s[i] != t[i]) { return false; } }
+  return true;
+}
+
+/** What follows `prefix` in `s`. */
+u8[] rest(u8[] s, string prefix) {
+  i32 from = prefix.toBytes().len();
+  u8[] out = u8[s.len() - from]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
+  return out;
+}
+
+/** The 20-byte identity digest on the consensus's first `dir-source` line, or empty. */
+export u8[] dirSourceFingerprint(u8[] consensus) {
+  u8[] keyword = "dir-source ".toBytes();
+  for (i32 i = 0; i + keyword.len() <= consensus.len(); i++) {
+    if (i != 0 && consensus[i - 1] != 10) { continue; }
+    bool hit = true;
+    for (i32 j = 0; j < keyword.len(); j++) {
+      if (consensus[i + j] != keyword[j]) { hit = false; break; }
+    }
+    if (!hit) { continue; }
+    // `dir-source <nickname> <fingerprint> ...` — the fingerprint is the second field.
+    i32 at = i + keyword.len();
+    while (at < consensus.len() && consensus[at] != 32 && consensus[at] != 10) { at = at + 1; }
+    at = at + 1;
+    i32 end = at;
+    while (end < consensus.len() && consensus[end] != 32 && consensus[end] != 10) {
+      end = end + 1;
+    }
+    // **`clamped`, not `slice`.** These offsets come from scanning a document handed to this relay by
+    // somebody else, and a `dir-source` line truncated at the end of the buffer leaves `at` one past
+    // it — which the private copy answered with empty and a trapping slice would answer by taking the
+    // relay down. The decode is `packages/codec`'s and refuses anything that is not hex.
+    u8[]? raw = decode(clamped(consensus, at, end));
+    return raw is null ? u8[0]() : raw!;
+  }
+  return u8[0]();
+}
+
+
+

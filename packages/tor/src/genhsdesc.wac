@@ -1,0 +1,280 @@
+// Write an onion service descriptor to a file, so tor's own decoder can judge it.
+//
+//   deno task app:build packages/tor/src/genhsdesc.wac --allow-write -o /tmp/genhsdesc.ts
+//   deno run --allow-write /tmp/genhsdesc.ts /tmp/desc.txt /tmp/vector.json
+//   <hsdesc-probe built against libtor.a> plaintext < /tmp/desc.txt
+//
+// The same shape as `gendesc.wac` and `genintro.wac`, for the same reason: the suite compares against
+// committed bytes rather than running tor, because a test that needs a built tor tree turns the
+// shared suite red for whoever has not got one. This is the half that regenerates them.
+//
+// **The keys are blinded, as a real service's are.** The descriptor-signing-key certificate is signed
+// with the *blinded* secret, whose scalar is derived rather than expanded from a seed, and the
+// subcredential the layers are encrypted under is derived from the identity key and that blinded key.
+// Everything is still reproducible, because the identity seed and the time period are both fixed.
+//
+// This was deliberately *not* the case at first: the descriptor was built with ordinary keypairs and
+// an arbitrary subcredential, which every oracle accepted, because nothing in a descriptor says which
+// key ought to have signed it. Blinding and the descriptor were each pinned against tor and never
+// against each other — the seam this project keeps being caught by — so they are joined here, and the
+// subcredential tor is handed is the derived one rather than a constant.
+
+import { Core, Cli, Change } from "../../platform/src/platform.wac";
+import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { encode as hexEncode } from "../../codec/src/hex.wac";
+import {
+  ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded,
+} from "../../crypto/src/ed25519.wac";
+import {
+  TIME_PERIOD_LENGTH_DEFAULT, blindedSecretKey, blindingFactor, subcredential, timePeriodNum,
+} from "./hsblind.wac";
+import { signedSpanOf } from "./hsdescgen.wac";
+import { BUILD_OK, Built, IntroPoint, buildDescriptor } from "./hsdescbuild.wac";
+import { ed25519FromCurve25519Public } from "../../crypto/src/ed25519.wac";
+import { x25519Base } from "../../crypto/src/x25519.wac";
+
+/** Two hours, which is what a real service asks for. */
+const i32 LIFETIME_MINUTES = 180;
+
+/**
+ * The revision counter, and the one after it.
+ *
+ * Two documents are emitted for the same service, differing only in this number. That is what makes
+ * the *sequence* rules testable: an HSDir replaces a descriptor only when the new one's revision
+ * counter is strictly greater, so re-uploading an unchanged descriptor is refused, and a document
+ * that arrives out of order must not overwrite a newer one. A single document cannot show any of
+ * that, and a second one edited by hand would not verify — the revision line is inside the span the
+ * signature covers.
+ */
+const i64 REVISION = 42;
+const i64 REVISION_NEXT = 43;
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 2) {
+    core.warn("usage: genhsdesc <descriptor-out> <vector-out>");
+    return 1;
+  }
+  string descOut = string.fromBytes(cli.arg(0).wait());
+  string vectorOut = string.fromBytes(cli.arg(1).wait());
+
+  // The service's identity: the key an onion address *is*. Everything else is derived from it.
+  u8[] identitySeed = seedFor(21);
+  u8[] identityPublic = ed25519PublicKey(identitySeed);
+
+  // The time period, fixed so the vector is reproducible. A live service uses the current one and
+  // republishes when it rolls over; the number is what makes a descriptor findable, since the hash
+  // ring is keyed on the blinded key it produces.
+  i64 periodLength = TIME_PERIOD_LENGTH_DEFAULT;
+  i64 periodNum = timePeriodNum(1785931200, periodLength, 0);
+  u8[] factor = blindingFactor(identityPublic, periodNum, periodLength);
+  u8[] blindExpanded = blindedSecretKey(ed25519ExpandedSecret(identitySeed), factor);
+
+  u8[] signSeed = seedFor(22);
+  u8[] signPublic = ed25519PublicKey(signSeed);
+
+  // **Hours since the epoch, not a duration.** Passing a small number here is passing an expiry in
+  // 1970, and tor's decoder rejects the descriptor without saying which of a dozen checks failed —
+  // which is exactly what happened on the first attempt. `gendesc.wac` computes it the same way.
+  //
+  // A committed vector therefore has an expiry baked into it. That is a real cost and the alternative
+  // is worse: a generator that read the clock could not be pinned against committed bytes at all. The
+  // window is a year, and `tools/hsdesc-probe.c` re-checks whenever the fixture is regenerated.
+  i64 published = 1785931200;                       // 2026-08-05 12:00:00 UTC, as gendesc uses
+  i64 expiryHours = (published / 3600) + 8760;      // a year on
+
+  // The introduction point. The link specifiers are the shape `hsintro.wac` validates — a count byte
+  // then one IPv4 entry for 127.0.0.1:9001.
+  u8[] ls = u8[9]();
+  ls[0] = 1;                                        // NSPEC
+  ls[1] = 0;                                        // LS_IPV4
+  ls[2] = 6;                                        // length
+  ls[3] = 127; ls[4] = 0; ls[5] = 0; ls[6] = 1;     // 127.0.0.1
+  ls[7] = 0x23; ls[8] = 0x29;                       // 9001
+
+  u8[] ipNtor = x25519Base(clamped(seedFor(25)));
+  u8[] ipAuthSeed = seedFor(26);
+  u8[] ipEncSecret = clamped(seedFor(27));
+  u8[] ipEnc = x25519Base(ipEncSecret);
+  u8[]? ipEncEd = ed25519FromCurve25519Public(ipEnc, 0);
+  if (ipEncEd is null) {
+    core.warn("genhsdesc: the encryption key does not convert to ed25519");
+    return 1;
+  }
+
+  IntroPoint[] intros = IntroPoint[1](fill: IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
+
+  // Three more introduction points, so a descriptor can be built with more than one. Each has its
+  // own keys and its own port, because two introduction points sharing a key would be one
+  // introduction point written twice and would not exercise the section loop at all.
+  IntroPoint[] many = IntroPoint[3](fill: IntroPoint(ls, ipNtor, ipAuthSeed, ipEncSecret));
+  for (i32 mi = 0; mi < 3; mi++) {
+    u8[] mls = u8[9]();
+    mls[0] = 1; mls[1] = 0; mls[2] = 6;
+    mls[3] = 127; mls[4] = 0; mls[5] = 0; mls[6] = 1;
+    mls[7] = 0x23; mls[8] = (0x29 + mi) & 0xFF;
+    many[mi] = IntroPoint(mls, x25519Base(clamped(seedFor(40 + mi))), seedFor(50 + mi),
+                          clamped(seedFor(60 + mi)));
+  }
+
+  // Sixteen decoy client-auth entries, which a descriptor carries whether or not client
+  // authorisation is in use — so that using it is not visible from the outside.
+  u8[][] clients = u8[][16]();
+  for (i32 ci = 0; ci < 16; ci++) {
+    u8[] one = u8[40]();
+    for (i32 i = 0; i < 40; i++) { one[i] = (ci * 97 + i * 11 + 3) & 0xFF; }
+    clients[ci] = one;
+  }
+  u8[] ephemeral = seedFor(23);
+  u8[] innerSalt = u8[16]();
+  for (i32 i = 0; i < 16; i++) { innerSalt[i] = (i * 29 + 5) & 0xFF; }
+  u8[] salt = u8[16]();
+  for (i32 i = 0; i < 16; i++) { salt[i] = (i * 23 + 11) & 0xFF; }
+
+  Built b = buildDescriptor(identitySeed, signSeed, intros, periodNum, periodLength, REVISION,
+                            LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
+  // The same service, the same keys, the same introduction point — one revision later. Everything
+  // that differs between these two documents follows from the counter, including both ciphertexts,
+  // because the revision is part of the key derivation for each layer as well as a line in the text.
+  Built bn = buildDescriptor(identitySeed, signSeed, intros, periodNum, periodLength, REVISION_NEXT,
+                             LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
+  if (b.error != BUILD_OK || bn.error != BUILD_OK) {
+    core.warn("genhsdesc: could not build the descriptor, error " + itoa(b.error) + "/" +
+              itoa(bn.error));
+    return 1;
+  }
+  u8[] doc = b.document;
+  u8[] docNext = bn.document;
+  u8[] blindPublic = b.blindedKey;
+  u8[] subcred = b.subcredential;
+  u8[] cert = b.certificate;
+  u8[] inner = b.inner;
+  u8[] superencrypted = b.superencrypted;
+  u8[] authCert = b.introAuthCerts[0];
+  u8[] encCert = b.introEncCerts[0];
+
+  Change c = cli.writeFile(descOut, doc).wait();
+  if (!c.ok()) {
+    core.warn("genhsdesc: " + descOut + ": " + c.message);
+    return 1;
+  }
+
+  Change cn = cli.writeFile(descOut + ".next", docNext).wait();
+  if (!cn.ok()) {
+    core.warn("genhsdesc: " + descOut + ".next: " + cn.message);
+    return 1;
+  }
+
+  // Variants, so the builder is exercised on inputs the committed fixture cannot reach. Each one
+  // changes exactly one thing and is checked by tor in `tools/capture-hspub.py`: two and three
+  // introduction points, and the same service one time period later — which must be filed under a
+  // different name, since the name *is* the blinded key.
+  IntroPoint[] two = IntroPoint[2](fill: many[0]);
+  two[1] = many[1];
+  Built v2 = buildDescriptor(identitySeed, signSeed, two, periodNum, periodLength, REVISION,
+                             LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
+  Built v3 = buildDescriptor(identitySeed, signSeed, many, periodNum, periodLength, REVISION,
+                             LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
+  Built vp = buildDescriptor(identitySeed, signSeed, intros, periodNum + 1, periodLength, REVISION,
+                             LIFETIME_MINUTES, expiryHours, ephemeral, innerSalt, salt, clients);
+  if (v2.error != BUILD_OK || v3.error != BUILD_OK || vp.error != BUILD_OK) {
+    core.warn("genhsdesc: could not build the variants");
+    return 1;
+  }
+
+  string variants =
+    variantJson("two introduction points", 2, periodNum, v2) + ",\n" +
+    variantJson("three introduction points", 3, periodNum, v3) + ",\n" +
+    variantJson("the next time period", 1, periodNum + 1, vp);
+
+  string json = "{\n" +
+    "  \"note\": \"generated by packages/tor/src/genhsdesc.wac; the outer document is what tor's " +
+    "own hs_desc_decode_plaintext accepts — see tools/hsdesc-probe.c\",\n" +
+    "  \"identitySeed\": \"" + hex(identitySeed) + "\",\n" +
+    "  \"identityPublic\": \"" + hex(identityPublic) + "\",\n" +
+    "  \"periodNum\": " + itoa64(periodNum) + ",\n" +
+    "  \"periodLength\": " + itoa64(periodLength) + ",\n" +
+    "  \"factor\": \"" + hex(factor) + "\",\n" +
+    "  \"blindExpanded\": \"" + hex(blindExpanded) + "\",\n" +
+    "  \"blindPublic\": \"" + hex(blindPublic) + "\",\n" +
+    "  \"signSeed\": \"" + hex(signSeed) + "\",\n" +
+    "  \"signPublic\": \"" + hex(signPublic) + "\",\n" +
+    "  \"cert\": \"" + hex(cert) + "\",\n" +
+    "  \"subcredential\": \"" + hex(subcred) + "\",\n" +
+    "  \"ephemeral\": \"" + hex(ephemeral) + "\",\n" +
+    "  \"salt\": \"" + hex(salt) + "\",\n" +
+    "  \"innerSalt\": \"" + hex(innerSalt) + "\",\n" +
+    "  \"linkSpecifiers\": \"" + hex(ls) + "\",\n" +
+    "  \"ipNtor\": \"" + hex(ipNtor) + "\",\n" +
+    "  \"ipAuthSeed\": \"" + hex(ipAuthSeed) + "\",\n" +
+    "  \"ipAuthPublic\": \"" + hex(ed25519PublicKey(ipAuthSeed)) + "\",\n" +
+    "  \"ipEnc\": \"" + hex(ipEnc) + "\",\n" +
+    "  \"ipEncEd\": \"" + hex(ipEncEd!) + "\",\n" +
+    "  \"authCert\": \"" + hex(authCert) + "\",\n" +
+    "  \"encCert\": \"" + hex(encCert) + "\",\n" +
+    "  \"innerPlainLen\": " + itoa(b.innerPlainLen) + ",\n" +
+    "  \"inner\": \"" + hex(inner) + "\",\n" +
+    "  \"middleLen\": " + itoa(b.middleLen) + ",\n" +
+    "  \"superencrypted\": \"" + hex(superencrypted) + "\",\n" +
+    "  \"lifetimeMinutes\": " + itoa(LIFETIME_MINUTES) + ",\n" +
+    "  \"revision\": 42,\n" +
+    "  \"revisionNext\": 43,\n" +
+    "  \"descriptorNext\": \"" + jsonText(docNext) + "\",\n" +
+    "  \"signedSpanLen\": " + itoa(signedSpanOf(doc).len()) + ",\n" +
+    "  \"variants\": [\n" + variants + "\n  ],\n" +
+    "  \"descriptor\": \"" + jsonText(doc) + "\"\n" +
+    "}\n";
+  Change v = cli.writeFile(vectorOut, json.toBytes()).wait();
+  if (!v.ok()) {
+    core.warn("genhsdesc: " + vectorOut + ": " + v.message);
+    return 1;
+  }
+  core.warn("genhsdesc: wrote a " + itoa(doc.len()) + "-byte descriptor to " + descOut);
+  return 0;
+}
+
+/** One variant, as an object in the vector's `variants` array. */
+string variantJson(string name, i32 introCount, i64 periodNum, Built b) {
+  return "   {\"name\": \"" + name + "\", \"introPoints\": " + itoa(introCount) +
+         ", \"periodNum\": " + itoa64(periodNum) +
+         ", \"blindedKey\": \"" + hex(b.blindedKey) + "\"" +
+         ", \"subcredential\": \"" + hex(b.subcredential) + "\"" +
+         ", \"innerPlainLen\": " + itoa(b.innerPlainLen) +
+         ", \"middleLen\": " + itoa(b.middleLen) +
+         ", \"descriptor\": \"" + jsonText(b.document) + "\"}";
+}
+
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/** A JSON string body. The document is ASCII with newlines; quote and backslash handled anyway. */
+string jsonText(u8[] body) {
+  string out = "";
+  for (i32 i = 0; i < body.len(); i++) {
+    i32 ch = body[i];
+    if (ch == 10) { out = out + "\\n"; }
+    else if (ch == 34) { out = out + "\\\""; }
+    else if (ch == 92) { out = out + "\\\\"; }
+    else {
+      u8[] one = u8[1]();
+      one[0] = ch;
+      out = out + string.fromBytes(one);
+    }
+  }
+  return out;
+}
+
+/** A curve25519 secret has to be clamped before it is used as a scalar. */
+u8[] clamped(u8[] s) {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
+  out[0] = out[0] & 248;
+  out[31] = out[31] & 127;
+  out[31] = out[31] | 64;
+  return out;
+}
+
+/** A deterministic 32-byte seed, distinct per role. The same shape `gendesc.wac` uses. */
+u8[] seedFor(i32 role) {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 7 + 3) & 0xFF; }
+  return s;
+}

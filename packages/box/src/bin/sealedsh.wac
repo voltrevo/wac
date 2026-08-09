@@ -1,0 +1,64 @@
+// A sealed shell **with the applets**: an in-memory world, and sixty commands over it.
+//
+//   deno task app:build packages/box/src/bin/sealedsh.wac -o sealedsh
+//   ./sealedsh -c 'seq 1 20 > n; sort -nr n | head -3; ls'
+//
+// `packages/sh`'s `sealed.wac` is this shell on `Fs.inMemory()` with only its own builtins; this is the
+// same idea one package up, where the commands live. Built with **no capabilities at all** — no read, no
+// write, no net — so every path a program here can name is inside the process.
+//
+// ## Why this could not exist until now
+//
+// An applet took a `Cli` and read the *host* through it, while the shell held its filesystem as a value.
+// Wiring them together would have given one session two filesystems: `ls /` listing the image and
+// `cat /etc/passwd` reading the real machine, with nothing in the output to say which (wac-mono 0109).
+// Applets take an `Fs` now, and `lib/input.wac` chooses how to read by mount — a host path still streams
+// through `openInput`, and anything else is served from the bytes the filesystem hands over.
+//
+// So this program is the proof of that change rather than a demonstration of the shell: if an applet
+// still reached the host, `cat /etc/passwd` here would print the real one, and the test says it does not.
+//
+// It is also the shape the browser terminal wants — an image, and commands over it — and the shape
+// design/0001 step 7 needs, where something boots an image and serves sessions from it.
+//
+// **`head -c 8 /dev/urandom` works here**, which it did not until `openStream` grew a byte cap. A
+// synthesised device is endless, so `Fs.readFile` refuses it by name rather than inventing a length —
+// and the reader had only a whole-file route for a non-host mount, so the refusal reached an applet
+// that wanted eight bytes. The bound is the applet's to declare and the file is the filesystem's to
+// know; `Fs.readSome` was already the route and nothing was passing the number down it.
+
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Fs, mountSystem } from "../../../fs/src/fs.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxApplet, boxNames, boxRun } from "../shrun.wac";
+import { UNKNOWN } from "../box.wac";
+
+export i32 main(Core core, Cli cli) {
+  // **This program is also its own applets**, as `bin/sh.wac` is: the shell spawns a stage by re-entering
+  // `main` with the applet's name first. Without grants nothing can actually spawn here, so it is the
+  // in-process route that runs — but the entry has to be a multi-call one either way, or a spawned
+  // `sort` would start a shell and hand it a script called `sort`.
+  i32 asApplet = boxApplet(core, cli);
+  if (asApplet != UNKNOWN) { return asApplet; }
+
+  Fs fs = Fs.inMemory(0);
+  fs.mkdir("/tmp", true);
+  // `/dev` and `/proc`, generated on read: `/dev/null`, `/dev/zero`, `/dev/urandom` and
+  // `/proc/self/cmdline`. A sealed session has a real CSPRNG this way without a grant for one.
+  Vec<string> argv = Vec.create();
+  argv.push("sealedsh");
+  for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
+  // `/bin` is `boxNames()`: the programs this build actually has, so `ls /bin` is the truth
+  // about this binary rather than a list somebody typed.
+  mountSystem(fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+
+  Shell sh = Shell.onFs(core, cli, fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  // Not spawnable: with no grants there is nothing to spawn, and claiming otherwise would make the
+  // shell try a route that cannot work before the one that can.
+  return shellMain(core, cli, sh, 0);
+}

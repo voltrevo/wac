@@ -1,0 +1,46 @@
+// The shell, with every applet in this package as a command.
+//
+//   deno task app:build packages/box/src/bin/sh.wac --allow-read --allow-write --allow-env -o wacsh
+//   ./wacsh -c 'seq 1 20 | shuf | sort -n | head -3'
+//   ./wacsh script.sh
+//
+// `packages/sh` built on its own has twelve small programs of its own and nothing else, because it
+// cannot import this package — `box` depends on `sh`, so the wiring has to come from here. This is
+// all of it: build a shell, hand it the table, run it.
+//
+// Here rather than as a `box sh` applet because `box.wac` imports every applet, and an applet that
+// wired in `boxRun` would import `box.wac` back. A `bin/` entry is imported by nothing, so the
+// cycle does not arise.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxApplet, boxNames, boxRun } from "../shrun.wac";
+import { UNKNOWN } from "../box.wac";
+
+export i32 main(Core core, Cli cli) {
+  // **This program is also its own applets.** When the shell runs `sort` as a child it spawns *this*
+  // bundle with `sort` as the first argument, so `main` has to be a multi-call entry: an applet if
+  // the name is one, a shell otherwise. Without it a spawned applet would start another shell and
+  // hand it a script file named `sort`.
+  //
+  // Ambiguity is possible in principle — `sh sort` now runs the applet rather than a script called
+  // `sort` — and is worth it: the alternative is that the shell's own programs cannot be programs.
+  // `sh ./sort` still reads the file, because a name with a slash is a path.
+  i32 asApplet = boxApplet(core, cli);
+  if (asApplet != UNKNOWN) { return asApplet; }
+
+  // **No `mountSystem` here, and that is the decision rather than an omission.** This shell is
+  // design/0001 D3a's "ordinary shell over the real filesystem": `/bin`, `/dev` and `/proc` are the
+  // machine's own, and mounting ours over them would hide a real `/bin` behind a list of sixty-three
+  // applets. `sealedsh`, `imaged` and `sshd -i` build a *system*, and they all call it.
+  Shell sh = Shell.create(core, cli);
+  sh.external = boxRun;
+  sh.externalNames = boxNames;   // so `help` lists them
+  // ...and they are applets of *this very program*, so the shell can run them as real children
+  // rather than calling them: `spawnSelf(["sort", "-n"])` re-enters `main` above, which dispatches
+  // on the first argument. Its own instance, its own grants — and in a page this is the only route
+  // to a real program at all.
+  sh.externalSpawnable = true;
+  return shellMain(core, cli, sh, 0);
+}

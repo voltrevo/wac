@@ -18,8 +18,8 @@
 // and typecheck without affecting the answer. That is deliberate: a compiler is as likely to get
 // the unexecuted branch wrong as the executed one, and validation will say so.
 
-import { wacCompile } from "../atoms/wac/wacCompile.ts";
-import { wacInstance } from "../atoms/wac/wacInstance.ts";
+import { wacCompile } from "../compiler/wacCompile.ts";
+import { wacInstance } from "../compiler/wacInstance.ts";
 
 // ── Values and types ──────────────────────────────────────────────────────────
 

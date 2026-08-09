@@ -1,0 +1,46 @@
+// The digest, then two spaces and the name — `-` for standard input, as the real one does.
+//
+// Streams, like `sha256sum`. With this there is nothing left in `box` that buffers for
+// want of an API; what still buffers does so because the job needs the whole input.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Chunk, Input, openStream, nextChunk, operandCount } from "../lib/input.wac";
+import { encode as hexencode } from "../../../codec/src/hex.wac";
+import { Sha512 } from "../../../crypto/src/sha512.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
+
+export i32 sha512sum(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // One line per file, as the real one prints — it used to hash the first operand and stop, so
+  // `sha256sum *.tar` checksummed one archive and said nothing about the others (wac-mono 0096).
+  i32 files = operandCount(a, 0);
+  i32 count = files == 0 ? 1 : files;
+  i32 status = 0;
+  for (i32 f = 0; f < count; f++) {
+    Input in = openStream(core, cli, fs, a, f, -1);
+    // An operand that will not open is reported, skipped, and the status at the end — GNU's rule, and
+    // the one `nextSpan` and `Reader` follow. Stopping meant every later file produced nothing at all.
+    if (!in.ok) { status = 1; continue; }
+    Feed fed = in.fed;
+
+    bool unread = false;
+    Sha512 h = Sha512.create();
+    while (true) {
+      Chunk got = nextChunk(core, cli, fed, a, in.label);
+      // A read that fails part way is a skip like any other, not the end of the run: the files named
+      // after it are still hashed. It used to `return`, so `sha256sum a somedir b` never reached `b`.
+      if (!got.ok) { status = 1; unread = true; break; }
+      if (!got.more) { break; }
+      u8[] chunk = got.bytes;
+      h.update(chunk);
+    }
+
+    string name = in.label == "" ? "-" : in.label;
+    core.log(string.fromBytes(hexencode(h.digest(64))) + "  " + name);
+  }
+
+  return 0;
+}

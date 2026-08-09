@@ -1,0 +1,1247 @@
+// A filesystem that belongs to the system rather than to the host.
+//
+// [design/0001](../../../design/0001-a-self-contained-system.md) step 1, filed as wac-mono 0067. Every
+// filesystem capability a program has today is the *host's*, so `packages/ssh`'s demo hands each session
+// the real disk of whatever ran the daemon and the browser terminal hands it the tab's Origin Private
+// File System. There is nothing that belongs to the system: nothing to seal a session inside, nothing to
+// persist as an image, and nothing hermetic for a test to run against.
+//
+// ## Why one type with a mount table, rather than an interface
+//
+// The obvious design is an abstract filesystem with a memory implementation and a host implementation.
+// wac will not do it: `override` is a source-level check and **dispatch is static** — a `Circle` in a
+// `Shape` variable answers `Shape.name()` — so a base-typed `Fs` would always run the base's bodies.
+// The language's own idiom for varying behaviour is a funcref plus explicit state (`Shell.external` is
+// one), and a funcref cannot capture a filesystem because there are no closures.
+//
+// So: one concrete `Fs`, holding a mount table, and the branch is written by hand. That is what the tour
+// says to do, and it turns out to be the shape the design wanted anyway — a host mount is how "translate
+// to real operations on the host" survives as a deliberate feature rather than as the default.
+//
+// ## What a path is here
+//
+// Absolute, `/`-separated, with no `.` or `..` left in it: `packages/sh`'s `resolve` already normalises
+// every path before it crosses a capability boundary, and this relies on that rather than repeating it.
+// A name is bytes — anything but `/` and NUL — because that is what a name is on the systems being
+// imitated. The one wrinkle is that names arrive here as wac strings, which are byte arrays, so nothing
+// is lost on the way in; what a *host* does with them is
+// [0065](../../../issues/open/0065-a-spawned-programs-arguments-are-not-byte-exact.md).
+
+import { Map } from "../../std/src/map.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { hashString, stringEq } from "../../std/src/hash.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
+  FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
+  Pending, Stat }
+  from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { resolvePath } from "./path.wac";
+import { PROC_RUN, Proc, Procs } from "./proc.wac";
+
+/** Where a mount's bytes actually live. */
+export enum Backing {
+  /** In this program's own memory: the default, and what a test wants. */
+  Memory,
+  /**
+   * The host, through the capabilities of whoever built this filesystem.
+   *
+   * Present so that reaching the real disk is something a caller *asks* for. A shell built with one of
+   * these at `/` behaves exactly as it did before this package existed, which is what makes the change
+   * to `packages/sh` a change of shape rather than of behaviour.
+   */
+  Host(Cli cli),
+  /**
+   * Files that do not exist until they are read — `/dev` and `/proc`.
+   *
+   * Step 6 of design/0001. Nothing is stored: `readDir` lists a fixed set of names and a read runs a
+   * generator, so `/dev/zero` costs what you ask of it rather than what it could give.
+   *
+   * It carries `randomBytes` and nothing else, because that is the only capability the set below needs
+   * and a mount that asked for a whole `Cli` could reach the disk. `Core.randomBytes` is a host function
+   * rather than a grant, so a session built with no filesystem permissions at all still has one — which
+   * is what lets `sealed` mount `/dev` without stopping being sealed.
+   */
+  Synth(fn[Pending<u8[]>(i32)] randomBytes),
+}
+
+/** One mounted filesystem, at a path. */
+export struct Mount {
+  /** Absolute, without a trailing slash. `/` is the empty string, so every path is a suffix of it. */
+  string at;
+  Backing backing;
+  /** Index into `Fs.nodes` of this mount's root. Meaningless for a host mount. */
+  i32 root;
+}
+
+/**
+ * A file or a directory.
+ *
+ * Metadata is stored beside the bytes because users are data in the image (design/0001 D5): a host's
+ * idea of who owns a file cannot survive an image that is one blob owned by whoever ran the process.
+ *
+ * `mode` and `owner` are **enforced** now — `Fs.user` says who is asking, and `may` decides. What is
+ * enforced is the permission on the file or directory being touched; **directory traversal is not**, so
+ * a private file inside a readable directory is protected and one inside an unreadable directory is
+ * protected by its own mode rather than by the path to it. That is less than POSIX and is said here
+ * rather than implied, per design/0001 D6.
+ */
+export struct Inode {
+  bool isDir;
+  /** Directory entries, name to node index. Empty for a file. */
+  Map<string, i32> entries;
+  /** File bytes. Empty for a directory. */
+  Buf data;
+  i32 mode;
+  string owner;
+  i64 mtime;
+
+  /** A copy of the bytes: a reader must not be able to write the file by holding its array. */
+  u8[] bytes(const this) { return this.data.bytes(); }
+
+  /** Record a new mode. A method because an assignment target in wac is a name, not a call's result. */
+  void setMode(this, i32 mode) { this.mode = mode; }
+
+  /** The same for the owner. */
+  void setOwner(this, string owner) { this.owner = owner; }
+
+  /** Add to the end, as a streaming write does. */
+  void append(this, u8[] data, i64 now) {
+    this.data.pushAll(data);
+    this.mtime = now;
+  }
+
+  /** Replace the contents, as a truncating write does. */
+  void replace(this, u8[] data, i64 now) {
+    this.data = Buf.create();
+    this.data.pushAll(data);
+    this.mtime = now;
+  }
+}
+
+/**
+ * A filesystem: some mounts, and the nodes of every memory mount in one pool.
+ *
+ * One pool rather than one per mount so that a node index means the same thing everywhere, which is what
+ * an image format will want to write out and what a handle table will want to point at.
+ */
+export struct Fs {
+  Vec<Mount> mounts;
+  Vec<Inode> nodes;
+  /**
+   * Who is acting: the owner of anything created, and the identity every permission check is against.
+   *
+   * `"root"` is exempt from the checks, and is what a filesystem starts as — so every caller that has
+   * not been given a user behaves exactly as it did before there were any. A session gets a real one
+   * from `/etc/passwd` (design/0001 step 4), and `packages/ssh`'s server is the first thing to set it.
+   */
+  string user;
+  /** Milliseconds, from whoever built this: wac has no clock of its own. */
+  i64 now;
+  /**
+   * What is running, which `/proc` reports — design/0001 step 3, and see `proc.wac`.
+   *
+   * Empty until somebody starts something. A filesystem cannot know its own program's arguments — argv
+   * belongs to whoever built it — so this is filled in rather than discovered, the same way `now` is.
+   *
+   * It replaced a `cmdline` string held here for `/proc/self/cmdline`. That string and a process table
+   * are the same fact written twice, and the table is the one that can also answer who the parent is
+   * and whether it is still running.
+   */
+  Procs procs;
+  /**
+   * The programs this build has, which `/bin` lists — design/0001's "a `/bin` full of programs".
+   *
+   * Handed in rather than discovered, like `procs` and `now`: the applets live in `packages/box`,
+   * which depends on this package, so a filesystem cannot ask what programs exist. Empty until
+   * somebody says, and then `/bin` is a directory with that many entries in it.
+   */
+  Vec<string> programs;
+  /** Where a relative path starts from — see `setCwd`. */
+  string cwd;
+  /**
+   * The file a streaming write is going to, and which mount it is on. Empty when there is none.
+   *
+   * See `openOut` for why a filesystem has a *cursor* at all: a redirection must not buffer, and the
+   * shell had nowhere but the host to send bytes as they arrived.
+   */
+  string outPath;
+  i32 outMount;
+
+  /** An empty filesystem with one memory mount at the root. */
+  Fs inMemory(i64 now) {
+    Vec<Mount> mounts = Vec.create();
+    Vec<Inode> nodes = Vec.create();
+    nodes.push(dirNode("root", now));
+    mounts.push(Mount("", Backing.Memory, 0));
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), "/", "", -1);
+  }
+
+  /**
+   * The host's filesystem, mounted at the root.
+   *
+   * What `packages/sh` gets when nobody has said otherwise, so that today's behaviour is one mount
+   * rather than a special case: the shell asks its filesystem, and its filesystem asks the host.
+   */
+  Fs onHost(Cli cli, i64 now) {
+    Vec<Mount> mounts = Vec.create();
+    Vec<Inode> nodes = Vec.create();
+    mounts.push(Mount("", Backing.Host(cli), -1));
+    // **The host's own directory**, because that is what a relative path means to a program standing on
+    // it: `box cat f` run from `/tmp` is asking about `/tmp/f`, and answering `/f` would be a different
+    // file. A memory filesystem starts at its own root, where there is nowhere else to be.
+    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(), cli.cwd().wait(), "", -1);
+  }
+
+  /**
+   * Mount the synthesised files at `at` — `/dev` or `/proc`.
+   *
+   * Two mounts rather than one because mounts are longest-prefix and the two trees are unrelated; what
+   * each holds is decided by `synthNames` from the mount point.
+   */
+  void mountSynth(this, string at, fn[Pending<u8[]>(i32)] randomBytes) {
+    this.mounts.push(Mount(trimSlash(at), Backing.Synth(randomBytes), -1));
+  }
+
+  /**
+   * Act as `who` from here on: what new files are owned by, and who the checks are against.
+   *
+   * A separate call rather than a constructor argument because the user is learned *after* the
+   * filesystem exists — `sshd` boots an image, reads `/etc/passwd` out of it, and only then knows whose
+   * session this is.
+   */
+  void setUser(this, string who) { this.user = who; }
+
+  /**
+   * Whether the current user may do `want` — 4 read, 2 write, 1 execute — to this node.
+   *
+   * Owner bits or other bits; there are **no groups**, because there is no group table to consult and
+   * inventing one would be the faking design/0001 D6 rules out. `root` may do anything, and so may a
+   * filesystem whose user was never set, which is what keeps every existing caller working unchanged.
+   */
+  bool may(const this, i32 node, i32 want) {
+    if (this.user == "" || this.user == "root") { return true; }
+    Inode n = this.nodes.get(node);
+    i32 bits = n.owner == this.user ? (n.mode >> 6) & 7 : n.mode & 7;
+    return (bits & want) == want;
+  }
+
+  /**
+   * Whether this path is served by the *host*, rather than by a memory or synthesised mount.
+   *
+   * The one thing a caller needs to know to choose how to read: the host has a streaming capability —
+   * `openInput` redirects standard input to a file and `readChunk` pulls it a piece at a time, so a
+   * large file on disk never has to be held whole — and this filesystem does not. A memory image is
+   * already in memory, so reading a node whole costs nothing it has not already paid, and there is
+   * nothing to stream *from*.
+   *
+   * Exposed rather than a `read` method that decides, because the decision is about which capability
+   * the caller may use afterwards, and only the caller knows what it is going to do with it.
+   */
+  bool isHostPath(const this, string path) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return false; }
+    match (this.mounts.get(mi).backing) {
+      case Host(cli): { return true; }
+      else: { return false; }
+    }
+  }
+
+  /**
+   * Where a relative path starts from.
+   *
+   * An applet handed `f` after the shell did `cd d` is asking about `/d/f`, and until this existed it
+   * was asking about `/f` — because resolution used to happen on the *host*, inside `pushChild`'s frame,
+   * and applets ask this filesystem now rather than the host (wac-mono 0109). Every entry point below
+   * resolves through `at`, so a caller may pass either kind of path and does not have to know which.
+   */
+  void setCwd(this, string where) { this.cwd = where; }
+
+  /** A path as this filesystem understands it: absolute, and with no `.` or `..` left in it. */
+  string at(const this, string path) { return resolvePath(this.cwd, path); }
+
+  /**
+   * Record that this program is running, and make it `/proc/self`. Answers its pid.
+   *
+   * This replaced `setCmdline`, which took the NUL-separated line `/proc/self/cmdline` answers. The
+   * words are what a caller has, and a line cannot be split back into words that contained spaces —
+   * so the join belongs on the way *out*, where `Proc.cmdline` does it.
+   */
+  i32 enter(this, Vec<string> argv) {
+    i32 pid = this.procs.start(0, argv, this.now);
+    this.procs.current = pid;
+    return pid;
+  }
+
+  /**
+   * Record which programs this build has, and mount `/bin` so they can be seen.
+   *
+   * **What a file in `/bin` is, honestly.** The applets are compiled into this program: there is no
+   * bundle on disk to point at, and writing one that looked like an executable would be the "plausible
+   * rows" design/0001 D6 refuses. So each entry is a real directory entry with a real mode, and
+   * reading it gives one line saying what it is. `ls /bin` is the truth; `cp /bin/wc elsewhere` gets a
+   * sentence rather than a program, and says so in the sentence.
+   */
+  void mountBin(this, Vec<string> programs, fn[Pending<u8[]>(i32)] randomBytes) {
+    this.programs = programs;
+    // **No programs, no `/bin`.** A build that wired no applets — `packages/ssh`'s server is one —
+    // would otherwise show an empty directory where the programs are meant to be, which claims more
+    // than an absent one does. `ls /` on such a machine says there is no `/bin`, and that is true.
+    if (programs.len() == 0) { return; }
+    // The funcref again, because `Backing.Synth` carries one for `/dev/urandom`'s sake and nothing
+    // in `/bin` will ever call it. Passing the caller's own is honest; inventing a stub that
+    // answered zero bytes would be a generator that exists to satisfy a type.
+    this.mounts.push(Mount("/bin", Backing.Synth(randomBytes), -1));
+  }
+
+  /**
+   * Begin writing to `path`, truncating it: the streaming half of `writeFile`.
+   *
+   * **Why a filesystem needs a cursor.** A redirection must not buffer — `seq 1 2000000000 > out`
+   * built twenty gigabytes in the shell and trapped on one wasm array (wac-mono 0070) — so a shell
+   * relaying a pipeline has to write each chunk as it arrives. `writeFile(path, bytes)` cannot do
+   * that, and the only streaming write in the world was `Cli.openOutput`, which redirects *the
+   * process's* standard output. So `packages/sh` had two implementations of `>`: the sequential path
+   * wrote through this filesystem and the streaming path wrote through the host, and they disagreed
+   * about which disk a sealed session's redirection landed on. Latent, because a sealed session does
+   * not spawn (wac-mono 0116) — and a leak the day it does.
+   *
+   * One cursor per filesystem, not a handle table: a shell redirects one command at a time, and a
+   * table would be a second thing to leak. `closeOut` ends it; opening another closes the first.
+   */
+  Change openOut(this, string path) {
+    if (this.outPath != "") { this.closeOut(); }
+    string full = this.at(path);
+    i32 mi = this.mountOf(full);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    // Truncate now, through the ordinary write, so that every check `writeFile` makes — the mount is
+    // writable, the path is not a directory, the parent exists — happens once and in one place.
+    Change made = this.writeFile(full, u8[0]());
+    if (made.fault != FAULT_NONE()) { return made; }
+    this.outPath = full;
+    this.outMount = mi;
+    match (this.mounts.get(mi).backing) {
+      // A host mount streams the only way the capability offers: by redirecting this process's
+      // output, which is what the shell was doing directly before this existed.
+      case Host(cli): { return cli.openOutput(full).wait(); }
+      else: { return Change.of(FAULT_NONE(), ""); }
+    }
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** Append to whatever `openOut` opened. False when there is nothing open or the write failed. */
+  bool writeOut(this, u8[] bytes) {
+    if (this.outPath == "") { return false; }
+    match (this.mounts.get(this.outMount).backing) {
+      case Host(cli): { return cli.write(bytes); }
+      else: {
+        i32 node = this.find(this.mounts.get(this.outMount), this.outPath);
+        if (node < 0) { return false; }
+        this.nodes.get(node).append(bytes, this.now);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Finish. A file is complete when this returns, which is what lets the next command read it. */
+  Change closeOut(this) {
+    if (this.outPath == "") { return Change.of(FAULT_NONE(), ""); }
+    i32 mi = this.outMount;
+    this.outPath = "";
+    this.outMount = -1;
+    match (this.mounts.get(mi).backing) {
+      // `openOutput("")` is how a program says it has finished writing — see `platform.wac`.
+      case Host(cli): { return cli.openOutput("").wait(); }
+      else: { return Change.of(FAULT_NONE(), ""); }
+    }
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** Mount a fresh empty memory filesystem at `at`, which must be an absolute normalised path. */
+  void mountMemory(this, string at) {
+    this.nodes.push(dirNode(this.user, this.now));
+    this.mounts.push(Mount(trimSlash(at), Backing.Memory, this.nodes.len() - 1));
+  }
+
+  /**
+   * Which mount owns this path: the longest `at` that prefixes it.
+   *
+   * Longest-prefix rather than first-match so that mounting `/home` under a host `/` does what a person
+   * expects, and so the order mounts were added in does not decide the answer.
+   *
+   * **-1 when no mount holds it**, which used to be impossible: `inMemory` and `onHost` both start with a
+   * mount at the root, and every path is under the root. An image can be loaded into a filesystem that
+   * has no root mount — `/home` saved on its own — and this returned mount 0 for `/elsewhere` in that
+   * case, which happened to fail in `find` for the wrong reason. Every caller checks it now.
+   */
+  i32 mountOf(const this, string path) {
+    i32 best = -1;
+    i32 bestLen = -1;
+    for (i32 i = 0; i < this.mounts.len(); i++) {
+      string at = this.mounts.get(i).at;
+      if (!underMount(at, path)) { continue; }
+      if (at.len() > bestLen) {
+        best = i;
+        bestLen = at.len();
+      }
+    }
+    return best;
+  }
+
+  // ── Reading ─────────────────────────────────────────────────────────────────
+
+  /** The whole file, or why not. */
+  FileResult readFile(this, string path) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return cli.readFile(path).wait(); }
+      // An endless device has no "whole" to read. GNU's `cat /dev/zero` runs until something stops it,
+      // which a `readFile` returning one array cannot do — so it refuses and says which read to use
+      // instead, rather than inventing a length or hanging.
+      case Synth(rand): { return synthRead(this, m, path, rand, -1); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return absentRead(node); }
+    if (!this.may(node, 4)) {
+      return FileResult.of(false, u8[0](), "permission denied", FAULT_DENIED());
+    }
+    if (this.nodes.get(node).isDir) {
+      // `FAULT_IS_DIR`, which is the category 0067 asked for and did not have: this used to be
+      // `FAULT_OTHER` because that is what the hosts answered, and the hosts answered it because
+      // `faults.ts` had no better word for `EISDIR`. Both sides know now, so a memory filesystem and a
+      // real one give a program the same answer to the same mistake — which is the whole point of the
+      // categories, and was not true here.
+      return FileResult.of(false, u8[0](), "Is a directory", FAULT_IS_DIR());
+    }
+    return FileResult.of(true, this.nodes.get(node).bytes(), "", FAULT_NONE());
+  }
+
+  /**
+   * At most `n` bytes from the start of a file.
+   *
+   * `head -c 16 /dev/urandom` is the reason: an endless device cannot answer `readFile`, and a `head`
+   * that read the whole file and then took the front could not either. Every other backing answers it by
+   * reading and truncating, which costs nothing extra for the sizes a `-c` is written with.
+   */
+  FileResult readSome(this, string path, i32 n) {
+    path = this.at(path);
+    if (n < 0) { return FileResult.of(false, u8[0](), "a negative length", FAULT_OTHER()); }
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Synth(rand): { return synthRead(this, m, path, rand, n); }
+      else: {}
+    }
+    FileResult whole = this.readFile(path);
+    if (!whole.ok || whole.bytes.len() <= n) { return whole; }
+    u8[] cut = u8[n]();
+    cut.copyFrom(whole.bytes, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
+
+  /** What a path is, if it is anything. */
+  Stat stat(this, string path) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    // Absence rather than a fault, as below: a path under no mount is nothing, and that is an answer.
+    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return cli.stat(path).wait(); }
+      case Synth(rand): { return synthStat(this, m, path); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    // Absence, not a fault: a memory tree can always answer, and "nothing here" is the answer — with
+    // one exception, which is the same one `statFault` makes on a host mount. `a/b/c` where `b` is a
+    // file is still "nothing here", and the category rides along so that `ls`, `cd` and `stat` can say
+    // which kind of nothing. `Stat.answered` stays true for it, so `test -e` is unaffected.
+    if (node < 0) {
+      return Stat.of(false, false, false, 0, 0, false,
+                     node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE());
+    }
+    Inode n = this.nodes.get(node);
+    return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, FAULT_NONE());
+  }
+
+  /** Nothing here is a symbolic link yet, so this is `stat` — said rather than implied. */
+  Stat linkStat(this, string path) { return this.stat(path); }
+
+  /**
+   * The names in a directory, sorted, without `.` or `..` — and null for a path that is not one.
+   *
+   * Sorted because a filesystem's own order is not something a program should depend on and every caller
+   * that cares sorts anyway. Null is the capability's answer for "not a directory", and keeping it means
+   * `ls` can tell that from an empty one.
+   */
+  string[]? readDir(this, string path) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return null; }
+    Mount m = this.mounts.get(mi);
+    string[]? own = null;
+    match (m.backing) {
+      case Host(cli): { own = cli.readDir(path).wait(); }
+      case Synth(rand): { own = synthDir(this, m, path); }
+      else: {
+        i32 node = this.find(m, path);
+        // Null rather than empty for "not a directory" or "not there", which is what the capability
+        // answers and what lets `ls` tell an empty directory from a missing one.
+        if (node < 0 || !this.nodes.get(node).isDir) { own = null; }
+        // A directory nobody may read lists as nothing rather than as empty — `null` is what the
+        // capability says for "you cannot have this", and `ls` reports it rather than printing a
+        // convincing empty directory.
+        else if (!this.may(node, 4)) { own = null; }
+        else { own = this.nodes.get(node).entries.keys(); }
+      }
+    }
+    if (own is null) { return null; }
+    return withMountsUnder(this, path, own!);
+  }
+
+  // ── Writing ─────────────────────────────────────────────────────────────────
+
+  /** Create or replace a file, making no parents: the same contract `writeFile` has. */
+  Change writeFile(this, string path, u8[] data) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    // **A mount point is a directory, and its parent lives in the mount above.** So the lookup below
+    // searches the wrong tree for it and used to answer "no such file or directory" for `/mnt`, and the
+    // synthesised backing answered "read-only file system" for `/dev` — three different wrong answers
+    // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
+    // this correctly already, and asking it twice would cost a round trip to be told what it just said.
+    match (m.backing) {
+      case Host(cli): {}
+      else: {
+        if (this.stat(path).isDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
+      }
+    }
+    match (m.backing) {
+      case Host(cli): { return cli.writeFile(path, data).wait(); }
+      case Synth(rand): {
+        // `/dev/null` accepts anything and keeps none of it, which is the whole of what it is for.
+        // Every other synthesised file is read-only, and says so rather than appearing to have taken
+        // the bytes — a write that vanishes silently is the failure `> /dev/zero` would otherwise be.
+        if (synthKind(this, m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
+        return Change.of(FAULT_READ_ONLY(), "Read-only file system");
+      }
+      else: {}
+    }
+    i32 parent = this.find(m, parentOf(path));
+    if (parent < 0) { return absentChange(parent); }
+    // `FAULT_OTHER` with the words "not a directory" until now, which is the same shape `FAULT_IS_DIR`
+    // was found in: the backing knew exactly what had happened and had no category to say it with, so
+    // the sentence was all a caller got — and it was lower case where every host says GNU's.
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
+    // Both of this path's "is a directory" refusals are gone: the check at the top of this function
+    // answers that question for *every* directory, including the mount points those two could not see.
+    // Two guards for one fact is how the two come to disagree.
+    string name = baseOf(path);
+    i32 existing = this.child(parent, name);
+    if (existing >= 0) {
+      if (!this.may(existing, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+      this.nodes.get(existing).replace(data, this.now);
+      return Change.of(FAULT_NONE(), "");
+    }
+    // Creating is a change to the *directory*, which is why the check is on the parent and not on the
+    // file that does not exist yet. Same rule as removing, below.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+    this.nodes.push(fileNode(data, this.user, this.now));
+    this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /**
+   * A directory. `parents` is `-p`: make what is missing above it, and say nothing if it is already there.
+   *
+   * The flag is the capability's, so a caller does not have to loop — and a `mkdir -p` written as a loop
+   * over `mkdir` cannot tell "already there" from "somebody else made it just now", which is the race the
+   * flag exists to avoid.
+   */
+  Change mkdir(this, string path, bool parents) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    // The same for `mkdir`, where the answer is "file exists" rather than "is a directory" — except
+    // under `-p`, which is the flag that means "and say nothing if it is already there".
+    // **A mount point is a directory, and its parent lives in the mount above.** So the lookup below
+    // searches the wrong tree for it and used to answer "no such file or directory" for `/mnt`, and the
+    // synthesised backing answered "read-only file system" for `/dev` — three different wrong answers
+    // for one question. What `/dev` is, is a directory. Host mounts are left alone: the host answers
+    // this correctly already, and asking it twice would cost a round trip to be told what it just said.
+    match (m.backing) {
+      case Host(cli): {}
+      else: {
+        if (this.stat(path).isDir) {
+          // `-p` is the flag that means "and say nothing if it is already there", so an existing
+          // directory is success under it and "file exists" without it. This answered neither for a
+          // mount point: the read-only refusal below fired first and `mkdir -p /dev` failed.
+          return parents
+            ? Change.of(FAULT_NONE(), "")
+            : Change.of(FAULT_EXISTS(), "file exists");
+        }
+      }
+    }
+    match (m.backing) {
+      case Host(cli): { return cli.mkdir(path, parents).wait(); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      else: {}
+    }
+    if (parents) { return this.mkdirAll(m, path); }
+    i32 parent = this.find(m, parentOf(path));
+    if (parent < 0) { return absentChange(parent); }
+    // **`FAULT_DENIED` until now**, so `mkdir f/g` in an image reported `Permission denied` about a
+    // path nothing had refused — the same mistake `FAULT_UNSUPPORTED` was added for, where the nearest
+    // available category blamed the file for something the file did not do.
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
+    string name = baseOf(path);
+    if (this.child(parent, name) >= 0) { return Change.of(FAULT_EXISTS(), "file exists"); }
+    // Making a directory is a change to the directory it goes in, exactly as writing a file is.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+    this.nodes.push(dirNode(this.user, this.now));
+    this.nodes.get(parent).entries.set(name, this.nodes.len() - 1);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** Every missing component of a path, and no complaint about the ones that are there. */
+  Change mkdirAll(this, Mount m, string path) {
+    string rest = path.slice(m.at.len(), path.len());
+    Vec<string> parts = splitPath(rest);
+    i32 at = m.root;
+    for (i32 i = 0; i < parts.len(); i++) {
+      i32 next = this.child(at, parts.get(i));
+      if (next < 0) {
+        // `-p` creates several, and each one is a change to the directory above it. Checked here rather
+        // than once at the top: the first few components may exist and be somebody else's.
+        if (!this.may(at, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+        this.nodes.push(dirNode(this.user, this.now));
+        next = this.nodes.len() - 1;
+        this.nodes.get(at).entries.set(parts.get(i), next);
+      } else if (!this.nodes.get(next).isDir) {
+        return Change.of(FAULT_EXISTS(), "file exists");
+      }
+      at = next;
+    }
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /**
+   * Remove a file, or an *empty* directory.
+   *
+   * The three answers a caller needs are the three the hosts give: gone, not there, or a directory with
+   * something in it — which is what makes `rm -f` able to ignore only the second.
+   */
+  Change remove(this, string path, bool recursive) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return cli.remove(path, recursive).wait(); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      else: {}
+    }
+    i32 parent = this.find(m, parentOf(path));
+    if (parent < 0) { return absentChange(parent); }
+    // A *file* named as a parent. `find` cannot answer this one — `f` in `f/g` is genuinely there, and
+    // it is the lookup below that is impossible — so the check belongs here, as it does in `writeFile`
+    // and `mkdir`. Without it `child` asked a file for its entries, got none, and `rm f/g` reported
+    // "No such file or directory" in an image where a host mount says "Not a directory".
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
+    string name = baseOf(path);
+    i32 node = this.child(parent, name);
+    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    if (this.nodes.get(node).isDir && this.nodes.get(node).entries.len() > 0 && !recursive) {
+      return Change.of(FAULT_NOT_EMPTY(), "directory not empty");
+    }
+    // Removing is a change to the directory the name is in, not to the file — which is why a read-only
+    // file in a writable directory can be deleted, on a real system and here.
+    if (!this.may(parent, 2)) { return Change.of(FAULT_DENIED(), "permission denied"); }
+    // Nothing is freed: a node nobody points at is unreachable, and an image writer walks from the roots.
+    // Reference counting would buy memory back in a program that deletes a great deal, and there is no
+    // such program yet — said here rather than discovered later.
+    this.nodes.get(parent).entries.remove(name);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /**
+   * Set a node's mode.
+   *
+   * `mode` and `owner` are recorded on every node and enforced nowhere — step 4 of design/0001 is where a
+   * session gets a user. They are recorded now so that an image written today is readable then, which is
+   * only true if something can actually *set* them: a field nothing writes is a field nothing tests, and
+   * "exact metadata" was the whole argument for a format of our own rather than tar.
+   *
+   * **Not implemented for a host mount.** There is no `chmod` capability — see `packages/platform` — so
+   * this refuses rather than pretending, because a mode silently not applied is worse than an error.
+   */
+  Change chmod(this, string path, i32 mode) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      // **Not implemented**, which is now a category of its own rather than the nearest one:
+      // `FAULT_DENIED` reached the user as "cannot access 'd': Permission denied", blaming the file
+      // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
+      // message below is what a caller prints. wac-mono 0117.
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return absentChange(node); }
+    // The owner's to give away, and root's to take: `chmod` on somebody else's file is refused, which is
+    // what stops a user opening a private file by widening it first.
+    if (this.user != "" && this.user != "root" && this.nodes.get(node).owner != this.user) {
+      return Change.of(FAULT_DENIED(), "operation not permitted");
+    }
+    this.nodes.get(node).setMode(mode);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** The same for the owner, and refused on a host mount for the same reason. */
+  Change chown(this, string path, string owner) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return absentChange(node); }
+    // **Root's alone.** On a real system giving a file away is privileged precisely because it is how a
+    // user would otherwise escape their own quota or hide a file behind somebody else's name.
+    if (this.user != "" && this.user != "root") {
+      return Change.of(FAULT_DENIED(), "operation not permitted");
+    }
+    this.nodes.get(node).setOwner(owner);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /** Move a name, replacing what is there — as the hosts do, and as `mv` expects. */
+  Change rename(this, string from, string to) {
+    from = this.at(from);
+    to = this.at(to);
+    i32 fromIndex = this.mountOf(from);
+    i32 toIndex = this.mountOf(to);
+    if (fromIndex < 0 || toIndex < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount fromMount = this.mounts.get(fromIndex);
+    Mount toMount = this.mounts.get(toIndex);
+    match (fromMount.backing) {
+      case Host(cli): {
+        // A rename across mounts is a copy and a delete, and no host does it for you. Not implemented
+        // rather than half-done: it would need reading the whole file, which a `Change` cannot report.
+        match (toMount.backing) {
+          case Host(cli2): { return cli.rename(from, to).wait(); }
+          else: { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+        }
+      }
+      else: {}
+    }
+    match (toMount.backing) {
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented"); }
+      else: {}
+    }
+    if (fromMount.at != toMount.at) {
+      return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented");
+    }
+    i32 fromParent = this.find(fromMount, parentOf(from));
+    if (fromParent < 0) { return absentChange(fromParent); }
+    // The source's parent, for the same reason `remove` checks it: a file cannot hold a name.
+    if (!this.nodes.get(fromParent).isDir) { return notADirectory(); }
+    i32 node = this.child(fromParent, baseOf(from));
+    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    i32 toParent = this.find(toMount, parentOf(to));
+    if (toParent < 0) { return absentChange(toParent); }
+    // Also `FAULT_DENIED` until now — see `mkdir`, which had the same line and the same wrong category.
+    if (!this.nodes.get(toParent).isDir) { return notADirectory(); }
+
+    // **Renaming onto something that is already there.** `rename(2)` has four rules here and this had
+    // none of them: it replaced the entry whatever it was, so `mv f d` where `d` is a directory
+    // succeeded and orphaned everything `d` held. Not a missing check — a wrong answer, and in an image
+    // it is data loss. The categories are the host's, taken from `test/host.test.ts`'s transcript rather
+    // than chosen: a file onto any directory is `FAULT_IS_DIR` — which the host started saying the moment
+    // `faults.ts` learned the word for `EISDIR`, and this transcript is what noticed that memory had not
+    // — a directory onto a file is `FAULT_NOT_A_DIR`, which is what `rename(2)` names it and what the
+    // host said as `FAULT_OTHER` until `faults.ts` learned `ENOTDIR`; the same transcript noticed this
+    // one too, one category later — a directory onto a *non-empty* directory is `FAULT_NOT_EMPTY`, and a
+    // directory onto an empty one is the single pair that is allowed.
+    i32 existing = this.child(toParent, baseOf(to));
+    if (existing >= 0 && existing != node) {
+      bool fromDir = this.nodes.get(node).isDir;
+      bool toDir = this.nodes.get(existing).isDir;
+      if (!fromDir && toDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
+      if (fromDir && !toDir) { return notADirectory(); }
+      if (fromDir && toDir && this.nodes.get(existing).entries.len() > 0) {
+        return Change.of(FAULT_NOT_EMPTY(), "directory not empty");
+      }
+    }
+
+    // **Both directories change**, so both have to allow it — and neither check is about the file: a
+    // rename does not read or write a byte of it, which is why a file nobody may read can still be moved
+    // by whoever owns the directory it is in. Missing entirely until now, so a stranger could take a file
+    // out of a private directory without ever being able to read it.
+    if (!this.may(fromParent, 2) || !this.may(toParent, 2)) {
+      return Change.of(FAULT_DENIED(), "permission denied");
+    }
+    this.nodes.get(fromParent).entries.remove(baseOf(from));
+    this.nodes.get(toParent).entries.set(baseOf(to), node);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  // ── Walking ─────────────────────────────────────────────────────────────────
+
+  /**
+   * The node a path names inside a mount, or one of the two negative answers below.
+   *
+   * `NODE_NOT_A_DIR` and `NODE_NONE` were both -1, so a memory filesystem could not tell `a/b/c` where
+   * `b` is a file from `a/b/c` where `b` is missing — and every caller here answered "no such file or
+   * directory" for both. A host mount says `Not a directory` for the first, which is what the operating
+   * system says, so **the same image gave different answers on different backings**: exactly the
+   * disagreement design/0001's arrival test exists to catch, in the place hardest to see it.
+   */
+  i32 find(const this, Mount m, string path) {
+    if (path.len() < m.at.len()) { return NODE_NONE(); }
+    string rest = path.slice(m.at.len(), path.len());
+    i32 at = m.root;
+    Vec<string> parts = splitPath(rest);
+    for (i32 i = 0; i < parts.len(); i++) {
+      if (!this.nodes.get(at).isDir) { return NODE_NOT_A_DIR(); }
+      i32 next = this.child(at, parts.get(i));
+      if (next < 0) { return NODE_NONE(); }
+      at = next;
+    }
+    return at;
+  }
+
+  /** A named child of a directory node, or -1. */
+  i32 child(const this, i32 dir, string name) {
+    if (name == "") { return dir; }
+    return this.nodes.get(dir).entries.get(name).orElse(-1);
+  }
+}
+
+/** `find` answered nothing because there is nothing at that path. */
+export i32 NODE_NONE() { return -1; }
+/**
+ * `find` answered nothing because a component of the path is not a directory.
+ *
+ * A second negative answer rather than a second function beside `find`: every caller already branches
+ * on `< 0`, and the thing they were missing was *which* nothing it was. -2 rather than -1 because a
+ * node index is never negative, so the space was there.
+ */
+export i32 NODE_NOT_A_DIR() { return -2; }
+
+/** Which absence a negative `find` answer is, as a fault. */
+export i32 absentFault(i32 node) {
+  return node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NOT_FOUND();
+}
+
+/**
+ * The `Change` a negative `find` answer becomes.
+ *
+ * One function rather than the sentence written out at each of the eight call sites, which is how the
+ * three copies this replaces came to disagree: `writeFile` answered `FAULT_OTHER`, `mkdir` answered
+ * `FAULT_DENIED`, and `rename` answered `FAULT_DENIED` — three categories for one fact, none of them
+ * the one the operating system uses.
+ */
+export Change absentChange(i32 node) {
+  return node == NODE_NOT_A_DIR()
+    ? notADirectory()
+    : Change.of(FAULT_NOT_FOUND(), "no such file or directory");
+}
+
+/** The same, for a read. */
+export FileResult absentRead(i32 node) {
+  return node == NODE_NOT_A_DIR()
+    ? FileResult.of(false, u8[0](), "Not a directory", FAULT_NOT_A_DIR())
+    : FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+}
+
+/**
+ * A file where a directory was wanted.
+ *
+ * GNU's own words, because a memory backing has no host to borrow a sentence from and every caller that
+ * renders this compares against GNU. The category is what a caller branches on; the words are what a
+ * person reads when nothing translates them.
+ */
+export Change notADirectory() { return Change.of(FAULT_NOT_A_DIR(), "Not a directory"); }
+
+/**
+ * A directory's own names, plus any mount point sitting directly in it.
+ *
+ * Without this a mount is invisible from above: `ls /` on a session with `/dev` and `/proc` listed
+ * neither, because the root's own tree has no entry for them — the mount table is the only thing that
+ * knows. A listing that omits a directory you can `cd` into is worse than a wrong one, because nothing
+ * about it looks wrong.
+ *
+ * A mount point that *also* exists as a real entry is listed once. Linux shows the mounted filesystem
+ * in that case and hides what is underneath, which is what `mountOf`'s longest-prefix rule already does
+ * for every other operation.
+ */
+string[] withMountsUnder(Fs fs, string path, string[] own) {
+  string at = trimSlash(path);
+  Vec<string> extra = Vec.create();
+  for (i32 i = 0; i < fs.mounts.len(); i++) {
+    string mp = fs.mounts.get(i).at;
+    if (mp == "" || mp == at) { continue; }
+    if (!underMount(at, mp)) { continue; }
+    string rest = mp.slice(at.len() + 1, mp.len());
+    // Directly in this directory, not further down: `/a/b` shows under `/a` and not under `/`.
+    if (lastSlash(rest) >= 0) { continue; }
+    bool already = false;
+    for (i32 k = 0; k < own.len(); k++) { if (own[k] == rest) { already = true; } }
+    for (i32 k = 0; k < extra.len(); k++) { if (extra.get(k) == rest) { already = true; } }
+    if (!already) { extra.push(rest); }
+  }
+  if (extra.len() == 0) {
+    sortNames(own);
+    return own;
+  }
+  string[] all = string[own.len() + extra.len()](fill: "");
+  for (i32 i = 0; i < own.len(); i++) { all[i] = own[i]; }
+  for (i32 i = 0; i < extra.len(); i++) { all[own.len() + i] = extra.get(i); }
+  sortNames(all);
+  return all;
+}
+
+/**
+ * Mount `/dev`, `/proc` and `/bin`, and enter this program in the process table, in one call.
+ *
+ * Three programs want exactly this and a fourth will; spelling it out in each is how the three drift.
+ * The pid is answered rather than discarded because a caller that starts children wants to be their
+ * parent, and `/proc/self` is only the *current* process.
+ *
+ * **`argv[0]` is this program's own name**, as it is in `/proc/<pid>/cmdline` on every system this
+ * imitates. Nothing can discover it — a wac program's arguments start at its first real one, which is
+ * `packages/box`'s `Args.name` problem in another place — so each entry point states what it is. Pass
+ * the arguments alone and `ps` shows a shell called `-c`.
+ */
+export i32 mountSystem(Fs fs, fn[Pending<u8[]>(i32)] randomBytes, Vec<string> argv,
+                      Vec<string> programs) {
+  fs.mountSynth("/dev", randomBytes);
+  fs.mountSynth("/proc", randomBytes);
+  fs.mountBin(programs, randomBytes);
+  return fs.enter(argv);
+}
+
+// ── Synthesised files ─────────────────────────────────────────────────────────
+//
+// Step 6 of design/0001. Cheap, because the VFS already answers every question these need to answer, and
+// disproportionately convincing: `/dev/null` is the difference between a shell that looks like one and a
+// shell you can actually type into.
+//
+// Nothing is stored. A read runs a generator, so `/dev/zero` costs what is asked of it. Two of the five
+// are **endless**, which is the one thing this model cannot express through `readFile`: GNU's
+// `cat /dev/zero` runs until something stops it, and one `u8[]` cannot. Rather than invent a length or
+// hang, `readFile` refuses those two by name and points at `readSome`, which is what a bounded read —
+// `head -c 16 /dev/urandom` — goes through anyway.
+
+i32 SYNTH_NONE() { return 0; }
+i32 SYNTH_NULL() { return 1; }
+i32 SYNTH_ZERO() { return 2; }
+i32 SYNTH_RANDOM() { return 3; }
+i32 SYNTH_CMDLINE() { return 4; }
+/** A directory in a synthesised tree: the mount point itself, and `/proc/<pid>`. */
+i32 SYNTH_DIR() { return 5; }
+/** `/proc/<pid>/comm`: argv[0] and a newline, as Linux's is. */
+i32 SYNTH_COMM() { return 6; }
+/** `/proc/<pid>/status`: the four lines whose values this system actually has. */
+i32 SYNTH_STATUS() { return 7; }
+/** `/bin/<name>`: a program this build has, which is not a file it could hand you. */
+i32 SYNTH_PROGRAM() { return 8; }
+
+/**
+ * The pid a `/proc` path is about, or -1 for a path that is not about one.
+ *
+ * `self` is a name for a pid rather than a directory of its own, exactly as it is on Linux, so
+ * everything below is written once against a number. A pid that has left the table is -1 too, which is
+ * what makes `cat /proc/<gone>/comm` a "no such file" rather than an empty answer.
+ */
+i32 procPid(Fs fs, string rest) {
+  i32 cut = 1;
+  while (cut < rest.len() && rest.toBytes()[cut] != '/') { cut = cut + 1; }
+  string name = rest.slice(1, cut);
+  if (name == "self") { return fs.procs.has(fs.procs.current) ? fs.procs.current : -1; }
+  if (name.len() == 0) { return -1; }
+  u8[] b = name.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    // Strictly digits: `atoi` would read `12x` as 12, and `/proc/12x` is not a process.
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+  }
+  i32 pid = 0;
+  for (i32 i = 0; i < b.len(); i++) { pid = pid * 10 + (b[i] - '0'); }
+  return fs.procs.has(pid) ? pid : -1;
+}
+
+/** What is left of a `/proc/<pid>` path after the pid: `""`, or `/cmdline`. */
+string procRest(string rest) {
+  i32 cut = 1;
+  while (cut < rest.len() && rest.toBytes()[cut] != '/') { cut = cut + 1; }
+  return rest.slice(cut, rest.len());
+}
+
+/** Which synthesised file a path names, or `SYNTH_NONE`. */
+i32 synthKind(Fs fs, Mount m, string path) {
+  string rest = path.slice(m.at.len(), path.len());
+  if (rest == "" || rest == "/") { return SYNTH_DIR(); }
+  if (m.at == "/dev") {
+    if (rest == "/null") { return SYNTH_NULL(); }
+    if (rest == "/zero") { return SYNTH_ZERO(); }
+    if (rest == "/urandom" || rest == "/random") { return SYNTH_RANDOM(); }
+    return SYNTH_NONE();
+  }
+  if (m.at == "/bin") {
+    string name = rest.slice(1, rest.len());
+    for (i32 i = 0; i < fs.programs.len(); i++) {
+      if (fs.programs.get(i) == name) { return SYNTH_PROGRAM(); }
+    }
+    return SYNTH_NONE();
+  }
+  if (m.at == "/proc") {
+    if (procPid(fs, rest) < 0) { return SYNTH_NONE(); }
+    string tail = procRest(rest);
+    if (tail == "" || tail == "/") { return SYNTH_DIR(); }
+    if (tail == "/cmdline") { return SYNTH_CMDLINE(); }
+    if (tail == "/comm") { return SYNTH_COMM(); }
+    if (tail == "/status") { return SYNTH_STATUS(); }
+    return SYNTH_NONE();
+  }
+  return SYNTH_NONE();
+}
+
+/**
+ * `/proc/<pid>/status`, with the keys whose values this system has and no others.
+ *
+ * Linux's has around fifty lines — signal masks, memory, capabilities, namespaces. Filling those with
+ * zeroes would be the "plausible rows" design/0001 D6 names: a reader cannot tell an invented `VmRSS: 0
+ * kB` from a measured one, and a process here has no address space of its own to measure. So this is
+ * four real lines in Linux's exact `Key:\tvalue` shape, and a program that wants more finds it missing
+ * rather than wrong.
+ *
+ * `State` is Linux's letter and word: `R (running)`, and `Z (zombie)` for a row that has exited and has
+ * not been reaped — which is what it is.
+ */
+string procStatus(Proc p) {
+  string state = p.state == PROC_RUN() ? "R (running)" : "Z (zombie)";
+  return "Name:\t" + p.comm() + "\n"
+    + "State:\t" + state + "\n"
+    + "Pid:\t" + itoa(p.pid) + "\n"
+    + "PPid:\t" + itoa(p.ppid) + "\n";
+}
+
+/**
+ * Read a synthesised file. `n` is -1 for "the whole of it", which the endless two refuse.
+ *
+ * The refusal names the file and the way to read it, because "is a directory"-style categories cannot
+ * carry it: a caller that gets `FAULT_OTHER` with no sentence learns nothing it can act on.
+ */
+FileResult synthRead(Fs fs, Mount m, string path, fn[Pending<u8[]>(i32)] randomBytes, i32 n) {
+  i32 kind = synthKind(fs, m, path);
+  if (kind == SYNTH_NONE()) {
+    return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+  }
+  if (kind == SYNTH_DIR()) { return FileResult.of(false, u8[0](), "is a directory", FAULT_OTHER()); }
+  if (kind == SYNTH_NULL()) { return FileResult.of(true, u8[0](), "", FAULT_NONE()); }
+  if (kind == SYNTH_PROGRAM()) {
+    u8[] all = programBytes(path.slice(m.at.len() + 1, path.len()));
+    if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(all, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
+  if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
+    u8[] all = procBytes(fs, m, path, kind);
+    if (n < 0 || n >= all.len()) { return FileResult.of(true, all, "", FAULT_NONE()); }
+    u8[] cut = u8[n]();
+    cut.copyFrom(all, 0, 0, n);
+    return FileResult.of(true, cut, "", FAULT_NONE());
+  }
+  if (n < 0) {
+    return FileResult.of(false, u8[0](),
+      "this file has no end: read a fixed number of bytes from it instead", FAULT_OTHER());
+  }
+  if (kind == SYNTH_ZERO()) { return FileResult.of(true, u8[n](fill: 0), "", FAULT_NONE()); }
+  return FileResult.of(true, randomBytes(n).wait(), "", FAULT_NONE());
+}
+
+/**
+ * What reading a program in `/bin` gives you.
+ *
+ * One sentence, and it is the sentence rather than a program because there is no program here to give:
+ * the applets are compiled into the running binary. A reader that copied this somewhere and tried to
+ * run it gets a text file that explains itself, which is the failure worth having.
+ */
+u8[] programBytes(string name) {
+  return (name + " is built into this program; there is no file here to copy elsewhere.\n").toBytes();
+}
+
+/**
+ * The bytes of a `/proc/<pid>` file.
+ *
+ * Separate from `synthRead` because `stat` needs the length and the only truthful way to get it is to
+ * render the thing: a `/proc` file has no stored size, and computing one a second way is how the two
+ * come to disagree. Linux answers 0 for these — it does not know either — which this deliberately does
+ * not copy, because a size of 0 on a file `cat` then reads bytes from is the sort of detail that makes
+ * a reader distrust everything around it.
+ */
+u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
+  i32 pid = procPid(fs, path.slice(m.at.len(), path.len()));
+  Proc? found = fs.procs.find(pid);
+  if (found is null) { return u8[0](); }
+  Proc p = found!;
+  if (kind == SYNTH_CMDLINE()) { return p.cmdline().toBytes(); }
+  if (kind == SYNTH_COMM()) { return (p.comm() + "\n").toBytes(); }
+  return procStatus(p).toBytes();
+}
+
+Stat synthStat(Fs fs, Mount m, string path) {
+  i32 kind = synthKind(fs, m, path);
+  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, FAULT_NONE()); }
+  // Size zero for the endless two, which is what Linux reports for them as well: a character device has
+  // no length, and zero is how that is spelled. The `/proc` files have real ones.
+  i64 size = 0 as i64;
+  if (kind == SYNTH_CMDLINE() || kind == SYNTH_COMM() || kind == SYNTH_STATUS()) {
+    size = procBytes(fs, m, path, kind).len() as i64;
+  }
+  if (kind == SYNTH_PROGRAM()) {
+    size = programBytes(path.slice(m.at.len() + 1, path.len())).len() as i64;
+  }
+  return Stat.of(true, true, false, size, fs.now, false, FAULT_NONE());
+}
+
+string[]? synthDir(Fs fs, Mount m, string path) {
+  i32 kind = synthKind(fs, m, path);
+  if (kind != SYNTH_DIR()) { return null; }
+  string rest = path.slice(m.at.len(), path.len());
+  if (m.at == "/dev") { return string[]("null", "random", "urandom", "zero"); }
+  if (m.at == "/bin") {
+    string[] names = string[fs.programs.len()](fill: "");
+    for (i32 i = 0; i < fs.programs.len(); i++) { names[i] = fs.programs.get(i); }
+    sortNames(names);
+    return names;
+  }
+  if (rest != "" && rest != "/") { return string[]("cmdline", "comm", "status"); }
+  // `/proc` itself: every pid, and `self`. Linux lists a great deal more here — `uptime`, `meminfo`,
+  // `mounts` — and each of those is a fact this system would have to have to answer, so the ones it
+  // has not got are absent rather than empty.
+  i32[] pids = fs.procs.pids();
+  string[] names = string[pids.len() + 1](fill: "");
+  for (i32 i = 0; i < pids.len(); i++) { names[i] = itoa(pids[i]); }
+  names[pids.len()] = "self";
+  sortNames(names);
+  return names;
+}
+
+/**
+ * Sort names by bytes, in place.
+ *
+ * Insertion sort: a directory listing is small, and a reader can check it. By *bytes*, because that is
+ * what `LC_ALL=C` means and what every tool this is compared against does with it.
+ *
+ * Exported because `image.wac` needs the same order for the same reason — an image's entries are written
+ * in listing order so that the same filesystem written twice gives the same bytes. Two copies of this
+ * would drift, and the drift would be invisible: both images would load fine and only compare unequal.
+ */
+export void sortNames(string[] names) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string v = names[i];
+    i32 j = i - 1;
+    while (j >= 0 && afterName(names[j], v)) {
+      names[j + 1] = names[j];
+      j--;
+    }
+    names[j + 1] = v;
+  }
+}
+
+/** Whether `a` sorts after `b`, by bytes. wac compares strings for equality and not for order. */
+bool afterName(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
+/** A fresh empty directory. */
+Inode dirNode(string owner, i64 now) {
+  return Inode(true, Map.create(hashString, stringEq), Buf.create(), 493, owner, now);   // 0755
+}
+
+/** A fresh file holding these bytes. */
+Inode fileNode(u8[] data, string owner, i64 now) {
+  Buf held = Buf.create();
+  held.pushAll(data);
+  return Inode(false, Map.create(hashString, stringEq), held, 420, owner, now);          // 0644
+}
+
+/** The path above this one: `/a/b` gives `/a`, and `/a` gives the root. */
+string parentOf(string path) {
+  i32 cut = lastSlash(path);
+  if (cut <= 0) { return ""; }
+  return path.slice(0, cut);
+}
+
+/** The last component: `/a/b` gives `b`. */
+string baseOf(string path) {
+  i32 cut = lastSlash(path);
+  if (cut < 0) { return path; }
+  return path.slice(cut + 1, path.len());
+}
+
+i32 lastSlash(string path) {
+  i32 at = -1;
+  for (i32 i = 0; i < path.len(); i++) {
+    if (path.slice(i, i + 1) == "/") { at = i; }
+  }
+  return at;
+}
+
+/** A path without its trailing slash, and the root as the empty string. */
+string trimSlash(string path) {
+  if (path.len() > 1 && path.slice(path.len() - 1, path.len()) == "/") {
+    return path.slice(0, path.len() - 1);
+  }
+  if (path == "/") { return ""; }
+  return path;
+}
+
+/** Whether `path` is at or under `at`, treating `at` as a whole component. */
+bool underMount(string at, string path) {
+  if (at == "") { return true; }
+  if (path.len() < at.len()) { return false; }
+  if (path.slice(0, at.len()) != at) { return false; }
+  if (path.len() == at.len()) { return true; }
+  return path.slice(at.len(), at.len() + 1) == "/";
+}
+
+/** The non-empty components of a path. */
+Vec<string> splitPath(string path) {
+  Vec<string> out = Vec.create();
+  i32 from = 0;
+  for (i32 i = 0; i <= path.len(); i++) {
+    bool end = i == path.len();
+    if (!end && path.slice(i, i + 1) != "/") { continue; }
+    if (i > from) { out.push(path.slice(from, i)); }
+    from = i + 1;
+  }
+  return out;
+}

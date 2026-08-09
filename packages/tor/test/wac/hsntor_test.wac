@@ -1,0 +1,358 @@
+// hs-ntor, against tor's own `test-hs-ntor-cl`.
+//
+// A round trip between two halves we wrote proves only that they agree. This handshake has two
+// Diffie-Hellmans doing different jobs — one authenticating the service, one giving forward secrecy —
+// and dropping either leaves a handshake that still completes and still agrees a key. `src/ntor.wac`
+// makes the same argument and its tests take the same shape: the values here are tor's.
+//
+// `test/data/hsntor_vectors.json` comes from `tools/capture-hsntor.py`, which runs tor's
+// `client1` and `client2` on deterministic inputs, so re-running reproduces the file exactly and a
+// difference means tor changed rather than the dice.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import {
+  clientIntroduceKeys, clientRendezvousKeys, hsMac, clientPublicKey, rendezvousCircuitKeys,
+  serviceIntroduceKeys, serviceRendezvousKeys, tHsEnc, tHsVerify, tHsMac, mHsExpand, S_KEY_LEN,
+  MAC_LEN,
+} from "../../src/hsntor.wac";
+import { x25519Base } from "../../../crypto/src/x25519.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
+
+const i32 V_COUNT = 0;
+const i32 V_CASE = 1;   // authKey(32) encKey(32) clientSec(32) clientPub(32) svcPub(32)
+                        // subcred(32) encOut(32) macOut(32) authMac(32) keySeed(32)
+                        // introEncSecret(32) serviceEphemeralSecret(32) — appended, so the
+                        // offsets above are unchanged
+
+u8[] arg1(i32 i) {
+  u8[] a = u8[1]();
+  a[0] = i;
+  return a;
+}
+u8[] none() { return u8[0](); }
+
+export string test_the_introduce1_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = ref(V_COUNT, none(), none())[0];
+  t.isTrue(n >= 3, "there are several cases, not one");
+  for (i32 i = 0; i < n; i++) {
+    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] auth = slice(c, 0, 32);
+    u8[] enc = slice(c, 32, 64);
+    u8[] csec = slice(c, 64, 96);
+    u8[] cpub = slice(c, 96, 128);
+    u8[] subcred = slice(c, 160, 192);
+
+    // Our own derivation of the client's public key must match the one openssl produced, or every
+    // comparison below would be against a different handshake.
+    t.isTrue(equal(clientPublicKey(csec), cpub),
+             "case " + itoa64(i as i64) + ": the client's public key agrees with openssl's");
+
+    u8[] keys = clientIntroduceKeys(auth, enc, csec, subcred);
+    t.eqI32(keys.len(), S_KEY_LEN + MAC_LEN, "case " + itoa64(i as i64) + ": 64 bytes of keys");
+    t.isTrue(equal(slice(keys, 0, 32), slice(c, 192, 224)),
+             "case " + itoa64(i as i64) + ": ENC_KEY agrees with tor's");
+    t.isTrue(equal(slice(keys, 32, 64), slice(c, 224, 256)),
+             "case " + itoa64(i as i64) + ": MAC_KEY agrees with tor's");
+  }
+  return t.report();
+}
+
+/**
+ * The service derives the same INTRODUCE1 keys the client does.
+ *
+ * Both sides are compared against **tor's**, not against each other: `capture-hsntor.py` runs
+ * `test-hs-ntor-cl client1` and `server1` over the same inputs and refuses to write a vector if they
+ * disagree, so the expected value here is tor's twice over. Checking our service against our client
+ * would pass for a pair that shared a mistake, which is the failure mode this repo has already hit on
+ * two other seams.
+ *
+ * The inputs are the asymmetry: the service holds the secret half of `enc-key ntor` and receives the
+ * client's ephemeral public key in the cell, where the client holds the public half and its own
+ * secret. Everything hashed after that is identical.
+ */
+export string test_the_service_derives_the_same_introduce_keys(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = ref(V_COUNT, none(), none())[0];
+  t.isTrue(n >= 3, "there are several cases, not one");
+
+  for (i32 i = 0; i < n; i++) {
+    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] authKey = slice(c, 0, 32);
+    u8[] encKey = slice(c, 32, 64);
+    u8[] clientPub = slice(c, 96, 128);
+    u8[] subcred = slice(c, 160, 192);
+    u8[] wantEnc = slice(c, 192, 224);
+    u8[] wantMac = slice(c, 224, 256);
+    u8[] encSecret = slice(c, 320, 352);
+
+    // The vector's own two halves must belong together, or the rest of this proves nothing.
+    t.eqBytes(x25519Base(encSecret), encKey, "the service's secret matches the descriptor's enc-key");
+
+    u8[] keys = serviceIntroduceKeys(authKey, encSecret, clientPub, subcred);
+    t.eqI32(keys.len(), 64, "the service gets 64 bytes of key material");
+    t.eqBytes(slice(keys, 0, 32), wantEnc, "ENC_KEY is tor's");
+    t.eqBytes(slice(keys, 32, 64), wantMac, "MAC_KEY is tor's");
+
+    // And it is the same material the client half produces, which is what makes the handshake work.
+    u8[] clientSec = slice(c, 64, 96);
+    t.eqBytes(keys, clientIntroduceKeys(authKey, encKey, clientSec, subcred),
+              "the two sides agree, which is the point of the handshake");
+  }
+  return t.report();
+}
+
+/** Every input matters to the service too, and a degenerate client key is refused. */
+export string test_the_service_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] authKey = slice(c, 0, 32);
+  u8[] clientPub = slice(c, 96, 128);
+  u8[] subcred = slice(c, 160, 192);
+  u8[] encSecret = slice(c, 320, 352);
+  u8[] good = serviceIntroduceKeys(authKey, encSecret, clientPub, subcred);
+
+  t.isTrue(!equal(good, serviceIntroduceKeys(flip(authKey), encSecret, clientPub, subcred)),
+           "the auth key changes the keys");
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, flipScalar(encSecret), clientPub, subcred)),
+           "the service secret changes the keys");
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, encSecret, flip(clientPub), subcred)),
+           "the client key changes the keys");
+  t.isTrue(!equal(good, serviceIntroduceKeys(authKey, encSecret, clientPub, flip(subcred))),
+           "the subcredential changes the keys");
+
+  // A small-order client key makes the shared value zero whatever the service's secret is, so anyone
+  // could derive what the service derives. Refused rather than returned.
+  t.eqI32(serviceIntroduceKeys(authKey, encSecret, u8[32](), subcred).len(), 0,
+          "an all-zero client key is refused");
+  t.eqI32(serviceIntroduceKeys(authKey, u8[0](), clientPub, subcred).len(), 0,
+          "and a missing secret is not a secret");
+  return t.report();
+}
+
+export string test_the_rendezvous_keys_are_tors(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = ref(V_COUNT, none(), none())[0];
+  for (i32 i = 0; i < n; i++) {
+    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] auth = slice(c, 0, 32);
+    u8[] enc = slice(c, 32, 64);
+    u8[] csec = slice(c, 64, 96);
+    u8[] svc = slice(c, 128, 160);
+    u8[] subcred = slice(c, 160, 192);
+
+    u8[] out = clientRendezvousKeys(auth, csec, enc, svc);
+    t.eqI32(out.len(), 64, "case " + itoa64(i as i64) + ": 64 bytes out");
+    t.isTrue(equal(slice(out, 0, 32), slice(c, 256, 288)),
+             "case " + itoa64(i as i64) + ": AUTH_INPUT_MAC agrees with tor's");
+    t.isTrue(equal(slice(out, 32, 64), slice(c, 288, 320)),
+             "case " + itoa64(i as i64) + ": NTOR_KEY_SEED agrees with tor's");
+  }
+  return t.report();
+}
+
+/**
+ * The service derives the same rendezvous keys the client does.
+ *
+ * Both against **tor's** values: `capture-hsntor.py` takes `authMac` and `ntorKeySeed` from
+ * `test-hs-ntor-cl client2`, so the expected numbers were computed by tor's client and are being
+ * reproduced by our service. The two sides reach the same pair of shared values from opposite
+ * directions — EXP(Y, x) and EXP(B, x) for the client, EXP(X, y) and EXP(X, b) for the service — and
+ * that is the only difference between the two derivations.
+ */
+export string test_the_service_derives_the_same_rendezvous_keys(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = ref(V_COUNT, none(), none())[0];
+  t.isTrue(n >= 3, "there are several cases, not one");
+
+  for (i32 i = 0; i < n; i++) {
+    u8[] c = ref(V_CASE, arg1(i), none());
+    u8[] authKey = slice(c, 0, 32);
+    u8[] clientPub = slice(c, 96, 128);
+    u8[] svcPub = slice(c, 128, 160);
+    u8[] wantAuthMac = slice(c, 256, 288);
+    u8[] wantKeySeed = slice(c, 288, 320);
+    u8[] encSecret = slice(c, 320, 352);
+    u8[] svcSecret = slice(c, 352, 384);
+
+    // The vector's halves must belong together, or nothing below it means anything.
+    t.eqBytes(x25519Base(svcSecret), svcPub, "the service ephemeral secret matches its public half");
+
+    u8[] keys = serviceRendezvousKeys(authKey, encSecret, svcSecret, clientPub);
+    t.eqI32(keys.len(), 64, "the service gets 64 bytes");
+    t.eqBytes(slice(keys, 0, 32), wantAuthMac, "AUTH_INPUT_MAC is the one tor's client expects");
+    t.eqBytes(slice(keys, 32, 64), wantKeySeed, "NTOR_KEY_SEED is tor's");
+
+    // And the same as our client's, which is what lets a circuit be joined at all.
+    u8[] clientSec = slice(c, 64, 96);
+    u8[] encKey = slice(c, 32, 64);
+    t.eqBytes(keys, clientRendezvousKeys(authKey, clientSec, encKey, svcPub),
+              "the two sides agree");
+  }
+  return t.report();
+}
+
+/** Every input matters to the service's rendezvous half too, and degenerate keys are refused. */
+export string test_the_service_rendezvous_refuses_what_it_should(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] authKey = slice(c, 0, 32);
+  u8[] clientPub = slice(c, 96, 128);
+  u8[] encSecret = slice(c, 320, 352);
+  u8[] svcSecret = slice(c, 352, 384);
+  u8[] good = serviceRendezvousKeys(authKey, encSecret, svcSecret, clientPub);
+
+  t.isTrue(!equal(good, serviceRendezvousKeys(flip(authKey), encSecret, svcSecret, clientPub)),
+           "the auth key changes the keys");
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, flipScalar(encSecret), svcSecret, clientPub)),
+           "the introduction secret changes the keys");
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, encSecret, flipScalar(svcSecret), clientPub)),
+           "the ephemeral secret changes the keys");
+  t.isTrue(!equal(good, serviceRendezvousKeys(authKey, encSecret, svcSecret, flip(clientPub))),
+           "the client key changes the keys");
+
+  t.eqI32(serviceRendezvousKeys(authKey, encSecret, svcSecret, u8[32]()).len(), 0,
+          "an all-zero client key is refused");
+  t.eqI32(serviceRendezvousKeys(authKey, encSecret, u8[0](), clientPub).len(), 0,
+          "and a missing ephemeral secret is not a secret");
+  return t.report();
+}
+
+export string test_every_input_changes_the_keys(fn[u8[](i32, u8[], u8[])] ref) {
+  // The vectors pin one path through the handshake. They cannot show that each input is *used* —
+  // a derivation that ignored the subcredential would match every vector taken at one time period
+  // and fail against a service after the period rolled, which is a bug that appears eight minutes
+  // after it is written.
+  T t = T.create();
+  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] auth = slice(c, 0, 32);
+  u8[] enc = slice(c, 32, 64);
+  u8[] csec = slice(c, 64, 96);
+  u8[] svc = slice(c, 128, 160);
+  u8[] subcred = slice(c, 160, 192);
+
+  u8[] base = clientIntroduceKeys(auth, enc, csec, subcred);
+  t.isFalse(equal(clientIntroduceKeys(flip(auth), enc, csec, subcred), base),
+            "the introduction point's auth key is bound in");
+  t.isFalse(equal(clientIntroduceKeys(auth, enc, csec, flip(subcred)), base),
+            "the subcredential is bound in, so the keys change with the time period");
+  t.isFalse(equal(clientIntroduceKeys(auth, enc, flipScalar(csec), subcred), base),
+            "the client's ephemeral secret is bound in");
+
+  u8[] rend = clientRendezvousKeys(auth, csec, enc, svc);
+  t.isFalse(equal(clientRendezvousKeys(flip(auth), csec, enc, svc), rend),
+            "the rendezvous keys depend on the auth key");
+  t.isFalse(equal(clientRendezvousKeys(auth, csec, enc, flip(svc)), rend),
+            "and on the service's ephemeral key");
+  t.isFalse(equal(clientRendezvousKeys(auth, csec, flip(enc), svc), rend),
+            "and on the service's introduction encryption key");
+  // Deliberately *not* the subcredential: unlike the introduction half it is not an input here, which
+  // tor's `hs_ntor_client_get_rendezvous1_keys()` confirms by not taking one. `clientRendezvousKeys`
+  // has no such parameter, so there is nothing to assert about.
+
+  // The two halves are different functions of overlapping inputs; if one were reachable from the
+  // other by relabelling, a mistake in wiring them up would be invisible.
+  t.isFalse(equal(slice(base, 0, 32), slice(rend, 0, 32)), "ENC_KEY is not AUTH_INPUT_MAC");
+  t.isFalse(equal(slice(base, 32, 64), slice(rend, 32, 64)), "MAC_KEY is not NTOR_KEY_SEED");
+  return t.report();
+}
+
+export string test_a_degenerate_key_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+  // A small-order public key makes the shared value all zero for every scalar, so somebody holding
+  // no private key derives exactly what we do. tor-spec says abort. Returning empty rather than
+  // "keys and a flag" is deliberate: a caller given keys plus a boolean uses the keys.
+  T t = T.create();
+  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] auth = slice(c, 0, 32);
+  u8[] enc = slice(c, 32, 64);
+  u8[] csec = slice(c, 64, 96);
+  u8[] svc = slice(c, 128, 160);
+  u8[] subcred = slice(c, 160, 192);
+  t.isTrue(clientIntroduceKeys(auth, enc, csec, subcred).len() == 64, "the real case works");
+
+  u8[] zero = u8[32]();
+  t.eqI32(clientIntroduceKeys(auth, zero, csec, subcred).len(), 0,
+          "an all-zero encryption key is refused");
+  t.eqI32(clientRendezvousKeys(auth, csec, zero, svc).len(), 0,
+          "and in the rendezvous half");
+  t.eqI32(clientRendezvousKeys(auth, csec, enc, zero).len(), 0,
+          "a small-order service ephemeral is refused");
+
+  // Wrong widths, which is what a truncated cell looks like.
+  t.eqI32(clientIntroduceKeys(slice(auth, 0, 31), enc, csec, subcred).len(), 0, "a short auth key");
+  t.eqI32(clientIntroduceKeys(auth, enc, csec, slice(subcred, 0, 31)).len(), 0, "a short subcred");
+  t.eqI32(clientRendezvousKeys(auth, csec, enc, slice(svc, 0, 16)).len(), 0,
+          "a short service ephemeral");
+  return t.report();
+}
+
+export string test_the_mac_binds_its_key_length(fn[u8[](i32, u8[], u8[])] ref) {
+  // `MAC(m, k) = H(INT_8(len(k)) | k | m)`. Without the length prefix a key and a message could be
+  // resplit: MAC("b", "ca") and MAC("ab", "c") would hash the same bytes.
+  T t = T.create();
+  // `hsMac(key, message)`. Same concatenated bytes, split differently: without the length prefix
+  // these two would hash identically.
+  t.isFalse(equal(hsMac("ab".toBytes(), "c".toBytes()), hsMac("a".toBytes(), "bc".toBytes())),
+            "a key and a message cannot be resplit into the same hash");
+  t.isTrue(equal(hsMac("x".toBytes(), "y".toBytes()), hsMac("x".toBytes(), "y".toBytes())),
+           "the MAC is a function");
+  t.eqI32(hsMac("x".toBytes(), "y".toBytes()).len(), 32, "and is 32 bytes");
+
+  // The four tweaks must all differ, since two of them are applied to the same input.
+  t.isFalse(equal(tHsEnc(), tHsVerify()), "t_hsenc and t_hsverify differ");
+  t.isFalse(equal(tHsEnc(), tHsMac()), "t_hsenc and t_hsmac differ");
+  t.isFalse(equal(tHsVerify(), mHsExpand()), "t_hsverify and m_hsexpand differ");
+  return t.report();
+}
+
+/** One bit of a 32-byte value, for "does this input matter" checks. */
+u8[] flip(u8[] b) {
+  u8[] o = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  o[0] = (o[0] ^ 1);
+  return o;
+}
+/** As `flip`, but keeping the curve25519 clamping so the result is still a valid scalar. */
+u8[] flipScalar(u8[] b) {
+  u8[] o = u8[b.len()]();
+  for (i32 i = 0; i < b.len(); i++) { o[i] = b[i]; }
+  o[1] = (o[1] ^ 1);
+  return o;
+}
+
+export string test_the_rendezvous_hop_keys_are_a_full_hop(fn[u8[](i32, u8[], u8[])] ref) {
+  // 128 bytes: Df, Db, Kf, Kb, each 32. The same layout as an ordinary hop and four times as wide,
+  // because this hop is SHA3-256 and AES-256 rather than SHA-1 and AES-128.
+  T t = T.create();
+  u8[] c = ref(V_CASE, arg1(0), none());
+  u8[] seed = slice(c, 288, 320);        // NTOR_KEY_SEED, tor's own
+  u8[] keys = rendezvousCircuitKeys(seed);
+  t.eqI32(keys.len(), 128, "a rendezvous hop takes 128 bytes of key material");
+
+  // The four parts must all differ. A KDF wired up wrong — reading the same 32 bytes four times, or
+  // an offset that repeats — gives a hop where the forward and backward directions share a
+  // keystream, which is a catastrophic and entirely silent failure.
+  i32 same01 = 0;
+  i32 same23 = 0;
+  i32 same02 = 0;
+  for (i32 i = 0; i < 32; i++) {
+    if (keys[i] == keys[32 + i]) { same01 = same01 + 1; }
+    if (keys[64 + i] == keys[96 + i]) { same23 = same23 + 1; }
+    if (keys[i] == keys[64 + i]) { same02 = same02 + 1; }
+  }
+  t.isTrue(same01 < 32, "Df and Db differ");
+  t.isTrue(same23 < 32, "Kf and Kb differ");
+  t.isTrue(same02 < 32, "Df and Kf differ");
+
+  // Deterministic, and every bit of the seed reaches every part.
+  t.isTrue(sameBytes(keys, rendezvousCircuitKeys(seed)), "the expansion is a function");
+  u8[] other = u8[32]();
+  for (i32 i = 0; i < 32; i++) { other[i] = seed[i]; }
+  other[31] = (other[31] ^ 1);
+  t.isFalse(sameBytes(rendezvousCircuitKeys(other), keys), "a flipped seed bit changes the keys");
+  t.eqI32(rendezvousCircuitKeys(u8[31]()).len(), 0, "a short seed gives no keys");
+  return t.report();
+}
+
+bool sameBytes(u8[] a, u8[] b) { return equal(a, b); }

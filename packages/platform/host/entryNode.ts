@@ -1,0 +1,284 @@
+// The two halves of a built program, for Node.
+//
+// Same bridge, same opcodes, same capability structs — only the thread API and the
+// platform calls differ. Node's `worker_threads` is not the web `Worker`: the message
+// port is `parentPort` rather than `self`, and a worker is spawned from source with
+// `{ eval: true }` rather than from a URL, which suits a bundled program better than the
+// blob URL Deno uses since there is no URL to make.
+//
+// Node 22 runs an extensionless file as ESM with top-level await, so a built program can
+// be `./wc` here as it is under Deno. Checked before this was written.
+//
+// Node has no permission system, so the grants are enforced by the capability world alone
+// — see `node.ts`.
+
+import { bridgeOf, CHUNK, newBridge } from "./layout.ts";
+import { type NodeListener, type NodeSock } from "./node.ts";
+import { type WorkerLike } from "./children.ts";
+
+/** Supplied by the generated launcher, which is where `node:net` can be imported. */
+export type NodeNet = {
+  connect(host: string, port: number): Promise<NodeSock>;
+  listen(address: string, port: number): Promise<NodeListener>;
+};
+import { serveHostCalls } from "./respond.ts";
+import { nodeWorld } from "./node.ts";
+import { cliOf, coreOf } from "./provider.ts";
+import type { AppModule, Grants } from "./entry.ts";
+
+/** Node's `worker_threads`, described rather than imported so this checks under Deno. */
+type ParentPort = { postMessage(m: unknown): void; on(e: "message", f: (m: unknown) => void): void };
+type NodeWorker = {
+  postMessage(m: unknown): void;
+  on(e: "message" | "error" | "exit", f: (m: never) => void): void;
+  terminate(): Promise<number>;
+};
+type WorkerThreads = {
+  parentPort: ParentPort | null;
+  Worker: new (src: string, opts: { eval: boolean }) => NodeWorker;
+};
+
+/**
+ * A `WorkerLike` from Node's `worker_threads`, for `spawn`.
+ *
+ * Here rather than in `node.ts` because that file describes Node's pieces instead of importing them,
+ * so it type-checks under Deno; `wt` only exists where the launcher runs. Node's `on("error")` is
+ * containment already — nothing propagates to the parent thread — so unlike the web worker there is
+ * no default to prevent.
+ */
+function workerFrom(wt: WorkerThreads): (source: string) => WorkerLike {
+  return (source: string) => {
+    const w = new wt.Worker(source, { eval: true });
+    return {
+      post: (m: unknown) => w.postMessage(m),
+      onMessage: (f: (data: unknown) => void) => w.on("message", f as (m: never) => void),
+      onError: (f: (message: string) => void) =>
+        w.on(
+          "error",
+          ((e: Error) => f(e instanceof Error ? e.message : String(e))) as (m: never) => void,
+        ),
+      terminate: () => { void w.terminate(); },
+    };
+  };
+}
+
+/** `child` is set by `spawnChild`: a spawned program runs `main`, never `page`. */
+type Start = { sab: SharedArrayBuffer; child?: boolean };
+
+/** Where to dump counters and what each one means — see `Coverage` in `entry.ts`. */
+type Coverage = { dir: string; lines: string[] };
+
+/** The two `node:fs` calls a dump needs, injected like every other Node built-in in this file. */
+type CovFs = {
+  mkdirSync(p: string, o: { recursive: boolean }): unknown;
+  writeFileSync(p: string, data: string): void;
+};
+
+/**
+ * Write what this program executed, through Node's own `fs`.
+ *
+ * The Deno half of this is `dumpCoverage` in `entry.ts`; they are two implementations of one idea
+ * because the two runtimes reach the filesystem differently and neither module imports the other.
+ * `fs` arrives as an argument rather than an import for the reason the whole file does that: this
+ * module is type-checked under Deno, and only an instrumented build should carry `node:fs` at all.
+ * wac-mono 0024.
+ */
+function dumpCoverageNode(app: AppModule, cov: Coverage, fs: CovFs): void {
+  try {
+    const len = (app as unknown as { __cov_len?: () => number }).__cov_len;
+    const get = (app as unknown as { __cov_get?: (i: number) => number }).__cov_get;
+    if (len === undefined || get === undefined) return;
+    const hit: string[] = [];
+    const seen = new Set<string>();
+    const n = len();
+    for (let i = 0; i < n; i++) {
+      if (get(i) > 0 && !seen.has(cov.lines[i])) {
+        seen.add(cov.lines[i]);
+        hit.push(cov.lines[i]);
+      }
+    }
+    fs.mkdirSync(cov.dir, { recursive: true });
+    // Named by time and a random suffix rather than `crypto.randomUUID`, which the Deno half uses:
+    // one file per run, and two children writing at once must not collide.
+    fs.writeFileSync(
+      `${cov.dir}/${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
+      JSON.stringify({ all: [...new Set(cov.lines)].sort(), hit: hit.sort() }),
+    );
+  } catch {
+    // A dump that cannot be written must not change what the program does. See the Deno half.
+  }
+}
+type Result = { ok: true; code: number } | { ok: false; error: string };
+
+/**
+ * The worker half.
+ *
+ * The handler is attached before anything can await, for the reason the Deno half
+ * documents: the application module suspends at its top-level `WebAssembly.instantiate`,
+ * and a message arriving in that window would be lost.
+ */
+export function runAsWorkerEntryNode(
+  wt: WorkerThreads,
+  app: AppModule,
+  cov?: Coverage,
+  fs?: CovFs,
+): void {
+  const port = wt.parentPort;
+  if (port === null) throw new Error("runAsWorkerEntryNode called off a worker");
+  // "This bundle loaded", before the bridge arrives and before the application runs — the one fact a
+  // parent cannot otherwise learn, and what `spawn` waits for so that a source which is not
+  // JavaScript is a failed child rather than a dead parent. wac-mono issue 0021.
+  port.postMessage({ ready: true });
+  port.on("message", (m: unknown) => {
+    const b = bridgeOf((m as Start).sab);
+    try {
+      if (typeof app.main !== "function") {
+        throw new Error("an application must export `main(Core, Cli) -> i32`");
+      }
+      // Allocates the counter array. Without it every instrumented function traps on its first branch
+      // with "dereferencing a null pointer" — which is what a Node coverage build did until this line
+      // existed, while the Deno one worked, because only half the contract had been implemented.
+      if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
+      const code = app.main(coreOf(b, app), cliOf(b, app));
+      if (cov !== undefined && fs !== undefined) dumpCoverageNode(app, cov, fs);
+      port.postMessage({ ok: true, code } as Result);
+    } catch (err) {
+      if (cov !== undefined && fs !== undefined) dumpCoverageNode(app, cov, fs);
+      port.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) } as Result);
+    }
+  });
+}
+
+/** The launcher half: serve the granted capabilities, run the worker, exit with its code. */
+export async function runLauncherNode(
+  wt: WorkerThreads,
+  fs: {
+    readFile(p: string): Promise<Uint8Array>;
+    writeFile(p: string, d: Uint8Array): Promise<void>;
+    mkdir(p: string, o: { recursive: boolean }): Promise<unknown>;
+    rm(p: string, o: { recursive: boolean; force: boolean }): Promise<void>;
+    rename(from: string, to: string): Promise<void>;
+    open(p: string, flags: string): Promise<{
+      read(b: Uint8Array, off: number, len: number): Promise<{ bytesRead: number }>;
+      write(b: Uint8Array): Promise<unknown>;
+      close(): Promise<void>;
+    }>;
+    stat(p: string): Promise<{ isFile(): boolean; isDirectory(): boolean; size: number; mtimeMs: number }>;
+    lstat(
+      p: string,
+    ): Promise<
+      { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number }
+    >;
+    readdir(p: string): Promise<string[]>;
+  },
+  proc: {
+    argv: string[];
+    env: Record<string, string | undefined>;
+    exit(code: number): never;
+    stdin: AsyncIterable<Uint8Array>;
+    stdout: { write(b: Uint8Array, cb: (e?: unknown) => void): void };
+    stderr: { write(b: Uint8Array, cb: (e?: unknown) => void): void };
+  },
+  workerSource: string,
+  grants: Grants = {},
+  net?: NodeNet,
+): Promise<void> {
+  let stdinIter: AsyncIterator<Uint8Array> | null = null;
+  const io = {
+    // Node's `net` is event-based; this is the adapter that gives it the promise shape
+    // `nodeWorld` expects. Incoming data is queued rather than dropped, because a `recv`
+    // that has not been called yet must not lose bytes the peer has already sent — and a
+    // waiter is parked only when the queue is empty.
+    connect: (host: string, port: number) => {
+      if (net === undefined) throw new Error("network access not granted to this application");
+      return net.connect(host, port);
+    },
+    listen: (address: string, port: number) => {
+      if (net === undefined) throw new Error("network access not granted to this application");
+      return net.listen(address, port);
+    },
+    readStdin: async (): Promise<Uint8Array> => {
+      const parts: Uint8Array[] = [];
+      for await (const c of proc.stdin) parts.push(c);
+      const total = parts.reduce((a, p) => a + p.length, 0);
+      const out = new Uint8Array(total);
+      let at = 0;
+      for (const p of parts) { out.set(p, at); at += p.length; }
+      return out;
+    },
+    // Node hands standard input over as an async iterable, which is already the shape a
+    // chunked read wants: one `next()` is one chunk, and `done` is the end.
+    readStdinChunk: async (): Promise<Uint8Array> => {
+      stdinIter ??= proc.stdin[Symbol.asyncIterator]();
+      const r = await stdinIter.next();
+      return r.done === true ? new Uint8Array(0) : r.value;
+    },
+    createFile: async (path: string) => {
+      const h = await fs.open(path, "w");
+      return { write: async (b: Uint8Array) => { await h.write(b); }, close: () => h.close() };
+    },
+    openFile: async (path: string) => {
+      const h = await fs.open(path, "r");
+      return {
+        read: async (): Promise<Uint8Array> => {
+          // A buffer per read, not one per handle: two reads on one handle can overlap now
+          // that the bridge has a ring, and sharing the destination means the kernel writes
+          // both into the same memory. See the note on `fresh` in `deno.ts`.
+          const b = new Uint8Array(CHUNK);
+          const { bytesRead } = await h.read(b, 0, CHUNK);
+          return bytesRead === 0 ? new Uint8Array(0) : b.subarray(0, bytesRead);
+        },
+        close: () => h.close(),
+      };
+    },
+    writeStdout: (b: Uint8Array): Promise<void> =>
+      new Promise((res, rej) => proc.stdout.write(b, (e) => (e ? rej(e) : res()))),
+    writeStderr: (b: Uint8Array): Promise<void> =>
+      new Promise((res, rej) => proc.stderr.write(b, (e) => (e ? rej(e) : res()))),
+    stat: async (path: string) => {
+      const st = await fs.stat(path);
+      return {
+        isFile: st.isFile(), isDirectory: st.isDirectory(),
+        size: st.size, mtimeMillis: Math.round(st.mtimeMs),
+      };
+    },
+    linkStat: async (path: string) => {
+      const st = await fs.lstat(path);
+      return {
+        isFile: st.isFile(), isDirectory: st.isDirectory(),
+        size: st.size, mtimeMillis: Math.round(st.mtimeMs),
+        isSymlink: st.isSymbolicLink(),
+      };
+    },
+    readDir: async (path: string) => (await fs.readdir(path)).sort(),
+  };
+  const bridge = newBridge();
+  const responder = serveHostCalls(bridge, nodeWorld(fs, proc, io, {
+    args: proc.argv.slice(2),
+    fs: { read: grants.read === true, write: grants.write === true },
+    net: grants.net === true,
+    env: grants.env === true ? (n) => proc.env[n] : undefined,
+    makeWorker: workerFrom(wt),
+    selfSource: workerSource,
+  }));
+
+  const worker = new wt.Worker(workerSource, { eval: true });
+  // Node queues messages on a port until a listener attaches, so unlike the web worker
+  // this cannot be posted too early — but it does have to be posted at all.
+  worker.postMessage({ sab: bridge.sab } satisfies Start);
+  const code = await new Promise<number>((resolve, reject) => {
+    worker.on("message", ((m: Result | { ready: true }) => {
+      if ("ready" in m) return;   // the load notice; only `spawn` has a use for it
+      if (m.ok) resolve(m.code);
+      else reject(new Error(m.error));
+    }) as (m: never) => void);
+    worker.on("error", ((e: Error) => reject(e)) as (m: never) => void);
+  }).catch((e: unknown) => {
+    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+    return 70;
+  });
+
+  responder.stop();
+  await worker.terminate();
+  proc.exit(code);
+}

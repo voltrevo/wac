@@ -1,0 +1,110 @@
+// `box`'s applets, as the shell's external commands.
+//
+//   import { boxRun } from "../src/shrun.wac";
+//   Shell sh = Shell.create(core, cli);
+//   sh.external = boxRun;
+//
+// Two lines, and `sort`, `grep`, `sha256sum`, `gzip`, `cut`, `shuf` and fifty more become
+// commands you can type. `packages/sh` had its own `cat`, `wc`, `head`, `tail`, `rev`, `sort`,
+// `uniq`, `grep`, `tr`, `seq`, `nl` and `printf` — twelve programs that existed only because the
+// real ones could not be called, and its own comments said so. They are the fallback now.
+//
+// ## Why the wiring points this way
+//
+// `box` depends on `sh` and not the other way round, so `sh` cannot import this table; it takes a
+// funcref instead and whoever has both packages hands one to the other. That also keeps `sh`
+// testable alone: with nothing wired in, the hook falls through and the shell behaves exactly as
+// it did.
+//
+// ## Why an applet needs no changes
+//
+// An applet reads `cli.readChunk()` and writes `cli.write(...)`, which are the *process's*
+// streams. In wac there are no closures, so it cannot be handed a substitute `Cli` — a fake
+// capability would have nowhere to put what it collected. `platform`'s answer is
+// `pushChild`/`popChild`: the host holds the child's world for the duration, so between the two
+// calls those same capabilities read the bytes we supply and keep what they are given. The applet
+// is not compiled differently, does not know, and cannot tell.
+//
+// The one thing that is *not* faithful is isolation. This is the same wasm instance with the same
+// authority: an applet run here can open any file the shell could. A real boundary is `spawn`,
+// which `sh` tries first — see `trySpawn` — and which a browser cannot do yet.
+
+import { Captured, Cli, Core } from "../../platform/src/platform.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Args, parseList } from "./lib/args.wac";
+import { UNKNOWN, appletNames, dispatch } from "./box.wac";
+import { Output } from "../../sh/src/refusal.wac";
+import { Fs } from "../../fs/src/fs.wac";
+
+/**
+ * Run `argv` as a `box` applet, with `stdin` as its input and `cwd` as where it stands.
+ *
+ * Matches `Shell.external`, so this is the whole of the integration.
+ *
+ * `Output.missing()` for a name that is not an applet, because that is what makes the shell say
+ * `command not found` and report 127 rather than printing `box`'s usage at somebody who typed a
+ * typo. The `UNKNOWN` sentinel exists for exactly this: an applet that ran and failed returns 1,
+ * and one that does not exist has to be a different answer.
+ */
+export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8[] stdin, bool inheritIn) {
+  if (argv.len() == 0) { return Output.missing(); }
+
+  // The applet's own name is `argv[0]` here, where under `box` it is `argv[1]` — `box grep x` and
+  // `grep x` in a shell are the same command spelled two ways. `parseList` takes where the
+  // arguments begin so both callers use the one parser.
+  string[] args = string[argv.len()](fill: "");
+  for (i32 i = 0; i < argv.len(); i++) { args[i] = argv.get(i); }
+  string name = args[0];
+  Args a = parseList(args, 1, name);
+
+  // Pushed before the applet runs and popped whatever it returns. There is no early return
+  // between these two lines on purpose: a push left on the stack would capture the shell's own
+  // output for ever afterwards, and the failure would appear as a terminal that has gone silent
+  // rather than as anything to do with this function.
+  // `inheritIn` is the shell saying "this one may read the real standard input" — so it is not handed
+  // bytes and the shell never had to read any. Without it a shell that cannot spawn had to drain its own
+  // input before starting an applet that might never read one, and at a terminal that never finished
+  // (wac-mono 0110).
+  // **Where the applet stands.** `pushChild`'s `cwd` is the host's answer to a relative path, and an
+  // applet asks this filesystem now — so the filesystem has to be told too, or `cat f` after `cd d`
+  // looks under the mount root (wac-mono 0109).
+  fs.setCwd(cwd);
+  cli.pushChild(args, stdin, cwd, inheritIn).wait();
+  i32 code = dispatch(core, cli, fs, a, name);
+  Captured got = cli.popChild().wait();
+
+  if (code == UNKNOWN) { return Output.missing(); }
+  return Output(got.out, got.err, code, true);
+}
+
+/**
+ * Run one applet as *this program's* `main` would, writing to the real streams.
+ *
+ * The other half of `Shell.externalSpawnable`. When the shell runs an applet as a child — a worker of
+ * its own, through `spawnSelf` — the child starts at `main` with the applet's name as its first
+ * argument, and `main` has to know what to do with that. `box.wac`'s already does; a program that
+ * *embeds* the shell needs this to do the same thing.
+ *
+ * No `pushChild` here, unlike `boxRun`: a child's output is already its own, and its `cli.write` goes
+ * to the handle its parent reads. Capturing would be capturing from itself.
+ *
+ * Answers `UNKNOWN` for a name that is not an applet, so a caller can be a shell instead.
+ */
+export i32 boxApplet(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 1) { return UNKNOWN; }
+  string[] args = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { args[i] = string.fromBytes(cli.arg(i).wait()); }
+  string name = args[0];
+  // `boxApplet` is the multi-call entry — this program run *as* an applet — so the filesystem is the
+  // host's, exactly as it is for `box` itself. A shell hands its own in through `boxRun` above.
+  return dispatch(core, cli, Fs.onHost(cli, 0), parseList(args, 1, name), name);
+}
+
+/**
+ * Every name `boxRun` answers to, for `Shell.externalNames`.
+ *
+ * The same list `box`'s own usage prints, so the shell's `help` and `box` with no arguments cannot
+ * disagree about what exists.
+ */
+export string[] boxNames() { return appletNames(); }

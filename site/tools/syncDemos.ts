@@ -15,7 +15,7 @@
 // generated HTML in git, refreshed by hand — which meant the demos on the site were as current as
 // whenever somebody last remembered, and they were three weeks of changes stale within a day.
 //
-// Run this locally to see them: `deno run -A tools/syncDemos.ts ../wac-mono`, then `npm run dev`.
+// Run this locally to see them: `deno run -A site/tools/syncDemos.ts`, then `npm run dev`.
 // Without it the demo links are still right and simply 404, which is the honest state of a checkout
 // that has not built them.
 //
@@ -56,7 +56,10 @@ const DEMOS: Demo[] = [
 
 const sizes: { file: string; size: string }[] = [];
 
-const mono = Deno.args[0] ?? "../wac-mono";
+const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
+// root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
+// checkout of wac-mono; the merge made it the tree this file is in.
+Deno.args[0] ?? ".";
 const out = new URL("../public/", import.meta.url).pathname;
 
 for (const demo of DEMOS) {

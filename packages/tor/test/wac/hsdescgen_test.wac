@@ -1,0 +1,438 @@
+// Onion service descriptors, against the document tor's own decoder accepted.
+
+import { T } from "../../../wactest/src/assert.wac";
+import {
+  DESC_SIG_PREFIX, SUPERENC_PAD_MULTIPLE, descriptorDocument, encryptLayer, encryptedPlaintext,
+  introPointSection, padToBlock, prefixed, signedSpanOf, superencryptedPlaintext,
+} from "../../src/hsdescgen.wac";
+import {
+  decryptLayer, encryptedConstant, superencryptedConstant, SALT_LEN, MAC_LEN,
+} from "../../src/hsdesc.wac";
+import { linkSpecifiersValid } from "../../src/hsintro.wac";
+import { blindedSecretKey, blindingFactor, subcredential } from "../../src/hsblind.wac";
+import { CERT_TYPE_SIGNING_HS_DESC, ed25519CertExpandedWithKey } from "../../src/relaycert.wac";
+import { ed25519ExpandedSecret, ed25519PublicKey, ed25519PublicKeyExpanded }
+  from "../../../crypto/src/ed25519.wac";
+import { ed25519Verify } from "../../../crypto/src/ed25519.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+
+const i32 H_DESCRIPTOR = 0;
+const i32 H_CERT = 1;
+const i32 H_SUPERENCRYPTED = 2;
+const i32 H_SIGN_SEED = 3;
+const i32 H_SIGN_PUBLIC = 4;
+const i32 H_IDENTITY_SEED = 21;
+const i32 H_IDENTITY_PUBLIC = 22;
+const i32 H_FACTOR = 23;
+const i32 H_BLIND_EXPANDED = 24;
+const i32 H_BLIND_PUBLIC = 6;
+const i32 H_NUM = 7;
+const i32 H_SUBCRED = 8;
+const i32 H_EPHEMERAL = 9;
+const i32 H_SALT = 10;
+const i32 H_INNER = 11;
+const i32 H_CLIENT = 12;
+const i32 H_CLIENT_COUNT = 13;
+const i32 H_INNER_SALT = 14;
+const i32 H_LINK_SPECS = 15;
+const i32 H_IP_NTOR = 16;
+const i32 H_IP_ENC = 17;
+const i32 H_IP_ENC_ED = 18;
+const i32 H_AUTH_CERT = 19;
+const i32 H_ENC_CERT = 20;
+
+u8[] none() { return u8[0](); }
+
+u8[] at(i32 i) {
+  u8[] a = u8[1]();
+  a[0] = i;
+  return a;
+}
+
+i32 be32(u8[] b) { return b[0] * 16777216 + b[1] * 65536 + b[2] * 256 + b[3]; }
+
+i32 num(fn[u8[](i32, u8[], u8[])] ref, i32 which) { return be32(ref(H_NUM, at(which), none())); }
+
+u8[] built(fn[u8[](i32, u8[], u8[])] ref) {
+  return descriptorDocument(num(ref, 0), ref(H_CERT, none(), none()), num(ref, 1) as i64,
+                            ref(H_SUPERENCRYPTED, none(), none()), ref(H_SIGN_SEED, none(), none()));
+}
+
+export string test_the_document_tor_decoded_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  t.eqBytes(built(ref), ref(H_DESCRIPTOR, none(), none()),
+            "the descriptor is the one tor's hs_desc_decode_plaintext accepted");
+  return t.report();
+}
+
+/**
+ * The signed span ends with the newline before `signature `, not before the object above it.
+ *
+ * tor finds `"\nsignature "` and steps *past* the newline, so that byte is inside the span. One byte
+ * either way leaves a document that parses and a signature that does not verify — the same shape as
+ * the ESTABLISH_INTRO span, and the reason both are pinned rather than described.
+ */
+export string test_the_signed_span_is_where_tor_stops(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] doc = built(ref);
+  u8[] span = signedSpanOf(doc);
+
+  t.eqI32(span.len(), num(ref, 2), "the span is the length recorded when tor accepted it");
+  t.eqI32(span[span.len() - 1], 10, "and it ends on the newline, which tor includes");
+  // What follows the span is exactly the signature line.
+  t.isTrue(startsWith(sub(doc, span.len(), doc.len()), "signature "),
+           "the byte after the span begins the signature line");
+
+  // The signature verifies over prefix+span with the descriptor signing key, and not over the span
+  // alone — the prefix is part of the message, as it is for ESTABLISH_INTRO.
+  u8[] sig = signatureOf(doc);
+  t.eqI32(sig.len(), 64, "there is a 64-byte signature to check");
+  t.isTrue(ed25519Verify(ref(H_SIGN_PUBLIC, none(), none()), prefixed(span), sig),
+           "the signature covers the prefixed span");
+  t.isTrue(!ed25519Verify(ref(H_SIGN_PUBLIC, none(), none()), span, sig),
+           "and not the bare span");
+  t.eqStr(DESC_SIG_PREFIX, "Tor onion service descriptor sig v3", "with tor's own prefix string");
+
+  // One byte more or less is a different message, which is the whole trap.
+  t.isTrue(!ed25519Verify(ref(H_SIGN_PUBLIC, none(), none()), prefixed(sub(doc, 0, span.len() - 1)),
+                          sig), "a span one byte short does not verify");
+  return t.report();
+}
+
+/**
+ * A layer encrypts to something the reader gets back, and the MAC is over the ciphertext.
+ *
+ * `decryptLayer` is our own, so this alone would be a round trip through one implementation. It earns
+ * its place by checking the *shape* tor's format fixes — salt first, MAC last, MAC over the
+ * ciphertext and not the plaintext — each of which a self-consistent pair would agree on wrongly.
+ * The layer contents are pinned against tor when the encrypted layers exist; this is the arithmetic.
+ */
+export string test_a_layer_round_trips_and_is_shaped_right(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] plain = "create2-formats 2\nintroduction-point AQAGAX8AAAEjKQ\n".toBytes();
+  u8[] secret = ref(H_BLIND_PUBLIC, none(), none());
+  u8[] subcred = u8[32]();
+  for (i32 i = 0; i < 32; i++) { subcred[i] = (i * 5 + 1) & 0xFF; }
+  u8[] salt = u8[SALT_LEN]();
+  for (i32 i = 0; i < SALT_LEN; i++) { salt[i] = (i * 13 + 2) & 0xFF; }
+
+  u8[] blob = encryptLayer(plain, secret, subcred, 42, salt, superencryptedConstant());
+  t.eqI32(blob.len(), SALT_LEN + plain.len() + MAC_LEN, "salt, ciphertext and MAC, and nothing else");
+  t.eqBytes(sub(blob, 0, SALT_LEN), salt, "the salt is first and is the one given");
+  t.eqBytes(decryptLayer(blob, secret, subcred, 42, superencryptedConstant()), plain,
+            "and the reader gets the plaintext back");
+
+  // The ciphertext is not the plaintext, which a cipher that silently did nothing would fail.
+  t.isTrue(!equal(sub(blob, SALT_LEN, SALT_LEN + plain.len()), plain),
+           "the middle is enciphered rather than copied");
+
+  // Every input changes the output, and a corrupted blob is refused rather than returned.
+  u8[] other = encryptLayer(plain, secret, subcred, 43, salt, superencryptedConstant());
+  t.isTrue(!equal(blob, other), "the revision counter changes the layer");
+  u8[] tampered = flipAt(blob, SALT_LEN + 1);
+  t.eqI32(decryptLayer(tampered, secret, subcred, 42, superencryptedConstant()).len(), 0,
+          "a flipped ciphertext byte fails the MAC");
+  t.eqI32(decryptLayer(flipAt(blob, 0), secret, subcred, 42, superencryptedConstant()).len(), 0,
+          "and so does a flipped salt byte, which changes the keys");
+
+  t.eqI32(encryptLayer(plain, secret, subcred, 42, u8[15](), superencryptedConstant()).len(), 0,
+          "a fifteen-byte salt is not a salt");
+  return t.report();
+}
+
+/** Inputs that cannot make a descriptor produce nothing, rather than an unsigned document. */
+export string test_bad_inputs_make_no_descriptor(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] cert = ref(H_CERT, none(), none());
+  u8[] sup = ref(H_SUPERENCRYPTED, none(), none());
+  u8[] seed = ref(H_SIGN_SEED, none(), none());
+
+  t.eqI32(descriptorDocument(180, u8[0](), 42, sup, seed).len(), 0, "no certificate, no descriptor");
+  t.eqI32(descriptorDocument(180, cert, 42, sup, u8[0]()).len(), 0, "no signing key, no descriptor");
+  t.eqI32(descriptorDocument(0, cert, 42, sup, seed).len(), 0, "a zero lifetime is not a lifetime");
+  t.eqI32(descriptorDocument(-1, cert, 42, sup, seed).len(), 0, "nor a negative one");
+  t.eqI32(signedSpanOf("no signature line here\n".toBytes()).len(), 0,
+          "a document with no signature line has no span");
+  return t.report();
+}
+
+/**
+ * The middle layer, rebuilt and compared against the one tor decrypted.
+ *
+ * This is the whole descriptor's middle stage: the plaintext, the padding to ten kilobytes, and the
+ * encryption under the blinded key and the subcredential. tor decrypted the committed blob and found
+ * sixteen auth clients and the inner object, so reproducing the blob byte for byte reproduces
+ * something an independent implementation understood.
+ */
+export string test_the_middle_layer_tor_decrypted_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = be32(ref(H_CLIENT_COUNT, none(), none()));
+  u8[][] clients = u8[][n]();
+  for (i32 i = 0; i < n; i++) { clients[i] = ref(H_CLIENT, at(i), none()); }
+
+  u8[] plain = superencryptedPlaintext(ref(H_EPHEMERAL, none(), none()), clients,
+                                       ref(H_INNER, none(), none()));
+  t.isTrue(plain.len() > 0, "the middle plaintext builds");
+  t.isTrue(startsWith(plain, "desc-auth-type x25519\n"),
+           "it opens with the auth type, which tor's token rule requires first");
+
+  u8[] padded = padToBlock(plain);
+  t.eqI32(padded.len(), num(ref, 3), "padded to the length tor decrypted");
+  t.eqI32(padded.len() % SUPERENC_PAD_MULTIPLE, 0, "and to a multiple of ten thousand");
+  t.isTrue(padded.len() >= plain.len(), "padding never shortens");
+  t.eqI32(padded[padded.len() - 1], 0, "the padding is NULs, which is where a reader stops");
+
+  // A plaintext *over* one block, because everything above passes for a padding that rounds the
+  // wrong way: under 10000 bytes, rounding down gives zero and a guard turns zero back into one
+  // block, so up and down agree. A planted "round down" fault survived until this case existed.
+  u8[] big = u8[SUPERENC_PAD_MULTIPLE + 1]();
+  for (i32 i = 0; i < big.len(); i++) { big[i] = 65; }
+  t.eqI32(padToBlock(big).len(), SUPERENC_PAD_MULTIPLE * 2,
+          "one byte over a block pads to two blocks, not down to one");
+  u8[] exact = u8[SUPERENC_PAD_MULTIPLE]();
+  for (i32 i = 0; i < exact.len(); i++) { exact[i] = 66; }
+  t.eqI32(padToBlock(exact).len(), SUPERENC_PAD_MULTIPLE,
+          "an exact block is left alone rather than grown");
+
+  u8[] blob = encryptLayer(padded, ref(H_BLIND_PUBLIC, none(), none()),
+                           ref(H_SUBCRED, none(), none()), num(ref, 1) as i64,
+                           ref(H_SALT, none(), none()), superencryptedConstant());
+  t.eqBytes(blob, ref(H_SUPERENCRYPTED, none(), none()),
+            "and the encrypted layer is the blob tor decrypted");
+  return t.report();
+}
+
+/** The decoy clients are present and uniform, because their absence would leak. */
+export string test_the_decoy_clients_are_written(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  i32 n = be32(ref(H_CLIENT_COUNT, none(), none()));
+  u8[][] clients = u8[][n]();
+  for (i32 i = 0; i < n; i++) { clients[i] = ref(H_CLIENT, at(i), none()); }
+  u8[] plain = superencryptedPlaintext(ref(H_EPHEMERAL, none(), none()), clients,
+                                       ref(H_INNER, none(), none()));
+
+  t.eqI32(countOf(plain, "auth-client "), n, "one line per client, and tor counted the same number");
+
+  // A layer with no clients is refused rather than written: the token rule wants at least one, and a
+  // descriptor whose shape says "nobody is authorised" is the leak the decoys exist to prevent.
+  t.eqI32(superencryptedPlaintext(ref(H_EPHEMERAL, none(), none()), u8[][0](),
+                                  ref(H_INNER, none(), none())).len(), 0,
+          "no clients at all is refused");
+  // A client of the wrong size would produce fields tor cannot parse.
+  u8[][] wrong = u8[][1]();
+  wrong[0] = u8[39]();
+  t.eqI32(superencryptedPlaintext(ref(H_EPHEMERAL, none(), none()), wrong,
+                                  ref(H_INNER, none(), none())).len(), 0,
+          "a thirty-nine byte client is not one");
+  t.eqI32(superencryptedPlaintext(u8[31](), clients, ref(H_INNER, none(), none())).len(), 0,
+          "and a thirty-one byte ephemeral key is not a key");
+  return t.report();
+}
+
+/**
+ * The inner layer, rebuilt and compared against the one tor decrypted into an introduction point.
+ *
+ * tor reported `intro_points: 1` for the committed descriptor, which is the assertion that matters:
+ * it **drops** an introduction point whose certificates do not check out and still returns success,
+ * so a descriptor that decodes with zero introduction points is a failure wearing a success. Two
+ * deliberately-wrong builds produced exactly that, and are recorded in the registrar's header.
+ */
+export string test_the_inner_layer_tor_read_is_reproduced(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] ls = ref(H_LINK_SPECS, none(), none());
+  t.isTrue(linkSpecifiersValid(ls), "the link specifiers are a list our own validator accepts");
+
+  u8[] section = introPointSection(ls, ref(H_IP_NTOR, none(), none()),
+                                   ref(H_AUTH_CERT, none(), none()), ref(H_IP_ENC, none(), none()),
+                                   ref(H_ENC_CERT, none(), none()));
+  t.isTrue(section.len() > 0, "the introduction point section builds");
+  t.isTrue(startsWith(section, "introduction-point "),
+           "it opens with the keyword tor's token rule requires first");
+  t.eqI32(countOf(section, "\nauth-key\n"), 1, "exactly one auth-key");
+  t.eqI32(countOf(section, "\nenc-key-cert\n"), 1, "exactly one enc-key-cert");
+  t.eqI32(countOf(section, "ED25519 CERT"), 4, "two certificates, each with a begin and an end");
+
+  u8[][] intros = u8[][1]();
+  intros[0] = section;
+  u8[] plain = encryptedPlaintext(intros);
+  t.isTrue(startsWith(plain, "create2-formats 2\n"),
+           "the inner layer opens with create2-formats, which tor requires first");
+  t.eqI32(plain.len(), num(ref, 4), "and is the length tor decrypted");
+
+  u8[] blob = encryptLayer(plain, ref(H_BLIND_PUBLIC, none(), none()),
+                           ref(H_SUBCRED, none(), none()), num(ref, 1) as i64,
+                           ref(H_INNER_SALT, none(), none()), encryptedConstant());
+  t.eqBytes(blob, ref(H_INNER, none(), none()),
+            "the encrypted inner layer is the blob tor decrypted");
+
+  // The inner layer is **not** padded, unlike the middle one. Its length tracks the number of
+  // introduction points, which is why the middle layer's padding is what hides that.
+  t.isTrue(plain.len() % SUPERENC_PAD_MULTIPLE != 0,
+           "the inner layer is not padded to a block, and only the middle one is");
+
+  // No introduction points is refused rather than written: a descriptor with none is useless, and
+  // tor would report exactly the `intro_points: 0` that a broken one does.
+  t.eqI32(encryptedPlaintext(u8[][0]()).len(), 0, "a descriptor with no introduction points is not one");
+  return t.report();
+}
+
+/** Inputs that cannot make an introduction point produce nothing. */
+export string test_a_bad_introduction_point_is_refused(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] ls = ref(H_LINK_SPECS, none(), none());
+  u8[] ntor = ref(H_IP_NTOR, none(), none());
+  u8[] enc = ref(H_IP_ENC, none(), none());
+  u8[] a = ref(H_AUTH_CERT, none(), none());
+  u8[] e = ref(H_ENC_CERT, none(), none());
+
+  t.eqI32(introPointSection(u8[0](), ntor, a, enc, e).len(), 0, "no link specifiers, no section");
+  t.eqI32(introPointSection(ls, u8[31](), a, enc, e).len(), 0, "a 31-byte onion key is not one");
+  t.eqI32(introPointSection(ls, ntor, u8[0](), enc, e).len(), 0, "no auth certificate, no section");
+  t.eqI32(introPointSection(ls, ntor, a, u8[31](), e).len(), 0, "a 31-byte encryption key is not one");
+  t.eqI32(introPointSection(ls, ntor, a, enc, u8[0]()).len(), 0, "no cross certificate, no section");
+  return t.report();
+}
+
+/**
+ * The whole chain, from one identity seed to the subcredential tor decrypted with.
+ *
+ * Every link here was already pinned against tor on its own. What was missing is that they were never
+ * joined: the descriptor was built with ordinary keypairs and a subcredential chosen at random, and
+ * every oracle accepted it, because **nothing in a descriptor says which key ought to have signed
+ * it**. A service that blinded wrongly would publish a document that decodes perfectly for anyone who
+ * does not know the identity key and fails only for the clients who do.
+ *
+ * So this walks the chain a service actually walks — identity, factor, blinded keypair,
+ * subcredential — and ends at the value tor was handed when it decrypted both layers.
+ */
+export string test_the_chain_from_identity_to_subcredential(fn[u8[](i32, u8[], u8[])] ref) {
+  T t = T.create();
+  u8[] seed = ref(H_IDENTITY_SEED, none(), none());
+
+  t.eqBytes(ed25519PublicKey(seed), ref(H_IDENTITY_PUBLIC, none(), none()),
+            "the identity public key is the seed's own");
+
+  i64 periodNum = num(ref, 5) as i64;
+  i64 periodLength = num(ref, 6) as i64;
+  u8[] factor = blindingFactor(ref(H_IDENTITY_PUBLIC, none(), none()), periodNum, periodLength);
+  t.eqBytes(factor, ref(H_FACTOR, none(), none()),
+            "the blinding factor is the one this period gives");
+
+  u8[] blindExpanded = blindedSecretKey(ed25519ExpandedSecret(seed), factor);
+  t.eqBytes(blindExpanded, ref(H_BLIND_EXPANDED, none(), none()),
+            "the blinded secret follows from the identity and the factor");
+  t.eqBytes(ed25519PublicKeyExpanded(blindExpanded), ref(H_BLIND_PUBLIC, none(), none()),
+            "and its public half is the blinded key tor read out of the certificate");
+
+  t.eqBytes(subcredential(ref(H_IDENTITY_PUBLIC, none(), none()), ref(H_BLIND_PUBLIC, none(), none())),
+            ref(H_SUBCRED, none(), none()),
+            "the subcredential tor decrypted with is the derived one, not a constant");
+
+  // And the certificate itself, rebuilt from the blinded secret. Every other test here takes the
+  // certificate from the vector as an *input*, so a fault in how it is built was invisible to all of
+  // them — one planted fault ("omit the signing key extension") survived until this line existed.
+  // Without that extension tor has nowhere to read `blinded_pubkey` from at all.
+  t.eqBytes(ed25519CertExpandedWithKey(CERT_TYPE_SIGNING_HS_DESC, expiryHoursOf(ref), 1,
+                                       ref(H_SIGN_PUBLIC, none(), none()),
+                                       ref(H_BLIND_PUBLIC, none(), none()), blindExpanded),
+            ref(H_CERT, none(), none()),
+            "the signing-key certificate is signed by the blinded key and carries it");
+
+  // A neighbouring period gives a different everything, which is what makes a descriptor expire from
+  // the hash ring rather than linger under a stale name.
+  u8[] otherFactor = blindingFactor(ref(H_IDENTITY_PUBLIC, none(), none()), periodNum + 1,
+                                    periodLength);
+  t.isTrue(!equal(otherFactor, factor), "the next period has its own factor");
+  u8[] otherBlind = ed25519PublicKeyExpanded(
+    blindedSecretKey(ed25519ExpandedSecret(seed), otherFactor));
+  t.isTrue(!equal(otherBlind, ref(H_BLIND_PUBLIC, none(), none())),
+           "and its own blinded key");
+  t.isTrue(!equal(subcredential(ref(H_IDENTITY_PUBLIC, none(), none()), otherBlind),
+                      ref(H_SUBCRED, none(), none())),
+           "and its own subcredential, so last period's descriptor will not decrypt");
+  return t.report();
+}
+
+/**
+ * The certificate's expiry, read back out of the committed certificate.
+ *
+ * Taken from the bytes rather than recomputed, because the generator's choice of expiry is not
+ * something this test is about — and hard-coding it here would be a second place to update.
+ */
+i64 expiryHoursOf(fn[u8[](i32, u8[], u8[])] ref) {
+  u8[] cert = ref(H_CERT, none(), none());
+  // VERSION[1] CERT_TYPE[1] EXPIRATION[4] — big-endian hours since the epoch.
+  return ((cert[2] as i64) << 24) | ((cert[3] as i64) << 16) | ((cert[4] as i64) << 8) |
+         (cert[5] as i64);
+}
+
+/** How many times `needle` appears. */
+i32 countOf(u8[] s, string needle) {
+  u8[] t = needle.toBytes();
+  i32 n = 0;
+  for (i32 i = 0; i + t.len() <= s.len(); i++) {
+    bool hit = true;
+    for (i32 j = 0; j < t.len(); j++) { if (s[i + j] != t[j]) { hit = false; break; } }
+    if (hit) { n = n + 1; }
+  }
+  return n;
+}
+
+/** The 64 bytes on the `signature ` line, decoded. */
+u8[] signatureOf(u8[] doc) {
+  u8[] span = signedSpanOf(doc);
+  if (span.len() == 0) { return u8[0](); }
+  i32 from = span.len() + "signature ".toBytes().len();
+  i32 end = from;
+  while (end < doc.len() && doc[end] != 10) { end = end + 1; }
+  return b64Decode(sub(doc, from, end));
+}
+
+/** Unpadded base64 back to bytes. Only what a signature line contains, so no padding handling. */
+u8[] b64Decode(u8[] text) {
+  i32 bits = 0;
+  i32 acc = 0;
+  u8[] out = u8[text.len() * 3 / 4]();
+  i32 n = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    i32 c = text[i];
+    i32 v = -1;
+    if (c >= 65 && c <= 90) { v = c - 65; }
+    else if (c >= 97 && c <= 122) { v = c - 71; }
+    else if (c >= 48 && c <= 57) { v = c + 4; }
+    else if (c == 43) { v = 62; }
+    else if (c == 47) { v = 63; }
+    if (v < 0) { continue; }
+    acc = (acc << 6) | v;
+    bits = bits + 6;
+    if (bits >= 8) {
+      bits = bits - 8;
+      out[n] = (acc >> bits) & 0xFF;
+      n = n + 1;
+    }
+  }
+  u8[] exact = u8[n]();
+  for (i32 i = 0; i < n; i++) { exact[i] = out[i]; }
+  return exact;
+}
+
+u8[] sub(u8[] s, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
+  return out;
+}
+
+u8[] flipAt(u8[] b, i32 i) {
+  u8[] out = u8[b.len()]();
+  for (i32 j = 0; j < b.len(); j++) { out[j] = b[j]; }
+  out[i] = out[i] ^ 1;
+  return out;
+}
+
+
+bool startsWith(u8[] s, string prefix) {
+  u8[] p = prefix.toBytes();
+  if (s.len() < p.len()) { return false; }
+  for (i32 i = 0; i < p.len(); i++) { if (s[i] != p[i]) { return false; } }
+  return true;
+}

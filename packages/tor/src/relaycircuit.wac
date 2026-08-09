@@ -1,0 +1,463 @@
+// The responder's side of a circuit: answering CREATE2, and being a hop.
+//
+// A client sends CREATE2 with an ntor request; the relay answers CREATED2 and both ends derive the
+// same key material. `packages/tor/src/ntor.wac` already had both halves of the handshake — the
+// server side was written so the differential against tor could check it from both directions — so
+// what is here is the cell layer around it and the one thing the client never needed:
+//
+// **the key material goes in the other direction.** tor's `relay_crypto_init(..., reverse)` swaps
+// the forward and backward halves for the responder, because "forward" means towards the exit and
+// the two ends of a hop disagree about which way that is. A relay that used the client's assignment
+// would encrypt with the key the client decrypts with, and every cell would be unrecognised in both
+// directions at once — which looks like a broken circuit and not like a key error.
+//
+// ## What is deliberately not decided here
+//
+// Nothing in this file touches a socket, keeps a circuit table, or decides whether to accept a
+// circuit at all. It is the transformation from one cell to the next, so that the part with the
+// sockets in it can be tested by feeding it cells.
+
+import { Hop, encryptRelay, decryptRelay, relayRecognized, relayCommand, relayStreamId,
+         relayPayload, relayLengthValid } from "./relay.wac";
+import { encodeFixed, cellPayload, cellCommand, cellCircId, cmdCreate2, cmdCreated2, cmdDestroy,
+         cmdRelay, cmdCreateFast, cmdCreatedFast, handshakeNtor } from "./cell.wac";
+import { ntorServerRespond } from "./ntor.wac";
+import { NTOR_KEY_MATERIAL } from "./relay.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
+
+/** The key material one hop needs: `Df | Db | Kf | Kb` for SHA-1 and AES-128. */
+export const i32 HOP_KEY_LEN = 72;
+
+/** An ntor CREATE2 request is 84 bytes: NODEID (20) | KEYID (32) | CLIENT_PK (32). */
+export const i32 NTOR_REQUEST_LEN = 84;
+/** An ntor CREATED2 reply is 64: SERVER_PK (32) | AUTH (32). */
+export const i32 NTOR_REPLY_LEN = 64;
+
+/**
+ * The ntor handshake out of a CREATE2 payload, or empty.
+ *
+ * `HTYPE (2) | HLEN (2) | HDATA`. Anything but ntor is refused rather than attempted: TAP is dead,
+ * ntor-v3 is a different handshake, and guessing at a type we do not implement would hand
+ * `ntorServerRespond` bytes of the wrong shape — which traps, because it asserts its length.
+ */
+export u8[] create2Handshake(u8[] payload) {
+  if (payload.len() < 4) { return u8[0](); }
+  i32 hType = (payload[0] * 256) + payload[1];
+  if (hType != handshakeNtor()) { return u8[0](); }
+  i32 hLen = (payload[2] * 256) + payload[3];
+  if (hLen != NTOR_REQUEST_LEN) { return u8[0](); }
+  if (4 + hLen > payload.len()) { return u8[0](); }
+  u8[] out = u8[hLen]();
+  for (i32 i = 0; i < hLen; i++) { out[i] = payload[4 + i]; }
+  return out;
+}
+
+/** A CREATED2 cell: `HLEN (2) | HDATA`, padded to a full cell by `encodeFixed`. */
+export u8[] created2Cell(i32 circId, u8[] reply) {
+  if (reply.len() == 0 || reply.len() > 507) { return u8[0](); }
+  u8[] payload = u8[2 + reply.len()]();
+  payload[0] = (reply.len() >> 8) & 0xFF;
+  payload[1] = reply.len() & 0xFF;
+  for (i32 i = 0; i < reply.len(); i++) { payload[2 + i] = reply[i]; }
+  return encodeFixed(circId, cmdCreated2(), payload);
+}
+
+/**
+ * The answer to a CREATE2 cell: the CREATED2 to send, and the hop to keep.
+ *
+ * `reply` is empty if the cell is not a usable CREATE2 or the handshake degenerates — the caller
+ * should then send a DESTROY, which is `destroyCell` below.
+ *
+ * `identity` is the relay's 20-byte RSA identity digest and `onionPriv` its curve25519 onion key;
+ * both are what the consensus published for it, and a mismatch means the client built its request
+ * for somebody else. ntor catches that: the AUTH the client checks will not match, so the client
+ * refuses. Nothing here needs to detect it separately.
+ */
+export struct Created {
+  /** The CREATED2 cell to send, or empty on refusal. */
+  u8[] cell;
+  /** The hop, ready to carry relay cells. Only meaningful when `cell` is not empty. */
+  Hop hop;
+  /**
+   * KH — the nonce shared with the client on this circuit, or empty.
+   *
+   * The responder needs it for the same reason the client does: an ESTABLISH_INTRO arriving on this
+   * circuit is MACed with it, and a relay that did not keep it cannot be an introduction point. It is
+   * the tail of the same ntor expansion the hop's keys came from, which is why it comes back here
+   * rather than being derived again from something.
+   */
+  u8[] kh;
+}
+
+export Created answerCreate2(
+  i32 circId, u8[] createPayload, u8[] identity, u8[] onionPriv, u8[] serverEphemeralPriv
+) {
+  Created bad = Created(u8[0](), Hop.create(u8[HOP_KEY_LEN]()), u8[0]());
+  if (identity.len() != 20 || onionPriv.len() != 32 || serverEphemeralPriv.len() != 32) {
+    return bad;
+  }
+  u8[] handshake = create2Handshake(createPayload);
+  if (handshake.len() != NTOR_REQUEST_LEN) { return bad; }
+
+  // `NTOR_KEY_MATERIAL`, not `HOP_KEY_LEN`: the extra twenty bytes are KH. The client half of this
+  // was expanding seventy-two too, so neither end had the nonce and no relay here could host an
+  // introduction point.
+  u8[] out = ntorServerRespond(identity, onionPriv, handshake, serverEphemeralPriv,
+                               NTOR_KEY_MATERIAL);
+  if (out.len() != NTOR_REPLY_LEN + NTOR_KEY_MATERIAL) { return bad; }
+
+  u8[] reply = u8[NTOR_REPLY_LEN]();
+  for (i32 i = 0; i < NTOR_REPLY_LEN; i++) { reply[i] = out[i]; }
+  u8[] material = u8[HOP_KEY_LEN]();
+  for (i32 i = 0; i < HOP_KEY_LEN; i++) { material[i] = out[NTOR_REPLY_LEN + i]; }
+  u8[] kh = u8[NTOR_KEY_MATERIAL - HOP_KEY_LEN]();
+  for (i32 i = 0; i < kh.len(); i++) { kh[i] = out[NTOR_REPLY_LEN + HOP_KEY_LEN + i]; }
+
+  return Created(created2Cell(circId, reply), Hop.createReversed(material), kh);
+}
+
+/** A DESTROY cell with a reason byte, tor-spec §5.4. */
+export u8[] destroyCell(i32 circId, i32 reason) {
+  u8[] payload = u8[1]();
+  payload[0] = reason;
+  return encodeFixed(circId, cmdDestroy(), payload);
+}
+
+/** `NONE` — no reason given, which is what a relay sends rather than explaining itself. */
+export const i32 DESTROY_NONE = 0;
+/** `PROTOCOL` — the peer sent something that violates the protocol. */
+export const i32 DESTROY_PROTOCOL = 1;
+/** `INTERNAL` — an error at this relay, not the peer's doing. (2 is INTERNAL; TORPROTOCOL is 1.) */
+export const i32 DESTROY_INTERNAL = 2;
+/** `RESOURCELIMIT` — this relay could have carried it and has run out of room. */
+export const i32 DESTROY_RESOURCELIMIT = 5;
+
+// ── Being a hop ───────────────────────────────────────────────────────────────
+
+/**
+ * A relay cell arriving from the client, decrypted and checked.
+ *
+ * `recognized` is false when the cell is not for this hop — which is the normal case for a relay in
+ * the middle of a circuit, and means the cell should be passed along to the next one unchanged
+ * except for this layer having been removed. That is the whole of onion routing in one boolean:
+ * a relay strips its layer, looks, and either acts or forwards.
+ */
+export struct Inbound {
+  bool recognized;
+  /** The payload after this hop's layer is removed, whether or not it was recognised. */
+  u8[] payload;
+  i32 command;
+  i32 streamId;
+  u8[] data;
+}
+
+export Inbound receiveFromClient(Hop hop, u8[] cellPayloadBytes) {
+  u8[] body = decryptRelay(hop, cellPayloadBytes);
+  if (!relayRecognized(hop, body)) {
+    return Inbound(false, body, -1, 0, u8[0]());
+  }
+  if (!relayLengthValid(body)) {
+    // Recognised, so it was sent by the client for us, and malformed. A relay that read past the
+    // length field here would be reading whatever the client put after it.
+    return Inbound(true, body, -1, 0, u8[0]());
+  }
+  return Inbound(true, body, relayCommand(body), relayStreamId(body), relayPayload(body));
+}
+
+/** A relay cell to send back to the client, encrypted for this hop. */
+export u8[] sendToClient(Hop hop, i32 circId, i32 command, i32 streamId, u8[] data) {
+  return encodeFixed(circId, cmdRelay(), encryptRelay(hop, command, streamId, data));
+}
+
+
+
+// ── Extending a circuit ───────────────────────────────────────────────────────
+
+/**
+ * An EXTEND2 cell's payload, as the relay being asked to extend reads it.
+ *
+ *     NSPEC [1]  (LSTYPE [1] LSLEN [1] LSPEC [LSLEN]) x NSPEC  HTYPE [2] HLEN [2] HDATA [HLEN]
+ *
+ * The relay's job is to open a connection to the node the specifiers describe, send the handshake on
+ * as a CREATE2, and send the CREATED2 back as an EXTENDED2. It never looks inside the handshake:
+ * that is between the client and the next hop, and a relay that could read it would be able to
+ * impersonate the hop it is extending to.
+ */
+export struct Extend {
+  bool ok;
+  /** The link specifiers, whole and in order, for the connection to make. */
+  u8[] linkSpecifiers;
+  i32 handshakeType;
+  /** The client's handshake, to be forwarded verbatim in a CREATE2. */
+  u8[] handshake;
+}
+
+export Extend parseExtend2(u8[] payload) {
+  Extend bad = Extend(false, u8[0](), -1, u8[0]());
+  if (payload.len() < 1) { return bad; }
+  i32 n = payload[0];
+  if (n == 0) { return bad; }
+
+  // Walk the specifiers to find where they end, then keep the whole run. They are forwarded as
+  // received: rend-spec and tor-spec both say unrecognised types must be passed on rather than
+  // dropped, because which types a party understands is a fingerprint.
+  i32 at = 1;
+  i32 legacyCount = 0;
+  i32 edCount = 0;
+  for (i32 i = 0; i < n; i++) {
+    if (at + 2 > payload.len()) { return bad; }
+    i32 type = payload[at];
+    i32 length = payload[at + 1];
+    // Redundant with the header check below — if a specifier overran, `at` ends past the payload and
+    // `at + 4 > payload.len()` catches it, so `specs` can never be allocated longer than the input.
+    // Kept because it says what the loop maintains, and removing it survives the tests, as it should.
+    if (at + 2 + length > payload.len()) { return bad; }
+    if (type == LS_LEGACY_IDENTITY) {
+      if (length != 20) { return bad; }
+      legacyCount = legacyCount + 1;
+    }
+    if (type == LS_ED25519_IDENTITY) {
+      if (length != 32) { return bad; }
+      edCount = edCount + 1;
+    }
+    if (type == LS_IPV4 && length != 6) { return bad; }
+    at = at + 2 + length;
+  }
+  // "Nodes SHOULD reject link specifier lists that include multiple instances of either one of
+  // those specifiers." Two identities is a request to extend to two different relays at once.
+  if (legacyCount > 1 || edCount > 1) { return bad; }
+
+  i32 specEnd = at;
+  if (at + 4 > payload.len()) { return bad; }
+  i32 hType = (payload[at] * 256) + payload[at + 1];
+  i32 hLen = (payload[at + 2] * 256) + payload[at + 3];
+  at = at + 4;
+  if (at + hLen > payload.len()) { return bad; }
+
+  u8[] specs = u8[specEnd]();
+  specs[0] = n;
+  for (i32 i = 1; i < specEnd; i++) { specs[i] = payload[i]; }
+  u8[] handshake = u8[hLen]();
+  for (i32 i = 0; i < hLen; i++) { handshake[i] = payload[at + i]; }
+  return Extend(true, specs, hType, handshake);
+}
+
+export const i32 LS_IPV4 = 0;
+export const i32 LS_IPV6 = 1;
+export const i32 LS_LEGACY_IDENTITY = 2;
+export const i32 LS_ED25519_IDENTITY = 3;
+
+/**
+ * The address and port from an IPv4 link specifier, as `a.b.c.d` and a port, or empty.
+ *
+ * A relay asked to extend needs somewhere to connect. IPv6 is not handled: this relay does not have
+ * an IPv6 socket to offer, and returning an address it cannot use would turn a clean refusal into a
+ * connection attempt that fails later and less clearly.
+ */
+export u8[] extendTarget(u8[] linkSpecifiers) {
+  if (linkSpecifiers.len() < 1) { return u8[0](); }
+  i32 n = linkSpecifiers[0];
+  i32 at = 1;
+  for (i32 i = 0; i < n; i++) {
+    if (at + 2 > linkSpecifiers.len()) { return u8[0](); }
+    i32 type = linkSpecifiers[at];
+    i32 length = linkSpecifiers[at + 1];
+    if (at + 2 + length > linkSpecifiers.len()) { return u8[0](); }
+    if (type == LS_IPV4 && length == 6) {
+      u8[] out = u8[6]();
+      for (i32 j = 0; j < 6; j++) { out[j] = linkSpecifiers[at + 2 + j]; }
+      return out;
+    }
+    at = at + 2 + length;
+  }
+  return u8[0]();
+}
+
+/** The 20-byte legacy identity a link specifier list names, or empty. */
+/**
+ * Whether a relay may act on this EXTEND2 at all, given its own identity.
+ *
+ * **A relay never connects to itself.** tor's `connection_or_connect` refuses outright — *"Client
+ * asked me to connect to myself. Refusing."* — and refuses again on the ed25519 identity. Trying it
+ * opens a connection to your own listener and runs a link handshake against yourself: a circular path
+ * with nothing at the end, and a way for one client's cell to cost a relay two connections and a
+ * circuit.
+ *
+ * An EXTEND2 carrying **no** legacy identity is not refused here. It is refused later, by
+ * `parseExtend2` and by the handshake, for not naming who to expect — and returning "may not extend"
+ * for a cell that named nobody would conflate *asked for something forbidden* with *asked for nothing*.
+ *
+ * **Not checked, and tor does check it:** extending back to the *previous* hop, which tor refuses by
+ * both identities as a circular-path defence. Our relay does not retain the identity of the party a
+ * circuit arrived from, so the check has nothing to compare against yet.
+ */
+export bool mayExtendTo(u8[] linkSpecifiers, u8[] ourFingerprint) {
+  u8[] wants = extendIdentity(linkSpecifiers);
+  if (wants.len() != 20 || ourFingerprint.len() != 20) { return true; }
+  i32 diff = 0;
+  for (i32 i = 0; i < 20; i++) { diff = diff | (wants[i] ^ ourFingerprint[i]); }
+  return diff != 0;
+}
+
+export u8[] extendIdentity(u8[] linkSpecifiers) {
+  if (linkSpecifiers.len() < 1) { return u8[0](); }
+  i32 n = linkSpecifiers[0];
+  i32 at = 1;
+  for (i32 i = 0; i < n; i++) {
+    if (at + 2 > linkSpecifiers.len()) { return u8[0](); }
+    i32 type = linkSpecifiers[at];
+    i32 length = linkSpecifiers[at + 1];
+    if (at + 2 + length > linkSpecifiers.len()) { return u8[0](); }
+    if (type == LS_LEGACY_IDENTITY && length == 20) {
+      u8[] out = u8[20]();
+      for (i32 j = 0; j < 20; j++) { out[j] = linkSpecifiers[at + 2 + j]; }
+      return out;
+    }
+    at = at + 2 + length;
+  }
+  return u8[0]();
+}
+
+/**
+ * An EXTENDED2 relay body: `HLEN [2] | HDATA`.
+ *
+ * The same shape as a CREATED2 payload, which is not a coincidence — it is the CREATED2 the next hop
+ * sent, repackaged. A relay copies the handshake through without inspecting it.
+ */
+export u8[] extended2Body(u8[] reply) {
+  if (reply.len() == 0 || reply.len() > 65535) { return u8[0](); }
+  u8[] out = u8[2 + reply.len()]();
+  out[0] = (reply.len() >> 8) & 0xFF;
+  out[1] = reply.len() & 0xFF;
+  for (i32 i = 0; i < reply.len(); i++) { out[2 + i] = reply[i]; }
+  return out;
+}
+
+// ── CREATE_FAST ───────────────────────────────────────────────────────────────
+//
+// The handshake for a client that does not know the relay's onion key. There is no public-key
+// operation in it at all: both sides contribute 20 random bytes and the key material is a SHA-1
+// chain over the pair.
+//
+// **That means it authenticates nothing**, and tor-spec is explicit that it is only safe as the
+// *first* hop of a circuit, where TLS has already authenticated the relay — the certificate chain in
+// the CERTS cell is what says who this is, and CREATE_FAST simply agrees a key with whoever that
+// turned out to be. Using it anywhere else would let any relay on the path be the endpoint.
+//
+// A bridge is exactly the case it exists for: a client told an address and a fingerprint has no
+// descriptor, so it has no onion key, so it cannot send a CREATE2. A C tor client pointed at this
+// relay sends CREATE_FAST, which is how this came to be implemented.
+
+/** `X` in a CREATE_FAST cell, and `Y` in the reply: 20 bytes each. */
+export const i32 CREATE_FAST_LEN = 20;
+
+/**
+ * KDF-TOR: `K = H(K0 | [00]) | H(K0 | [01]) | …`, tor-spec §5.2.1.
+ *
+ * SHA-1 in a counter chain, which is why the spec says it "shouldn't be used for new
+ * functionality" — it is here because CREATE_FAST is, and CREATE_FAST is what a bridge client sends.
+ *
+ * The first 20 bytes are `KH`, which the reply carries to prove the relay derived the same key;
+ * the rest is `Df | Db | Kf | Kb` for an ordinary hop.
+ */
+export u8[] kdfTor(u8[] k0, i32 outLen) {
+  u8[] out = u8[outLen]();
+  i32 produced = 0;
+  i32 counter = 0;
+  while (produced < outLen) {
+    u8[] input = u8[k0.len() + 1]();
+    for (i32 i = 0; i < k0.len(); i++) { input[i] = k0[i]; }
+    input[k0.len()] = counter;
+    u8[] block = sha1(input);
+    for (i32 i = 0; i < block.len() && produced < outLen; i++) {
+      out[produced] = block[i];
+      produced = produced + 1;
+    }
+    counter = counter + 1;
+  }
+  return out;
+}
+
+/**
+ * Answer a CREATE_FAST cell: the CREATED_FAST to send, and the hop to keep.
+ *
+ * `serverRandom` must be 20 bytes from a real random source — it is half the key material, and a
+ * predictable `Y` means a predictable circuit key. There is no public-key operation to fall back on
+ * here, so this is the only secret the relay contributes.
+ */
+export Created answerCreateFast(i32 circId, u8[] createPayload, u8[] serverRandom) {
+  Created bad = Created(u8[0](), Hop.create(u8[HOP_KEY_LEN]()), u8[0]());
+  if (serverRandom.len() != CREATE_FAST_LEN) { return bad; }
+  if (createPayload.len() < CREATE_FAST_LEN) { return bad; }
+
+  u8[] k0 = u8[CREATE_FAST_LEN * 2]();
+  for (i32 i = 0; i < CREATE_FAST_LEN; i++) { k0[i] = createPayload[i]; }
+  for (i32 i = 0; i < CREATE_FAST_LEN; i++) { k0[CREATE_FAST_LEN + i] = serverRandom[i]; }
+
+  // KH, then the hop's 72 bytes.
+  u8[] material = kdfTor(k0, CREATE_FAST_LEN + HOP_KEY_LEN);
+  u8[] payload = u8[CREATE_FAST_LEN * 2]();
+  for (i32 i = 0; i < CREATE_FAST_LEN; i++) { payload[i] = serverRandom[i]; }
+  for (i32 i = 0; i < CREATE_FAST_LEN; i++) { payload[CREATE_FAST_LEN + i] = material[i]; }
+
+  u8[] hopKeys = u8[HOP_KEY_LEN]();
+  for (i32 i = 0; i < HOP_KEY_LEN; i++) { hopKeys[i] = material[CREATE_FAST_LEN + i]; }
+  // The first `CREATE_FAST_LEN` bytes *are* KH — they are what the reply's second half proves
+  // knowledge of. The comment above has said so all along beside code that kept only the rest.
+  u8[] fastKh = u8[CREATE_FAST_LEN]();
+  for (i32 i = 0; i < CREATE_FAST_LEN; i++) { fastKh[i] = material[i]; }
+  return Created(encodeFixed(circId, cmdCreatedFast(), payload), Hop.createReversed(hopKeys),
+                 fastKh);
+}
+
+// ── Opening a stream: the exit's half of RELAY_BEGIN ──────────────────────────
+
+/** Where a `RELAY_BEGIN` asks to be connected. `ownAddress` means the client wrote no host. */
+export struct Begin {
+  bool ok;
+  string host;
+  i32 port;
+  bool ownAddress;
+}
+
+/**
+ * Read a `RELAY_BEGIN` body: `ADDRPORT \0 FLAGS[4]`, where ADDRPORT is `host:port` as text.
+ *
+ * `beginBody` in `relay.wac` is the writer, and this is deliberately not its inverse by construction:
+ * it parses the bytes on the wire, so a client that is not ours is read the same way.
+ *
+ * **A leading colon means the relay's own address**, which is not a malformed host — it is how a
+ * rendezvous stream is opened, and `hsconnect.wac` sends exactly `":" + port`. An exit that treated it
+ * as an empty hostname would refuse the one case an onion service depends on.
+ *
+ * The port is rejected outside 1..65535, and the NUL must be present: without it the flags would be
+ * read as part of the address, which is how a four-byte suffix becomes a plausible hostname.
+ */
+export Begin parseBegin(u8[] body) {
+  Begin bad = Begin(false, "", 0, false);
+  i32 nul = -1;
+  for (i32 i = 0; i < body.len(); i++) {
+    if (body[i] == 0) { nul = i; break; }
+  }
+  if (nul < 0) { return bad; }
+
+  // The colon that separates the port is the *last* one: an IPv6 literal has several, and taking the
+  // first would cut it in half.
+  i32 colon = -1;
+  for (i32 i = 0; i < nul; i++) {
+    if (body[i] == 58) { colon = i; }
+  }
+  if (colon < 0) { return bad; }
+
+  i32 port = 0;
+  for (i32 i = colon + 1; i < nul; i++) {
+    if (body[i] < 48 || body[i] > 57) { return bad; }
+    port = port * 10 + (body[i] - 48);
+    if (port > 65535) { return bad; }
+  }
+  if (port < 1) { return bad; }
+
+  u8[] host = u8[colon]();
+  for (i32 i = 0; i < colon; i++) { host[i] = body[i]; }
+  return Begin(true, string.fromBytes(host), port, colon == 0);
+}

@@ -1,0 +1,62 @@
+// Every path under a root, depth first.
+//
+// **A partial answer is reported, never returned quietly.** Two things can cut the walk short — a
+// directory that cannot be read, and the depth bound below — and both used to `return` with nothing
+// said, so `find` printed an incomplete listing and exited 0. A listing that is silently incomplete
+// is worse than an error, because the caller's next step is to act on it: `find | xargs rm` on a
+// truncated list deletes the wrong set.
+
+import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+/**
+ * How deep the walk goes.
+ *
+ * A depth bound rather than a cycle check, because `stat` does not distinguish a symbolic link and a
+ * loop through one is otherwise unbounded. Deeper than anything ordinary and still arbitrary, which
+ * is why reaching it is now an error rather than a quiet stop — GitHub wac-mono#13, and the real fix
+ * is link-aware metadata in `platform` (#25).
+ */
+i32 MAX_DEPTH() { return 64; }
+
+export i32 find(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  string root = a.rest.len() < 1 ? "." : a.rest[0];
+  Stat st = fs.stat(root);
+  // GNU quotes the path and gives no frame: `find: 'nosuch': No such file or directory`. Same story
+  // as `du` next door — an invented phrase for every absence, so a path with no read grant and a path
+  // that is genuinely missing were one answer.
+  if (!st.exists) {
+    core.warn(a.name + ": '" + root + "': " + st.words("No such file or directory"));
+    return 1;
+  }
+  core.log(root);
+  return walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
+}
+
+/** False if any part of this subtree could not be listed. */
+bool walk(Core core, Cli cli, Fs fs, string name, string dir, i32 depth) {
+  if (depth > MAX_DEPTH()) {
+    core.warn(name + ": " + dir + ": deeper than " + itoa(MAX_DEPTH()) +
+      " levels, not descending (a symlink loop, or a genuinely deep tree)");
+    return false;
+  }
+  string[]? names = fs.readDir(dir);
+  if (names is null) {
+    core.warn(name + ": " + dir + ": cannot read directory");
+    return false;
+  }
+  string[] found = names!;
+  bool complete = true;
+  for (i32 i = 0; i < found.len(); i++) {
+    string path = dir + "/" + found[i];
+    core.log(path);
+    if (fs.stat(path).isDir) {
+      if (!walk(core, cli, fs, name, path, depth + 1)) { complete = false; }
+    }
+  }
+  return complete;
+}

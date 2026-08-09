@@ -1,3 +1,24 @@
+// Run it like this:
+//
+//   deno test -A --unstable-sloppy-imports --no-check site/tools/site.test.ts
+//
+// Both flags are about `site/src`, which is a vite project. `./file-store` with no extension is
+// what vite and `tsc --moduleResolution bundler` resolve and what Deno's resolver refuses — there
+// are 33 such imports and rewriting them would be changing the site to suit a tool that is not
+// building it. The site's TypeScript is checked by `npx tsc -b` in `site/`, which is the checker
+// that agrees with the bundler. The flags are on this one command rather than in `deno.json`, so
+// the other 2,900 tests keep strict resolution.
+//
+// It needed neither before the repository merge, only because the language repo had no
+// `deno.json` at all.
+//
+// This file reaches into `site/src`, which is a vite project: `./file-store` with no extension is
+// what vite and `tsc --moduleResolution bundler` both resolve, and what Deno's resolver refuses.
+// The site's TypeScript is checked by `npx tsc -b` in `site/`, which is the checker that agrees
+// with the bundler actually building it; Deno type-checking the same files is a second opinion
+// from a tool that is not compiling them. It worked before the repository merge only because the
+// language repo had no `deno.json` at all.
+//
 // The website's code, compiled.
 //
 // Every snippet on the site is a claim about the compiler, and until now nothing checked any of
@@ -10,7 +31,7 @@
 //
 //   deno test -A tools/site.test.ts
 
-import { wacCompile } from "../atoms/wac/wacCompile.ts";
+import { wacCompile } from "../../compiler/wacCompile.ts";
 import { EXAMPLES } from "../src/editor/examples.ts";
 
 // Snippets live in `src/snippets.ts` (the tour) and beside the page that prints only its own.
@@ -232,7 +253,7 @@ Deno.test("site: the compiler size the site claims is the size it is", async () 
   // "~6,000 lines" sat on the front page for months while the compiler grew to 16,000. It is a
   // flattering direction to be wrong in, which is why nobody noticed — a smaller compiler sounds
   // better. The number is measurable, so measure it.
-  const dir = new URL("../atoms/wac/", import.meta.url).pathname;
+  const dir = new URL("../../compiler/", import.meta.url).pathname;
   let actual = 0;
   for await (const e of Deno.readDir(dir)) {
     if (!e.isFile || !e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) continue;
@@ -432,7 +453,7 @@ Deno.test("site: the number of tagged claims the site quotes is the number there
   // number here came from somewhere outside the sentence containing it — and 419 is the count of
   // tag *occurrences*, so the likeliest history is that somebody counted mentions rather than
   // claims. A tag written twice is one claim.
-  const specDir = new URL("../spec", import.meta.url).pathname;
+  const specDir = new URL("../../spec", import.meta.url).pathname;
   const tags = new Set<string>();
   const walk = async (dir: string): Promise<void> => {
     for await (const e of Deno.readDir(dir)) {

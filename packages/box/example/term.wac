@@ -1,0 +1,344 @@
+// A shell, in a browser tab.
+//
+//   deno task app:build packages/box/example/term.wac --target browser --allow-read --allow-write -o page/index.html
+//   box httpd -8080 page -x
+//
+// `packages/sh` unchanged: quoting, parameter expansion, command substitution, arithmetic,
+// pipelines, redirection, `&&`/`||`, `if`/`while`/`for`/`case`, functions, subshells, globbing.
+// It was written for a terminal and tested against GNU bash script for script, and none of that
+// is different here — what is different is that its `Cli` reaches the Origin Private File System
+// instead of a disk, and its output goes to an element instead of a pipe.
+//
+// The shell was already able to run in a page before any of this existed: it built, started, and
+// exited immediately, because a page's standard input is empty and a shell with no input has
+// nothing to do. All that was missing was a keyboard.
+//
+// What runs here is the shell's own built-ins — including `cd`, `pwd` and `ls` — and then every
+// applet in `packages/box`, wired in with `sh.external = boxRun`. `sort`, `sha256sum`, `gzip`,
+// `cut`, `diff`, `shuf`, `strings`, `tar`: the same code the command-line `box` runs, in the page.
+//
+// **It spawns them.** This paragraph used to say the opposite — "`spawn` is Deno-only", so `platform`
+// grew `pushChild`/`popChild` and an applet ran inside the shell's own instance with the page's whole
+// authority. A worker can create a worker, and `spawnSelf` needs no filesystem: this bundle is its own
+// program, so `sort` is this program again with `sort` as its first argument. Each stage is a separate
+// worker with its own `SharedArrayBuffer`, its own grants and its own instance, answered by the page
+// while its parent is parked. Issue 0030, closed.
+//
+// `pushChild`/`popChild` are still here and still the fallback — a world that cannot spawn degrades to
+// them rather than reporting a program broken — which is exactly what makes the difference invisible
+// from the outside. `browser_live.test.ts` tells the two apart in a real Chromium by the one place
+// they differ: a called applet's output is captured and capped at 8 MiB, so `seq 1 1500000 | wc -c`
+// truncates, and a spawned one's queue drains as the next stage reads it, so it answers what GNU
+// answers.
+//
+// Pipeline stages therefore run at once as well, and `yes | head -1` terminates the way it does in
+// bash rather than stopping at the cap. What has not changed is inside a stage: a `box` applet
+// streams through `Sink`, but `packages/sh`'s own twelve fallback programs return all their output at
+// once, which is issue 0061.
+//
+// ## Why the terminal is built the way it is
+//
+// **The scrollback pins itself with CSS, not with a capability.** A terminal has to show the
+// newest line, and `setText` cannot scroll anything. Rather than adding a `scrollToEnd`
+// capability for one caller, the scroller is `flex-direction: column-reverse`, which anchors it
+// to the end — the browser keeps a reversed column scrolled to its bottom for free. A reversed
+// column also pins a *short* session to the bottom of the frame, under a screenful of nothing,
+// which is what this looked like embedded in a page; `justify-content: flex-end` is the top in a
+// reversed column, so a short session starts at the top and a long one still ends at the bottom.
+//
+// **History is a ring in a local.** Up and Down arrive as `keydown` events with the bytes a terminal
+// would send in `Event.value`, so the whole feature is a `string[]` and two integers in the loop — no
+// state outside the program, and nothing the page has to know about.
+//
+// ## What this is still not, and the decision it waits on
+//
+// design/0001 step 5 asks for "one module for both the ssh channel and the browser's keydown loop",
+// and `packages/tty` is that module — echo, erase, `^U`, `^W`, `^C`, `^D`, `^V`, every rule read off
+// the kernel's own discipline through a pty. **This page does not use it.** Keystrokes now arrive as
+// the bytes a terminal sends, which is the half that was in the way; what is left is that the editing
+// happens in an `<input>` and the browser does it.
+//
+// That is a decision rather than an oversight, and it is not free either way. Taking the editing over
+// means `packages/tty` decides what the line is, so `^C`, `^D`, `^U` and `^W` work here exactly as
+// they do over ssh — and it means giving up what the `<input>` supplies for nothing: the block caret
+// the CSS below goes to some length for, IME composition for every language that needs one, and
+// paste. Over ssh those are the client's terminal's problem; in a page they would become ours.
+//
+// So: the vocabulary is shared, the discipline is not yet, and the cost of sharing it is written down
+// here rather than discovered by whoever tries.
+
+import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { Shell, runScript } from "../../sh/src/exec.wac";
+// `fmt`'s, not a fourth copy: this file had one, and the copies had already drifted — the i32-minimum
+// bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
+import { itoa } from "../../fmt/src/itoa.wac";
+import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
+
+/**
+ * The bytes a terminal sends for the three keys this loop reads.
+ *
+ * Written as bytes rather than as escapes in a string literal because that is what they are, and
+ * because a reader should be able to check them against `infocmp` without decoding an escape twice.
+ */
+string cr() { return string.fromCodepoint(13); }
+/** `^C`. The same byte `packages/tty`'s discipline calls `INTR`. */
+string intr() { return string.fromCodepoint(3); }
+string upArrow() { return string.fromCodepoint(27) + "[A"; }
+string downArrow() { return string.fromCodepoint(27) + "[B"; }
+
+/** How many commands to remember. A ring, so the oldest falls off rather than growing forever. */
+const i32 HISTORY = 64;
+
+/** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
+const string SOURCE =
+  "https://github.com/voltrevo/wac-mono/blob/master/packages/box/example/README.md#termwac";
+
+const string BANNER =
+  "wac sh — packages/sh with every packages/box applet, in a browser tab. Type at the\n" +
+  "prompt; `help` lists the sixty programs, Up and Down walk the history, `clear` empties\n" +
+  "the screen. / is an Origin Private File System: what you write survives a reload and is\n" +
+  "visible to nothing outside this tab.\n" +
+  "\n";
+
+/**
+ * The same bundle, as one of its own programs.
+ *
+ * A tab is a `page`; a *child* of that tab is a `main`. When the shell runs `sort` it spawns this very
+ * bundle with `sort` as the first argument — there is no filesystem of programs in a browser, so the
+ * only program a page reliably has is the one it already is — and the child starts here. Which of the
+ * two exports runs is decided by how the program was started, not by guessing.
+ *
+ * Without this, `externalSpawnable` below would spawn a child with nothing to run.
+ */
+export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
+
+/**
+ * The prompt: where you are, and a `$`.
+ *
+ * A prompt that never changes is decoration. `cd` is a built-in here and the filesystem is real,
+ * so the working directory is a thing the reader can move around in and get lost in, and a shell
+ * that will not say where it is is the one thing every real one does say.
+ */
+string prompt(Shell sh) { return sh.cwd + " $"; }
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac sh").wait();
+
+  // The style travels with the markup: `render` sets innerHTML, and a `<style>` in there applies.
+  // That is why the launcher's page is bare now — an application dresses itself.
+  page.render(
+    "<style>" +
+    // Tuned to sit inside the website's terminal frame: the same ground, text and accent the page
+    // around it uses, so the embed reads as one object rather than a window into another site.
+    //
+    // The root is a `<label for="cmd">`, which is the whole of click-anywhere-to-type. A page has
+    // no way to move focus — there is no `focus` capability and adding one for this would be a
+    // capability per widget — but a label focuses its control natively, so clicking dead space in
+    // the scrollback puts the keyboard back in the prompt. Dragging still selects: a label focuses
+    // on click and does not eat a drag, which is what makes copying output out of here still work.
+    // A page with no stylesheet under it is `content-box`, and `#wrap` below is `height: 100%`
+    // with padding: those two make the scroller 44px taller than the frame that clips it, which
+    // put the prompt below the visible edge — reading as no bottom margin, and as a scrollback
+    // that stopped just short of the newest line until a keystroke scrolled the caret into view.
+    "  #term, #term * { box-sizing: border-box; }" +
+    "  #term { position: fixed; inset: 0; overflow: hidden; display: block; cursor: text;" +
+    "          background: #06070a; color: #d7dde6;" +
+    "          font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }" +
+    "  #term ::selection { background: #1c4b45; color: #eafffb; }" +
+    // `column-reverse` is what makes new output stick to the bottom without scripting, and the
+    // prompt is inside the scroller rather than below it so that it is the next line of the
+    // session rather than a footer bolted to the window. Reversed, so both come first in the
+    // markup and render last.
+    //
+    // On its own the reversal also pins a *short* session to the bottom of the frame, under a
+    // screenful of nothing. `justify-content: flex-end` looks like the fix and is a trap: in an
+    // overflowing flex scroller, content pushed past the start edge by alignment cannot be
+    // scrolled to at all — `scrollHeight` stays equal to `clientHeight` and one `ls` puts the
+    // output somewhere the reader cannot reach. `#pad` does the same job as a flex item instead:
+    // it takes the free space while there is any, and is 0 tall once there is none, so the
+    // overflow is ordinary overflow and scrolls.
+    //
+    // The bottom padding is a reserved strip for `#src`, which is fixed to the frame rather than
+    // sitting in the prompt line: a link floating at the end of the line you are typing on is the
+    // one thing here that never looked like a terminal, and reserving the strip is what stops the
+    // prompt from ever sliding under it.
+    "  #wrap { height: 100%; overflow-y: auto; display: flex;" +
+    "          flex-direction: column-reverse; padding: 14px 16px 30px;" +
+    // Thin, and visible: scrollback nobody can tell is there is scrollback nobody scrolls.
+    "          scrollbar-width: thin; scrollbar-color: #2b3240 transparent; }" +
+    "  #pad { flex: 1 1 0; min-height: 0; }" +
+    "  #scr { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
+    "  #bar { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 1ch; }" +
+    "  #ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
+    // `caret-shape: block` is the cursor, blinking, sized and positioned by the browser rather
+    // than drawn by us. Doing it by hand would mean mirroring the value into a span and tracking
+    // the caret index through every arrow key, paste and IME composition — a second implementation
+    // of text editing, to be wrong in a different way. Where it is unsupported the caret stays a
+    // line, which is the shape it was before.
+    //
+    // The field is `flex: 1` and not `field-sizing: content`, and that is the whole reason this
+    // comment exists. Content sizing is the obvious choice here — it makes prompt, command and
+    // cursor one continuous line instead of a text box with a prompt next to it — and it silently
+    // costs the block: a field exactly as wide as its text has no cell left for a caret past the
+    // last character, so the browser clips the block to a bar. Measured both, zoomed, with
+    // `caret: "initial"` screenshots: identical markup, block in one and a bar in the other. The
+    // width does not show, because the field is transparent and the line has nothing to its right.
+    "  #cmd { flex: 1; min-width: 4ch;" +
+    "         background: transparent; border: 0; outline: 0; color: inherit;" +
+    "         font: inherit; padding: 0; caret-color: #5eead4; caret-shape: block; }" +
+    // A status line rather than part of the prompt: down in the strip `#wrap` reserves for it.
+    "  #src { position: fixed; right: 16px; bottom: 7px; color: #6b7482; font-size: 11.5px;" +
+    "         text-decoration: none; white-space: nowrap; }" +
+    "  #src:hover { color: #5eead4; text-decoration: underline; }" +
+    "</style>" +
+    "<label id=\"term\" for=\"cmd\">" +
+    "  <div id=\"wrap\">" +
+    "    <div id=\"pad\"></div>" +
+    "    <div id=\"bar\"><span id=\"ps1\">$</span>" +
+    "      <input id=\"cmd\" autofocus autocomplete=\"off\" spellcheck=\"false\"" +
+    "             autocapitalize=\"off\" autocorrect=\"off\"></div>" +
+    "    <pre id=\"scr\"></pre>" +
+    "  </div>" +
+    "  <a id=\"src\" href=\"" + SOURCE + "\">source &amp; build it</a>" +
+    "</label>"
+  ).wait();
+
+  string screen = BANNER;
+  page.setText("scr", screen).wait();
+  page.on("#cmd", "keydown").wait();
+
+  // One shell for the whole session, so variables and functions persist between commands exactly
+  // as they would in a terminal. `capture` is what `packages/ssh`'s server uses for the same
+  // reason: the output has to be collected rather than written, since "written" here would mean
+  // the page's log rather than the screen being drawn.
+  Shell sh = Shell.create(core, cli);
+  sh.capture = true;
+  // **No `mountSystem` here, and it is a gap rather than an oversight.** design/0001 wants the
+  // browser terminal to be "the *same system* in a tab", which means the `/dev`, `/proc` and `/bin`
+  // every other session has. Mounting them was tried this tick and had to come out: the shell got
+  // them and its *programs* did not, because a spawned stage is a fresh instance and `shrun.wac`
+  // gives a fresh instance `Fs.onHost`. So `ls /bin` listed sixty-three programs — `ls` is a builtin,
+  // on the session's own filesystem — and `cat /dev/null` failed, because `cat` was spawned.
+  //
+  // A consistent poorer world beats an inconsistent richer one: a system that answers differently
+  // depending on which route the shell took is the quiet-wrong-answer shape this repo keeps removing.
+  // wac-mono 0116 is what unblocks it, and it is a decision about what `spawnSelf` hands a child.
+
+  // Every `box` applet, as a command you can type — `sort`, `sha256sum`, `gzip`, `cut`, `shuf` and
+  // fifty more, the same code `box` runs on a command line. This is the *fallback* now: the shell
+  // spawns them (below), and calls them only in a world that cannot.
+  sh.external = boxRun;
+  sh.externalNames = boxNames;   // so `help` lists them
+  // ...and they are applets of *this very program*, so the shell can run them as real children
+  // rather than calling them: `spawnSelf(["sort", "-n"])` re-enters `main` above, which dispatches
+  // on the first argument. Its own instance, its own grants — and in a page this is the only route
+  // to a real program at all.
+  //
+  // **Turning this off was tried this tick and is worse.** A called applet's output is captured in
+  // memory and capped at 8 MiB, so `seq 1 1500000 | wc -c` truncates; a spawned one's queue drains
+  // as the next stage reads it. The assertion in `platform/test/browser_live.test.ts` exists to tell
+  // the two routes apart and caught it immediately. A missing `/dev/null` is a visible failure; a
+  // silently short byte count is the other kind.
+  sh.externalSpawnable = true;
+
+  // Open on a session rather than on a prompt with nothing above it. These are run through the
+  // same `runScript` the keyboard reaches, so what the frame shows on load is this build's real
+  // output — a screenshot of a terminal is a drawing, and a terminal that has already done
+  // something is not. The website prints the same three lines beside the embed, and
+  // `tools/frontpage.test.ts` fails if either drifts from what the shell actually answers.
+  string[] opening = string[](
+    "seq 1 20 | grep 7 | wc -l",
+    "echo 'a whole new stack' | gzip -c | wc -c",
+    "echo hello | sha256sum"
+  );
+  page.setText("ps1", prompt(sh)).wait();
+  for (i32 i = 0; i < opening.len(); i++) {
+    screen = screen + prompt(sh) + " " + opening[i] + "\n";
+    runScript(sh, opening[i]);
+    screen = screen + string.fromBytes(sh.outBuf.take()) + string.fromBytes(sh.errOut.take());
+    page.setText("scr", screen).wait();
+  }
+  screen = screen + "\n";
+
+  string[] history = string[HISTORY](fill: "");
+  i32 count = 0;      // how many commands have been run, ever
+  i32 cursor = 0;     // how far back Up has walked; 0 means "at the prompt"
+
+  while (true) {
+    Event e = page.nextEvent().wait();
+    if (e.kind != "keydown") { continue; }
+
+    // Up and Down walk the ring. Held here rather than in the page because the history *is*
+    // program state: it is what this shell has been asked to do.
+    //
+    // **The escape sequences a terminal sends**, not the key names a browser uses. A `keydown` used
+    // to arrive as `ev.key` — "ArrowUp", "Enter" — and a program in a page therefore saw a vocabulary
+    // nothing else in this system speaks; `packages/tty`'s discipline consumes bytes, because a
+    // terminal is a byte stream. The host translates at the edge now (`terminalBytes` in
+    // `host/entryBrowser.ts`), so above that line everything is bytes, here as over ssh.
+    if (e.value == upArrow() || e.value == downArrow()) {
+      i32 depth = e.value == upArrow() ? cursor + 1 : cursor - 1;
+      i32 have = count < HISTORY ? count : HISTORY;
+      if (depth > have) { depth = have; }
+      if (depth < 0) { depth = 0; }
+      cursor = depth;
+      page.setValue("cmd", depth == 0 ? "" : history[(count - depth) % HISTORY]).wait();
+      continue;
+    }
+
+    // **`^C` at a prompt throws away what has been typed and starts a fresh line**, which is exactly
+    // what it does at an ssh prompt — `packages/ssh`'s session loop echoes `^C` and a newline and
+    // moves on. The same key, the same effect, in both places, which is the whole of what step 5
+    // means by one system rather than two ports of the idea. It could not be done here at all until
+    // keystrokes arrived as bytes: `Ctrl-C` and `c` were the same `keydown` value.
+    //
+    // What `^C` still does *not* do here is end a running command, which is step 5's own criterion
+    // and is the same blocker in both places: nothing reads a keystroke while a command runs.
+    if (e.value == intr()) {
+      screen = screen + prompt(sh) + " " + page.getValue("cmd").wait() + "^C\n";
+      page.setValue("cmd", "").wait();
+      page.setText("scr", screen).wait();
+      cursor = 0;
+      continue;
+    }
+
+    // CR, which is what the Enter key puts on the wire; the discipline is what turns it into a
+    // newline. `packages/tty` implements that rule and this page does not reach it yet — see the
+    // note above `main`.
+    if (e.value != cr()) { continue; }
+
+    string line = page.getValue("cmd").wait();
+    page.setValue("cmd", "").wait();
+    cursor = 0;
+    if (line == "") { continue; }
+
+    history[count % HISTORY] = line;
+    count = count + 1;
+
+    // `clear` is the terminal's, not the shell's: `sh` has no notion of a screen to clear, and
+    // implementing it here costs one branch and is what everybody reaches for first.
+    if (line == "clear") {
+      screen = "";
+      page.setText("scr", screen).wait();
+      continue;
+    }
+
+    screen = screen + prompt(sh) + " " + line + "\n";
+    i32 status = runScript(sh, line);
+    // `cd` is a built-in, so the directory it moved to is the shell's own field and the prompt has
+    // to be told. After the command rather than before it: the line just echoed belongs to where
+    // it was run, and the next prompt to where that left us.
+    page.setText("ps1", prompt(sh)).wait();
+    screen = screen + string.fromBytes(sh.outBuf.take()) + string.fromBytes(sh.errOut.take());
+    // A non-zero status is worth showing: without a prompt that displays `$?`, a command that
+    // failed silently and one that printed nothing look identical.
+    if (status != 0) { screen = screen + "[exit " + itoa(status) + "]\n"; }
+
+    page.setText("scr", screen).wait();
+    if (sh.exiting) {
+      page.setText("scr", screen + "\n[the shell exited " + itoa(sh.exitCode) + "]\n").wait();
+      return sh.exitCode;
+    }
+  }
+}
+

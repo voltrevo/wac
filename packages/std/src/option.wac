@@ -1,0 +1,60 @@
+// Option<T> — a value that may be absent, without using null.
+//
+// wac has `T?`, and it works for every T including a primitive (wac issue 0045). For a
+// reference it is also cheaper — one word, no allocation — so `Point?` is the right thing to
+// write and `Option<Point>` is not. Option earns its place on two narrower grounds:
+//
+//   - **a nested absence.** `T??` does not exist, so a container of nullables cannot
+//     distinguish "no entry" from "an entry holding null". `Option<T?>` can, which is why
+//     `Map.get` returns one: `Map<string, JsonValue?>` is a real shape and `null` would be
+//     ambiguous in it.
+//   - **an absent case that is a compile error to forget.** `match` is exhaustive. A missing
+//     `case` is refused; a missing null check is not.
+//
+// A nullable primitive is boxed, and so is an Option, so between `i32?` and `Option<i32>`
+// there is nothing to choose on cost — pick by which of the two reasons above applies.
+
+export enum Option<T> {
+  Some(T v), None
+
+  bool isSome(const this) {
+    return match (this) { case Some(_): true, case None: false };
+  }
+
+  bool isNone(const this) {
+    return match (this) { case Some(_): false, case None: true };
+  }
+
+  /** The value, or `d` if there is none. */
+  T orElse(const this, T d) {
+    return match (this) { case Some(v): v, case None: d };
+  }
+
+  /**
+   * The value, or a trap.
+   *
+   * For the case where absence is a bug rather than a possibility — the parallel of `x!`
+   * on a nullable. `trap` carries no message, so prefer `match` where the caller can say
+   * something useful.
+   */
+  T unwrap(const this) {
+    match (this) {
+      case Some(v): return v;
+      case None: trap;
+    }
+  }
+}
+
+/**
+ * `f` applied to the value, if there is one.
+ *
+ * A free function rather than a method because a method cannot introduce a type parameter
+ * of its own: `U` is not the enum's. Inference reads `T` from the Option and `U` from the
+ * function's return type, so the call site names neither.
+ */
+export Option<U> mapOption<T, U>(Option<T> o, fn[U(T)] f) {
+  return match (o) {
+    case Some(v): Option.Some(f(v)),
+    case None: Option.None,
+  };
+}

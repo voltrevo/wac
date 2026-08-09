@@ -1,0 +1,1836 @@
+// A Tor relay: accept a connection, prove who we are, and carry circuits.
+//
+//   deno task app packages/tor/src/relayd.wac --allow-net --allow-read --allow-write -- \
+//     <data-directory> [-p port] [-a address]
+//
+// `design/0002` step 3. Everything below the sockets is in `relaycert.wac`, `relaylink.wac` and
+// `relaycircuit.wac`, each tested on its own; this is the program that holds them together.
+//
+//     initiator                       this relay
+//     ---------                       ----------
+//     TLS 1.3          <----->        packages/tls' server, with a certificate we made
+//     VERSIONS         ------>
+//                      <------        VERSIONS, CERTS, AUTH_CHALLENGE, NETINFO
+//     NETINFO          ------>
+//     CREATE2          ------>
+//                      <------        CREATED2
+//     RELAY            <----->        a circuit
+//
+// ## It makes its own keys
+//
+// On first run it generates an RSA-1024 identity, an ed25519 identity, an ed25519 signing key, an
+// ntor onion key and a TLS link certificate, and writes them to the data directory. Nothing is
+// borrowed: `packages/crypto/src/rsagen.wac` makes the RSA key and `packages/tls/src/x509gen.wac`
+// the certificate. `design/0002` D4 was revised to require exactly this — a relay that cannot make
+// its own link certificate cannot rotate it, and a real relay rotates it every few hours.
+//
+// ## One connection at a time
+//
+// The same limitation `packages/ssh`'s sshd has and for the same reason: `accept` blocks, and the
+// world offers no way to wait on a listener and a live connection together *and* act on whichever
+// speaks. `waitAny` can wait on two tickets, but a relay needs to be reading from every connection
+// it has while accepting new ones, and that is a scheduler rather than a wait. Named here rather
+// than left to be discovered: this relay is a demonstration that the protocol works, not a relay
+// anybody should run.
+//
+// ## What it does not do
+//
+// **EXTEND2 is parsed and refused.** `relaycircuit.wac` reads the cell and names the next hop, and
+// acting on it means opening an outbound connection while an inbound one is live — which is the
+// concurrency this program does not have. A client extending through this relay gets a DESTROY
+// rather than silence.
+//
+// **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
+// being told, which is what a `Bridge` line is.
+
+import { Core, Cli, Socket, FileResult, Change, Pending } from "../../platform/src/platform.wac";
+import { Read } from core;
+import { Buf } from "../../bytes/src/buf.wac";
+import { Parsed, parseRequest } from "../../http/src/request.wac";
+import { DirDocuments, dirSourceFingerprint } from "./dirserve.wac";
+import { ALPHABET_STANDARD, encode as base64Encode } from "../../codec/src/base64.wac";
+import { AuthorityCert, Verdict, parseCertificates, verifyConsensus } from "./consensus.wac";
+import { DirAction, dirStep, filed } from "./dirstep.wac";
+import { PUB_OK } from "./hsstore.wac";
+
+/** How many onion service descriptors this relay will hold as an HSDir. */
+const i32 MAX_STORED_DESCRIPTORS = 32;
+import { microdescDigests } from "./microdesc.wac";
+import {
+  Link, chunkRequest, connectRelay, feedLink, handshakeTls, itoa, linkHandshake, pump, sendCells,
+  takeCell,
+} from "./link.wac";
+import { itoa64 } from "../../wactest/src/itoa64.wac";
+import {
+  INTRO_ACK_SUCCESS, INTRO_ACK_UNKNOWN_ID, IntroPoints, Introduced, establishIntro,
+  forgetCircuit, forgetConnection, introduce1, introduceAckBody,
+} from "./introrelay.wac";
+import {
+  Joined, RV_OK, RendPoints, establishRendezvous, forgetRendCircuit, forgetRendConnection,
+  rendezvous1,
+} from "./rendrelay.wac";
+import {
+  relayEstablishIntro, relayEstablishRendezvous, relayIntroEstablished, relayIntroduce1,
+  relayIntroduce2, relayIntroduceAck, relayRendezvous1, relayRendezvous2,
+  relayRendezvousEstablished,
+} from "./relay.wac";
+import {
+  tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsPhase, phaseEstablished, phaseFailed,
+} from "../../tls/src/server.wac";
+import { recordsReady } from "../../tls/src/record.wac";
+import { selfSignedEd25519, selfSignedRsa } from "../../tls/src/x509gen.wac";
+import { generateRsaKey, RsaKey } from "../../crypto/src/rsagen.wac";
+import { ed25519PublicKey } from "../../crypto/src/ed25519.wac";
+import { x25519Base } from "../../crypto/src/x25519.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import {
+  ed25519Cert, rsaCrossCert, linkCertDigest, certsCell,
+  CERT_TYPE_RSA_ID, CERT_TYPE_SIGNING, CERT_TYPE_LINK, CERT_TYPE_RSA_CROSSCERT,
+  KEY_TYPE_ED25519, KEY_TYPE_SHA256_X509,
+} from "./relaycert.wac";
+import { relayHandshakeReply, responderVersion, netinfoOtherAddress } from "./relaylink.wac";
+import {
+  Begin, Created, Extend, Inbound, answerCreate2, parseBegin, answerCreateFast, destroyCell,
+  extendTarget, mayExtendTo,
+  extended2Body, parseExtend2, receiveFromClient, sendToClient,
+  DESTROY_INTERNAL, DESTROY_NONE, DESTROY_PROTOCOL, DESTROY_RESOURCELIMIT,
+} from "./relaycircuit.wac";
+import {
+  Hop, relayBegin, relayBeginDir, relayConnected, relayData, relayEnd, relayExtend2,
+  relaySendme,
+  relayExtended2, wrapForClient,
+} from "./relay.wac";
+import {
+  RelayInfo, RelayKeys, routerDescriptor, rsaDescriptorDigest, rsaFingerprint,
+} from "./routerdesc.wac";
+import {
+  cellSize, cellCommand, cellCircId, cellPayload, cmdVersions, cmdNetinfo, cmdCreate2, cmdRelay,
+  cmdRelayEarly, cmdPadding, cmdDestroy, cmdCreateFast, cmdCreated2, decodeCreated2, encodeCreate2,
+  encodeFixed,
+} from "./cell.wac";
+import { slice } from "../../bytes/src/slice.wac";
+
+/** How long a circuit may be silent before the connection is dropped. */
+const i32 IDLE_TIMEOUT_MS = 120000;
+/** How often a relay that is waiting for its directory documents looks to see whether they exist. */
+const i32 DIR_POLL_MS = 500;
+
+/** How many connections a relay will hold at once. Beyond this it refuses rather than collapses. */
+const i32 MAX_CONNS = 64;
+
+/**
+ * How many circuits one connection may carry.
+ *
+ * A bootstrapping tor wants at least two at once — a directory circuit and an exit circuit — and
+ * predictive building adds a few more. Eight is well clear of that and keeps the wait list, which is
+ * rebuilt from every connection's circuits each round, a size worth walking.
+ */
+const i32 MAX_CIRCS = 8;
+
+/**
+ * A window, and how many cells of it a `SENDME` restores.
+ *
+ * tor's `STREAMWINDOW_INCREMENT` and `CIRCWINDOW_INCREMENT`. A client may send 500 cells on a stream
+ * and 1000 on a circuit before it must stop, and each `SENDME` returned buys it 50 or 100 more. Send
+ * none and an upload stops dead at the initial window — measured at exactly that boundary, before
+ * this existed: 200 KB (411 cells) went through and 300 KB (617 cells) did not.
+ *
+ * **Version 0 SENDMEs, with an empty body.** Version 1 carries the digest of the cell that triggered
+ * it; tor's `sendme_accept_min_version` defaults to **0**, so the simple form is accepted and no
+ * digest has to be threaded out of the relay crypto. `sendmeBodyV1` in `relay.wac` is there for the
+ * day a consensus raises that minimum.
+ */
+const i32 STREAM_SENDME_EVERY = 50;
+const i32 CIRCUIT_SENDME_EVERY = 100;
+
+/** An hour in seconds, for certificate lifetimes. */
+const i64 HOUR = 3600;
+
+/**
+ * Everything a relay is, on disk.
+ *
+ * Held together rather than passed as eight arrays, because the relation between them is the whole
+ * point: the signing key is certified by the identity, the link certificate by the signing key, and
+ * the TLS certificate's digest by the link certificate. A struct makes a caller that has one of them
+ * have all of them.
+ */
+export struct Identity {
+  bool ok;
+  /** RSA-1024, the identity a consensus knows a relay by. */
+  u8[] rsaModulus;
+  u8[] rsaExponent;
+  u8[] rsaPrivate;
+  /** SHA-1 of the RSA public key's DER — the fingerprint, and what a `Bridge` line names. */
+  u8[] fingerprint;
+  /** ed25519 master identity, and the signing key it certifies. */
+  u8[] edIdentitySeed;
+  u8[] edSigningSeed;
+  /** The curve25519 key a CREATE2 handshake is against. */
+  u8[] onionPrivate;
+  /**
+   * The TLS certificate, and the **RSA** key it carries.
+   *
+   * A separate key from the identity, and short-lived, as tor's link key is. Reusing the identity
+   * key would mean the long-lived private key doing a signature on every connection, which is worse
+   * than the thing this is fixing.
+   */
+  u8[] tlsCertDer;
+  u8[] linkModulus;
+  u8[] linkExponent;
+  u8[] linkPrivate;
+  /** Kept only to derive the TLS ephemeral key from; it no longer signs anything. */
+  u8[] tlsSeed;
+}
+
+/**
+ * Derive every key from one 32-byte seed.
+ *
+ * Deterministic, so a relay restarted with the same seed is the same relay — which is what makes a
+ * `Bridge` line keep working across a restart, and what lets a test know a fingerprint in advance.
+ * The seed is the whole of the relay's secrecy; see the note in `rsagen.wac`.
+ */
+export Identity deriveIdentity(u8[] seed, i64 now) {
+  Identity bad = Identity(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](), u8[0](),
+                          u8[0](), u8[0](), u8[0](), u8[0](), u8[0]());
+  if (seed.len() != 32) { return bad; }
+
+  // Each key from its own tweak of the seed, so no two are derived from the same bytes.
+  u8[] rsaSeed = tweak(seed, 1);
+  u8[] edIdentity = tweak(seed, 2);
+  u8[] edSigning = tweak(seed, 3);
+  u8[] onion = clampScalar(tweak(seed, 4));
+  u8[] tlsSeed = tweak(seed, 5);
+
+  RsaKey rsa = generateRsaKey(1024, rsaSeed);
+  if (!rsa.ok) { return bad; }
+
+  // A relay's TLS certificate is valid for a few hours and rotated; anything longer is a claim it
+  // does not need to make. The subject is arbitrary — nothing checks it, because the ed25519 chain
+  // is what binds this certificate to the relay.
+  //
+  // **RSA, because every real relay's is.** This was `selfSignedEd25519`, which works — the ed25519
+  // chain in the CERTS cell binds the link handshake and the TLS certificate under it is bound by
+  // *digest* rather than by key type, so nothing in the protocol objects and a C tor bootstraps
+  // through it. What it also does is make a relay of ours identifiable as ours from the first flight,
+  // by a field anyone on the path can read, before a single Tor cell is exchanged. tor builds its
+  // link certificate from `crypto_pk_generate_key`; `openssl s_client` against the old relayd said
+  // `Public Key Algorithm: ED25519` in as many words.
+  //
+  // 1024-bit, which is tor's size for a link key and also the only size that works here: issue 0099
+  // records that a 2048-bit private-key operation does not finish in any time a peer would wait, and
+  // this key signs a CertificateVerify on every connection.
+  RsaKey link = generateRsaKey(1024, tweak(seed, 6));
+  if (!link.ok) { return bad; }
+  u8[] cert = selfSignedRsa("Tor relay", now, now - HOUR, now + 48 * HOUR,
+                            link.modulus, link.publicExponent, link.privateExponent);
+  if (cert.len() == 0) { return bad; }
+
+  return Identity(true, rsa.modulus, rsa.publicExponent, rsa.privateExponent,
+                  rsaFingerprint(rsa.modulus, rsa.publicExponent),
+                  edIdentity, edSigning, onion, cert,
+                  link.modulus, link.publicExponent, link.privateExponent, tlsSeed);
+}
+
+
+/** The CERTS cell body this relay presents: types 4, 5 and 7. */
+export u8[] identityCerts(Identity id, i64 now) {
+  u8[] edIdentity = ed25519PublicKey(id.edIdentitySeed);
+  u8[] edSigning = ed25519PublicKey(id.edSigningSeed);
+  i64 expires = (now + 48 * HOUR) / HOUR;
+
+  u8[] signing = ed25519Cert(CERT_TYPE_SIGNING, expires, KEY_TYPE_ED25519, edSigning,
+                             edIdentity, id.edIdentitySeed);
+  u8[] link = ed25519Cert(CERT_TYPE_LINK, expires, KEY_TYPE_SHA256_X509,
+                          linkCertDigest(id.tlsCertDer), edSigning, id.edSigningSeed);
+  u8[] cross = rsaCrossCert(edIdentity, expires, id.rsaModulus, id.rsaPrivate);
+
+  // The RSA identity certificate, type 2: an X.509 certificate self-signed with the RSA identity
+  // key. The ed25519 chain above looks complete without it and is not — tor refuses the whole cell
+  // with "Missing legacy RSA ID certificate", which is what a C tor client said when this was left
+  // out. Its validity window is longer than the link certificate's because an identity is not
+  // rotated.
+  u8[] rsaId = selfSignedRsa("Tor relay identity", now, now - HOUR, now + 365 * 24 * HOUR,
+                             id.rsaModulus, id.rsaExponent, id.rsaPrivate);
+  if (signing.len() == 0 || link.len() == 0 || cross.len() == 0 || rsaId.len() == 0) {
+    return u8[0]();
+  }
+
+  u8[][] certs = u8[][4]();
+  certs[0] = rsaId;
+  certs[1] = signing;
+  certs[2] = link;
+  certs[3] = cross;
+  return certsCell(i32[](CERT_TYPE_RSA_ID, CERT_TYPE_SIGNING, CERT_TYPE_LINK,
+                         CERT_TYPE_RSA_CROSSCERT), certs);
+}
+
+u8[] tweak(u8[] seed, i32 label) {
+  u8[] input = u8[seed.len() + 1]();
+  for (i32 i = 0; i < seed.len(); i++) { input[i] = seed[i]; }
+  input[seed.len()] = label;
+  return sha256(input);
+}
+
+u8[] clampScalar(u8[] s) {
+  u8[] out = u8[32]();
+  for (i32 i = 0; i < 32; i++) { out[i] = s[i]; }
+  out[0] = out[0] & 248;
+  out[31] = (out[31] & 127) | 64;
+  return out;
+}
+
+/**
+ * The TAP onion key, from the same seed, derived only when a descriptor is wanted.
+ *
+ * Not part of `deriveIdentity` on purpose: serving costs nothing without it — CREATE2 uses the
+ * curve25519 ntor key and CREATE_FAST uses no key at all — while generating it is a second RSA-1024
+ * prime search, and a relay that never publishes would pay for it at every start. A relay that *does*
+ * publish needs it, because `onion-key` and `onion-key-crosscert` are not optional in a descriptor.
+ */
+export RsaKey deriveTapOnionKey(u8[] seed) {
+  if (seed.len() != 32) { return RsaKey(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0]()); }
+  return generateRsaKey(1024, tweak(seed, 6));
+}
+
+/**
+ * The relay's own descriptor: the document an authority publishes about it.
+ *
+ * The keys are the ones this relay actually serves with, which is the whole point — a descriptor
+ * generated from separate key material describes a relay that does not exist, and a client that
+ * believed it would connect somewhere and find the wrong identity.
+ */
+export u8[] ownDescriptor(
+  Identity id, RsaKey tap, string nickname, string address, i32 orPort, i64 now
+) {
+  if (!id.ok || !tap.ok) { return u8[0](); }
+  RelayKeys keys = RelayKeys(
+    id.rsaModulus, id.rsaExponent, id.rsaPrivate,
+    tap.modulus, tap.publicExponent, tap.privateExponent,
+    id.edIdentitySeed, id.edSigningSeed, id.onionPrivate);
+  // A descriptor's certificates expire in hours; this window is the same 48 the TLS certificate uses,
+  // so a relay's papers all go stale together rather than one at a time.
+  // `accept` because `relayd` parses RELAY_BEGIN and carries a stream. The descriptor and the vote have
+  // to agree — a client reads this one, and it used to say reject while the consensus said accept.
+  //
+  // **The two are written in different grammars.** A descriptor's policy takes address patterns
+  // (`accept *:*`); a consensus `p` line takes a port summary (`accept 1-65535`). Putting the summary
+  // form here is not merely unidiomatic: tor's own parser refuses the whole descriptor, which is how
+  // this was caught.
+  RelayInfo info = RelayInfo(nickname, address, orPort, 0, now,
+                             1073741824, 1073741824, 640416, (now / 3600) + 48,
+                             "accept *:*");
+  return routerDescriptor(keys, info);
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 port = 9001;
+  string bind = "127.0.0.1";
+  string seedPath = "";
+  string descriptorOut = "";
+  string seedLineOut = "";
+  string nickname = "wacrelay";
+  string consensusPath = "";
+  string microConsensusPath = "";
+  string microdescPath = "";
+  string certPath = "";
+  string[] descPaths = string[0]();
+  i32 argc = cli.argCount().wait();
+  for (i32 i = 0; i < argc; i++) {
+    string a = string.fromBytes(cli.arg(i).wait());
+    if (a == "-p" && i + 1 < argc) {
+      port = parseInt(string.fromBytes(cli.arg(i + 1).wait()));
+      i = i + 1;
+    } else if (a == "-a" && i + 1 < argc) {
+      bind = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "--seedline" && i + 1 < argc) {
+      seedLineOut = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "--descriptor" && i + 1 < argc) {
+      descriptorOut = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-n" && i + 1 < argc) {
+      nickname = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-C" && i + 1 < argc) {
+      consensusPath = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-K" && i + 1 < argc) {
+      certPath = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-M" && i + 1 < argc) {
+      microConsensusPath = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-m" && i + 1 < argc) {
+      microdescPath = string.fromBytes(cli.arg(i + 1).wait());
+      i = i + 1;
+    } else if (a == "-D" && i + 1 < argc) {
+      descPaths = pushString(descPaths, string.fromBytes(cli.arg(i + 1).wait()));
+      i = i + 1;
+    } else if (seedPath == "") {
+      seedPath = a;
+    }
+  }
+  if (seedPath == "") {
+    core.warn("usage: relayd <seed-file> [-p port] [-a address] [-n nickname] " +
+              "[--descriptor path] [--seedline path] [-C consensus -K certificate] [-D descriptor]... " +
+              "[-M microdesc-consensus -m microdescriptors]");
+    return 1;
+  }
+
+  // The seed file is 32 bytes. Read rather than generated, so a relay keeps its identity across a
+  // restart and a `Bridge` line stays valid — a relay with a new fingerprint every run is not a
+  // relay anybody can be told about.
+  FileResult seedFile = cli.readFile(seedPath).wait();
+  if (!seedFile.ok) {
+    core.warn("relayd: " + seedFile.error + " — write 32 random bytes there first");
+    return 1;
+  }
+  if (seedFile.bytes.len() < 32) {
+    core.warn("relayd: the seed file must be at least 32 bytes");
+    return 1;
+  }
+  u8[] seed = u8[32]();
+  for (i32 i = 0; i < 32; i++) { seed[i] = seedFile.bytes[i]; }
+
+  i64 now = core.nowMillis().wait() / 1000;
+  core.log("relayd: deriving an identity (RSA-1024 key generation takes a moment)");
+  Identity id = deriveIdentity(seed, now);
+  if (!id.ok) {
+    core.warn("relayd: could not derive an identity from that seed");
+    return 1;
+  }
+  core.log("relayd: fingerprint " + hex(id.fingerprint));
+  core.log("relayd: ntor onion key " + hex(x25519Base(id.onionPrivate)));
+
+
+  // A relay serves directory documents over RELAY_BEGIN_DIR, and a bootstrapping tor asks *any* relay
+  // it knows for them — there is no flag that stops it asking, so a relay that cannot answer leaves the
+  // client stuck with a consensus it cannot check.
+  //
+  // They may not exist yet, and that is not an error. A consensus is built from the descriptors of the
+  // relays it describes, and a descriptor does not name a port until its relay has bound one — so on a
+  // network being stood up from nothing, every relay is listening before any consensus can exist. A
+  // relay that treated the missing file as fatal forced two passes: start, write descriptors, die,
+  // build a consensus, start again on the same ports. That is where the fixed ports came from, and
+  // with them the collisions.
+  //
+  // So the paths are a standing instruction rather than a precondition: serve these once they are
+  // there. Until then the relay carries circuits and answers 404 for directory documents, which is
+  // exactly what it did before with no `-C` at all.
+  bool wantDir = consensusPath != "" && certPath != "";
+  DirLoad loaded = loadDocuments(core, cli, consensusPath, certPath, descPaths, microConsensusPath,
+                                 microdescPath);
+  DirDocuments docs = loaded.docs;
+  bool hasDir = loaded.ok;
+  // Said once per distinct problem rather than once per attempt: the poll runs twice a second, and a
+  // relay pointed at the wrong file should say so clearly, not four hundred times a minute.
+  string complained = "";
+  if (wantDir && !hasDir) {
+    if (loaded.problem != "") {
+      core.warn("relayd: " + loaded.problem);
+      complained = loaded.problem;
+    } else {
+      core.log("relayd: waiting for " + consensusPath +
+               " — serving no directory documents until it is there");
+    }
+  }
+
+  u8[] certs = identityCerts(id, now);
+  if (certs.len() == 0) {
+    core.warn("relayd: could not build the certificate chain");
+    return 1;
+  }
+
+  Socket listener = cli.listen(bind, port).wait();
+  if (listener.handle < 0) {
+    core.warn("relayd: listen: " + listener.error);
+    return 1;
+  }
+  core.log("relayd: listening on " + bind + ":" + itoa(listener.port));
+
+  // `--descriptor` writes what an authority should publish about this relay, **after binding**, and
+  // then carries on serving.
+  //
+  // It used to write and exit, taking the port from `-p`. That made `-p 0` — ask the operating system
+  // for a free one — useless here, because the descriptor would advertise port zero and the real port
+  // was released on exit anyway. Fixed ports are then the only option, and two agents running a
+  // network at once collide on them: this session lost three separate runs to a previous batch of
+  // relays still holding 5551-5553 while the new ones logged `Address already in use` and carried on.
+  //
+  // Binding first and keeping the socket removes both problems. The descriptor advertises the port the
+  // relay is actually listening on, whoever chose it, and there is no window between writing and
+  // serving for anyone else to take it.
+  // What a client needs in order to ask *this* relay for a consensus: where it is, who it is, and
+  // the key its ntor handshake uses. `bootstrap` calls this a seed line and wants exactly four
+  // fields, `host port identityHex ntorOnionKeyBase64`.
+  //
+  // Written by the relay for the same reason the descriptor is: two of the four facts are keys only
+  // this process has derived, and the third is a port only the operating system knows until the bind
+  // happened. A launcher's description cannot hold any of them, and a human copying them out of the
+  // log is the step this removes.
+  if (seedLineOut != "") {
+    string line = bind + " " + itoa(listener.port) + " " + hex(id.fingerprint) + " " +
+                  string.fromBytes(base64Encode(x25519Base(id.onionPrivate), ALPHABET_STANDARD(),
+                                                false)) + "\n";
+    Change wroteSeed = cli.writeFile(seedLineOut, line.toBytes()).wait();
+    if (!wroteSeed.ok()) {
+      core.warn("relayd: " + seedLineOut + ": " + wroteSeed.message);
+      return 1;
+    }
+    core.log("relayd: wrote a seed line for this relay to " + seedLineOut);
+  }
+
+  if (descriptorOut != "") {
+    core.log("relayd: deriving the TAP onion key a descriptor needs (another moment)");
+    RsaKey tap = deriveTapOnionKey(seed);
+    u8[] desc = ownDescriptor(id, tap, nickname, bind, listener.port, now);
+    if (desc.len() == 0) {
+      core.warn("relayd: could not build a descriptor");
+      return 1;
+    }
+    Change wrote = cli.writeFile(descriptorOut, desc).wait();
+    if (!wrote.ok()) {
+      core.warn("relayd: " + descriptorOut + ": " + wrote.message);
+      return 1;
+    }
+    core.log("relayd: wrote a " + itoa(desc.len()) + "-byte descriptor for port " +
+             itoa(listener.port) + " to " + descriptorOut);
+  }
+
+
+  // Accept and serve at once. The listener's ticket sits in the same `waitAny` as every live
+  // connection's, so a relay busy carrying one circuit still answers the relay extending to it — which
+  // is the whole reason this is not a loop that serves one connection to completion.
+  // `Conn?` because a struct array needs a default and a half-built connection is not a thing
+  // this program should be able to name. `live` is the count that is real.
+  Conn?[] conns = Conn?[MAX_CONNS]();
+  i32 live = 0;
+  // Connections are numbered from one for the log. `live` is a position in an array that compacts,
+  // so it names a different connection over time and is no use for telling them apart.
+  i32 nextConnId = 0;
+  // The two onion-service roles this relay can be asked to play. Both are relay-wide rather than
+  // per-connection: a service establishes its introduction point over one circuit and a client
+  // arrives over another, and the whole point is that the relay joins two parties who never share a
+  // connection.
+  IntroPoints intros = IntroPoints.create(MAX_CONNS * 2);
+  RendPoints rends = RendPoints.create(MAX_CONNS * 2);
+  Pending<Socket> incoming = cli.accept(listener.handle);
+  bool accepting = true;
+
+  while (true) {
+    // The wait list is rebuilt each round because it changes shape each round: a connection may gain a
+    // next hop or a stream, or go away. Index 0 is always the listener; after that each live
+    // connection contributes one to three ids, and `owner`/`source` record which is which so the
+    // answer can be translated back. Guessing that mapping instead of recording it is the bug this
+    // shape exists to avoid.
+    i32 n = accepting ? 1 : 0;
+    for (i32 i = 0; i < live; i++) {
+      n = n + 1;
+      for (i32 j = 0; j < conns[i]!.circCount; j++) {
+        if (conns[i]!.circs[j]!.hasNext) { n = n + 1; }
+        if (conns[i]!.circs[j]!.hasStream) { n = n + 1; }
+      }
+    }
+    i32[] ids = i32[n]();
+    i32[] owner = i32[n]();
+    i32[] source = i32[n]();
+    i32[] slot = i32[n]();
+    i32 at = 0;
+    if (accepting) {
+      ids[0] = incoming.id;
+      owner[0] = -1;
+      source[0] = -1;
+      slot[0] = -1;
+      at = 1;
+    }
+    for (i32 i = 0; i < live; i++) {
+      ids[at] = conns[i]!.fromClient.id; owner[at] = i; source[at] = 0; slot[at] = -1; at = at + 1;
+      for (i32 j = 0; j < conns[i]!.circCount; j++) {
+        if (conns[i]!.circs[j]!.hasNext) {
+          ids[at] = conns[i]!.circs[j]!.fromNext.id;
+          owner[at] = i; source[at] = 1; slot[at] = j; at = at + 1;
+        }
+        if (conns[i]!.circs[j]!.hasStream) {
+          ids[at] = conns[i]!.circs[j]!.fromStream.id;
+          owner[at] = i; source[at] = 2; slot[at] = j; at = at + 1;
+        }
+      }
+    }
+
+    // A relay still waiting for its documents wakes twice a second to look for them; one that has
+    // them waits out the idle timeout as before. The short poll is not a background timer — it is the
+    // same `waitAny`, given a deadline — so it costs nothing while traffic is arriving and stops the
+    // moment the documents are read.
+    i32 which = core.waitAny(ids, wantDir && !hasDir ? DIR_POLL_MS : IDLE_TIMEOUT_MS);
+    if (which < 0 && wantDir && !hasDir) {
+      // Not idle: still waiting. Dropping the connections here would drop the relay that is extending
+      // through us while the authority is still counting votes, which is the one moment a network
+      // being stood up cannot afford it.
+      DirLoad again = loadDocuments(core, cli, consensusPath, certPath, descPaths, microConsensusPath,
+                                    microdescPath);
+      if (again.ok) {
+        docs = again.docs;
+        hasDir = true;
+      } else if (again.problem != "" && again.problem != complained) {
+        core.warn("relayd: " + again.problem);
+        complained = again.problem;
+      }
+      continue;
+    }
+    if (which < 0) {
+      // Nothing spoke for two minutes. Dropping everything is heavy-handed and it is what a relay with
+      // no traffic should do rather than hold sockets for a network that has gone.
+      for (i32 i = 0; i < live; i++) { dropConn(core, cli, conns[i]!, intros, rends); }
+      live = 0;
+      // The accept ticket is **not** re-armed here. `cancel` detaches this program from the answer but
+      // does not stop the host accepting, so a fresh `accept` collides with the one still running and
+      // fails with "another accept task is ongoing" — instantly, which makes `waitAny` return at once,
+      // which re-arms again. That spin ran 167,000 times in one run of this program, burned a core, and
+      // was misread as another agent's load. A timeout means nothing arrived; the ticket is still good.
+      continue;
+    }
+
+    if (accepting && which == 0) {
+      Socket fresh = incoming.wait();
+      if (fresh.handle < 0) {
+        // Re-arming after a failure is what turns one refusal into a spin. Say it once and stop
+        // accepting: the connections already held keep working, and a listener that cannot accept is
+        // not something to retry thousands of times a second.
+        core.warn("relayd: accept: " + fresh.error + " — no longer accepting");
+        accepting = false;
+        continue;
+      }
+      incoming = cli.accept(listener.handle);
+      if (live >= MAX_CONNS) {
+        // Refusing is the honest answer. A relay that accepts every connection offered holds them all
+        // and dies on the first burst, which is worse for the network than one refusal.
+        core.warn("relayd: at " + itoa(MAX_CONNS) + " connections, refusing " + fresh.peer);
+        cli.closeSocket(fresh.handle);
+        continue;
+      }
+      core.log("relayd: connection " + itoa(nextConnId + 1) + " from " + fresh.peer);
+      nextConnId = nextConnId + 1;
+      conns[live] = newConn(core, cli, fresh, id, nextConnId);
+      live = live + 1;
+      continue;
+    }
+
+    i32 who = owner[which];
+    Conn hot = conns[who]!;
+    // The documents come back because a publish *replaces* them: `filed` builds a new struct when
+    // the arrays grow, so assigning inside `feedConn` would rebind its own parameter and every upload
+    // would be forgotten the moment that connection was done with. Which is exactly what happened —
+    // three relays each reported "1 held" for two different descriptors and then answered 404.
+    docs = feedConn(core, cli, hot, source[which], slot[which], id, certs, docs, hasDir,
+                    conns, live, intros, rends);
+    if (!hot.live) {
+      dropConn(core, cli, hot, intros, rends);
+      // Close the gap rather than leave a hole: the wait list is built by walking 0..live, and a dead
+      // entry in the middle would be waited on forever.
+      for (i32 i = who; i + 1 < live; i++) { conns[i] = conns[i + 1]; }
+      live = live - 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * What one `tlsServerFeed` produced: the new state, the records to send, and any application data.
+ *
+ * `tlsServerFeed` answers `[stateLen][state][toSendLen][toSend][appDataLen][appData]` in one array
+ * — the state is *returned* rather than mutated, so a caller that forgets to keep it silently keeps
+ * using the old keys. Unpacking it into three named pieces is the smallest thing that makes that
+ * impossible to forget.
+ */
+struct Fed {
+  u8[] state;
+  u8[] toSend;
+  u8[] appData;
+}
+
+Fed unpackFeed(u8[] packed) {
+  i32 at = 0;
+  u8[] state = takeVec(packed, at);
+  at = at + 4 + state.len();
+  u8[] toSend = takeVec(packed, at);
+  at = at + 4 + toSend.len();
+  u8[] appData = takeVec(packed, at);
+  return Fed(state, toSend, appData);
+}
+
+u8[] takeVec(u8[] b, i32 at) {
+  if (at + 4 > b.len()) { return u8[0](); }
+  i32 n = (b[at] * 16777216) + (b[at + 1] * 65536) + (b[at + 2] * 256) + b[at + 3];
+  if (at + 4 + n > b.len()) { return u8[0](); }
+  return slice(b, at + 4, at + 4 + n);
+}
+
+/** One connection, from TLS through to circuits, until it closes. */
+/**
+ * One connection this relay is serving, and everything its life depends on.
+ *
+ * These were `runLink`'s locals when a relay served one connection at a time. They had to become a
+ * struct for the same reason the loop had to change: **a relay in the middle of a circuit must serve
+ * the client it has and accept the extend that is coming**, and a program sitting inside one
+ * connection's function cannot do the second. Whether a three-hop circuit could be built used to
+ * depend on the order connections happened to arrive.
+ */
+struct Conn {
+  bool live;
+  /** A number for the log, so lines from connections handled at once can be told apart. */
+  i32 id;
+  i32 sock;
+  Socket sockObj;
+  u8[] tls;
+  /**
+   * Raw bytes that do not yet form whole TLS records.
+   *
+   * `tlsServerFeed` takes **whole records only** and traps on a partial one — its own comment says
+   * so, and `tlsRecordNeeded`/`recordsReady` exist to enforce it. This fed it whatever `recv`
+   * returned. That works for as long as every record happens to arrive intact, which is every small
+   * exchange: a request that fits in one record, a reply that fits in one record. It stops working
+   * the moment enough data arrives at once for a record to be split across two reads — a 64 KB
+   * upload, say — and then the trap kills the connection, tor sees `CONNRESET` or a TLS error, and
+   * every circuit on that connection dies at once with nothing logged here at all. Issue 0089.
+   *
+   * `link.wac` had this right on the client side. Its comment is the warning this file did not
+   * heed: "a reader that mostly works fails on a fast connection rather than a slow one".
+   */
+  u8[] raw;
+  u8[] buf;
+  bool established;
+  bool versionsSeen;
+  /** The circuits this connection carries. `circCount` is how many of them are real. */
+  Circ?[] circs;
+  i32 circCount;
+  /** How many circuits this connection has torn down, so a silent teardown is countable. */
+  i32 droppedCircs;
+  /** The one outstanding read of the connection itself. A ticket must exist to be waited on. */
+  Pending<Read> fromClient;
+}
+
+/**
+ * One circuit on a connection.
+ *
+ * This used to be a set of fields on `Conn`, which made "a second circuit on one connection" a
+ * refusal rather than a case. It is not an exotic one: a bootstrapping tor opens a directory circuit
+ * and an exit circuit to the same guard, over the same TLS connection, within the same second — so
+ * refusing the second meant the exit circuit died and no stream was ever begun through this relay.
+ * A circuit id is only unique per connection, which is why the lookup is per `Conn` and not global.
+ */
+struct Circ {
+  i32 circId;
+  Hop hop;
+  bool hasNext;
+  Link next;
+  i32 nextCircId;
+  Pending<Read> fromNext;
+  i32 dirStream;
+  Buf dirRequest;
+  bool hasStream;
+  i32 streamSock;
+  i32 streamId;
+  Pending<Read> fromStream;
+  /** Data cells received from the client, for flow control. Circuit-wide, and per stream. */
+  i32 cellsInCirc;
+  i32 cellsInStream;
+  /** Bytes forwarded each way on this stream, so a stream that ends early can say how early. */
+  i32 streamIn;
+  i32 streamOut;
+  /** Whether anything has been forwarded, so the first one can be logged and the rest not. */
+  bool forwardedAny;
+  /** How many cells have gone each way for a later hop. A relay that forwards silently cannot say
+   *  whether cells stopped arriving or stopped being sent, which is the question issue 0089 is on. */
+  i32 forwardedOut;
+  i32 forwardedBack;
+
+  // ── Onion service roles ──
+  /**
+   * KH, the nonce shared with whoever built this circuit. Empty for a circuit we extended onward.
+   *
+   * An ESTABLISH_INTRO arriving here is MACed with it, which is what stops one being replayed from
+   * another circuit. It comes from the CREATE handshake and nowhere else.
+   */
+  u8[] kh;
+  /** Whether an INTRODUCE1 has already been seen here. tor allows exactly one per circuit. */
+  bool introduced;
+  /** The connection id and circuit id this one is spliced to, or -1 — a completed rendezvous. */
+  i32 spliceConn;
+  i32 spliceCirc;
+}
+
+/**
+ * A circuit with nothing attached yet.
+ *
+ * `idle` is a ticket that will never be waited on — `hasNext` and `hasStream` are what the wait list
+ * consults — but the fields cannot be empty, so the connection's own read stands in until there is
+ * something real to hold.
+ */
+Circ newCirc(Core core, Cli cli, i32 circId, Hop hop, Pending<Read> idle, u8[] kh) {
+  return Circ(circId, hop, false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, idle,
+              -1, Buf.create(), false, -1, -1, idle, 0, 0, 0, 0, false, 0, 0,
+              kh, false, -1, -1);
+}
+
+/**
+ * Send a relay cell to the last hop of a circuit that may be on another connection.
+ *
+ * Introduction points and rendezvous points are the only places a relay moves a cell *sideways*: it
+ * arrives on one circuit and leaves on another, with no stream and no next hop between them. So the
+ * connection is found by id rather than being to hand, and a false return means the far side has gone
+ * — which is ordinary, since the party waiting there may have given up.
+ */
+bool sendToSlot(Core core, Cli cli, Conn?[] conns, i32 connCount, i32 connId, i32 circId,
+                i32 command, u8[] body) {
+  for (i32 i = 0; i < connCount; i++) {
+    if (conns[i] is null) { continue; }
+    Conn other = conns[i]!;
+    if (!other.live || other.id != connId) { continue; }
+    for (i32 j = 0; j < other.circCount; j++) {
+      Circ target = other.circs[j]!;
+      if (target.circId != circId) { continue; }
+      other.tls = sendCell(cli, other.sockObj, other.tls,
+                           sendToClient(target.hop, target.circId, command, 0, body));
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Forward an already-peeled payload to the far side of a rendezvous, adding that circuit's layer. */
+bool sendToSplice(Core core, Cli cli, Conn?[] conns, i32 connCount, i32 connId, i32 circId,
+                  u8[] payload) {
+  for (i32 i = 0; i < connCount; i++) {
+    if (conns[i] is null) { continue; }
+    Conn other = conns[i]!;
+    if (!other.live || other.id != connId) { continue; }
+    for (i32 j = 0; j < other.circCount; j++) {
+      Circ target = other.circs[j]!;
+      if (target.circId != circId) { continue; }
+      other.tls = sendCell(cli, other.sockObj, other.tls,
+                           encodeFixed(target.circId, cmdRelay(),
+                                       wrapForClient(target.hop, payload)));
+      target.forwardedBack = target.forwardedBack + 1;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Record the other half of a splice on the circuit that was waiting. */
+void spliceBack(Conn?[] conns, i32 connCount, i32 connId, i32 circId, i32 toConn, i32 toCirc) {
+  for (i32 i = 0; i < connCount; i++) {
+    if (conns[i] is null) { continue; }
+    Conn other = conns[i]!;
+    if (!other.live || other.id != connId) { continue; }
+    for (i32 j = 0; j < other.circCount; j++) {
+      Circ target = other.circs[j]!;
+      if (target.circId != circId) { continue; }
+      target.spliceConn = toConn;
+      target.spliceCirc = toCirc;
+      return;
+    }
+  }
+}
+
+/** A connection as it arrives: TLS begun, nothing else known yet. */
+Conn newConn(Core core, Cli cli, Socket sock, Identity id, i32 connId) {
+  u8[] tls = tlsServerInitRsa(id.tlsCertDer, id.linkModulus, id.linkExponent, id.linkPrivate,
+                              clampScalar(tweak(id.tlsSeed, 6)), core.randomBytes(32).wait());
+  Pending<Read> first = cli.recv(sock.handle);
+  return Conn(true, connId, sock.handle, sock, tls, u8[0](), u8[0](), false, false,
+              Circ?[MAX_CIRCS](), 0, 0, first);
+}
+
+/** The circuit with this id on this connection, or -1. */
+i32 findCirc(Conn c, i32 circId) {
+  for (i32 i = 0; i < c.circCount; i++) {
+    if (c.circs[i]!.circId == circId) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * Tear down one circuit, leaving the connection carrying the others.
+ *
+ * The slot is closed by compaction rather than by a flag, for the same reason connections are: the
+ * wait list is built by walking 0..circCount, so a hole in the middle would be waited on forever.
+ */
+void dropCirc(Core core, Cli cli, Conn c, i32 slot, IntroPoints intros, RendPoints rends) {
+  Circ k = c.circs[slot]!;
+  // Whatever this circuit was holding for the onion protocol goes with it. Without this the maps
+  // fill with entries naming circuits that are gone, and the symptom is a relay quietly refusing new
+  // introduction points because it is full of dead ones.
+  forgetCircuit(intros, c.id, k.circId);
+  forgetRendCircuit(rends, c.id, k.circId);
+  if (k.forwardedOut > 0 || k.forwardedBack > 0) {
+    core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) + " carried " +
+             itoa(k.forwardedOut) + " cells out, " + itoa(k.forwardedBack) + " back");
+  }
+  // Callers each explain *why* they are dropping; this says that one happened at all, so a circuit
+  // that vanishes is never a silent event.
+  c.droppedCircs = c.droppedCircs + 1;
+  if (k.hasStream) { cli.closeSocket(k.streamSock); k.hasStream = false; }
+  if (k.hasNext) { cli.closeSocket(k.next.sock); k.hasNext = false; }
+  for (i32 i = slot; i + 1 < c.circCount; i++) { c.circs[i] = c.circs[i + 1]; }
+  c.circCount = c.circCount - 1;
+}
+
+/** Everything a closing connection holds: its own socket, and every circuit's. */
+void dropConn(Core core, Cli cli, Conn c, IntroPoints intros, RendPoints rends) {
+  core.log("relayd: [" + itoa(c.id) + "]  dropping a connection carrying " + itoa(c.circCount) + " circuit(s), " +
+           itoa(c.droppedCircs) + " already torn down");
+  while (c.circCount > 0) { dropCirc(core, cli, c, c.circCount - 1, intros, rends); }
+  forgetConnection(intros, c.id);
+  forgetRendConnection(rends, c.id);
+  cli.closeSocket(c.sock);
+  c.live = false;
+}
+
+/**
+ * One source of one connection has spoken: read it and act.
+ *
+ * `source` is 0 for the client, 1 for the next hop, 2 for a stream — the same numbering the wait
+ * builds, so the caller never has to translate. `slot` is which circuit of this connection spoke, and
+ * is meaningless for the client, whose cells name their own circuit. The function returns when the
+ * event is handled; `c.live` says whether the connection survived it.
+ */
+/** What `loadDocuments` found: the documents, whether every one was there, and what was wrong. */
+struct DirLoad {
+  DirDocuments docs;
+  bool ok;
+  /** Empty when the files are merely not there yet; otherwise what is wrong with one that is. */
+  string problem;
+}
+
+/**
+ * Whether a file that exists is the document it is supposed to be.
+ *
+ * The first keyword, which is tor's own rule — `networkstatus_parse_vote_from_string` requires the
+ * document to *start* with its version keyword. This is the cheap check, and its real value is that
+ * it makes a half-written file retry instead of stick: a reader that catches an authority mid-write
+ * sees a truncation, and a truncation does not start with the keyword either.
+ *
+ * It is not the check that matters. See `verifiedAgainst` below for that one.
+ */
+bool startsWith(u8[] doc, string keyword) {
+  u8[] k = keyword.toBytes();
+  if (doc.len() < k.len()) { return false; }
+  for (i32 i = 0; i < k.len(); i++) { if (doc[i] != k[i]) { return false; } }
+  return true;
+}
+
+/** The empty set — what a relay serves before its documents exist, and answers 404 from. */
+DirDocuments none() {
+  return DirDocuments(u8[0](), u8[0](), u8[0](), u8[0](), u8[][0](), u8[0](),
+                      u8[0](), u8[][0](), u8[][0](), u8[][0]());
+}
+
+
+/**
+ * The authority a certificate belongs to, from its own `fingerprint` line.
+ *
+ * Taken from the file rather than from configuration because the file *is* the configuration: an
+ * operator who points `-K` at a certificate has named the authority this relay trusts, exactly as a
+ * `DirAuthority` line does in tor. `parseCertificates` then recomputes the fingerprint from the
+ * identity key inside and drops the certificate if the two disagree, so a `fingerprint` line that
+ * lies about its own key does not survive being read.
+ */
+string certificateFingerprint(u8[] cert) {
+  i32 at = -1;
+  if (startsWith(cert, "fingerprint ")) {
+    at = 0;
+  } else {
+    for (i32 i = 0; i + 12 <= cert.len(); i++) {
+      if (cert[i] != 10) { continue; }
+      bool hit = true;
+      u8[] k = "fingerprint ".toBytes();
+      for (i32 j = 0; j < k.len(); j++) {
+        if (i + 1 + j >= cert.len() || cert[i + 1 + j] != k[j]) { hit = false; break; }
+      }
+      if (hit) { at = i + 1; break; }
+    }
+  }
+  if (at < 0) { return ""; }
+  i32 from = at + 12;
+  i32 to = from;
+  while (to < cert.len() && cert[to] != 10 && cert[to] != 13) { to = to + 1; }
+  u8[] out = u8[to - from]();
+  for (i32 i = from; i < to; i++) { out[i - from] = cert[i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * Whether the authority whose certificate we hold actually signed this consensus.
+ *
+ * **This relay used to serve whatever it was handed.** The reasoning was that a relay is a cache and
+ * the client is the party that checks signatures — which is true about who is *protected*, and wrong
+ * about what a cache does. C tor puts every consensus it receives through
+ * `networkstatus_set_current_consensus`, and the call that makes one servable —
+ * `dirserv_set_cached_consensus_networkstatus` — sits *after* `networkstatus_check_consensus_signature`
+ * in that function. One that fails goes to `unverified-consensus`, a different file, and is not
+ * served. tor's own comment about a flavour it will not use says it plainly: *"we won't use it, we
+ * didn't want it, and we won't serve it."*
+ *
+ * So the client checking is not a reason for the cache not to. Serving an unsigned consensus is
+ * handing every client that asks a document they will spend a round trip rejecting, and — on a test
+ * network, which is what this program is for — it converts a wrong file at the relay into a mystery
+ * at the client. That is precisely how the JSON-instead-of-a-consensus mistake in the previous commit
+ * stayed invisible for a whole session.
+ *
+ * **Where this is weaker than tor, and why:** tor requires a *majority* of the authorities it knows.
+ * This relay is configured with one certificate, so a majority of what it knows is that one signature.
+ * The rule is the same rule; the trust set is as large as the configuration makes it. A relay given
+ * several authorities' certificates in one `-K` file gets the majority rule with no change here,
+ * because `verifyConsensus` counts distinct trusted signers and that is where the threshold lives.
+ */
+string verifiedAgainst(u8[] consensus, u8[] certFile, i64 now, string what) {
+  string fp = certificateFingerprint(certFile);
+  if (fp == "") { return "the certificate has no fingerprint line, so there is no authority to trust"; }
+  string[] trusted = string[1]();
+  trusted[0] = fp;
+  AuthorityCert[] certs = parseCertificates(certFile, trusted);
+  if (certs.len() == 0) {
+    return "the certificate does not verify against its own identity key, so it says nothing about " +
+           "who signed the " + what;
+  }
+  Verdict v = verifyConsensus(consensus, certs, trusted, now);
+  if (!v.ok) {
+    string why = v.stale != "" ? v.stale
+                               : itoa(v.goodSignatures) + " good signature(s), " + itoa(v.needed) +
+                                 " needed";
+    return "the " + what + " is not signed by " + fp + " — " + why;
+  }
+  return "";
+}
+
+/**
+ * Read the directory documents, if they are all there yet.
+ *
+ * A missing file is `false` rather than a warning, because this is called repeatedly until it
+ * succeeds and a relay waiting for a consensus that has not been built yet should say so once, not
+ * once every half second. A file that is there but unreadable — a permission, a disk — is still worth
+ * saying, and is still not fatal: the next attempt may find it.
+ *
+ * Partial is not a state. Either every path given resolves or nothing is served, so a relay can never
+ * answer with a consensus and 404 for the descriptors that consensus names.
+ */
+DirLoad loadDocuments(Core core, Cli cli, string consensusPath, string certPath, string[] descPaths,
+                      string microConsensusPath, string microdescPath) {
+  if (consensusPath == "" || certPath == "") { return DirLoad(none(), false, ""); }
+  FileResult cf = cli.readFile(consensusPath).wait();
+  FileResult kf = cli.readFile(certPath).wait();
+  if (!cf.ok || !kf.ok) {
+    return DirLoad(none(), false, "");
+  }
+  if (!startsWith(cf.bytes, "network-status-version")) {
+    return DirLoad(none(), false, consensusPath + " is not a consensus — it does not begin " +
+                                  "\"network-status-version\"");
+  }
+  if (!startsWith(kf.bytes, "dir-key-certificate-version")) {
+    return DirLoad(none(), false, certPath + " is not an authority certificate — it does not begin " +
+                                  "\"dir-key-certificate-version\"");
+  }
+  // The check that matters: this relay does not serve a consensus the authority it was configured
+  // with did not sign. See `verifiedAgainst`.
+  i64 now = core.nowMillis().wait() / 1000;
+  string bad = verifiedAgainst(cf.bytes, kf.bytes, now, "consensus");
+  if (bad != "") { return DirLoad(none(), false, consensusPath + ": " + bad); }
+  // The descriptors too, because tor asks for them over BEGIN_DIR as readily as for the consensus.
+  // Leaving them out did not make it ask elsewhere: it read our 404's ten-byte body as "server info"
+  // eight times over and stayed at 0/2 usable descriptors.
+  u8[] descriptors = u8[0]();
+  u8[][] digests = u8[][descPaths.len()]();
+  for (i32 di = 0; di < descPaths.len(); di++) {
+    FileResult df = cli.readFile(descPaths[di]).wait();
+    if (!df.ok) {
+      return DirLoad(none(), false, "");
+    }
+    descriptors = joinBytes(descriptors, df.bytes);
+    digests[di] = rsaDescriptorDigest(df.bytes);
+  }
+  // The microdesc flavour and the microdescriptors, when given. A client of this package asks for
+  // those and nothing else, so a relay serving only the ns flavour is one our own client cannot
+  // bootstrap from — which is how this gap survived four rounds of C tor interop.
+  //
+  // The `m` digests are computed here rather than passed in, exactly as a real cache does: it stores
+  // microdescriptors keyed by their own digest, so the key and the document cannot disagree.
+  u8[] microCons = u8[0]();
+  u8[] micros = u8[0]();
+  u8[][] microDigests = u8[][0]();
+  if (microConsensusPath != "" && microdescPath != "") {
+    FileResult mcf = cli.readFile(microConsensusPath).wait();
+    FileResult mdf = cli.readFile(microdescPath).wait();
+    if (!mcf.ok || !mdf.ok) {
+      return DirLoad(none(), false, "");
+    }
+    // The microdesc flavour is a consensus too, signed by the same authority over its own body, and a
+    // relay that checked one flavour and served the other unchecked would have done the work and kept
+    // the hole — ours is the flavour our own client asks for.
+    if (!startsWith(mcf.bytes, "network-status-version")) {
+      return DirLoad(none(), false, microConsensusPath + " is not a consensus — it does not begin " +
+                                    "\"network-status-version\"");
+    }
+    string badMicro = verifiedAgainst(mcf.bytes, kf.bytes, now, "microdesc consensus");
+    if (badMicro != "") { return DirLoad(none(), false, microConsensusPath + ": " + badMicro); }
+    microCons = mcf.bytes;
+    micros = mdf.bytes;
+    microDigests = microdescDigests(micros);
+  }
+
+  core.log("relayd: serving the consensus, certificate and " + itoa(descPaths.len()) +
+           " descriptor(s) over BEGIN_DIR" +
+           (micros.len() == 0 ? ""
+                              : ", plus " + itoa(microDigests.len()) + " microdescriptor(s)"));
+  return DirLoad(DirDocuments(cf.bytes, microCons, kf.bytes, descriptors, digests,
+                              dirSourceFingerprint(cf.bytes), micros, microDigests, u8[][0](),
+                              u8[][0]()), true, "");
+}
+
+/**
+ * `conns` and the two maps are passed in because the onion-service roles are the only place a relay
+ * moves a cell *sideways* — out of the connection it arrived on and into another. Everything else
+ * here concerns one connection and one circuit, which is why this function did not need them until
+ * now, and why they are arguments rather than a wider refactor.
+ */
+DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity id, u8[] certs,
+              DirDocuments docs, bool hasDir, Conn?[] conns, i32 connCount, IntroPoints intros,
+              RendPoints rends) {
+    if (source == 2) {
+      Circ k = c.circs[slot]!;
+      bool open = false;
+      u8[] payload = u8[0]();
+      match (k.fromStream.wait()) {
+        case Data(bytes): { payload = bytes; open = true; }
+        case End: { }
+        case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the stream failed: " + why); }
+      }
+      if (!open) {
+        // The far end closed, which is an END rather than silence: a client that is told nothing waits
+        // for its own timeout and blames the circuit.
+        c.tls = sendCell(cli, c.sockObj, c.tls,
+                       sendToClient(k.hop, k.circId, relayEnd(), k.streamId, endReason()));
+        cli.closeSocket(k.streamSock);
+        k.hasStream = false;
+        core.log("relayd: [" + itoa(c.id) + "]  stream " + itoa(k.streamId) + " on handle " +
+                 itoa(k.streamSock) + " closed by the far end after " +
+                 itoa(k.streamIn) + " bytes in, " + itoa(k.streamOut) + " bytes out");
+        // The stream is gone; the circuit is not. A client reuses a circuit for the next stream, so
+        // tearing down the connection here would cost it a fresh three-hop build per request.
+        return docs;
+      }
+      // Re-armed **after** the check, not before it. Arming a read on a socket that is about to be
+      // closed leaves a ticket outstanding on a dead handle for the rest of the program: nothing ever
+      // waits it, it holds one of the platform ring's sixteen slots, and the next stream on this
+      // circuit gets a fresh ticket while the abandoned one is still in flight. See issue 0089.
+      k.fromStream = cli.recv(k.streamSock);
+      k.streamOut = k.streamOut + payload.len();
+      u8[][] parts = chunkRequest(payload);
+      for (i32 pi = 0; pi < parts.len(); pi++) {
+        c.tls = sendCell(cli, c.sockObj, c.tls,
+                       sendToClient(k.hop, k.circId, relayData(), k.streamId, parts[pi]));
+      }
+      // Return, but stay live: forwarding a body is the connection working, not the connection ending.
+      // This was `continue` in the single-connection loop and became `c.live = false` in the move to
+      // `feedConn`, which closed the circuit after the first cell of every response.
+      return docs;
+    }
+
+
+    if (source == 1) {
+      // The next hop answered. Its cells belong to the client, one layer of encryption added.
+      Circ k = c.circs[slot]!;
+      bool alive = false;
+      match (k.fromNext.wait()) {
+        case Data(bytes): { alive = feedLink(k.next, bytes); }
+        case End: { }
+        case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the next hop failed: " + why); }
+      }
+      if (!alive) {
+        core.warn("relayd: [" + itoa(c.id) + "]  the next hop closed the connection");
+        c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_NONE));
+        dropCirc(core, cli, c, slot, intros, rends);
+        return docs;
+      }
+      // As above: only a hop that is staying gets a fresh read.
+      k.fromNext = cli.recv(k.next.sock);
+      while (true) {
+        u8[] back = takeCell(k.next);
+        if (back.len() == 0) { break; }
+        i32 backCommand = cellCommand(back, 0);
+        if (backCommand == cmdPadding()) { continue; }
+        if (backCommand == cmdDestroy()) {
+          core.log("relayd: [" + itoa(c.id) + "]  the next hop destroyed its leg of the circuit");
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_NONE));
+          dropCirc(core, cli, c, slot, intros, rends);
+          return docs;
+        }
+        if (backCommand != cmdRelay() && backCommand != cmdRelayEarly()) { continue; }
+        // One layer on, and out to the client. The payload is opaque here: it was encrypted for the
+        // client by the hop beyond us.
+        k.forwardedBack = k.forwardedBack + 1;
+        c.tls = sendCell(cli, c.sockObj, c.tls,
+                       encodeFixed(k.circId, cmdRelay(), wrapForClient(k.hop, cellPayload(back, 0))));
+      }
+      // Same as the stream case: cells arriving from the next hop are the circuit carrying traffic.
+      return docs;
+    }
+
+
+    u8[] incoming = u8[0]();
+    bool live = false;
+    match (c.fromClient.wait()) {
+      case Data(bytes): {
+        incoming = bytes;
+        live = true;
+      }
+      // A connection ending was silent, which made "the peer went away" indistinguishable from
+      // "nothing happened" in a log — and a circuit dying at the client with no line here is exactly
+      // what issue 0089 looked like from the outside.
+      case End: { core.log("relayd: [" + itoa(c.id) + "]  the initiator closed the connection"); }
+      case Failed(why): { core.warn("relayd: [" + itoa(c.id) + "]  the connection failed: " + why); }
+    }
+    if (!live) {
+      // The client is gone, so every circuit it built over this connection is too. `dropConn` in the
+      // main loop closes them; saying so here is what `c.live = false` means.
+      c.live = false;
+      return docs;
+    }
+    // And here: a connection that is going does not need another read outstanding on it.
+    c.fromClient = cli.recv(c.sock);
+    // Whole records only, or `tlsServerFeed` traps. Anything left over waits for the next read.
+    c.raw = concat(c.raw, incoming);
+    i32 ready = recordsReady(c.raw);
+    if (ready == 0) { return docs; }
+    u8[] whole = slice(c.raw, 0, ready);
+    c.raw = slice(c.raw, ready, c.raw.len());
+
+    Fed fed = unpackFeed(tlsServerFeed(c.tls, whole));
+    c.tls = fed.state;
+    if (fed.toSend.len() > 0) { cli.send(c.sock, fed.toSend).wait(); }
+    if (tlsPhase(c.tls) == phaseFailed()) {
+      core.warn("relayd: [" + itoa(c.id) + "]  the TLS handshake failed");
+      c.live = false;
+      return docs;
+    }
+    if (!c.established && tlsPhase(c.tls) == phaseEstablished()) {
+      c.established = true;
+      core.log("relayd: [" + itoa(c.id) + "]  TLS established");
+    }
+    c.buf = concat(c.buf, fed.appData);
+
+    while (true) {
+      i32 size = cellSize(c.buf, 0);
+      if (size < 0 || size > c.buf.len()) { break; }
+      u8[] cell = slice(c.buf, 0, size);
+      c.buf = slice(c.buf, size, c.buf.len());
+
+      i32 command = cellCommand(cell, 0);
+      if (command == cmdPadding()) { continue; }
+
+      if (!c.versionsSeen) {
+        if (command != cmdVersions()) {
+          core.warn("relayd: [" + itoa(c.id) + "]  first cell was not VERSIONS");
+          c.live = false;
+          return docs;
+        }
+        i32 version = responderVersion(cell);
+        if (version < 0) {
+          core.warn("relayd: [" + itoa(c.id) + "]  no link protocol version in common");
+          c.live = false;
+          return docs;
+        }
+        core.log("relayd: [" + itoa(c.id) + "]  link protocol " + itoa(version));
+        c.versionsSeen = true;
+        u8[] reply = relayHandshakeReply(certs, core.randomBytes(32).wait(),
+                                         peerIpv4(c.sockObj.peer), core.nowMillis().wait() / 1000);
+        if (reply.len() == 0) {
+          core.warn("relayd: [" + itoa(c.id) + "]  could not build the handshake reply");
+          c.live = false;
+          return docs;
+        }
+        c.tls = sendCell(cli, c.sockObj, c.tls, reply);
+        continue;
+      }
+
+      if (command == cmdNetinfo()) {
+        u8[] mine = netinfoOtherAddress(cell);
+        if (mine.len() == 4) {
+          core.log("relayd: [" + itoa(c.id) + "]  the initiator sees us as " + itoa(mine[0]) + "." + itoa(mine[1]) +
+                   "." + itoa(mine[2]) + "." + itoa(mine[3]));
+        }
+        core.log("relayd: [" + itoa(c.id) + "]  link established");
+        continue;
+      }
+
+      if (command == cmdCreateFast()) {
+        // A client with no descriptor for us — which is every client told about us by a `Bridge`
+        // line — has no onion key and so cannot send a CREATE2. TLS has already authenticated us by
+        // then, which is what makes CREATE_FAST safe here and nowhere else.
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0))) { continue; }
+        Created fast = answerCreateFast(cellCircId(cell, 0), cellPayload(cell, 0),
+                                        randomBytes20(core));
+        if (fast.cell.len() == 0) {
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          continue;
+        }
+        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0), fast.hop, c.fromClient, fast.kh);
+        c.circCount = c.circCount + 1;
+        c.tls = sendCell(cli, c.sockObj, c.tls, fast.cell);
+        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0)) + " created (CREATE_FAST)");
+        continue;
+      }
+
+      if (command == cmdCreate2()) {
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0))) { continue; }
+        Created answer = answerCreate2(cellCircId(cell, 0), cellPayload(cell, 0),
+                                       id.fingerprint, id.onionPrivate,
+                                       clampScalar(core.randomBytes(32).wait()));
+        if (answer.cell.len() == 0) {
+          core.warn("relayd: [" + itoa(c.id) + "]  the CREATE2 was not one we could answer");
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          continue;
+        }
+        c.circs[c.circCount] = newCirc(core, cli, cellCircId(cell, 0), answer.hop, c.fromClient, answer.kh);
+        c.circCount = c.circCount + 1;
+        c.tls = sendCell(cli, c.sockObj, c.tls, answer.cell);
+        core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(cellCircId(cell, 0)) + " created");
+        continue;
+      }
+
+      if (command == cmdRelay() || command == cmdRelayEarly()) {
+        i32 slotOf = findCirc(c, cellCircId(cell, 0));
+        if (slotOf < 0) {
+          c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(cellCircId(cell, 0), DESTROY_PROTOCOL));
+          continue;
+        }
+        Circ k = c.circs[slotOf]!;
+        Inbound inbound = receiveFromClient(k.hop, cellPayload(cell, 0));
+        if (!inbound.recognized) {
+          // Not for us, so it belongs to a hop beyond us: forward the once-peeled payload verbatim.
+          // A relay never learns what is inside — that is between the client and the further hop.
+          // A joined rendezvous is the other thing an unrecognised cell can mean. The client and the
+          // service share keys through us, so the cell is re-wrapped for the far circuit and not read:
+          // one layer of ours comes off on the way in and one goes on on the way out, which is what
+          // tor does when it rewrites `cell->circ_id` and hands the cell to the spliced circuit.
+          if (!k.hasNext && k.spliceConn >= 0) {
+            if (!sendToSplice(core, cli, conns, connCount, k.spliceConn, k.spliceCirc,
+                              inbound.payload)) {
+              core.warn("relayd: [" + itoa(c.id) + "]  the far side of the rendezvous is gone");
+              c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+              dropCirc(core, cli, c, slotOf, intros, rends);
+            }
+            continue;
+          }
+          if (!k.hasNext) {
+            core.warn("relayd: [" + itoa(c.id) + "]  a cell for a later hop, but nothing has been extended to");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          // Forwarding was silent, which made "no stream opened" impossible to tell apart from "no cell
+          // ever arrived". The first one per circuit is enough to say the path is carrying traffic
+          // without a line per cell.
+          if (!k.forwardedAny) {
+            k.forwardedAny = true;
+            core.log("relayd: [" + itoa(c.id) + "]  forwarding cells for a later hop on circuit " + itoa(k.circId));
+          }
+          k.forwardedOut = k.forwardedOut + 1;
+          sendCells(k.next, encodeFixed(k.nextCircId, cmdRelay(), inbound.payload));
+          continue;
+        }
+
+        if (inbound.command == relayExtend2()) {
+          if (k.hasNext) {
+            core.warn("relayd: [" + itoa(c.id) + "]  a second EXTEND2 on one circuit is not supported");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          Extended done = extendCircuit(core, cli, inbound.data, id);
+          if (!done.ok) {
+            // A refusal the client can act on: it will try another path rather than hang.
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_INTERNAL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          k.next = done.link;
+          k.nextCircId = done.circId;
+          k.hasNext = true;
+          k.fromNext = cli.recv(k.next.sock);
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                         sendToClient(k.hop, k.circId, relayExtended2(), 0,
+                                      extended2Body(done.reply)));
+          core.log("relayd: [" + itoa(c.id) + "]  extended circuit " + itoa(k.circId) + " to the next hop as " +
+                   itoa(k.nextCircId));
+          continue;
+        }
+
+        // ── The onion-service relay roles ──────────────────────────────────
+        //
+        // A relay holding an introduction point or a rendezvous point learns nothing from either: the
+        // first is a key it files a circuit under, the second a cookie it matches. Everything that
+        // could identify a service is encrypted to somebody else.
+
+        if (inbound.command == relayEstablishIntro()) {
+          // Only on a circuit that ends here — a circuit we extended onward belongs to a further hop
+          // and claiming it would be promising to deliver cells we cannot deliver.
+          u8[] filed = establishIntro(intros, inbound.data, k.kh, c.id, k.circId, !k.hasNext);
+          if (filed.len() == 0) {
+            core.warn("relayd: [" + itoa(c.id) + "]  an ESTABLISH_INTRO we would not accept");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayIntroEstablished(), 0, u8[0]()));
+          core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
+                   " is an introduction point");
+          continue;
+        }
+
+        if (inbound.command == relayIntroduce1()) {
+          Introduced decided = introduce1(intros, inbound.data, !k.introduced);
+          k.introduced = true;
+          i32 status = decided.status;
+          if (status == INTRO_ACK_SUCCESS) {
+            // Read the target *before* anything can change it: `forgetCircuit` below compacts the
+            // map, so an index taken afterwards would name a different entry.
+            i32 toConn = intros.connIds[decided.at];
+            i32 toCirc = intros.circIds[decided.at];
+            // The body goes on unchanged — an INTRODUCE2 *is* an INTRODUCE1, and only the command
+            // differs. A relay that rewrote any of it would be rewriting ciphertext.
+            if (!sendToSlot(core, cli, conns, connCount, toConn, toCirc, relayIntroduce2(),
+                            inbound.data)) {
+              // The service's circuit is gone. Drop the registration so the next client is told
+              // *unknown id* immediately rather than after another failed forward, and tell this one
+              // the same thing — from a client's side an introduction point that has lost the service
+              // and one that never had it are the same event.
+              forgetCircuit(intros, toConn, toCirc);
+              status = INTRO_ACK_UNKNOWN_ID;
+            }
+          }
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayIntroduceAck(), 0,
+                                        introduceAckBody(status)));
+          core.log("relayd: [" + itoa(c.id) + "]  an introduction, status " + itoa(status));
+          continue;
+        }
+
+        if (inbound.command == relayEstablishRendezvous()) {
+          i32 held = establishRendezvous(rends, inbound.data, c.id, k.circId, !k.hasNext);
+          if (held != RV_OK) {
+            core.warn("relayd: [" + itoa(c.id) + "]  an ESTABLISH_RENDEZVOUS we would not accept");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayRendezvousEstablished(), 0, u8[0]()));
+          core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) +
+                   " is waiting at a rendezvous");
+          continue;
+        }
+
+        if (inbound.command == relayRendezvous1()) {
+          Joined join = rendezvous1(rends, inbound.data, !k.hasNext);
+          if (join.error != RV_OK) {
+            // An unknown cookie is ordinary rather than suspicious — tor's own note is that a client
+            // which gave up after INTRODUCE1 leaves exactly this.
+            core.warn("relayd: [" + itoa(c.id) + "]  a RENDEZVOUS1 with nothing waiting for it");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          if (!sendToSlot(core, cli, conns, connCount, join.connId, join.circId,
+                          relayRendezvous2(), join.rendezvous2)) {
+            core.warn("relayd: [" + itoa(c.id) + "]  the waiting circuit went away");
+            c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(k.circId, DESTROY_PROTOCOL));
+            dropCirc(core, cli, c, slotOf, intros, rends);
+            continue;
+          }
+          // Spliced both ways. From here neither circuit is read again: cells arriving on one are
+          // re-wrapped for the other, which is the whole of what a rendezvous point does.
+          k.spliceConn = join.connId;
+          k.spliceCirc = join.circId;
+          spliceBack(conns, connCount, join.connId, join.circId, c.id, k.circId);
+          core.log("relayd: [" + itoa(c.id) + "]  rendezvous joined: circuit " + itoa(k.circId) +
+                   " to " + itoa(join.circId));
+          continue;
+        }
+
+        if (inbound.command == relayBegin()) {
+          if (k.hasStream) {
+            core.warn("relayd: [" + itoa(c.id) + "]  a second stream on one circuit is not supported");
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+            continue;
+          }
+          Begin want = parseBegin(inbound.data);
+          if (!want.ok) {
+            core.warn("relayd: [" + itoa(c.id) + "]  a BEGIN we could not read");
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+            continue;
+          }
+          // A leading colon means this relay's own address, which is how a rendezvous stream is opened.
+          string host = want.ownAddress ? "127.0.0.1" : want.host;
+          Socket target = cli.connect(host, want.port).wait();
+          if (target.handle < 0) {
+            core.log("relayd: [" + itoa(c.id) + "]  " + host + ":" + itoa(want.port) + " refused: " + target.error);
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+            continue;
+          }
+          k.streamSock = target.handle;
+          k.streamId = inbound.streamId;
+          k.hasStream = true;
+          // A circuit carries streams in turn and these count *this* stream. Without the reset the
+          // second stream's total includes the first's, which is how "590 bytes in" was read as one
+          // request when it was three.
+          k.streamIn = 0;
+          k.streamOut = 0;
+          k.cellsInStream = 0;
+          k.fromStream = cli.recv(k.streamSock);
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                         sendToClient(k.hop, k.circId, relayConnected(), k.streamId, connectedBody()));
+          core.log("relayd: [" + itoa(c.id) + "]  stream " + itoa(k.streamId) + " open to " + host + ":" +
+                   itoa(want.port) + " on handle " + itoa(k.streamSock));
+          continue;
+        }
+
+        // Flow control, before the cell is dispatched: a client's window is spent by *any* data
+        // cell on the circuit, including the directory stream's, so the circuit-level count is kept
+        // here rather than inside the branch that happens to handle this stream.
+        if (inbound.command == relayData()) {
+          k.cellsInCirc = k.cellsInCirc + 1;
+          if (k.cellsInCirc % CIRCUIT_SENDME_EVERY == 0) {
+            // Stream id 0 is what makes it circuit-level rather than about one stream.
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relaySendme(), 0, u8[0]()));
+            core.log("relayd: [" + itoa(c.id) + "]  circuit " + itoa(k.circId) + " SENDME after " +
+                     itoa(k.cellsInCirc) + " cells");
+          }
+        }
+
+        if (inbound.command == relayData() && k.hasStream && inbound.streamId == k.streamId) {
+          k.cellsInStream = k.cellsInStream + 1;
+          if (k.cellsInStream % STREAM_SENDME_EVERY == 0) {
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relaySendme(), k.streamId, u8[0]()));
+          }
+          k.streamIn = k.streamIn + inbound.data.len();
+          if (!cli.send(k.streamSock, inbound.data).wait()) {
+            core.warn("relayd: [" + itoa(c.id) + "]  the stream would not take the data");
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), k.streamId, endReason()));
+            cli.closeSocket(k.streamSock);
+            k.hasStream = false;
+          }
+          continue;
+        }
+
+        if (inbound.command == relayEnd() && k.hasStream && inbound.streamId == k.streamId) {
+          core.log("relayd: [" + itoa(c.id) + "]  the client ended stream " + itoa(k.streamId) + " after " +
+                   itoa(k.streamIn) + " bytes in, " + itoa(k.streamOut) + " bytes out");
+          cli.closeSocket(k.streamSock);
+          k.hasStream = false;
+          continue;
+        }
+
+        if (inbound.command == relayBeginDir()) {
+          if (!hasDir) {
+            // Refused rather than ignored: a client that gets no answer waits out its timeout, and a
+            // client that gets an END tries somewhere else immediately.
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), inbound.streamId, endReason()));
+            core.log("relayd: [" + itoa(c.id) + "]  a BEGIN_DIR, refused: no documents to serve");
+            continue;
+          }
+          k.dirStream = inbound.streamId;
+          k.dirRequest = Buf.create();
+          // CONNECTED with an empty payload: a directory stream has no address to report, unlike the
+          // BEGIN it otherwise resembles.
+          c.tls = sendCell(cli, c.sockObj, c.tls,
+                         sendToClient(k.hop, k.circId, relayConnected(), k.dirStream, u8[0]()));
+          core.log("relayd: [" + itoa(c.id) + "]  a directory stream opened as " + itoa(k.dirStream));
+          continue;
+        }
+
+        if (inbound.command == relayData() && inbound.streamId == k.dirStream) {
+          k.dirRequest.pushAll(inbound.data);
+          // A publish is the reason this waits rather than answering the first read: a descriptor is
+          // fourteen kilobytes and arrives in thirty cells. `dirStep` holds off until the whole
+          // request is present, which is the same contract `dird` serves on its DirPort — and the
+          // only route to an HSDir, since the HSDirs in a real consensus have no DirPort at all.
+          DirAction act = dirStep(k.dirRequest.bytes(), docs);
+          if (act.ready) {
+            if (act.descriptor.len() > 0) {
+              docs = filed(docs, act.descriptor, act.blindedKey, MAX_STORED_DESCRIPTORS);
+              core.log("relayd: [" + itoa(c.id) + "]  filed an onion service descriptor, " +
+                       itoa(docs.hsDescriptors.len()) + " held");
+            } else if (act.refusedFor != PUB_OK) {
+              core.warn("relayd: [" + itoa(c.id) + "]  refused a descriptor, reason " +
+                        itoa(act.refusedFor));
+            }
+            // 498 bytes to a cell, which is what `chunkRequest` splits at — named for the client's
+            // side of the same operation, and the same arithmetic in this direction.
+            u8[][] parts = chunkRequest(act.response);
+            for (i32 pi = 0; pi < parts.len(); pi++) {
+              c.tls = sendCell(cli, c.sockObj, c.tls,
+                             sendToClient(k.hop, k.circId, relayData(), k.dirStream, parts[pi]));
+            }
+            c.tls = sendCell(cli, c.sockObj, c.tls,
+                           sendToClient(k.hop, k.circId, relayEnd(), k.dirStream, endReason()));
+            core.log("relayd: [" + itoa(c.id) + "]  answered a directory request with " +
+                     itoa(act.response.len()) + " bytes in " + itoa(parts.len()) + " cells");
+            k.dirStream = -1;
+          }
+          continue;
+        }
+
+        core.log("relayd: [" + itoa(c.id) + "]  relay command " + itoa(inbound.command) + " on stream " +
+                 itoa(inbound.streamId) + " (this circuit has " +
+                 (k.hasStream ? "stream " + itoa(k.streamId) : "no stream") + ")");
+        continue;
+      }
+
+      if (command == cmdDestroy()) {
+        core.log("relayd: [" + itoa(c.id) + "]  the initiator destroyed circuit " + itoa(cellCircId(cell, 0)));
+        i32 gone = findCirc(c, cellCircId(cell, 0));
+        if (gone >= 0) { dropCirc(core, cli, c, gone, intros, rends); }
+        continue;
+      }
+    }
+  return docs;
+}
+
+/**
+ * Whether a fresh circuit can be opened with this id, refusing it in the caller's stead if not.
+ *
+ * Two ways it cannot: the id is already in use on this connection, which is a protocol error, or this
+ * connection is already carrying `MAX_CIRCS`. Both answer DESTROY, because a client that is told
+ * nothing waits out its own timeout before trying another relay.
+ */
+bool roomForCirc(Core core, Cli cli, Conn c, i32 circId) {
+  if (findCirc(c, circId) >= 0) {
+    core.warn("relayd: [" + itoa(c.id) + "]  circuit " + itoa(circId) + " is already open on this connection");
+    c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_PROTOCOL));
+    return false;
+  }
+  if (c.circCount >= MAX_CIRCS) {
+    core.warn("relayd: [" + itoa(c.id) + "]  at " + itoa(MAX_CIRCS) + " circuits on one connection, refusing another");
+    c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_RESOURCELIMIT));
+    return false;
+  }
+  return true;
+}
+
+
+/** What extending produced: the connection to the next hop, its circuit id, and the CREATED2 reply. */
+struct Extended {
+  bool ok;
+  Link link;
+  i32 circId;
+  u8[] reply;
+}
+
+/**
+ * Open a connection to the hop an EXTEND2 names and hand its handshake on as a CREATE2.
+ *
+ * Blocking, on purpose. While a circuit is being extended there is nothing else to do on it — the
+ * client is waiting for the EXTENDED2 and will send nothing until it arrives — so the next hop's TLS
+ * and link handshake can own the thread. Forwarding afterwards is the part that must not block, and
+ * that is what the `waitAny` in `serve` is for.
+ *
+ * The handshake is forwarded **verbatim**. A relay that looked inside it could impersonate the hop it
+ * is extending to, which is why `parseExtend2` hands over opaque bytes and this does not inspect them.
+ */
+Extended extendCircuit(Core core, Cli cli, u8[] extendBody, Identity id) {
+  Extended bad = Extended(false, Link(core, cli, "", -1, u8[0](), u8[0](), true, u8[0]()), 0, u8[0]());
+
+  Extend want = parseExtend2(extendBody);
+  if (!want.ok) {
+    core.warn("relayd:   an EXTEND2 we could not read");
+    return bad;
+  }
+  u8[] target = extendTarget(want.linkSpecifiers);
+  if (target.len() != 6) {
+    core.warn("relayd:   the EXTEND2 named no IPv4 address we can reach");
+    return bad;
+  }
+
+  // **Never extend to ourselves.** tor's `connection_or_connect` refuses outright —
+  // *"Client asked me to connect to myself. Refusing."* — and does the same for the ed25519 identity.
+  // A relay that tried it would open a connection to its own listener and run a link handshake with
+  // itself, which is a circular path with nothing at the end of it and a way to make a relay spend
+  // two connections and a circuit on one client's request.
+  //
+  // design/0002 carried this as an unexplained handshake bug for days: one relay asked to extend to
+  // `127.0.0.1:5555`, its own port, failed somewhere in an uninstrumented VERSIONS exchange, and the
+  // note said *a relay extending to itself is the case to look at, and tor is entitled to ask for it*.
+  // tor is entitled to ask; the answer is no. Whatever the handshake did was downstream of a
+  // connection that should never have been opened, and instrumenting it would have described a
+  // symptom.
+  if (!mayExtendTo(want.linkSpecifiers, id.fingerprint)) {
+    core.warn("relayd:   asked to extend to ourselves; refusing");
+    return bad;
+  }
+  string host = itoa(target[0]) + "." + itoa(target[1]) + "." + itoa(target[2]) + "." +
+                itoa(target[3]);
+  i32 port = target[4] * 256 + target[5];
+  core.log("relayd:   extending to " + host + ":" + itoa(port));
+
+  Link next = connectRelay(core, cli, host, port);
+  if (next.dead) {
+    core.warn("relayd:   could not reach " + host + ":" + itoa(port));
+    return bad;
+  }
+  handshakeTls(next);
+  if (next.dead || !linkHandshake(next, host)) {
+    core.warn("relayd:   the link handshake with " + host + " failed");
+    cli.closeSocket(next.sock);
+    return bad;
+  }
+
+  // A circuit id of our own choosing for the leg we originate. Ours is the connection, so ours is the
+  // namespace: the client's id and this one describe the same circuit and need not match, and tor-spec
+  // requires the high bit set for the side that opened the connection.
+  u8[] r = core.randomBytes(4).wait();
+  i32 nextCircId = (r[0] * 16777216 + r[1] * 65536 + r[2] * 256 + r[3]) | 0x80000000;
+  if (nextCircId == 0) { nextCircId = 0x80000001; }
+
+  sendCells(next, encodeCreate2(nextCircId, want.handshakeType, want.handshake));
+
+  // Wait for the CREATED2 that answers it. Anything else on this fresh connection is a protocol
+  // error rather than something to skip past.
+  while (true) {
+    u8[] cell = takeCell(next);
+    if (cell.len() == 0) {
+      if (!pump(next)) {
+        core.warn("relayd:   the next hop said nothing we could use");
+        cli.closeSocket(next.sock);
+        return bad;
+      }
+      continue;
+    }
+    i32 command = cellCommand(cell, 0);
+    if (command == cmdPadding()) { continue; }
+    if (command != cmdCreated2() || cellCircId(cell, 0) != nextCircId) {
+      core.warn("relayd:   the next hop answered with cell command " + itoa(command));
+      cli.closeSocket(next.sock);
+      return bad;
+    }
+    u8[] reply = decodeCreated2(cellPayload(cell, 0));
+    if (reply.len() == 0) {
+      core.warn("relayd:   the next hop's CREATED2 was unreadable");
+      cli.closeSocket(next.sock);
+      return bad;
+    }
+    return Extended(true, next, nextCircId, reply);
+  }
+  return bad;
+}
+
+/** Twenty random bytes: half the key material of a CREATE_FAST handshake. */
+u8[] randomBytes20(Core core) {
+  u8[] r = core.randomBytes(32).wait();
+  u8[] out = u8[20]();
+  for (i32 i = 0; i < 20; i++) { out[i] = r[i]; }
+  return out;
+}
+
+/** Seal `cell` and write it, returning the advanced TLS state. */
+u8[] sendCell(Cli cli, Socket conn, u8[] tls, u8[] cell) {
+  Fed out = unpackFeed(tlsServerSend(tls, cell));
+  if (out.toSend.len() > 0) { cli.send(conn.handle, out.toSend).wait(); }
+  return out.state;
+}
+
+/** The peer's address as four bytes, or 127.0.0.1 when it cannot be read. */
+u8[] peerIpv4(string peer) {
+  u8[] text = peer.toBytes();
+  u8[] out = u8[4]();
+  i32 part = 0;
+  i32 value = -1;
+  for (i32 i = 0; i <= text.len() && part < 4; i++) {
+    bool end = i == text.len() || text[i] == '.' || text[i] == ':';
+    if (end) {
+      if (value < 0 || value > 255) { return loopback(); }
+      out[part] = value;
+      part = part + 1;
+      value = -1;
+      if (i < text.len() && text[i] == ':') { break; }
+    } else if (text[i] >= '0' && text[i] <= '9') {
+      value = (value < 0 ? 0 : value) * 10 + (text[i] - '0');
+    } else {
+      return loopback();
+    }
+  }
+  return (part == 4) ? out : loopback();
+}
+
+u8[] loopback() { return u8[](127, 0, 0, 1); }
+
+u8[] concat(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+
+string hex(u8[] b) {
+  u8[] digits = "0123456789ABCDEF".toBytes();
+  u8[] out = u8[b.len() * 2]();
+  for (i32 i = 0; i < b.len(); i++) {
+    out[i * 2] = digits[(b[i] >> 4) & 0xF];
+    out[i * 2 + 1] = digits[b[i] & 0xF];
+  }
+  return string.fromBytes(out);
+}
+
+i32 parseInt(string s) {
+  u8[] b = s.toBytes();
+  i32 v = 0;
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+/** A one-byte RELAY_END reason: `REASON_DONE`, the ordinary close. */
+u8[] endReason() {
+  u8[] r = u8[1]();
+  r[0] = 6;
+  return r;
+}
+
+string[] pushString(string[] xs, string x) {
+  string[] out = string[xs.len() + 1]();
+  for (i32 i = 0; i < xs.len(); i++) { out[i] = xs[i]; }
+  out[xs.len()] = x;
+  return out;
+}
+
+u8[] joinBytes(u8[] a, u8[] b) {
+  u8[] out = u8[a.len() + b.len()]();
+  for (i32 i = 0; i < a.len(); i++) { out[i] = a[i]; }
+  for (i32 i = 0; i < b.len(); i++) { out[a.len() + i] = b[i]; }
+  return out;
+}
+
+/**
+ * A RELAY_CONNECTED body: the address the stream reached, and how long it may be cached.
+ *
+ * `127.0.0.1` and a zero TTL. The address is what a client uses for its own bookkeeping, and zero says
+ * not to cache it — honest for a testnet exit that connects to one loopback address.
+ */
+u8[] connectedBody() {
+  u8[] b = u8[8]();
+  b[0] = 127;
+  b[3] = 1;
+  return b;
+}

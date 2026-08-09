@@ -1,0 +1,32 @@
+// The fault numbers and phrases, as the wac side sees them, for `test/faults_agree.test.ts`.
+//
+// A probe rather than a test in wac, because the comparison is against `host/faults.ts` — TypeScript, on
+// the other side of the bridge — and that is the whole point: the two copies of this numbering cannot see
+// each other, so something has to hold them up side by side.
+//
+// **Every category, and it used to be the first eight.** `FAULT_IS_DIR` and `FAULT_UNSUPPORTED` were added
+// after this was written and neither was added here, so the file that exists to catch a shifted numbering
+// stopped covering the numbering exactly when it started changing. `codes()`'s length is compared against
+// the test's own list, which is what makes an omission here fail rather than pass quietly.
+import { FAULT_NONE, FAULT_NOT_FOUND, FAULT_DENIED, FAULT_EXISTS, FAULT_NOT_EMPTY, FAULT_OTHER,
+         FAULT_NOT_REPRESENTABLE, FAULT_NOT_GRANTED, FAULT_IS_DIR, FAULT_UNSUPPORTED,
+         FAULT_NOT_A_DIR, FAULT_READ_ONLY, faultWords } from "../../src/platform.wac";
+
+export i32[] codes() {
+  i32[] out = i32[12]();
+  out[0] = FAULT_NONE();
+  out[1] = FAULT_NOT_FOUND();
+  out[2] = FAULT_DENIED();
+  out[3] = FAULT_EXISTS();
+  out[4] = FAULT_NOT_EMPTY();
+  out[5] = FAULT_OTHER();
+  out[6] = FAULT_NOT_REPRESENTABLE();
+  out[7] = FAULT_NOT_GRANTED();
+  out[8] = FAULT_IS_DIR();
+  out[9] = FAULT_UNSUPPORTED();
+  out[10] = FAULT_NOT_A_DIR();
+  out[11] = FAULT_READ_ONLY();
+  return out;
+}
+
+export u8[] words(i32 fault) { return faultWords(fault).toBytes(); }

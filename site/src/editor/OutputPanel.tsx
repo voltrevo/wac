@@ -5,7 +5,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import type { FileMap } from "./file-store";
-import type { WacExport } from "../../atoms/wac/wacCompile.ts";
+import type { WacExport } from "../../../compiler/wacCompile.ts";
 import { compile, wasmHex, runFunction, generateBindgen, placeholderFor, runnable, type EditorCompileResult } from "./wac-compile";
 
 interface Props {

@@ -1,0 +1,172 @@
+// Serializer: JSON value tree -> UTF-8 bytes.
+//
+// Numbers are written from the source span kept on JsonNumber rather than from
+// its f64. That is not laziness about canonical form so much as necessity: wac
+// has no float-to-string operation, so printing an f64 would mean implementing
+// shortest-round-trip formatting (Ryu or Grisu) first.
+//
+// The fold is a `match`, so the compiler checks that every variant is handled —
+// which is the difference between this and the switch-on-tag it replaced, where a
+// forgotten case fell through to `trap` at run time.
+
+import { JsonValue, JsonMember } from "./value.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { writeF64 } from "../../fmt/src/ftoa.wac";
+
+export void writeValue(Buf out, JsonValue v) {
+  // Exhaustive: adding a variant to JsonValue makes this a compile error rather
+  // than a case that silently falls through to `trap`, which is what the old
+  // switch-on-tag did.
+  match (v) {
+    case Null: {
+      out.pushAll(u8[]('n', 'u', 'l', 'l'));
+    }
+    case Bool(value): {
+      if (value) {
+        out.pushAll(u8[]('t', 'r', 'u', 'e'));
+      } else {
+        out.pushAll(u8[]('f', 'a', 'l', 's', 'e'));
+      }
+    }
+    case Number(value, raw): {
+      // A parsed number is written back exactly as it was read; one built by hand
+      // has no span and is formatted to its shortest round-tripping decimal.
+      if (raw.len() > 0) {
+        out.pushAll(raw);
+      } else if (value - value != 0.0) {
+        // NaN and ±Infinity, which that subtraction is false for and every finite value is true
+        // for. JSON has no spelling for either, and the float formatter happily wrote the
+        // JavaScript ones — `NaN`, `Infinity` — so a hand-built tree serialised to text this
+        // package's own parser rejects. `JSON.stringify` writes `null` for them, and being judged
+        // against `JSON.stringify` is the claim this file makes, so it writes `null` too.
+        out.pushAll(u8[]('n', 'u', 'l', 'l'));
+      } else {
+        writeF64(out, value);
+      }
+    }
+    case Str(bytes): {
+      writeString(out, bytes);
+    }
+    case Array(items): {
+      out.push('[');
+      for (i32 i = 0; i < items.len(); i++) {
+        if (i > 0) { out.push(','); }
+        writeValue(out, items.get(i));
+      }
+      out.push(']');
+    }
+    case Object(members): {
+      out.push('{');
+      for (i32 i = 0; i < members.len(); i++) {
+        if (i > 0) { out.push(','); }
+        // Fetched once: `at` is a bounds-checked call through the member Vec, and asking
+        // twice per member was measurable on object-heavy documents.
+        JsonMember m = members.at(i);
+        writeString(out, m.key);
+        out.push(':');
+        writeValue(out, m.value);
+      }
+      out.push('}');
+    }
+  }
+}
+
+// Quote and escape a UTF-8 byte string. Only the characters JSON requires are
+// escaped — quote, backslash, and anything below a space — so multi-byte UTF-8
+// passes through untouched, which matches what JSON.stringify emits.
+/**
+ * A JSON string literal.
+ *
+ * **Not every `u8[]` is text.** A parsed string was UTF-8 by the time it got here, but
+ * `JsonValue.Str` takes raw bytes, so a hand-built one may hold anything — and every byte at or
+ * above space used to be copied through unchanged. `Str(u8[](0xFF))` therefore produced output that
+ * this package's own parser rejects, which is the one thing a serialiser must not do. Each
+ * ill-formed byte becomes U+FFFD, matching what `Buf.pushCodepoint` does with a non-scalar.
+ *
+ * Well-formed multi-byte sequences are copied whole rather than byte by byte, because the escaping
+ * below only concerns ASCII and a continuation byte must never be looked at as though it were a
+ * character.
+ */
+export void writeString(Buf out, u8[] bytes) {
+  out.push('"');
+  for (i32 i = 0; i < bytes.len(); i++) {
+    i32 width = sequenceLen(bytes, i);
+    if (width == 0) {
+      out.pushAll(u8[](0xEF, 0xBF, 0xBD));       // U+FFFD, for one ill-formed byte
+      continue;
+    }
+    if (width > 1) {
+      for (i32 k = 0; k < width; k++) { out.push(bytes[i + k]); }
+      i = i + width - 1;
+      continue;
+    }
+    i32 c = bytes[i];
+    switch (c) {
+      case '"':  { out.push('\\'); out.push('"'); }
+      case '\\': { out.push('\\'); out.push('\\'); }
+      // 0x08 and 0x0C stay numeric: wac has no \b or \f character escape.
+      case 0x08: { out.push('\\'); out.push('b'); }
+      case 0x0C: { out.push('\\'); out.push('f'); }
+      case '\n': { out.push('\\'); out.push('n'); }
+      case '\r': { out.push('\\'); out.push('r'); }
+      case '\t': { out.push('\\'); out.push('t'); }
+      default: {
+        if (c < ' ') {
+          writeUnicodeEscape(out, c);
+        } else {
+          out.push(c);
+        }
+      }
+    }
+  }
+  out.push('"');
+}
+
+void writeUnicodeEscape(Buf out, i32 c) {
+  out.push('\\');
+  out.push('u');
+  out.push(hexChar((c >> 12) & 0xF));
+  out.push(hexChar((c >> 8) & 0xF));
+  out.push(hexChar((c >> 4) & 0xF));
+  out.push(hexChar(c & 0xF));
+}
+
+// Lowercase, matching JSON.stringify.
+i32 hexChar(i32 nibble) {
+  if (nibble < 10) { return '0' + nibble; }
+  return 'a' + (nibble - 10);
+}
+
+/**
+ * The length of the well-formed UTF-8 sequence starting at `i`, or 0 if there is not one.
+ *
+ * The lead-byte ranges are the ones RFC 3629 actually allows, which is narrower than "any byte with
+ * the right high bits": C0 and C1 could only ever encode something overlong, ED A0..BF is a
+ * surrogate, and F4 90.. is past U+10FFFF. Accepting those is how a validator lets through the
+ * sequences that make two decoders disagree.
+ */
+i32 sequenceLen(u8[] b, i32 i) {
+  i32 c = b[i];
+  if (c < 0x80) { return 1; }
+  if (c >= 0xC2 && c <= 0xDF) { return cont(b, i, 1) ? 2 : 0; }
+  if (c == 0xE0) { return between(b, i + 1, 0xA0, 0xBF) && cont(b, i, 2) ? 3 : 0; }
+  if (c >= 0xE1 && c <= 0xEC) { return cont(b, i, 2) ? 3 : 0; }
+  if (c == 0xED) { return between(b, i + 1, 0x80, 0x9F) && cont(b, i, 2) ? 3 : 0; }
+  if (c >= 0xEE && c <= 0xEF) { return cont(b, i, 2) ? 3 : 0; }
+  if (c == 0xF0) { return between(b, i + 1, 0x90, 0xBF) && cont(b, i, 3) ? 4 : 0; }
+  if (c >= 0xF1 && c <= 0xF3) { return cont(b, i, 3) ? 4 : 0; }
+  if (c == 0xF4) { return between(b, i + 1, 0x80, 0x8F) && cont(b, i, 3) ? 4 : 0; }
+  return 0;
+}
+
+/** Whether the `n` bytes after `i` are all continuations, and all present. */
+bool cont(u8[] b, i32 i, i32 n) {
+  for (i32 k = 1; k <= n; k++) {
+    if (!between(b, i + k, 0x80, 0xBF)) { return false; }
+  }
+  return true;
+}
+
+bool between(u8[] b, i32 at, i32 lo, i32 hi) {
+  return at < b.len() && b[at] >= lo && b[at] <= hi;
+}

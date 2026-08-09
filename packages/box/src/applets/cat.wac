@@ -1,0 +1,175 @@
+// Bytes through, unchanged — a chunk at a time, so a file larger than memory still works, and
+// stopping as soon as nobody is reading.
+//
+// **Unless a flag says otherwise**, which nine of them do and which this ignored entirely. `cat -n`
+// printed the file unnumbered, `cat -s` left every blank line where it was, and `cat -Q` — not a flag
+// GNU has at all — was accepted in silence. Accepting a flag and not doing it is the worst of the three
+// answers a gap can give: the caller asked for something, got no error, and is now reading output that
+// is wrong in exactly the way they asked it not to be. Found by measuring this package's applets against
+// `packages/sh`'s corpus (wac-mono 0103), where seventeen scripts turned on it.
+//
+// The transformations are line-shaped, so they read lines; with no flag on, the original byte pump is
+// still what runs, because that is the property `cat` is for. GNU's bundles are `-A` = `-vET`,
+// `-e` = `-vE`, `-t` = `-vT`, and `-b` overrides `-n`.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, Span, nextSpan, openStream, operandCount } from "../lib/input.wac";
+import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 cat(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // Every letter GNU has, so an unknown one is the caller's mistake and gets GNU's own sentence. `-u` is
+  // accepted and does nothing there too — it means "unbuffered", and this is.
+  u8[] flags = a.flags.toBytes();
+  for (i32 i = 0; i < flags.len(); i++) {
+    if (!known(flags[i])) {
+      u8[] one = u8[1](fill: flags[i]);
+      core.warn(a.name + ": invalid option -- '" + string.fromBytes(one) + "'");
+      core.warn("Try '" + a.name + " --help' for more information.");
+      return 1;
+    }
+  }
+
+  bool all = has(a, 'A');
+  bool ends = has(a, 'E') || all || has(a, 'e');
+  bool tabs = has(a, 'T') || all || has(a, 't');
+  bool nonPrinting = has(a, 'v') || all || has(a, 'e') || has(a, 't');
+  bool number = has(a, 'n');
+  bool numberFilled = has(a, 'b');
+  bool squeeze = has(a, 's');
+
+  if (!ends && !tabs && !nonPrinting && !number && !numberFilled && !squeeze) { return copy(core, cli, fs, a); }
+
+  // Numbering and squeezing run *across* the operands, as GNU's do: `cat -n f g` keeps counting.
+  i32 count = 0;
+  bool wasBlank = false;
+  i32 files = operandCount(a, 0);
+  i32 many = files == 0 ? 1 : files;
+  Sink out = Sink.create(cli);
+  i32 status = 0;
+  for (i32 f = 0; f < many; f++) {
+    // Flushed *before* opening, because the diagnostic goes straight to standard error while output is
+    // block-buffered here — so without this, `a` arrives after the complaint about the file between it
+    // and `b`. GNU's `error()` flushes standard output for exactly this reason.
+    out.flush();
+    Input in = openStream(core, cli, fs, a, f, -1);
+    // **An operand that will not open does not end the run.** GNU reports it, carries on with the next
+    // file and exits 1 at the end — `cat a missing b` prints both `a` and `b` — and stopping here meant
+    // every file after the first bad one silently produced nothing. Found by moving `backings.test.ts`
+    // into this package (wac-mono 0103), where one script names three files and the middle one is absent.
+    if (!in.ok) { status = 1; continue; }
+    Lines s = Lines.create();
+    // **The feed the opener chose**, not the process's own input. `openStream` redirects standard input
+    // only when the path is on the host; anywhere else it hands back a feed over the bytes the
+    // filesystem gave it, and an applet that built its own read an empty stdin instead (wac-mono 0109).
+    Feed fed = in.fed;
+    while (true) {
+      Line l = nextLine(s, fed);
+      if (!l.ok) { break; }
+      bool blank = l.bytes.len() == 0;
+      // `-s`: one blank line stands for a run of them, so the state is "was the last one blank" rather
+      // than a count.
+      if (squeeze && blank && wasBlank) { continue; }
+      wasBlank = blank;
+
+      Buf line = Buf.create();
+      if (numberFilled) {
+        // `-b` overrides `-n` and numbers only the lines with something on them. A blank line gets
+        // nothing at all, not even the width, which is GNU's layout.
+        if (!blank) {
+          count++;
+          line.pushAll(numberField(count).toBytes());
+        }
+      } else if (number) {
+        count++;
+        line.pushAll(numberField(count).toBytes());
+      }
+      for (i32 i = 0; i < l.bytes.len(); i++) {
+        i32 c = l.bytes[i];
+        if (c == 9) {
+          // A tab is `-T`'s alone: `-v` leaves it, which is why this is asked first.
+          if (tabs) { line.pushAll("^I".toBytes()); } else { line.push(9); }
+          continue;
+        }
+        if (!nonPrinting || (c >= 32 && c < 127)) { line.push(c); continue; }
+        pushVisible(line, c);
+      }
+      // `-E` marks a line *end*, and a last line that arrived without a newline has none: `printf x |
+      // cat -A` is `x`, not `x$`. The flag shows what is there rather than asserting where lines stop.
+      if (ends && l.nl) { line.push('$'); }
+      if (!emitTo(out, line.take(), l.nl)) { out.flush(); return status; }
+    }
+  }
+  out.flush();
+  return status;
+}
+
+/** The plain path: bytes through, a chunk at a time, which is what `cat` is for. */
+i32 copy(Core core, Cli cli, Fs fs, Args a) {
+  i32 at = 0;
+  bool opened = false;
+  // An operand that would not open is skipped and remembered: the status at the end, not a stop.
+  bool failed = false;
+  // The feed travels with the span: it changes when the run moves to the next operand, and on anything
+  // but a host mount it is serving bytes rather than pulling on the process's own input.
+  Feed fed = Feed.of(cli, u8[0]());
+  while (true) {
+    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    fed = got.fed;
+    failed = failed || got.failed;
+    if (!got.ok) { return 1; }
+    opened = true;
+    at = got.at;
+    if (!got.more) { return failed ? 1 : 0; }
+    // `write` answers false when the other end has gone, which is the only signal there is — this
+    // used to discard it and keep reading, so `cat` of an endless source went on for ever after
+    // whatever was reading it had exited. Success, as it is for every filter.
+    if (!cli.write(got.bytes)) { return failed ? 1 : 0; }
+  }
+  return failed ? 1 : 0;
+}
+
+bool known(i32 letter) {
+  u8[] letters = "AbeEnstTuv".toBytes();
+  for (i32 i = 0; i < letters.len(); i++) {
+    if (letters[i] == letter) { return true; }
+  }
+  return false;
+}
+
+/** GNU's number column: six wide, right-aligned, then a tab. */
+string numberField(i32 n) {
+  string s = itoa(n);
+  string pad = "";
+  for (i32 i = s.len(); i < 6; i++) { pad = pad + " "; }
+  return pad + s + "\t";
+}
+
+/**
+ * One byte as `-v` shows it.
+ *
+ * Control characters are `^X`, DEL is `^?`, and anything with the high bit set is `M-` and then the same
+ * rule applied to the low seven bits — which is how a byte above 127 can come out as `M-^A`.
+ */
+void pushVisible(Buf out, i32 c) {
+  i32 v = c;
+  if (v >= 128) {
+    out.pushAll("M-".toBytes());
+    v = v - 128;
+  }
+  if (v < 32) {
+    out.push('^');
+    out.push(v + 64);
+    return;
+  }
+  if (v == 127) {
+    out.pushAll("^?".toBytes());
+    return;
+  }
+  out.push(v);
+}

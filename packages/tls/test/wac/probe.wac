@@ -1,0 +1,240 @@
+// The key schedule at the host boundary.
+import { sigEd25519 } from "../../src/handshake.wac";
+import { expandLabel, deriveSecret, earlySecret, handshakeSecret, masterSecret,
+         trafficKeyIv, finishedVerify, nextTrafficSecret, emptyHash, zeroKey }
+  from "../../src/keyschedule.wac";
+
+export u8[] tlsExpandLabel(u8[] secret, u8[] label, u8[] ctx, i32 len) {
+  return expandLabel(secret, label, ctx, len);
+}
+export u8[] tlsDeriveSecret(u8[] secret, u8[] label, u8[] th) { return deriveSecret(secret, label, th); }
+export u8[] tlsEarlySecret(u8[] psk) { return earlySecret(psk); }
+export u8[] tlsHandshakeSecret(u8[] early, u8[] dhe) { return handshakeSecret(early, dhe); }
+export u8[] tlsMasterSecret(u8[] hs) { return masterSecret(hs); }
+export u8[] tlsTrafficKeyIv(u8[] secret, i32 keyLen) { return trafficKeyIv(secret, keyLen); }
+export u8[] tlsFinishedVerify(u8[] base, u8[] th) { return finishedVerify(base, th); }
+export u8[] tlsNextTrafficSecret(u8[] s) { return nextTrafficSecret(s); }
+export u8[] tlsEmptyHash() { return emptyHash(); }
+export u8[] tlsZeroKey() { return zeroKey(); }
+
+// Record layer.
+import { recordSeal, recordOpen, recordType, recordContent, recordLength,
+         suiteAes128Gcm, suiteChaCha20, suiteKeyLen } from "../../src/record.wac";
+
+export u8[] tlsSeal(i32 suite, u8[] k, u8[] iv, i64 seq, i32 ct, u8[] content, i32 pad) {
+  return recordSeal(suite, k, iv, seq, ct, content, pad);
+}
+export u8[] tlsOpen(i32 suite, u8[] k, u8[] iv, i64 seq, u8[] rec) {
+  return recordOpen(suite, k, iv, seq, rec);
+}
+export i32 tlsRecordType(u8[] inner) { return recordType(inner); }
+export u8[] tlsRecordContent(u8[] inner) { return recordContent(inner); }
+export i32 tlsRecordLength(u8[] buf) { return recordLength(buf); }
+export i32 tlsSuiteAes() { return suiteAes128Gcm(); }
+export i32 tlsSuiteChaCha() { return suiteChaCha20(); }
+export i32 tlsSuiteKeyLen(i32 s) { return suiteKeyLen(s); }
+
+// Handshake messages.
+import { parseClientHello, ClientHello, serverHello, encryptedExtensions, certificate,
+         certificateVerify, certificateVerifyContent, finished, handshakeMessage,
+         messageType, messageBody, messageLength } from "../../src/handshake.wac";
+
+/**
+ * Parse a ClientHello and flatten the result, since bindgen cannot marshal a struct.
+ * Layout: suite(2) flags(1) sessionIdLen(1) sessionId keyShareLen(1) keyShare
+ *         nameLen(2) name random(32)
+ */
+export u8[] tlsParseClientHello(u8[] body, i32 preferred) {
+  ClientHello ch = parseClientHello(body, preferred);
+  i32 n = 2 + 1 + 1 + ch.sessionId.len() + 1 + ch.keyShare.len() + 2 + ch.serverName.len() + 32;
+  u8[] out = u8[n]();
+  i32 p = 0;
+  out[p] = (ch.suite >> 8) & 0xFF; p++;
+  out[p] = ch.suite & 0xFF; p++;
+  out[p] = (ch.offersTls13 ? 1 : 0) | (ch.offersEd25519 ? 2 : 0); p++;
+  out[p] = ch.sessionId.len(); p++;
+  for (i32 i = 0; i < ch.sessionId.len(); i++) { out[p + i] = ch.sessionId[i]; }
+  p += ch.sessionId.len();
+  out[p] = ch.keyShare.len(); p++;
+  for (i32 i = 0; i < ch.keyShare.len(); i++) { out[p + i] = ch.keyShare[i]; }
+  p += ch.keyShare.len();
+  out[p] = (ch.serverName.len() >> 8) & 0xFF; p++;
+  out[p] = ch.serverName.len() & 0xFF; p++;
+  for (i32 i = 0; i < ch.serverName.len(); i++) { out[p + i] = ch.serverName[i]; }
+  p += ch.serverName.len();
+  for (i32 i = 0; i < 32; i++) { out[p + i] = ch.random[i]; }
+  return out;
+}
+export u8[] tlsServerHello(u8[] r, u8[] sid, i32 suite, i32 group, u8[] ks) {
+  return serverHello(r, sid, suite, group, ks);
+}
+export u8[] tlsEncryptedExtensions() { return encryptedExtensions(); }
+export u8[] tlsCertificate(u8[] der) { return certificate(der); }
+export u8[] tlsCertificateVerify(u8[] sig) { return certificateVerify(sigEd25519(), sig); }
+export u8[] tlsCertVerifyContent(u8[] th, bool server) { return certificateVerifyContent(th, server); }
+export u8[] tlsFinished(u8[] vd) { return finished(vd); }
+export u8[] tlsHandshakeMessage(i32 t, u8[] b) { return handshakeMessage(t, b); }
+export i32 tlsMessageType(u8[] m) { return messageType(m); }
+export u8[] tlsMessageBody(u8[] m) { return messageBody(m); }
+export i32 tlsMessageLength(u8[] b) { return messageLength(b); }
+
+// The server state machine.
+import { tlsServerInit, tlsServerInitRsa, tlsServerFeed, tlsServerSend, tlsPhase, tlsRecordNeeded,
+         tlsServerClose, tlsServerAlert } from "../../src/server.wac";
+export u8[] srvInit(u8[] cert, u8[] seed, u8[] eph, u8[] rnd) { return tlsServerInit(cert, seed, eph, rnd); }
+/** A server whose certificate carries an RSA key, signing CertificateVerify with RSA-PSS. */
+export u8[] srvInitRsa(u8[] cert, u8[] n, u8[] e, u8[] d, u8[] eph, u8[] rnd) {
+  return tlsServerInitRsa(cert, n, e, d, eph, rnd);
+}
+export u8[] srvFeed(u8[] state, u8[] input) { return tlsServerFeed(state, input); }
+export u8[] srvSend(u8[] state, u8[] data) { return tlsServerSend(state, data); }
+export i32 srvPhase(u8[] state) { return tlsPhase(state); }
+export i32 srvRecordNeeded(u8[] buf) { return tlsRecordNeeded(buf); }
+export u8[] srvClose(u8[] state) { return tlsServerClose(state); }
+export u8[] srvAlert(u8[] state, i32 d) { return tlsServerAlert(state, d); }
+
+// X.509.
+import { parseCert, Cert, certMatchesHost, certSignedBy, verifyChain, verifyPath,
+         keyEd25519, keyP256, keyRsa, keyP384, sigEd25519Alg, sigEcdsaSha256,
+         sigEcdsaSha384, sigRsaSha256, sigRsaSha384, sigRsaSha512, sigRsaPss
+       } from "../../src/x509.wac";
+
+/**
+ * The key* and sig* constants, in one array.
+ *
+ * So a test names them instead of repeating the numbers. It was repeating them: the path
+ * tests had `const KEY_P256 = 2` written out, which is a second copy of a protocol
+ * constant that agrees with the first only until somebody renumbers one. Mutation testing
+ * is what surfaced it — every one of these accessors could be replaced with `return 0`
+ * and no test noticed, because no test called them.
+ */
+export u8[] x509Constants() {
+  return u8[](keyEd25519(), keyP256(), keyRsa(), keyP384(),
+              sigEd25519Alg(), sigEcdsaSha256(), sigEcdsaSha384(),
+              sigRsaSha256(), sigRsaSha384(), sigRsaSha512(), sigRsaPss());
+}
+
+/**
+ * Parse and flatten.
+ * [notBefore(8)][notAfter(8)][isCa(1)][keyType(1)][sigAlg(1)]
+ * [keyLen(2)][key][expLen(1)][exp][dnsLen(2)][dns]
+ */
+export u8[] x509Parse(u8[] der) {
+  Cert c = parseCert(der);
+  i32 n = 8 + 8 + 1 + 1 + 1 + 2 + c.publicKey.len() + 1 + c.rsaExponent.len()
+        + 2 + c.dnsNames.len();
+  u8[] out = u8[n]();
+  i32 p = 0;
+  for (i32 i = 0; i < 8; i++) { out[p + i] = ((c.notBefore >> (((7 - i) * 8) as i64)) & 255) as! i32; }
+  p += 8;
+  for (i32 i = 0; i < 8; i++) { out[p + i] = ((c.notAfter >> (((7 - i) * 8) as i64)) & 255) as! i32; }
+  p += 8;
+  out[p] = c.isCa ? 1 : 0; p++;
+  out[p] = c.keyType; p++;
+  out[p] = c.sigAlg; p++;
+  out[p] = (c.publicKey.len() >> 8) & 0xFF; p++;
+  out[p] = c.publicKey.len() & 0xFF; p++;
+  for (i32 i = 0; i < c.publicKey.len(); i++) { out[p + i] = c.publicKey[i]; }
+  p += c.publicKey.len();
+  out[p] = c.rsaExponent.len(); p++;
+  for (i32 i = 0; i < c.rsaExponent.len(); i++) { out[p + i] = c.rsaExponent[i]; }
+  p += c.rsaExponent.len();
+  out[p] = (c.dnsNames.len() >> 8) & 0xFF; p++;
+  out[p] = c.dnsNames.len() & 0xFF; p++;
+  for (i32 i = 0; i < c.dnsNames.len(); i++) { out[p + i] = c.dnsNames[i]; }
+  return out;
+}
+export bool x509MatchesHost(u8[] der, u8[] host) { return certMatchesHost(parseCert(der), host); }
+export bool x509SignedBy(u8[] leafDer, u8[] caDer) {
+  return certSignedBy(parseCert(leafDer), parseCert(caDer));
+}
+export i32 x509VerifyChain(u8[] leafDer, u8[] caDer, u8[] host, i64 now) {
+  return verifyChain(parseCert(leafDer), parseCert(caDer), host, now);
+}
+
+/** Path building over a concatenated chain and trust store, as the client does it. */
+export i32 x509VerifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffsets,
+                          u8[] host, i64 now, i32 maxDepth) {
+  return verifyPath(chain, chainOffsets, roots, rootOffsets, host, now, maxDepth);
+}
+
+// The client state machine.
+import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose, tlsClientPhase,
+         tlsClientFailure } from "../../src/client.wac";
+export u8[] cliInit(u8[] host, u8[] roots, i32[] rootOffsets, u8[] eph, u8[] p256,
+                    u8[] kemSeed, u8[] rnd, i64 now) {
+  return tlsClientInit(host, roots, rootOffsets, eph, p256, kemSeed, rnd, now);
+}
+export u8[] cliFeed(u8[] state, u8[] input) { return tlsClientFeed(state, input); }
+export u8[] cliSend(u8[] state, u8[] data) { return tlsClientSend(state, data); }
+export u8[] cliClose(u8[] state) { return tlsClientClose(state); }
+export i32 cliPhase(u8[] state) { return tlsClientPhase(state); }
+export i32 cliFailure(u8[] state) { return tlsClientFailure(state); }
+
+// The post-quantum hybrid, at the boundary. Reached only through whole handshakes until
+// now, which is why every one of its length guards survived mutation testing.
+import {
+  hybridClientOffer, hybridServerAccept, hybridClientFinish,
+  groupX25519MlKem768, hybridClientShareLen, hybridServerShareLen, hybridSecretLen,
+} from "../../src/hybrid.wac";
+export u8[] hybOffer(u8[] kemSeed, u8[] xPriv) { return hybridClientOffer(kemSeed, xPriv); }
+export u8[] hybAccept(u8[] share, u8[] m, u8[] xPriv) { return hybridServerAccept(share, m, xPriv); }
+export u8[] hybFinish(u8[] offer, u8[] share, u8[] xPriv) { return hybridClientFinish(offer, share, xPriv); }
+export i32 hybGroup() { return groupX25519MlKem768(); }
+export i32 hybClientLen() { return hybridClientShareLen(); }
+export i32 hybServerLen() { return hybridServerShareLen(); }
+export i32 hybSecretLen() { return hybridSecretLen(); }
+
+// The alert registry, so a test can check the numbers against RFC 8446 rather than
+// against a second copy of them written in TypeScript.
+import {
+  alertCloseNotify, alertUnexpectedMessage, alertBadRecordMac, alertHandshakeFailure,
+  alertIllegalParameter, alertDecodeError, alertDecryptError, alertProtocolVersion,
+  alertMissingExtension, alertNoApplicationProtocol, alertBadCertificate,
+  alertUnsupportedCertificate, alertCertificateExpired, alertUnknownCa, alertBody,
+} from "../../src/record.wac";
+export u8[] alertCodes() {
+  return u8[](
+    alertCloseNotify(), alertUnexpectedMessage(), alertBadRecordMac(),
+    alertHandshakeFailure(), alertBadCertificate(), alertUnsupportedCertificate(),
+    alertCertificateExpired(), alertIllegalParameter(), alertUnknownCa(),
+    alertDecodeError(), alertDecryptError(), alertProtocolVersion(),
+    alertMissingExtension(), alertNoApplicationProtocol());
+}
+export u8[] alertEncode(i32 description) { return alertBody(description); }
+
+// The byte cursor. Every one of its bounds checks survived mutation testing, because it
+// is only ever driven through whole handshakes, where the lengths are well formed by
+// construction — which is exactly the input a wire parser does not get from the network.
+import { Reader, Writer } from "../../src/wire.wac";
+
+/** Read a sequence of operations against `buf`; traps exactly where the Reader does. */
+export i32 wireRead(u8[] buf, i32 op, i32 n) {
+  Reader r = Reader.create(buf);
+  if (op == 0) { return r.u8(); }
+  if (op == 1) { return r.u16(); }
+  if (op == 2) { return r.u24(); }
+  if (op == 3) { return r.u32(); }
+  if (op == 4) { return r.take(n).len(); }
+  if (op == 5) { return r.slice(n).remaining(); }
+  if (op == 6) { return r.vec8().len(); }
+  if (op == 7) { return r.vec16().len(); }
+  if (op == 8) { return r.vec24().len(); }
+  if (op == 9) { return r.sub8().remaining(); }
+  if (op == 10) { return r.sub16().remaining(); }
+  if (op == 11) { r.expectEnd(); return 0; }
+  if (op == 12) { r.take(n); r.expectEnd(); return 0; }
+  if (op == 13) { return r.empty() ? 1 : 0; }
+  trap;
+}
+
+/** Write a length-prefixed vector of `n` bytes; traps where the Writer does. */
+export i32 wireVec(i32 width, i32 n) {
+  Writer w = Writer.create();
+  u8[] src = u8[n]();
+  if (width == 8) { w.vec8(src); }
+  else if (width == 16) { w.vec16(src); }
+  else if (width == 24) { w.vec24(src); }
+  else { trap; }
+  return w.take().len();
+}

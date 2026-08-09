@@ -8,7 +8,7 @@ import { linter } from "@codemirror/lint";
 import { wac as wacLang, wapy as wapyLang } from "./wac-language";
 import { wacLintSource } from "./wac-lint";
 import { compile, runFunction, placeholderFor, type EditorCompileResult } from "./wac-compile";
-import type { WacExport } from "../../atoms/wac/wacCompile.ts";
+import type { WacExport } from "../../../compiler/wacCompile.ts";
 
 const highlight = HighlightStyle.define([
   { tag: tags.keyword, color: "#c084fc" },

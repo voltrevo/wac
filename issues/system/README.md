@@ -1,0 +1,112 @@
+# Issues
+
+Bug reports and cross-cutting tasks for the packages in this repo. The compiler has
+its own tracker — a wac *compiler* bug belongs in `wac/issues/`, even when you found
+it writing a package here.
+
+## When to file rather than just fix it
+
+Packages have de facto owners, so the rule is about who is likely to be mid-change:
+
+- **A package you are working in:** just fix it. An issue you close in the same
+  session is noise.
+- **A package someone else is working in:** file it. A change that reaches into
+  another agent's package while they have uncommitted work costs both of you more
+  than the fix is worth.
+- **Anything that makes `deno task test` red for everyone:** file it *and* say so in
+  the summary, because the next person to pull cannot tell whose failure it is.
+- **Work that is blocked on something else:** file it, with what it is waiting for.
+  That is the difference between "nobody has done this" and "this cannot be done yet".
+
+## There are also issues on GitHub
+
+`github.com/voltrevo/wac-mono/issues` and `github.com/voltrevo/wac/issues` have reports from
+outside this container, filed by the owner. **Look there before filing here**, because they are not
+visible from `INDEX.md` and duplicating one costs the same as duplicating anything else.
+
+They **are** mirrored in, so that work in this container is visible from `INDEX.md` like everything
+else. The mirror is a stub: title, kind, whether it has been reproduced here, and a link.
+**Discussion belongs on GitHub**, where the reporter is — a mirror that grows its own argument is the
+drift this warns about. Close both when it is fixed.
+
+### Swept to wac-mono #53 and wac #10 (2026-08-08)
+
+`#1`–`#30` are the original mirror, as `0031`–`0040` here and `0065`–`0068` in `wac/issues/`.
+Everything since was checked against the code on 2026-08-08, and most of it did not need a stub —
+**which is the useful half of this list**, because the alternative is somebody verifying it twice:
+
+| upstream | what happened |
+|---|---|
+| #38, #39 | directions, and they are in `design/0001` and `design/0003`. A direction does not belong here — see the table below |
+| #40, #42 | **done**: the image format, and streaming redirection routed through `Fs.openOut`/`writeOut`/`closeOut` |
+| #41 | the same gap as **0116**, filed independently. Cross-referenced there rather than mirrored |
+| #43, #44 | **done** in `packages/mpt`, and both cite the upstream number in the code |
+| #45, #46 | **done**: `packages/tor/README.md` and `design/0003` say what they now say |
+| #47 | a design reconsideration, and the claim it quotes is no longer in `design/0001` |
+| #49 | **done**: `tlsClientFeed` and `tlsServerFeed` both refuse a closed phase, each with a comment describing this exact flight |
+| #48, #50, #51, #52, #53 | open — mirrored as `0118`–`0122` |
+| wac #8, #9, #10 | the compiler's, so `wac/issues/` rather than here |
+
+When sweeping again, start at wac-mono #54 and wac #11.
+
+## What does not belong here
+
+Three things already have homes, and duplicating them means two records that drift:
+
+| where it goes | what |
+|---|---|
+| `design/` | a **direction**: too big to be actionable, spanning packages, with decisions that constrain code not yet written. An issue is one slice of one, and references it rather than restating it |
+| the package's `README.md` | that package's own known limitations and roadmap — its "Not here yet" section |
+| `~/notes/living/wac/language-friction-log.md` | language gaps, ranked across projects. "No generics" is not an issue, it is a measured cost |
+| `wac/issues/` | anything whose fix is in the compiler |
+
+An issue is for something **actionable that is not already written down**.
+
+## Filing one
+
+Add `issues/open/NNNN-short-slug.md`, taking the next free number, from
+`TEMPLATE.md`. Commit it on the primary branch; an issue is not a code change, so
+there is nothing to coordinate.
+
+Numbers can collide when two agents file at once. If that happens, renumber yours —
+it is a rename, and the loser is whoever pushes second.
+
+Add a row to `INDEX.md` in the same commit. The index is the thing people read.
+
+## Closing one
+
+Move the file to `issues/closed/` in the commit that fixes it, and set `Status:` to
+what happened — `fixed`, `wontfix`, or `obsolete` with a reason. Keeping closed
+issues rather than deleting them is what makes "was this ever a problem?" answerable
+without archaeology.
+
+## A test that fails for reasons of its own: `[flaky NNNN]`
+
+A test that sometimes fails without the code being wrong costs whoever is pushing an hour of diagnosing
+their own change — that is what [0082](closed/0082-five-tests-fail-rather-than-slow-down-when-the-machine-is-busy.md)
+is about, and it happened to the person who filed it. Until the cause is found, such a test carries the
+issue number **in its name**:
+
+```ts
+Deno.test("[flaky 0082] an endless producer stops at the cap rather than filling memory", …)
+```
+
+So the failure arrives with its own alternative explanation, in the line the runner prints, at the moment
+somebody is deciding whether they broke something. That is the whole of it: a tracker entry helps only
+those who already suspect the suite.
+
+**The tag is the dangerous half**, and this is not a licence to leave it. "Known flaky" is how a real
+regression gets waved through, so:
+
+- it names an **open** issue, and `tools/flaky.test.ts` fails the suite when the issue is closed and the
+  tag is not — the tag and the issue come off together;
+- that test also prints the tagged tests on every green run, because a list nobody sees is how three
+  flaky tests became normal;
+- it is a description of a *known* fault with evidence in the issue, never a shrug at a test somebody
+  has not looked at.
+
+## What makes a report worth having
+
+A reproduction. For a package, the smallest input that misbehaves and what you
+expected instead; for a build failure, the exact error. If you narrowed it, say what
+you tried — "passes on the 3-byte input, fails at 4" is worth more than a paragraph.

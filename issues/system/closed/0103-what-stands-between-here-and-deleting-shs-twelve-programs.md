@@ -1,0 +1,277 @@
+# What stands between here and deleting `packages/sh`'s twelve programs
+
+**Status**: closed
+**Filed**: 2026-08-07
+
+## What
+
+`packages/sh/README.md` has said for a while that the sensible end state is to delete the twelve programs
+built into the shell and let `packages/box`'s applets serve instead — "once something checks that `box`'s
+pass the same differential scripts against bash". Nothing checked, so the paragraph had no number in it
+and the deletion never had a next step.
+
+`deno task corpus:through <shell>` is that check. It reads `packages/sh/test/differential.test.ts`'s own
+corpus — so it cannot go stale — and runs every script through some other shell against bash.
+
+Through `packages/box/src/bin/sh.wac`, on 2026-08-07: **563/632**, with the 69 in five programs. All five
+are fixed and the score is **649/649** — every script in `packages/sh`'s own corpus now agrees with bash
+through `packages/box`'s applets, which is the precondition this issue exists to establish.
+
+| program | was | now | what |
+| --- | --- | --- | --- |
+| `tr` | 44 | 0 | took its sets literally and had no flags at all — **wac-mono 0098**, now closed |
+| `cat` | 17 | 0 | all nine flags were accepted and ignored, and `-Q` — not a GNU flag — was accepted too |
+| `seq` | 6 | 0 | usage errors exited 0 or 2 where GNU exits 1, and a word was read as zero rather than refused |
+| `uniq`, `sort` | 1 each | 0 | a lone `-` was read as a filename |
+| `grep -q` | (a hang) | 0 | printed every matching line and read the whole input |
+
+**A lone `-` is standard input** now, in `lib/input.wac` where the convention belongs rather than in each
+applet — and *not* in `rev` or `strings`, which are util-linux and binutils and do not take it. That
+distinction was measured on the real tools; applying the convention everywhere would have traded one wrong
+answer for another, which is what wac-mono 0096 records about the last time an operand rule was assumed
+universal.
+
+## Why this is worth doing rather than leaving
+
+Two implementations of `grep` disagreed for months and nobody knew: `packages/sh`'s matched substrings
+while `packages/box`'s had the regex engine wired in, so `grep '^h'` in the shell answered *nothing
+matched*. It was found by using the shell by hand, not by any test, because both suites passed — each was
+testing its own half. Every day the twelve stay is another day two answers can drift apart with nothing
+comparing them.
+
+The corpus check is what makes the deletion safe rather than hopeful: it measures the replacement against
+the same 632 scripts the originals are held to, and the README's own reason for keeping them is that
+"swapping the implementation under a passing suite without measuring it first is how a green suite starts
+lying".
+
+## What is left, measured
+
+The deletion is a bigger change than "delete twelve functions", and the numbers say where the work is.
+Of the 649 scripts:
+
+| | scripts | |
+| --- | ---: | --- |
+| need no external program at all | 361 | shell language: quoting, expansion, control flow, builtins |
+| need `printf` | 171 | **now a builtin**, see below |
+| need one of the other eleven | ~117 | `tr` 71, `seq` 59, `cat` 48, `grep` 39, and the tail |
+
+**`printf` is done and was the trap.** It was one of the twelve, and in bash it is a *builtin* — a script
+that writes `printf` gets the shell's, not `/usr/bin/printf`. `packages/box` has **no `printf` at all**,
+so deleting the twelve with it among them would have removed a builtin bash has and a quarter of the
+corpus uses, and `corpus:through` would not have noticed because it runs box's shell *and* box has no
+printf to be missing from. It now lives in `packages/sh/src/printf.wac` and is dispatched beside `echo`
+and `test`, where the deletion cannot reach it.
+
+**What actually blocks the rest.** `packages/sh/test/differential.test.ts` builds `packages/sh/src/sh.wac`
+and runs all 649 through it. Delete the eleven and 117 of those scripts test a shell with no commands.
+The suite cannot simply build `packages/box`'s shell instead: `box` depends on `sh`, so `sh`'s tests
+depending on `box` is a cycle. So the deletion needs one of:
+
+1. the 117 scripts move to a corpus that runs through `packages/box/src/bin/sh.wac` — which is what
+   `corpus:through` already does, so this is mostly bookkeeping about which suite owns which script; or
+2. `packages/sh`'s differential keeps the language cases and `packages/box`'s suite owns the ones that
+   name a program, which is the same split said the other way round.
+
+Either way `packages/sh/src/{sealed,imaged}.wac` and `packages/ssh/src/sshd.wac` need applets from
+somewhere, and `ssh` does not depend on `box` today — it can, with no cycle, and that is the edge the
+deletion adds.
+
+None of that is hard; it is just not one sitting, and doing half of it leaves a shell with no commands.
+
+## Done when
+
+`deno task corpus:through` reports 632/632 through `packages/box/src/bin/sh.wac`, the twelve are deleted,
+and `packages/sh` runs the applets it is handed.
+
+## Also found by the same run, and fixed
+
+`packages/box`'s `grep -q` did not stop at the first match — worse, it printed every matching line, which
+is the opposite of what the flag asks. The corpus contains `seq 1 100000 | grep -q 5` precisely because
+`packages/sh`'s does stop, and measuring through box's ran until it was killed, which is why
+`corpusThrough.ts` bounds each script through `timeout(1)` and reports what never finished.
+
+## 2026-08-07, later: the blocker is cleared, and the drift got worse
+
+**The split is done.** `packages/sh/test/corpus.ts` holds the corpus and `needsProgram`;
+`packages/box/test/corpus.test.ts` runs the 256 of 673 scripts that name one of the eleven through
+`packages/box/src/bin/sh.wac` against bash, on output *and* exit status. `tools/corpusThrough.ts`
+imports the corpus instead of scraping it out of the test file with a regular expression.
+
+So the thing this issue said had to happen first has happened: the scripts that need programs are owned
+by a suite that runs them against `packages/box`'s applets, and `packages/sh`'s differential can drop to
+the language cases in the same commit that deletes its copies.
+
+**Held to the same corpus for the first time, the two halves had drifted both ways.**
+
+- `packages/box`'s grep had no `-x`, which `packages/sh`'s has always had. Four scripts. Implemented.
+- `packages/sh`'s `wc` does **not** pad its counts into a column when given several files, and GNU and
+  `packages/box`'s do:
+
+  ```
+  $ wc -l big.txt small.txt      bash: "120 big.txt / ␣␣4 small.txt / 124 total"
+                                 sh:   "120 big.txt / 4 small.txt / 124 total"
+  ```
+
+  Not fixed, deliberately: `countWidth` and `rightAlign` are already in `program.wac`, so the machinery
+  is there and something about `sizeKnown` is wrong — and fixing a copy that this issue exists to delete
+  is the work this issue exists to stop doing. It is written here as the third piece of evidence in one
+  week that two implementations with two suites drift silently.
+- Also found by hand: `sort -u` and `uniq -c` are not implemented in `packages/sh` and are in
+  `packages/box`.
+
+## What is left, exactly
+
+1. Delete the eleven from `program.wac`, keeping `optionRefusal` — `exec.wac`'s `ls` builtin uses it and
+   it is not a program. It wants its own file.
+2. `exec.wac` dispatches externals through `run`/`names`; with no programs left, that becomes
+   `Shell.external` or "command not found". `sh.wac` imports `isProgram`, `programNames` and
+   `runStreaming`, and `sealed.wac` imports `programNames`.
+3. `packages/sh/test/differential.test.ts` runs `CORPUS.filter((s) => !needsProgram(s))`.
+4. `packages/ssh/src/sshd.wac` serves a session with sh's shell and would serve one with no commands.
+   `ssh` does not depend on `box` today; it can, with no cycle, and that is the edge this adds.
+
+None of it is hard and none of it can be done half way: a shell with no commands and a suite that still
+expects them is a red tree, so it is one commit.
+
+## 2026-08-07, later still: two down, nine to go, and the method
+
+They cannot all go at once — half of `packages/sh`'s own tests use `wc` and `seq` as *incidental*
+commands rather than as subjects, so the tree would be red for as long as it took to convert them. So
+they go a few at a time, and the machinery for that is in place:
+
+- `packages/sh/test/corpus.ts` has `DELETED` and `usesDeleted`. Every script list in
+  `differential.test.ts` is filtered through it, including the `cd`-wrapped ones built at run time.
+- `packages/box/test/corpus.test.ts` runs every script naming any of the eleven, so nothing is lost as
+  names move over.
+- `packages/box/test/programs.test.ts` holds the error-wording cases for the ones already gone.
+
+**One step is: add the name to `DELETED`, delete the function and its dispatch line from `program.wac`,
+drop it from `gnuHas` and from `gaps.test.ts`'s tool list, and fix whatever incidental use turns up.**
+`nl` and `rev` took about forty minutes including the four bugs they found in `packages/box` on the way
+(carry-on after an unreadable operand, three error wordings, two exit statuses, and `rev -`).
+
+Nine left: `cat`, `wc`, `head`, `tail`, `sort`, `uniq`, `grep`, `tr`, `seq`. `cat`, `wc` and `seq` are
+the heavily-used ones and are best left until last. When the last goes, `program.wac` loses `run`,
+`runStreaming`, `isProgram`, `programNames`, `names` and `dispatchProgram`; `Output` and `optionRefusal`
+stay and want a file of their own; and `packages/ssh`'s `sshd` needs `boxRun` — the `ssh` → `box` edge,
+which is still the one new dependency this whole thing adds.
+
+## 2026-08-07, later: the last step has a second blocker, and it is a seam
+
+`packages/ssh`'s `sshd` needs the applets once the last of the eleven goes, and that edge is blocked
+twice over:
+
+- **wac 0076** — adding the import makes an untouched function fail to compile, and the module is
+  rejected at instantiate.
+- ~~**wac-mono 0109**~~ — closed: applets take an `Fs` now, and `packages/box/src/bin/sealedsh.wac` is
+  sixty of them over a filesystem that is not the host's, built with no capabilities at all.
+
+Neither is a reason to stop deleting: five are gone and the remaining six are still duplicates. It does
+mean the last one cannot simply be followed by "and now sshd uses box".
+
+## 2026-08-08: both blockers are gone
+
+- **wac 0076** is fixed: a method call went to whichever `Struct$method` registered first, so adding
+  box's import to `sshd` made an untouched function fail to compile. The emitter uses the entry's own
+  index now.
+- **wac-mono 0109** is closed: applets take an `Fs`, so a session's commands read the session's
+  filesystem.
+
+`sshd` now wires `boxRun`, and `packages/ssh/test/server.test.ts` runs `seq | sort -nr | head` and
+`sha256sum` over an image through OpenSSH's own client. So the six programs left in `packages/sh` —
+`cat`, `wc`, `head`, `sort`, `grep`, `seq` — have no consumer that needs them: the shell's own
+differential is the only thing left holding them, and `corpus.ts`'s `DELETED` list is how they go.
+
+## 2026-08-08, later: the source side is done in twenty minutes, and the tests are the whole job
+
+Tried it. `program.wac` is deleted, `Output` and `optionRefusal` moved to `packages/sh/src/refusal.wac`
+— neither is a program, and `ls` is a builtin that still refuses flags — and every source consumer is
+adjusted: `sh.wac` loses its multi-call branch, `exec.wac`'s external dispatch ends in
+`Output.missing()` rather than a private fallback, `help` loses its third list, and `sealed.wac` and
+`imaged.wac` wire nothing. `packages/box/src/shrun.wac` imports `Output` from its new home. That part
+is an hour including the prose, and `packages/sh/test/differential.test.ts` — the suite this issue was
+about — passes 6/6 once four hand-written groups stop using `cat` and `seq` as incidental commands:
+
+- the interleave test uses `ls` for its invalid-UTF-8 diagnostic;
+- `STDIN_CASES` drains with `while read l; do echo "$l"; done` instead of `cat`;
+- the tilde case reads back with `ls ~/f`;
+- the GNU-wording list keeps `ls nosuchthing` and hands the rest to `packages/box`.
+
+**Then twelve other tests fail, and they are not incidental uses — they are the job.** This is what
+"none of it is hard" got wrong above, and it is a real finding rather than a snag:
+
+| file | what it is testing | why it needs commands |
+| --- | --- | --- |
+| `test/backings.test.ts` | ~40 scripts against bash over Memory/Host/image backings | the scripts *are* `cat f`, `wc -l f`, `sort f \| head -1` |
+| `test/sealed.test.ts` | a sealed shell has a filesystem and it is not the host's | reads a file to show which world it came from |
+| `test/imaged.test.ts` | what one session writes the next one reads | same |
+| `test/unnameable.test.ts` | a file whose name is not valid UTF-8 says which side is at fault | the diagnostic belongs to whatever *opens* the file |
+| `test/node_shell.test.ts` | the shell on Node answers what bash answers | host-touching scripts, which are the program ones |
+| `test/spawn.test.ts` (4) | `$WACPATH`, and 0110's still-open standard input | needs a producer that ignores its input and a stage after it |
+| `packages/fs/test/synth.test.ts` | `/dev` and `/proc` | reads them |
+
+Every one of those observes a **filesystem** through a **command**, and this package will have no
+commands. So the deletion's real precondition is not in `packages/sh` at all:
+
+**Step 0 is moving the image shells up a package.** `packages/box/src/bin/sealedsh.wac` already is
+`packages/sh/src/sealed.wac` with the sixty applets; `imaged.wac` has no counterpart and wants one
+(it is thirty lines — boot an image, wire `boxRun`, save on the way out). Then `backings`, `sealed`,
+`imaged`, `unnameable`, `node_shell` and `fs`'s `synth` move to `packages/box/test`, where the shell
+they build has commands, and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as
+shells with builtins and nothing else. `spawn.test.ts` stays, using `packages/platform/example/wc.wac`
+as the spawned program it already uses, with `seq` replaced by a `while` loop and 0110's three-stage
+case moved to `packages/box/test/shell.test.ts`.
+
+That is one sitting of its own and it is the *whole* of what is left — after it, deleting the six is
+the twenty minutes above.
+
+The work described here is parked in `agent-a`'s workspace as a git stash (`git stash list`), not
+pushed: a shell with no commands and a suite that still expects them is a red tree.
+
+## Also found while doing it
+
+`gaps.test.ts` would have gone **green while checking nothing**. It sweeps every option GNU documents
+for `wc`, `head`, `sort` and `grep` and asserts none is called "invalid option" — and a shell that no
+longer has those commands answers "command not found", which contains no such words. The sweep would
+have passed on four tools that were not there. It is `["ls"]` now, the one tool in it that is a
+builtin, with the floor on the case count lowered to match; `packages/box/test/flags.test.ts` asks the
+same question of the applets over more tools than were ever here.
+
+`break` is not implemented: `while read l; do echo "$l"; break; done` prints `break: command not
+found` and loops forever. Nothing in the corpus uses it. Filed separately as **0111**.
+
+## 2026-08-08, done
+
+`packages/sh` has no programs. `program.wac` is deleted; `Output` and `optionRefusal` live in
+`src/refusal.wac`, because neither is a program and `ls` is a builtin that still refuses flags.
+
+The step this issue could not see until it was tried was **moving the image shells up a package**, and
+that is what made the rest mechanical:
+
+- `packages/box/src/bin/imaged.wac` is new — `packages/sh/src/imaged.wac` with the applets wired in —
+  and `packages/sh/src/{sealed,imaged}.wac` are deleted rather than left as shells with builtins only.
+- `backings`, `sealed` (now `session`), `imaged`, `unnameable`, `node_shell` and `packages/fs`'s `synth`
+  moved to `packages/box/test`, where the shell they build has commands. 0110's still-open-stdin case
+  went to `packages/box/test/stdin_open.test.ts` for the same reason.
+- `packages/sh/test/differential.test.ts` keeps the language cases; the four hand-written groups that
+  used `cat` and `seq` as scenery use builtins now.
+
+**Three things fell out of the move, and they are the reason it was worth doing rather than a cost of
+doing it.**
+
+`head -c 8 /dev/urandom` works in a sealed session. `openStream` takes a byte cap, so a bounded read
+reaches `Fs.readSome` — the route that has always existed for endless synthesised files and that nothing
+was passing a number down. `sealedsh.wac` named this as the one thing that did not work.
+
+**An unreadable operand in the middle of a list stopped the run.** `cat a missing b` printed `a`,
+complained, and never printed `b`. Eight applets did it — `cat` twice, once in each of its two paths —
+and `lib/input.wac`'s own comment described it as "a difference worth naming rather than a difference
+worth pretending about". Every operand case anyone had written names one file, or two that both exist;
+the one script in `backings.test.ts` that names three found it the moment it ran against these applets.
+Fixed, with `packages/box/test/operand_errors.test.ts` as the sweep, against the real tools.
+
+**Two more wordings.** `tac` says "failed to open 'x' for reading" and `split` says "cannot open 'x' for
+reading" — five distinct sentences now in `cannotOpen`, each read off the tool.
+
+What is left is ordering, and it is **0112**: where both streams are merged, a complaint can overtake
+output produced before it. Same bytes, same status.

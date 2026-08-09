@@ -1,0 +1,76 @@
+// A shell whose filesystem is a file, **with the applets**: the session ends, the filesystem does not.
+//
+//   deno task app:build packages/box/src/bin/imaged.wac -o imaged --allow-read --allow-write
+//   ./imaged home.wacimg -c 'mkdir /data; seq 1 5 > /data/n; sort -nr /data/n | head -1'
+//   ./imaged home.wacimg -c 'cat /data/n'
+//
+// design/0001 step 2 is done when "a session's writes survive a restart", and `image.wac` on its own only
+// shows that a *filesystem value* survives a round trip. This is the restart.
+//
+// `sealedsh.wac` beside this is the same shell on a filesystem that is *not* kept — the two differ by one
+// pair of grants and by these two calls, and they are two programs rather than one with a flag for the
+// reason `sealedsh` states: **sealed means built with no filesystem grants at all**, and a session that
+// loads and saves an image needs read and write on that path. Putting the option on `sealedsh` would spend
+// the property to save a file.
+//
+// The image is loaded before the script runs and written after it finishes, **including when the script
+// fails**: a shell that only saved on success would lose the work of a session that ended badly, which is
+// exactly the session whose work is worth keeping. A path that does not exist yet is an empty filesystem
+// rather than an error, so the first run of a new image needs no separate step to create one.
+//
+// ## What the grants decide, which is not obvious
+//
+// This is built with read and write and **not spawn**, and that is what keeps a redirected pipeline inside
+// the image: `echo hello | tr a-z A-Z > /data/up` lands in the image and `/data/up` does not exist on the
+// host afterwards. The streaming pipeline in `exec.wac` gives up as soon as `spawnStage` reports no spawn
+// in this world, and the sequential path it falls back to writes through `Fs`. Build this with `spawn` and
+// a redirected pipeline would reach the host again, because `packages/fs` still has no output sink.
+//
+// So the property here belongs to the grants rather than to the code, and `test/imaged.test.ts` pins it as
+// it stands rather than as a sentence that would like it to be stronger.
+
+import { Core, Cli } from "../../../platform/src/platform.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Booted, boot, save } from "../../../fs/src/image.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { Shell } from "../../../sh/src/exec.wac";
+import { shellMain } from "../../../sh/src/entry.wac";
+import { boxApplet, boxNames, boxRun } from "../shrun.wac";
+import { UNKNOWN } from "../box.wac";
+
+export i32 main(Core core, Cli cli) {
+  // **This program is also its own applets**, as `bin/sh.wac` and `bin/sealedsh.wac` are: the shell runs a
+  // stage by re-entering `main` with the applet's name first. It has to be a multi-call entry even where
+  // nothing spawns, or a `sort` would start a shell and hand it a script called `sort`.
+  i32 asApplet = boxApplet(core, cli);
+  if (asApplet != UNKNOWN) { return asApplet; }
+
+  if (cli.argCount().wait() < 1) {
+    core.warn("usage: imaged <image.wacimg> [-c script | script]");
+    return 2;
+  }
+  string path = string.fromBytes(cli.arg(0).wait());
+
+  Vec<string> argv = Vec.create();
+  argv.push("imaged");
+  for (i32 i = 0; i < cli.argCount().wait(); i++) { argv.push(string.fromBytes(cli.arg(i).wait())); }
+  Booted booted = boot(core, cli, path, argv, Vec.fromArray(boxNames()));
+  if (!booted.ok) {
+    core.warn("imaged: " + path + ": " + booted.error);
+    return 1;
+  }
+  Fs fs = booted.fs;
+
+  Shell sh = Shell.onFs(core, cli, fs);
+  sh.cwd = "/";
+  sh.external = boxRun;
+  sh.externalNames = boxNames;
+  i32 code = shellMain(core, cli, sh, 1);
+
+  // After the script, whatever happened to it. `save` warns about anything it could not write, which is
+  // the whole reason it is a shared function rather than a `writeFile` call: losing a session in silence
+  // looks exactly like keeping it.
+  if (!save(core, cli, "imaged", path, sh.fs)) { return 1; }
+
+  return code;
+}

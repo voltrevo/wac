@@ -1,0 +1,60 @@
+// Runs of printable bytes, four or more — `strings -6` for a longer minimum.
+//
+// The run itself is the only thing held, and it carries across a chunk boundary: a string
+// split by a read is one string, not two short ones that both fall under the minimum.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Feed, Sink } from "../../../platform/src/stream.wac";
+import { Span, nextSpan } from "../lib/input.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 strings(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  i32 at = 0;
+  bool opened = false;
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+  i32 min = a.hasNum ? a.num : 4;
+
+  Sink out = Sink.create(cli);
+  Buf run = Buf.create();
+  bool failed = false;
+  // The feed travels with the span — see `lib/input.wac`.
+  Feed fed = Feed.of(cli, u8[0]());
+  while (true) {
+    Span got = nextSpan(core, cli, fs, a, at, opened, fed);
+    fed = got.fed;
+    failed = failed || got.failed;
+    if (!got.ok) { out.flush(); return 1; }
+    opened = true;
+    at = got.at;
+    if (!got.more) { break; }
+    u8[] data = got.bytes;
+    for (i32 i = 0; i < data.len(); i++) {
+      i32 b = data[i];
+      if (b >= 32 && b < 127) { run.push(b); continue; }
+      emit(out, run, min);
+    }
+  }
+  emit(out, run, min);
+  out.flush();
+  return failed ? 1 : 0;
+}
+
+/**
+ * The run so far, if it is long enough, and reset either way.
+ *
+ * Its own `emit` rather than `reader.wac`'s: this one decides *whether* to emit, from a length, and
+ * the third argument is that length rather than a newline flag. Buffered through a `Sink` for the
+ * reason issue 0039 gives — a binary of any size has a great many short runs in it.
+ */
+void emit(Sink into, Buf run, i32 min) {
+  if (run.len >= min) {
+    u8[] line = u8[run.len](fill: 0);
+    line.copyFrom(run.data, 0, 0, run.len);
+    into.lineBytes(line);
+  }
+  run.len = 0;
+}

@@ -1,0 +1,302 @@
+// The wac AST, as sum types.
+//
+// This file replaces a flat integer node pool. That pool was not a bad design —
+// real compilers use one deliberately, and it removed an allocation per node — but
+// it was chosen here because wac had no sum types, and the cost landed on every
+// line that touched a node rather than once at the definition:
+//
+//   * `a`, `b`, `c` meant something different per tag, and nothing checked it. The
+//     comments were the only schema.
+//   * Three fields was the hard limit, so `sFor` and `dFunc` packed two node indices
+//     into one i32 (`pack2`/`unpackLo`/`unpackHi`, with `none()` standing in for -1
+//     because -1 does not survive packing). Four references needed a bit-layout
+//     convention.
+//   * Everything shared one tag space, so `sCase` had to be a statement and `dParam`
+//     a declaration, though neither is one.
+//   * A missing case in a walk was silent.
+//
+// All four are gone. `pack2`, `unpackLo`, `unpackHi` and `none` are deleted rather
+// than ported — the three-field limit was their only reason to exist. Case clauses,
+// parameters, fields and import items are now their own types instead of squatting
+// in a tag range. And `match` is exhaustive, so a walk that misses a variant does not
+// compile.
+//
+// Positions live on the wrapper structs rather than being repeated in every variant:
+// `Expr` carries line and col, `Expr.kind` says what it is. That keeps 2 fields in
+// one place instead of 98 across 49 variants, and matches how the reference nests
+// its discriminant inside an object that always has a position.
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export struct Ty {
+  TyKind kind;
+  i32 line;
+  i32 col;
+}
+
+export enum TyKind {
+  /** `i32`, `bool`, `string`, … — `tok` is the name token. */
+  Prim(i32 tok),
+  /**
+   * A named struct, enum or variant, with its type arguments.
+   *
+   * `Vec<i32>` is one of these with one argument, `Map<string, Vec<i32>>` with two. Empty for a plain
+   * name, which is what every non-generic reference is. The resolver substitutes them and nothing after
+   * it sees a non-empty list — but a *parser* has to record them, which is the whole of wac-mono 0003.
+   */
+  Named(i32 tok, Ty[] typeArgs),
+  Arr(Ty elem),
+  Nullable(Ty inner),
+  Funcref(Ty ret, Ty[] params),
+}
+
+export Ty tyPrim(i32 tok, i32 line, i32 col) {
+  return Ty(TyKind.Prim(tok), line, col);
+}
+export Ty tyNamed(i32 tok, Ty[] typeArgs, i32 line, i32 col) {
+  return Ty(TyKind.Named(tok, typeArgs), line, col);
+}
+export Ty tyArr(Ty elem, i32 line, i32 col) {
+  return Ty(TyKind.Arr(elem), line, col);
+}
+export Ty tyNullable(Ty inner, i32 line, i32 col) {
+  return Ty(TyKind.Nullable(inner), line, col);
+}
+export Ty tyFuncref(Ty ret, Ty[] params, i32 line, i32 col) {
+  return Ty(TyKind.Funcref(ret, params), line, col);
+}
+
+// ── Expressions ───────────────────────────────────────────────────────────────
+
+export struct Expr {
+  ExprKind kind;
+  i32 line;
+  i32 col;
+}
+
+/** A named argument in a struct literal: `Point(x: 1, y: 2)`. */
+export struct NamedArg {
+  i32 nameTok;
+  Expr value;
+}
+
+export enum ExprKind {
+  /**
+   * `match (x) { case A: 1, else: 2 }` in expression position.
+   *
+   * The statement form is `StmtKind.Match`; this one has a value per arm rather than a body, which is
+   * what `Arm.value` is for. `packages/std`'s `Option<T>` is written with it, and nothing here could
+   * read that file — the parser had the statement and not the expression.
+   */
+  MatchExpr(Expr subject, Arm[] arms),
+  /** `tok` is the literal token; the value is read from the source span. */
+  IntLit(i32 tok),
+  FloatLit(i32 tok),
+  StrLit(i32 tok),
+  BoolLit(bool value),
+  NullLit,
+  Ident(i32 tok),
+  /** `op` is the operator token. */
+  Unary(i32 op, Expr operand),
+  Binary(i32 op, Expr left, Expr right),
+  /** One of `as`, `as!`, `as~`, `as@` — which is in `op`. */
+  Cast(i32 op, Expr operand, Ty target),
+  /**
+   * `x is T`, `x is null`, or `x is y` — reference identity against a value.
+   *
+   * Which of the three is encoded by what is present: `target` for a type test,
+   * `other` for an identity test, neither for a null test. The reference stores the
+   * right side in one field of a union type; there is no union of a type and an
+   * expression here, so they are separate optional fields and at most one is set.
+   */
+  Is(Expr left, Ty? target, Expr? other, bool negated),
+  Ternary(Expr cond, Expr then, Expr els),
+  Call(Expr callee, Expr[] args),
+  Index(Expr arr, Expr index),
+  Member(Expr obj, i32 nameTok),
+  /** `x!` — the non-null assertion. */
+  Unwrap(Expr operand),
+  /** `Point(1, 2)` or `Point(x: 1, y: 2)`; one of the two lists is empty. */
+  Construct(Ty ctype, Expr[] args, NamedArg[] named),
+  /** `++`/`--`; `prefix` distinguishes `++i` from `i++`. */
+  Incr(Lvalue target, i32 op, bool prefix),
+  /**
+   * `i32[n]()`, `i32[n](fill: v)`, or `i32[](1, 2, 3)`.
+   *
+   * `size` and `elements` are exclusive. `fill` accompanies `size` and gives every
+   * element that value, which is the only way to size an array dynamically when the
+   * element type has no default — as anything reachable from an enum does not.
+   */
+  ArrNew(Ty elem, Expr? size, Expr? fill, Expr[] elements),
+}
+
+// ── Lvalues ───────────────────────────────────────────────────────────────────
+//
+// Kept a separate type from `Expr`, as in the reference: an assignment target is a
+// narrower grammar than an expression, and making that a type rather than a
+// validation pass means an unassignable target cannot be constructed.
+
+export struct Lvalue {
+  LvalueKind kind;
+  i32 line;
+  i32 col;
+}
+
+export enum LvalueKind {
+  LIdent(i32 tok),
+  LField(Lvalue base, i32 nameTok),
+  LIndex(Lvalue base, Expr index),
+  LUnwrap(Lvalue base),
+}
+
+// ── Statements ────────────────────────────────────────────────────────────────
+
+export struct Stmt {
+  StmtKind kind;
+  i32 line;
+  i32 col;
+}
+
+/**
+ * One `case` or `default` clause.
+ *
+ * Its own type now. In the pool it had to be tag `sCase` in the statement range,
+ * which meant every statement walk saw a node that is not a statement.
+ */
+export struct Case {
+  /** null for `default`. */
+  Expr? value;
+  Stmt[] body;
+  /**
+   * The `case` or `default` keyword's own position.
+   *
+   * A `Case` is not a `Stmt` and has no position otherwise, and *"case value must be i32"* names the
+   * keyword rather than the value — the same exception `override` is, and for the same reason: the
+   * complaint is about the arm rather than about the expression in it.
+   */
+  i32 line;
+  i32 col;
+}
+
+/**
+ * One `case Pattern:` or `else:` arm of a `match`.
+ *
+ * `variantTok` is -1 for the `else` arm. A binding of `_` is a discard and is kept as
+ * the token so the printer can reproduce it.
+ */
+export struct Arm {
+  i32 variantTok;
+  i32[] bindingToks;
+  Stmt[] body;
+  /**
+   * The arm's value, for a `match` used as an *expression* — null for the statement form.
+   *
+   * One arm type for both, as the reference has it: an expression arm has a value and no body, a
+   * statement arm a body and no value. Two types would mean two of everything that walks them.
+   */
+  Expr? value;
+}
+
+export enum StmtKind {
+  /** `isConst` folds what the pool needed two tags for. */
+  Var(Ty type, i32 nameTok, Expr init, bool isConst),
+  Assign(Lvalue target, i32 op, Expr rhs),
+  IncrStmt(Lvalue target, i32 op),
+  /** `els` is empty for no else; an `else if` is a single-statement block. */
+  If(Expr cond, Stmt[] then, Stmt[] els),
+  While(Expr cond, Stmt[] body),
+  /** Four references, which the pool could not hold without bit-packing. */
+  For(Stmt? init, Expr? cond, Stmt? update, Stmt[] body),
+  DoWhile(Stmt[] body, Expr cond),
+  Switch(Expr subject, Case[] cases),
+  Return(Expr? value),
+  Break,
+  Continue,
+  Trap,
+  Match(Expr subject, Arm[] arms),
+  Block(Stmt[] body),
+  ExprStmt(Expr expr),
+}
+
+// ── Declarations ──────────────────────────────────────────────────────────────
+
+/** `import { a, b as c } from "./m.wac"` — one item. */
+export struct ImportItem {
+  i32 nameTok;
+  /** The same token as `nameTok` when there is no `as`. */
+  i32 aliasTok;
+}
+
+export struct Param {
+  i32 nameTok;
+  Ty type;
+  /** A leading `const`, which forbids writing through the parameter. */
+  bool isConst;
+}
+
+export struct Field {
+  i32 nameTok;
+  Ty type;
+  bool isConst;
+}
+
+export struct Method {
+  i32 nameTok;
+  Ty returnType;
+  Param[] params;
+  Stmt[] body;
+  bool isOverride;
+  /**
+   * The `override` keyword's own token, or -1 when there is none.
+   *
+   * A method has no position of its own — a diagnostic about one names its return type, which is
+   * where the declaration starts. `override` is the exception: *"'override' on 'foo' but no parent
+   * method to override"* names the keyword, because the keyword is the part that is wrong.
+   */
+  i32 overrideTok;
+  /** A method without `this` is static. */
+  bool hasThis;
+  bool thisConst;
+}
+
+/** One variant of an `enum` declaration. Payload fields are shaped like params. */
+export struct Variant {
+  i32 nameTok;
+  Param[] fields;
+}
+
+export struct Decl {
+  DeclKind kind;
+  i32 line;
+  i32 col;
+}
+
+export enum DeclKind {
+  /**
+   * `prefixTok` is the bare word in `import { Read } from core;` and -1 for an ordinary quoted
+   * import, where `pathTok` is the string instead. Exactly one of the two is set: `core` is not a
+   * path, so there is nothing to quote and nothing to resolve it against.
+   */
+  Import(i32 pathTok, i32 prefixTok, ImportItem[] items),
+  /**
+   * `typeParams` are the name tokens of `<T, U>` after the declaration's name, empty when there are
+   * none. A generic function, struct or enum is the same declaration with those recorded.
+   */
+  Func(i32 nameTok, Ty returnType, Param[] params, Stmt[] body, bool exported,
+       i32[] typeParams),
+  /** `parentTok` is -1 when the struct has no parent. */
+  StructDecl(i32 nameTok, i32 parentTok, Field[] fields, Method[] methods,
+             bool exported, bool isConst, i32[] typeParams),
+  /**
+   * An enum's methods are held and not printed, exactly as the reference holds them: `Option<T>` has
+   * six, and a parser that stopped at the first one could not read the file at all.
+   */
+  EnumDecl(i32 nameTok, Variant[] variants, bool exported, Method[] methods,
+           i32[] typeParams),
+  /** `[export] const <type> <name> = <expr>;` at file scope. */
+  ConstDecl(i32 nameTok, Ty type, Expr init, bool exported),
+}
+
+export struct Program {
+  Decl[] decls;
+}

@@ -2,7 +2,7 @@
 // because a worker stuck in a wasm loop keeps Deno's process alive even after `terminate()` —
 // see `runIsolated`. Prints one line and exits; the parent kills whatever is left.
 import { createRunner } from "../src/editor/wac-compile.ts";
-import { wacCompile } from "../atoms/wac/wacCompile.ts";
+import { wacCompile } from "../../compiler/wacCompile.ts";
 
 function compiled(src: string, file: string) {
   const r = wacCompile(new Map([[file, src]]), file);

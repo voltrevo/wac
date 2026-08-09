@@ -1,0 +1,496 @@
+// Generate a router descriptor and write it to a file, so tor's own parser can judge it.
+//
+// This is the regeneration half of the differential in `test/routerdesc_wac.test.ts`. The suite does
+// not run this: it compares against the descriptor bytes committed as a vector, because a test that
+// needs a built tor tree present turns the shared suite red for whoever does not have one — the
+// mistake `test/ntor_wac.test.ts` documents having made once already.
+//
+//     deno task app:build packages/tor/src/gendesc.wac -o /tmp/gendesc.ts --allow-write
+//     deno run --allow-write /tmp/gendesc.ts /tmp/desc.txt
+//     <parsedesc-probe built against libtor.a> < /tmp/desc.txt
+//
+// Everything is derived from fixed seeds, so the output is reproducible and a change in it is a
+// change in the generator rather than in the weather. RSA-1024 key generation is a prime search and
+// takes a moment; that is the reason this is a tool and the keys are committed with the vector rather
+// than generated inside a test.
+
+import { Core, Cli, Change, FileResult } from "../../platform/src/platform.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { encode as hexEncode, encodeUpper } from "../../codec/src/hex.wac";
+import { rsaFingerprint } from "./routerdesc.wac";
+import { generateRsaKey, RsaKey } from "../../crypto/src/rsagen.wac";
+import { RelayInfo, RelayKeys, descriptorIdentity, routerDescriptor } from "./routerdesc.wac";
+import { AuthorityKeys, authorityCertificate } from "./authcert.wac";
+import { RelayOpinion, VoteInfo, sortedDescriptors, voteDocument } from "./vote.wac";
+import {
+  ConsensusInfo, ConsensusVoter, consensusDocument, microdescConsensusDocument,
+} from "./consensusgen.wac";
+import { microdescriptor } from "./microdesc.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
+
+/** A deterministic 32-byte seed. Distinct per role, so no two keys are the same key. */
+u8[] seedFor(i32 role) {
+  u8[] s = u8[32]();
+  for (i32 i = 0; i < 32; i++) { s[i] = (role * 61 + i * 7 + 3) & 0xFF; }
+  return s;
+}
+
+/** A curve25519 secret has to be clamped; `curve25519ToEd25519Secret` uses it as a scalar unchanged. */
+u8[] ntorSecret() {
+  u8[] s = seedFor(9);
+  s[0] = s[0] & 248;
+  s[31] = s[31] & 127;
+  s[31] = s[31] | 64;
+  return s;
+}
+
+/** One document, on its own, as it goes over the wire. */
+bool writeWire(Core core, Cli cli, string path, u8[] doc, string what) {
+  Change c = cli.writeFile(path, doc).wait();
+  if (!c.ok()) {
+    core.warn("gendesc: " + path + ": " + c.message);
+    return false;
+  }
+  core.log("gendesc: wrote the " + what + " to " + path);
+  return true;
+}
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 1) {
+    core.warn("usage: gendesc <out-path>");
+    return 1;
+  }
+  string out = string.fromBytes(cli.arg(0).wait());
+
+  core.log("gendesc: generating two RSA-1024 keys (a prime search, so this takes a moment)");
+  RsaKey identity = generateRsaKey(1024, seedFor(1));
+  RsaKey onion = generateRsaKey(1024, seedFor(2));
+  if (!identity.ok || !onion.ok) {
+    core.warn("gendesc: RSA key generation failed");
+    return 1;
+  }
+
+  RelayKeys keys = RelayKeys(
+    identity.modulus, identity.publicExponent, identity.privateExponent,
+    onion.modulus, onion.publicExponent, onion.privateExponent,
+    seedFor(3), seedFor(4), ntorSecret());
+
+  // A fixed time by default, so the vectors are reproducible: 2026-08-05 12:00:00 UTC, with a
+  // certificate expiry a year past it — certificates count in hours, not seconds.
+  //
+  // A fifth argument overrides it, which is what a *live* server needs: a document whose validity
+  // window is in the past is correctly refused by any client, so the committed fixture cannot also be
+  // the thing a real tor bootstraps from. The window widens with it for the same reason — the default
+  // 20/40/60 seconds mirrors chutney's voting interval and is far too short to bootstrap against.
+  //
+  // `-` means *read the clock*, which is what a description file needs: a launcher's plan is written
+  // once and run whenever, and a timestamp baked into it is a document that expires. The caller could
+  // compute the seconds and pass them, and by hand that is what happens — but nothing in a static
+  // description can, so the program that needs the time asks for it.
+  i64 published = 1785931200;
+  bool live = cli.argCount().wait() >= 5;
+  if (live) {
+    string when = string.fromBytes(cli.arg(4).wait());
+    if (when == "-") {
+      // A window back, not now. `valid-after` is `published + window` — a consensus is published
+      // before the period it covers — so `-` meaning literally *now* produces documents that become
+      // valid in an hour, which is not what anybody asking for "now" wants. This was wrong when `-`
+      // was added and no test could see it: nothing that read a consensus checked its validity
+      // window, so the whole network came up around a document that was not yet in force.
+      published = core.nowMillis().wait() / 1000 - 3600;
+    } else {
+      i64 given = atoi64(cli.arg(4).wait());
+      if (given <= 0) {
+        core.warn("gendesc: the fifth argument must be a unix time in seconds, or `-` for now");
+        return 1;
+      }
+      published = given;
+    }
+  }
+  i64 window = live ? 3600 : 20;
+  RelayInfo info = RelayInfo("wacrelay", "127.0.0.1", 9001, 0, published,
+                             1073741824, 1073741824, 640416,
+                             (published / 3600) + 8760, "reject *:*");
+
+  u8[] desc = routerDescriptor(keys, info);
+  if (desc.len() == 0) {
+    core.warn("gendesc: could not build a descriptor");
+    return 1;
+  }
+
+  // Written as the test's vector, not as a bare document: reproducing these bytes needs the private
+  // exponents, and an RSA-1024 prime search is far too slow to run inside the suite. With the keys
+  // committed the test is a byte-for-byte comparison that costs nothing.
+  Change c = cli.writeFile(out, vectorJson(keys, info, desc).toBytes()).wait();
+  if (!c.ok()) {
+    core.warn("gendesc: " + out + ": " + c.message);
+    return 1;
+  }
+  core.log("gendesc: wrote a " + itoa(desc.len()) + "-byte descriptor, with its keys, to " + out);
+
+  // The authority key certificate, when a second path is given. Same tool because it needs the same
+  // slow prime search, and doing both in one run means one wait instead of two.
+  if (cli.argCount().wait() >= 2) {
+    string certOut = string.fromBytes(cli.arg(1).wait());
+    core.log("gendesc: generating the authority's two keys");
+    RsaKey authIdentity = generateRsaKey(1024, seedFor(5));
+    RsaKey authSigning = generateRsaKey(1024, seedFor(6));
+    if (!authIdentity.ok || !authSigning.ok) {
+      core.warn("gendesc: authority key generation failed");
+      return 1;
+    }
+    AuthorityKeys ak = AuthorityKeys(
+      authIdentity.modulus, authIdentity.publicExponent, authIdentity.privateExponent,
+      authSigning.modulus, authSigning.publicExponent, authSigning.privateExponent);
+
+    i64 expires = published + 31536000;
+    u8[] cert = authorityCertificate(ak, published, expires);
+    if (cert.len() == 0) {
+      core.warn("gendesc: could not build an authority certificate");
+      return 1;
+    }
+    Change cc = cli.writeFile(certOut, certVectorJson(ak, published, expires, cert).toBytes()).wait();
+    if (!cc.ok()) {
+      core.warn("gendesc: " + certOut + ": " + cc.message);
+      return 1;
+    }
+    core.log("gendesc: wrote a " + itoa(cert.len()) + "-byte authority certificate to " + certOut);
+    // The certificate on its own, for the same reason as the consensus below: `relayd -K` and `dird`
+    // want the document, not a vector with the document inside it.
+    if (!writeWire(core, cli, certOut + ".cert", cert, "authority certificate")) { return 1; }
+    // And the one line a client needs: the fingerprint of the authority it should trust.
+    //
+    // This is the whole basis of a client's trust, which is why `app.wac` takes it as a file the
+    // user chooses rather than reading it out of the directory being checked — a list taken from the
+    // documents it is verifying would make the verification vacuous. That argument is about where the
+    // list comes *from*, not about who types it: on a network generated from scratch, the authority
+    // is whoever this program just made keys for, and nothing else knows the answer.
+    // Unbroken uppercase hex, which is how `authcert.wac` writes it into the certificate and how a
+    // client reads it — a router descriptor spells the same 20 bytes in groups of four, and mixing
+    // the two spellings is a comparison that silently never matches.
+    string fpLine =
+      string.fromBytes(encodeUpper(rsaFingerprint(ak.identityN, ak.identityE))) + "\n";
+    if (!writeWire(core, cli, certOut + ".fingerprint", fpLine.toBytes(),
+                   "authority fingerprint a client should trust")) { return 1; }
+
+    // And a vote, when a third path is given. The relay it votes about is the one whose descriptor
+    // this run produced, so the whole set is consistent and reproducible from the same seeds.
+    if (cli.argCount().wait() >= 3) {
+      string voteOut = string.fromBytes(cli.arg(2).wait());
+      // A sixth argument names a descriptor to vote about instead of the one generated here. That is
+      // what makes the documents describe a relay that *exists*: `relayd --descriptor` writes the one
+      // for the keys it actually serves with, and an authority voting about anything else describes a
+      // relay a client would connect to and find the wrong identity at.
+      // Every argument from the sixth on names a descriptor to vote about, so a network of several
+      // relays is described by listing them. With none, the one generated here stands in.
+      i32 extra = cli.argCount().wait() - 5;
+      i32 count = extra > 0 ? extra : 1;
+      RelayOpinion[] relays = RelayOpinion[count]();
+      for (i32 ri = 0; ri < count; ri++) {
+        u8[] subject = desc;
+        if (extra > 0) {
+          string subjectPath = string.fromBytes(cli.arg(5 + ri).wait());
+          FileResult sf = cli.readFile(subjectPath).wait();
+          if (!sf.ok) {
+            core.warn("gendesc: " + subjectPath + ": " + sf.error);
+            return 1;
+          }
+          subject = sf.bytes;
+          core.log("gendesc: voting about the relay described in " + subjectPath);
+        }
+        // `V2Dir` is back, because it became true: `relayd -C -K -D` answers RELAY_BEGIN_DIR now, and
+        // a relay that serves directory documents *is* a cache. It was dropped when it was a false
+        // claim, and dropping it had a cost that took two runs to see — **a guard must be a directory
+        // cache**, so without the flag tor found "0 eligible guards", could sample no entry guard, and
+        // would not build a path however many relays the consensus listed. The descriptors were fine:
+        // it logged "3 elements to add" and then ran out of guards.
+        //
+        // `HSDir` is here now, and it is the third flag to arrive by becoming true rather than by
+        // being wanted. It was withheld while nothing served a hidden-service directory — a client
+        // believing it would have published descriptors into a hole. `relayd` answers
+        // `POST /tor/hs/3/publish` over BEGIN_DIR and serves `/tor/hs/3/<z>` back, so the flag now
+        // describes something.
+        //
+        // Its absence was invisible until a service tried to publish on our own network and was told
+        // *no directory took the descriptor* — with nothing wrong anywhere except that
+        // `hsdirCandidates` had nobody to choose from. A network that cannot host the thing it was
+        // built to host, because of one missing word in a vote.
+        //
+        // `accept` became true when `relayd` learned to carry a stream: it parses RELAY_BEGIN, opens
+        // the socket, answers CONNECTED and forwards data both ways. D4 is why this is the order —
+        // the policy follows the capability rather than advertising ahead of it, which is what the
+        // V2Dir and HSDir decisions were both about.
+        relays[ri] = RelayOpinion(subject, "Exit Fast Guard HSDir Running Stable V2Dir Valid",
+                                  640416, "accept 1-65535");
+      }
+      VoteInfo vi = VoteInfo("wacauth", "127.0.0.1", "127.0.0.1", 7000, 5000,
+                             "agent-b@wac-mono", published, published + window,
+                             published + window * 2, published + window * 3, 4, 4);
+      u8[] vote = voteDocument(vi, ak, cert, relays);
+      if (vote.len() == 0) {
+        core.warn("gendesc: could not build a vote");
+        return 1;
+      }
+      Change vc = cli.writeFile(voteOut, voteVectorJson(ak, vi, relays[0], cert, vote).toBytes()).wait();
+      if (!vc.ok()) {
+        core.warn("gendesc: " + voteOut + ": " + vc.message);
+        return 1;
+      }
+      core.log("gendesc: wrote a " + itoa(vote.len()) + "-byte vote to " + voteOut);
+
+      // And a consensus, when a fourth path is given. One authority, so the agreement is trivial and
+      // the document is the point: the vote-digest is this vote's own digest, which is what a real
+      // consensus records about each vote it was computed from.
+      if (cli.argCount().wait() >= 4) {
+        string consOut = string.fromBytes(cli.arg(3).wait());
+        ConsensusVoter[] voters = ConsensusVoter[1]();
+        voters[0] = ConsensusVoter("wacauth", rsaFingerprint(ak.identityN, ak.identityE),
+                                   "127.0.0.1", "127.0.0.1", 7000, 5000, "agent-b@wac-mono",
+                                   sha1(vote));
+        ConsensusInfo ci = ConsensusInfo(32, published + window, published + window * 2,
+                                         published + window * 3, 4, 4, WEIGHTS);
+        u8[] cons = consensusDocument(ci, voters, relays, ak);
+        if (cons.len() == 0) {
+          core.warn("gendesc: could not build a consensus");
+          return 1;
+        }
+        // Both flavours, because a client of this package asks for the microdesc one and a C tor with
+        // `UseMicrodescriptors 0` asks for the other. An authority serving only the flavour its own
+        // client does not use is how this went unnoticed until step 5 needed a network with no C in it.
+        u8[] micro = microdescConsensusDocument(ci, voters, relays, ak);
+        if (micro.len() == 0) {
+          core.warn("gendesc: could not build a microdesc consensus");
+          return 1;
+        }
+        u8[] mds = allMicrodescriptors(relays);
+        Change cc2 = cli.writeFile(consOut,
+          consVectorJson(ak, ci, voters[0], relays[0], cons, micro, mds).toBytes()).wait();
+        if (!cc2.ok()) {
+          core.warn("gendesc: " + consOut + ": " + cc2.message);
+          return 1;
+        }
+        core.log("gendesc: wrote a " + itoa(cons.len()) + "-byte consensus and a " +
+                 itoa(micro.len()) + "-byte microdesc one to " + consOut);
+
+        // And the documents themselves, on their own, in the form they go over the wire.
+        //
+        // Everything above is a *vector* file: the document wrapped in JSON next to the keys that
+        // signed it, which is what the differential tests want. Nothing consumed them as documents,
+        // so every caller that needed one — `dird`, `relayd -C`, the by-hand recipe — extracted it
+        // with a script first. `dird` has documented this convention for as long as it has existed
+        // ("`<consensus>.micro` and `<consensus>.mds` are what `gendesc` writes") and gendesc has
+        // never written them. It does now, and the names are the ones dird was already looking for.
+        //
+        // A description file for `network.wac` can only name wac programs, so this is what makes an
+        // authority something a launcher can run rather than a step a human does in between.
+        if (!writeWire(core, cli, consOut + ".consensus", cons, "consensus")) { return 1; }
+        if (!writeWire(core, cli, consOut + ".consensus.micro", micro, "microdesc consensus")) {
+          return 1;
+        }
+        if (!writeWire(core, cli, consOut + ".consensus.mds", mds, "microdescriptors")) { return 1; }
+      }
+    }
+  }
+  return 0;
+}
+
+/** Lowercase hex, for the key material in the vector. */
+string hex(u8[] b) { return string.fromBytes(hexEncode(b)); }
+
+/**
+ * A JSON string body. The descriptor is ASCII with newlines; quote and backslash are handled anyway
+ * so that a future field cannot silently produce invalid JSON.
+ *
+ * Built through a Buf rather than by concatenating a string per character — 2 KB of `out = out + c`
+ * is 2000 allocations of a growing string, and the byte-oriented version is the shape the rest of
+ * this package uses for documents.
+ */
+string jsonText(u8[] text) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < text.len(); i++) {
+    i32 c = text[i];
+    if (c == 10) { out.push(92); out.push(110); }
+    else if (c == 34) { out.push(92); out.push(34); }
+    else if (c == 92) { out.push(92); out.push(92); }
+    else { out.push(c); }
+  }
+  return string.fromBytes(out.bytes());
+}
+
+string field(string name, string value) { return "  \"" + name + "\": \"" + value + "\",\n"; }
+
+/**
+ * The vector: every input, and the document they produce.
+ *
+ * Written by this tool rather than by a Python capture script because the private exponents only
+ * exist here — `generateRsaKey` derives them from the seed and nothing else can recover them.
+ */
+string vectorJson(RelayKeys k, RelayInfo info, u8[] desc) {
+  return "{\n" +
+    field("note", "generated by packages/tor/src/gendesc.wac; accepted by tor's " +
+                  "router_parse_entry_from_string") +
+    field("rsaIdentityN", hex(k.rsaIdentityN)) +
+    field("rsaIdentityE", hex(k.rsaIdentityE)) +
+    field("rsaIdentityD", hex(k.rsaIdentityD)) +
+    field("rsaOnionN", hex(k.rsaOnionN)) +
+    field("rsaOnionE", hex(k.rsaOnionE)) +
+    field("rsaOnionD", hex(k.rsaOnionD)) +
+    field("edIdentitySeed", hex(k.edIdentitySeed)) +
+    field("edSigningSeed", hex(k.edSigningSeed)) +
+    field("ntorSecret", hex(k.ntorSecret)) +
+    field("nickname", info.nickname) +
+    field("address", info.address) +
+    "  \"orPort\": " + itoa(info.orPort) + ",\n" +
+    "  \"dirPort\": " + itoa(info.dirPort) + ",\n" +
+    "  \"published\": " + itoa64(info.published) + ",\n" +
+    "  \"bandwidthRate\": " + itoa64(info.bandwidthRate) + ",\n" +
+    "  \"bandwidthBurst\": " + itoa64(info.bandwidthBurst) + ",\n" +
+    "  \"bandwidthObserved\": " + itoa64(info.bandwidthObserved) + ",\n" +
+    "  \"certExpiryHours\": " + itoa64(info.certExpiryHours) + ",\n" +
+    "  \"descriptor\": \"" + jsonText(desc) + "\"\n" +
+    "}\n";
+}
+
+/** The authority certificate vector, in the same shape and for the same reason as the descriptor's. */
+string certVectorJson(AuthorityKeys k, i64 published, i64 expires, u8[] cert) {
+  return "{\n" +
+    field("note", "generated by packages/tor/src/gendesc.wac; accepted by tor's " +
+                  "authority_cert_parse_from_string") +
+    field("identityN", hex(k.identityN)) +
+    field("identityE", hex(k.identityE)) +
+    field("identityD", hex(k.identityD)) +
+    field("signingN", hex(k.signingN)) +
+    field("signingE", hex(k.signingE)) +
+    field("signingD", hex(k.signingD)) +
+    "  \"published\": " + itoa64(published) + ",\n" +
+    "  \"expires\": " + itoa64(expires) + ",\n" +
+    "  \"certificate\": \"" + jsonText(cert) + "\"\n" +
+    "}\n";
+}
+
+/**
+ * The vote vector. Self-contained on purpose — it repeats the certificate and the descriptor that the
+ * other two vectors also carry, because a test that had to join three files to rebuild one document
+ * would be checking the joining as much as the generator.
+ */
+string voteVectorJson(AuthorityKeys k, VoteInfo vi, RelayOpinion r, u8[] cert, u8[] vote) {
+  return "{\n" +
+    field("note", "generated by packages/tor/src/gendesc.wac; accepted by tor's " +
+                  "networkstatus_parse_vote_from_string, which for a vote verifies the signature") +
+    field("identityN", hex(k.identityN)) +
+    field("identityE", hex(k.identityE)) +
+    field("identityD", hex(k.identityD)) +
+    field("signingN", hex(k.signingN)) +
+    field("signingE", hex(k.signingE)) +
+    field("signingD", hex(k.signingD)) +
+    field("nickname", vi.nickname) +
+    field("address", vi.address) +
+    field("ip", vi.ip) +
+    field("contact", vi.contact) +
+    field("flags", r.flags) +
+    field("exitPolicy", r.exitPolicy) +
+    "  \"dirPort\": " + itoa(vi.dirPort) + ",\n" +
+    "  \"orPort\": " + itoa(vi.orPort) + ",\n" +
+    "  \"published\": " + itoa64(vi.published) + ",\n" +
+    "  \"validAfter\": " + itoa64(vi.validAfter) + ",\n" +
+    "  \"freshUntil\": " + itoa64(vi.freshUntil) + ",\n" +
+    "  \"validUntil\": " + itoa64(vi.validUntil) + ",\n" +
+    "  \"voteSeconds\": " + itoa(vi.voteSeconds) + ",\n" +
+    "  \"distSeconds\": " + itoa(vi.distSeconds) + ",\n" +
+    "  \"bandwidth\": " + itoa64(r.bandwidth) + ",\n" +
+    field2("certificate", jsonText(cert)) +
+    field2("descriptor", jsonText(r.descriptor)) +
+    "  \"vote\": \"" + jsonText(vote) + "\"\n" +
+    "}\n";
+}
+
+/** A field whose value is already escaped. */
+string field2(string name, string escaped) { return "  \"" + name + "\": \"" + escaped + "\",\n"; }
+
+/** The weights a real chutney consensus carries, which are the defaults when nothing is measured. */
+const string WEIGHTS =
+  "Wbd=3333 Wbe=0 Wbg=0 Wbm=10000 Wdb=10000 Web=10000 Wed=3333 Wee=10000 Weg=3333 Wem=10000 " +
+  "Wgb=10000 Wgd=3333 Wgg=10000 Wgm=10000 Wmb=10000 Wmd=3333 Wme=0 Wmg=0 Wmm=10000";
+
+/**
+ * Every relay's microdescriptor, concatenated as a directory answer carries them.
+ *
+ * The order is the consensus's, so a client walking `m` lines and a client walking the response
+ * meet in the same place. A relay whose microdescriptor cannot be built is skipped here exactly as
+ * the consensus skips it, so the two documents cannot come to disagree about who is in the network.
+ */
+u8[] allMicrodescriptors(RelayOpinion[] relays) {
+  u8[][] descriptors = u8[][relays.len()]();
+  for (i32 i = 0; i < relays.len(); i++) { descriptors[i] = relays[i].descriptor; }
+  u8[][] order = sortedDescriptors(descriptors);
+  Buf out = Buf.create();
+  for (i32 i = 0; i < order.len(); i++) {
+    u8[] md = microdescriptor(order[i], policyFor(relays, order[i]));
+    if (md.len() == 0) { continue; }
+    out.pushAll(md);
+  }
+  return out.bytes();
+}
+
+/** The policy summary the opinion holding this descriptor states. */
+string policyFor(RelayOpinion[] relays, u8[] descriptor) {
+  u8[] want = descriptorIdentity(descriptor);
+  for (i32 i = 0; i < relays.len(); i++) {
+    u8[] have = descriptorIdentity(relays[i].descriptor);
+    if (have.len() != want.len() || want.len() == 0) { continue; }
+    bool hit = true;
+    for (i32 j = 0; j < want.len(); j++) { if (have[j] != want[j]) { hit = false; break; } }
+    if (hit) { return relays[i].exitPolicy; }
+  }
+  return "reject 1-65535";
+}
+
+/** The consensus vector, self-contained for the same reason the vote's is. */
+string consVectorJson(AuthorityKeys k, ConsensusInfo ci, ConsensusVoter v, RelayOpinion r, u8[] cons,
+                      u8[] micro, u8[] mds) {
+  return "{\n" +
+    field("note", "generated by packages/tor/src/gendesc.wac; structure accepted by tor's " +
+                  "networkstatus_parse_vote_from_string, which does NOT check a consensus signature " +
+                  "— see issue 0081. The signature is checked by node in the test.") +
+    field("identityN", hex(k.identityN)) +
+    field("identityE", hex(k.identityE)) +
+    field("identityD", hex(k.identityD)) +
+    field("signingN", hex(k.signingN)) +
+    field("signingE", hex(k.signingE)) +
+    field("signingD", hex(k.signingD)) +
+    field("nickname", v.nickname) +
+    field("address", v.address) +
+    field("ip", v.ip) +
+    field("contact", v.contact) +
+    field("identityDigest", hex(v.identityDigest)) +
+    field("voteDigest", hex(v.voteDigest)) +
+    field("flags", r.flags) +
+    field("exitPolicy", r.exitPolicy) +
+    field("bandwidthWeights", ci.bandwidthWeights) +
+    "  \"dirPort\": " + itoa(v.dirPort) + ",\n" +
+    "  \"orPort\": " + itoa(v.orPort) + ",\n" +
+    "  \"consensusMethod\": " + itoa(ci.consensusMethod) + ",\n" +
+    "  \"validAfter\": " + itoa64(ci.validAfter) + ",\n" +
+    "  \"freshUntil\": " + itoa64(ci.freshUntil) + ",\n" +
+    "  \"validUntil\": " + itoa64(ci.validUntil) + ",\n" +
+    "  \"voteSeconds\": " + itoa(ci.voteSeconds) + ",\n" +
+    "  \"distSeconds\": " + itoa(ci.distSeconds) + ",\n" +
+    "  \"bandwidth\": " + itoa64(r.bandwidth) + ",\n" +
+    field2("descriptor", jsonText(r.descriptor)) +
+    field2("consensus", jsonText(cons)) +
+    field2("microdescriptors", jsonText(mds)) +
+    "  \"consensusMicrodesc\": \"" + jsonText(micro) + "\"\n" +
+    "}\n";
+}
+
+/** A unix time from its digits, or -1 — a partial parse would silently date the network wrongly. */
+i64 atoi64(u8[] text) {
+  if (text.len() == 0) { return -1; }
+  i64 v = 0;
+  for (i32 i = 0; i < text.len(); i++) {
+    if (text[i] < 48 || text[i] > 57) { return -1; }
+    v = v * 10 + ((text[i] - 48) as i64);
+  }
+  return v;
+}

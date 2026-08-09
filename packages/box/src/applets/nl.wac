@@ -1,0 +1,37 @@
+// Lines numbered from one — but only the non-empty ones, which is what `nl` does by
+// default and what this got wrong until a file with a blank line in it was compared. The
+// counter does not advance on a blank line either; it is skipped, not numbered invisibly.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Reader } from "../lib/input.wac";
+import { Line, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 nl(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+
+  Sink out = Sink.create(cli);
+  Reader r = Reader.create(core, cli, fs, a, 0, out);
+  i32 n = 0;
+  while (true) {
+    Line l = r.next(core, cli, fs, a);
+    if (!l.ok) { out.flush(); return r.broken || r.failed ? 1 : 0; }
+    if (l.bytes.len() == 0) {
+      // Seven spaces where the number and its tab would be, which is what the real one
+      // emits — measured, not derived from the six-wide number field.
+      emitTo(out, "       ".toBytes(), true);
+      continue;
+    }
+    n++;
+    string num = itoa(n);
+    string pad = "";
+    for (i32 i = num.toBytes().len(); i < 6; i++) { pad = pad + " "; }
+    // `nl` terminates its last line even when the input did not, unlike `head` and
+    // `tail`. Checked against the real one rather than assumed to be uniform.
+    emitTo(out, (pad + num + "\t" + string.fromBytes(l.bytes)).toBytes(), true);
+  }
+  return 0;
+}

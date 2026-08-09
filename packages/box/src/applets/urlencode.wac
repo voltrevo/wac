@@ -1,0 +1,35 @@
+// Percent-encoding, as a URL *component* would be written.
+//
+// `SET_COMPONENT`, not `SET_PATH`: a path may legally contain `/`, `:` and `@`, so encoding with the
+// path set left `a/b` as `a/b` — which is right for serialising a path and useless for a filter
+// whose output is meant to be pasted into one. The component set is what `encodeURIComponent`
+// approximates, and it is also the only set that escapes `%`, so the hand-rolled pre-pass that used
+// to do that here is gone with it.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, readAll } from "../lib/input.wac";
+import { withNewline } from "../lib/bytes.wac";
+
+import { encode, SET_COMPONENT } from "../../../url/src/percent.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 urlencode(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  Input in = readAll(core, cli, fs, a, 0);
+  if (!in.ok) { return 1; }
+  cli.write(withNewline(encode(trimNewline(in.bytes), SET_COMPONENT())));
+  return 0;
+}
+
+/** A trailing newline is the shell's, not the datum's. */
+u8[] trimNewline(u8[] b) {
+  if (b.len() > 0 && b[b.len() - 1] == '\n') {
+    u8[] out = u8[b.len() - 1](fill: 0);
+    out.copyFrom(b, 0, 0, b.len() - 1);
+    return out;
+  }
+  return b;
+}

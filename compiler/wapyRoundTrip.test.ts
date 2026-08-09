@@ -247,7 +247,7 @@ check("empty bodies", `
 // ── And the corpus, which is where anything I did not think of lives ─────────
 
 Deno.test("round trip: spec/tour.wac", async () => {
-  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
+  const src = await Deno.readTextFile(new URL("../spec/tour.wac", import.meta.url));
   const r = roundTrip(src, "spec/tour.wac");
   if (!r.ok) throw new Error(r.why);
 });
@@ -261,10 +261,10 @@ Deno.test("round trip: spec/tour.wac", async () => {
  * variable name, `None` as a variant inside a match expression, nested generic brackets. None of
  * them is exotic; all of them are things I would not have thought to write a case for.
  *
- *   deno test -A atoms/wac/wapyRoundTrip.test.ts
+ *   deno test -A compiler/wapyRoundTrip.test.ts
  */
 Deno.test("round trip: all of wac-mono", async () => {
-  const root = new URL("../../../wac-mono/packages/", import.meta.url);
+  const root = new URL("../packages/", import.meta.url);
   let pkgs: string[];
   try {
     pkgs = [];

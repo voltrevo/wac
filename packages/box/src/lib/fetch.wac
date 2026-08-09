@@ -1,0 +1,32 @@
+// One HTTP GET for `get` and `wget`, which differ by three lines: `wget` points the current output at a
+// file first, and the fetch itself does not know the difference.
+//
+// **The socket loop moved.** It is `packages/http/src/client.wac` now — the same request, read-to-EOF and
+// parse that a JSON-RPC client needs, and there is no version of "write the loop again with POST in it"
+// that ends well. What is left here is what was actually specific to these two applets: the header dump
+// and the exit code.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { get, Fetched } from "../../../http/src/client.wac";
+
+/** The exit code the applet should return. */
+export i32 fetch(Core core, Cli cli, string name, string host, string path, i32 port, bool headers) {
+  Fetched f = get(cli, host, port, path);
+  if (!f.ok) {
+    core.warn(name + ": " + f.error);
+    return 1;
+  }
+
+  if (headers) {
+    core.log("HTTP " + itoa(f.response.status));
+    for (i32 i = 0; i < f.response.headers.count; i++) {
+      core.log(string.fromBytes(f.response.headers.nameAt(i)) + ": "
+             + string.fromBytes(f.response.headers.valueAt(i)));
+    }
+    core.log("");
+  }
+  cli.write(f.response.body);
+  // A 4xx or 5xx is a fetch that worked and a request that did not, which is what `wget` reports too.
+  return f.response.status >= 400 ? 1 : 0;
+}

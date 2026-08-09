@@ -1,0 +1,82 @@
+// Encoded, with a trailing newline — or **decoded** with `-d`, which it used to ignore.
+//
+// `base64 -d` re-encoded its input and said nothing: the caller asked for the opposite of what they got,
+// by name, and the output looks like base64 either way. `packages/codec` has had `decode` all along, so
+// the flag was one import from working (wac-mono 0105).
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Input, readInput } from "../lib/input.wac";
+import { withNewline } from "../lib/bytes.wac";
+
+import { decode as unb64, encode as b64, ALPHABET_STANDARD } from "../../../codec/src/base64.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 base64(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (extraOperand(core, a, 1)) { return 1; }
+  Input in = readInput(core, cli, fs, a, 0);
+  if (!in.ok) { return 1; }
+  if (has(a, 'd')) {
+    u8[]? out = unb64(withoutSpace(in.bytes));
+    if (out is null) {
+      // GNU's own sentence, and its status: a decode that cannot be done is not an empty result.
+      core.warn(a.name + ": invalid input");
+      return 1;
+    }
+    cli.write(out!);
+    return 0;
+  }
+  // **Wrapped at 76 columns, and nothing at all for empty input** — both GNU's, and neither was here:
+  // this wrote one long line, and answered a bare newline for no input where GNU answers nothing. The
+  // decoder's own comment said "its own encoder wraps at 76 columns and this one ends with a newline",
+  // so the difference was known and written down rather than fixed.
+  //
+  // `-w N` sets the width and `-w 0` turns wrapping off, which is why this is a number rather than a
+  // flag. A `0` has to be distinguishable from "not given", which is what `hasNum` is for.
+  i32 width = a.hasNum ? a.num : 76;
+  cli.write(wrapped(b64(in.bytes, ALPHABET_STANDARD(), true), width));
+  return 0;
+}
+
+/**
+ * The text without its whitespace, which is what decoding has to be given.
+ *
+ * GNU ignores newlines when decoding, and it has to: its own encoder wraps at 76 columns and this one
+ * ends with a newline, so a round trip through either fails without this. `packages/codec`'s `decode` is
+ * strict on purpose — a stray byte in the middle of a base64 field is a real error to a *protocol* — so
+ * the leniency belongs here, in the tool whose input is a text file.
+ */
+u8[] withoutSpace(u8[] text) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < text.len(); i++) {
+    i32 c = text[i];
+    if (c == 32 || c == 9 || c == 10 || c == 13) { continue; }
+    out.push(c);
+  }
+  return out.take();
+}
+
+/**
+ * `text` in lines of `width`, each with a newline — or, when `width` is 0, one line with **no** newline.
+ *
+ * That last part is measured rather than guessed: `base64 -w 0` writes exactly the encoding and stops,
+ * while the wrapped form ends every line including the last. Empty text produces nothing either way, not
+ * a newline — a program that wrote one would put a stray blank line in the middle of anything
+ * concatenating its output.
+ */
+u8[] wrapped(u8[] text, i32 width) {
+  if (text.len() == 0) { return u8[0](); }
+  if (width <= 0) { return text; }
+  Buf out = Buf.create();
+  for (i32 i = 0; i < text.len(); i = i + width) {
+    i32 end = i + width < text.len() ? i + width : text.len();
+    out.pushBytes(text, i, end - i);
+    out.push(10);
+  }
+  return out.take();
+}

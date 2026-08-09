@@ -1,0 +1,74 @@
+// Adjacent duplicate lines collapsed; `-c` counts them.
+//
+// Adjacent is the whole point: one line of state is enough, so this streams even though
+// `sort -u`, which does the same job for non-adjacent lines, cannot.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, openStream } from "../lib/input.wac";
+import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { cmpBytes } from "../lib/lines.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 uniq(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // **`uniq INPUT [OUTPUT]`.** The second operand is a *file to write*, not an extra one, so calling it
+  // extra blamed the caller for GNU's own syntax — and named the wrong operand as well, since a third is
+  // where GNU starts complaining. Writing it is not implemented; saying which of the two that is beats
+  // both the old message and quietly ignoring it.
+  if (a.rest.len() == 2) {
+    core.warn(a.name + ": writing to a second operand is not implemented; redirect instead");
+    return 1;
+  }
+  if (extraOperand(core, a, 2)) { return 1; }
+  Input in = openStream(core, cli, fs, a, 0, -1);
+  if (!in.ok) { return 1; }
+  bool counting = has(a, 'c');
+  // **`-d` and `-u` select which runs are shown**, and both were accepted and ignored: `uniq -d` printed
+  // every line where GNU prints only the repeated ones, and `-u` printed every line where GNU prints only
+  // the ones that appear once. Two flags whose whole purpose is to *filter*, filtering nothing, silently
+  // (wac-mono 0105). They are opposites, so asking for both selects nothing, which is what GNU does too.
+  bool onlyRepeated = has(a, 'd');
+  bool onlyUnique = has(a, 'u');
+
+  Lines s = Lines.create();
+  // The feed the opener chose — see `lib/input.wac`; not the process's own input.
+  Feed fed = in.fed;
+  Sink out = Sink.create(cli);
+  u8[] prev = u8[0]();
+  bool lastNl = true;
+  i32 run = 0;
+  while (true) {
+    Line l = nextLine(s, fed);
+    if (!l.ok) { break; }
+    if (run > 0 && cmpBytes(l.bytes, prev) == 0) { run++; lastNl = l.nl; continue; }
+    if (run > 0) { show(out, prev, run, counting, lastNl, onlyRepeated, onlyUnique); }
+    prev = l.bytes;
+    lastNl = l.nl;
+    run = 1;
+  }
+  if (run > 0) { show(out, prev, run, counting, lastNl, onlyRepeated, onlyUnique); }
+  out.flush();
+  return 0;
+}
+
+/**
+ * `uniq` terminates its last line even when the input did not — checked against the real
+ * one, which is not uniform across these tools: `head`, `tail` and `rev` preserve a
+ * missing final newline and `uniq` and `nl` add one.
+ */
+void show(Sink out, u8[] line, i32 run, bool counting, bool nl, bool onlyRepeated, bool onlyUnique) {
+  // A run of one is "unique"; a run of more is "repeated". `-d` keeps the second, `-u` the first, and
+  // asking for both keeps neither.
+  if (onlyRepeated && run < 2) { return; }
+  if (onlyUnique && run > 1) { return; }
+  if (!counting) { emitTo(out, line, true); return; }
+  // The real one right-aligns the count in a field of seven, then a space.
+  string n = itoa(run);
+  string pad = "";
+  for (i32 i = n.toBytes().len(); i < 7; i++) { pad = pad + " "; }
+  emitTo(out, (pad + n + " " + string.fromBytes(line)).toBytes(), true);
+}

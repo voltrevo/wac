@@ -1,0 +1,244 @@
+// The client half: the handshake, authentication, and running a command.
+//
+// Everything below this file is functions over bytes, which is the right shape for testing each
+// rule against a real server and the wrong shape for someone who just wants to run a command.
+// This is the shape for that. The buffering and framing underneath live in `conn.wac`, shared
+// with the server, since only the handshake differs between the two ends.
+//
+// The one thing the capability world cannot do is wait on two sockets at once, which SSH does not
+// need for a single channel running one command. It would need it for port forwarding.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Conn, msgNewKeys } from "./conn.wac";
+import { Found, Version, clientVersion, clientVersionLine, scanVersion, speaksV2 } from "./version.wac";
+import { keyLength } from "./cipher.wac";
+import { clientProposal, decode, encode, msgKexInit, negotiate } from "./kexinit.wac";
+import { EcdhReply, deriveKey, ecdhInit, ephemeralPublic, exchangeHash, msgKexEcdhReply,
+         parseEcdhReply, sharedSecret, verifyEd25519Host } from "./kex.wac";
+import { msgServiceAccept, msgUserAuthFailure, msgUserAuthSuccess, publicKeyRequest,
+         serviceRequest } from "./auth.wac";
+import { Incoming, Window, channelClose, defaultMaxPacket, execRequest, extendedDataStderr,
+         msgChannelData, msgChannelExtendedData, msgChannelOpenConfirmation,
+         msgChannelOpenFailure, msgChannelClose, msgChannelRequest, openSession, parse,
+         windowAdjust } from "./channel.wac";
+
+/** Our channel number. Any value would do; 0 is what every other client uses. */
+i32 ourChannel() { return 0; }
+
+/**
+ * The receive window we advertise.
+ *
+ * Small enough that the adjustment path runs for any real output rather than only for very large
+ * output — a window nobody ever exhausts is a code path nobody ever tests.
+ */
+i32 windowSize() { return 64 * 1024; }
+
+export struct Client {
+  /** The transport underneath: socket, buffer, keys and the two sequence numbers. */
+  Conn conn;
+
+  /** H from the first exchange, which authentication signatures bind to. */
+  u8[] sessionId;
+  /** The host key the server presented, for the caller to check against known_hosts. */
+  u8[] hostKey;
+
+  Client create(Core core, Cli cli, i32 sock) {
+    return Client(Conn.create(core, cli, sock), u8[0](), u8[0]());
+  }
+
+  bool failed(const this) { return this.conn.failed(); }
+  string error(const this) { return this.conn.error; }
+
+  /**
+   * Version exchange, key exchange and NEWKEYS.
+   *
+   * Leaves `sessionId` and `hostKey` set. The caller must check `hostKey` against known_hosts
+   * before sending anything else — this cannot do it, because the file and the policy belong to
+   * whoever is running the program.
+   */
+  void handshake(this) {
+    if (!this.conn.cli.send(this.conn.sock, clientVersionLine()).wait()) {
+      this.conn.fail("cannot send the version line");
+      return;
+    }
+
+    // The server may send banner lines first, so this reads until a version line appears.
+    u8[] serverVersion = u8[0]();
+    while (true) {
+      Version v = scanVersion(this.conn.buf.data, 0, this.conn.buf.len);
+      match (v.status) {
+        case Ok: {
+          serverVersion = v.line;
+          this.conn.buf.dropFront(v.used);
+        }
+        case Incomplete: {
+          if (!this.conn.fill()) {
+            this.conn.fail("the connection closed during the version exchange");
+            return;
+          }
+          continue;
+        }
+        else: {
+          this.conn.fail("the server did not send a usable version line");
+          return;
+        }
+      }
+      break;
+    }
+    if (!speaksV2(serverVersion)) {
+      this.conn.fail("the server does not speak SSH-2: " + string.fromBytes(serverVersion));
+      return;
+    }
+
+    u8[] ourKexInit = encode(clientProposal(), this.conn.core.randomBytes(16).wait());
+    if (!this.conn.sendPacket(ourKexInit)) { this.conn.fail("cannot send KEXINIT"); return; }
+
+    u8[] theirKexInit = this.conn.readPacket();
+    if (this.conn.failed()) { return; }
+    if (theirKexInit[0] != msgKexInit()) { this.conn.fail("expected KEXINIT"); return; }
+    if (!this.agreed(theirKexInit)) { return; }
+
+    u8[] secret = this.conn.core.randomBytes(32).wait();
+    u8[] qc = ephemeralPublic(secret);
+    if (!this.conn.sendPacket(ecdhInit(qc))) { this.conn.fail("cannot send the key exchange"); return; }
+
+    u8[] replyPayload = this.conn.readPacket();
+    if (this.conn.failed()) { return; }
+    if (replyPayload[0] != msgKexEcdhReply()) { this.conn.fail("expected the key exchange reply"); return; }
+    EcdhReply? reply = parseEcdhReply(replyPayload);
+    if (reply is null) { this.conn.fail("the key exchange reply did not parse"); return; }
+
+    u8[]? shared = sharedSecret(secret, reply!.serverPublic);
+    if (shared is null) {
+      this.conn.fail("the server sent a low-order point");
+      return;
+    }
+    u8[] h = exchangeHash(clientVersion(), serverVersion, ourKexInit, theirKexInit,
+                          reply!.hostKey, qc, reply!.serverPublic, shared!);
+    if (!verifyEd25519Host(reply!.hostKey, reply!.signature, h)) {
+      this.conn.fail("the server's host key signature did not verify");
+      return;
+    }
+    this.sessionId = h;
+    this.hostKey = reply!.hostKey;
+
+    if (!this.conn.sendPacket(u8[](msgNewKeys()))) { this.conn.fail("cannot send NEWKEYS"); return; }
+    u8[] theirNewKeys = this.conn.readPacket();
+    if (this.conn.failed()) { return; }
+    if (theirNewKeys[0] != msgNewKeys()) { this.conn.fail("expected NEWKEYS"); return; }
+
+    // 'C' is client-to-server and 'D' the other way, so a client writes with C and reads with D.
+    this.conn.startEncryption(deriveKey(shared!, h, h, 0x44, keyLength()),
+                              deriveKey(shared!, h, h, 0x43, keyLength()));
+  }
+
+  /** Whether the server offers everything we require. */
+  bool agreed(this, u8[] theirKexInit) {
+    if (decode(theirKexInit) is null) { this.conn.fail("the server's KEXINIT did not parse"); return false; }
+    clientProposal();
+    if (negotiate(clientProposal().kex, decode(theirKexInit)!.kex).len() == 0) {
+      this.conn.fail("no key exchange in common");
+      return false;
+    }
+    if (negotiate(clientProposal().hostKey, decode(theirKexInit)!.hostKey).len() == 0) {
+      this.conn.fail("no host key algorithm in common — this client only knows ssh-ed25519");
+      return false;
+    }
+    if (negotiate(clientProposal().cipherToServer, decode(theirKexInit)!.cipherToServer).len() == 0) {
+      this.conn.fail("no cipher in common");
+      return false;
+    }
+    return true;
+  }
+
+  /** Request the authentication service and authenticate with an Ed25519 key. */
+  void authenticate(this, u8[] user, u8[] publicBlob, u8[] seed) {
+    if (!this.conn.sendPacket(serviceRequest())) { this.conn.fail("cannot request ssh-userauth"); return; }
+    u8[] accept = this.conn.readPacket();
+    if (this.conn.failed()) { return; }
+    if (accept[0] != msgServiceAccept()) { this.conn.fail("the server refused ssh-userauth"); return; }
+
+    u8[] request = publicKeyRequest(this.sessionId, user, publicBlob, seed);
+    if (!this.conn.sendPacket(request)) { this.conn.fail("cannot send the authentication request"); return; }
+
+    while (true) {
+      u8[] reply = this.conn.readPacket();
+      if (this.conn.failed()) { return; }
+      if (reply[0] == msgUserAuthSuccess()) { return; }
+      if (reply[0] == msgUserAuthFailure()) {
+        this.conn.fail("the server rejected the key");
+        return;
+      }
+      // A banner may arrive before either, and anything else is not ours to interpret.
+    }
+  }
+
+  /**
+   * Run `command`, writing its output through the capabilities, and answer with its exit status.
+   *
+   * -1 means the command never reported one, which a server is allowed not to do.
+   */
+  i32 run(this, u8[] command) {
+    if (!this.conn.sendPacket(openSession(ourChannel(), windowSize(), defaultMaxPacket()))) {
+      this.conn.fail("cannot open a channel");
+      return -1;
+    }
+
+    i32 serverChannel = -1;
+    while (serverChannel < 0) {
+      u8[] p = this.conn.readPacket();
+      if (this.conn.failed()) { return -1; }
+      Incoming m = parse(p);
+      if (!m.ok) { this.conn.fail("a channel message did not parse"); return -1; }
+      if (m.kind == msgChannelOpenFailure()) {
+        this.conn.fail("the server refused the channel: " + string.fromBytes(m.data));
+        return -1;
+      }
+      if (m.kind == msgChannelOpenConfirmation()) { serverChannel = m.senderChannel; }
+    }
+
+    if (!this.conn.sendPacket(execRequest(serverChannel, command, true))) {
+      this.conn.fail("cannot send the command");
+      return -1;
+    }
+
+    Window window = Window.create(windowSize());
+    i32 status = -1;
+    bool closed = false;
+
+    while (!closed) {
+      u8[] p = this.conn.readPacket();
+      if (this.conn.failed()) { break; }
+      Incoming m = parse(p);
+      if (!m.ok) { this.conn.fail("a channel message did not parse"); break; }
+
+      if (m.kind == msgChannelData()) {
+        this.conn.cli.write(m.data);
+        this.giveCredit(window, serverChannel, m.data.len());
+      } else if (m.kind == msgChannelExtendedData()) {
+        // Straight through, in the order the server sent it, so the two streams interleave here as
+        // they did on the remote host. This used to be buffered to the end of the run and emitted as
+        // one `warn`: `warn` writes a line of *text*, so a per-packet call inserted a newline at
+        // every packet boundary and the whole-run form lost the ordering and mangled anything that
+        // was not valid UTF-8. `writeErr` takes bytes. wac-mono issue 0014.
+        if (m.extra == extendedDataStderr()) { this.conn.cli.writeErr(m.data); }
+        this.giveCredit(window, serverChannel, m.data.len());
+      } else if (m.kind == msgChannelRequest()) {
+        // `exit-status` is a request, not a reply, and nothing prompts it.
+        if (string.fromBytes(m.data) == "exit-status") { status = m.extra; }
+      } else if (m.kind == msgChannelClose()) {
+        closed = true;
+      }
+    }
+
+    this.conn.sendPacket(channelClose(serverChannel));
+    return status;
+  }
+
+  void giveCredit(this, Window window, i32 channel, i32 n) {
+    i32 increment = window.consume(n);
+    if (increment > 0) {
+      this.conn.sendPacket(windowAdjust(channel, increment));
+    }
+  }
+}

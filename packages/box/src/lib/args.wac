@@ -1,0 +1,355 @@
+// Flags and positional arguments, parsed once for every applet.
+//
+// Without this each applet hardcoded its behaviour — `head` always took ten lines and `wc`
+// could not do `-l`. One parser makes a dozen of them real rather than approximate.
+
+import { Cli } from "../../../platform/src/platform.wac";
+import { atoi } from "../../../fmt/src/itoa.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+
+export struct Args {
+  /**
+   * What to call this program in its own error messages.
+   *
+   * Under `box` it is the applet name, so `mkdir` says "mkdir: ...". Built alone it is
+   * whatever the entry point in `bin/` passes, because a program in this model genuinely
+   * does not know its own name — argv starts at its first real argument, and nothing
+   * hands it argv[0]. Hardcoding "box: " here would have been a lie in half the builds.
+   */
+  string name;
+  /** The letters of every `-x` flag, concatenated: `-iv` and `-i -v` both give "iv". */
+  string flags;
+  /** `-5`, or `-n 5` where the applet takes one. Meaningless unless `hasNum`. */
+  i32 num;
+  /**
+   * Whether a numeric option was actually given.
+   *
+   * Zero used to mean both "absent" and "the user asked for zero", so `head -0` printed ten lines:
+   * every applet spelled its default as `a.num == 0 ? 10 : a.num`, and there was no way to say zero.
+   */
+  bool hasNum;
+  /**
+   * `""`, `"+"` or `"-"`: which of GNU's three forms a numeric value was written in.
+   *
+   * The sign is not part of the number — it selects a different question, and only for `head` and
+   * `tail`, in opposite directions. `num` is the magnitude either way.
+   */
+  string numSign;
+  /**
+   * The value given for a numeric option that is not a number — `head -n x`.
+   *
+   * Empty when there was none. It used to be nothing at all: a value that failed `allDigits` was
+   * consumed and then *ignored*, so `head -n x` fell back to the default and printed ten lines with a
+   * status of 0. A mistake in the command came back as an answer, which is the worst of the three
+   * things it could have done.
+   */
+  string badNum;
+  string[] rest;
+  /**
+   * The value of each flag that took one, as `letter` then the value: `-d,` and `-d ,` both give
+   * `",,"` — the first byte is the flag.
+   *
+   * The detached spelling is the reason this exists. It used to be refused on the grounds that
+   * `parseList` would have left the value among the positional arguments where a filename lives, and
+   * that was true while the parser had no idea which letters take a value. `takesValue` is that idea,
+   * so the value is consumed where it is recognised and never reaches `rest` — which is what `cut -f 1`
+   * and `fold -w 3` need, being how the two of them are spelled everywhere but here.
+   */
+  string[] values;
+  /**
+   * The arguments exactly as they were spelled, which `flagValue` needs and the fields above
+   * cannot reconstruct: `-iv` and `-d,` are both "letters after a dash" once parsed.
+   *
+   * Kept here rather than read back from the `Cli` so that an `Args` means the same thing however
+   * it was built. It used to come from `cli.arg(i)`, which was fine while the only arguments in
+   * existence were the process's own — and wrong the moment `packages/sh` began running applets
+   * in-process with a command line of its own.
+   */
+  string[] argv;
+  /**
+   * The applet's *own* arguments — `argv` from where they begin, with the applet name dropped.
+   *
+   * `argv` is the whole array, and where an applet's arguments start inside it depends on how it was
+   * launched: `box echo -n hi` has the name at index 0 and `bin/echo -n hi` does not. An applet that
+   * must read arguments raw — `echo`, whose `-n` is not an option and is only special leading — had no
+   * way to ask for that, so reading `argv` printed the applet's own name back at the caller.
+   */
+  string[] own;
+  /**
+   * The letter of a flag that takes a value and was given none — `head -n` with nothing after it.
+   *
+   * Empty when there was none. It used to be nothing at all: the parser ran out of arguments, recorded
+   * the flag without a value, and the applet fell back to its default, so `head -n` printed ten lines
+   * and exited 0 where GNU says "option requires an argument -- 'n'" and exits 1. A mistake in the
+   * command came back as an answer, which is the worst of the three things it could do.
+   */
+  string missingValue;
+  /**
+   * The first `--long` option given, spelled as it was written, or `""`.
+   *
+   * A long option is not a run of short ones, and reading it as one produced the worst message in the
+   * set: `sort --key=2` lost its first two bytes to the same loop that reads `-iv`, so the refusal
+   * named the *dash* — `sort: invalid option -- '-'`. Kept whole here so `refuseFlags` can say what
+   * was actually written. Only the first, because the refusal stops at the first thing it cannot do.
+   */
+  string longOpt;
+}
+
+export bool has(Args a, i32 flag) {
+  u8[] f = a.flags.toBytes();
+  for (i32 i = 0; i < f.len(); i++) { if (f[i] == flag) { return true; } }
+  return false;
+}
+
+/**
+ * The arguments as `box` sees them: index 0 is the applet name, so parsing starts at 1.
+ *
+ * A standalone build of one applet has no name to skip and uses `parseFrom(cli, 0, "wc")`.
+ * The applet itself is identical either way — that is the point of the split, and of
+ * `bin/`.
+ */
+export Args parseArgs(Cli cli) {
+  return parseFrom(cli, 1, string.fromBytes(cli.arg(0).wait()));
+}
+
+export Args parseFrom(Cli cli, i32 first, string name) {
+  // Materialised, then parsed by the list form below. The parser used to read `cli.arg(i)` inside
+  // its loops, which meant it could only ever parse *this process's* arguments — and the shell
+  // running an applet in-process has a `Vec<string>` of its own to hand over. Same parser, so a
+  // flag cannot come to mean one thing under `box` and another under `sh`.
+  i32 n = cli.argCount().wait();
+  string[] argv = string[n](fill: "");
+  for (i32 i = 0; i < n; i++) { argv[i] = string.fromBytes(cli.arg(i).wait()); }
+  return parseList(argv, first, name);
+}
+
+/** The same, over arguments somebody already has. `first` is where the applet's own begin. */
+export Args parseList(string[] argv, i32 first, string name) {
+  // **One pass.** It used to count positionals, allocate, then fill — and the two walks disagreed
+  // about whether `-n 2` consumes the `2`, so `tail -n 2 file` allocated two slots and wrote one,
+  // leaving a phantom `""` that reached `openStream` as an empty path. A scratch array of the
+  // largest it could be, then a copy of exactly what was written, cannot drift that way.
+  string[] scratch = string[argv.len()](fill: "");
+  i32 at = 0;
+  string[] pairs = string[argv.len()](fill: "");
+  i32 np = 0;
+
+  string flags = "";
+  i32 num = 0;
+  bool hasNum = false;
+  string numSign = "";
+  string badNum = "";
+  string missingValue = "";
+  string longOpt = "";
+  i32 i = first;
+  bool optionsOver = false;
+  while (i < argv.len()) {
+    string s = argv[i];
+    // `--` ends the options, as it does everywhere else. Without it an operand beginning with a
+    // dash could not be named at all: `box cat -- -x` treated both arguments as flags, left `rest`
+    // empty, and `cat` read standard input and succeeded — the file never opened and nothing said
+    // so. Everything after it is an operand, including a later `--`.
+    if (!optionsOver && s == "--") { optionsOver = true; i++; continue; }
+    if (optionsOver || !isFlag(s)) { scratch[at] = s; at++; i++; continue; }
+    u8[] b = s.toBytes();
+    // `--name` and `--name=value`: recorded, not decomposed. `--` itself was taken above.
+    if (b[1] == '-') {
+      if (longOpt == "") { longOpt = s; }
+      i++;
+      continue;
+    }
+    if (b[1] >= '0' && b[1] <= '9') {
+      num = atoi(string.fromBytes(slice(b, 1, b.len())));          // -5
+      hasNum = true;
+    } else {
+      i32 k = 1;
+      while (k < b.len()) {
+        i32 letter = b[k];
+        flags = flags + string.fromBytes(slice(b, k, k + 1));
+        if (!takesValue(name, letter)) { k++; continue; }
+
+        // Attached — `-d,`, `-f2` — is the rest of this argument, and it ends the argument: a value
+        // cannot be followed by more flags, or `-d,v` would be a comma and a `v`.
+        if (k + 1 < b.len()) {
+          string attached = string.fromBytes(slice(b, k + 1, b.len()));
+          pairs[np] = valueOf(letter, attached);
+          np++;
+          if (takesNumber(name, letter)) {
+            if (numeric(attached)) {
+              numSign = signOf(attached);
+              num = magnitude(attached);
+              hasNum = true;
+            } else { badNum = attached; }
+          } else if (allDigits(attached)) { num = atoi(attached); hasNum = true; }
+          k = b.len();
+          continue;
+        }
+        // Detached — `-d ,`, `-n 5` — is the next argument, whatever it looks like. Consuming it here
+        // is what keeps it out of `rest`, where it would be indistinguishable from a filename.
+        if (i + 1 < argv.len()) {
+          string detached = argv[i + 1];
+          pairs[np] = valueOf(letter, detached);
+          np++;
+          if (takesNumber(name, letter)) {
+            if (numeric(detached)) {
+              numSign = signOf(detached);
+              num = magnitude(detached);
+              hasNum = true;
+            } else { badNum = detached; }
+          } else if (allDigits(detached)) { num = atoi(detached); hasNum = true; }
+          i++;
+        } else {
+          // **A flag that takes a value, at the end of the line.** `head -n` and `fold -w` were
+          // *ignored* here: the loop ran out of arguments, the flag was recorded with no value, and the
+          // applet used its default — so `head -n` printed ten lines and exited 0 where GNU refuses.
+          // Recorded rather than reported, because `Args` has no `Core` to warn through.
+          missingValue = string.fromBytes(slice(b, k, k + 1));
+        }
+        k++;
+      }
+    }
+    i++;
+  }
+
+  string[] rest = string[at](fill: "");
+  for (i32 k = 0; k < at; k++) { rest[k] = scratch[k]; }
+  string[] values = string[np](fill: "");
+  for (i32 k = 0; k < np; k++) { values[k] = pairs[k]; }
+  string[] own = string[argv.len() - first > 0 ? argv.len() - first : 0](fill: "");
+  for (i32 k = first; k < argv.len(); k++) { own[k - first] = argv[k]; }
+  return Args(name, flags, num, hasNum, numSign, badNum, rest, values, argv, own, missingValue, longOpt);
+}
+
+/**
+ * Which of an applet's flags take a value — the letters, in either spelling.
+ *
+ * A table rather than a rule, because the same letter means both things in different programs: `-n` is
+ * a count in `head` and `tail` and a boolean in `grep` and `sort`. It used to be a rule ("only `-n`,
+ * and only when the next argument is all digits"), and the cost was two silent wrong answers from one
+ * line: `grep -n 123 file` put 123 in `num`, dropped `n` from the flags, and searched for `file`.
+ *
+ * Anything absent here is a boolean, and its value — if somebody writes one — stays an operand. The
+ * cost of forgetting a letter is a usage error rather than a wrong answer, which is the right way
+ * round: `cut -f 1` was refused with a usage message for exactly this reason before the table existed.
+ *
+ * GNU's spellings are what these are: `cut -d, -f2` and `cut -d , -f 2` are the same command, and
+ * `fold -w 40` is how `fold` is documented — `-40` works here too, and works nowhere else.
+ */
+/**
+ * Whether this option's value is a *number*, as opposed to a delimiter or a field list.
+ *
+ * Separate from `takesValue` because the two ask different things: `cut -d` takes a value and a comma is
+ * a perfectly good one, while `head -n` takes a value that has to be a number and `x` is a mistake. The
+ * parser could not tell them apart, so it quietly ignored every value it could not read as digits.
+ */
+bool takesNumber(string name, i32 letter) {
+  // `-c` counts bytes where `-n` counts lines; everything else about them is the same.
+  if (name == "head" || name == "tail") { return letter == 'n' || letter == 'c'; }
+  if (name == "shuf" || name == "strings") { return letter == 'n'; }
+  if (name == "fold") { return letter == 'w'; }
+  if (name == "split") { return letter == 'l'; }
+  if (name == "base64" || name == "base32") { return letter == 'w'; }
+  return false;
+}
+
+/** A number in any of GNU's three forms: `2`, `+2`, `-2`. */
+bool numeric(string v) {
+  u8[] b = v.toBytes();
+  i32 i = 0;
+  if (i < b.len() && (b[i] == '+' || b[i] == '-')) { i++; }
+  if (i >= b.len()) { return false; }
+  for (; i < b.len(); i++) {
+    if (b[i] < '0' || b[i] > '9') { return false; }
+  }
+  return true;
+}
+
+/** Which of GNU's three forms a count was written in. */
+string signOf(string v) {
+  if (v.len() == 0) { return ""; }
+  string first = v.slice(0, 1);
+  return first == "+" || first == "-" ? first : "";
+}
+
+/** A count without its sign. */
+i32 magnitude(string v) {
+  i32 n = atoi(v);
+  return n < 0 ? -n : n;
+}
+
+bool takesValue(string name, i32 letter) {
+  if (name == "head" || name == "tail") { return letter == 'n' || letter == 'c'; }
+  if (name == "shuf" || name == "strings") { return letter == 'n'; }
+  // `-b` and `-c` take a list too, and were missing here — so `cut -c2-4` parsed as the four flags
+  // `c`, `2`, `-`, `4` and was refused for the wrong reason entirely.
+  if (name == "cut") { return letter == 'd' || letter == 'f' || letter == 'b' || letter == 'c'; }
+  if (name == "fold") { return letter == 'w'; }
+  if (name == "split") { return letter == 'l'; }
+  if (name == "base64" || name == "base32") { return letter == 'w'; }
+  return false;
+}
+
+/**
+ * GNU's sentence for a numeric option's value that is not a number.
+ *
+ * Each tool words it differently and the differences are not guessable — `head` says "invalid number of
+ * lines", `fold` says "columns", `shuf` says "invalid line count" and `strings`, being binutils rather
+ * than coreutils, says "invalid integer argument" with no quotes at all. Read off the installed tools
+ * rather than remembered; `test/box.test.ts` compares them. No trailing newline: `core.warn` adds one.
+ *
+ * **Plain apostrophes, not typographic ones.** GNU quotes with `‘x’` in a UTF-8 locale and `'x'` under
+ * `LC_ALL=C`, and `LC_ALL=C` is what this repo compares in — `packages/sh/test/differential.test.ts`
+ * fixes it so `sort` compares bytes, and every other diagnostic here already uses apostrophes.
+ */
+export string badNumberMessage(Args a) {
+  if (a.name == "strings") { return "strings: invalid integer argument " + a.badNum; }
+  // Which flag carried the value decides the noun: GNU says "bytes" for `-c` and "lines" for `-n`, and
+  // the same tool says both.
+  string what = has(a, 'c') ? "bytes" : "lines";
+  if (a.name == "fold") { what = "columns"; }
+  if (a.name == "shuf") { return "shuf: invalid line count: '" + a.badNum + "'"; }
+  return a.name + ": invalid number of " + what + ": '" + a.badNum + "'";
+}
+
+/** One entry of `Args.values`: the letter, then its value. */
+string valueOf(i32 letter, string value) {
+  return string.fromBytes(u8[1](fill: letter)) + value;
+}
+
+/**
+ * The value of a flag that takes one: the `,` of `-d,` or of `-d ,`.
+ *
+ * Both spellings, now that `takesValue` says which letters have one. The detached form used to be
+ * refused — the parser could not tell a value from a filename, so `cut -f 2` reached `cut` as no value
+ * at all and got a usage message naming the attached spelling. That message was honest and the
+ * behaviour was still wrong: `-f 2` is how everybody writes it.
+ *
+ * The scan over `argv` remains as the fallback, for an applet whose letter is not in the table and
+ * which asks anyway — that answers the attached spelling, which is all it could ever have got.
+ */
+export string flagValue(Args a, i32 letter) {
+  for (i32 i = 0; i < a.values.len(); i++) {
+    u8[] b = a.values[i].toBytes();
+    if (b.len() >= 1 && b[0] == letter) { return string.fromBytes(slice(b, 1, b.len())); }
+  }
+  // From 0, which is safe under both layouts: an applet name never begins with a dash,
+  // so `box`'s extra leading argument cannot be mistaken for a flag.
+  for (i32 i = 0; i < a.argv.len(); i++) {
+    u8[] b = a.argv[i].toBytes();
+    if (b.len() < 2 || b[0] != '-' || b[1] != letter) { continue; }
+    if (b.len() > 2) { return string.fromBytes(slice(b, 2, b.len())); }
+  }
+  return "";
+}
+
+bool isFlag(string s) {
+  u8[] b = s.toBytes();
+  return b.len() > 1 && b[0] == '-';
+}
+
+bool allDigits(string s) {
+  u8[] b = s.toBytes();
+  if (b.len() == 0) { return false; }
+  for (i32 i = 0; i < b.len(); i++) { if (b[i] < '0' || b[i] > '9') { return false; } }
+  return true;
+}

@@ -1,0 +1,66 @@
+// The names in a directory, or the path itself when it is a file.
+//
+// **Sorted, and without the names beginning with a dot** — which is what `ls` does, and what this did not.
+// `readDir`'s order is the filesystem's, so the output differed from the tool this imitates on any
+// directory with more than one entry, and nothing compared them: replacing this whole function's body with
+// a default left `packages/box`'s suite green (wac-mono 0005). It is compared against `ls -1` now.
+//
+// `-a`, `-l` and the rest are **not implemented**, and a flag is refused rather than ignored. Ignoring is
+// what every applet in this package does with a letter it does not know, and for `ls` that is the
+// difference between "hidden files are not shown" and "you asked for them and were not told no".
+
+import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 ls(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.flags != "") {
+    core.warn(a.name + ": -" + a.flags + ": not implemented — this ls takes no options");
+    return 2;
+  }
+  string path = a.rest.len() < 1 ? "." : a.rest[0];
+  string[]? names = fs.readDir(path);
+  if (names is null) {
+    // Not a directory, not there, or not permitted. The comment here used to say the application could not
+    // tell "by design" — it can now: `Stat` carries a fault, so a path this host cannot name and a path
+    // with nothing at it are different answers rather than the same `exists = false`. wac-mono 0065.
+    Stat st = fs.stat(path);
+    // **A directory that is there and could not be listed is a failure, not a name.** This said
+    // `exists` and printed the path, which is right for a *file* — `ls f` prints `f` — and was wrong
+    // for a directory whose listing was refused: `chmod 000 d; ls d` printed `d` and exited 0, where
+    // GNU says "cannot open directory 'd': Permission denied" and exits 2. A wrong answer reported as
+    // success, from the most ordinary permission a person can set.
+    //
+    // `readDir` cannot say *why* — it answers `string[]?`, and a null carries no reason — so the
+    // reason comes from `stat`, which can. That is the same route this branch already took for a path
+    // that is not there at all.
+    if (st.exists && st.isDir) {
+      core.warn(a.name + ": cannot open directory '" + path + "': " + st.words("Permission denied"));
+      return 2;
+    }
+    if (st.exists) { core.log(path); return 0; }
+    // GNU's frame and GNU's words: `ls: cannot access 'f/g': Not a directory`, which the shell's
+    // *builtin* `ls` next door has printed since 0067 and this applet did not. It said `ls: f/g: cannot
+    // list` — an invented phrase, for a fault the category can name — and `ls` is both a builtin and an
+    // applet, so which of the two a person saw depended on how the shell was built.
+    core.warn(a.name + ": cannot access '" + path + "': " + st.words("No such file or directory"));
+    return 2;
+  }
+  string[] found = names!;
+  // Byte order, which is `ls` under `LC_ALL=C` — the environment every comparison in this repo uses. A
+  // locale-aware collation is a different thing and is not implemented.
+  u8[][] shown = u8[][found.len()](fill: u8[0]());
+  i32 n = 0;
+  for (i32 i = 0; i < found.len(); i++) {
+    u8[] name = found[i].toBytes();
+    if (name.len() > 0 && name[0] == '.') { continue; }
+    shown[n] = name;
+    n++;
+  }
+  u8[][] sorted = mergeSortWith(shown, n, cmpBytes);
+  for (i32 i = 0; i < n; i++) { core.log(string.fromBytes(sorted[i])); }
+  return 0;
+}

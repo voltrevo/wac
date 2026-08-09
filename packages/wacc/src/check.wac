@@ -1,0 +1,3427 @@
+// Rung 3, first slice: the type of a returned literal against the function's declared return type.
+//
+// The rung is 3,190 reference lines and ~210 distinct messages. This is one of them, chosen because
+// it is the smallest diagnostic that still needs everything a type checker needs — a declaration
+// walked for its signature, a body walked for a statement nested arbitrarily deep, a type inferred
+// from an expression, the two compared, and a position reported that a caller can point at.
+//
+// ## Two rules, because the language has two
+//
+// A returned **name** must have the declared type *exactly*: `return p` where `p` is an `i64` is an
+// error from an `i32` function, and `f32` from `f64` is too. A returned **literal** is not a value of
+// some type that has to match — it is polymorphic over a family, and any of `i32 i64 u32 u64` accepts
+// an integer literal.
+//
+// Modelling only the family is what the first version did, and the parameter grid found it: 58 of 72
+// rejections caught, the missing fourteen all within a family. Modelling only exact types would be
+// worse, because it would report `return 1` from an `i64` as an error the reference does not.
+//
+// ## Why a subset is the point
+//
+// Everything this slice cannot type — a call, a member, arithmetic, a name from another module — is
+// silence rather than a guess. It reports a subset of the reference and never a superset, which is
+// the only property that lets a partial checker be compared against a complete one at all.
+//
+// ## Positions
+//
+// The reference reports the **returned expression**, not the `return` keyword:
+//
+//     export i32 main() { return "x"; }
+//     return: expected i32, found string   @ 1:28
+//
+// Column 28 is the `"`, column 21 is the `r` of `return`. Every AST node here carries its own line
+// and column, so this is `e.line, e.col` and not arithmetic.
+
+import { lex, tokenStride } from "./lex.wac";
+import {
+  kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
+  kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
+  kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde,
+} from "./kinds.wac";
+import {
+  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt, StmtKind,
+  Ty, TyKind,
+} from "./ast.wac";
+
+/** A returned value whose type cannot be the declared one. */
+export i32 errReturnTypeMismatch() { return 1; }
+/** A non-void function that can reach its closing brace. */
+export i32 errMissingReturn() { return 2; }
+/**
+ * A variable initialised with something that cannot be its declared type.
+ *
+ * A separate code from the return mismatch because the reference words them differently — *"type
+ * mismatch: expected i32, got string"* against *"return: expected i32, found string"* — and rung 3's
+ * comparison is by code and position, so two families that a caller could tell apart should not
+ * arrive here as one.
+ */
+export i32 errInitTypeMismatch() { return 3; }
+/** Two operands of an arithmetic operator that are not the same type. */
+export i32 errOperandMismatch() { return 4; }
+/** An argument that cannot be the parameter it is passed to. */
+export i32 errArgumentMismatch() { return 5; }
+/**
+ * An expression that has to be `bool` and is not.
+ *
+ * Two of the reference's messages, kept as one code because they are one rule in two positions:
+ * *"'&&' requires bool operands, got i32"* and *"condition must be bool"*. Both say the same thing —
+ * this expression is used where only a boolean can go — and nothing a caller does with the diagnostic
+ * would distinguish them.
+ */
+export i32 errNotBool() { return 6; }
+/** `==` or `!=` on a reference type, where the language wants `is`. */
+export i32 errNotComparable() { return 7; }
+/** A construction argument that cannot be the field it fills. */
+export i32 errFieldMismatch() { return 8; }
+/** A nullable value where a non-null one is required. */
+export i32 errNullableToNonNull() { return 9; }
+/**
+ * The three ways a write can be refused, kept apart because the reference keeps them apart.
+ *
+ * *"cannot assign to const variable 'n'"*, *"cannot write to const field 'k'"* and *"cannot write
+ * through const reference"* say different things about where the constness lives — on the binding,
+ * on the field, or on the path to it — and a caller fixing one would not fix the others.
+ */
+export i32 errConstVariable() { return 10; }
+export i32 errConstField() { return 11; }
+export i32 errConstReference() { return 12; }
+/** A static method that the struct does not have. */
+export i32 errNoStaticMethod() { return 13; }
+/** An instance method that the struct does not have. */
+export i32 errNoMethod() { return 14; }
+/** A non-const method called through a const receiver. */
+export i32 errNonConstThroughConst() { return 15; }
+/** A cast written with an operator the conversion does not take. */
+export i32 errWrongCastOp() { return 16; }
+/** Two parameters of one function with the same name. */
+export i32 errDuplicateParam() { return 17; }
+/** An array element or fill that cannot be the array's element type. */
+export i32 errArrayElement() { return 18; }
+/** A builtin called with the wrong number of arguments. */
+export i32 errBuiltinArity() { return 19; }
+/** A builtin argument of the wrong type. */
+export i32 errBuiltinArg() { return 20; }
+/** A name used where nothing declares it. */
+export i32 errUndefinedName() { return 35; }
+/** A `void` where a type is needed. */
+export i32 errVoidType() { return 36; }
+/** A `return` that disagrees with the function's own `void`ness, either way. */
+export i32 errReturnValueness() { return 37; }
+/** An operator given something it cannot work on. */
+export i32 errOperandKind() { return 38; }
+/** A field read from something that has no such field, or no fields at all. */
+export i32 errNoSuchField() { return 39; }
+/** A member reached through a nullable without unwrapping it. */
+export i32 errThroughNullable() { return 40; }
+/** An index into something that is not an array, or with something that is not an index. */
+export i32 errIndex() { return 41; }
+/** A ternary whose branches cannot be the same type. */
+export i32 errTernaryBranches() { return 42; }
+/** `is` or `!` applied to something the question does not make sense for. */
+export i32 errReferenceOp() { return 43; }
+/** A `switch` on something it cannot switch on. */
+export i32 errSwitchSubject() { return 44; }
+/** A named construction naming a field the struct does not have, or leaving one out. */
+export i32 errNamedField() { return 45; }
+/** A float literal too large for the type it is going into. */
+export i32 errFloatRange() { return 50; }
+
+/** A cast between two types that are already the same. */
+export i32 errRedundantCast() { return 46; }
+/** Calling something that is not a function, or naming something that does not exist to call. */
+export i32 errNotCallable() { return 47; }
+/** A method named without calling it. */
+export i32 errMethodAsValue() { return 48; }
+/** A struct's name used where a value belongs. */
+export i32 errStructAsValue() { return 49; }
+/** A method that hides a parent's without saying `override`. */
+export i32 errOverrideMissing() { return 21; }
+/** `override` on a method no parent declares. */
+export i32 errOverrideSpurious() { return 22; }
+/** `++` or `--` on something that is not an integer. */
+export i32 errIncrType() { return 23; }
+/** `>>>` on a type where it says nothing, or on a non-integer. */
+export i32 errShiftOp() { return 24; }
+/** Positional construction with the wrong number of arguments. */
+export i32 errCtorArity() { return 25; }
+/** A packed type in a position that has no slot for one. */
+export i32 errPackedPosition() { return 26; }
+/** A write through a string index — strings are immutable. */
+export i32 errStringIndexWrite() { return 27; }
+/** A default construction of something that has no default value. */
+export i32 errNoDefault() { return 28; }
+/** A non-null field that refers back to its own struct. */
+export i32 errRecursiveField() { return 29; }
+/** `as` where the conversion is a downcast and may fail. */
+export i32 errDowncast() { return 30; }
+/** `break` or `continue` with nothing to leave. */
+export i32 errNoLoop() { return 31; }
+/** A call with the wrong number of arguments. */
+export i32 errCallArity() { return 32; }
+/** A nullable packed type, which has no representation. */
+export i32 errPackedNullable() { return 33; }
+/** A module-level `const` whose value cannot be computed at compile time. */
+export i32 errNotCompileTime() { return 34; }
+
+/**
+ * A type is its **canonical name**: `"i32"`, `"P"`, or `""` for one this slice cannot name.
+ *
+ * It was a small integer per primitive, which was enough while every type was a primitive and became
+ * the limit the moment structs mattered. A name costs a string compare where an id cost an integer
+ * one, and buys the whole rest of the type system for nothing: two struct types differ exactly when
+ * their names do, and "is this a reference type" is "is this name not a primitive".
+ *
+ * `""` is *unknown*, and unknown is silence. That is different from a type that exists and fits
+ * nothing — `u8` cannot be a return type at all — which is a primitive with a name like any other and
+ * is refused by `acceptsLiteral` and by never equalling anything a caller can produce.
+ */
+export string typeNone() { return ""; }
+
+/** Whether a name is one of the language's primitives, as opposed to a struct, enum or import. */
+export bool isPrimitiveName(string n) {
+  return n == "i32" || n == "i64" || n == "u32" || n == "u64" ||
+         n == "f32" || n == "f64" || n == "bool" || n == "string" ||
+         n == "u8" || n == "u16" || n == "i8" || n == "i16";
+}
+
+/**
+ * Whether `==` and `!=` are allowed on this type.
+ *
+ * They are not, on a reference type: the reference answers `'==' not allowed on reference type P —
+ * use 'is' for identity`, and it says so even when both sides are the same `P`, because the question
+ * is identity rather than equality. `string` is the exception the language makes — two strings
+ * compare by value — which is why this asks about the name rather than about reference-ness.
+ */
+/**
+ * Whether a function with this return type must return a value.
+ *
+ * `void` is the only type that means *no value*, and under the old id model it came back as "unknown"
+ * and so was excluded by accident. Now that a type is its name, `void` is a name like any other and
+ * has to be excluded on purpose — which is better, because the exclusion is now a statement about
+ * `void` rather than a side effect of not modelling it.
+ */
+export bool returnsAValue(string n) { return n != "" && n != "void"; }
+
+/**
+ * Whether `from` to `to` loses nothing, so plain `as` is the operator.
+ *
+ * Measured, not derived. There is no tidy formula: `u32 -> u64` is lossless and `i32 -> u64` is not,
+ * because the first cannot be negative; `f32 -> f64` is and `i64 -> f64` is not, because 53 bits of
+ * mantissa do not hold 64 of integer. A rule invented to cover the first six would have been wrong
+ * about the seventh, so this is the set the reference agrees to, and the grid in
+ * `test/typecheck.test.ts` re-derives it from the reference on every run rather than trusting it.
+ */
+bool losslessCast(string from, string to) {
+  // A `bool` widens to every numeric type and needs no help doing it — `x as! i32` on a bool is
+  // *"lossy cast not needed"*. The other direction is lossy, and takes `as!` or `as~` but not `as@`:
+  // there is no raw conversion to a bool, because the bit pattern is not the question.
+  if (from == "bool") {
+    return to == "i32" || to == "i64" || to == "u32" || to == "u64" || to == "f32" || to == "f64";
+  }
+  if (from == "i32") { return to == "i64" || to == "f64"; }
+  if (from == "u32") { return to == "i64" || to == "u64" || to == "f64"; }
+  if (from == "f32") { return to == "f64"; }
+  return false;
+}
+
+/**
+ * Whether `as@` — reinterpret the bits — is available for this conversion.
+ *
+ * Also measured. It is close to "the target is an integer no wider than the source", and that rule
+ * is wrong for `f64 -> i64`, which the reference refuses while allowing `f64 -> i32`. Rather than
+ * carry a formula with an exception, this carries the pairs.
+ */
+bool rawCast(string from, string to) {
+  if (from == "i32") { return to == "u32"; }
+  if (from == "u32") { return to == "i32"; }
+  if (from == "i64") { return to == "i32" || to == "u32" || to == "u64"; }
+  if (from == "u64") { return to == "i32" || to == "u32" || to == "i64"; }
+  if (from == "f32" || from == "f64") { return to == "i32" || to == "u32"; }
+  return false;
+}
+
+/** Whether `s` ends with `suffix`. wac has no string method for it. */
+bool endsWith(string s, string suffix) {
+  u8[] a = s.toBytes();
+  u8[] b = suffix.toBytes();
+  if (b.len() > a.len()) { return false; }
+  for (i32 i = 0; i < b.len(); i++) {
+    if (a[a.len() - b.len() + i] != b[i]) { return false; }
+  }
+  return true;
+}
+
+/**
+ * The template name in an instantiation — `Box` in `Box<i32>` — or `""` when it is not one.
+ *
+ * Everything the checker knows about a generic is recorded under the template, because that is the
+ * only place its fields are written down. So every lookup that takes an owner has to come back here
+ * first, and the type arguments are what it substitutes afterwards.
+ */
+string genericBase(string t) {
+  if (!endsWith(t, ">")) { return ""; }
+  u8[] a = t.toBytes();
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] == 60) {
+      u8[] out = u8[i]();
+      for (i32 j = 0; j < i; j++) { out[j] = a[j]; }
+      return string.fromBytes(out);
+    }
+  }
+  return "";
+}
+
+/**
+ * The type arguments of an instantiation, split at the commas that are not inside another one.
+ *
+ * `Pair<Vec<i32>, f64>` has two arguments and four commas' worth of temptation to get this wrong, so
+ * the split counts `<` and `>` depth rather than looking for a separator.
+ */
+string[] genericArgs(string t) {
+  string base = genericBase(t);
+  if (base == "") { return string[0](); }
+  u8[] a = t.toBytes();
+  i32 start = base.toBytes().len() + 1;
+  i32 end = a.len() - 1;
+  i32 n = 1;
+  i32 depth = 0;
+  for (i32 i = start; i < end; i++) {
+    if (a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+  }
+  string[] out = string[n]();
+  i32 at = 0;
+  i32 from = start;
+  depth = 0;
+  for (i32 i = start; i <= end; i++) {
+    bool cut = i == end;
+    if (i < end) {
+      if (a[i] == 60) { depth = depth + 1; }
+      else if (a[i] == 62) { depth = depth - 1; }
+      else if (a[i] == 44 && depth == 0) { cut = true; }
+    }
+    if (!cut) { continue; }
+    i32 lo = from;
+    while (lo < i && a[lo] == 32) { lo = lo + 1; }
+    u8[] piece = u8[i - lo]();
+    for (i32 j = 0; j < piece.len(); j++) { piece[j] = a[lo + j]; }
+    out[at] = string.fromBytes(piece);
+    at = at + 1;
+    from = i + 1;
+  }
+  return out;
+}
+
+/** The template an instantiation is of — `Box` for `Box<i32>` — or the type itself when it is not one. */
+string templateOf(string t) {
+  string base = genericBase(t);
+  return base == "" ? t : base;
+}
+
+/**
+ * A type written inside a generic, read in the world of one of its instantiations.
+ *
+ * `T` inside `Box<T>` is `i32` when the owner is `Box<i32>`, and `T[]` is `i32[]` — the suffixes come
+ * along, because a parameter can appear under any number of them. A type that mentions no parameter
+ * comes back unchanged, which is most of them.
+ *
+ * Returns unknown when the owner is not an instantiation but the written type still names a
+ * parameter: that is a generic's member read without knowing what it was instantiated with, and
+ * there is no answer to give.
+ */
+string substituteType(C c, string owner, string written) {
+  string base = genericBase(owner);
+  string template = base == "" ? owner : base;
+  i32 si = c.structAt(template);
+  if (si < 0 || c.structParamCount[si] == 0) { return written; }
+
+  // Peel `[]` and `?` off, substitute the core, and put them back in the order they came off.
+  string core = written;
+  string suffix = "";
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    else { break; }
+  }
+
+  string[] args = genericArgs(owner);
+  for (i32 i = 0; i < c.structParamCount[si]; i++) {
+    if (c.structParamNames[c.structParamAt[si] + i] != core) { continue; }
+    if (i >= args.len()) { return typeNone(); }
+    return args[i] + suffix;
+  }
+  return written;
+}
+
+/** `s` without its last `n` bytes. */
+string dropLast(string s, i32 n) {
+  u8[] a = s.toBytes();
+  if (n > a.len()) { return ""; }
+  u8[] out = u8[a.len() - n]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = a[i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * Whether a type is held *by value* — a number or a boolean.
+ *
+ * The concept `isPrimitiveName` keeps getting used for and is not: `string` is in that list, because
+ * the list is about how a type is **passed**, and a string is nonetheless a reference. It can be
+ * null, so `s is null` is a fair question; it can be cast to itself, so `s as string` is not
+ * redundant; it has methods, so `s.slice(…)` is not a call on something with none.
+ *
+ * Three rules have now been written with `isPrimitiveName` where they meant this, and each reported
+ * working code until it was corrected. Naming the distinction is cheaper than remembering it.
+ */
+bool isValueType(string n) { return isPrimitiveName(n) && n != "string"; }
+
+/** Whether a type is one of the integers, which is what the bitwise operators and `~` demand. */
+bool isIntegerName(string n) {
+  return n == "i32" || n == "i64" || n == "u32" || n == "u64";
+}
+
+/** Whether a type is nullable, which is one of the ways to have a default value: null. */
+bool isNullableName(string n) { return endsWith(n, "?"); }
+
+/** The type inside a `T?`, or `""` when it is not one. */
+string withoutNull(string n) {
+  if (!endsWith(n, "?")) { return ""; }
+  return dropLast(n, 1);
+}
+
+/**
+ * Whether a value of type `got` may be where a `want` is expected.
+ *
+ * Not equality, because the language has one widening this slice can see: a non-null value goes into
+ * a nullable slot, so `P? q = p;` is legal for a `P`. The other direction is not — `P q = p;` for a
+ * `P?` is *"cannot assign nullable to non-null"* — but that is a **different family** with its own
+ * message, so this answers `true` for it and stays quiet. Saying nothing about a program the
+ * reference rejects is a subset checker doing its job; saying the wrong thing about it is not.
+ */
+export bool assignable(C c, string want, string got) {
+  if (want == "" || got == "") { return true; }
+  if (want == got) { return true; }
+  if (withoutNull(want) == got) { return true; }
+  // A nullable source is a hatch **only when its base would fit**. `P?` into a `P` is the
+  // nullable-into-non-null family and reports there; `P?` into an `i32` is an ordinary mismatch and
+  // was silent for as long as this said "any nullable is assignable to anything". The sweep found it
+  // forty times over — one cell per (nullable type, unrelated slot) — which is what a blanket
+  // exemption looks like from the outside: not a wrong answer anywhere, just no answer at all.
+  // Both nullable: the question is entirely about the bases, and `Circle?` goes into a `Shape?` for
+  // the same reason a `Circle` goes into a `Shape`. Unwrapping only the source compared `Shape?`
+  // against `Circle` and called a working program wrong — the reference corpus caught it where the
+  // sweep did not, because the sweep's accepted half has no nullable-child-into-nullable-parent cell.
+  if (isNullableName(want) && isNullableName(got)) {
+    return assignable(c, withoutNull(want), withoutNull(got));
+  }
+  if (isNullableName(got)) { return assignable(c, want, withoutNull(got)); }
+  // A child goes into a parent's slot without a cast; the other direction is the downcast that needs
+  // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
+  // missed because nothing in the spec corpus assigns a child to a parent.
+  if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
+  // `anyref` holds any **reference**: a struct, an array, a string, a nullable one of those. Not a
+  // primitive — `anyref r = someI32` is a mismatch — so this is not simply "accepts everything".
+  if (want == "anyref") { return isReferenceType(c, got); }
+  return false;
+}
+
+/** Whether a type is held by reference, which is what `anyref` accepts and primitives are not. */
+bool isReferenceType(C c, string t) {
+  string core = withoutNull(t);
+  string at = core == "" ? t : core;
+  return isArrayName(at) || at == "string" || at == "anyref" || c.isStruct(at);
+}
+
+/**
+ * Whether this is specifically a nullable value going into a non-null slot.
+ *
+ * Its own diagnostic — *"cannot assign nullable to non-null"* — rather than a type mismatch, because
+ * the reference words it that way and a caller can tell them apart: one says the types are unrelated,
+ * the other says they are the same type and one of them might not be there.
+ *
+ * `assignable` still answers `true` for it, so the mismatch rules stay quiet and this reports instead
+ * of both firing at one position.
+ */
+export bool nullableIntoNonNull(string want, string got) {
+  if (want == "" || got == "") { return false; }
+  if (!endsWith(got, "?")) { return false; }
+  if (endsWith(want, "?")) { return false; }
+  return withoutNull(got) == want;
+}
+
+/** Whether `==` is refused on this type because it is a reference. Arrays are, as structs are. */
+bool isArrayName(string n) { return endsWith(n, "[]"); }
+
+/**
+ * The storage types, which WasmGC allows as array elements and nowhere else.
+ *
+ * The distinction that matters is **position**, and it took a false alarm on 113 files to see it.
+ * `u8 x = 5;` is an error — a packed type cannot be a local — while `bytes[i] = 5;` is the ordinary
+ * way every byte buffer in this repository is written, because there the `u8` is an array element and
+ * an `i32` truncates into it at the store. A rule about the type alone cannot tell those apart, and
+ * the one here was written from the return-type grid, where packed accepts nothing.
+ */
+bool isPackedName(string n) {
+  return n == "u8" || n == "u16" || n == "i8" || n == "i16";
+}
+
+export bool comparableByValue(string n) {
+  return n == "" || n == "string" || isPrimitiveName(n);
+}
+
+/** The families a literal is polymorphic over. */
+export i32 litNone() { return 0; }
+export i32 litInteger() { return 1; }
+export i32 litFloat() { return 2; }
+export i32 litBool() { return 3; }
+export i32 litString() { return 4; }
+/**
+ * `null`, which is also what an *uninitialised* declaration holds.
+ *
+ * `i32 z;` and `i32 x = null;` parse to the same thing — a `NullLit` init — and the reference gives
+ * them the same diagnostic, *"expected i32, got null"*. So the missing initialiser needs no separate
+ * rule; it is already this one.
+ */
+export i32 litNull() { return 5; }
+
+/** The checker's state: what it is reading, and what it has found. */
+export struct C {
+  u8[] src;
+  i32[] toks;
+  /**
+   * The names declared in the function being checked, and the primitive each was declared with.
+   *
+   * Two parallel arrays because wac has no map, which is the shape every symbol table in this
+   * package will have. Rebuilt per function: a name means nothing outside the one that declared it.
+   */
+  string[] names;
+  string[] types;
+  /** Whether each name was declared `const`. */
+  bool[] nameConsts;
+  i32 nameCount;
+  /** Enum names. An enum has no default value, which is the only thing recorded about one here. */
+  string[] enumNames;
+  i32 enumCount;
+  /** How many of `names` are module-level and outlive a function. */
+  i32 globalCount;
+  /**
+   * Every function in the file, and the primitives of its parameters.
+   *
+   * The first table here that outlives one function: locals are cleared per declaration, and this is
+   * not — a call names something declared elsewhere in the file, and often further down it. Flat
+   * storage because wac has no map and no growable array of structs: `funcParamAt` and
+   * `funcParamCount` index into one shared `funcParamPrims`, which is the same shape `lex.wac` uses
+   * for tokens and for the same reason.
+   */
+  /** The structs declared in this file, so a name can be known to be a reference type. */
+  string[] structNames;
+  /** Each struct's parent, or `""`. Parallel to `structNames`, so inheritance is one hop per lookup. */
+  string[] structParents;
+  /**
+   * The names of each struct's type parameters — `T` for `Box<T>`, `A` and `B` for `Pair<A, B>`.
+   *
+   * Flat, with `structParamAt` and `structParamCount` indexing into it, which is the same shape the
+   * function parameters use and for the same reason: wac has no growable array of arrays. These are
+   * what a field type written `T` is substituted *from*, so without them a generic's fields are text.
+   */
+  string[] structParamNames;
+  i32[] structParamAt;
+  i32[] structParamCount;
+  i32 structParamTotal;
+  /**
+   * Whether each struct takes type parameters.
+   *
+   * Recorded rather than inferred from an empty field table, because "generic" and "has no fields"
+   * are different facts and only one of them means *say nothing*. A generic's fields and methods are
+   * not modelled — `struct Box<T> { T v; }` has a field whose type is the parameter — so every rule
+   * that would consult them has to know to stop, and an empty table cannot tell it why it is empty.
+   */
+  bool[] structGenerics;
+  i32 structCount;
+  /**
+   * Every field of every struct, as three parallel arrays.
+   *
+   * Flat rather than nested because wac has no map and no growable array of structs, and a field
+   * lookup is rare enough that a scan costs nothing at this size. `structNames` could have held an
+   * offset and a count, as the function table does — it does not, because a field is looked up by
+   * (struct, name) rather than by position, so the offset would buy nothing.
+   */
+  /**
+   * Every method of every struct: who owns it, its name, and the two facts a call site needs.
+   *
+   * `isStatic` is "declared without `this`", which is what makes `P.mk()` legal and `p.mk()` not.
+   * `isConst` is `const this`, which decides whether a const receiver may call it.
+   */
+  string[] methodOwners;
+  string[] methodNames;
+  bool[] methodStatics;
+  bool[] methodConsts;
+  /**
+   * What each method returns, as written — `T` inside a generic, substituted at the call site.
+   *
+   * Absent until now, so a method call typed as *unknown* and every rule downstream of one stopped
+   * there: `this.getInner().mutate()` could not be refused because nothing knew what `getInner()`
+   * handed back, and `S.make` as a value had no type to mismatch against.
+   */
+  string[] methodReturns;
+  /**
+   * Each method's parameter types, flat, with `methodParamAt` and `methodParamCount` indexing in.
+   *
+   * Only a **static** method needs them: taking one as a value produces a funcref, and a funcref
+   * spells its parameters. An instance method cannot be taken as a value at all, so its parameters
+   * are recorded and never read — which is cheaper than a second table that leaves them out.
+   */
+  string[] methodParamTypes;
+  i32[] methodParamAt;
+  i32[] methodParamCount;
+  i32 methodParamTotal;
+  i32 methodCount;
+  string[] fieldOwners;
+  string[] fieldNames;
+  string[] fieldTypes;
+  /** Whether each field was declared `const`. */
+  bool[] fieldConsts;
+  i32 fieldCount;
+  string[] funcNames;
+  /** Each function's return type, so a call has one. */
+  string[] funcReturns;
+  i32[] funcParamAt;
+  i32[] funcParamCount;
+  string[] funcParamTypes;
+  /**
+   * Whether each function takes type parameters, and what they are called.
+   *
+   * A generic function's signature is written in its own parameters, which mean nothing at a call
+   * site until they are bound. Recorded **as written** now rather than blanked, because binding them
+   * is exactly what inference does — and the flag is what keeps the ordinary argument check from
+   * reading `Box<T>` as a type nobody has.
+   */
+  bool[] funcGenerics;
+  string[] funcTypeParamNames;
+  i32[] funcTypeParamAt;
+  i32[] funcTypeParamCount;
+  i32 funcTypeParamTotal;
+  i32 funcCount;
+  i32 funcParamTotal;
+  /**
+   * How many loops and switches enclose the statement being checked.
+   *
+   * On the state rather than threaded through `checkStmt`, which every rule here would otherwise have
+   * to carry to reach the two that use it. Switches count: `break` leaves one, and the reference also
+   * accepts `continue` inside one, which is measured rather than inferred from its message.
+   */
+  i32 loopDepth;
+  /**
+   * What the expression **about to be walked** is required to be, or unknown.
+   *
+   * The one piece of information that flows *down* the tree rather than up. Every other rule here
+   * reads an expression and asks what it is; a bare `Box(1.0)` cannot be asked that, because its type
+   * arguments are inferred from wherever it is going. Carried on the state rather than threaded
+   * through `checkExpr`, which forty call sites would otherwise have to pass along.
+   *
+   * Read and **cleared** at the top of `checkExpr`, so it reaches exactly one expression: the one the
+   * context set it for. A sub-expression of that one is in a position of its own, and `Box(1).get()`
+   * is the case that proves it — the receiver inherits nothing from the `return` it sits under.
+   */
+  string expected;
+  /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
+  i32[] errors;
+  i32 errorCount;
+
+  C create(u8[] src, i32[] toks, i32 capacity) {
+    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
+             string[capacity](), 0, 0,
+             string[capacity](), string[capacity](),
+             string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
+             string[capacity](), string[capacity](), bool[capacity](), bool[capacity](),
+             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](), 0, 0,
+             string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
+             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
+             string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
+             i32[capacity](), 0, 0, 0,
+             0, "",
+             i32[capacity * 3](), 0);
+  }
+
+  /**
+   * Record a declared name.
+   *
+   * A second declaration of the same name **poisons** it to `primNone` rather than replacing or
+   * keeping the first. wac scopes by block, and this slice does not track blocks — so a local
+   * shadowing a parameter, or two locals of different types in sibling blocks, would otherwise make
+   * a lookup confidently wrong and produce a diagnostic the reference does not. Poisoning costs the
+   * few names that are declared twice and keeps the checker a subset, which is the property
+   * everything here depends on.
+   */
+  void declare(this, string name, string ty) { this.declareConst(name, ty, false); }
+
+  /** The same, recording whether the binding is `const`. */
+  void declareConst(this, string name, string ty, bool isConst) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { this.types[i] = typeNone(); return; }
+    }
+    if (this.nameCount >= this.names.len()) { return; }
+    this.names[this.nameCount] = name;
+    this.types[this.nameCount] = ty;
+    this.nameConsts[this.nameCount] = isConst;
+    this.nameCount = this.nameCount + 1;
+  }
+
+  /** Whether a name was declared `const`. Unknown names are not, which is silence. */
+  bool isConstName(this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return this.nameConsts[i]; }
+    }
+    return false;
+  }
+
+  /** The type a name was declared with, or `typeNone` for one this slice never saw. */
+  /**
+   * Whether the name is bound at all, which is a different question from what its type is.
+   *
+   * A match binding is declared with an *unknown* type, so `typeOfName` answers the same for it as
+   * for a name that was never declared. The undefined-variable rule needs the distinction and nothing
+   * else does, which is why this is separate rather than a change to the other.
+   */
+  /**
+   * Retype an existing name, without the poisoning `declareConst` does on a redeclaration.
+   *
+   * Narrowing needs to say "for the length of this branch, `s` is a `Circle`" and then put it back.
+   * Declaring would mark the name unknown instead, which is the right answer for a *second*
+   * declaration and the wrong one for the same binding seen more precisely.
+   */
+  void setType(this, string name, string ty) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { this.types[i] = ty; return; }
+    }
+  }
+
+  bool isDeclaredName(const this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  string typeOfName(this, string name) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) { return this.types[i]; }
+    }
+    return typeNone();
+  }
+
+  /**
+   * Record a function's signature.
+   *
+   * A second declaration of the same name is skipped rather than poisoned. Unlike a local, two
+   * functions with one name are a program that does not compile at all — the reference says so with
+   * its own diagnostic — so there is no ambiguity to be conservative about, only a program this
+   * slice will not reach.
+   */
+  void declareFunc(this, string name, string ret, string[] paramTypes, i32 count,
+                   string[] typeParams) {
+    for (i32 i = 0; i < this.funcCount; i++) {
+      if (this.funcNames[i] == name) { return; }
+    }
+    if (this.funcCount >= this.funcNames.len()) { return; }
+    if (this.funcParamTotal + count > this.funcParamTypes.len()) { return; }
+    this.funcNames[this.funcCount] = name;
+    this.funcReturns[this.funcCount] = ret;
+    this.funcParamAt[this.funcCount] = this.funcParamTotal;
+    this.funcParamCount[this.funcCount] = count;
+    this.funcGenerics[this.funcCount] = typeParams.len() > 0;
+    this.funcTypeParamAt[this.funcCount] = this.funcTypeParamTotal;
+    this.funcTypeParamCount[this.funcCount] = typeParams.len();
+    for (i32 i = 0; i < typeParams.len(); i++) {
+      if (this.funcTypeParamTotal >= this.funcTypeParamNames.len()) { break; }
+      this.funcTypeParamNames[this.funcTypeParamTotal] = typeParams[i];
+      this.funcTypeParamTotal = this.funcTypeParamTotal + 1;
+    }
+    for (i32 i = 0; i < count; i++) {
+      this.funcParamTypes[this.funcParamTotal + i] = paramTypes[i];
+    }
+    this.funcParamTotal = this.funcParamTotal + count;
+    this.funcCount = this.funcCount + 1;
+  }
+
+  /** Record a struct declared in this file, and who it inherits from. */
+  void declareStruct(this, string name, string parent, string[] typeParams) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return; }
+    }
+    if (this.structCount >= this.structNames.len()) { return; }
+    this.structNames[this.structCount] = name;
+    this.structParents[this.structCount] = parent;
+    this.structGenerics[this.structCount] = typeParams.len() > 0;
+    this.structParamAt[this.structCount] = this.structParamTotal;
+    this.structParamCount[this.structCount] = typeParams.len();
+    for (i32 i = 0; i < typeParams.len(); i++) {
+      if (this.structParamTotal >= this.structParamNames.len()) { break; }
+      this.structParamNames[this.structParamTotal] = typeParams[i];
+      this.structParamTotal = this.structParamTotal + 1;
+    }
+    this.structCount = this.structCount + 1;
+  }
+
+  /** Which entry holds this struct, or -1. */
+  i32 structAt(const this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return i; }
+    }
+    return -1;
+  }
+
+  /** Whether this struct takes type parameters, and so is not modelled beyond its name. */
+  bool isGeneric(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return this.structGenerics[i]; }
+    }
+    return false;
+  }
+
+  /** Record one field of one struct. */
+  void declareField(this, string owner, string name, string ty) {
+    this.declareFieldConst(owner, name, ty, false);
+  }
+
+  /** The same, recording whether the field is `const`. */
+  void declareFieldConst(this, string owner, string name, string ty, bool isConst) {
+    if (this.fieldCount >= this.fieldNames.len()) { return; }
+    this.fieldOwners[this.fieldCount] = owner;
+    this.fieldNames[this.fieldCount] = name;
+    this.fieldTypes[this.fieldCount] = ty;
+    this.fieldConsts[this.fieldCount] = isConst;
+    this.fieldCount = this.fieldCount + 1;
+  }
+
+  /** A struct's declared parent, or `""`. */
+  string parentOf(this, string name) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == name) { return this.structParents[i]; }
+    }
+    return "";
+  }
+
+  /** Record one method of one struct. */
+  void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
+                     string[] params) {
+    if (this.methodCount >= this.methodNames.len()) { return; }
+    this.methodParamAt[this.methodCount] = this.methodParamTotal;
+    this.methodParamCount[this.methodCount] = params.len();
+    for (i32 i = 0; i < params.len(); i++) {
+      if (this.methodParamTotal >= this.methodParamTypes.len()) { break; }
+      this.methodParamTypes[this.methodParamTotal] = params[i];
+      this.methodParamTotal = this.methodParamTotal + 1;
+    }
+    this.methodOwners[this.methodCount] = owner;
+    this.methodNames[this.methodCount] = name;
+    this.methodStatics[this.methodCount] = isStatic;
+    this.methodConsts[this.methodCount] = isConst;
+    this.methodReturns[this.methodCount] = ret;
+    this.methodCount = this.methodCount + 1;
+  }
+
+  /**
+   * Which entry holds `owner.name` **without** inheritance, or -1.
+   *
+   * Static methods are not inherited: `Sub.make()` is an error even when `Base` declares `make` and
+   * `Sub` extends it — the reference says *"struct 'Sub' has no static method 'make'"*. That is the
+   * opposite of instance methods, which are, and it is why the two lookups are separate rather than
+   * one with a flag.
+   */
+  i32 ownMethodAt(this, string owner, string name) {
+    owner = templateOf(owner);
+    for (i32 i = 0; i < this.methodCount; i++) {
+      if (this.methodOwners[i] == owner && this.methodNames[i] == name) { return i; }
+    }
+    return -1;
+  }
+
+  /** Which entry holds `owner.name`, following the inheritance chain, or -1. */
+  i32 methodAt(this, string owner, string name) {
+    owner = templateOf(owner);
+    string at = owner;
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return -1; }
+      for (i32 i = 0; i < this.methodCount; i++) {
+        if (this.methodOwners[i] == at && this.methodNames[i] == name) { return i; }
+      }
+      at = this.parentOf(at);
+    }
+    return -1;
+  }
+
+  /**
+   * Whether `owner` has a field called `name` at all, whatever its type.
+   *
+   * Distinct from `fieldType` answering something: a funcref field has no name this slice can spell,
+   * so its type is unknown while the field plainly exists. `sh.externalNames()` calls one, and asking
+   * the type would have said "no such field" about a field two lines above it.
+   */
+  bool hasField(this, string owner, string name) {
+    string at = templateOf(owner);
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return false; }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return true; }
+      }
+      at = this.parentOf(at);
+    }
+    return false;
+  }
+
+  /** Whether `owner.name` is a const field, following the inheritance chain. */
+  bool isConstField(this, string owner, string name) {
+    string at = templateOf(owner);
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return false; }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) { return this.fieldConsts[i]; }
+      }
+      at = this.parentOf(at);
+    }
+    return false;
+  }
+
+  /** How many fields `owner` declares itself, ignoring anything inherited. */
+  i32 ownFieldCount(this, string owner) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] == owner) { n = n + 1; }
+    }
+    return n;
+  }
+
+  /** The type of `owner`'s `k`th own field, in declaration order. */
+  string ownFieldAt(this, string owner, i32 k) {
+    i32 n = 0;
+    for (i32 i = 0; i < this.fieldCount; i++) {
+      if (this.fieldOwners[i] != owner) { continue; }
+      if (n == k) { return this.fieldTypes[i]; }
+      n = n + 1;
+    }
+    return typeNone();
+  }
+
+  /**
+   * How many fields a positional construction of `owner` takes.
+   *
+   * Inherited ones included, because a construction fills them: `C(1, 2.0)` for `struct C : B` with
+   * `B { i32 b }` and `C { f64 c }` fills `b` then `c`. The parent's come **first**, which is not a
+   * guess — `C(1.0, 2.0)` puts the reference's complaint on the first argument.
+   */
+  i32 constructArity(this, string owner) {
+    i32 n = 0;
+    string at = templateOf(owner);
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return n; }
+      n = n + this.ownFieldCount(at);
+      at = this.parentOf(at);
+    }
+    return n;
+  }
+
+  /** The type of the `i`th positional field of `owner`, parents first. */
+  string constructFieldAt(this, string owner, i32 i) {
+    owner = templateOf(owner);
+    string parent = this.parentOf(owner);
+    i32 inherited = parent == "" ? 0 : this.constructArity(parent);
+    if (i < inherited) { return this.constructFieldAt(parent, i); }
+    return this.ownFieldAt(owner, i - inherited);
+  }
+
+  /**
+   * The type of `owner.name`, following the inheritance chain, or `typeNone`.
+   *
+   * A field the chain does not have is unknown rather than an error: *"struct 'P' has no field
+   * 'nope'"* is the reference's own diagnostic and a family this slice does not own. The walk is
+   * bounded by the number of structs, so a cycle in the parent chain — which the reference rejects
+   * separately — terminates here rather than hanging.
+   */
+  string fieldType(this, string owner, string name) {
+    // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
+    // template to find the field and substitutes on the way back out.
+    string at = templateOf(owner);
+    for (i32 hop = 0; hop <= this.structCount; hop++) {
+      if (at == "") { return typeNone(); }
+      for (i32 i = 0; i < this.fieldCount; i++) {
+        if (this.fieldOwners[i] == at && this.fieldNames[i] == name) {
+          return substituteType(this, owner, this.fieldTypes[i]);
+        }
+      }
+      at = this.parentOf(at);
+    }
+    return typeNone();
+  }
+
+  /**
+   * Whether this name is a struct declared here.
+   *
+   * Deliberately narrower than "not a primitive". An enum, an imported type or a generic parameter is
+   * also not a primitive, and this slice has not measured what the reference says about comparing
+   * those — so they stay unknown rather than being swept in by a rule about everything else.
+   */
+  bool isStruct(const this, string name) {
+    // An instantiation is a struct: `Box<i32>` is as much a reference type as `Box` is, and every
+    // rule that asks this question means the reference-type one. `isGeneric` stays exact, so the two
+    // together say what is wanted — a bare `Box` is the unmodelled template, `Box<i32>` is a type.
+    string at = templateOf(name);
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == at) { return true; }
+    }
+    return false;
+  }
+
+  /** Which entry holds this function, or -1. */
+  i32 funcAt(this, string name) {
+    for (i32 i = 0; i < this.funcCount; i++) {
+      if (this.funcNames[i] == name) { return i; }
+    }
+    return -1;
+  }
+
+  /**
+   * Forget every name, for the next function — except the module-level ones.
+   *
+   * A file's `const` declarations are in scope everywhere in it, so they are declared once before any
+   * body is walked and survive the clear. `globalCount` is where the per-function names start; a
+   * function's own names are the ones above it.
+   */
+  void clearScope(this) { this.nameCount = this.globalCount; }
+
+  void declareEnum(this, string name) {
+    if (this.enumCount >= this.enumNames.len()) { return; }
+    this.enumNames[this.enumCount] = name;
+    this.enumCount = this.enumCount + 1;
+  }
+
+  /** An enum has no default value, which is the only thing this pass records about one. */
+  bool isEnum(const this, string name) {
+    for (i32 i = 0; i < this.enumCount; i++) {
+      if (this.enumNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
+  void report(this, i32 code, i32 line, i32 col) {
+    if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
+    this.errors[this.errorCount * 3] = code;
+    this.errors[this.errorCount * 3 + 1] = line;
+    this.errors[this.errorCount * 3 + 2] = col;
+    this.errorCount = this.errorCount + 1;
+  }
+}
+
+/**
+ * A token's kind.
+ *
+ * `Binary.op` is a token *index*, not a kind — `print.wac` renders it with `tok(op)`, which reads the
+ * source text at that index. Comparing the index against a `kPlus()` constant compares an index to a
+ * kind and is quietly always false, which is what the first version of the operand check did: it
+ * compiled, ran, and reported nothing.
+ */
+i32 tokenKind(C c, i32 t) {
+  if (t < 0) { return -1; }
+  return c.toks[t * tokenStride()];
+}
+
+/** A token's line, for the diagnostics that name a keyword rather than a node. */
+i32 tokenLine(C c, i32 t) { return c.toks[t * tokenStride() + 3]; }
+
+/** A token's column, paired with `tokenLine`. */
+i32 tokenCol(C c, i32 t) { return c.toks[t * tokenStride() + 4]; }
+
+/** A token's source text. Primitive type names are ordinary identifiers, so this is how they are read. */
+string tokenText(C c, i32 t) {
+  if (t < 0) { return ""; }
+  i32 start = c.toks[t * tokenStride() + 1];
+  i32 len = c.toks[t * tokenStride() + 2];
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = c.src[start + i]; }
+  return string.fromBytes(out);
+}
+
+/**
+ * The canonical name of a declared type, or `typeNone` for one this slice cannot name.
+ *
+ * `Prim` and `Named` are both just their token's text — `i32` and `P` are the same question once a
+ * type is a name. An array, a nullable or a funcref is unknown: they have names (`i32[]`, `P?`) that
+ * this could spell, and nothing here compares them yet, so spelling them would be inventing a
+ * capability the rules do not have.
+ */
+export string typeOfTy(C c, Ty t) {
+  match (t.kind) {
+    case Prim(tok): { return tokenText(c, tok); }
+    case Named(tok, typeArgs): {
+      // A generic instantiation spells itself. `Box<i32>` and `Box<f64>` are different types and the
+      // model here is that a type *is* its canonical name, so the name has to carry the arguments —
+      // an earlier version returned unknown for all of them, which made every generic invisible.
+      // Invariance then costs nothing: two instantiations differ exactly when their names do.
+      string base = tokenText(c, tok);
+      if (typeArgs.len() == 0) { return base; }
+      string out = base + "<";
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        string a = typeOfTy(c, typeArgs[i]);
+        if (a == typeNone()) { return typeNone(); }
+        if (i > 0) { out = out + ", "; }
+        out = out + a;
+      }
+      return out + ">";
+    }
+    // `i32[]` and `P?` are names too, built from the name inside. An element or inner type this
+    // slice cannot spell makes the whole thing unspellable rather than half-named: `Box<i32>[]` is
+    // not `[]`.
+    case Arr(elem): {
+      string inner = typeOfTy(c, elem);
+      if (inner == typeNone()) { return typeNone(); }
+      return inner + "[]";
+    }
+    case Nullable(inner): {
+      string base = typeOfTy(c, inner);
+      if (base == typeNone()) { return typeNone(); }
+      return base + "?";
+    }
+    // A funcref spells itself the way the reference words it — `fn(i32) -> i32` — so two of them are
+    // the same type exactly when their parameters and return agree, which is what the language means
+    // by assignable here. There is no variance: `fn(bool) -> i32` does not hold a `fn(i32) -> i32`.
+    case Funcref(ret, params): {
+      string out = "fn(";
+      for (i32 i = 0; i < params.len(); i++) {
+        string pt = typeOfTy(c, params[i]);
+        if (pt == typeNone()) { return typeNone(); }
+        if (i > 0) { out = out + ", "; }
+        out = out + pt;
+      }
+      string rt = typeOfTy(c, ret);
+      if (rt == typeNone()) { return typeNone(); }
+      return out + ") -> " + rt;
+    }
+  }
+}
+
+/**
+ * Report a literal that does not fit, with the caller's own code — unless the problem is the range,
+ * which has a code of its own.
+ *
+ * Eight positions ask this question and the reference answers all of them the same way, so the choice
+ * is one function here or the same three lines eight times. `mismatch` is what the caller calls a
+ * wrong *family*; a float too large for an `f32` is a different complaint about a literal that was
+ * otherwise the right kind.
+ */
+void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
+  if (literalFits(c, want, e)) { return; }
+  if (!acceptsLiteral(want, litKindOf(e))) {
+    c.report(mismatch, line, col);
+    return;
+  }
+  // A range complaint names the **literal**, where a family mismatch names the whole expression:
+  // `i32 x = -1.5` is reported at the `-` and `f32 x = -1.0e40` at the `1`. Measured, and the pair is
+  // worth stating together, because either one alone reads as an off-by-one against the other.
+  Expr inner = innermostLiteral(e);
+  c.report(errFloatRange(), inner.line, inner.col);
+}
+
+/** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
+Expr innermostLiteral(Expr e) {
+  match (e.kind) {
+    case Unary(op, operand): { return innermostLiteral(operand); }
+    else: { return e; }
+  }
+}
+
+/**
+ * A float literal's value, read out of its text.
+ *
+ * Needed for one rule and no other: an `f32` slot refuses a literal too large to be one, and the
+ * boundary is the *value* rather than anything visible in the text — `3.4028235e38` fits and
+ * `3.4028236e38` does not, and f32's maximum written out in full with no exponent at all fits. An
+ * exponent check would have been wrong on both of those.
+ *
+ * Accumulated in `f64`, which has room to spare for the comparison. No sign: a leading `-` is a unary
+ * operator and never part of the token, which the reference's own column confirms.
+ */
+f64 floatLiteralValue(C c, i32 tok) {
+  u8[] a = tokenText(c, tok).toBytes();
+  f64 mantissa = 0.0;
+  i32 i = 0;
+  while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+    mantissa = mantissa * 10.0 + (a[i] - 48) as f64;
+    i = i + 1;
+  }
+  if (i < a.len() && a[i] == 46) {
+    i = i + 1;
+    f64 scale = 0.1;
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      mantissa = mantissa + (a[i] - 48) as f64 * scale;
+      scale = scale * 0.1;
+      i = i + 1;
+    }
+  }
+  i32 exp = 0;
+  bool negExp = false;
+  if (i < a.len() && (a[i] == 101 || a[i] == 69)) {
+    i = i + 1;
+    if (i < a.len() && (a[i] == 43 || a[i] == 45)) {
+      negExp = a[i] == 45;
+      i = i + 1;
+    }
+    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
+      exp = exp * 10 + (a[i] - 48);
+      i = i + 1;
+    }
+  }
+  // Applied by repeated multiplication, and capped: past 400 the answer is already infinity one way
+  // or zero the other, and the loop has nothing left to say.
+  if (exp > 400) { exp = 400; }
+  for (i32 e = 0; e < exp; e++) {
+    if (negExp) { mantissa = mantissa * 0.1; } else { mantissa = mantissa * 10.0; }
+  }
+  return mantissa;
+}
+
+/**
+ * Whether a literal fits the slot it is going into — the family question, plus `f32`'s range.
+ *
+ * One function so the range rule reaches every position at once. It applies in all of them, measured:
+ * an initialiser, a return, an argument, an array element, a field, an assignment. Only `f32` is
+ * checked — the reference accepts `f64 x = 1.0e400`, which is out of range for an `f64` too, and
+ * matching that is the job rather than improving on it.
+ */
+bool literalFits(C c, string want, Expr e) {
+  i32 lit = litKindOf(e);
+  if (!acceptsLiteral(want, lit)) { return false; }
+  string core = withoutNull(want);
+  string base = core == "" ? want : core;
+  if (base != "f32" || lit != litFloat()) { return true; }
+  match (e.kind) {
+    case FloatLit(tok): {
+      // f32's largest finite value plus half an ulp: anything above it rounds to infinity, and
+      // anything at or below it rounds to something an `f32` can hold.
+      return floatLiteralValue(c, tok) <= 3.4028235677973366e38;
+    }
+    // The sign is a unary operator and the magnitude is what the range is about, so this asks the
+    // same question one node down. The reference agrees: it reports at the literal, not at the `-`.
+    case Unary(op, operand): { return literalFits(c, want, operand); }
+    else: { return true; }
+  }
+}
+
+/** The family a literal expression belongs to, or `litNone` when the expression is not one. */
+export i32 litKindOf(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return litInteger(); }
+    case FloatLit(tok): { return litFloat(); }
+    case StrLit(tok): { return litString(); }
+    case BoolLit(value): { return litBool(); }
+    case NullLit: { return litNull(); }
+    // `-1.0e40` is a float literal with a sign in front, and every rule that asks this means that.
+    // Left out, the whole literal path skipped a negated one — so `f32 x = -1.0e40;` went unchecked
+    // while `f32 x = 1.0e40;` did not, which is the sort of hole that only shows up beside its twin.
+    case Unary(op, operand): {
+      i32 inner = litKindOf(operand);
+      return inner == litInteger() || inner == litFloat() ? inner : litNone();
+    }
+    else: { return litNone(); }
+  }
+}
+
+/**
+ * Whether a declared type accepts a literal of this family.
+ *
+ * The grid in `test/typecheck.test.ts` regenerates this from the reference on every run, so a
+ * disagreement fails loudly rather than sitting here as a stale table.
+ */
+export bool acceptsLiteral(string want, i32 lit) {
+  // A `T?` takes a null, and takes whatever `T` takes: `i32? n = null;` and `i32? n = 5;` are both
+  // legal. So the question for a nullable is the question for the type inside it, plus null.
+  if (endsWith(want, "?")) {
+    if (lit == litNull()) { return true; }
+    return acceptsLiteral(withoutNull(want), lit);
+  }
+  if (lit == litInteger()) {
+    return want == "i32" || want == "i64" || want == "u32" || want == "u64";
+  }
+  if (lit == litFloat()) { return want == "f32" || want == "f64"; }
+  if (lit == litBool()) { return want == "bool"; }
+  if (lit == litString()) { return want == "string"; }
+  // Nothing this slice can name is nullable. A `T?` is, and `typeOfTy` answers `typeNone` for one, so
+  // a nullable declaration never reaches here — silence rather than a wrong refusal. A struct is not
+  // nullable either: `P q = null;` is `expected P, got null`, which this now says.
+  if (lit == litNull()) { return false; }
+  return true;
+}
+
+/**
+ * The type of a non-literal expression, or `typeNone`.
+ *
+ * Only a name, resolved against the parameters and locals of the function being checked. A call, a
+ * member access or arithmetic still needs an expression typer, and silence is the honest answer for
+ * all of them.
+ */
+/**
+ * The type an assignment target has, or `typeNone`.
+ *
+ * The same walk as `typeOfExpr` over a different node family, because an lvalue is its own tree: a
+ * name, a field of one, an element of one, or an unwrapped nullable. `LUnwrap` is `x!`, which is the
+ * `T` inside a `T?` — the one place a type gets *narrower* going down the tree.
+ */
+export string typeOfLvalue(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return c.typeOfName(tokenText(c, tok)); }
+    case LField(base, nameTok): {
+      string owner = typeOfLvalue(c, base);
+      if (owner == typeNone()) { return typeNone(); }
+      return c.fieldType(owner, tokenText(c, nameTok));
+    }
+    case LIndex(base, index): {
+      string arr = typeOfLvalue(c, base);
+      if (!isArrayName(arr)) { return typeNone(); }
+      return dropLast(arr, 2);
+    }
+
+    case LUnwrap(base): {
+      string inner = withoutNull(typeOfLvalue(c, base));
+      return inner == "" ? typeNone() : inner;
+    }
+  }
+}
+
+export string typeOfExpr(C c, Expr e) {
+  match (e.kind) {
+    case Ident(tok): { return c.typeOfName(tokenText(c, tok)); }
+    // `p.x`, typed from the struct's field declarations and its parents'. The receiver is typed by
+    // this same function, so `a.b.c` works by recursion for as long as every step is nameable.
+    case Member(obj, nameTok): {
+      string owner = typeOfExpr(c, obj);
+      if (owner == typeNone()) {
+        // A **static** method named without being called is a value: a funcref of its own signature.
+        // `S.make` is a `fn() -> S`, which is why assigning it to an `i32` is an ordinary mismatch
+        // rather than the *"cannot use method as a value"* an instance method gets — a static is a
+        // function, and an instance method is not one until it has a receiver.
+        return staticMethodType(c, obj, tokenText(c, nameTok));
+      }
+      return c.fieldType(owner, tokenText(c, nameTok));
+    }
+    // A cast is its target type, whichever of the four spellings it used. The four differ in what
+    // they *permit* — see `checkCast` — and not in what they produce.
+    case Cast(op, operand, target): { return typeOfTy(c, target); }
+    /**
+     * A method call, typed by what the method says it returns.
+     *
+     * Read in the receiver's world, so `Vec<i32>.at()` declared `T at(…)` is an `i32`. A funcref call
+     * has no name to look up and stays unknown, as it always did.
+     */
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          string recvT = receiverType(c, obj);
+          if (recvT == typeNone() || recvT == "") { return typeNone(); }
+          i32 mi = c.methodAt(recvT, tokenText(c, nameTok));
+          if (mi < 0) { return typeNone(); }
+          return substituteType(c, recvT, c.methodReturns[mi]);
+        }
+        else: { return typeNone(); }
+      }
+    }
+    // `x is T` asks a question, so it answers a boolean whatever `x` and `T` are.
+    case Is(left, target, other, negated): { return "bool"; }
+    /**
+     * A binary expression, which had no arm here at all — every one of them typed as unknown, so a
+     * comparison used as a value, an arithmetic result returned, and an operand of an operand were
+     * all invisible to every rule that asks what an expression is.
+     *
+     * A comparison and the logical operators are always `bool`. Everything else is the type of its
+     * operands, taken from whichever side is not a literal: `x + 1` is an `i32` because `x` is, and
+     * the literal takes its type from the other side rather than giving one.
+     */
+    case Binary(op, left, right): {
+      i32 bk = tokenKind(c, op);
+      if (bk == kEq() || bk == kNe() || bk == kLt() || bk == kLe() || bk == kGt() || bk == kGe() ||
+          bk == kAndAnd() || bk == kOrOr()) {
+        return "bool";
+      }
+      string bl = litKindOf(left) != litNone() ? typeNone() : typeOfExpr(c, left);
+      if (bl != typeNone()) { return bl; }
+      return litKindOf(right) != litNone() ? typeNone() : typeOfExpr(c, right);
+    }
+    case Unwrap(operand): {
+      string inner = withoutNull(typeOfExpr(c, operand));
+      return inner == "" ? typeNone() : inner;
+    }
+    case Index(arr, index): {
+      string a = typeOfExpr(c, arr);
+      if (!isArrayName(a)) { return typeNone(); }
+      string elem = dropLast(a, 2);
+      // Reading a packed element **widens**: `bytes[i]` from a `u8[]` is an i32-shaped value, which
+      // is why `return this.data[i];` from an `i32` function is the ordinary way this repository
+      // reads a byte. Calling it a `u8` reported 115 files. The exact widened type is not measured,
+      // so this says nothing — the same answer, and the same reason, as a packed assignment target.
+      if (isPackedName(elem)) { return typeNone(); }
+      return elem;
+    }
+    // `!x` is a boolean; `-x` and `~x` are whatever `x` is.
+    case Unary(op, operand): {
+      if (tokenKind(c, op) == kBang()) { return "bool"; }
+      return typeOfExpr(c, operand);
+    }
+    // Both branches or nothing. A conditional whose arms disagree has a type the reference works out
+    // by unification, which this slice cannot do — and guessing one branch would be worse than
+    // silence, because the guess is right half the time and wrong in a way nothing here would catch.
+    case Ternary(cond, then, els): {
+      string t = typeOfExpr(c, then);
+      return t == typeOfExpr(c, els) ? t : typeNone();
+    }
+    // A construction is either a struct being made or a function being called — the parser cannot
+    // tell, so neither can this, and the name decides. A struct name gives the struct; a function
+    // name gives what it returns; anything else is unknown.
+    case Construct(ctype, args, named): {
+      string name = "";
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (typeArgs.len() > 0) { return typeOfTy(c, ctype); }
+          name = tokenText(c, tok);
+        }
+        else: { }
+      }
+      if (name == "") { return typeNone(); }
+      // `Box(1.0)` with no type arguments written is legal — the arguments are *inferred*, from the
+      // declared type of whatever the construction flows into, and inside the generic's own methods
+      // the bare name means the instantiation being compiled. Neither is knowable from the syntax at
+      // hand, so this says unknown rather than guessing `Box`, which would be a type nothing has.
+      if (c.isStruct(name)) { return c.isGeneric(name) ? typeNone() : name; }
+      i32 at = c.funcAt(name);
+      if (at < 0) { return typeNone(); }
+      if (c.funcGenerics[at]) { return genericCallReturn(c, at, args); }
+      return c.funcReturns[at];
+    }
+    else: { return typeNone(); }
+  }
+}
+
+/**
+ * Whether a statement list always leaves the function — the reference's *"not all code paths return
+ * a value"*.
+ *
+ * Control flow rather than types, and the second kind of thing rung 3 does. The rule is the ordinary
+ * definite-return analysis with one subtlety that the spec's own cases are mostly about:
+ *
+ * **`while (true)` leaves the function unless something can break out of it.** An infinite loop with
+ * no exit never reaches the statement after it, so a function ending in one needs no return; give it
+ * a reachable `break` and the loop can finish, so the closing brace becomes reachable again and a
+ * return is required. Four of the seven spec cases are exactly this, and they place the `break`
+ * inside a block, inside an `else if`, and inside a `match` arm — so "does this loop contain a
+ * break" has to walk as deep as the statements go.
+ *
+ * A `break` inside a **nested** loop or a `switch` belongs to that construct, not to this loop, and
+ * does not make it finite. That is why `breaksOut` stops descending at a loop or a switch and
+ * `alwaysLeaves` does not.
+ */
+bool alwaysLeaves(Stmt[] body) {
+  // **Any** statement, not the last one. An earlier `return` settles it just as well: everything
+  // after it is unreachable, so the function still always leaves. Reading only the last statement
+  // said otherwise for `{ return 1; i32 dead = 2; }`, which the reference accepts — a false alarm,
+  // and the kind that only a corpus of *accepted* programs can find.
+  for (i32 i = 0; i < body.len(); i++) {
+    if (leaves(body[i])) { return true; }
+  }
+  return false;
+}
+
+/** Whether one statement always leaves the function. */
+bool leaves(Stmt s) {
+  match (s.kind) {
+    case Return(value): { return true; }
+    case Trap: { return true; }
+    case Block(body): { return alwaysLeaves(body); }
+    // Both arms, and there must be an arm to take: an `if` with no `else` falls through when the
+    // condition is false.
+    case If(cond, then, els): {
+      return els.len() > 0 && alwaysLeaves(then) && alwaysLeaves(els);
+    }
+    case While(cond, body): { return isTrueLiteral(cond) && !breaksOut(body); }
+    case DoWhile(body, cond): { return isTrueLiteral(cond) && !breaksOut(body); }
+    // A `for` with no condition is the other spelling of `while (true)`.
+    case For(init, cond, update, body): { return (cond is null) && !breaksOut(body); }
+    // A `match` is exhaustive by construction — the language requires every variant — so it leaves
+    // when every arm does. Modelling it was not optional: six functions in this very file are a
+    // single `match` whose arms all return, and treating that as falling through reported all six.
+    case Match(subject, arms): {
+      if (arms.len() == 0) { return false; }
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (!alwaysLeaves(arms[i].body)) { return false; }
+      }
+      return true;
+    }
+    // A `switch` needs a `default` as well: without one, a subject matching no case falls straight
+    // through. A `break` in a case leaves the switch and not the function, so `alwaysLeaves` on the
+    // case body is exactly the right question.
+    case Switch(subject, cases): {
+      bool hasDefault = false;
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { hasDefault = true; }
+        if (!alwaysLeaves(cases[i].body)) { return false; }
+      }
+      return hasDefault;
+    }
+    else: { return false; }
+  }
+}
+
+/** `true`, written literally — the only condition this slice will call infinite. */
+bool isTrueLiteral(Expr e) {
+  match (e.kind) {
+    case BoolLit(value): { return value; }
+    else: { return false; }
+  }
+}
+
+/**
+ * Whether a `break` in this list belongs to the loop enclosing it.
+ *
+ * Does not descend into a nested loop or a `switch`: a `break` there is that construct's, and the
+ * outer loop is still infinite. Does descend into blocks, `if`/`else` and `match` arms, because a
+ * break in any of those is the loop's — which is what three of the spec's cases check.
+ */
+bool breaksOut(Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    if (breaksOutOf(body[i])) { return true; }
+  }
+  return false;
+}
+
+bool breaksOutOf(Stmt s) {
+  match (s.kind) {
+    case Break: { return true; }
+    case Block(body): { return breaksOut(body); }
+    case If(cond, then, els): { return breaksOut(then) || breaksOut(els); }
+    case Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        if (breaksOut(arms[i].body)) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * The operands of `+ - * / %`, which must be the same type.
+ *
+ * Three sets, and which set an operator is in was read off the reference rather than assumed:
+ *
+ *   - **`+ - * / %` and `& | ^`** answer `type mismatch in 'op': A and B` whenever the operands
+ *     differ. One rule, no exceptions among primitives.
+ *   - **`< <= > >= == !=`** answer the same. A mixed comparison against a `string` answers a
+ *     *different* message depending on which side it is on — `i32 < string` is `'<' not allowed on
+ *     reference type` while `string < i32` is `type mismatch in '<'` — but both sit at the operator,
+ *     which is the position this reports, so the distinction costs nothing here. An earlier version
+ *     excluded strings from comparisons on the strength of seeing the first message and not the
+ *     second, and lost recall for no reason. `string == string` is allowed and stays silent because
+ *     the two agree, not because of a rule about strings.
+ *   - **`&& ||`** never answer a mismatch at all. `1 && 2` is `'&&' requires bool operands`, which is
+ *     about each operand on its own rather than about the pair, so it is not this check.
+ *
+ * Shifts are in none of them: they deliberately accept mixed widths — `i64 << i32` is legal, and the
+ * friction log records a compiler bug from assuming otherwise.
+ *
+ * A literal operand is skipped rather than typed. `x + 1` is legal for any numeric `x` because the
+ * literal takes the other side's type, so demanding they agree would report exactly the code
+ * everybody writes.
+ */
+void checkExpr(C c, Expr e) {
+  string want = c.expected;
+  c.expected = typeNone();
+  match (e.kind) {
+    case Binary(op, left, right): {
+      checkExpr(c, left);
+      checkExpr(c, right);
+      i32 k = tokenKind(c, op);
+      // `>>>` is an unsigned shift, so on a type that is already unsigned it says nothing that `>>`
+      // does not — the language calls that redundant rather than harmless. On a float it has no
+      // meaning at all. Both name the operator, so both are one code here.
+      if (k == kShrU()) {
+        string st = typeOfExpr(c, left);
+        if (st == "u32" || st == "u64" || st == "f32" || st == "f64") {
+          c.report(errShiftOp(), tokenLine(c, op), tokenCol(c, op));
+        }
+      }
+      bool arith = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
+                   k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
+      // Arithmetic and bitwise operators want a number. Two booleans *agree*, so the same-type rule
+      // below has nothing to say about `a + b` — this is the question of what the operands are, which
+      // is the same distinction `&&` draws, one operator family further along.
+      string alt = typeOfExpr(c, left);
+      string art = typeOfExpr(c, right);
+      if (arith && (alt == "bool" || art == "bool" || startsWithFn(alt) || startsWithFn(art))) {
+        c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
+      }
+      // The bitwise operators want *integers*, which is a narrower demand than "numeric": `a & b` on
+      // two `f64`s is refused although the two agree, so the same-type rule below never sees it. A
+      // shift asks it of both sides separately — the value being shifted and the amount to shift by.
+      bool bitwise = k == kAnd() || k == kOr() || k == kCaret();
+      bool shift = k == kShl() || k == kShr() || k == kShrU();
+      if (bitwise || shift) {
+        string lt2 = typeOfExpr(c, left);
+        string rt2 = typeOfExpr(c, right);
+        bool badL = lt2 != typeNone() && !isIntegerName(lt2);
+        bool badR = rt2 != typeNone() && !isIntegerName(rt2);
+        if (badL || badR) { c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op)); }
+      }
+      bool sameType = k == kPlus() || k == kMinus() || k == kStar() || k == kSlash() ||
+                      k == kPercent() || k == kAnd() || k == kOr() || k == kCaret();
+      bool comparison = k == kLt() || k == kLe() || k == kGt() || k == kGe() ||
+                        k == kEq() || k == kNe();
+      // `&&` and `||` are the other rule: each operand must be a boolean on its own, which is a
+      // different question from whether the two agree. Reported at the operator, where the reference
+      // reports it, and a literal counts — `p && 1` is an error while `p && true` is not.
+      // `==` and `!=` on a struct: the language wants `is`, and says so even when both sides are the
+      // same struct, because the question is identity rather than equality. Checked before the
+      // same-type rule, which would otherwise say nothing about `P == P`.
+      if (k == kEq() || k == kNe()) {
+        string lt = typeOfExpr(c, left);
+        string rt = typeOfExpr(c, right);
+        if (c.isStruct(lt) || c.isStruct(rt) || isArrayName(lt) || isArrayName(rt)) {
+          c.report(errNotComparable(), e.line, e.col);
+          return;
+        }
+      }
+      if (k == kAndAnd() || k == kOrOr()) {
+        if (notBool(c, left) || notBool(c, right)) {
+          c.report(errNotBool(), e.line, e.col);
+        }
+        return;
+      }
+      if (!sameType && !comparison) { return; }
+      // A literal operand takes the other side's type, so `x + 1` is legal for any numeric `x` and
+      // demanding they agree would report the code everybody writes.
+      if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) { return; }
+      string a = typeOfExpr(c, left);
+      string b = typeOfExpr(c, right);
+      if (a == typeNone() || b == typeNone() || a == b) { return; }
+      c.report(errOperandMismatch(), e.line, e.col);
+    }
+    // A name that nothing declares. The most-missed family in the reference's own tests, and the last
+    // rule here to need a *complete* picture of scope rather than a fact about one construct: every
+    // binder the language has must be known, because anything missed is a false alarm on working
+    // code rather than a gap. Locals, parameters, `this` and match bindings come from the name table;
+    // functions, structs, enums, imports and the primitive type names are looked up where they live.
+    case Ident(tok): {
+      string idn = tokenText(c, tok);
+      if (!nameExists(c, idn)) { c.report(errUndefinedName(), e.line, e.col); return; }
+      // A struct's name is not a value. It reaches expression position legitimately as the receiver
+      // of a static call, and that arrives through the `Call` and `Member` arms rather than here —
+      // so an `Ident` that names a struct and nothing else is one used where a value belongs.
+      if (!c.isDeclaredName(idn) && c.isStruct(idn) && c.funcAt(idn) < 0) {
+        c.report(errStructAsValue(), e.line, e.col);
+      }
+    }
+    // `x is null` and `a is b` ask about a *reference*, so a primitive is not something they can be
+    // asked about. Both land on the `is`, which is this node's own position.
+    case Is(left, target, other, negated): {
+      checkExpr(c, left);
+      if (!(other is null)) { checkExpr(c, other!); }
+      // Phrased as "is it a **primitive**" rather than "is it not a reference". The two are not the
+      // same question: an enum, a funcref and a generic instantiation are all references, and asking
+      // the negative form reported 27 files that were doing nothing wrong. The positive form only
+      // ever fires on a type this checker can name, which is the direction to be wrong in.
+      string lt3 = typeOfExpr(c, left);
+      if (isValueType(lt3)) { c.report(errReferenceOp(), e.line, e.col); }
+    }
+    // `p!` on something that was never nullable: there is nothing to unwrap.
+    case Unwrap(operand): {
+      checkExpr(c, operand);
+      // The same caution: unwrapping is refused only when the operand is a type this checker knows
+      // is not nullable — a struct or a primitive — rather than whenever it cannot see a `?`.
+      string ut2 = typeOfExpr(c, operand);
+      if (withoutNull(ut2) == "" && (isPrimitiveName(ut2) || ut2 == "bool" || c.isStruct(ut2))) {
+        c.report(errReferenceOp(), e.line, e.col);
+      }
+    }
+    case Unary(op, operand): {
+      checkExpr(c, operand);
+      // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
+      // one node, all reported at the operator, and all of them silent on an unknown operand.
+      i32 uk = tokenKind(c, op);
+      string ut = typeOfExpr(c, operand);
+      if (ut != typeNone()) {
+        if (uk == kBang() && ut != "bool") {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        } else if (uk == kMinus() && (ut == "bool" || ut == "string" || c.isStruct(ut))) {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        } else if (uk == kTilde() && !isIntegerName(ut)) {
+          c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+        }
+      }
+    }
+    // The expression form of `++`. `IncrStmt` had it as a statement, and `return x++` is neither —
+    // the same shape reached through a different node, which is the third time that has happened.
+    case Incr(target, op, prefix): { checkIncr(c, target, e.line, e.col); }
+    // A `match` used for its value. Its arms hold expressions rather than statements, so nothing that
+    // walked the statement form reached them — found by the grid, not by a rule looking wrong.
+    case MatchExpr(subject, arms): {
+      checkExpr(c, subject);
+      // An expression arm carries a value and no body — one `Arm` type serves both forms, as the
+      // reference has it — so the value is the whole of what there is to walk here.
+      //
+      // The bindings are declared *here* rather than in `declareStmt`, because that walks statements
+      // and this is an expression: a `match` used for its value can sit inside an initialiser or a
+      // return, where the declaration pass never goes. Three files said so — `case Some(v): v * 3`
+      // reported `v` as undefined. Declaring them at the point of use is enough because an arm's
+      // value is walked immediately afterwards, and leaving them in scope for the rest of the
+      // function is over-permissive in the silent direction, which is the one to err in.
+      for (i32 i = 0; i < arms.len(); i++) {
+        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+        }
+        if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
+      }
+    }
+    // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
+    // type, which is the same question as an initialiser with the type coming from the `[]`.
+    case ArrNew(elem, size, fill, elements): {
+      if (!(size is null)) {
+        checkExpr(c, size!);
+        // A length is a count, so it is an `i32` — at the size expression, which is the only thing
+        // there is to name.
+        Expr sz = size!;
+        i32 slit = litKindOf(sz);
+        if (slit != litNone()) {
+          if (!acceptsLiteral("i32", slit)) { c.report(errIndex(), sz.line, sz.col); }
+        } else {
+          string st2 = typeOfExpr(c, sz);
+          if (st2 != typeNone() && !isIntegerName(st2)) { c.report(errIndex(), sz.line, sz.col); }
+        }
+      }
+      string elemWant = typeOfTy(c, elem);
+      // An element's slot is the element type, which is what lets a bare generic infer inside one.
+      for (i32 i = 0; i < elements.len(); i++) {
+        c.expected = elemWant;
+        checkExpr(c, elements[i]);
+      }
+      if (!(fill is null)) {
+        c.expected = elemWant;
+        checkExpr(c, fill!);
+      }
+      string want = elemWant;
+      if (want == typeNone()) { return; }
+      // `E[2]()` with nothing to fill it asks every element for a default, and an enum has none.
+      if (elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
+        c.report(errNoDefault(), e.line, e.col);
+      }
+      // A packed element is an `i32` at this position, the way `bytes[i] = 5` is: the width is the
+      // array's business, not the element expression's.
+      if (isPackedName(want)) { want = "i32"; }
+      for (i32 i = 0; i < elements.len(); i++) { checkElement(c, want, elements[i]); }
+      if (!(fill is null)) { checkElement(c, want, fill!); }
+    }
+    // A cast's operand. `(p + q) as i64` reported nothing, because typing a cast as its target — the
+    // right answer — meant never looking inside it.
+    case Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
+    case Ternary(cond, then, els): {
+      checkExpr(c, cond);
+      checkExpr(c, then);
+      checkExpr(c, els);
+      // The condition is the `if` rule in expression position, and lands on the condition itself.
+      if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
+      // The branches have to agree, because the whole expression is one type. A literal branch takes
+      // the other's type, as everywhere, so only two known and different types are a complaint — and
+      // it names the node rather than either branch, neither being more wrong than the other.
+      if (litKindOf(then) == litNone() && litKindOf(els) == litNone()) {
+        string tt = typeOfExpr(c, then);
+        string et = typeOfExpr(c, els);
+        if (tt != typeNone() && et != typeNone() && !assignable(c, tt, et) &&
+            !assignable(c, et, tt)) {
+          c.report(errTernaryBranches(), e.line, e.col);
+        }
+      } else if (litKindOf(then) != litNone() && litKindOf(els) != litNone()) {
+        // Two literals of different families — `c ? 1 : true` — have nothing to take a type from.
+        if (litKindOf(then) != litKindOf(els)) { c.report(errTernaryBranches(), e.line, e.col); }
+      }
+    }
+    case Index(arr, index): {
+      checkExpr(c, arr);
+      checkExpr(c, index);
+      checkIndex(c, e, arr, index);
+    }
+    case Member(obj, nameTok): {
+      checkReceiver(c, obj);
+      checkMember(c, e, obj, tokenText(c, nameTok));
+    }
+    // `g(a)` is a **Construct**, not a Call. The parser cannot tell a call from a struct
+    // construction — `Point(1, 2)` and `g(a)` are the same syntax — so it builds `Construct` with a
+    // `Named` type for both and the resolver decides which later. A `case Call` never matches a
+    // plain named call, which is why the first version of this reported nothing at all.
+    case Construct(ctype, args, named): {
+      // Each argument is walked with the slot it is going into, which is what lets a generic
+      // construction nested in one — `g(Box(1.0))` — infer from the parameter.
+      match (ctype.kind) {
+        case Named(ctok, ctargs): {
+          string cname = tokenText(c, ctok);
+          for (i32 i = 0; i < args.len(); i++) {
+            c.expected = argumentSlot(c, cname, ctargs.len() > 0 ? typeOfTy(c, ctype) : cname, i);
+            checkExpr(c, args[i]);
+          }
+        }
+        else: {
+          for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+        }
+      }
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          string name = tokenText(c, tok);
+          if (c.isStruct(name)) {
+            // A **bare generic** takes its type arguments from wherever it is going. With a target
+            // whose template is this one, the construction *is* that type and its arguments are
+            // checked against the substituted fields; with no target at all there is nothing to infer
+            // from, and the reference calls the bare name undefined — which it is, since a template
+            // is not a type. `Box(1.0)` assigned to a `Box<f64>` is ordinary and `Box(1).get()` is
+            // not, and the only difference between them is the slot.
+            string spelled = typeArgs.len() > 0 ? typeOfTy(c, ctype) : name;
+            if (typeArgs.len() == 0 && c.isGeneric(name)) {
+              // The target's **nullability is not part of the question**: a `MapEntry<K, V>?` slot
+              // takes a `MapEntry<K, V>`, and the construction produces the non-null one. Comparing
+              // the spelled target directly missed that and reported a working line in `packages/std`.
+              string wantCore = withoutNull(want);
+              string wantBase = wantCore == "" ? want : wantCore;
+              if (templateOf(wantBase) == name) {
+                spelled = wantBase;
+              } else {
+                c.report(errNotCallable(), e.line, e.col);
+                return;
+              }
+            }
+            checkConstruct(c, spelled, args, named, e);
+            // Two questions a construction asks that the field types do not. With arguments, the
+            // count has to match — parents included, since a child is constructed with the whole
+            // chain's fields. With none, it is a *default* construction, and the struct has to have
+            // a default at all.
+            if (!c.isGeneric(name)) {
+              if (args.len() > 0 && named.len() == 0 && args.len() != fieldArity(c, name)) {
+                c.report(errCtorArity(), e.line, e.col);
+              } else if (args.len() == 0 && named.len() == 0 && !hasDefault(c, name, 0)) {
+                c.report(errNoDefault(), e.line, e.col);
+              }
+            }
+          }
+          else { checkCallee(c, name, args, named, e); }
+        }
+        else: { }
+      }
+    }
+    // A real `Call` is a method or a funcref. A method call is `Call(Member(receiver, name), args)`
+    // and is checked; a funcref call has no name to look up and is not.
+    case Call(callee, args): {
+      for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          // The **object**, not the whole callee. Walking the callee as an expression would read
+          // `p.inc()` as a field access to `inc` and call it a missing field, which is the method it
+          // is about to check. The nullable rule still applies and is asked for separately, because
+          // *"cannot call method on nullable"* is its own diagnostic.
+          checkReceiver(c, obj);
+          checkThroughNullable(c, e, obj);
+          checkMethodCall(c, e, obj, tokenText(c, nameTok), args);
+        }
+        else: { checkExpr(c, callee); }
+      }
+    }
+    else: { }
+  }
+}
+
+/**
+ * `x++` and `--x`, which are a write and an arithmetic operation at once.
+ *
+ * Two rules, and they land in different places: the write is refused at the **operand**, which is
+ * where every other const complaint goes, and a type that cannot be incremented is refused at the
+ * **node's own position**. Those are the same column for `++x` and differ for `x++`, and the node's
+ * position differs again between the two forms — a statement `x++;` starts at the `x`, while the
+ * expression `return x++` is positioned at the operator. Passing the position in rather than deriving
+ * it from the operator token is what lets one function serve both.
+ *
+ * Unsigned types are fine despite the wording of the reference's message — only the floats are
+ * refused, which is measured rather than read off the text.
+ */
+void checkIncr(C c, Lvalue target, i32 line, i32 col) {
+  checkWrite(c, target);
+  checkLvalueExprs(c, target);
+  string t = typeOfLvalue(c, target);
+  if (t == "f32" || t == "f64") {
+    c.report(errIncrType(), line, col);
+  }
+}
+
+/**
+ * A nullable packed type, which the language has nowhere to put.
+ *
+ * `u8?` is not a narrower `i32?`: unwrapping one has to yield a value, and no slot is one byte wide,
+ * so there is no representation for the unwrapped case at all. Refused wherever the type is written,
+ * and the array form `u8?[]` is the same fact one level down — an array of them would need the
+ * element to exist.
+ */
+void checkPackedNullable(C c, string t, Ty at) {
+  string inner = t;
+  if (isArrayName(inner)) { inner = dropLast(inner, 2); }
+  string unwrapped = withoutNull(inner);
+  if (unwrapped != "" && isPackedName(unwrapped)) {
+    Ty base = baseTy(at);
+    c.report(errPackedNullable(), base.line, base.col);
+  }
+}
+
+/**
+ * The innermost type under any `[]` and `?` suffixes.
+ *
+ * Each suffix carries its own token position — the parser records where the `[` is, not where the
+ * type it decorates begins — so a complaint about `u8?[]` reported at the `Ty` itself lands on the
+ * bracket, three columns past where the reference puts it. Rung 2 learned this about parse errors;
+ * this is the same fact reaching a different consumer.
+ */
+Ty baseTy(Ty t) {
+  match (t.kind) {
+    case Arr(elem): { return baseTy(elem); }
+    case Nullable(inner): { return baseTy(inner); }
+    else: { return t; }
+  }
+}
+
+/**
+ * The expressions buried inside an lvalue — the `i` in `a[i]`, and so on down the path.
+ *
+ * A write's target is walked for what it *is* (const, a string index) and, until the grid asked, not
+ * at all for what is in it: `a[(p + q)]++` had a fault in a position nothing visited. Writing this
+ * separately from `checkWrite` keeps the two questions apart, since one reports about the path and
+ * the other about the expressions hanging off it.
+ */
+void checkLvalueExprs(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIndex(base, index): { checkLvalueExprs(c, base); checkExpr(c, index); }
+    case LField(base, nameTok): { checkLvalueExprs(c, base); }
+    case LUnwrap(base): { checkLvalueExprs(c, base); }
+    else: { }
+  }
+}
+
+/**
+ * Whether anything in the file binds this name.
+ *
+ * Every binder wac has, in one place, because the undefined-name rule is only as good as this list:
+ * a name it does not know about is a false diagnostic on working code rather than a missed case.
+ * Locals, parameters, `this`, match bindings and imports live in the name table; functions, structs
+ * and enums have tables of their own; and the primitive type names are bound by the language rather
+ * than by anything in the file — `string.fromBytes(b)` puts one in expression position.
+ */
+bool nameExists(C c, string n) {
+  if (c.isDeclaredName(n)) { return true; }
+  if (c.funcAt(n) >= 0 || c.isStruct(n) || c.isEnum(n)) { return true; }
+  return isPrimitiveName(n) || n == "string" || n == "bool" || n == "anyref";
+}
+
+/** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
+bool notBool(C c, Expr e) {
+  i32 lit = litKindOf(e);
+  if (lit != litNone()) { return lit != litBool(); }
+  string t = typeOfExpr(c, e);
+  return t != typeNone() && t != "bool";
+}
+
+/**
+ * What is being called, before anything about the arguments.
+ *
+ * Four answers, and only the first is a function: a **declared function**, a **local holding a
+ * funcref**, a **local holding something else** — which is not callable at all — and a name that is
+ * nothing, which is the undefined-name rule reaching call position. All three complaints land on the
+ * call, which is the only thing there is to name.
+ *
+ * A call through a funcref is checked for arity and no further: the parameter *types* are in the
+ * funcref's spelling and could be compared, but that needs the spelling taken apart again and the
+ * corpus does not distinguish it.
+ */
+void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
+  if (c.funcAt(name) >= 0) {
+    // `f { x: 1 }` — the named-argument syntax belongs to struct construction and nothing else.
+    if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    checkCall(c, name, args, call);
+    return;
+  }
+  if (c.isDeclaredName(name)) {
+    string t = c.typeOfName(name);
+    if (t == typeNone() || t == "") { return; }
+    if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    i32 arity = funcrefArity(t);
+    if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); }
+    return;
+  }
+  if (c.isEnum(name) || isPrimitiveName(name) || name == "string" || name == "bool") { return; }
+  c.report(errNotCallable(), call.line, call.col);
+}
+
+/**
+ * How many parameters a funcref type takes, or -1 when the type is not one.
+ *
+ * Counted from the spelling — `fn(i32, f64) -> void` — because the spelling *is* the type here. An
+ * empty parameter list is zero rather than one, which is the whole of the special case.
+ */
+i32 funcrefArity(string t) {
+  if (!startsWithFn(t)) { return -1; }
+  u8[] a = t.toBytes();
+  i32 depth = 0;
+  i32 n = 1;
+  bool empty = true;
+  for (i32 i = 3; i < a.len(); i++) {
+    if (a[i] == 41 && depth == 0) { break; }
+    if (a[i] == 40 || a[i] == 60) { depth = depth + 1; }
+    else if (a[i] == 41 || a[i] == 62) { depth = depth - 1; }
+    else if (a[i] == 44 && depth == 0) { n = n + 1; }
+    if (a[i] != 32) { empty = false; }
+  }
+  return empty ? 0 : n;
+}
+
+/** Whether a type name is a funcref, which this spells `fn(` and nothing else does. */
+bool startsWithFn(string t) {
+  u8[] a = t.toBytes();
+  if (a.len() < 4) { return false; }
+  return a[0] == 102 && a[1] == 110 && a[2] == 40;
+}
+
+/**
+ * The arguments of a call against the parameters of what it calls.
+ *
+ * Only a plain named function declared in this file. A name that is not one — a struct being
+ * constructed, an imported function, a generic — simply is not in the table, and `funcAt` answering
+ * -1 is the silence that keeps this a subset.
+ *
+ * An arity mismatch is left alone too. The reference answers it with its own message — *"expected 2
+ * argument(s), got 1"* — and pairing arguments with parameters positionally when the counts differ
+ * would report the wrong ones anyway.
+ */
+void checkCall(C c, string name, Expr[] args, Expr call) {
+  i32 at = c.funcAt(name);
+  if (at < 0) { return; }
+  // The count first, and it stops there: a call with the wrong number of arguments is one complaint
+  // about the call, not one per argument that happened to line up with the wrong parameter.
+  if (c.funcParamCount[at] != args.len()) {
+    c.report(errCallArity(), call.line, call.col);
+    return;
+  }
+  // Arity applies to a generic function; the *types* do not, until the parameters are bound, and
+  // binding them is the caller's job rather than this rule's.
+  if (c.funcGenerics[at]) { return; }
+  for (i32 i = 0; i < args.len(); i++) {
+    string want = c.funcParamTypes[c.funcParamAt[at] + i];
+    if (want == typeNone()) { continue; }
+    i32 lit = litKindOf(args[i]);
+    if (lit != litNone()) {
+      reportLiteral(c, want, args[i], errArgumentMismatch(), args[i].line, args[i].col);
+      continue;
+    }
+    string got = typeOfExpr(c, args[i]);
+    if (nullableIntoNonNull(want, got)) {
+      c.report(errNullableToNonNull(), args[i].line, args[i].col);
+    } else if (!assignable(c, want, got)) {
+      c.report(errArgumentMismatch(), args[i].line, args[i].col);
+    }
+  }
+}
+
+/**
+ * A struct construction's arguments against the fields they fill.
+ *
+ * Positional only, and the arity has to match. Both restrictions are the reference's rather than
+ * convenience: a wrong count is *"positional construction of 'P' expects 2 arguments"*, its own
+ * family; and `P(x: 1)` is not named-argument syntax at all — the reference answers *"expects 2
+ * arguments"* **and** *"undefined variable 'x'"*, so whatever that spelling means, it is not this.
+ */
+void checkConstruct(C c, string name, Expr[] args, NamedArg[] named, Expr at) {
+  if (named.len() > 0) {
+    // `Point { x: 1, z: 3 }` names its fields, so the two questions are whether every name is one the
+    // struct has and whether every field the struct has was named. Both land on the construction.
+    string tmpl = templateOf(name);
+    if (!c.isStruct(tmpl) || c.isGeneric(tmpl)) { return; }
+    for (i32 i = 0; i < named.len(); i++) {
+      if (!c.hasField(tmpl, tokenText(c, named[i].nameTok))) {
+        c.report(errNamedField(), at.line, at.col);
+        return;
+      }
+    }
+    i32 wanted = fieldArity(c, tmpl);
+    if (named.len() != wanted) { c.report(errNamedField(), at.line, at.col); }
+    return;
+  }
+  if (c.constructArity(name) != args.len()) { return; }
+  for (i32 i = 0; i < args.len(); i++) {
+    // Read in the instantiation's world: `Box<i32>(1)` wants an `i32` where the field says `T`, and
+    // a bare `Box(1)` has nothing to substitute from, so `T` comes back unknown and says nothing.
+    string want = substituteType(c, name, c.constructFieldAt(name, i));
+    if (want == typeNone()) { continue; }
+    i32 lit = litKindOf(args[i]);
+    if (lit != litNone()) {
+      reportLiteral(c, want, args[i], errFieldMismatch(), args[i].line, args[i].col);
+      continue;
+    }
+    if (!assignable(c, want, typeOfExpr(c, args[i]))) {
+      c.report(errFieldMismatch(), args[i].line, args[i].col);
+    }
+  }
+}
+
+/**
+ * Whether writing through this lvalue is refused, and why.
+ *
+ * Three answers because the reference gives three, and they are about different things: the binding
+ * is const, the field is const, or the path to it goes through a const reference. A caller fixing one
+ * would not fix the others.
+ *
+ * Reported at the **target**, which is where the reference puts all three.
+ */
+void checkWrite(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): {
+      // A write to a name nothing declares. Reached here rather than by the expression rule, because
+      // an assignment's target is an `Lvalue` and not an `Expr` — the same rule, one node kind along,
+      // which is the fourth time that distinction has hidden a case.
+      if (!nameExists(c, tokenText(c, tok))) {
+        c.report(errUndefinedName(), lv.line, lv.col);
+        return;
+      }
+      if (c.isConstName(tokenText(c, tok))) {
+        c.report(errConstVariable(), lv.line, lv.col);
+      }
+    }
+    case LField(base, nameTok): {
+      Lvalue root = rootOf(lv);
+      if (undefinedRoot(c, root)) { c.report(errUndefinedName(), root.line, root.col); return; }
+      // The same two questions the expression form asks, in the position an `LField` node occupies —
+      // the dot — rather than at the root, where the const complaints go. Writing to a field is not
+      // a different question from reading one about whether the field is there.
+      string ownerT = typeOfLvalue(c, base);
+      if (ownerT != typeNone() && ownerT != "") {
+        if (withoutNull(ownerT) != "") {
+          c.report(errThroughNullable(), lv.line, lv.col);
+          return;
+        }
+        string ownerTmpl = templateOf(ownerT);
+        if (c.isStruct(ownerTmpl) && !c.isGeneric(ownerTmpl)) {
+          if (!c.hasField(ownerT, tokenText(c, nameTok)) &&
+              c.methodAt(ownerT, tokenText(c, nameTok)) < 0) {
+            c.report(errNoSuchField(), lv.line, lv.col);
+            return;
+          }
+        } else if (isPrimitiveName(ownerT) || ownerT == "bool") {
+          c.report(errNoSuchField(), lv.line, lv.col);
+          return;
+        }
+      }
+      string owner = typeOfLvalue(c, base);
+      if (owner != typeNone() && c.isConstField(owner, tokenText(c, nameTok))) {
+        c.report(errConstField(), root.line, root.col);
+        return;
+      }
+      // Otherwise the path itself may be const: a `const P p` refuses every write through it, field
+      // by field, whatever those fields say about themselves.
+      if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
+    }
+    case LIndex(base, index): {
+      string baseT = typeOfLvalue(c, base);
+      if (baseT != typeNone() && baseT != "" && !isArrayName(baseT) && baseT != "string") {
+        c.report(errIndex(), lv.line, lv.col);
+        return;
+      }
+      // Both index complaints land on the `LIndex` node — the bracket — where as an expression the
+      // "not an array" one names the operand and the "bad index" one names the index. An lvalue is
+      // one node with one position and the reference uses it for both.
+      i32 wlit = litKindOf(index);
+      if (wlit != litNone()) {
+        if (!acceptsLiteral("i32", wlit)) { c.report(errIndex(), lv.line, lv.col); }
+      } else {
+        string wit = typeOfExpr(c, index);
+        if (wit != typeNone() && !isIntegerName(wit)) { c.report(errIndex(), lv.line, lv.col); }
+      }
+      Lvalue idxRoot = rootOf(lv);
+      if (undefinedRoot(c, idxRoot)) {
+        c.report(errUndefinedName(), idxRoot.line, idxRoot.col);
+        return;
+      }
+      // A string is not an array with a store: indexing one reads a byte and there is nowhere to put
+      // one back. Reported at the index itself rather than at the root, which is where every other
+      // complaint in this function goes — the immutability is the string's, not the path's.
+      if (typeOfLvalue(c, base) == "string") {
+        c.report(errStringIndexWrite(), lv.line, lv.col);
+        return;
+      }
+      Lvalue r = rootOf(lv);
+      if (constPath(c, base)) { c.report(errConstReference(), r.line, r.col); }
+    }
+    case LUnwrap(base): { checkWrite(c, base); }
+  }
+}
+
+/** Whether the root of a write path is a name nothing declares. */
+bool undefinedRoot(C c, Lvalue root) {
+  match (root.kind) {
+    case LIdent(tok): { return !nameExists(c, tokenText(c, tok)); }
+    else: { return false; }
+  }
+}
+
+/**
+ * The leftmost lvalue in a path — `p` in `p.a.b[0]`.
+ *
+ * Every const complaint is reported here, which is where the reference puts them: for `p.k = 1` it
+ * names column 56, the `p`, and not 57, the field node. Reporting at the node that *is* const would
+ * have been the obvious choice and is off by one against every compound target.
+ */
+Lvalue rootOf(Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return lv; }
+    case LField(base, nameTok): { return rootOf(base); }
+    case LIndex(base, index): { return rootOf(base); }
+    case LUnwrap(base): { return rootOf(base); }
+  }
+}
+
+/**
+ * Whether an lvalue names a const reference — a binding declared `const`, or a path through one.
+ *
+ * Distinct from `checkWrite`'s first case: assigning *to* `p` is a const-variable error, while
+ * assigning to `p.x` through a const `p` is a const-reference one. Same constness, different
+ * complaint, because one rebinds the name and the other reaches past it.
+ */
+bool constPath(C c, Lvalue lv) {
+  match (lv.kind) {
+    case LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
+    case LField(base, nameTok): { return constPath(c, base); }
+    case LIndex(base, index): { return constPath(c, base); }
+    case LUnwrap(base): { return constPath(c, base); }
+  }
+}
+
+/** One array element or fill against the element type. */
+void checkElement(C c, string want, Expr e) {
+  i32 lit = litKindOf(e);
+  if (lit != litNone()) {
+    reportLiteral(c, want, e, errArrayElement(), e.line, e.col);
+    return;
+  }
+  string got = typeOfExpr(c, e);
+  if (!assignable(c, want, got)) { c.report(errArrayElement(), e.line, e.col); }
+}
+
+/**
+ * Whether an expression calls a function, which is what a module-level `const` may not do.
+ *
+ * A constant's value is computed before the program runs, so arithmetic on literals is fine and
+ * `P(1)` is fine — a construction is a shape rather than a computation — while `n()` and `i32[n()]()`
+ * are not. Phrased as "does this contain a call" rather than "is this constant" on purpose: the
+ * second is the larger claim and the first is the one the corpus actually distinguishes, so this
+ * says nothing about anything else.
+ */
+bool callsAFunction(C c, Expr e) {
+  match (e.kind) {
+    case Construct(ctype, args, named): {
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (c.funcAt(tokenText(c, tok)) >= 0) { return true; }
+        }
+        else: { }
+      }
+      for (i32 i = 0; i < args.len(); i++) {
+        if (callsAFunction(c, args[i])) { return true; }
+      }
+      return false;
+    }
+    case Call(callee, args): { return true; }
+    case Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
+    case Unary(op, operand): { return callsAFunction(c, operand); }
+    case ArrNew(elem, size, fill, elements): {
+      if (!(size is null)) {
+        if (callsAFunction(c, size!)) { return true; }
+      }
+      if (!(fill is null)) {
+        if (callsAFunction(c, fill!)) { return true; }
+      }
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (callsAFunction(c, elements[i])) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * Whether an expression names something const, following field access.
+ *
+ * `this.inner.mutate()` inside a `const this` method is refused, and the constness has to travel
+ * through the field access to see it — a receiver that is a plain name was all the first version
+ * looked at, so every deep receiver came back non-const. Three spec cases are this shape.
+ *
+ * What it deliberately does not do is follow an *assignment*: `Counter c = this; c.mutate();` is also
+ * refused by the reference, and knowing that needs to track where `c` came from, which is flow
+ * analysis rather than a walk. That case stays uncaught, and uncaught is the safe direction.
+ */
+bool constExpr(C c, Expr e) {
+  match (e.kind) {
+    case Ident(tok): { return c.isConstName(tokenText(c, tok)); }
+    case Member(obj, nameTok): { return constExpr(c, obj); }
+    case Index(arr, index): { return constExpr(c, arr); }
+    case Unwrap(operand): { return constExpr(c, operand); }
+    // What a method hands back through a const receiver is itself const. `this.getInner().mutate()`
+    // inside a `const this` method is refused, and the accessor is the whole point of the case: it
+    // looks like a way to launder the constness and is not one. The receiver decides, not the return
+    // type — a method called on something const returns something const.
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): { return constExpr(c, obj); }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * Whether a type can be produced out of nothing — `P p = P();` and `P[2]()` both ask this.
+ *
+ * Primitives have a zero, arrays and strings have an empty one, a nullable has null. A struct has a
+ * default when every field does, so this recurses; an **enum has none at all**, even one whose every
+ * variant is payload-free, because there is no variant the language would pick for you.
+ *
+ * `depth` is the cycle guard, and returning `false` at the bottom of it is not a fallback: a struct
+ * that reaches itself through non-null fields genuinely has no default, since building one would
+ * require building one first. That is the same fact the recursive-field rule reports, seen from the
+ * construction rather than from the declaration.
+ *
+ * Unknown is `true` — silence, as everywhere else here. A type this pass cannot see is not a type it
+ * gets to complain about.
+ */
+bool hasDefault(C c, string t, i32 depth) {
+  if (t == typeNone() || t == "") { return true; }
+  if (depth > 16) { return false; }
+  if (isNullableName(t) || isArrayName(t)) { return true; }
+  // A funcref has no zero: there is no function to point at until something points it somewhere.
+  if (startsWithFn(t)) { return false; }
+  if (c.isEnum(t)) { return false; }
+  if (!c.isStruct(t) || c.isGeneric(t)) { return true; }
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != t) { continue; }
+    if (!hasDefault(c, c.fieldTypes[i], depth + 1)) { return false; }
+  }
+  string parent = c.parentOf(t);
+  if (parent != "") { return hasDefault(c, parent, depth + 1); }
+  return true;
+}
+
+/** Whether `from`'s non-null fields can reach `target`, which is what makes a reference recursive. */
+bool reachesStruct(C c, string from, string target, i32 depth) {
+  if (depth > 16 || !c.isStruct(from) || c.isGeneric(from)) { return false; }
+  if (from == target) { return true; }
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != from) { continue; }
+    string ft = c.fieldTypes[i];
+    if (isNullableName(ft) || isArrayName(ft)) { continue; }
+    if (reachesStruct(c, ft, target, depth + 1)) { return true; }
+  }
+  return false;
+}
+
+/** How many fields a positional construction of this struct takes, parents included. */
+i32 fieldArity(C c, string t) {
+  i32 n = 0;
+  string at = t;
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (at == "") { return n; }
+    for (i32 i = 0; i < c.fieldCount; i++) {
+      if (c.fieldOwners[i] == at) { n = n + 1; }
+    }
+    at = c.parentOf(at);
+  }
+  return n;
+}
+
+/**
+ * Whether a type is held by reference, for the purposes of a cast.
+ *
+ * Wider than `isReferenceType`, which `anyref` asks: an enum and a funcref are references too, and a
+ * nullable one is still one. Kept separate because the two questions have different answers for
+ * `anyref` itself and there is no benefit to pretending otherwise.
+ */
+bool isCastRef(C c, string t) {
+  string core = withoutNull(t);
+  string at = core == "" ? t : core;
+  if (at == "" || at == typeNone()) { return false; }
+  return isArrayName(at) || at == "string" || at == "anyref" || startsWithFn(at) ||
+         c.isEnum(at) || c.isStruct(at);
+}
+
+/** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
+bool descendsFrom(C c, string sub, string sup) {
+  string at = c.parentOf(sub);
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (at == "") { return false; }
+    if (at == sup) { return true; }
+    at = c.parentOf(at);
+  }
+  return false;
+}
+
+/**
+ * The builtin statics on the primitive types, and the one instance method with an arity worth checking.
+ *
+ * `f64.toBits`, `string.fromCodepoint` and their siblings are not declared anywhere. They are the
+ * language's own surface, so no signature in the file describes them and the receiver is a type name
+ * that is not a struct — which is exactly why they were invisible to every rule up to here, and why
+ * they were the largest uncaught cluster once the struct rules were done. Eight spec cases.
+ *
+ * The surface, measured rather than guessed: each float pairs with the unsigned integer of its own
+ * width, `toBits` takes the float and gives the bits and `fromBits` is the reverse; `string.fromBytes`
+ * takes `u8[]`, `string.fromCodepoint` takes `i32`. Any other name on those three types has no static
+ * method at all, rather than a wrong signature. Arity is reported at the call and an argument's type
+ * at the argument, so the two are different positions and are kept as different codes.
+ *
+ * An argument is compared *exactly*, not by assignability — `f32.toBits(someF64)` is refused even
+ * though an `f32` widens to an `f64`, because reinterpretation is about a width and not a value. A
+ * literal is the one exception, and takes the parameter's type the way an initialiser does.
+ *
+ * Returns whether the receiver was a builtin, which is what stops the struct rules from also looking.
+ */
+bool checkBuiltinCall(C c, Expr call, string recv, string name, Expr[] args) {
+  string want = "";
+  if (recv == "f64" || recv == "f32") {
+    if (name != "toBits" && name != "fromBits") {
+      c.report(errNoStaticMethod(), call.line, call.col);
+      return true;
+    }
+    if (name == "toBits") { want = recv; }
+    else if (recv == "f64") { want = "u64"; }
+    else { want = "u32"; }
+  } else if (recv == "string") {
+    if (name == "fromBytes") { want = "u8[]"; }
+    else if (name == "fromCodepoint") { want = "i32"; }
+    else {
+      c.report(errNoStaticMethod(), call.line, call.col);
+      return true;
+    }
+  } else {
+    return false;
+  }
+  if (args.len() != 1) {
+    c.report(errBuiltinArity(), call.line, call.col);
+    return true;
+  }
+  i32 lit = litKindOf(args[0]);
+  if (lit != litNone()) {
+    reportLiteral(c, want, args[0], errBuiltinArg(), args[0].line, args[0].col);
+    return true;
+  }
+  string got = typeOfExpr(c, args[0]);
+  if (got != typeNone() && got != want) { c.report(errBuiltinArg(), args[0].line, args[0].col); }
+  return true;
+}
+
+/** The funcref type of `S.make`, or unknown when the receiver is not a struct with that static. */
+string staticMethodType(C c, Expr obj, string name) {
+  string owner = "";
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      if (c.typeOfName(n) == typeNone() && c.isStruct(n)) { owner = n; }
+    }
+    else: { }
+  }
+  if (owner == "" || c.isGeneric(owner)) { return typeNone(); }
+  i32 at = c.ownMethodAt(owner, name);
+  if (at < 0 || !c.methodStatics[at]) { return typeNone(); }
+  string out = "fn(";
+  for (i32 i = 0; i < c.methodParamCount[at]; i++) {
+    if (i > 0) { out = out + ", "; }
+    out = out + c.methodParamTypes[c.methodParamAt[at] + i];
+  }
+  return out + ") -> " + c.methodReturns[at];
+}
+
+/**
+ * The type a receiver denotes: the value's type, or the struct itself when the receiver names one.
+ *
+ * `p.m()` and `P.m()` are the same syntax and differ only in that, which the method-call rule already
+ * knew and `typeOfExpr` did not.
+ */
+string receiverType(C c, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      string t = c.typeOfName(n);
+      if (t != typeNone()) { return t; }
+      if (c.isStruct(n)) { return n; }
+      return typeNone();
+    }
+    else: { return typeOfExpr(c, obj); }
+  }
+}
+
+/**
+ * Bind a generic function's type parameters by matching its written parameter against an actual type.
+ *
+ * `Box<T>` against `Box<f64>` binds `T` to `f64`; `T` against anything binds it to that; `T[]` against
+ * `f64[]` looks one level down. Anything that does not line up binds nothing, which leaves the
+ * parameter unbound and the return type unknown — silence, as everywhere.
+ *
+ * String against string, because in this checker a type *is* its canonical name and the written form
+ * and the actual form are both one.
+ */
+void bindTypeParams(C c, string written, string actual, string[] names, string[] bound) {
+  if (written == "" || actual == "" || written == typeNone() || actual == typeNone()) { return; }
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] == written) {
+      if (bound[i] == "") { bound[i] = actual; }
+      return;
+    }
+  }
+  if (endsWith(written, "[]") && endsWith(actual, "[]")) {
+    bindTypeParams(c, dropLast(written, 2), dropLast(actual, 2), names, bound);
+    return;
+  }
+  if (endsWith(written, "?") && endsWith(actual, "?")) {
+    bindTypeParams(c, dropLast(written, 1), dropLast(actual, 1), names, bound);
+    return;
+  }
+  string wb = genericBase(written);
+  if (wb == "" || wb != genericBase(actual)) { return; }
+  string[] wargs = genericArgs(written);
+  string[] aargs = genericArgs(actual);
+  if (wargs.len() != aargs.len()) { return; }
+  for (i32 i = 0; i < wargs.len(); i++) { bindTypeParams(c, wargs[i], aargs[i], names, bound); }
+}
+
+/** A written type with the bound parameters put in, or unknown when any of them is still open. */
+string applyBindings(string written, string[] names, string[] bound) {
+  string core = written;
+  string suffix = "";
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (endsWith(core, "[]")) { core = dropLast(core, 2); suffix = "[]" + suffix; }
+    else if (endsWith(core, "?")) { core = dropLast(core, 1); suffix = "?" + suffix; }
+    else { break; }
+  }
+  for (i32 i = 0; i < names.len(); i++) {
+    if (names[i] != core) { continue; }
+    if (bound[i] == "") { return typeNone(); }
+    return bound[i] + suffix;
+  }
+  return written;
+}
+
+/**
+ * The return type of a call to a generic function, with its type parameters inferred from the
+ * arguments — or unknown when the arguments do not settle them.
+ */
+string genericCallReturn(C c, i32 at, Expr[] args) {
+  i32 n = c.funcTypeParamCount[at];
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = "";
+  }
+  i32 count = c.funcParamCount[at];
+  if (args.len() != count) { return typeNone(); }
+  for (i32 i = 0; i < count; i++) {
+    string got = litKindOf(args[i]) != litNone() ? typeNone() : typeOfExpr(c, args[i]);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+  }
+  return applyBindings(c.funcReturns[at], names, bound);
+}
+
+/**
+ * What the `i`th argument of a call or construction is required to be, or unknown.
+ *
+ * A struct's `i`th field or a function's `i`th parameter — the two shapes share the syntax, so this
+ * asks which one the name is, exactly as the checking rules do one level up.
+ */
+string argumentSlot(C c, string name, string spelled, i32 i) {
+  if (c.isStruct(name)) {
+    if (c.isGeneric(name) && spelled == name) { return typeNone(); }
+    return substituteType(c, spelled, c.constructFieldAt(spelled, i));
+  }
+  i32 at = c.funcAt(name);
+  if (at < 0 || c.funcGenerics[at] || i >= c.funcParamCount[at]) { return typeNone(); }
+  return c.funcParamTypes[c.funcParamAt[at] + i];
+}
+
+/**
+ * The object of a member access or a method call, which is not quite an ordinary expression.
+ *
+ * `P.mk()` and `f64.toBits(x)` put a **type name** in receiver position, and a type name is not a
+ * value — the struct-as-value rule would report every static call in the repo, which is exactly what
+ * it did. A receiver that is a bare name denoting a type is therefore not walked as an expression at
+ * all; anything else is.
+ */
+void checkReceiver(C c, Expr obj) {
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      // A local of that name shadows the type and is an ordinary value again.
+      if (!c.isDeclaredName(n) && (c.isStruct(n) || c.isEnum(n) || isPrimitiveName(n) ||
+          n == "string" || n == "bool")) {
+        return;
+      }
+    }
+    else: { }
+  }
+  checkExpr(c, obj);
+}
+
+/**
+ * Reaching through a nullable without unwrapping it.
+ *
+ * `p.x` on a `P?` is refused even though `P` has an `x`: the value might not be there, and the
+ * language wants that said with `!` rather than assumed. Its own diagnostic rather than a missing
+ * field, because the field is not missing.
+ */
+void checkThroughNullable(C c, Expr at, Expr obj) {
+  string t = typeOfExpr(c, obj);
+  if (t == typeNone()) { return; }
+  string inner = withoutNull(t);
+  if (inner != "" && c.isStruct(inner)) { c.report(errThroughNullable(), at.line, at.col); }
+}
+
+/**
+ * A field that the owner does not have — or that it could not have, being a primitive.
+ *
+ * Silent unless the owner is *known*: an unknown type has no fields to be missing. A name that is a
+ * method rather than a field is not missing either, which is why the method table is consulted before
+ * complaining — `c.get` without parentheses is the reference's own separate diagnostic.
+ */
+void checkMember(C c, Expr at, Expr obj, string name) {
+  string t = typeOfExpr(c, obj);
+  if (t == typeNone() || t == "") { return; }
+  if (withoutNull(t) != "") { checkThroughNullable(c, at, obj); return; }
+  if (isArrayName(t) || t == "string") { return; }
+  if (c.isStruct(t)) {
+    if (c.isGeneric(t)) { return; }
+    if (c.hasField(t, name)) { return; }
+    // A method reached as a *value*. This function is only asked about members that are not the
+    // callee of a call — the `Call` arm walks the object instead — so a method name arriving here is
+    // one that was named without being called, which the language does not allow.
+    if (c.methodAt(t, name) >= 0) { c.report(errMethodAsValue(), at.line, at.col); return; }
+    c.report(errNoSuchField(), at.line, at.col);
+    return;
+  }
+  // An enum's value is one of its variants and the checker does not know which, so a payload field is
+  // not reachable through the enum type — only through a variant, which `is` narrowing produces.
+  if (c.isEnum(t)) { c.report(errNoSuchField(), at.line, at.col); return; }
+  // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
+  // value, so this cannot be one of those — `f64.toBits` has an `Ident` for an object, not a value.
+  if (isPrimitiveName(t) || t == "bool") { c.report(errNoSuchField(), at.line, at.col); }
+}
+
+/** An index expression: is the thing an array, and is the index one. */
+void checkIndex(C c, Expr at, Expr arr, Expr index) {
+  string t = typeOfExpr(c, arr);
+  if (t != typeNone() && t != "" && !isArrayName(t) && t != "string") {
+    // At the **operand**: it is the thing that is not an array. As an lvalue the same complaint lands
+    // on the bracket instead, because that is where an `LIndex` node sits — two node kinds, two
+    // positions, which is the second time this exact split has come up.
+    c.report(errIndex(), arr.line, arr.col);
+    return;
+  }
+  i32 lit = litKindOf(index);
+  if (lit != litNone()) {
+    if (!acceptsLiteral("i32", lit)) { c.report(errIndex(), index.line, index.col); }
+    return;
+  }
+  string it = typeOfExpr(c, index);
+  if (it != typeNone() && !isIntegerName(it)) { c.report(errIndex(), index.line, index.col); }
+}
+
+/**
+ * A method call: does the struct have it, and may this receiver call it?
+ *
+ * Static and instance calls are the same syntax — `P.mk()` and `p.mk()` differ only in whether the
+ * receiver names a struct or a value — so the receiver decides which question is asked. A local
+ * shadowing a struct name is a value, which is why the scope is consulted first.
+ *
+ * Reported at the call, which is the receiver's own position and where the reference puts all three.
+ */
+void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
+  string recv = "";
+  bool isStatic = false;
+  match (obj.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      string ty = c.typeOfName(n);
+      if (ty != typeNone()) {
+        recv = ty;
+      } else if (c.isStruct(n)) {
+        recv = n;
+        isStatic = true;
+      } else if (checkBuiltinCall(c, call, n, name, args)) {
+        // A primitive type name as the receiver — a builtin static. A local of that name would have
+        // been found above, which is what keeps a variable called `string` a variable.
+        return;
+      }
+    }
+    else: {
+      recv = typeOfExpr(c, obj);
+      // A string literal has no type of its own — like every literal it takes one from context —
+      // but as a receiver it is a `string` and nothing else, so `"hi".toBytes()` has a surface.
+      if (recv == typeNone() && litKindOf(obj) == litString()) { recv = "string"; }
+    }
+  }
+  // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
+  if (recv == "string" && name == "toBytes") {
+    if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  // `len()` is the one method an array and a string share, and it takes nothing.
+  if ((isArrayName(recv) || recv == "string") && name == "len") {
+    if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  // A method on something that has none. A primitive has no methods at all, and an array has only
+  // the builtins — so a name that is not one of those is missing rather than unknown. Reported at the
+  // **receiver**, which is where the reference puts this one: `x.toString()` names the `x`, unlike a
+  // struct's missing method, which names the call.
+  // **Numbers and booleans only.** An array's builtin surface is larger than `len` — `push`, `fill`,
+  // `copy` and more — and a string's has `slice` in it, and this has measured neither, so calling an
+  // unknown method on one missing reported 70 files and then 10. What is left is the half of the rule
+  // that can be stated without the measurement: a number has no methods at all, which is a fact
+  // rather than a list. `string` is in `isPrimitiveName` and has to be excluded by name, which is the
+  // whole trap — the predicate is about how a type is *passed*, not about what it can do.
+  if (isValueType(recv)) {
+    c.report(errNoMethod(), obj.line, obj.col);
+    return;
+  }
+  bool recvConst = !isStatic && constExpr(c, obj);
+  if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
+  // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
+  // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an
+  // ordinary call that this would otherwise call missing.
+  if (c.isGeneric(recv)) { return; }
+
+  // A field can hold a funcref, and `sh.externalNames()` calls the field rather than a method of
+  // that name. `packages/sh` has four of them. A name that is a field is not a missing method.
+  if (c.hasField(recv, name)) { return; }
+
+  // Statics are looked up on the struct itself; instance methods inherit.
+  i32 at = isStatic ? c.ownMethodAt(recv, name) : c.methodAt(recv, name);
+  if (at < 0) {
+    c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
+    return;
+  }
+  // A static call must name a static method, and an instance call must not. The reference words the
+  // first as "has no static method", which is why a mismatch here is the same diagnostic as a
+  // missing one rather than a fourth.
+  if (isStatic != c.methodStatics[at]) {
+    c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
+    return;
+  }
+  if (!isStatic && recvConst && !c.methodConsts[at]) {
+    c.report(errNonConstThroughConst(), call.line, call.col);
+  }
+}
+
+/**
+ * Whether this cast used the operator the conversion takes.
+ *
+ * Four spellings, and the language treats them as a claim about what is happening rather than as
+ * synonyms: `as` says nothing is lost, `as!` says the value is checked, `as~` says it is truncated,
+ * `as@` says the bits are reinterpreted. Using the wrong one is *"lossy cast not needed"* or its
+ * siblings — the reference's own family — and the point is that a reader can trust the spelling.
+ *
+ * Only conversions between two primitives this slice can name. A cast to or from a struct, an array
+ * or a generic is a reference cast, which has its own rules and its own diagnostics.
+ *
+ * The **position differs by which complaint it is**, which no amount of reasoning would have
+ * suggested and which took three corrections to get right:
+ *
+ *   - *"lossy cast not needed"* — a heavier operator on a conversion that loses nothing — names the
+ *     **operand**. For `x as~ i64` it is the `x`, not the `as~` two columns later.
+ *   - *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* names the **operator**, because it is
+ *     advice about which operator to write.
+ *   - *"no raw conversion for 'f64' -> 'f32'"* names the **operator** too.
+ *
+ * The one that names the operand is the one saying the cast should not be there at all; the two that
+ * name the operator are saying this operator is the wrong one. That reads as a principle in
+ * hindsight and was three separate contradictions from the spec corpus in practice.
+ */
+void checkCast(C c, Expr e, i32 op, Expr operand, Ty target) {
+  string to = typeOfTy(c, target);
+  // A cast down a struct hierarchy is the one cast that can *fail* rather than lose precision, so it
+  // takes `as!` — the checked spelling — and plain `as` is refused. Upcasting is silent: a `Circle`
+  // is a `Shape` with nothing to check. Reported at the operator, like every other wrong-spelling
+  // complaint in this family.
+  // A cast between two references, which is a different family from a numeric conversion: only `as`
+  // and `as!` mean anything, and which of the two is right is decided by the direction. Upcasting is
+  // always safe and takes `as`; downcasting can fail and takes `as!`; `as~` and `as@` are refused
+  // outright, because truncating and reinterpreting are questions about a bit pattern and a reference
+  // does not have one to talk about. All at the operator, like every other wrong-spelling complaint.
+  string castFrom = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  if (castFrom == typeNone() || castFrom == "" || to == typeNone() || to == "") { return; }
+  bool fromRef = isCastRef(c, castFrom);
+  bool toRef = isCastRef(c, to);
+  i32 ck = tokenKind(c, op);
+  // Crossing between the two worlds is never a conversion. `i32 as string` and `P as i32` are both
+  // *"no valid cast"*, whichever spelling is used — a number and a reference have nothing in common
+  // to convert. The one exception is `i31ref`, handled below, which exists precisely to cross.
+  if (fromRef != toRef && castFrom != "i31ref" && to != "i31ref" &&
+      (fromRef || isValueType(castFrom)) && (toRef || isValueType(to)) &&
+      !isPackedName(castFrom) && !isPackedName(to)) {
+    c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    return;
+  }
+  // Two references. Only `as` and `as!` mean anything, and which is right depends on the direction:
+  // upcasting — including a type to itself — is always safe and takes `as`, and everything else is
+  // treated as a downcast that may fail and takes `as!`. `string as P` is a downcast by this rule
+  // rather than an error of its own, which is measured: the reference words it *"downcast to 'P' may
+  // fail"* even though a string will never be a `P`.
+  if (fromRef && toRef && castFrom != "i31ref" && to != "i31ref") {
+    // A funcref is a reference that converts to nothing but itself — there is no hierarchy of
+    // function types here and nothing to check at runtime, so every spelling is refused.
+    if (startsWithFn(castFrom) != startsWithFn(to) ||
+        (startsWithFn(castFrom) && castFrom != to)) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      return;
+    }
+    if (ck == kAsTilde() || ck == kAsAt()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      return;
+    }
+    // Two things have to widen for a cast to be the safe direction: the **type**, and the
+    // **nullability**. `P as P?` adds the possibility of being absent and cannot fail; `P? as P`
+    // takes it away and can; `Sub as Base?` does both at once. Measured across the nullable row,
+    // where `P? as Base?` is a downcast despite both sides being nullable, because `P` is not a
+    // `Base` — the two conditions are independent and both are required.
+    string fromCore = withoutNull(castFrom);
+    string fromBase = fromCore == "" ? castFrom : fromCore;
+    string toCore = withoutNull(to);
+    string toBase = toCore == "" ? to : toCore;
+    bool widensType = fromBase == toBase || descendsFrom(c, fromBase, toBase);
+    bool widensNull = isNullableName(to) || !isNullableName(castFrom);
+    bool up = widensType && widensNull;
+    if (up && ck == kAsBang()) { c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op)); }
+    if (!up && ck == kAs()) { c.report(errDowncast(), tokenLine(c, op), tokenCol(c, op)); }
+    return;
+  }
+  // `i31ref` is a reference that pairs with `i32`, and with nothing else: coming back out is
+  // lossless, going in is lossy, and any other source has no conversion at all whichever spelling is
+  // used. Handled here rather than in the numeric tables because it is not a primitive.
+  if (to == "i31ref") {
+    string i31from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+    if (i31from == typeNone() || i31from == "i31ref") { return; }
+    if (i31from != "i32") {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+      return;
+    }
+    // `i32 -> i31ref` is the lossy direction: `as!` and `as~` carry it, `as` and `as@` do not.
+    i32 ik = tokenKind(c, op);
+    if (ik == kAs() || ik == kAsAt()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    }
+    return;
+  }
+  // Only conversions between two **value** types from here on. A `string` reaches this point through
+  // `isPrimitiveName` and must not: casting one to itself is ordinary, where casting an `i32` to an
+  // `i32` is redundant.
+  if (to == typeNone() || !isValueType(to) || isPackedName(to)) { return; }
+  string from = litKindOf(operand) != litNone() ? typeNone() : typeOfExpr(c, operand);
+  // Out of an `i31ref` and into an integer, which is the lossless direction — so `as` is the only
+  // spelling that carries it, and every other one is a complaint at the operator.
+  if (from == "i31ref") {
+    if (to == "i32" && tokenKind(c, op) != kAs()) {
+      c.report(errWrongCastOp(), tokenLine(c, op), tokenCol(c, op));
+    }
+    return;
+  }
+  if (from == typeNone() || !isValueType(from) || isPackedName(from)) { return; }
+  i32 k = tokenKind(c, op);
+  // A cast to the type it already is does nothing, and the language says so rather than allowing it
+  // as a no-op. Only measured for plain `as`; the checked and truncating spellings say nothing here.
+  // A cast to the type it already is does nothing, whichever of the four was written — the checked
+  // and truncating spellings are as redundant as the plain one, which the first version of this
+  // assumed the opposite of.
+  if (from == to) {
+    c.report(errRedundantCast(), tokenLine(c, op), tokenCol(c, op));
+    return;
+  }
+
+  bool lossless = losslessCast(from, to);
+
+  // Losslessness is decided first, whichever operator was written. `x as@ i64` from an `i32` is
+  // *"lossy cast not needed"* and not *"no raw conversion"* — the reference complains that the
+  // conversion needs no help before it complains about which help was offered. Ordering this the
+  // other way round put the right diagnostic at the wrong position, and only the corpus said so.
+  if (k == kAs()) {
+    // At the operator: *"'i32' -> 'u32' is lossy — use 'as!', 'as~', or 'as@'"* is advice about
+    // which operator to write, so it points at the one that is there.
+    if (!lossless) { c.report(errWrongCastOp(), e.line, e.col); }
+    return;
+  }
+  if (lossless) {
+    c.report(errWrongCastOp(), operand.line, operand.col);
+    return;
+  }
+  // Not lossless, so `as!` and `as~` are both fine. `as@` additionally needs a raw form to exist,
+  // and *that* complaint is about the operator, so it is reported there.
+  if (k == kAsAt() && !rawCast(from, to)) { c.report(errWrongCastOp(), e.line, e.col); }
+}
+
+/**
+ * Two parameters of one function or method sharing a name.
+ *
+ * Reported at the second, which is the one that could be renamed. Nothing else here looks at a
+ * declaration for its own sake — every other rule is about a use — so this is the first check that
+ * reads a signature rather than following a walk.
+ */
+void checkParams(C c, Param[] params) {
+  for (i32 i = 0; i < params.len(); i++) {
+    // A packed type has no slot of its own — it exists as an array element and nowhere else — so it
+    // cannot be a parameter. Reported at the type, which is the same position a duplicate name uses.
+    string pt = typeOfTy(c, params[i].type);
+    if (isPackedName(pt)) {
+      c.report(errPackedPosition(), params[i].type.line, params[i].type.col);
+    }
+    // `void` is what a function returns, not a value anything can hold, so it is not a type a
+    // parameter or a field can have.
+    if (pt == "void") { c.report(errVoidType(), params[i].type.line, params[i].type.col); }
+    checkPackedNullable(c, pt, params[i].type);
+    string a = tokenText(c, params[i].nameTok);
+    for (i32 j = 0; j < i; j++) {
+      if (tokenText(c, params[j].nameTok) == a) {
+        c.report(errDuplicateParam(), params[i].type.line, params[i].type.col);
+        break;
+      }
+    }
+  }
+}
+
+/** Every name a statement declares, however deeply nested. */
+void declareStmt(C c, Stmt s) {
+  match (s.kind) {
+    case Var(type, nameTok, init, isConst): {
+      // A local that **aliases** something const is const too. `Counter c = this; c.mutate();` inside
+      // a `const this` method looks like a way to launder the constness and is not one — the local
+      // and the receiver are the same object.
+      //
+      // Only for a type you can write **through**: a struct or an array. `i32 v = this.n;` is a copy
+      // and writing to it is nobody's business but the local's, and a `string` is a reference but an
+      // immutable one — assigning a new string to the local mutates nothing, which is why
+      // `string s = SOME_CONST; s = s + "x";` is ordinary and reported seven times before this said
+      // "reference" where it meant "writable".
+      string vt = typeOfTy(c, type);
+      string vcore = withoutNull(vt);
+      string vbase = vcore == "" ? vt : vcore;
+      bool writable = isArrayName(vbase) || c.isStruct(vbase);
+      bool aliasesConst = writable && constExpr(c, init);
+      c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst);
+    }
+    case Block(body): { declareAll(c, body); }
+    case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }
+    case While(cond, body): { declareAll(c, body); }
+    case DoWhile(body, cond): { declareAll(c, body); }
+    case For(init, cond, update, body): {
+      if (!(init is null)) { declareStmt(c, init!); }
+      declareAll(c, body);
+    }
+    case Switch(subject, cases): {
+      for (i32 i = 0; i < cases.len(); i++) { declareAll(c, cases[i].body); }
+    }
+    case Match(subject, arms): {
+      for (i32 i = 0; i < arms.len(); i++) {
+        // The arm's bindings are names too, and they scope to the arm. This slice does not track
+        // that, so they are declared as *unknown* — which both silences them and, because a second
+        // declaration poisons, silences any local elsewhere in the function with the same name.
+        //
+        // Not modelling them was a false alarm rather than a gap. `typeOfTy` in this very file has an
+        // `Arr` arm declaring a local `string inner` and a `Nullable` arm binding a `Ty` called
+        // `inner`; without this, the local's type leaked across and `typeOfTy(c, inner)` was reported
+        // as an argument mismatch against its own parameter.
+        for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
+          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+        }
+        declareAll(c, arms[i].body);
+      }
+    }
+    else: { }
+  }
+}
+
+/** Every name declared in a list of statements. */
+void declareAll(C c, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) { declareStmt(c, body[i]); }
+}
+
+/**
+ * How many names a condition narrows, and to what — written into `outNames` / `outTypes`.
+ *
+ * Purely syntactic, which is what the reference does and is measured rather than assumed: `x is T`
+ * narrows, `a && b` narrows with either side, and **`||` and `!` do not**. `(s is Circle) || true`
+ * leaves `s` a `Shape`, because the other arm may be the one that held; `!(s is Circle)` guarding an
+ * early return does not narrow what follows either, which is the reference declining to reason about
+ * control flow it could have.
+ *
+ * The narrowing lasts for the **then** branch and no further. Nothing here survives the `if`.
+ */
+i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
+  match (cond.kind) {
+    case Is(left, target, other, negated): {
+      if (negated || (target is null) || n >= outNames.len()) { return n; }
+      match (left.kind) {
+        case Ident(tok): {
+          string t = typeOfTy(c, target!);
+          if (t == typeNone()) { return n; }
+          outNames[n] = tokenText(c, tok);
+          outTypes[n] = t;
+          return n + 1;
+        }
+        else: { return n; }
+      }
+    }
+    case Binary(op, l, r): {
+      if (tokenKind(c, op) != kAndAnd()) { return n; }
+      return narrowingsOf(c, r, outNames, outTypes, narrowingsOf(c, l, outNames, outTypes, n));
+    }
+    else: { return n; }
+  }
+}
+
+/**
+ * A condition, which must be a boolean.
+ *
+ * Reported at the condition itself rather than at the `if`, which is where the reference puts it —
+ * *"condition must be bool"* names the expression that is wrong, not the statement containing it.
+ * The condition is also walked as an ordinary expression, so a mismatch inside it is still found.
+ */
+void checkCond(C c, Expr cond) {
+  if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
+  checkExpr(c, cond);
+}
+
+/** Every `return` in a list of statements. */
+void checkAll(C c, Stmt[] body, Ty want) {
+  for (i32 i = 0; i < body.len(); i++) { checkStmt(c, body[i], want); }
+}
+
+/** Every `return` in a statement, however deeply nested, checked against `want`. */
+void checkStmt(C c, Stmt s, Ty want) {
+  match (s.kind) {
+    /**
+     * An assignment, which is the initialiser question with the declared type coming from the target
+     * rather than from a `Ty` node.
+     *
+     * Only plain `=`. A compound assignment (`n += 1`) is the operator's rule rather than this one —
+     * the reference accepts `n += 1` for an `i32` exactly as it accepts `n + 1` — and folding the two
+     * would report the literal cases that rule deliberately skips.
+     */
+    // `n++` writes as much as `n = n + 1` does.
+    case IncrStmt(target, op): { checkIncr(c, target, s.line, s.col); }
+    // A bare expression — `p.set(1);` — was walked nowhere. Every expression rule reached only
+    // expressions that were part of something else: a return, an initialiser, a condition. A
+    // statement that is just a call is the commonest shape in the language and had no rule applied
+    // to it at all, which is how the const-receiver check looked broken when it was merely unreached.
+    case ExprStmt(expr): { checkExpr(c, expr); }
+    case Assign(target, op, rhs): {
+      c.expected = typeOfLvalue(c, target);
+      checkExpr(c, rhs);
+      // Every assignment writes, compound or not — `n += 1` on a const is refused exactly as `n = 1`
+      // is, so this comes before the plain-`=` gate below.
+      checkWrite(c, target);
+      if (tokenKind(c, op) != kAssign()) {
+        // A compound assignment is the operator's rule and the assignment's at once: `x += 1.5` on an
+        // `i32` is refused for the same reason `x + 1.5` would be, but reported at the **target**
+        // rather than at the operator. Literals count here, unlike in a binary expression, because
+        // there is no other side for the literal to take its type from — the target settles it.
+        string ct = typeOfLvalue(c, target);
+        if (ct == typeNone() || ct == "" || isPackedName(ct)) { return; }
+        // `+=` and its siblings are arithmetic, so the target has to be something arithmetic can be
+        // done to: a number, or a `string`, which concatenates. An array, a struct, an enum and a
+        // funcref all *agree with themselves*, so the type comparison below has nothing to say about
+        // `a += b` on two of them — the same shape as `a & b` on two floats, one operator family on.
+        if (!isValueType(ct) && ct != "string") {
+          c.report(errOperandMismatch(), target.line, target.col);
+          return;
+        }
+        i32 clit = litKindOf(rhs);
+        if (clit != litNone()) {
+          reportLiteral(c, ct, rhs, errOperandMismatch(), target.line, target.col);
+          return;
+        }
+        string cgot = typeOfExpr(c, rhs);
+        if (cgot != typeNone() && cgot != ct) {
+          c.report(errOperandMismatch(), target.line, target.col);
+        }
+        return;
+      }
+      string wantTo = typeOfLvalue(c, target);
+      if (wantTo == typeNone()) { return; }
+      // A packed target is an array element by construction — nothing else can have that type — and
+      // an integer truncates into one at the store. What the reference accepts beyond that is not
+      // measured, so this says nothing about packed targets at all.
+      if (isPackedName(wantTo)) { return; }
+      i32 litTo = litKindOf(rhs);
+      if (litTo != litNone()) {
+        reportLiteral(c, wantTo, rhs, errInitTypeMismatch(), rhs.line, rhs.col);
+        return;
+      }
+      string gotTo = typeOfExpr(c, rhs);
+      if (nullableIntoNonNull(wantTo, gotTo)) {
+        c.report(errNullableToNonNull(), rhs.line, rhs.col);
+      } else if (!assignable(c, wantTo, gotTo)) {
+        c.report(errInitTypeMismatch(), rhs.line, rhs.col);
+      }
+    }
+    // The same question one position over: a declared type, and something that has to fit it.
+    case Var(type, nameTok, init, isConst): {
+      string wantVar = typeOfTy(c, type);
+      checkPackedNullable(c, wantVar, type);
+      if (wantVar == typeNone()) { return; }
+      i32 litVar = litKindOf(init);
+      if (litVar != litNone()) {
+        reportLiteral(c, wantVar, init, errInitTypeMismatch(), init.line, init.col);
+        return;
+      }
+      string gotVar = typeOfExpr(c, init);
+      if (nullableIntoNonNull(wantVar, gotVar)) {
+        c.report(errNullableToNonNull(), init.line, init.col);
+      } else if (!assignable(c, wantVar, gotVar)) {
+        c.report(errInitTypeMismatch(), init.line, init.col);
+      }
+      c.expected = wantVar;
+      checkExpr(c, init);
+    }
+    case Return(value): {
+      // Before the types: whether there should be a value here at all. Both directions are errors and
+      // both name the `return` itself rather than what follows it — there is nothing to name in the
+      // second case, which is presumably why the reference settled on the statement for both.
+      string declared = typeOfTy(c, want);
+      if (declared == "void" && !(value is null)) {
+        c.report(errReturnValueness(), s.line, s.col);
+        return;
+      }
+      if ((value is null) && returnsAValue(declared)) {
+        c.report(errReturnValueness(), s.line, s.col);
+        return;
+      }
+      if (value is null) { return; }
+      string expected = declared;
+      if (!returnsAValue(expected)) { return; }
+      Expr e = value!;
+      i32 lit = litKindOf(e);
+      if (lit != litNone()) {
+        // A literal: polymorphic over a family, so the question is whether the declared type is in it.
+        reportLiteral(c, expected, e, errReturnTypeMismatch(), e.line, e.col);
+        return;
+      }
+      // A name: a value of exactly one type, so the question is whether it is the declared one.
+      string got = typeOfExpr(c, e);
+      if (nullableIntoNonNull(expected, got)) {
+        c.report(errNullableToNonNull(), e.line, e.col);
+      } else if (!assignable(c, expected, got)) {
+        c.report(errReturnTypeMismatch(), e.line, e.col);
+      }
+      c.expected = expected;
+      checkExpr(c, e);
+    }
+    // Every arm carrying statements recurses. `els` is an empty array rather than a null for "no
+    // else", and `Switch`/`Match` hold their bodies one level deeper, inside cases and arms.
+    case Block(body): { checkAll(c, body, want); }
+    case If(cond, then, els): {
+      checkCond(c, cond);
+      // `if (s is Circle) { s.radius }` — the guard is what makes the payload reachable, so the then
+      // branch is walked with `s` retyped and the old type put back afterwards. Saved and restored
+      // rather than scoped, because this checker's names are one flat table per function.
+      string[] nNames = string[8]();
+      string[] nTypes = string[8]();
+      i32 nCount = narrowingsOf(c, cond, nNames, nTypes, 0);
+      string[] saved = string[nCount]();
+      for (i32 i = 0; i < nCount; i++) {
+        saved[i] = c.typeOfName(nNames[i]);
+        c.setType(nNames[i], nTypes[i]);
+      }
+      checkAll(c, then, want);
+      for (i32 i = 0; i < nCount; i++) { c.setType(nNames[i], saved[i]); }
+      checkAll(c, els, want);
+    }
+    // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
+    // and `continue` because the reference accepts it there, which is measured rather than read off
+    // its message. Reported at the statement, which is the whole of it.
+    case Break: {
+      if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
+    }
+    case Continue: {
+      if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
+    }
+    case While(cond, body): {
+      checkCond(c, cond);
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
+    }
+    case DoWhile(body, cond): {
+      checkCond(c, cond);
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
+    }
+    case For(init, cond, update, body): {
+      // The init and update are statements, and were declared but never checked — a `for` whose
+      // initialiser is wrong said nothing. The reachability grid found it: `For` passed on its body
+      // and failed on its init, which is exactly the shape of a walk that descends one field and not
+      // its siblings.
+      if (!(init is null)) { checkStmt(c, init!, want); }
+      if (!(cond is null)) { checkCond(c, cond!); }
+      if (!(update is null)) { checkStmt(c, update!, want); }
+      c.loopDepth = c.loopDepth + 1;
+      checkAll(c, body, want);
+      c.loopDepth = c.loopDepth - 1;
+    }
+    case Switch(subject, cases): {
+      checkExpr(c, subject);
+      // A `switch` jumps on an integer, and a signed or unsigned 32-bit one at that. Reported at the
+      // subject, which is the expression that cannot be switched on.
+      string subT = typeOfExpr(c, subject);
+      if (subT != typeNone() && subT != "" && subT != "i32" && subT != "u32") {
+        c.report(errSwitchSubject(), subject.line, subject.col);
+      }
+      // A case value is compared against the subject with `==`, so it is an `i32` like the subject.
+      // At the `case` keyword rather than at the value, which is why a `Case` now carries a position:
+      // the complaint is about the arm rather than about the expression in it.
+      for (i32 i = 0; i < cases.len(); i++) {
+        if (cases[i].value is null) { continue; }
+        Expr cv = cases[i].value!;
+        i32 cvl = litKindOf(cv);
+        if (cvl != litNone()) {
+          if (!acceptsLiteral("i32", cvl)) {
+            c.report(errSwitchSubject(), cases[i].line, cases[i].col);
+          }
+        } else {
+          string cvt = typeOfExpr(c, cv);
+          if (cvt != typeNone() && !isIntegerName(cvt)) {
+            c.report(errSwitchSubject(), cases[i].line, cases[i].col);
+          }
+        }
+      }
+      c.loopDepth = c.loopDepth + 1;
+      for (i32 i = 0; i < cases.len(); i++) { checkAll(c, cases[i].body, want); }
+      c.loopDepth = c.loopDepth - 1;
+    }
+    case Match(subject, arms): {
+      c.loopDepth = c.loopDepth + 1;
+      for (i32 i = 0; i < arms.len(); i++) { checkAll(c, arms[i].body, want); }
+      c.loopDepth = c.loopDepth - 1;
+    }
+    else: { }
+  }
+}
+
+/** Check one program, and return `(code, line, col)` triples in source order. */
+export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
+  C c = C.create(src, toks, tokenCount);
+  // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
+  // imported is in scope for the whole file, so these sit with the module-level constants.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          c.declare(tokenText(c, items[i].aliasTok), typeNone());
+        }
+        if (prefixTok >= 0) { c.declare(tokenText(c, prefixTok), typeNone()); }
+      }
+      else: { }
+    }
+  }
+
+  // Module-level `const` declarations, which are in scope in every body and outlive `clearScope`.
+  // A write to one is *"cannot assign to constant 'S'"*, which is the const-variable rule reaching a
+  // scope it did not have — and reaching it through fields too: `S.v = 9` on a `const P S` is refused
+  // the way a `const P p` parameter is.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), true);
+      }
+      else: { }
+    }
+  }
+  c.globalCount = c.nameCount;
+
+  // Signatures first, over the whole file: a call names something declared elsewhere, and often
+  // further down. The same argument as collecting locals before walking a body, one scope up.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        c.declareEnum(tokenText(c, nameTok));
+        // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
+        // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
+        // be as much a struct as anything else here. Registered under its bare name, which is how
+        // `is` writes it; the qualified `Shape.Circle` is a construction and goes elsewhere.
+        for (i32 vi = 0; vi < variants.len(); vi++) {
+          string vname = tokenText(c, variants[vi].nameTok);
+          c.declareStruct(vname, "", string[0]());
+          for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
+            c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
+                                typeOfTy(c, variants[vi].fields[fi].type), false);
+          }
+        }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        string name = tokenText(c, nameTok);
+        string[] tps = string[typeParams.len()]();
+        for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
+        c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
+        // A generic struct's fields are not recorded. `struct Box<T> { T v; }` has a field whose
+        // type is the *parameter* `T`, which is a name like any other to `typeOfTy` and therefore
+        // looks like a struct called `T` — enough to make `Box(1)` a field mismatch against a type
+        // that does not exist. The spec corpus caught it:
+        // `[§wac-generic-expected-position-3qmz8vk]`. With no fields recorded the arity is zero,
+        // never matches, and construction of a generic says nothing — which is the honest answer
+        // until instantiation is modelled.
+        // Generics included, and their field types recorded **as written** — `T`, `T[]`. A name like
+        // `T` is meaningless on its own, and becomes a type only once an instantiation says what its
+        // arguments are, which is what `substituteType` does at every lookup. Recording nothing, as
+        // the first version did, made every generic's members invisible rather than unknown.
+        for (i32 i = 0; i < fields.len(); i++) {
+          // `const struct Config { … }` makes every field const without any of them saying so,
+          // which is the whole point of the spelling: one word instead of one per field.
+          c.declareFieldConst(name, tokenText(c, fields[i].nameTok),
+                              typeOfTy(c, fields[i].type), isConst || fields[i].isConst);
+        }
+        for (i32 i = 0; i < methods.len(); i++) {
+          string[] mps = string[methods[i].params.len()]();
+          for (i32 pi = 0; pi < methods[i].params.len(); pi++) {
+            mps[pi] = typeOfTy(c, methods[i].params[pi].type);
+          }
+          c.declareMethod(name, tokenText(c, methods[i].nameTok),
+                          !methods[i].hasThis, methods[i].thisConst,
+                          typeOfTy(c, methods[i].returnType), mps);
+        }
+      }
+      else: { }
+    }
+  }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        // A generic function's signature is written in terms of its own type parameters, which mean
+        // nothing at a call site: `Box<T>` accepts every `Box<…>`, and `T` accepts everything. Its
+        // arity is still worth having — that does not depend on the types — so the parameters are
+        // recorded as unknown rather than the function being left out.
+        // Recorded **as written**, generics included: `Box<T>` and `T` are what a call site binds
+        // against. An earlier version blanked them, which was right when nothing could bind them and
+        // is now the thing standing between a generic call and its return type.
+        string[] prims = string[params.len()]();
+        for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
+        string[] ftps = string[typeParams.len()]();
+        for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
+        c.declareFunc(tokenText(c, nameTok), typeOfTy(c, returnType), prims, params.len(), ftps);
+      }
+      else: { }
+    }
+  }
+  // Methods, which until now were not walked at all: every rule here stopped at the edge of a
+  // struct, so a method's returns, initialisers and operands went entirely unchecked. `this` is an
+  // ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the struct's own
+  // name — and every rule then reaches `this.x` through the field table that already existed.
+  // A module-level constant's initialiser, *after* the signatures — the rule is "does this call a
+  // function", so it needs to know which names are functions, and a constant may be initialised by
+  // one declared further down the file. The first version of this ran before the signature pass and
+  // silently found nothing, which looked exactly like the rule not working.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case ConstDecl(nameTok, type, init, exported): {
+        if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
+      }
+      else: { }
+    }
+  }
+
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        string owner = tokenText(c, nameTok);
+        // A non-null field that reaches its own struct: `struct Node { Node next; }` cannot be built
+        // at all, because building one needs one first. Reported at the field's type, which is the
+        // only place it *can* be reported — a struct like this is refused on sight, with no
+        // construction anywhere in the file to hang the complaint on.
+        for (i32 fi = 0; fi < fields.len(); fi++) {
+          string ft = typeOfTy(c, fields[fi].type);
+          // The same two rules a parameter has, in the other declaration position that takes a type.
+          if (isPackedName(ft)) {
+            c.report(errPackedPosition(), fields[fi].type.line, fields[fi].type.col);
+          }
+          if (ft == "void") { c.report(errVoidType(), fields[fi].type.line, fields[fi].type.col); }
+          if (isNullableName(ft) || isArrayName(ft) || !c.isStruct(ft)) { continue; }
+          if (reachesStruct(c, ft, owner, 0)) {
+            c.report(errRecursiveField(), fields[fi].type.line, fields[fi].type.col);
+          }
+        }
+        string parent = c.parentOf(owner);
+        for (i32 mi = 0; mi < methods.len(); mi++) {
+          // `override` is a claim about a parent, and the language checks it both ways: a method that
+          // hides one without saying so, and a method that says so with nothing to hide. The first is
+          // reported at the return type — where a method's declaration starts, as with a missing
+          // return — and the second at the keyword itself, which is the part that is wrong.
+          bool hides = parent != "" && c.methodAt(parent, tokenText(c, methods[mi].nameTok)) >= 0;
+          if (methods[mi].isOverride && !hides) {
+            c.report(errOverrideSpurious(), tokenLine(c, methods[mi].overrideTok),
+                     tokenCol(c, methods[mi].overrideTok));
+          } else if (!methods[mi].isOverride && hides) {
+            c.report(errOverrideMissing(), methods[mi].returnType.line, methods[mi].returnType.col);
+          }
+          c.clearScope();
+          // A method without `this` is static, and `this` means nothing in it.
+          // A `const this` method may not write through the receiver, which is the same rule as a
+          // `const P p` parameter and reuses it exactly.
+          if (methods[mi].hasThis) {
+            c.declareConst("this", owner, methods[mi].thisConst);
+          }
+          checkParams(c, methods[mi].params);
+          for (i32 i = 0; i < methods[mi].params.len(); i++) {
+            c.declareConst(tokenText(c, methods[mi].params[i].nameTok),
+                           typeOfTy(c, methods[mi].params[i].type),
+                           methods[mi].params[i].isConst);
+          }
+          declareAll(c, methods[mi].body);
+          checkAll(c, methods[mi].body, methods[mi].returnType);
+          // At the **return type**, where the reference puts it. A `Method` carries no position of
+          // its own — unlike a `Decl`, which is why the top-level version reports at the declaration
+          // — and the return type is the first thing a method has that does.
+          if (returnsAValue(typeOfTy(c, methods[mi].returnType)) &&
+              !alwaysLeaves(methods[mi].body)) {
+            c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
+          }
+        }
+      }
+      else: { }
+    }
+  }
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        // Declarations first, in a pass of their own over the whole body, so a `return` that reads a
+        // name declared later still resolves it. A checker that declared as it walked would treat a
+        // forward reference as unknown for no reason — the reference has the whole function in hand
+        // and so does this.
+        c.clearScope();
+        checkParams(c, params);
+        for (i32 i = 0; i < params.len(); i++) {
+          c.declareConst(tokenText(c, params[i].nameTok), typeOfTy(c, params[i].type),
+                         params[i].isConst);
+        }
+        declareAll(c, body);
+        checkAll(c, body, returnType);
+        // Reported at the declaration rather than at the closing brace, which is where the reference
+        // puts it: the fault is the function's, not any one statement's.
+        if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(body)) {
+          c.report(errMissingReturn(), prog.decls[d].line, prog.decls[d].col);
+        }
+      }
+      else: { }
+    }
+  }
+  i32[] out = i32[c.errorCount * 3]();
+  for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
+  return out;
+}

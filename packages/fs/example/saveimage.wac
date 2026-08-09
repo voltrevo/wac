@@ -1,0 +1,47 @@
+// Save a filesystem that is partly the host's, and say what could not be saved.
+//
+//   saveimage <hostdir> <out.wacimg>
+//
+// The host's filesystem at `/`, one memory mount at `/home`, some writes into each, and then an image.
+// What comes out on standard output is the list of mount points that were *not* written, then the dump of
+// what was — so a test can check the promise `image.write` makes rather than only the half of it that a
+// filesystem with no host mount can demonstrate.
+//
+// This exists because that promise cannot be tested from `wacBind`: a host mount needs a real `Cli` with
+// real grants, which only a built program has. `test/image.test.ts` says so at the test it replaces, and
+// `test/host.test.ts` builds programs the same way for the same reason.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Fs } from "../src/fs.wac";
+import { Sink } from "../../platform/src/stream.wac";
+import { dump, write, Written } from "../src/image.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 2) {
+    core.warn("usage: saveimage <hostdir> <out.wacimg>");
+    return 2;
+  }
+  string hostDir = string.fromBytes(cli.arg(0).wait());
+  string outPath = string.fromBytes(cli.arg(1).wait());
+
+  // The host at the root, so `hostDir` is a real path on a real disk, and memory at `/home` — which is
+  // the arrangement design/0001 has in mind: a session whose home is ours and whose system is not.
+  Fs fs = Fs.onHost(cli, 1754500000000);
+  fs.mountMemory("/home");
+
+  fs.writeFile(hostDir + "/on-the-host", "this lives on a real disk\n".toBytes());
+  fs.mkdir("/home/claude", true);
+  fs.writeFile("/home/claude/notes", "this lives in memory\n".toBytes());
+  fs.chmod("/home/claude/notes", 384);   // 0600
+  fs.chown("/home/claude/notes", "claude");
+
+  Written w = write(fs);
+  Sink out = Sink.toOutput(cli);
+  for (i32 i = 0; i < w.skipped.len(); i++) { out.line("skipped " + w.skipped[i]); }
+  out.line(dump(w.bytes));
+  out.flush();
+
+  cli.writeFile(outPath, w.bytes).wait();
+  return 0;
+}

@@ -23,8 +23,8 @@
 // function that calls back into the module part-way through a transfer, and enums (whose variants
 // need a generator of their own).
 
-import { wacCompile } from "../atoms/wac/wacCompile.ts";
-import { wacBindgen } from "../atoms/wac/wacBindgen.ts";
+import { wacCompile } from "../compiler/wacCompile.ts";
+import { wacBindgen } from "../compiler/wacBindgen.ts";
 import { Rng } from "./fuzz.ts";
 
 // ── Types the boundary can carry ──────────────────────────────────────────────

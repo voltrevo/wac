@@ -1,0 +1,890 @@
+// X.509 certificates: enough to check a TLS server's identity.
+//
+// A certificate is a signed assertion that a public key belongs to a name. Verifying one
+// means three separate things, and skipping any of them makes the other two pointless:
+//
+//   1. the signature is valid, so the issuer really said this
+//   2. the issuer is one we trust, or is vouched for by one, up to a root we hold
+//   3. the name we asked for is one this certificate covers
+//
+// A client that checks the signature and not the name accepts any valid certificate for
+// any host, which is the classic failure — the attacker gets a real certificate for a
+// domain they own and presents it for yours.
+//
+// ## What is parsed
+//
+//   Certificate ::= SEQUENCE {
+//     tbsCertificate       TBSCertificate,
+//     signatureAlgorithm   AlgorithmIdentifier,
+//     signatureValue       BIT STRING }
+//
+// The signature covers `tbsCertificate` *as encoded*, so its bytes are kept verbatim
+// rather than re-serialised from a parse. Re-encoding would produce a byte string that
+// is equal in meaning and possibly not equal in bytes, and the signature is over bytes.
+//
+// ## Three key types
+//
+// Ed25519, ECDSA P-256, and RSA. Between them that is essentially every certificate on
+// the public web. Each brings its own encoding quirk, and each quirk is a place where a
+// parser is wrong for one key type and right for the other two:
+//
+//   Ed25519   the key is the BIT STRING, 32 bytes, and that is all
+//   EC        the BIT STRING is an uncompressed point, and the *curve* lives in the
+//             algorithm parameters rather than in the key — a parser that ignores the
+//             parameters will read a P-384 key as though it were P-256
+//   RSA       the BIT STRING contains another DER structure, a SEQUENCE of two INTEGERs,
+//             and DER integers are signed — so a modulus with its top bit set, which is
+//             almost all of them, carries a leading zero byte that is not part of the key
+
+import { ed25519Verify } from "../../crypto/src/ed25519.wac";
+import { p256Verify, p256VerifyDigest } from "../../crypto/src/p256.wac";
+import { p384VerifyDigest } from "../../crypto/src/p384.wac";
+import { rsaVerifyPkcs1, rsaVerifyPss } from "../../crypto/src/rsa.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { sha384 } from "../../crypto/src/sha512.wac";
+import {
+  Der, tagBoolean, tagInteger, tagBitString, tagOctetString, tagOid, tagUtcTime,
+  tagGeneralizedTime, tagSequence, tagContext, tagContextPrim,
+  oidBasicConstraints, oidEcPublicKey, oidKeyUsage, oidEcdsaSha256, oidEcdsaSha384, oidEd25519,
+  oidEquals, oidPrime256v1, oidRsaEncryption, oidRsaPss, oidRsaSha256, oidRsaSha384,
+  oidRsaSha512, oidSecp384r1, oidSubjectAltName, oidExtKeyUsage, oidServerAuth,
+  oidAnyExtKeyUsage, oidNameConstraints, unsignedInteger,
+} from "./asn1.wac";
+import { clamped } from "../../bytes/src/slice.wac";
+
+/**
+ * The time a certificate carries when its date could not be read.
+ *
+ * Far in the past, so `notBefore` comparisons refuse it and `notAfter` comparisons refuse it
+ * too — an unreadable date is never inside a validity window, whichever end it was on.
+ */
+const i64 TIME_UNREADABLE = -62135596800;
+
+/** Key types this understands. */
+export i32 keyEd25519() { return 1; }
+export i32 keyP256() { return 2; }
+export i32 keyRsa() { return 3; }
+export i32 keyP384() { return 4; }
+
+/** Signature algorithms this understands. */
+export i32 sigEd25519Alg() { return 1; }
+export i32 sigEcdsaSha256() { return 2; }
+export i32 sigEcdsaSha384() { return 3; }
+export i32 sigRsaSha256() { return 4; }
+export i32 sigRsaSha384() { return 5; }
+export i32 sigRsaSha512() { return 6; }
+export i32 sigRsaPss() { return 7; }
+
+/** What a client needs out of a certificate. */
+export struct Cert {
+  /** The exact bytes the signature covers. */
+  u8[] tbs;
+  /** The signature over `tbs`, as it appeared. */
+  u8[] signature;
+  /** How `signature` was made — one of the sig* constants. */
+  i32 sigAlg;
+  /** Which of the key* constants `publicKey` is. */
+  i32 keyType;
+  /**
+   * The key. Ed25519: 32 raw bytes. P-256: 65 uncompressed point bytes. RSA: the
+   * modulus, with the DER sign byte already stripped.
+   */
+  u8[] publicKey;
+  /** RSA's public exponent, empty for the other key types. */
+  u8[] rsaExponent;
+  /** The issuer's Name, as encoded, for chaining. */
+  u8[] issuer;
+  /** The subject's Name, as encoded. */
+  u8[] subject;
+  /** notBefore and notAfter, as seconds since the epoch. */
+  i64 notBefore;
+  i64 notAfter;
+  /** Whether basicConstraints says this may sign other certificates. */
+  bool isCa;
+  /**
+   * basicConstraints' pathLenConstraint, or -1 when absent.
+   *
+   * The number of intermediates allowed *below* this certificate. A CA with 0 may sign
+   * leaves and not other CAs. Ignoring it is how a constrained intermediate gets used to
+   * issue for the whole internet.
+   */
+  i32 pathLen;
+  /**
+   * Whether keyUsage permits signing certificates, or true when the extension is absent.
+   *
+   * Absent means unconstrained, which is the opposite of the safe default everywhere
+   * else — but it is what RFC 5280 §4.2.1.3 says, and inventing a stricter rule here
+   * would reject certificates that every other client accepts.
+   */
+  bool canSignCerts;
+  /** The dNSName entries in subjectAltName, NUL-separated. */
+  u8[] dnsNames;
+  /**
+   * The iPAddress entries in subjectAltName, four bytes each, concatenated.
+   *
+   * Separate from `dnsNames` and not merged with them, because the matching rule differs:
+   * an IP literal must be matched against these and *only* these. See `certMatchesHost`.
+   */
+  u8[] ipAddresses;
+  /**
+   * Whether extKeyUsage permits TLS server authentication, or true when it is absent.
+   *
+   * Absent means unrestricted, the same rule as `canSignCerts`. Present means the listed
+   * purposes are the only ones, so a certificate issued for e-mail or code signing is
+   * not usable here — it is a valid certificate for something else.
+   */
+  bool serverAuth;
+  /**
+   * A critical extension this parser does not process, which makes the certificate
+   * unusable rather than merely unfamiliar.
+   *
+   * Also set for a nameConstraints extension whose subtrees are of a kind not enforced
+   * below, because a restriction understood in part is not understood.
+   */
+  bool badCritical;
+  /**
+   * Whether the DER read cleanly.
+   *
+   * A malformed certificate produces a `Cert` full of harmless defaults rather than a trap,
+   * so something has to say that it did. Every tampered certificate the fuzzer produced was
+   * rejected anyway — by the signature check, which cannot pass over bytes that were not
+   * what was signed — but relying on that would make the parser's honesty depend on a later
+   * step, and a caller that only wanted to read a name would get no warning at all.
+   */
+  bool wellFormed;
+  /**
+   * nameConstraints dNSName subtrees, NUL-separated. Empty means no constraint.
+   *
+   * These limit what a CA may vouch for. A sub-CA constrained to `example.com` that can
+   * still issue for a bank is the whole reason the extension exists.
+   */
+  u8[] permittedDns;
+  u8[] excludedDns;
+}
+
+/**
+ * Days from the epoch to the start of `year`, proleptic Gregorian.
+ *
+ * Certificate times are absolute, so this needs to be right rather than approximately
+ * right — a leap-year rule that is off by a day makes a certificate expire a day early
+ * once every four years, which is the kind of bug that gets found in production.
+ */
+i64 daysFromCivil(i32 y, i32 m, i32 d) {
+  i32 yy = m <= 2 ? y - 1 : y;
+  i32 era = (yy >= 0 ? yy : yy - 399) / 400;
+  i32 yoe = yy - era * 400;
+  i32 doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  i32 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (era as i64) * 146097 + (doe as i64) - 719468;
+}
+
+/** Two ASCII digits, or -1 if they are not there or are not digits. */
+i32 twoDigits(u8[] s, i32 at) {
+  if (at < 0 || at + 1 >= s.len()) { return -1; }
+  if (s[at] < '0' || s[at] > '9' || s[at + 1] < '0' || s[at + 1] > '9') { return -1; }
+  return (s[at] - '0') * 10 + (s[at + 1] - '0');
+}
+
+/**
+ * A UTCTime or GeneralizedTime, as seconds since the epoch.
+ *
+ * UTCTime writes the year with two digits, which needs a rule for the century: RFC 5280
+ * says 50 and above is 19xx, below is 20xx. That rule expires in 2049, and writing it
+ * down is the only thing anyone can do about it.
+ */
+i64 parseTime(u8[] s, bool generalized) {
+  i32 at = 0;
+  i32 year = 0;
+  if (generalized) {
+    year = twoDigits(s, 0) * 100 + twoDigits(s, 2);
+    at = 4;
+  } else {
+    i32 yy = twoDigits(s, 0);
+    year = yy >= 50 ? 1900 + yy : 2000 + yy;
+    at = 2;
+  }
+  i32 month = twoDigits(s, at);
+  i32 day = twoDigits(s, at + 2);
+  i32 hour = twoDigits(s, at + 4);
+  i32 minute = twoDigits(s, at + 6);
+  i32 second = twoDigits(s, at + 8);
+  // A date nobody could have meant. Returning a sentinel rather than trapping: this is
+  // parsing a certificate a stranger sent, and every validity comparison treats the sentinel
+  // as "not valid now", which is the answer an unreadable date deserves.
+  if (month < 1 || month > 12 || day < 1 || day > 31) { return TIME_UNREADABLE; }
+  if (hour > 23 || minute > 59 || second > 60) { return TIME_UNREADABLE; }
+  return daysFromCivil(year, month, day) * 86400
+       + (hour as i64) * 3600 + (minute as i64) * 60 + (second as i64);
+}
+
+/** Read the two times out of a Validity SEQUENCE. */
+i64 readTime(Der v) {
+  i32 tag = v.peekTag();
+  if (tag == tagUtcTime()) { return parseTime(v.element(tagUtcTime()).rest(), false); }
+  if (tag == tagGeneralizedTime()) { return parseTime(v.element(tagGeneralizedTime()).rest(), true); }
+  return TIME_UNREADABLE;
+}
+
+/**
+ * Parse a DER certificate.
+ *
+ * Fields that no decision here depends on — the serial number, the inner signature
+ * algorithm, the unique identifiers — are skipped rather than read. Parsing something to
+ * throw it away is a place for a bug to hide with nothing to catch it.
+ */
+export Cert parseCert(u8[] der) {
+  Der top = Der.create(der);
+  Der cert = top.element(tagSequence());
+
+  // tbsCertificate: keep the bytes, then parse a copy of them.
+  u8[] tbs = cert.elementBytes();
+  Der tbsOuter = Der.create(tbs);
+  Der t = tbsOuter.element(tagSequence());
+
+  // version [0] EXPLICIT, absent for v1.
+  if (t.nextIs(tagContext(0))) { t.skip(); }
+  t.skip();                          // serialNumber
+  t.skip();                          // signature AlgorithmIdentifier, checked outside
+  u8[] issuer = t.elementBytes();    // issuer Name, kept whole for chaining
+
+  Der validity = t.element(tagSequence());
+  i64 notBefore = readTime(validity);
+  i64 notAfter = readTime(validity);
+
+  u8[] subject = t.elementBytes();
+
+  // subjectPublicKeyInfo ::= SEQUENCE { algorithm, subjectPublicKey BIT STRING }
+  Der spki = t.element(tagSequence());
+  Der alg = spki.element(tagSequence());
+  u8[] algOid = alg.oid();
+  i32 keyType = 0;
+  u8[] publicKey = u8[0]();
+  u8[] rsaExponent = u8[0]();
+
+  // An algorithm we do not implement leaves keyType at 0, which every verification
+  // treats as "cannot check this". Trapping instead would conflate *malformed* with
+  // *unsupported* — and a trust store is full of the second kind: the system bundle here
+  // has 121 roots including P-384 and other things this does not do, and one of them
+  // must not take down the parse of the 120 it could have used.
+  if (oidEquals(algOid, oidEd25519())) {
+    publicKey = spki.bitString();
+    if (publicKey.len() == 32) { keyType = 1; }
+  } else if (oidEquals(algOid, oidEcPublicKey())) {
+    // The curve is in the parameters, not the key. Reading the key without checking
+    // them would take a P-384 point for a P-256 one and verify against the wrong curve.
+    u8[] curve = alg.oid();
+    if (oidEquals(curve, oidPrime256v1())) {
+      publicKey = spki.bitString();
+      if (publicKey.len() == 65 && publicKey[0] == 4) { keyType = 2; }
+    } else if (oidEquals(curve, oidSecp384r1())) {
+      publicKey = spki.bitString();
+      if (publicKey.len() == 97 && publicKey[0] == 4) { keyType = 4; }
+    }
+  } else if (oidEquals(algOid, oidRsaEncryption())) {
+    // The BIT STRING holds another DER structure: SEQUENCE { modulus, exponent }.
+    Der inner = Der.create(spki.bitString());
+    Der seq = inner.element(tagSequence());
+    publicKey = unsignedInteger(seq.element(tagInteger()).rest());
+    rsaExponent = unsignedInteger(seq.element(tagInteger()).rest());
+    keyType = 3;
+  }
+
+  bool isCa = false;
+  i32 pathLen = -1;
+  bool canSignCerts = true;
+  bool serverAuth = true;         // absent extKeyUsage means unrestricted
+  bool badCritical = false;
+  u8[] permittedDns = u8[0]();
+  u8[] excludedDns = u8[0]();
+  u8[] dnsNames = u8[0]();
+  u8[] ipAddresses = u8[0]();
+
+  if (t.nextIs(tagContextPrim(1))) { t.skip(); }   // issuerUniqueID
+  if (t.nextIs(tagContextPrim(2))) { t.skip(); }   // subjectUniqueID
+  if (t.nextIs(tagContext(3))) {
+    Der extsOuter = t.element(tagContext(3));
+    Der exts = extsOuter.element(tagSequence());
+    while (!exts.empty()) {
+      Der ext = exts.element(tagSequence());
+      u8[] id = ext.oid();
+      // RFC 5280 §4.2: a certificate MUST be rejected if it carries a critical extension
+      // the verifier does not recognise. "Critical" is the issuer saying this restriction
+      // is load-bearing, so skipping one accepts the certificate on terms nobody checked.
+      // Recording it and refusing later beats trapping, for the same reason an unsupported
+      // key algorithm does not trap: a trust store is full of certificates that are merely
+      // not for us.
+      bool critical = false;
+      if (ext.nextIs(tagBoolean())) { critical = ext.element(tagBoolean()).rest()[0] != 0; }
+      u8[] value = ext.element(tagOctetString()).rest();
+
+      if (oidEquals(id, oidBasicConstraints())) {
+        Der bc = Der.create(value);
+        Der seq = bc.element(tagSequence());
+        if (seq.nextIs(tagBoolean())) {
+          isCa = seq.element(tagBoolean()).rest()[0] != 0;
+        }
+        if (seq.nextIs(tagInteger())) {
+          u8[] pl = seq.element(tagInteger()).rest();
+          // A one- or two-byte integer in practice; anything larger is not a constraint
+          // anyone means, so it is treated as absent rather than parsed heroically.
+          pathLen = pl.len() == 1 ? pl[0] : (pl.len() == 2 ? ((pl[0] << 8) | pl[1]) : -1);
+        }
+      } else if (oidEquals(id, oidKeyUsage())) {
+        // A BIT STRING whose bit 5 is keyCertSign. The first content byte is the count
+        // of unused trailing bits, and the bits are numbered from the *most* significant
+        // end — so keyCertSign is 0x04 in the first data byte, not 0x20.
+        Der ku = Der.create(value);
+        u8[] bits = ku.element(tagBitString()).rest();
+        canSignCerts = bits.len() >= 2 && (bits[1] & 0x04) != 0;
+      } else if (oidEquals(id, oidSubjectAltName())) {
+        dnsNames = collectDnsNames(value);
+        ipAddresses = collectIpAddresses(value);
+      } else if (oidEquals(id, oidExtKeyUsage())) {
+        // Present means the enumerated purposes are the only ones allowed, so serverAuth
+        // has to be among them. A certificate issued for e-mail or code signing is a
+        // perfectly valid certificate that simply is not for this, and accepting it is
+        // how a CA's separation between purposes stops meaning anything.
+        serverAuth = false;
+        Der eku = Der.create(value);
+        Der purposes = eku.element(tagSequence());
+        while (!purposes.empty()) {
+          u8[] purpose = purposes.oid();
+          if (oidEquals(purpose, oidServerAuth()) || oidEquals(purpose, oidAnyExtKeyUsage())) {
+            serverAuth = true;
+          }
+        }
+      } else if (oidEquals(id, oidNameConstraints())) {
+        // Only dNSName subtrees are enforced. Anything else — an IP range, a directory
+        // name, an e-mail domain, or a subtree with a minimum or maximum — is a real
+        // restriction that would go unapplied, so the certificate is marked unusable
+        // rather than being trusted with the part that was understood.
+        if (constraintsUnderstood(value)) {
+          permittedDns = subtreeDns(value, tagContext(0));
+          excludedDns = subtreeDns(value, tagContext(1));
+        } else {
+          badCritical = true;
+        }
+      } else if (critical) {
+        badCritical = true;
+      }
+    }
+  }
+
+  // signatureAlgorithm, which says how the issuer signed — a different question from
+  // what key *this* certificate carries.
+  Der sigAlgSeq = cert.element(tagSequence());
+  u8[] sigOid = sigAlgSeq.oid();
+  i32 sigAlg = 0;
+  if (oidEquals(sigOid, oidEd25519())) { sigAlg = 1; }
+  else if (oidEquals(sigOid, oidEcdsaSha256())) { sigAlg = 2; }
+  else if (oidEquals(sigOid, oidEcdsaSha384())) { sigAlg = 3; }
+  else if (oidEquals(sigOid, oidRsaSha256())) { sigAlg = 4; }
+  else if (oidEquals(sigOid, oidRsaSha384())) { sigAlg = 5; }
+  else if (oidEquals(sigOid, oidRsaSha512())) { sigAlg = 6; }
+  else if (oidEquals(sigOid, oidRsaPss())) { sigAlg = 7; }
+  // Anything else leaves sigAlg at 0, which certSignedBy refuses. Same reasoning as
+  // the key type above.
+  u8[] signature = cert.bitString();
+
+  return Cert(tbs, signature, sigAlg, keyType, publicKey, rsaExponent, issuer, subject,
+              notBefore, notAfter, isCa, pathLen, canSignCerts, dnsNames, ipAddresses,
+              serverAuth, badCritical, !top.failed(), permittedDns, excludedDns);
+}
+
+/**
+ * Whether every subtree in a nameConstraints extension is one this code enforces.
+ *
+ * Only dNSName bases with no minimum or maximum. RFC 5280 §4.2.1.10 requires minimum to
+ * be zero and maximum to be absent, so a certificate using them is already irregular;
+ * the other GeneralName kinds — IP ranges, directory names, e-mail domains — are ordinary
+ * and simply not implemented. In both cases the answer is that the certificate cannot be
+ * used, because the alternative is applying the constraints that were understood and
+ * quietly dropping the rest.
+ */
+bool constraintsUnderstood(u8[] value) {
+  Der nc = Der.create(value);
+  Der seq = nc.element(tagSequence());
+  while (!seq.empty()) {
+    i32 tag = seq.peekTag();
+    Der subtrees = seq.any();
+    if (tag != tagContext(0) && tag != tagContext(1)) { return false; }
+    while (!subtrees.empty()) {
+      Der sub = subtrees.element(tagSequence());
+      i32 gtag = sub.peekTag();
+      sub.skip();
+      if (gtag != tagContextPrim(2)) { return false; }   // not a dNSName
+      if (!sub.empty()) { return false; }   // a minimum or maximum follows the base
+    }
+  }
+  return true;
+}
+
+/** The dNSName bases of one side of a nameConstraints extension, NUL-joined. */
+u8[] subtreeDns(u8[] value, i32 want) {
+  Der nc = Der.create(value);
+  Der seq = nc.element(tagSequence());
+  u8[] acc = u8[0]();
+  while (!seq.empty()) {
+    i32 tag = seq.peekTag();
+    Der subtrees = seq.any();
+    if (tag == want) {
+      while (!subtrees.empty()) {
+        Der sub = subtrees.element(tagSequence());
+        i32 gtag = sub.peekTag();
+        Der base = sub.any();
+        if (gtag == tagContextPrim(2)) { acc = joinName(acc, base.rest()); }
+      }
+    }
+  }
+  return acc;
+}
+
+/** Append one name to a NUL-separated list. */
+u8[] joinName(u8[] acc, u8[] name) {
+  u8[] out = u8[acc.len() + (acc.len() > 0 ? 1 : 0) + name.len()]();
+  i32 p = 0;
+  for (i32 i = 0; i < acc.len(); i++) { out[p] = acc[i]; p++; }
+  if (acc.len() > 0) { out[p] = 0; p++; }
+  for (i32 i = 0; i < name.len(); i++) { out[p] = name[i]; p++; }
+  return out;
+}
+
+i32 lowerByte(i32 c) { return c >= 65 && c <= 90 ? c + 32 : c; }
+
+/**
+ * Whether `name` falls inside the subtree `list[s..e)`, by RFC 5280 §4.2.1.10.
+ *
+ * A dNSName subtree covers the name itself and anything below it, matched on label
+ * boundaries: `wac.test` covers `a.wac.test` and `wac.test`, and does not cover
+ * `evilwac.test`. Comparing by suffix alone is what makes the third one match, and it is
+ * how a constrained CA escapes its namespace by registering the right last letters.
+ */
+bool baseCovers(u8[] list, i32 s, i32 e, u8[] name) {
+  i32 bl = e - s;
+  if (bl == 0) { return true; }            // an empty base is the whole namespace
+  if (name.len() < bl) { return false; }
+  i32 off = name.len() - bl;
+  for (i32 i = 0; i < bl; i++) {
+    if (lowerByte(name[off + i]) != lowerByte(list[s + i])) { return false; }
+  }
+  return off == 0 || name[off - 1] == '.';
+}
+
+/** Whether any subtree in a NUL-separated list covers `name`. */
+bool anyBaseCovers(u8[] list, u8[] name) {
+  if (list.len() == 0) { return false; }
+  i32 s = 0;
+  for (i32 i = 0; i <= list.len(); i++) {
+    if (i == list.len() || list[i] == 0) {
+      if (baseCovers(list, s, i, name)) { return true; }
+      s = i + 1;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether the leaf's names satisfy a CA's nameConstraints.
+ *
+ * Checked against the *leaf*, not against the certificate directly below the CA, because
+ * the constraint governs everything the CA is an authority for however far down it sits.
+ */
+bool namesAllowed(Cert leaf, Cert ca) {
+  if (ca.permittedDns.len() == 0 && ca.excludedDns.len() == 0) { return true; }
+  u8[] names = leaf.dnsNames;
+  i32 s = 0;
+  for (i32 i = 0; i <= names.len(); i++) {
+    if (i == names.len() || names[i] == 0) {
+      if (i > s) {
+        u8[] one = u8[i - s]();
+        for (i32 k = 0; k < one.len(); k++) { one[k] = names[s + k]; }
+        if (ca.permittedDns.len() > 0 && !anyBaseCovers(ca.permittedDns, one)) { return false; }
+        if (anyBaseCovers(ca.excludedDns, one)) { return false; }
+      }
+      s = i + 1;
+    }
+  }
+  return true;
+}
+
+/** The dNSName entries of a SubjectAltName, joined with NUL bytes. */
+/** The four-byte iPAddress entries of a subjectAltName, concatenated. */
+u8[] collectIpAddresses(u8[] value) {
+  Der san = Der.create(value);
+  Der names = san.element(tagSequence());
+  u8[] acc = u8[0]();
+  while (!names.empty()) {
+    i32 tag = names.peekTag();
+    Der item = names.any();
+    if (tag == tagContextPrim(7)) {                 // iPAddress, IMPLICIT OCTET STRING
+      u8[] addr = item.rest();
+      // Four bytes is IPv4 and sixteen is IPv6. Only IPv4 is matched, so the rest are
+      // dropped here rather than stored and silently never compared.
+      if (addr.len() == 4) {
+        u8[] joined = u8[acc.len() + 4]();
+        for (i32 i = 0; i < acc.len(); i++) { joined[i] = acc[i]; }
+        for (i32 i = 0; i < 4; i++) { joined[acc.len() + i] = addr[i]; }
+        acc = joined;
+      }
+    }
+  }
+  return acc;
+}
+
+u8[] collectDnsNames(u8[] value) {
+  Der san = Der.create(value);
+  Der names = san.element(tagSequence());
+  u8[] acc = u8[0]();
+  while (!names.empty()) {
+    i32 tag = names.peekTag();
+    Der item = names.any();
+    if (tag == tagContextPrim(2)) {                 // dNSName, IMPLICIT IA5String
+      u8[] name = item.rest();
+      u8[] joined = u8[acc.len() + (acc.len() > 0 ? 1 : 0) + name.len()]();
+      i32 p = 0;
+      for (i32 i = 0; i < acc.len(); i++) { joined[p] = acc[i]; p++; }
+      if (acc.len() > 0) { joined[p] = 0; p++; }
+      for (i32 i = 0; i < name.len(); i++) { joined[p] = name[i]; p++; }
+      acc = joined;
+    }
+  }
+  return acc;
+}
+
+/** Case-insensitive comparison of two host-name byte strings. */
+bool eqHost(u8[] a, i32 aFrom, i32 aLen, u8[] b) {
+  if (aLen != b.len()) { return false; }
+  for (i32 i = 0; i < aLen; i++) {
+    i32 x = a[aFrom + i];
+    i32 y = b[i];
+    if (x >= 'A' && x <= 'Z') { x += 32; }
+    if (y >= 'A' && y <= 'Z') { y += 32; }
+    if (x != y) { return false; }
+  }
+  return true;
+}
+
+/**
+ * The four octets of `host` if it is a dotted-quad IPv4 literal, or an empty array.
+ *
+ * Deliberately strict: exactly four parts, every part digits, every value under 256. Not
+ * `inet_aton` — that accepts octal, hex and fewer than four parts, so `0177.0.0.1` and
+ * `2130706433` are both 127.0.0.1 to it. A permissive parser here would let a name that
+ * some other component treats as a hostname be matched as an address, or the reverse.
+ */
+u8[] parseIpv4(u8[] host) {
+  u8[] out = u8[4]();
+  i32 part = 0;
+  i32 value = 0;
+  i32 digits = 0;
+  bool leadingZero = false;
+  for (i32 i = 0; i <= host.len(); i++) {
+    if (i == host.len() || host[i] == '.') {
+      // A leading zero is a parse failure, not an octal prefix. `127.0.0.001` is the case:
+      // this parser would read it as 127.0.0.1 while the URL spec rejects it outright, and
+      // a disagreement about whether a string is an address or a name is the whole reason
+      // to be strict here.
+      if (digits == 0 || digits > 3 || value > 255 || part > 3 || leadingZero) {
+        return u8[0]();
+      }
+      out[part] = value;
+      part++;
+      value = 0;
+      digits = 0;
+      leadingZero = false;
+    } else if (host[i] >= '0' && host[i] <= '9') {
+      if (digits == 1 && value == 0) { leadingZero = true; }
+      value = value * 10 + (host[i] - '0');
+      digits++;
+    } else {
+      return u8[0]();
+    }
+  }
+  return part == 4 ? out : u8[0]();
+}
+
+/**
+ * Whether the certificate covers `host`.
+ *
+ * An IP literal is matched against iPAddress entries and **nothing else**. RFC 6125 §6.4:
+ * when the reference identity is an address, dNSName entries are not consulted at all. That
+ * is not pedantry — a certificate carrying `DNS:127.0.0.1` is something a CA might well
+ * issue as an ordinary name, and treating it as authority over the address would let it
+ * stand in for a host it was never meant to cover.
+ *
+ * A name is matched against dNSName entries, with wildcards on the leftmost label only,
+ * which is what RFC 6125 §6.4.3 allows: `*.example.com` matches `a.example.com` and not
+ * `a.b.example.com` and not `example.com`. A wildcard anywhere else, or one matching a bare
+ * dot-less name, is the shape that lets one certificate cover a whole registry.
+ */
+export bool certMatchesHost(Cert c, u8[] host) {
+  u8[] ip = parseIpv4(host);
+  if (ip.len() == 4) {
+    for (i32 i = 0; i + 4 <= c.ipAddresses.len(); i += 4) {
+      if (c.ipAddresses[i] == ip[0] && c.ipAddresses[i + 1] == ip[1] &&
+          c.ipAddresses[i + 2] == ip[2] && c.ipAddresses[i + 3] == ip[3]) { return true; }
+    }
+    return false;
+  }
+  i32 start = 0;
+  for (i32 i = 0; i <= c.dnsNames.len(); i++) {
+    if (i == c.dnsNames.len() || c.dnsNames[i] == 0) {
+      i32 len = i - start;
+      if (len > 0 && matchesOne(c.dnsNames, start, len, host)) { return true; }
+      start = i + 1;
+    }
+  }
+  return false;
+}
+
+bool matchesOne(u8[] pat, i32 at, i32 len, u8[] host) {
+  if (len >= 2 && pat[at] == '*' && pat[at + 1] == '.') {
+    // The host must have at least one label before a dot, and the rest must match
+    // exactly. `*.a.com` against `a.com` is not a match: there is no label to consume.
+    i32 dot = -1;
+    for (i32 i = 0; i < host.len(); i++) {
+      if (host[i] == '.' && dot < 0) { dot = i; }
+    }
+    if (dot <= 0) { return false; }
+    u8[] tail = u8[host.len() - dot - 1]();
+    for (i32 i = 0; i < tail.len(); i++) { tail[i] = host[dot + 1 + i]; }
+    return eqHost(pat, at + 2, len - 2, tail);
+  }
+  return eqHost(pat, at, len, host);
+}
+
+/**
+ * An ECDSA signature from its DER wrapper, as raw r ++ s.
+ *
+ * X.509 writes ECDSA as SEQUENCE { r INTEGER, s INTEGER }; the crypto layer wants two
+ * fixed-width values, `len` bytes each — 32 for P-256, 48 for P-384. The integers are
+ * signed and variable-length, so each needs its sign byte stripped and then left-padding
+ * back to `len`: a shorter r is not a smaller signature, it is the same number with fewer
+ * digits.
+ */
+u8[] ecdsaFromDer(u8[] der, i32 len) {
+  Der outer = Der.create(der);
+  Der seq = outer.element(tagSequence());
+  u8[] r = unsignedInteger(seq.element(tagInteger()).rest());
+  u8[] s = unsignedInteger(seq.element(tagInteger()).rest());
+  // An integer wider than the curve is a malformed signature, not a program error. Empty
+  // here means "no signature to check", and every caller treats that as a failed check.
+  if (r.len() > len || s.len() > len) { return u8[0](); }
+  u8[] out = u8[2 * len]();
+  for (i32 i = 0; i < r.len(); i++) { out[len - r.len() + i] = r[i]; }
+  for (i32 i = 0; i < s.len(); i++) { out[2 * len - s.len() + i] = s[i]; }
+  return out;
+}
+
+/** An ECDSA signature verified against whichever curve the signer's key is on. */
+bool ecdsaCheck(i32 keyType, u8[] publicKey, u8[] digest, u8[] derSig) {
+  if (keyType == 2) { return p256VerifyDigest(publicKey, digest, ecdsaFromDer(derSig, 32)); }
+  if (keyType == 4) { return p384VerifyDigest(publicKey, digest, ecdsaFromDer(derSig, 48)); }
+  return false;
+}
+
+/**
+ * Whether `signer` signed `cert`.
+ *
+ * The signature algorithm on the certificate and the key type of the signer have to
+ * agree — an ECDSA signature checked against an RSA key is not a failure to verify, it
+ * is a category error, and treating it as a mere `false` would hide a chain that has
+ * been assembled wrongly.
+ */
+export bool certSignedBy(Cert cert, Cert signer) {
+  if (cert.sigAlg == 0 || signer.keyType == 0) { return false; }
+  if (cert.sigAlg == 1) {
+    if (signer.keyType != 1) { return false; }
+    return ed25519Verify(signer.publicKey, cert.tbs, cert.signature);
+  }
+  if (cert.sigAlg == 2 || cert.sigAlg == 3) {
+    // The hash comes from the signature algorithm and the curve from the signer's key,
+    // and they are independent: ecdsa-with-SHA256 under a P-384 key is legal and occurs.
+    // Pairing them the other way round — assuming SHA-384 means P-384 — would verify real
+    // chains by accident and reject the ones that mix.
+    u8[] digest = cert.sigAlg == 2 ? sha256(cert.tbs) : sha384(cert.tbs);
+    return ecdsaCheck(signer.keyType, signer.publicKey, digest, cert.signature);
+  }
+  if (cert.sigAlg == 4 || cert.sigAlg == 5 || cert.sigAlg == 6) {
+    if (signer.keyType != 3) { return false; }
+    i32 hashLen = cert.sigAlg == 4 ? 32 : (cert.sigAlg == 5 ? 48 : 64);
+    return rsaVerifyPkcs1(signer.publicKey, signer.rsaExponent, cert.tbs,
+                          cert.signature, hashLen);
+  }
+  if (cert.sigAlg == 7) {
+    if (signer.keyType != 3) { return false; }
+    // The PSS parameters live in the algorithm identifier and default to SHA-1, which
+    // nothing sane uses. Assuming SHA-256 with a matching salt covers what certificate
+    // authorities actually issue and is wrong for anything else — a limitation, not a
+    // safe default, and it fails closed rather than accepting the wrong hash.
+    return rsaVerifyPss(signer.publicKey, signer.rsaExponent, cert.tbs,
+                        cert.signature, 32, 32);
+  }
+  return false;
+}
+
+/** Whether two encoded Names are byte-identical, which is how a chain links. */
+bool nameEquals(u8[] a, u8[] b) { return oidEquals(a, b); }
+
+/**
+ * Verify a leaf against a trusted root, at a point in time, for a host name.
+ *
+ * Returns 0 for success and a non-zero code otherwise, because a boolean would answer
+ * "did it work" and the caller needs to know which of the three checks failed — the
+ * alert to send differs, and so does the advice to a human.
+ */
+export i32 verifyChain(Cert leaf, Cert root, u8[] host, i64 now) {
+  // Refused first, and on its own footing. A malformed certificate would fail the signature
+  // check a few lines down anyway, but "the signature did not verify" is the wrong thing to
+  // report about bytes that were never a certificate — and it makes the parser's honesty
+  // depend on a step some callers do not reach.
+  if (!leaf.wellFormed || !root.wellFormed) { return 13; }
+  if (now < leaf.notBefore) { return 1; }        // not yet valid
+  if (now > leaf.notAfter) { return 2; }         // expired
+  if (now < root.notBefore || now > root.notAfter) { return 3; }
+  if (!root.isCa) { return 4; }                  // a leaf cannot vouch for anything
+  if (!nameEquals(leaf.issuer, root.subject)) { return 5; }
+  if (!certSignedBy(leaf, root)) { return 6; }
+  if (!certMatchesHost(leaf, host)) { return 7; }
+  if (leaf.badCritical) { return 12; }
+  if (!leaf.serverAuth) { return 11; }
+  return 0;
+}
+
+/**
+ * Verify a TLS CertificateVerify signature against this certificate's key.
+ *
+ * `scheme` is a TLS SignatureScheme code point, which is a different namespace from the
+ * OIDs a certificate uses — 0x0403 and `ecdsa-with-SHA256` mean the same thing and are
+ * written nothing alike. Keeping the translation here rather than in the handshake means
+ * the one place that knows both namespaces is the one place that has both to hand.
+ *
+ * The scheme must match the key: RFC 8446 §4.4.3 requires that a peer only send a
+ * signature its certificate can actually carry, and accepting a mismatch would mean
+ * verifying an ECDSA signature against whatever bytes an RSA modulus happens to be.
+ */
+export bool certVerifySignature(Cert c, i32 scheme, u8[] content, u8[] signature) {
+  if (scheme == 0x0807) {                       // ed25519
+    if (c.keyType != 1) { return false; }
+    return ed25519Verify(c.publicKey, content, signature);
+  }
+  if (scheme == 0x0403) {                       // ecdsa_secp256r1_sha256
+    if (c.keyType != 2) { return false; }
+    return p256Verify(c.publicKey, content, ecdsaFromDer(signature, 32));
+  }
+  if (scheme == 0x0503) {                       // ecdsa_secp384r1_sha384
+    if (c.keyType != 4) { return false; }
+    return p384VerifyDigest(c.publicKey, sha384(content), ecdsaFromDer(signature, 48));
+  }
+  if (scheme == 0x0804) {                       // rsa_pss_rsae_sha256
+    if (c.keyType != 3) { return false; }
+    return rsaVerifyPss(c.publicKey, c.rsaExponent, content, signature, 32, 32);
+  }
+  if (scheme == 0x0805) {                       // rsa_pss_rsae_sha384
+    if (c.keyType != 3) { return false; }
+    return rsaVerifyPss(c.publicKey, c.rsaExponent, content, signature, 48, 48);
+  }
+  if (scheme == 0x0401) {                       // rsa_pkcs1_sha256
+    // RFC 8446 §4.4.3 forbids PKCS#1 v1.5 in CertificateVerify — it is listed in
+    // signature_algorithms only so a peer knows we can check *certificate* signatures
+    // made with it. A peer that uses it here is not speaking TLS 1.3.
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Verify a certificate chain against a set of trusted roots.
+ *
+ * `chain` is the leaf followed by whatever intermediates the server chose to send, in
+ * the order it sent them — which RFC 8446 §4.4.2 says *should* be leaf-first but does
+ * not require, and which some servers get wrong. `roots` is the trust store.
+ *
+ * The path is built from the leaf upwards, each step looking for a certificate whose
+ * subject matches the current issuer, and stopping at the first root that both matches
+ * and verifies. A cross-signed root sent as an intermediate is followed like any other
+ * link, which is not a special case here but is how a good deal of the web chains: for
+ * raw.githubusercontent.com the server sends ISRG's newer root cross-signed by Root X1,
+ * so the anchor is three certificates up rather than at the end of what was sent.
+ *
+ * What it does not do is backtrack. If a link verifies but leads nowhere, no alternative
+ * issuer for that link is tried, so a chain with two possible paths where only the second
+ * reaches a root is reported as untrusted. Nor is there any revocation checking. A real
+ * client does both.
+ *
+ * Returns 0 for success, or a code saying which check failed. Codes are distinguished
+ * because "expired", "unknown issuer" and "wrong name" want different alerts and
+ * different advice to a human:
+ *
+ *   1 not yet valid          2 expired               3 root out of date
+ *   5 unknown authority      7 name mismatch         8 empty chain
+ *   9 depth exceeded        10 name constraint      11 not for server authentication
+ *  12 unrecognised critical extension
+ *
+ * `chainOffsets` and `rootOffsets` describe where each DER certificate begins inside
+ * the two blobs, because wac has no array of byte arrays crossing a boundary and
+ * flattening is cheaper than a struct nobody else needs.
+ */
+export i32 verifyPath(u8[] chain, i32[] chainOffsets, u8[] roots, i32[] rootOffsets,
+                      u8[] host, i64 now, i32 maxDepth) {
+  i32 nChain = chainOffsets.len() / 2;
+  i32 nRoots = rootOffsets.len() / 2;
+  if (nChain == 0) { return 8; }                 // nothing to verify
+
+  Cert leaf = parseCert(clamped(chain, chainOffsets[0], chainOffsets[1]));
+  if (now < leaf.notBefore) { return 1; }
+  if (now > leaf.notAfter) { return 2; }
+  if (!certMatchesHost(leaf, host)) { return 7; }
+  if (leaf.badCritical) { return 12; }
+  if (!leaf.serverAuth) { return 11; }
+
+  Cert current = leaf;
+  i32 depth = 0;
+  while (depth < maxDepth) {
+    // A root that signed the current certificate ends the path.
+    for (i32 r = 0; r < nRoots; r++) {
+      Cert root = parseCert(clamped(roots, rootOffsets[2 * r], rootOffsets[2 * r + 1]));
+      if (!nameEquals(current.issuer, root.subject)) { continue; }
+      if (root.keyType == 0) { continue; }       // an algorithm we cannot check
+      if (root.badCritical) { continue; }        // terms we cannot honour
+      if (!root.isCa) { continue; }
+      if (!root.canSignCerts) { continue; }
+      if (now < root.notBefore || now > root.notAfter) { continue; }
+      if (certSignedBy(current, root)) {
+        // After the signature, so a name-constrained root that did not sign this chain
+        // cannot reject it on behalf of the one that did.
+        if (!namesAllowed(leaf, root)) { return 10; }
+        return 0;
+      }
+      // A root with a matching name whose signature does not check is not this path's
+      // root. Two authorities can share a subject name, so this keeps looking rather
+      // than failing — which is the difference between working and not for the handful
+      // of CAs that have reissued under the same name.
+    }
+
+    // Otherwise look for an intermediate in the chain the server sent.
+    bool advanced = false;
+    for (i32 i = 1; i < nChain; i++) {
+      Cert cand = parseCert(clamped(chain, chainOffsets[2 * i], chainOffsets[2 * i + 1]));
+      if (!nameEquals(current.issuer, cand.subject)) { continue; }
+      if (cand.keyType == 0) { continue; }
+      if (cand.badCritical) { continue; }
+      if (!cand.isCa) { continue; }              // a leaf cannot vouch for anything
+      if (!cand.canSignCerts) { continue; }
+      if (now < cand.notBefore || now > cand.notAfter) { continue; }
+      // pathLenConstraint counts the intermediates permitted below this one. `depth`
+      // is how many we have already walked past, so exceeding it means this CA is being
+      // used further down a chain than its issuer allowed.
+      if (cand.pathLen >= 0 && depth > cand.pathLen) { continue; }
+      if (!certSignedBy(current, cand)) { continue; }
+      if (!namesAllowed(leaf, cand)) { return 10; }
+      current = cand;
+      advanced = true;
+      i = nChain;
+    }
+    if (!advanced) { return 5; }                 // no issuer found: unknown authority
+    depth++;
+  }
+  return 9;                                      // ran past the depth limit
+}
+

@@ -1,0 +1,435 @@
+// Internals tested in wac, asserting on the parsed tree directly.
+//
+// The host-side tests are the ones that matter for conformance — their oracle is
+// the host's own JSON, which cannot exist inside wasm. But they can only ever
+// observe bytes, because a JsonValue is a GC reference and bindgen marshals only
+// primitives and primitive arrays. So everything they check about the tree is
+// really a check on its re-serialization, and a bug that cancelled itself out
+// between parse and stringify would pass.
+//
+// These reach the tree: kinds, member ordering, unescaped string contents and the
+// growth of json's own ref-element containers. The shared byte buffer has its own
+// tests in packages/bytes.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { JsonValue, JsonArray, JsonObject, bytesEqual, numberOf } from "../../src/value.wac";
+import { writeValue } from "../../src/stringify.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+import { Parser, parseDocument, hexDigit, ERR_NONE, ERR_TRAILING, ERR_CONTROL } from "../../src/parse.wac";
+
+/**
+ * Extractors.
+ *
+ * `match` is a statement and narrows only a plain variable, so pulling one field out
+ * for an assertion takes a function. That is not worse than the `as!` chain it
+ * replaces — it is one place per shape instead of one cast per use — and an arm that
+ * cannot happen traps rather than returning a plausible default.
+ */
+i32 tagOf(JsonValue v) {
+  match (v) {
+    case Null:   return 0;
+    case Bool:   return 1;
+    case Number: return 2;
+    case Str:    return 3;
+    case Array:  return 4;
+    case Object: return 5;
+  }
+}
+
+u8[] strBytes(JsonValue v) {
+  match (v) {
+    case Str(bytes): return bytes;
+    else: trap;
+  }
+}
+
+bool boolValue(JsonValue v) {
+  match (v) {
+    case Bool(value): return value;
+    else: trap;
+  }
+}
+
+f64 numValue(JsonValue v) {
+  match (v) {
+    case Number(value, raw): return value;
+    else: trap;
+  }
+}
+
+u8[] numRaw(JsonValue v) {
+  match (v) {
+    case Number(value, raw): return raw;
+    else: trap;
+  }
+}
+
+JsonArray asArray(JsonValue v) {
+  match (v) {
+    case Array(items): return items;
+    else: trap;
+  }
+}
+
+JsonObject asObject(JsonValue v) {
+  match (v) {
+    case Object(members): return members;
+    else: trap;
+  }
+}
+
+JsonValue? parseStr(string src) {
+  // `string.toBytes()` replaced a 40-line ASCII lookup table here. The table
+  // existed only because nothing converted text to bytes, and it could not
+  // represent a non-ASCII character at all — which is what this test file needs
+  // for a multi-byte key.
+  Parser p = Parser.create(src.toBytes());
+  return parseDocument(p);
+}
+
+// ── Small helpers ────────────────────────────────────────────────────────────
+
+export string test_hex_digit() {
+  T t = T.create();
+  t.eqI32(hexDigit(0x30), 0, "'0'");
+  t.eqI32(hexDigit(0x39), 9, "'9'");
+  t.eqI32(hexDigit(0x61), 10, "'a'");
+  t.eqI32(hexDigit(0x66), 15, "'f'");
+  t.eqI32(hexDigit(0x41), 10, "'A'");
+  t.eqI32(hexDigit(0x46), 15, "'F'");
+  t.eqI32(hexDigit(0x67), -1, "'g' is not hex");
+  t.eqI32(hexDigit(0x2F), -1, "'/' is not hex");
+  t.eqI32(hexDigit(0x47), -1, "'G' is not hex");
+  return t.report();
+}
+
+export string test_bytes_equal() {
+  T t = T.create();
+  t.isTrue(bytesEqual(u8[](1, 2, 3), u8[](1, 2, 3)), "identical");
+  t.isTrue(bytesEqual(u8[0](), u8[0]()), "both empty");
+  t.isFalse(bytesEqual(u8[](1, 2), u8[](1, 2, 3)), "prefix is not equal");
+  t.isFalse(bytesEqual(u8[](1, 2, 3), u8[](1, 2, 4)), "last byte differs");
+  t.isFalse(bytesEqual(u8[](1), u8[0]()), "one empty");
+  return t.report();
+}
+
+// ── Containers ───────────────────────────────────────────────────────────────
+
+export string test_json_array_growth() {
+  T t = T.create();
+  JsonArray a = JsonArray.create();
+  t.eqI32(a.len(), 0, "starts empty");
+  for (i32 i = 0; i < 50; i++) {
+    a.push(JsonValue.Number(1.0, u8[](0x31)));
+  }
+  t.eqI32(a.len(), 50, "length after 50 pushes");
+  t.eqI32(tagOf(a.get(0)), 2, "element kind survives growth");
+  t.eqI32(tagOf(a.get(49)), 2, "last element too");
+  return t.report();
+}
+
+/** An object with `n` members keyed by a single ascending byte, plus a duplicate of the first. */
+JsonObject manyMembers(i32 n) {
+  JsonObject o = JsonObject.create();
+  for (i32 i = 0; i < n; i++) {
+    o.push(u8[](65 + i), numberOf(i as f64));
+  }
+  // A duplicate of the first key, with a different value. Lookup must still find the first.
+  o.push(u8[](65), numberOf(999.0));
+  return o;
+}
+
+/**
+ * Lookup agrees with itself either side of the index threshold.
+ *
+ * `get` scans until an object has been looked up `INDEX_MIN_SCANS` times, then builds a hash
+ * index and uses that instead. Two code paths for one question, so the test asks the same
+ * questions enough times to cross over and checks nothing changed — including the rule that a
+ * duplicated key resolves to its *first* member, which a Map would happily lose.
+ */
+export string test_lookup_agrees_across_the_index_threshold() {
+  T t = T.create();
+  i32 n = 20;                       // above INDEX_MIN_MEMBERS
+  JsonObject o = manyMembers(n);
+
+  // 40 rounds is well past the scan-count threshold, so the later rounds are indexed.
+  //
+  // Summed rather than checked per lookup, and with no conditional in the loop at all. Any
+  // `if` or ternary in a passing test has a side that never runs, which a branch-coverage
+  // report cannot distinguish from a real hole; `t.eq*` keeps its branch inside `assert.wac`,
+  // where wactest's own tests cover both sides. `v!` traps if a key vanished, which is a loud
+  // enough failure for a test.
+  f64 sum = 0.0;
+  for (i32 round = 0; round < 40; round++) {
+    for (i32 i = 0; i < n; i++) {
+      sum = sum + numValue(o.get(u8[](65 + i))!);
+    }
+  }
+  // 0+1+..+19 per round. The duplicate of key "A" holds 999, so a lookup resolving to it
+  // instead of the first member would push the total far past this.
+  t.eqF64(sum, 40.0 * 190.0, "every round agrees, scanned and indexed alike");
+  t.isTrue(o.get(u8[](200)) is null, "a missing key is still missing once indexed");
+  t.eqI32(o.len(), n + 1, "every member is still there, duplicate included");
+  return t.report();
+}
+
+/**
+ * A push after the index exists is still findable.
+ *
+ * The index is built lazily and then maintained by `push`. If `push` forgot to update it, this
+ * is the shape that breaks: look something up enough times to force the index, then add a key
+ * and ask for it.
+ */
+export string test_push_after_indexing_is_visible() {
+  T t = T.create();
+  JsonObject o = manyMembers(20);
+  for (i32 round = 0; round < 40; round++) { o.get(u8[](66)); }
+
+  o.push(u8[](200), numberOf(7.0));
+  JsonValue? found = o.get(u8[](200));
+  t.isTrue(found is not null, "a member pushed after the index was built is found");
+  t.eqF64(numValue(found!), 7.0, "and has the right value");
+
+  // And a duplicate added after indexing must not displace the original.
+  o.push(u8[](66), numberOf(123.0));
+  t.eqF64(numValue(o.get(u8[](66))!), 1.0, "the first member still wins");
+  return t.report();
+}
+
+export string test_json_object_lookup() {
+  T t = T.create();
+  JsonObject o = JsonObject.create();
+  o.push(u8[](0x61), JsonValue.Number(1.0, u8[](0x31)));           // a: 1
+  o.push(u8[](0x62), JsonValue.Number(2.0, u8[](0x32)));           // b: 2
+  t.eqI32(o.len(), 2, "two members");
+
+  JsonValue? found = o.get(u8[](0x62));
+  t.isTrue(found is not null, "b is found");
+  t.eqI32(tagOf(found!), 2, "b is a number");
+
+  t.isTrue(o.get(u8[](0x63)) is null, "c is absent");
+  t.isTrue(o.get(u8[0]()) is null, "empty key is absent");
+
+  // Duplicates are retained, and lookup returns the first.
+  o.push(u8[](0x61), JsonValue.Number(9.0, u8[](0x39)));
+  t.eqI32(o.len(), 3, "duplicate key is kept as a third member");
+  t.isTrue(numValue(o.get(u8[](0x61))!) == 1.0, "lookup returns the first of a duplicated key");
+  return t.report();
+}
+
+// ── The tree the host tests cannot see ───────────────────────────────────────
+
+export string test_tree_shape() {
+  T t = T.create();
+  JsonValue? v = parseStr("{\"a\":[1,true],\"b\":null}");
+  t.isTrue(v is not null, "document parses");
+  t.eqI32(tagOf(v!), 5, "root is an object");
+
+  JsonObject o = asObject(v!);
+  t.eqI32(o.len(), 2, "two members");
+  t.eqBytes(o.at(0).key, u8[](0x61), "first key is a");
+  t.eqBytes(o.at(1).key, u8[](0x62), "second key is b");
+  t.eqI32(tagOf(o.at(1).value), 0, "b is null");
+
+  JsonArray arr = asArray(o.at(0).value);
+  t.eqI32(arr.len(), 2, "a has two elements");
+  t.eqI32(tagOf(arr.get(0)), 2, "first is a number");
+  t.eqI32(tagOf(arr.get(1)), 1, "second is a bool");
+  return t.report();
+}
+
+export string test_string_accessors() {
+  T t = T.create();
+  JsonValue? v = parseStr("{\"name\":\"wac\",\"n\":1}");
+  t.isTrue(v is not null, "parses");
+  JsonObject o = asObject(v!);
+
+  // Lookup by a string key is what calling code actually has, and it must agree
+  // with the byte-keyed form rather than being a separate code path.
+  JsonValue? byStr = o.getStr("name");
+  t.isTrue(byStr is not null, "getStr finds the member");
+  t.eqStr(string.fromBytes(strBytes(byStr!)), "wac", "and its value comes back as a string");
+  JsonValue? byBytes = o.get(u8[]('n', 'a', 'm', 'e'));
+  t.isTrue(byBytes is not null, "the byte-keyed form finds it too");
+  t.isTrue(byStr! is byBytes!, "and both return the same object");
+
+  t.isTrue(o.getStr("nope") is null, "a missing key is null");
+  t.isTrue(o.getStr("") is null, "so is the empty key");
+  // A prefix of a real key must not match — bytesEqual compares lengths first.
+  t.isTrue(o.getStr("nam") is null, "a prefix does not match");
+  t.eqStr(o.at(0).keyStr(), "name", "keyStr reads the member key");
+  t.eqStr(o.at(1).keyStr(), "n", "including a one-character one");
+  return t.report();
+}
+
+export string test_string_accessors_handle_utf8() {
+  T t = T.create();
+  // The interesting case for a byte/string boundary: a key and a value that are
+  // multi-byte, plus one built from an escape rather than from literal bytes.
+  JsonValue? v = parseStr("{\"日\":\"caf\\u00e9\"}");
+  t.isTrue(v is not null, "parses");
+  JsonObject o = asObject(v!);
+  t.eqStr(o.at(0).keyStr(), "日", "a multi-byte key round-trips");
+  JsonValue? found = o.getStr("日");
+  t.isTrue(found is not null, "and can be looked up by that string");
+  t.eqStr(string.fromBytes(strBytes(found!)), "café",
+    "a value assembled from a \\u escape comes back as the right string");
+  return t.report();
+}
+
+export string test_member_order_is_source_order() {
+  T t = T.create();
+  // The host cannot check this: JS hoists integer-like keys to the front of its
+  // own output, so a re-serialized comparison would disagree for reasons that
+  // have nothing to do with this parser.
+  JsonValue? v = parseStr("{\"2\":0,\"b\":0,\"1\":0}");
+  t.isTrue(v is not null, "parses");
+  JsonObject o = asObject(v!);
+  t.eqBytes(o.at(0).key, u8[](0x32), "first key is 2");
+  t.eqBytes(o.at(1).key, u8[](0x62), "second key is b");
+  t.eqBytes(o.at(2).key, u8[](0x31), "third key is 1");
+  return t.report();
+}
+
+export string test_unescaped_string_contents() {
+  T t = T.create();
+  JsonValue? v = parseStr("\"a\\u0041\\n\\\\b\"");
+  t.isTrue(v is not null, "parses");
+  t.eqBytes(strBytes(v!), u8[]('a', 'A', '\n', '\\', 'b'), "escapes are decoded in place");
+  return t.report();
+}
+
+export string test_surrogate_pair_decodes_to_one_scalar() {
+  T t = T.create();
+  JsonValue? v = parseStr("\"\\ud83d\\ude00\"");
+  t.isTrue(v is not null, "parses");
+  t.eqBytes(strBytes(v!), u8[](0xF0, 0x9F, 0x98, 0x80), "pair becomes U+1F600");
+  return t.report();
+}
+
+export string test_unpaired_surrogate_becomes_replacement() {
+  T t = T.create();
+  JsonValue? v = parseStr("\"\\ud83d\"");
+  t.isTrue(v is not null, "parses");
+  t.eqBytes(strBytes(v!), u8[](0xEF, 0xBF, 0xBD), "lone high surrogate becomes U+FFFD");
+  return t.report();
+}
+
+export string test_number_keeps_its_source_span() {
+  T t = T.create();
+  JsonValue? v = parseStr("[1e2,-0]");
+  t.isTrue(v is not null, "parses");
+  JsonArray a = asArray(v!);
+  t.eqBytes(numRaw(a.get(0)), u8[](0x31, 0x65, 0x32), "raw span is 1e2, not 100");
+  t.isTrue(numValue(a.get(0)) == 100.0, "value is still 100");
+  t.eqBytes(numRaw(a.get(1)), u8[](0x2D, 0x30), "negative zero keeps its sign in the span");
+  return t.report();
+}
+
+export string test_error_codes_and_positions() {
+  T t = T.create();
+
+  Parser p1 = Parser.create("[1] junk".toBytes());
+  t.isTrue(parseDocument(p1) is null, "trailing content fails");
+  t.eqI32(p1.err, ERR_TRAILING(), "reported as trailing");
+  t.eqI32(p1.errPos, 4, "position is where the junk starts");
+
+  Parser p2 = Parser.create(u8[](0x22, 0x0A, 0x22));   // "\n" raw newline
+  t.isTrue(parseDocument(p2) is null, "raw control byte fails");
+  t.eqI32(p2.err, ERR_CONTROL(), "reported as a control byte");
+  t.eqI32(p2.errPos, 1, "position is the control byte");
+
+  Parser p3 = Parser.create("[1]".toBytes());
+  t.isTrue(parseDocument(p3) is not null, "valid input succeeds");
+  t.eqI32(p3.err, ERR_NONE(), "no error recorded");
+
+  return t.report();
+}
+
+// ── Serializing a tree that was never parsed ─────────────────────────────────
+
+export string test_hand_built_tree_serializes() {
+  T t = T.create();
+  // The gap this closes: before packages/fmt there was no float-to-string, so a
+  // JsonNumber with no source span could not be written at all.
+  JsonObject o = JsonObject.create();
+  o.push("n".toBytes(), numberOf(1.5));
+  o.push("big".toBytes(), numberOf(1.0e21));
+  o.push("small".toBytes(), numberOf(0.1));
+  JsonArray a = JsonArray.create();
+  a.push(numberOf(0.0));
+  a.push(numberOf(-2.25));
+  o.push("xs".toBytes(), JsonValue.Array(a));
+
+  Buf out = Buf.create();
+  writeValue(out, JsonValue.Object(o));
+  t.eqStr(out.toStr(),
+    "{\"n\":1.5,\"big\":1e+21,\"small\":0.1,\"xs\":[0,-2.25]}",
+    "every number is formatted to its shortest form");
+  return t.report();
+}
+
+export string test_hand_built_values_stay_valid_json() {
+  T t = T.create();
+
+  // NaN and the infinities have no JSON spelling, and the float formatter wrote the JavaScript
+  // ones — so a hand-built tree serialised to text this package's own parser rejects.
+  // `JSON.stringify` writes null for them. GitHub wac-mono#29.
+  Buf a = Buf.create();
+  writeValue(a, numberOf(0.0 / 0.0));
+  t.eqBytes(a.bytes(), "null".toBytes(), "NaN is null, as JSON.stringify has it");
+
+  Buf b = Buf.create();
+  writeValue(b, numberOf(1.0 / 0.0));
+  t.eqBytes(b.bytes(), "null".toBytes(), "positive infinity is null");
+
+  Buf c = Buf.create();
+  writeValue(c, numberOf(-1.0 / 0.0));
+  t.eqBytes(c.bytes(), "null".toBytes(), "and so is negative infinity");
+
+  Buf d = Buf.create();
+  writeValue(d, numberOf(1.5));
+  t.eqBytes(d.bytes(), "1.5".toBytes(), "a finite number is still written as itself");
+
+  // `Str` takes raw bytes, so a hand-built one may hold anything. Each ill-formed byte becomes
+  // U+FFFD rather than being copied into output that is not UTF-8. GitHub wac-mono#30.
+  Buf e = Buf.create();
+  writeValue(e, JsonValue.Str(u8[](0xFF)));
+  t.eqBytes(e.bytes(), u8[]('"', 0xEF, 0xBF, 0xBD, '"'), "a lone 0xFF is replaced");
+
+  Buf f = Buf.create();
+  writeValue(f, JsonValue.Str(u8[](0xED, 0xA0, 0x80)));
+  t.eqBytes(f.bytes(), u8[]('"', 0xEF, 0xBF, 0xBD, 0xEF, 0xBF, 0xBD, 0xEF, 0xBF, 0xBD, '"'),
+    "an encoded surrogate is three ill-formed bytes");
+
+  Buf g = Buf.create();
+  writeValue(g, JsonValue.Str(u8[](0xC3, 0xA9)));
+  t.eqBytes(g.bytes(), u8[]('"', 0xC3, 0xA9, '"'), "well-formed UTF-8 is copied whole");
+
+  Buf h = Buf.create();
+  writeValue(h, JsonValue.Str(u8[](0xF0, 0x9F, 0x98, 0x80)));
+  t.eqBytes(h.bytes(), u8[]('"', 0xF0, 0x9F, 0x98, 0x80, '"'), "including four-byte sequences");
+
+  Buf i = Buf.create();
+  writeValue(i, JsonValue.Str(u8[](0xC3)));
+  t.eqBytes(i.bytes(), u8[]('"', 0xEF, 0xBF, 0xBD, '"'), "a truncated sequence is ill-formed");
+
+  Buf j = Buf.create();
+  writeValue(j, JsonValue.Str(u8[](0xC0, 0xAF)));
+  t.eqBytes(j.bytes(), u8[]('"', 0xEF, 0xBF, 0xBD, 0xEF, 0xBF, 0xBD, '"'),
+    "and so is an overlong encoding of '/'");
+
+  return t.report();
+}
+
+export string test_parsed_numbers_keep_their_span() {
+  T t = T.create();
+  // The other half of the rule: a parsed number is written back verbatim, so
+  // `1e2` does not become `100` and `-0` keeps its sign.
+  JsonValue? v = parseStr("[1e2,-0,1.50]");
+  t.isTrue(v is not null, "parses");
+  Buf out = Buf.create();
+  writeValue(out, v!);
+  t.eqStr(out.toStr(), "[1e2,-0,1.50]", "spans are preserved exactly");
+  return t.report();
+}

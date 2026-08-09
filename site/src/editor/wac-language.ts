@@ -15,8 +15,8 @@ import {
   LanguageSupport,
 } from "@codemirror/language";
 import { Tag } from "@lezer/highlight";
-import { KEYWORDS } from "../../atoms/wac/wacLex.ts";
-import { SPELLINGS } from "../../atoms/wac/wapyLex.ts";
+import { KEYWORDS } from "../../../compiler/wacLex.ts";
+import { SPELLINGS } from "../../../compiler/wapyLex.ts";
 
 export const trapTag = Tag.define();
 

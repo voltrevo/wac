@@ -1,7 +1,7 @@
-import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../atoms/wac/wacCompile.ts";
+import { wacCompile, type CompileResult, type WacExport, type WacCompiled } from "../../../compiler/wacCompile.ts";
 import { isArrayType, runHere, type RunReply, type RunRequest } from "./run.worker.ts";
-import { wacBindgen } from "../../atoms/wac/wacBindgen.ts";
-import { wacDiag } from "../../atoms/wac/wacDiag.ts";
+import { wacBindgen } from "../../../compiler/wacBindgen.ts";
+import { wacDiag } from "../../../compiler/wacDiag.ts";
 import type { FileMap } from "./file-store";
 
 export type EditorCompileResult =

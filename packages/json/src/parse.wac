@@ -1,0 +1,418 @@
+// JSON parser (RFC 8259), byte-oriented.
+//
+// Input is UTF-8 bytes rather than `string` — see value.wac for why. That turns
+// the scanner into comparisons on i32, which is what wac is good at.
+//
+// wac has no exceptions and no sum types, so errors travel as a code on the
+// Parser plus a null return. Every parse entry point returns `T?`; null always
+// means "check p.err".
+
+import { JsonValue, JsonArray, JsonObject } from "./value.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { atofSpan } from "../../fmt/src/atof.wac";
+
+export i32 ERR_NONE()         { return 0; }
+export i32 ERR_UNEXPECTED()   { return 1; }  // wrong byte for the position
+export i32 ERR_EOF()          { return 2; }  // ran out of input mid-value
+export i32 ERR_NUMBER()       { return 3; }  // malformed number
+export i32 ERR_ESCAPE()       { return 4; }  // bad \ escape
+export i32 ERR_CONTROL()      { return 5; }  // raw control byte in a string
+export i32 ERR_TRAILING()     { return 6; }  // non-whitespace after the value
+export i32 ERR_DEPTH()        { return 7; }  // nesting limit exceeded
+export i32 ERR_UTF8()         { return 8; }  // malformed UTF-8 inside a string
+
+// Bounded so a hostile input cannot exhaust the wasm stack. Real JSON is
+// nowhere near this deep.
+i32 MAX_DEPTH() { return 400; }
+
+export struct Parser {
+  u8[] src;
+  i32 pos;
+  i32 err;
+  i32 errPos;
+  i32 depth;
+
+  Parser create(u8[] src) { return Parser(src, 0, 0, 0, 0); }
+
+  // -1 rather than a bool+out-param: every caller compares against a byte
+  // value anyway, and no real byte is negative.
+  i32 peek(const this) {
+    if (this.pos >= this.src.len()) { return -1; }
+    return this.src[this.pos];
+  }
+
+  void fail(this, i32 code) {
+    // Keep the first failure: it is the one nearest the actual mistake.
+    if (this.err == 0) {
+      this.err = code;
+      this.errPos = this.pos;
+    }
+  }
+
+  void skipWs(this) {
+    while (this.pos < this.src.len()) {
+      i32 c = this.src[this.pos];
+      if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+        this.pos++;
+      } else {
+        return;
+      }
+    }
+  }
+
+  // Match an ASCII keyword at the cursor without allocating.
+  bool eatWord(this, u8[] word) {
+    if (this.pos + word.len() > this.src.len()) { return false; }
+    for (i32 i = 0; i < word.len(); i++) {
+      if (this.src[this.pos + i] != word[i]) { return false; }
+    }
+    this.pos += word.len();
+    return true;
+  }
+
+  JsonValue? parseValue(this) {
+    if (this.depth >= MAX_DEPTH()) { this.fail(ERR_DEPTH()); return null; }
+    i32 c = this.peek();
+    if (c < 0) { this.fail(ERR_EOF()); return null; }
+
+    switch (c) {
+      case '{': { return this.parseObject(); }
+      case '[': { return this.parseArray(); }
+      case '"': {
+        u8[]? b = this.parseStringBytes();
+        if (b is null) { return null; }
+        return JsonValue.Str(b!);
+      }
+      case 't': {
+        if (this.eatWord(u8[]('t', 'r', 'u', 'e'))) { return JsonValue.Bool(true); }
+        this.fail(ERR_UNEXPECTED());
+        return null;
+      }
+      case 'f': {
+        if (this.eatWord(u8[]('f', 'a', 'l', 's', 'e'))) { return JsonValue.Bool(false); }
+        this.fail(ERR_UNEXPECTED());
+        return null;
+      }
+      case 'n': {
+        if (this.eatWord(u8[]('n', 'u', 'l', 'l'))) { return JsonValue.Null; }
+        this.fail(ERR_UNEXPECTED());
+        return null;
+      }
+      default: {
+        if (c == '-' || (c >= '0' && c <= '9')) {   // '-' or digit
+          return this.parseNumber();
+        }
+        this.fail(ERR_UNEXPECTED());
+        return null;
+      }
+    }
+  }
+
+  JsonValue? parseArray(this) {
+    this.pos++;                                        // consume [
+    this.depth++;
+    JsonArray arr = JsonArray.create();
+    this.skipWs();
+    if (this.peek() == ']') {
+      this.pos++;
+      this.depth--;
+      return JsonValue.Array(arr);
+    }
+    while (true) {
+      this.skipWs();
+      JsonValue? item = this.parseValue();
+      if (item is null) { return null; }
+      arr.push(item!);
+      this.skipWs();
+      i32 c = this.peek();
+      if (c == ',') { this.pos++; continue; }
+      if (c == ']') {
+        this.pos++;
+        this.depth--;
+        return JsonValue.Array(arr);
+      }
+      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      return null;
+    }
+  }
+
+  JsonValue? parseObject(this) {
+    this.pos++;                                        // consume {
+    this.depth++;
+    JsonObject obj = JsonObject.create();
+    this.skipWs();
+    if (this.peek() == '}') {
+      this.pos++;
+      this.depth--;
+      return JsonValue.Object(obj);
+    }
+    while (true) {
+      this.skipWs();
+      if (this.peek() != '"') {
+        if (this.peek() < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+        return null;
+      }
+      u8[]? key = this.parseStringBytes();
+      if (key is null) { return null; }
+      this.skipWs();
+      if (this.peek() != ':') {
+        if (this.peek() < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+        return null;
+      }
+      this.pos++;
+      this.skipWs();
+      JsonValue? v = this.parseValue();
+      if (v is null) { return null; }
+      obj.push(key!, v!);
+      this.skipWs();
+      i32 c = this.peek();
+      if (c == ',') { this.pos++; continue; }
+      if (c == '}') {
+        this.pos++;
+        this.depth--;
+        return JsonValue.Object(obj);
+      }
+      if (c < 0) { this.fail(ERR_EOF()); } else { this.fail(ERR_UNEXPECTED()); }
+      return null;
+    }
+  }
+
+  // Returns the unescaped UTF-8 bytes of a string, cursor left after the
+  // closing quote.
+  u8[]? parseStringBytes(this) {
+    this.pos++;                                        // consume opening "
+    Buf out = Buf.create();
+    while (true) {
+      if (this.pos >= this.src.len()) { this.fail(ERR_EOF()); return null; }
+      i32 c = this.src[this.pos];
+      if (c == '"') {
+        this.pos++;
+        return out.bytes();
+      }
+      if (c == '\\') {
+        this.pos++;
+        if (!this.readEscape(out)) { return null; }
+        continue;
+      }
+      // RFC 8259: unescaped bytes below ' ' are not allowed in a string.
+      if (c < ' ') { this.fail(ERR_CONTROL()); return null; }
+      if (c < 0x80) {
+        out.push(c);
+        this.pos++;
+        continue;
+      }
+      // Non-ASCII: the whole sequence is validated and copied together. JSON text
+      // must be UTF-8, and a byte above 0x7F can only appear here — outside a
+      // string every legal byte is ASCII, so a bad one already fails structurally.
+      i32 seq = this.utf8SeqLen();
+      if (seq < 0) { this.fail(ERR_UTF8()); return null; }
+      for (i32 k = 0; k < seq; k++) { out.push(this.src[this.pos + k]); }
+      this.pos += seq;
+    }
+  }
+
+  /**
+   * Length of the well-formed UTF-8 sequence at the cursor, or -1.
+   *
+   * Rejects what RFC 3629 excludes as well as what it never defined: overlong
+   * encodings (which would let a quote or a NUL hide inside a multi-byte form),
+   * the surrogate range D800-DFFF, which has no UTF-8 encoding, and anything above
+   * U+10FFFF. A length-only check waves all three through.
+   */
+  i32 utf8SeqLen(const this) {
+    i32 n = this.src.len();
+    i32 b0 = this.src[this.pos];
+
+    if (b0 < 0xC2) { return -1; }          // continuation byte, or an overlong lead
+
+    i32 need = 0;
+    i32 lo = 0x80;
+    i32 hi = 0xBF;
+    if (b0 <= 0xDF) {
+      need = 1;
+    } else if (b0 <= 0xEF) {
+      need = 2;
+      if (b0 == 0xE0) { lo = 0xA0; }       // below this is overlong
+      if (b0 == 0xED) { hi = 0x9F; }       // above this is the surrogate range
+    } else if (b0 <= 0xF4) {
+      need = 3;
+      if (b0 == 0xF0) { lo = 0x90; }       // below this is overlong
+      if (b0 == 0xF4) { hi = 0x8F; }       // above this is past U+10FFFF
+    } else {
+      return -1;                           // F5..FF encode nothing
+    }
+
+    if (this.pos + need >= n) { return -1; }
+    i32 c1 = this.src[this.pos + 1];
+    if (c1 < lo || c1 > hi) { return -1; }
+    for (i32 i = 2; i <= need; i++) {
+      i32 ci = this.src[this.pos + i];
+      if (ci < 0x80 || ci > 0xBF) { return -1; }
+    }
+    return need + 1;
+  }
+
+  bool readEscape(this, Buf out) {
+    i32 e = this.peek();
+    if (e < 0) { this.fail(ERR_EOF()); return false; }
+    switch (e) {
+      case '"': { out.push('"'); this.pos++; return true; }
+      case '\\': { out.push('\\'); this.pos++; return true; }
+      case '/': { out.push('/'); this.pos++; return true; }
+      case 'b': { out.push(0x08); this.pos++; return true; }   // \b
+      case 'f': { out.push(0x0C); this.pos++; return true; }   // \f
+      case 'n': { out.push('\n'); this.pos++; return true; }
+      case 'r': { out.push('\r'); this.pos++; return true; }
+      case 't': { out.push('\t'); this.pos++; return true; }
+      case 'u': { return this.readUnicodeEscape(out); }        // \uXXXX
+      default: { this.fail(ERR_ESCAPE()); return false; }
+    }
+  }
+
+  // \uXXXX, joining a surrogate pair into one scalar.
+  //
+  // This was the routine that could not be written against `string` at all, and
+  // the reason this package is byte-oriented. `string.fromCodepoint` now exists,
+  // so it *could* be — but only one character at a time, joined with `+`, which
+  // on an immutable string is quadratic. Bytes stay the right representation
+  // until there is a `string.fromBytes`.
+  bool readUnicodeEscape(this, Buf out) {
+    this.pos++;                                        // consume 'u'
+    i32 hi = this.readHex4();
+    if (hi < 0) { return false; }
+
+    // Not a high surrogate — emit as-is, replacing a stray low surrogate.
+    if (hi < 0xD800 || hi > 0xDBFF) {
+      if (hi >= 0xDC00 && hi <= 0xDFFF) {
+        out.pushCodepoint(0xFFFD);
+      } else {
+        out.pushCodepoint(hi);
+      }
+      return true;
+    }
+
+    // High surrogate: a following \uDC00-\uDFFF completes the pair. Anything
+    // else leaves it unpaired, which has no UTF-8 form, so it becomes U+FFFD.
+    if (this.pos + 1 < this.src.len()
+        && this.src[this.pos] == '\\'
+        && this.src[this.pos + 1] == 'u') {
+      i32 save = this.pos;
+      this.pos += 2;
+      i32 lo = this.readHex4();
+      if (lo < 0) { return false; }
+      if (lo >= 0xDC00 && lo <= 0xDFFF) {
+        i32 cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+        out.pushCodepoint(cp);
+        return true;
+      }
+      // Valid \u but not a low surrogate: the first is unpaired, and the
+      // second still has to be emitted on its own terms.
+      out.pushCodepoint(0xFFFD);
+      this.pos = save;
+      return true;
+    }
+
+    out.pushCodepoint(0xFFFD);
+    return true;
+  }
+
+  // Four hex digits as a value, or -1 having recorded the failure.
+  i32 readHex4(this) {
+    if (this.pos + 4 > this.src.len()) { this.fail(ERR_EOF()); return -1; }
+    i32 v = 0;
+    for (i32 i = 0; i < 4; i++) {
+      i32 d = hexDigit(this.src[this.pos + i]);
+      if (d < 0) { this.fail(ERR_ESCAPE()); return -1; }
+      v = (v << 4) | d;
+    }
+    this.pos += 4;
+    return v;
+  }
+
+  // number = '-'? ('0' | [1-9][0-9]*) ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?
+  //
+  // This only validates the syntax and finds the span's extent. Converting the
+  // span to an f64 belongs to packages/fmt, which does it exactly.
+  JsonValue? parseNumber(this) {
+    i32 start = this.pos;
+    if (this.peek() == '-') { this.pos++; }
+    i32 c = this.peek();
+    if (c == '0') {                                       // leading 0
+      this.pos++;
+      // A second digit after a leading zero is invalid JSON (01, 00).
+      i32 n = this.peek();
+      if (n >= '0' && n <= '9') { this.fail(ERR_NUMBER()); return null; }
+    } else if (c >= '1' && c <= '9') {
+      while (true) {
+        i32 d = this.peek();
+        if (d < '0' || d > '9') { break; }
+        this.pos++;
+      }
+    } else {
+      this.fail(ERR_NUMBER());
+      return null;
+    }
+
+    if (this.peek() == '.') {
+      this.pos++;
+      i32 fracDigits = 0;
+      while (true) {
+        i32 d = this.peek();
+        if (d < '0' || d > '9') { break; }
+        this.pos++;
+        fracDigits++;
+      }
+      if (fracDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+    }
+
+    i32 e = this.peek();
+    if (e == 'e' || e == 'E') {                          // e E
+      this.pos++;
+      i32 s = this.peek();
+      if (s == '+' || s == '-') { this.pos++; }
+      i32 expDigits = 0;
+      while (true) {
+        i32 d = this.peek();
+        if (d < '0' || d > '9') { break; }
+        this.pos++;
+        expDigits++;
+      }
+      if (expDigits == 0) { this.fail(ERR_NUMBER()); return null; }
+    }
+
+    // The span is now known to be a well-formed JSON number, and the conversion is
+    // packages/fmt's problem. It is correctly rounded — the double nearest the
+    // decimal, ties to even — where the accumulate-and-scale this replaced was
+    // exact only 72% of the time and up to 2 ulp out otherwise.
+    f64 value = atofSpan(this.src, start, this.pos);
+
+    // Keep the source span: it lets the serializer round-trip a number without
+    // a shortest-representation float formatter, which wac does not have.
+    u8[] raw = u8[this.pos - start]();
+    for (i32 i = 0; i < raw.len(); i++) {
+      raw[i] = this.src[start + i];
+    }
+    return JsonValue.Number(value, raw);
+  }
+}
+
+export i32 hexDigit(i32 b) {
+  if (b >= '0' && b <= '9') { return b - '0'; }        // 0-9
+  if (b >= 'a' && b <= 'f') { return b - 'a' + 10; }   // a-f
+  if (b >= 'A' && b <= 'F') { return b - 'A' + 10; }   // A-F
+  return -1;
+}
+
+// Parse a complete document: one value, optional surrounding whitespace,
+// nothing else.
+export JsonValue? parseDocument(Parser p) {
+  p.skipWs();
+  JsonValue? v = p.parseValue();
+  if (v is null) { return null; }
+  p.skipWs();
+  if (p.pos < p.src.len()) {
+    p.fail(ERR_TRAILING());
+    return null;
+  }
+  return v;
+}

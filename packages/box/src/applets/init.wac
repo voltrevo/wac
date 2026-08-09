@@ -1,0 +1,148 @@
+// Start what the system says to start, and reap it — design/0001 step 7's other half.
+//
+//   init                 # reads /etc/init
+//   init /etc/other      # or wherever
+//
+// Step 7 is "`init`, and a system that boots: something owns the image, starts the daemons, and
+// reaps." `sshd -i image` is the first half — one program that owns an image and serves sessions from
+// it — and this is the second: a system whose services are **data in the image**, started by a program
+// that then waits for them.
+//
+// ## What a service is here
+//
+// One line of `/etc/init`, which is a command: the program's name and its arguments, split on spaces.
+// Blank lines and `#` comments are skipped. Each line becomes a child through `spawnSelf`, so a
+// service is one of this binary's own applets — its own instance, its own grants, actually concurrent.
+//
+// **The file is the system's, not this program's.** That is the whole point of step 7: what runs at
+// boot is something you can `cat`, edit and save in the image, rather than a list compiled into a
+// binary. An image with no `/etc/init` starts nothing and says so, which is not an error — a system
+// with no services is a system.
+//
+// ## What this is not, said plainly
+//
+// **Not a supervisor.** No restart policy, no dependency order, no health checks, no readiness. Those
+// are design/0001's own open question — "supervision is named in D8 and in none of the eight steps:
+// either it belongs in step 7's definition of done or it is a ninth step" — and this does not settle
+// it. What is here is start, wait, report, reap.
+//
+// **No signals.** `init` cannot stop a service, because nothing can: `kill` needs step 3's delivery
+// half, which does not exist. When a service ends, this reports how; it never ends one.
+//
+// The distinction matters because a "supervisor" that quietly did neither would look like the real
+// thing until the first service died.
+
+import { Child, Cli, Core, GRANT_NONE } from "../../../platform/src/platform.wac";
+import { argvOf } from "../../../platform/src/stream.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { FileResult, readReason } from "../../../platform/src/platform.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Read } from core;
+
+/** One line of `/etc/init`, as words. Empty for a blank line or a comment. */
+string[] words(string line) {
+  Vec<string> out = Vec.create();
+  string word = "";
+  u8[] b = line.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    // A `#` starts a comment wherever it is, which is what every init file this imitates does — and
+    // means a service cannot have a `#` in an argument. Said here rather than discovered.
+    if (b[i] == '#') { break; }
+    if (b[i] == ' ' || b[i] == 9) {
+      if (word.len() > 0) { out.push(word); word = ""; }
+      continue;
+    }
+    word = word + string.fromCodepoint(b[i]);
+  }
+  if (word.len() > 0) { out.push(word); }
+  string[] made = string[out.len()](fill: "");
+  for (i32 i = 0; i < out.len(); i++) { made[i] = out.get(i); }
+  return made;
+}
+
+/** The lines of a file, without their newlines. */
+Vec<string> lines(u8[] bytes) {
+  Vec<string> out = Vec.create();
+  string line = "";
+  for (i32 i = 0; i < bytes.len(); i++) {
+    if (bytes[i] == 10) { out.push(line); line = ""; continue; }
+    line = line + string.fromCodepoint(bytes[i]);
+  }
+  if (line.len() > 0) { out.push(line); }
+  return out;
+}
+
+export i32 init(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  string path = a.rest.len() > 0 ? a.rest[0] : "/etc/init";
+
+  FileResult f = fs.readFile(fs.at(path));
+  if (!f.ok) {
+    // Absent is not a failure: a system with no services is a system. Said out loud, because a boot
+    // that started nothing in silence is indistinguishable from one that started everything and lost
+    // the output.
+    core.warn("init: " + path + ": " + readReason(f) + "; nothing to start");
+    return 0;
+  }
+
+  Vec<string> all = lines(f.bytes);
+  Vec<i32> handles = Vec.create();
+  Vec<string> names = Vec.create();
+  for (i32 i = 0; i < all.len(); i++) {
+    string[] argv = words(all.get(i));
+    if (argv.len() == 0) { continue; }
+    // `GRANT_NONE`: a service gets what it is given and nothing more, and nothing here has a way to
+    // say what it should be given. That is a gap rather than a decision — an `/etc/init` that could
+    // name grants per service is the next thing this file wants — and `GRANT_NONE` is the honest
+    // floor rather than handing every service everything this program has.
+    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false).wait();
+    if (kid.unavailable()) {
+      core.warn("init: this world cannot spawn, so no service can start");
+      return 1;
+    }
+    if (kid.handle < 0) {
+      core.warn("init: " + argv[0] + ": " + kid.error);
+      continue;
+    }
+    // Nothing feeds a service's input, and a service that waits for one would wait for ever.
+    cli.closeFeed(kid.handle);
+    handles.push(kid.handle);
+    names.push(argv[0]);
+    core.log("init: started " + argv[0]);
+  }
+
+  if (handles.len() == 0) {
+    core.log("init: nothing to start");
+    return 0;
+  }
+
+  // **Reaping is the half that makes this init rather than a launcher.** Each service is waited for
+  // and its status reported; a child nobody waits for is a row in the process table that never goes.
+  //
+  // In order rather than by `waitAny`, and the difference is worth stating: `waitAny` would report
+  // them as they end, which is what a supervisor wants and what a *restart policy* would need. This
+  // has none, so the order it reports in is the order they were started, which is stable and
+  // therefore testable. When there is a policy, this loop is what changes.
+  i32 worst = 0;
+  for (i32 i = 0; i < handles.len(); i++) {
+    i32 h = handles.get(i);
+    // Whatever the service wrote, before its status — otherwise a service's own words arrive after
+    // the line saying it ended.
+    bool reading = true;
+    while (reading) {
+      match (cli.recv(h).wait()) {
+        case Data(bytes): { cli.write(bytes); }
+        case End: { reading = false; }
+        case Failed(why): { reading = false; }
+      }
+    }
+    i32 code = cli.exitCode(h).wait();
+    cli.closeSocket(h);
+    core.log("init: " + names.get(i) + " exited " + itoa(code));
+    if (code != 0 && worst == 0) { worst = code; }
+  }
+  return worst;
+}

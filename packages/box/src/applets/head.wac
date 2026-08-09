@@ -1,0 +1,147 @@
+// The first N lines, ten by default — or the first N **bytes** with `-c`, or, with a minus, everything
+// but the last N of whichever unit.
+//
+// **The minus form is not a negative count**, it is a different question, and only `head` asks it —
+// `tail`'s signed spelling is `+N` and means something else again. It used to be read as a plain count,
+// so `head -n -2` printed the default ten lines.
+//
+// The only applet that need not reach the end of its input: once it has the lines it was
+// asked for it stops reading, so `head -1` of a huge file costs one chunk. Nothing else
+// here can do that, and it is the reason `head` no longer shares `pick` with `tail`.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, badNumberMessage, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, labelAt, openStream, operandCount, readFailed } from "../lib/input.wac";
+import { Feed, Line, Lines, Sink, emitTo, nextLine } from "../../../platform/src/stream.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 head(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // A count that is not a count is a mistake in the command, not a reason to use the default: this
+  // used to print ten lines for `head -n x` and exit 0.
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+  // `hasNum`, not `num == 0`: `head -0` and `head -n 0` mean no lines, as GNU's do.
+  i32 want = a.hasNum ? a.num : 10;
+  bool allButLast = a.numSign == "-";
+  // `-c` is bytes. It used to be a boolean flag, so its value became an operand: `head -c 3 f` said
+  // "head: 3: No such file or directory", blaming the caller for a real GNU spelling, and `head -c3 f`
+  // printed the whole file.
+  bool bytes = has(a, 'c');
+
+  // A banner over each file, and a blank line between them, once there is more than one — which is what
+  // the real one does and the only way to tell whose lines you are looking at. It used to read the first
+  // operand and stop (wac-mono 0096).
+  i32 files = operandCount(a, 0);
+  i32 count = files == 0 ? 1 : files;
+  bool banner = files > 1;
+
+  Sink out = Sink.create(cli);
+  i32 status = 0;
+  for (i32 f = 0; f < count; f++) {
+    // Flushed before opening: the complaint goes straight to standard error while this is
+    // block-buffered, so without it the banner and lines of an earlier file arrive after it.
+    out.flush();
+    // **The one applet with a bound to declare.** `head -c 8` reads eight bytes and no more, which is
+    // what lets it answer for `/dev/urandom` at all — an endless file has no whole for `readFile` to
+    // return. `-c -8` is "all but the last eight", which needs the whole thing, so it declares nothing.
+    Input in = openStream(core, cli, fs, a, f, bytes && !allButLast ? want : -1);
+    // Reported, skipped, and the status at the end. GNU prints the banner of every file it *can* open,
+    // so a missing one in the middle costs a complaint and nothing else.
+    if (!in.ok) { status = 1; continue; }
+    if (banner) {
+      if (f > 0) { out.line(""); }
+      out.line("==> " + in.label + " <==");
+    }
+    Lines s = Lines.create();
+    // The feed the opener chose — see `lib/input.wac`; not the process's own input.
+    Feed fed = in.fed;
+    if (bytes) {
+      if (!headBytes(out, fed, want, allButLast)) { out.flush(); return status; }
+      if (unread(core, out, a, fed, f)) { status = 1; }
+      continue;
+    }
+    if (allButLast) {
+      // Delayed by `want` lines: a line can only be emitted once that many more have arrived behind
+      // it. Asking for more than the input holds prints nothing, as GNU does.
+      if (want <= 0) {
+        while (true) {
+          Line l = nextLine(s, fed);
+          if (!l.ok) { break; }
+          if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
+        }
+        if (unread(core, out, a, fed, f)) { status = 1; }
+        continue;
+      }
+      u8[][] held = u8[][want](fill: u8[0]());
+      bool[] ended = bool[want](fill: true);
+      i32 seen = 0;
+      while (true) {
+        Line l = nextLine(s, fed);
+        if (!l.ok) { break; }
+        if (seen >= want) {
+          i32 at = (seen - want) % want;
+          if (!emitTo(out, held[at], ended[at])) { out.flush(); return status; }
+        }
+        held[seen % want] = l.bytes;
+        ended[seen % want] = l.nl;
+        seen++;
+      }
+      if (unread(core, out, a, fed, f)) { status = 1; }
+      continue;
+    }
+    for (i32 i = 0; i < want; i++) {
+      Line l = nextLine(s, fed);
+      if (!l.ok) { break; }
+      if (!emitTo(out, l.bytes, l.nl)) { out.flush(); return status; }
+    }
+    if (unread(core, out, a, fed, f)) { status = 1; }
+  }
+  out.flush();
+  return status;
+}
+
+/**
+ * Whether the feed stopped because the read *failed*, said out loud if it did.
+ *
+ * `head -1 somedir` printed **nothing and exited 0**: a directory opens and then refuses to be read, and
+ * `Line.ok` false means "no more lines" for both reasons. Every other applet here reaches this through
+ * `nextChunk` or `Reader`, which do check; `head` pulls `nextLine` itself, so it needs the same check at
+ * every way out of a file — which is why this is a function and not a line at the bottom of the loop.
+ */
+bool unread(Core core, Sink out, Args a, Feed fed, i32 f) {
+  if (fed.why == "") { return false; }
+  out.flush();
+  core.warn(readFailed(a.name, labelAt(a, f), fed.why));
+  return true;
+}
+
+/**
+ * The first `want` bytes, or everything but the last `want`.
+ *
+ * `head -c` stops as soon as it has its bytes, for the reason `head -n` does — a producer learns nobody
+ * is reading when its own write is refused. The all-but-last form cannot: it has to reach the end to
+ * know where the end is, so it holds `want` bytes back and no more.
+ */
+bool headBytes(Sink out, Feed fed, i32 want, bool allButLast) {
+  if (!allButLast) {
+    i32 sent = 0;
+    while (sent < want) {
+      u8[] chunk = fed.next();
+      if (chunk.len() == 0) { return true; }
+      i32 take = chunk.len();
+      if (sent + take > want) { take = want - sent; }
+      u8[] piece = u8[take]();
+      piece.copyFrom(chunk, 0, 0, take);
+      if (!emitTo(out, piece, false)) { return false; }
+      sent = sent + take;
+    }
+    return true;
+  }
+  u8[] all = fed.rest();
+  i32 upTo = all.len() - want;
+  if (upTo < 0) { upTo = 0; }
+  u8[] head = u8[upTo]();
+  head.copyFrom(all, 0, 0, upTo);
+  return emitTo(out, head, false);
+}

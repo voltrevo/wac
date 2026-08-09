@@ -1,0 +1,30 @@
+// Directories made. `-p` makes the parents too, and forgives one that already exists.
+
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 mkdir(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+  bool parents = has(a, 'p');
+  i32 code = 0;
+  for (i32 i = 0; i < a.rest.len(); i++) {
+    Change c = fs.mkdir(a.rest[i], parents);
+    if (c.ok()) { continue; }
+    // The category's words where there are any, the host's sentence where there are not — `reasonOf`,
+    // which is `platform.wac`'s and shared with the shell's builtin `mkdir`, the same program.
+    //
+    // This line was a *one-row copy* of that table: `c.fault == FAULT_EXISTS() ? "File exists" :
+    // c.message`. It was right about the row it had and silent about the rest, so `mkdir f/g` where `f`
+    // is a file printed `Not a directory (os error 20): mkdir '/abs/path/f/g'` — an errno and the
+    // host's absolute path — where GNU prints four words. A copy of one row is the worst size to keep.
+    //
+    // GNU's frame too: `mkdir: cannot create directory 'f/g': …`, quotes and all. Issue 0009.
+    core.warn(a.name + ": cannot create directory '" + a.rest[i] + "': " + reasonOf(c));
+    code = 1;
+  }
+  return code;
+}

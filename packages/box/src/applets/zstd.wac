@@ -1,0 +1,20 @@
+// Compress with Zstandard.
+//
+// `packages/zstd` is the largest package here and nothing had put it on a pipe. Unlike
+// `gzip` it has no streaming form, so this holds its input — the honest note being that
+// the limit is the package's, not the world's.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, readInput } from "../lib/input.wac";
+import { compress } from "../../../zstd/src/encode.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 zstd(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  Input in = readInput(core, cli, fs, a, 0);
+  if (!in.ok) { return 1; }
+  cli.write(compress(in.bytes));
+  return 0;
+}

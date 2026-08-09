@@ -1,0 +1,256 @@
+// POSIX bracket expressions, which the engine next door does not have.
+//
+// `compile.wac` implements JavaScript's dialect and says so — including inside brackets, where the two
+// dialects genuinely differ:
+//
+//   - `[[:alpha:]]` is a **character class** in POSIX and a set of the six characters `[ : a l p h` in
+//     JavaScript, followed by a literal `]`;
+//   - `[]a]` is a class of `]` and `a` in POSIX, and an *empty* class in JavaScript;
+//   - `[.x.]` and `[=x=]` are a collating element and an equivalence class in POSIX, and nothing at all
+//     in JavaScript.
+//
+// So a `grep` handing a POSIX pattern straight to that engine gets a different set of characters and no
+// error. `grep '[[:digit:]]'` matched **nothing at all** — the class parsed as a set containing `[`, `:`,
+// `d`, `i`, `g` and `t` and then required a literal `]` after it, which is a pattern nobody wrote. That is
+// silence in the worst place, since a caller who greps for digits and gets no lines concludes there are
+// none.
+//
+// wac-mono 0104 found the outer half of the same mistake — both greps read *extended* where `grep` reads
+// *basic* — and `basic.wac` was written for it. This is the half inside the brackets, and it was left
+// because the bracket contents were copied through untouched by design: "inside one, none of the six is
+// special in either dialect" is true of the six operators and false of `[:`, `[.` and `[=`.
+//
+// ## A rewrite, again, rather than a second engine
+//
+// A POSIX class is a set of ranges, and this engine has ranges. So `[[:digit:]]` becomes `[0-9]` before
+// it is compiled, `[[:alpha:][:digit:]_]` becomes `[A-Za-z0-9_]`, and the engine sees only what it
+// already understands. `basic.wac` calls the same rewriter, so basic and extended cannot disagree about
+// what a bracket means — they differ in their operators and nothing else.
+//
+// The classes are the **C locale**, which is what everything here compares against: `LC_ALL=C` is in
+// every differential test's environment, and `[[:alpha:]]` in any other locale is a question about a
+// Unicode database rather than about bytes. `packages/box`'s `tr` reads the same table from here.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Program } from "./program.wac";
+import { Compiled, compileFlags } from "./compile.wac";
+
+/** Compile a POSIX **extended** regular expression — `grep -E`. Null when it will not compile. */
+export Compiled compileExtended(u8[] pattern) {
+  Rewritten r = toJs(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, false, true);
+}
+
+/** As `compileExtended`, with the `i` flag. */
+export Compiled compileExtendedIgnoreCase(u8[] pattern) {
+  Rewritten r = toJs(pattern);
+  if (r.pattern is null) { return Compiled(null, r.why); }
+  return compileFlags(r.pattern!, true, true);
+}
+
+/**
+ * A POSIX pattern with every bracket expression rewritten into this engine's dialect, or the reason one
+ * of them could not be — an unterminated `[`, or a class name that is not one of the twelve.
+ *
+ * Everything outside a bracket is copied byte for byte, including escapes: the operators are the same in
+ * extended POSIX and here, and `basic.wac` has already done that translation by the time this is called.
+ */
+/** A rewritten pattern, or why it could not be — the two bracket mistakes GNU words differently. */
+export struct Rewritten {
+  u8[]? pattern;
+  string why;
+}
+
+/** GNU's own sentence for a bracket that `copyBracket` refused: -1 unmatched, -2 a class name. */
+export string bracketReason(i32 code) {
+  if (code == -2) { return "Invalid character class name"; }
+  if (code == -3) { return "Invalid range end"; }
+  return "Unmatched [, [^, [:, [., or [=";
+}
+
+export Rewritten toJs(u8[] pattern) {
+  Buf out = Buf.create();
+  i32 i = 0;
+  while (i < pattern.len()) {
+    i32 c = pattern[i];
+    // An escaped byte is not a bracket, whatever it is: `\[` is a literal `[`.
+    if (c == '\\' && i + 1 < pattern.len()) {
+      i32 anchor = bufferAnchor(pattern[i + 1]);
+      if (anchor >= 0) { out.push(anchor); i = i + 2; continue; }
+      out.push(c);
+      out.push(pattern[i + 1]);
+      i = i + 2;
+      continue;
+    }
+    if (c == '.') {
+      writeAny(out);
+      i++;
+      continue;
+    }
+    if (c != '[') {
+      out.push(c);
+      i++;
+      continue;
+    }
+    i32 next = copyBracket(out, pattern, i);
+    if (next < 0) { return Rewritten(null, bracketReason(next)); }
+    i = next;
+  }
+  return Rewritten(out.take(), "");
+}
+
+/**
+ * Copy the bracket expression starting at `at` into `out`, as a class this engine accepts. Returns the
+ * index just past its `]`; -1 if it is unterminated, -2 if a class name is not one of the twelve, -3 for
+ * a range whose ends are the wrong way round.
+ * `bracketReason` turns those into the sentences GNU uses for them.
+ *
+ * Exported because `basic.wac` needs exactly this and nothing else of the file: a basic pattern's
+ * brackets are POSIX brackets too, and having two copies of the rule would be having two dialects again.
+ */
+export i32 copyBracket(Buf out, u8[] p, i32 at) {
+  i32 i = at + 1;
+  out.push('[');
+  if (i < p.len() && p[i] == '^') { out.push('^'); i++; }
+  // **A `]` first is a member**, in both basic and extended, and is not this engine's rule. `[]a]` is a
+  // class of two characters; without this it is the empty class, which matches nothing and says nothing.
+  bool first = true;
+  while (i < p.len()) {
+    i32 c = p[i];
+    if (c == ']' && !first) {
+      out.push(']');
+      return i + 1;
+    }
+    first = false;
+
+    // `[:alpha:]`, `[.x.]`, `[=x=]` — the three POSIX constructs that live inside a bracket.
+    if (c == '[' && i + 1 < p.len() && (p[i + 1] == ':' || p[i + 1] == '=' || p[i + 1] == '.')) {
+      i32 mark = p[i + 1];
+      i32 end = closerAt(p, i + 2, mark);
+      if (end < 0) { return -1; }
+      if (mark == ':') {
+        if (!writeClass(out, string.fromBytes(sliceOf(p, i + 2, end)))) { return -2; }
+      } else {
+        // A collating element and an equivalence class both name **one** character in the C locale, and
+        // `[.ch.]` is a mistake here rather than a two-character element — there is no locale in this
+        // program for which it would be one.
+        if (end != i + 3) { return -1; }
+        writeMember(out, p[i + 2]);
+      }
+      i = end + 2;
+      continue;
+    }
+
+    i32 lo = c;
+    i32 after = i + 1;
+    // `a-z`, where the `-` is neither first nor last. A `-` before `]` is a literal hyphen, which is the
+    // rule every implementation shares and none of them writes down.
+    if (after < p.len() && p[after] == '-' && after + 1 < p.len() && p[after + 1] != ']') {
+      i32 hi = p[after + 1];
+      if (hi < lo) { return -3; }
+      writeMember(out, lo);
+      out.push('-');
+      writeMember(out, hi);
+      i = after + 2;
+      continue;
+    }
+    writeMember(out, lo);
+    i = after;
+  }
+  return -1;                                   // no closing `]`
+}
+
+/**
+ * GNU's buffer anchors as the line anchors they are here: `^` for `` \` ``, `$` for `\'`, -1 otherwise.
+ *
+ * `grep` matches one line at a time, so the start of the buffer *is* the start of the line and the two
+ * are exactly equal. Passed through they were a literal back-tick and a literal quote, so `grep '\`a'`
+ * searched for a back-tick and answered "no lines" — a wrong answer with nothing to see. Basic and
+ * extended both spell them this way, which is why this is here rather than in either scanner.
+ */
+export i32 bufferAnchor(i32 next) {
+  if (next == '`') { return '^'; }
+  if (next == '\'') { return '$'; }
+  return -1;
+}
+
+/**
+ * POSIX's `.`, which is any byte but a newline.
+ *
+ * The engine's own `.` is JavaScript's, and JavaScript has **four** line terminators: it excludes CR and
+ * U+2028/9 as well, and `program.wac` says so deliberately. A `grep` is not JavaScript — a line holding a
+ * lone carriage return matched nothing here and matches in GNU — so the POSIX layer spells `.` as the
+ * class it means rather than borrowing the one next door.
+ */
+export void writeAny(Buf out) {
+  out.push('[');
+  out.push('^');
+  out.push('\\');
+  out.push('n');
+  out.push(']');
+}
+
+/**
+ * One byte as a class member.
+ *
+ * Only the four characters that mean something inside this engine's brackets are escaped. Escaping
+ * anything else would change it: `\n` is a newline to `compile.wac`, so escaping the letter `n` would
+ * turn a search for `n` into a search for a line break.
+ */
+void writeMember(Buf out, i32 b) {
+  if (b == ']' || b == '\\' || b == '^' || b == '-') { out.push('\\'); }
+  out.push(b);
+}
+
+/** Write a named class as ranges. False when the name is not one of the twelve. */
+bool writeClass(Buf out, string name) {
+  i32[] ranges = classRanges(name);
+  if (ranges.len() == 0) { return false; }
+  for (i32 k = 0; k + 1 < ranges.len(); k = k + 2) {
+    writeMember(out, ranges[k]);
+    if (ranges[k + 1] != ranges[k]) {
+      out.push('-');
+      writeMember(out, ranges[k + 1]);
+    }
+  }
+  return true;
+}
+
+/**
+ * The twelve POSIX classes in the C locale, as `lo, hi, lo, hi` pairs. Empty when `name` is not one.
+ *
+ * Written out rather than derived from `isalpha`-style predicates, because the set *is* the
+ * specification: a reader can check `punct` against the table here and cannot check it against a chain
+ * of range comparisons without rebuilding the table in their head. It is checked against GNU `grep` and
+ * GNU `tr` over every byte, which is the only reason to believe it.
+ */
+export i32[] classRanges(string name) {
+  if (name == "alpha") { return i32[]('A', 'Z', 'a', 'z'); }
+  if (name == "alnum") { return i32[]('0', '9', 'A', 'Z', 'a', 'z'); }
+  if (name == "digit") { return i32[]('0', '9'); }
+  if (name == "upper") { return i32[]('A', 'Z'); }
+  if (name == "lower") { return i32[]('a', 'z'); }
+  if (name == "space") { return i32[](9, 13, 32, 32); }
+  if (name == "blank") { return i32[](9, 9, 32, 32); }
+  if (name == "cntrl") { return i32[](0, 31, 127, 127); }
+  if (name == "print") { return i32[](32, 126); }
+  if (name == "graph") { return i32[](33, 126); }
+  if (name == "punct") { return i32[](33, 47, 58, 64, 91, 96, 123, 126); }
+  if (name == "xdigit") { return i32[]('0', '9', 'A', 'F', 'a', 'f'); }
+  return i32[]();
+}
+
+/** Where a `[:name:]`, `[=c=]` or `[.c.]` ends — the index of its `mark` — or -1. */
+i32 closerAt(u8[] p, i32 from, i32 mark) {
+  for (i32 i = from; i + 1 < p.len(); i++) {
+    if (p[i] == mark && p[i + 1] == ']') { return i; }
+  }
+  return -1;
+}
+
+u8[] sliceOf(u8[] p, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  out.copyFrom(p, from, 0, to - from);
+  return out;
+}

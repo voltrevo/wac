@@ -48,7 +48,7 @@ export const CORE = {
 // \`Failed\` does not compile.
 //
 // It is in \`core\` rather than in a package because both ends of a stream have to name it and no
-// adapter can join two copies — see the note at the top of atoms/wac/wacCore.ts.
+// adapter can join two copies — see the note at the top of compiler/wacCore.ts.
 
 export enum Read {
   /** Bytes, and never zero of them — an empty answer is \`End\`. */

@@ -1,0 +1,153 @@
+// CRC-32 as gzip uses it: reflected polynomial 0xEDB88320, pre- and
+// post-inverted.
+//
+// Two implementations. The table-driven one is what the pipeline calls; the
+// bitwise one is kept because it is the definition, and the tests check the table
+// against it over random input rather than only against fixed vectors.
+//
+// This matters more than it looks. Every compress and every decompress checksums
+// the whole payload, so with only the bitwise form CRC-32 was ~26 ms of the ~30 ms
+// needed to process 1 MiB — the dominant cost of the whole library, ahead of both
+// LZ77 and Huffman coding, and the reason every operation plateaued at the same
+// throughput regardless of how compressible the input was.
+
+/**
+ * Eight stacked tables, flat in one array at `k * 256 + n`.
+ *
+ * Table 0 is the ordinary per-byte table; each subsequent one is table 0 advanced
+ * another byte, so eight bytes can be folded in with eight *independent* lookups.
+ * That is the point: the byte-at-a-time loop carries a dependency from each
+ * iteration to the next, so it runs at the latency of a table lookup rather than
+ * the throughput. Flat rather than nested to keep it one bounds-checked array.
+ */
+export u32[] crcTable8() {
+  u32[] t = u32[2048]();
+  for (i32 n = 0; n < 256; n++) {
+    u32 c = n as@ u32;
+    for (i32 k = 0; k < 8; k++) {
+      if ((c & 1) != 0) {
+        c = 0xEDB88320 ^ (c >> 1);
+      } else {
+        c = c >> 1;
+      }
+    }
+    t[n] = c;
+  }
+  for (i32 k = 1; k < 8; k++) {
+    for (i32 n = 0; n < 256; n++) {
+      u32 prev = t[(k - 1) * 256 + n];
+      t[k * 256 + n] = (prev >> 8) ^ t[(prev & 0xFF) as@ i32];
+    }
+  }
+  return t;
+}
+
+// Below this, building 2048 table entries costs more than it saves, so the bitwise
+// form wins outright — no table at all.
+i32 sliceThreshold() { return 512; }
+
+/**
+ * CRC-32 of `data`, eight bytes at a time.
+ *
+ * Folds four bytes into the running value, then indexes eight tables at once and
+ * xors the results. The lookups do not depend on each other, so they pipeline
+ * instead of serialising on lookup latency the way the byte-at-a-time loop does.
+ */
+export u32 crc32(u8[] data) {
+  i32 n = data.len();
+  if (n < sliceThreshold()) {
+    return crc32Bitwise(data);
+  }
+
+  u32[] t = crcTable8();
+  u32 crc = 0xFFFFFFFF;
+  i32 i = 0;
+
+  while (i + 8 <= n) {
+    u32 a = crc ^ (data[i] as@ u32) ^ ((data[i + 1] << 8) as@ u32)
+          ^ ((data[i + 2] << 16) as@ u32) ^ ((data[i + 3] << 24) as@ u32);
+    crc = t[1792 + ((a & 0xFF) as@ i32)]
+        ^ t[1536 + (((a >> 8) & 0xFF) as@ i32)]
+        ^ t[1280 + (((a >> 16) & 0xFF) as@ i32)]
+        ^ t[1024 + (((a >> 24) & 0xFF) as@ i32)]
+        ^ t[768 + data[i + 4]]
+        ^ t[512 + data[i + 5]]
+        ^ t[256 + data[i + 6]]
+        ^ t[data[i + 7]];
+    i += 8;
+  }
+
+  // Whatever is left over, one byte at a time.
+  while (i < n) {
+    crc = t[((crc ^ (data[i] as@ u32)) & 0xFF) as@ i32] ^ (crc >> 8);
+    i++;
+  }
+
+  return crc ^ 0xFFFFFFFF;
+}
+
+/**
+ * The definition, bit by bit. Not used in the pipeline — it is the reference the
+ * table-driven version is tested against, because a single wrong table entry
+ * would otherwise only be caught if some fixed vector happened to reach it.
+ */
+export u32 crc32Bitwise(u8[] data) {
+  u32 crc = 0xFFFFFFFF;
+  for (i32 i = 0; i < data.len(); i++) {
+    crc ^= data[i] as@ u32;
+    for (i32 k = 0; k < 8; k++) {
+      bool low = (crc & 1) != 0;
+      crc >>= 1;
+      if (low) { crc ^= 0xEDB88320; }
+    }
+  }
+  return crc ^ 0xFFFFFFFF;
+}
+
+// ── Incremental form ──────────────────────────────────────────────────────────
+//
+// `crc32` takes a whole array, which a stream does not have. The three functions below
+// expose the same computation in the three pieces a stream needs.
+//
+// The value carried between calls is the *unfinalised* register: `crc32` starts it at all
+// ones and inverts it at the end, so a caller that held the finished checksum and fed it
+// back would be inverting twice. `crc32Start` and `crc32Finish` name the two ends so that
+// is not something to remember.
+//
+// The table is a parameter rather than rebuilt per call: `crcTable8` computes 2048 entries,
+// which is amortised to nothing over a whole payload and would otherwise dominate a stream
+// that folds in 32 KiB at a time.
+
+/** The initial register value. Not a checksum — pass it to `crc32Update`. */
+export u32 crc32Start() { return 0xFFFFFFFF; }
+
+/** Turn a register value into the checksum that goes in a gzip trailer. */
+export u32 crc32Finish(u32 crc) { return crc ^ 0xFFFFFFFF; }
+
+/** Fold `data` into a running register. `t` comes from `crcTable8()`, built once. */
+export u32 crc32Update(u32[] t, u32 crc, u8[] data) {
+  i32 n = data.len();
+  u32 acc = crc;
+  i32 i = 0;
+
+  while (i + 8 <= n) {
+    u32 a = acc ^ (data[i] as@ u32) ^ ((data[i + 1] << 8) as@ u32)
+          ^ ((data[i + 2] << 16) as@ u32) ^ ((data[i + 3] << 24) as@ u32);
+    acc = t[1792 + ((a & 0xFF) as@ i32)]
+        ^ t[1536 + (((a >> 8) & 0xFF) as@ i32)]
+        ^ t[1280 + (((a >> 16) & 0xFF) as@ i32)]
+        ^ t[1024 + (((a >> 24) & 0xFF) as@ i32)]
+        ^ t[768 + data[i + 4]]
+        ^ t[512 + data[i + 5]]
+        ^ t[256 + data[i + 6]]
+        ^ t[data[i + 7]];
+    i += 8;
+  }
+
+  while (i < n) {
+    acc = t[((acc ^ (data[i] as@ u32)) & 0xFF) as@ i32] ^ (acc >> 8);
+    i++;
+  }
+
+  return acc;
+}

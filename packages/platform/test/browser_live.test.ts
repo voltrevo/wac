@@ -1,0 +1,575 @@
+// The browser target, in an actual browser. wac-mono issue 0016.
+//
+// `browser.test.ts` drives the handlers over an in-memory Origin Private File System, which is
+// most of the value and not all of it: `readDir(".")` passed there for a week and answered "not
+// a directory" in Chromium, because the double's path handling came from the same assumption as
+// the code it was checking. A double cannot find that. A browser can.
+//
+// **Ignored unless a browser is installed**, so the suite stays zero-dependency and offline by
+// default: the `npm:playwright` import is dynamic and inside the test, so nothing is fetched
+// when it is skipped. To make it run:
+//
+//     mkdir -p ~/pw && cd ~/pw && npm install playwright
+//     ./node_modules/.bin/playwright install chromium
+//     sudo ./node_modules/.bin/playwright install-deps chromium
+//
+// The browser lands in `~/.cache/ms-playwright`, which is what the guard looks for. Deno pulls
+// the JavaScript half itself on first run. Then run it with **`deno test -A`** — nothing narrower
+// works: `deno task test` withholds `--allow-sys`, and granting only that is not enough either,
+// because `playwright-core` reads `/proc/sys/fs/binfmt_misc/WSLInterop` through `node:fs` and Deno
+// gates that on blanket access. The guard skips rather than fails, and **says why on standard error**,
+// because a silent skip reads as coverage. Chromium 151 on arm64 works — issue 0016 warned the
+// arm64 builds had been unavailable, and they are not any more.
+//
+// What this proves that nothing else does: `SharedArrayBuffer` under genuine cross-origin
+// isolation, `Atomics.wait` on a real `Worker`, the page's own plumbing — the blob-URL worker,
+// the `crossOriginIsolated` check, the `<pre>` that `write` appends to — and, since `Page`
+// landed, an interactive application driven by real clicks and real typing.
+
+import { buildApp } from "../build.ts";
+// Imported for its side effect: retries a spawn that fails with "Text file busy" and names
+// whoever held the file, if anyone did. wac-mono 0074.
+import "../../../harness/spawnRetry.ts";
+
+/** Local, because this repo has no third-party dependencies. */
+function assertEquals<T>(got: T, want: T, msg?: string): void {
+  if (got !== want) {
+    throw new Error(
+      `assertEquals failed${msg === undefined ? "" : ` — ${msg}`}\n` +
+        `  got:  ${JSON.stringify(got)}\n  want: ${JSON.stringify(want)}`,
+    );
+  }
+}
+
+/**
+ * Whether this run can drive a browser at all: one has to be installed, and Playwright needs
+ * a permission the shared suite does not grant.
+ *
+ * `deno task test` runs with read, write, run, net and env — not `--allow-sys`, which
+ * `playwright-core` needs at *import* time to work out where Chrome keeps its profile. Rather
+ * than widen the permissions of every test in the repo for one that is usually skipped, this
+ * asks, and the answer decides. So the live test runs under `deno test -A` and is ignored by
+ * `deno task test`, which is the right way round: the shared suite should not be the thing
+ * that needs a browser.
+ */
+function canDriveBrowser(): string {
+  if (Deno.permissions.querySync({ name: "sys", kind: "homedir" }).state !== "granted") {
+    return "no `sys` permission: run this file with `deno test -A`";
+  }
+  const home = Deno.env.get("HOME");
+  if (home === undefined) return "no HOME to look for a browser under";
+  try {
+    const found = [...Deno.readDirSync(`${home}/.cache/ms-playwright`)]
+      .some((e) => e.isDirectory && e.name.startsWith("chromium"));
+    if (!found) return `no chromium in ${home}/.cache/ms-playwright`;
+  } catch {
+    return `no ${home}/.cache/ms-playwright: no browser installed`;
+  }
+  return "";
+}
+
+/**
+ * Why this run cannot drive a browser, or `""` when it can — **and it is printed, not swallowed.**
+ *
+ * A skip that says nothing reads as coverage that was never there, which is how this repo has already
+ * lost a corpus entry for weeks (wac-mono 0005's note on `tour.wac`). Deno prints `ignored` and no reason,
+ * so the reason goes to standard error at module scope, once.
+ *
+ * The check is a *string* rather than a bool for the same reason. It also has to answer more than
+ * "is Chromium there": granting `--allow-sys` alone is not enough, because `playwright-core` reads
+ * `/proc/sys/fs/binfmt_misc/WSLInterop` through `node:fs`, which Deno gates on blanket access — so
+ * adding `--allow-sys` to `deno task test` turns this from a clean skip into a red suite, which is
+ * exactly what happened when I tried it. `deno test -A` is the way to run it, and saying so here is
+ * worth more than a comment in the header nobody reads at the moment they need it.
+ */
+const cannotBecause = canDriveBrowser();
+if (cannotBecause !== "") {
+  console.error(`browser_live: skipped — ${cannotBecause}`);
+}
+
+/**
+ * Serve a directory with the two headers a page needs before `SharedArrayBuffer` exists.
+ *
+ * `box httpd -x` sends exactly these and would make the loop entirely wac, which is a better
+ * demonstration than a test: platform's own suite should not need `box` built to run.
+ */
+function serve(dir: string): { port: number; stop(): Promise<void> } {
+  const server = Deno.serve({ port: 0, onListen: () => {} }, async (req) => {
+    const name = new URL(req.url).pathname.replace(/^\/+/, "") || "index.html";
+    try {
+      const body = await Deno.readFile(`${dir}/${name}`);
+      return new Response(body, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cross-origin-opener-policy": "same-origin",
+          "cross-origin-embedder-policy": "require-corp",
+        },
+      });
+    } catch {
+      return new Response("no", { status: 404 });
+    }
+  });
+  return { port: (server.addr as Deno.NetAddr).port, stop: () => server.shutdown() };
+}
+
+Deno.test({
+  name: "a wac program runs in a real browser, over real cross-origin isolation",
+  ignore: cannotBecause !== "",
+  // An external browser process and its pipes are not resources this test can account for to
+  // Deno's satisfaction, and pretending otherwise would mean leaking them instead.
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const { chromium } = await import("npm:playwright@1");
+    const dir = await Deno.makeTempDir({ prefix: "wac-page-" });
+    const native = await Deno.makeTempFile({ prefix: "wac-wc-" });
+    let browser;
+    let http: { port: number; stop(): Promise<void> } | undefined;
+    try {
+      // `wc` for the browser and for Deno, from one source: the differential is the point.
+      await buildApp("packages/platform/example/wc.wac", `${dir}/index.html`, {}, "browser");
+      await buildApp("packages/platform/example/wc.wac", native, {});
+      // `roundtrip` exercises the filesystem, which is where a page differs most.
+      await buildApp(
+        "packages/platform/example/roundtrip.wac",
+        `${dir}/rt.html`,
+        { read: true, write: true },
+        "browser",
+      );
+
+      const port = (http = serve(dir)).port;
+      // --no-proxy-server: this container sets HTTP_PROXY, and Chromium would send 127.0.0.1
+      // through Squid, which cannot reach it.
+      browser = await chromium.launch({ args: ["--no-proxy-server"] });
+      const page = await browser.newPage();
+      const failures: string[] = [];
+      page.on("pageerror", (e: Error) => failures.push(String(e)));
+
+      const run = async (path: string): Promise<string> => {
+        await page.goto(`http://127.0.0.1:${port}/${path}`, { waitUntil: "load" });
+        // The exit line is the launcher saying the application returned, so it is the only
+        // sound thing to wait for — and a timeout here is a failure, never a pass.
+        // Page code as strings, not closures: `document` and `crossOriginIsolated` are not in
+        // Deno's type environment, and a closure that only compiles because it was cast is a
+        // worse lie than a string that plainly runs somewhere else.
+        await page.waitForFunction(
+          "document.body.innerText.includes('[exit')",
+          null,
+          { timeout: 30_000 },
+        );
+        return (await page.evaluate("document.body.innerText")) as string;
+      };
+
+      const wc = await run("index.html");
+      // The headers did their job. Without this the rest could pass for the wrong reason —
+      // a page that never reached `newBridge` would show its header text and nothing else.
+      assertEquals(await page.evaluate("crossOriginIsolated"), true, "cross-origin isolated");
+      assertEquals(await page.evaluate("typeof SharedArrayBuffer"), "function", "SharedArrayBuffer");
+      assertEquals(wc.includes("[exit 0]"), true, wc);
+
+      // A page's standard input is always empty, so the comparison is `wc` of nothing — which
+      // is still the whole bridge: a worker parked on `Atomics.wait` for every capability.
+      const onDeno = new Deno.Command(native, { stdin: "null", stdout: "piped" }).outputSync();
+      const expected = new TextDecoder().decode(onDeno.stdout).trim();
+      assertEquals(wc.includes(expected), true, `page should contain ${expected}:\n${wc}`);
+
+      // The filesystem. `readDir(".")` is here because it is what this test was worth writing
+      // for: it answered "not a directory" in Chromium while the double said otherwise.
+      const rt = await run("rt.html");
+      assertEquals(rt.includes("same bytes back"), true, rt);
+      assertEquals(rt.includes("including roundtrip.txt"), true, rt);
+      assertEquals(rt.includes("[exit 0]"), true, rt);
+
+      // An interactive application, driven by real clicks. This is the part no double reaches:
+      // delegated listeners surviving a `render`, an event queue feeding a parked worker, and
+      // state kept in a local across events because the program is a loop rather than a set of
+      // callbacks.
+      await buildApp("packages/platform/example/counter.wac", `${dir}/counter.html`, {}, "browser");
+      await page.goto(`http://127.0.0.1:${port}/counter.html`, { waitUntil: "load" });
+      await page.waitForSelector("#up", { timeout: 30_000 });
+
+      await page.click("#up");
+      await page.click("#up");
+      await page.click("#up");
+      await page.click("#down");
+      assertEquals(await page.textContent("#n"), "2", "three up and one down");
+
+      // Typing, which arrives as `input` events carrying the value.
+      await page.fill("#echo", "typed");
+      assertEquals(await page.textContent("#said"), "you typed: typed");
+
+      await page.click("#reset");
+      assertEquals(await page.textContent("#n"), "0", "reset");
+      assertEquals(await page.inputValue("#echo"), "", "reset clears the box too");
+
+      // And the loop ends when the program decides to return, not when the page decides.
+      await page.click("#up");
+      await page.click("#quit");
+      await page.waitForFunction(
+        "document.body.innerText.includes('[exit')",
+        null,
+        { timeout: 30_000 },
+      );
+      const done = (await page.evaluate("document.body.innerText")) as string;
+      assertEquals(done.includes("counted to 1"), true, done);
+      assertEquals(done.includes("[exit 0]"), true, done);
+
+      // Pixels, a pointer and files — the three that only a browser can answer for.
+      await buildApp("packages/platform/example/pixels.wac", `${dir}/pixels.html`, {}, "browser");
+      await page.goto(`http://127.0.0.1:${port}/pixels.html`, { waitUntil: "load" });
+      // Wait for the canvas to have been *drawn into*, which is the actual precondition, rather
+      // than for a particular size. Two wrong versions preceded this: pinning `width === 240`
+      // failed as a timeout when the picture was made bigger, and `width > 0` passed instantly
+      // because an undrawn canvas is already 300x150 by default — so the pixel checks below ran
+      // on a blank one and reported zero opaque pixels out of 45,000.
+      await page.waitForFunction(
+        `(() => {
+          const c = document.getElementById("c");
+          if (c === null) return false;
+          const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+          for (let i = 3; i < d.length; i += 4) if (d[i] === 255) return true;
+          return false;
+        })()`,
+        null,
+        { timeout: 30_000 },
+      );
+      const size = await page.evaluate(
+        "({ w: document.getElementById('c').width, h: document.getElementById('c').height })",
+      ) as { w: number; h: number };
+
+      // A canvas with real content: every pixel opaque, and more than a handful of colours.
+      // A blank buffer would satisfy "a canvas exists" and nothing else here.
+      const drawn = await page.evaluate(`(() => {
+        const c = document.getElementById('c');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const seen = new Set();
+        let opaque = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          seen.add(d[i] + ',' + d[i + 1] + ',' + d[i + 2]);
+          if (d[i + 3] === 255) opaque++;
+        }
+        return { colours: seen.size, opaque, total: d.length / 4 };
+      })()`) as { colours: number; opaque: number; total: number };
+      assertEquals(drawn.total, size.w * size.h, "the buffer is the size wac asked for");
+      assertEquals(drawn.opaque, drawn.total, "every pixel was written");
+      assertEquals(drawn.colours > 20, true, `only ${drawn.colours} colours — is it blank?`);
+
+      // Pointer coordinates, in the canvas's *backing store* — not its CSS box. This canvas is
+      // drawn at one size and displayed at another, so the two differ, and the invariant worth
+      // asserting is the one an application depends on: the middle of the element is the middle
+      // of the buffer it drew. Pinning a literal (it was `x=119`) tested the window size.
+      const box = (await page.locator("#c").boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForFunction(
+        "document.getElementById('pos').textContent.startsWith('x=')",
+        null,
+        { timeout: 30_000 },
+      );
+      const pos = (await page.textContent("#pos")) ?? "";
+      const at = pos.match(/x=(\d+) y=(\d+)/);
+      assertEquals(at !== null, true, pos);
+      assertEquals(
+        Math.abs(Number(at![1]) - size.w / 2) <= 3 && Math.abs(Number(at![2]) - size.h / 2) <= 3,
+        true,
+        `the centre of the element should be the centre of the ${size.w}x${size.h} buffer: ${pos}`,
+      );
+      // And the centre of the default view is inside the set, so it never escapes.
+      assertEquals(pos.includes("never (inside)"), true, pos);
+
+      // A file in and a file back out, checked against this runtime's own crypto and gzip rather
+      // than against more wac. It drives `box/example/hash.wac`, which is where `nextFile` lives
+      // now: a page that hashes a file you drop on it has a reason to want one, and a Mandelbrot
+      // viewer never did.
+      await buildApp(
+        "packages/box/example/hash.wac",
+        `${dir}/hash.html`,
+        {},
+        "browser",
+      );
+      await page.goto(`http://127.0.0.1:${port}/hash.html`, { waitUntil: "load" });
+      await page.waitForSelector("#in", { timeout: 30_000 });
+
+      const given = `${dir}/given.txt`;
+      const body = "handed to the page\n".repeat(500);
+      await Deno.writeTextFile(given, body);
+      const wanted = [...new Uint8Array(
+        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
+      )].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      await page.setInputFiles("#f", given);
+      await page.waitForFunction(
+        "document.getElementById('note').textContent.startsWith('from ')",
+        null,
+        { timeout: 30_000 },
+      );
+      assertEquals(await page.textContent("#sha"), wanted, "the page's SHA-256 of the file");
+      assertEquals(await page.textContent("#len"), String(body.length));
+
+      const coming = page.waitForEvent("download", { timeout: 30_000 });
+      await page.click("#save");
+      const back = await coming;
+      assertEquals(back.suggestedFilename(), "given.txt.gz");
+      // Decompressed by the runtime, so the claim is "a real gzip container" and not "our gzip
+      // agrees with our gunzip" — the two ends of a round trip running the same code test only
+      // that the code is symmetrical.
+      const gz = await Deno.readFile((await back.path())!);
+      const plain = new Response(
+        new Blob([gz as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip")),
+      );
+      assertEquals(await plain.text(), body, "what the page compressed, ungzipped");
+
+      // The ratio the page prints, which nothing looked at: `tenths` could return anything and every
+      // assertion above still held, because the page's numbers were checked and its arithmetic was not.
+      // Computed here from the two lengths this test already knows — the input's, and the container the
+      // runtime just decompressed — so it is the *formatting* under test rather than the compressor.
+      const permille = Math.floor(gz.length * 1000 / body.length);
+      assertEquals(
+        await page.textContent("#ratio"),
+        `(${Math.floor(permille / 10)}.${permille % 10}% of the input)`,
+        "the page's compression ratio",
+      );
+
+      // And the shell, which is `packages/sh` unchanged with a keyboard in front of it.
+      await buildApp(
+        "packages/box/example/term.wac",
+        `${dir}/term.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      await page.goto(`http://127.0.0.1:${port}/term.html`, { waitUntil: "load" });
+      await page.waitForSelector("#cmd", { timeout: 30_000 });
+      // The terminal runs an opening session before it takes the keyboard, so the frame the website
+      // embeds shows real output rather than an empty prompt. Wait for the last of it: without this
+      // the first `command` below races the startup and reads its output instead. Waiting for the
+      // hash also checks the opening session in a real browser, which is where it is displayed.
+      await page.waitForFunction(
+        `document.getElementById('scr').textContent.includes(` +
+          `'5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03')`,
+        null,
+        { timeout: 60_000 },
+      );
+      const command = async (line: string): Promise<string> => {
+        const before = (await page.textContent("#scr")) ?? "";
+        await page.fill("#cmd", line);
+        await page.press("#cmd", "Enter");
+        await page.waitForFunction(
+          `document.getElementById('scr').textContent !== ${JSON.stringify(before)}`,
+          null,
+          { timeout: 30_000 },
+        );
+        return ((await page.textContent("#scr")) ?? "").slice(before.length).trim();
+      };
+      assertEquals((await command("echo hello | tr a-z A-Z")).endsWith("HELLO"), true);
+      assertEquals((await command("for i in 1 2 3; do echo $i; done")).endsWith("1\n2\n3"), true);
+      // Redirection into OPFS and back out again: a shell with a real filesystem under it.
+      assertEquals((await command("echo kept > note.txt; cat note.txt")).endsWith("kept"), true);
+
+      // **What a tab does not have, pinned so the gap is visible rather than assumed.**
+      //
+      // design/0001 wants the browser terminal to be "the *same system* in a tab", which means the
+      // `/dev`, `/proc` and `/bin` every other session has. It does not have them, and mounting them
+      // was tried this tick and had to come out: the shell got them and its *programs* did not,
+      // because a spawned stage is a fresh instance with `Fs.onHost`. `ls /bin` listed sixty-three
+      // programs — `ls` is a builtin, on the session's own filesystem — and `cat /dev/null` failed.
+      //
+      // So this asserts the gap. When wac-mono 0116 is decided these become the positive assertions,
+      // and until then a tab that quietly grew half a world fails here.
+      const devnull = await command("cat /dev/null; echo [$?]");
+      assertEquals(
+        devnull.endsWith("[0]"),
+        false,
+        `a tab has no /dev yet (0116); it said ${JSON.stringify(devnull)}`,
+      );
+
+      // **The cursor is a block, and stays one.** `caret-shape: block` only paints a full cell if
+      // the field has a cell left to paint in; sizing the input to its content — which is the
+      // obvious way to make prompt, command and cursor one line — silently clips it back to a bar.
+      // Nothing about that shows up in the DOM, so what is checked is the condition that causes
+      // it: the field is wider than the text in it.
+      // **`^C` at the prompt throws the line away**, as it does at an ssh prompt — and it is only
+      // possible because a keydown now arrives as the byte a terminal sends. Before this, `Ctrl-C`
+      // and `c` were the same event value and the page could not tell them apart.
+      await page.fill("#cmd", "rm -rf /");
+      await page.press("#cmd", "Control+c");
+      // `inputValue` rather than a `waitForFunction` over the DOM: this file has no DOM lib, which
+      // is deliberate — it drives a browser from outside rather than describing one.
+      await page.waitForFunction("document.getElementById('cmd').value === ''", { timeout: 10_000 });
+      const afterIntr = await page.textContent("#scr");
+      if (!afterIntr?.includes("rm -rf /^C")) {
+        throw new Error(`\`^C\` did not abandon the line: ${JSON.stringify(afterIntr?.slice(-120))}`);
+      }
+
+      await page.fill("#cmd", "echo hi");
+      const caret = await page.evaluate(`(() => {
+        const el = document.getElementById("cmd");
+        const s = getComputedStyle(el);
+        const probe = document.createElement("span");
+        probe.style.font = s.font;
+        probe.style.whiteSpace = "pre";
+        probe.textContent = el.value;
+        document.body.appendChild(probe);
+        const text = probe.getBoundingClientRect().width;
+        probe.remove();
+        return { shape: s.caretShape, field: el.getBoundingClientRect().width, text };
+      })()`) as { shape: string; field: number; text: number };
+      await page.fill("#cmd", "");
+      assertEquals(caret.shape, "block", "the prompt cursor should be a block, not a line");
+      assertEquals(
+        caret.field > caret.text + 4,
+        true,
+        `the input is ${Math.round(caret.field)}px for ${Math.round(caret.text)}px of text, so a ` +
+          `block caret at the end of the line has no cell and the browser clips it to a bar`,
+      );
+
+      // **Output you cannot scroll to is output you did not print.** The scrollback is a reversed
+      // flex column, and a reversed flex column has a trap in it: content pushed past the start
+      // edge by `justify-content` is unreachable — no scrollbar, no wheel, `scrollHeight` equal to
+      // `clientHeight`. That shipped, and one `ls` was enough to lose the answer off the top. What
+      // makes it worth a test rather than a comment is that everything else still passes: the text
+      // is in `#scr`, so every assertion above is happy about output nobody can see.
+      await command("seq 1 200");
+      const scroll = await page.evaluate(`(() => {
+        const w = document.getElementById("wrap");
+        w.scrollTop = -1e6; // a reversed column scrolls to negative; clamped to the top either way
+        const first = document.getElementById("scr").getBoundingClientRect().top;
+        return {
+          over: w.scrollHeight - w.clientHeight,
+          reachedTop: first - w.getBoundingClientRect().top,
+        };
+      })()`) as { over: number; reachedTop: number };
+      assertEquals(
+        scroll.over > 0,
+        true,
+        `200 lines did not make the scrollback scrollable (scrollHeight - clientHeight = ` +
+          `${scroll.over}), so the earlier output is on the page and out of reach`,
+      );
+      assertEquals(
+        Math.abs(scroll.reachedTop) < 40,
+        true,
+        `scrolled to the top and the first line is still ${scroll.reachedTop}px away from it`,
+      );
+
+      // **The newest line has to be inside the frame.** The scroller is `height: 100%` with
+      // padding, and on a page with no stylesheet under it that is `content-box` — so the scroller
+      // ends up taller than the element clipping it and the prompt renders past the visible edge.
+      // It reads as two separate faults, which is why it is worth pinning: no margin under the
+      // prompt, and a scrollback that stops short of the newest line until a keystroke scrolls the
+      // caret into view. Both are this.
+      const fits = await page.evaluate(`(() => {
+        // Back to the newest line: the check above left the view at the top of the scrollback.
+        document.getElementById("wrap").scrollTop = 0;
+        const box = (id) => document.getElementById(id).getBoundingClientRect();
+        return {
+          slack: Math.round(box("term").height - box("wrap").height),
+          under: Math.round(box("term").bottom - box("bar").bottom),
+        };
+      })()`) as { slack: number; under: number };
+      assertEquals(
+        fits.slack >= 0,
+        true,
+        `the scroller is ${-fits.slack}px taller than the frame that clips it, so its last line ` +
+          `is rendered where nothing can scroll to it`,
+      );
+      assertEquals(
+        fits.under >= 16,
+        true,
+        `the prompt sits ${fits.under}px from the bottom edge — typing happens against the border`,
+      );
+
+      // **Which route answered.** Every assertion above passes either way: an applet called inside
+      // the shell's own instance and one spawned as a worker print the same bytes, which is what made
+      // the in-process fallback worth having and also what made this half of 0030 unfalsifiable.
+      //
+      // The cap tells them apart. A *called* applet's output is captured in memory and capped at
+      // 8 MiB (`host/child.ts`), so it truncates; a *spawned* one's queue drains as the next stage
+      // reads it, so it does not. Measured under Deno, where both routes can be built: the same
+      // command answers 8323568 with `externalSpawnable` off and 10888896 with it on — and the second
+      // is what GNU answers, which is why the expectation comes from `bash` here rather than from a
+      // literal in this file.
+      const big = "seq 1 1500000 | wc -c";
+      const gnu = new TextDecoder()
+        .decode((await new Deno.Command("bash", { args: ["-c", big], stdout: "piped" }).output()).stdout)
+        .trim();
+      assertEquals(
+        (await command(big)).endsWith(gnu),
+        true,
+        `the page truncated where a spawned child would not — applets are running in-process. ` +
+          `bash says ${gnu}`,
+      );
+
+      // A page spawning a program of its own: issue 0030's whole claim, in a real browser.
+      //
+      // The child is a `--worker` bundle built for the browser, put into the Origin Private File
+      // System by this test — because that is the honest gap 0030 names. A page has no filesystem
+      // full of programs, so somebody has to put one there, and once it is there `spawn` reads it
+      // like any other file. What this proves that the double cannot: a worker created *by a
+      // worker*, its own `SharedArrayBuffer`, and its calls answered by the page while its parent is
+      // parked in `Atomics.wait`.
+      const childBundle = await Deno.makeTempFile({ prefix: "wac-child-", suffix: ".worker.js" });
+      await buildApp("packages/platform/example/wc.wac", childBundle, {}, "browser", true);
+      await buildApp(
+        "packages/platform/example/runner.wac",
+        `${dir}/runner.html`,
+        { read: true },
+        "browser",
+      );
+      const bundleSource = await Deno.readTextFile(childBundle);
+      await Deno.remove(childBundle);
+
+      // Written straight into OPFS from the page's own thread, which is the only way in: there is
+      // no other route to a page's private filesystem, and that is the point of it.
+      await page.goto(`http://127.0.0.1:${port}/runner.html`, { waitUntil: "load" });
+      await page.evaluate(
+        `(async (source) => {
+          const root = await navigator.storage.getDirectory();
+          const handle = await root.getFileHandle("wc.worker.js", { create: true });
+          const w = await handle.createWritable();
+          await w.write(source);
+          await w.close();
+        })(${JSON.stringify(bundleSource)})`,
+      );
+
+      await page.goto(
+        `http://127.0.0.1:${port}/runner.html?a=wc.worker.js&a=${encodeURIComponent("one two three")}`,
+        { waitUntil: "load" },
+      );
+      await page.waitForFunction(
+        "document.body.innerText.includes('[exit')",
+        null,
+        { timeout: 30_000 },
+      );
+      const spawned = (await page.evaluate("document.body.innerText")) as string;
+      // `wc` of "one two three\n": one line, three words, fourteen bytes. Compared against the same
+      // program run natively rather than against a literal, which is the differential this file is
+      // for — the child is the same source built for a different host.
+      const nativeWc = new Deno.Command(native, {
+        args: [],
+        stdin: "piped",
+        stdout: "piped",
+      }).spawn();
+      const wr = nativeWc.stdin.getWriter();
+      await wr.write(new TextEncoder().encode("one two three\n"));
+      await wr.close();
+      const nativeOut = new TextDecoder().decode((await nativeWc.output()).stdout).trim();
+      assertEquals(spawned.includes(nativeOut), true, `page: ${spawned}\nnative: ${nativeOut}`);
+      assertEquals(spawned.includes("[exit 0]"), true, spawned);
+
+      // And the same page running *itself* as a child, which is the half of 0030 that matters for a
+      // browser: there is no filesystem of programs in a tab, so the only program a page reliably has
+      // is the one it already is. No file was written for this one — that is the whole point.
+      await buildApp("packages/platform/example/twin.wac", `${dir}/twin.html`, {}, "browser");
+      const twin = await run("twin.html");
+      assertEquals(twin.includes("parent: about to run myself"), true, twin);
+      assertEquals(twin.includes("SHOUT: HELLO TWIN"), true, twin);
+      assertEquals(twin.includes("parent: the child exited 0"), true, twin);
+      assertEquals(twin.includes("[exit 0]"), true, twin);
+
+      assertEquals(failures.join("\n"), "", "the page raised errors");
+    } finally {
+      await browser?.close();
+      await http?.stop();
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(native);
+    }
+  },
+});

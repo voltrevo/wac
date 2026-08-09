@@ -1,17 +1,44 @@
 <p align="center">
-  <img src="public/banner.svg" alt="wac — A C-family language for WebAssembly GC" width="640">
+  <img src="site/public/banner.svg" alt="wac — A C-family language for WebAssembly GC" width="640">
 </p>
 
 # wac
 
-A C-family language for WebAssembly GC. Structs, methods, arrays, nullable refs, subtyping,
-generics and enums.
+A C-family language for WebAssembly GC, and a systems stack written in it.
 
-**[Website](https://voltrevo.github.io/wac/)** · **[Language spec](spec/)**
+**[Website](https://voltrevo.github.io/wac/)** · **[Language spec](spec/)** · **[Packages](packages/)**
+
+## What is in here
+
+This was two repositories — `wac`, the language and its compiler, and `wac-mono`, the packages
+written in it — merged because the seam between them had started costing more than it bought. A
+change spanning both was two pushes that could not be atomic, the packages pinned a compiler commit
+and went red when a checkout was stale, and the website quoted numbers from the other tree that were
+wrong within a week.
+
+```
+spec/          the language: definition, tour, cli documentation
+compiler/      the compiler — lexer to WasmGC emitter, in TypeScript with no dependencies
+packages/      34 packages written in wac, including `wacc`, the compiler ported to wac
+native/        a host with no JavaScript in it: Rust on wasmtime
+harness/       the test harness the packages share
+site/          the website
+tools/         repo-wide tooling
+design/        design notes: `lang/` and `system/`
+issues/        issues: `lang/` and `system/`
+```
+
+`issues/` and `design/` keep that split because both trees numbered from 0001 and 79 numbers
+collide. A reference to "wac 0076" is `issues/lang/`, and "wac-mono 0103" is `issues/system/`.
 
 ## Pure TypeScript. Zero dependencies.
 
-The entire compiler — lexer, parser, resolver, type checker, WasmGC emitter, and binary builder — is pure TypeScript with no native code, no LLVM, no binaryen, no wasm toolchain. It runs in the browser and in Deno/Node. The compiler, runtime, and bindgen total ~6,000 lines.
+The compiler — lexer, parser, resolver, type checker, WasmGC emitter, binary builder — is pure
+TypeScript with no native code, no LLVM, no binaryen and no wasm toolchain. It runs in a browser
+and in Deno or Node, and totals about 16,000 lines.
+
+It is also being replaced by itself: `packages/wacc` is that compiler written in wac, and it
+already reproduces its own output byte for byte. The TypeScript compiler is the seed.
 
 ## Example
 

@@ -1,0 +1,19 @@
+// Everything but the last path component.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { dirName } from "../lib/path.wac";
+import { missingOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 dirname(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (a.rest.len() < 1) { return missingOperand(core, a.name, ""); }
+  // **Every operand, not the first.** `dirname a b c` prints three lines in GNU and printed one here,
+  // so a loop over a list of paths silently lost all but the first.
+  for (i32 i = 0; i < a.rest.len(); i++) {
+    core.log(string.fromBytes(dirName(a.rest[i].toBytes())));
+  }
+  return 0;
+}

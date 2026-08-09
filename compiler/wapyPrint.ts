@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run --allow-read
 // wapy — print a wac file in Python-flavoured syntax.
 //
-//   deno run --allow-read atoms/wac/wapyPrint.ts packages/std/src/option.wac
-//   deno run --allow-read atoms/wac/wapyPrint.ts --stats src/*.wac
+//   deno run --allow-read compiler/wapyPrint.ts packages/std/src/option.wac
+//   deno run --allow-read compiler/wapyPrint.ts --stats src/*.wac
 //
 // ## What this is
 //

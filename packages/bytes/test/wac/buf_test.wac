@@ -1,0 +1,383 @@
+// Buf's own tests. It was previously covered only incidentally, through gzip's
+// codecs and json's serializer, which meant the parts neither of them used —
+// pushU16/pushU32 in isolation, take()'s aliasing contract, the bulk reserve
+// path — were unverified.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Buf } from "../../src/buf.wac";
+
+export string test_growth_from_empty() {
+  T t = T.create();
+  Buf b = Buf.create();
+  t.eqI32(b.len, 0, "starts empty");
+  for (i32 i = 0; i < 100; i++) { b.push(i); }
+  t.eqI32(b.len, 100, "length after 100 pushes");
+  t.eqI32(b.get(0), 0, "first byte");
+  t.eqI32(b.get(99), 99, "last byte");
+  // bytes() must hand back exactly len, not the doubled capacity.
+  t.eqI32(b.bytes().len(), 100, "bytes() trims spare capacity");
+  return t.report();
+}
+
+export string test_bytes_are_stored_unsigned() {
+  T t = T.create();
+  // The u8/i8 distinction: a byte with the high bit set must read back as 255,
+  // not -1. This is what the i8 -> u8 migration was about.
+  Buf b = Buf.create();
+  b.push(0xFF);
+  b.push(0x80);
+  t.eqI32(b.get(0), 255, "0xFF reads back as 255");
+  t.eqI32(b.get(1), 128, "0x80 reads back as 128");
+  t.eqBytes(b.bytes(), u8[](0xFF, 0x80), "and survives the copy out");
+  return t.report();
+}
+
+export string test_push_truncates_to_a_byte() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.push(0x1FF);
+  b.push(-1);
+  t.eqI32(b.get(0), 0xFF, "0x1FF truncates to 0xFF");
+  t.eqI32(b.get(1), 0xFF, "-1 truncates to 0xFF");
+  return t.report();
+}
+
+export string test_with_capacity() {
+  T t = T.create();
+  Buf b = Buf.withCapacity(64);
+  t.eqI32(b.len, 0, "capacity is not length");
+  for (i32 i = 0; i < 64; i++) { b.push(i); }
+  t.eqI32(b.len, 64, "fills to capacity without growing");
+  b.push(64);
+  t.eqI32(b.len, 65, "and still grows past it");
+  t.eqI32(b.get(64), 64, "the byte past the original capacity survived");
+
+  // A capacity below the default floor is raised to it rather than honoured, so
+  // a tiny hint cannot make growth quadratic.
+  Buf small = Buf.withCapacity(1);
+  for (i32 i = 0; i < 16; i++) { small.push(i); }
+  t.eqI32(small.len, 16, "a capacity of 1 still holds 16 without trouble");
+  return t.report();
+}
+
+export string test_push_bytes_range() {
+  T t = T.create();
+  Buf b = Buf.create();
+  u8[] src = u8[]('a', 'b', 'c', 'd', 'e');
+  b.pushBytes(src, 1, 3);
+  t.eqBytes(b.bytes(), u8[]('b', 'c', 'd'), "start and count are both honoured");
+  b.pushBytes(src, 0, 0);
+  t.eqI32(b.len, 3, "a zero count is a no-op");
+  return t.report();
+}
+
+export string test_push_bytes_grows_once_and_correctly() {
+  T t = T.create();
+  // The bulk path takes a different branch from repeated push, so the contents
+  // have to be checked, not just the length. 300 bytes crosses several doublings
+  // from the default capacity of 16.
+  Buf b = Buf.create();
+  u8[] src = u8[300]();
+  for (i32 i = 0; i < 300; i++) { src[i] = i & 0xFF; }
+  b.pushBytes(src, 0, 300);
+  t.eqI32(b.len, 300, "all 300 arrived");
+  t.eqI32(b.get(0), 0, "first");
+  t.eqI32(b.get(255), 255, "the byte at the wrap point");
+  t.eqI32(b.get(256), 0, "and just past it");
+  t.eqI32(b.get(299), 299 & 0xFF, "last");
+  return t.report();
+}
+
+export string test_push_all() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.push('x');
+  b.pushAll(u8[]('y', 'z'));
+  b.pushAll(u8[0]());
+  t.eqBytes(b.bytes(), u8[]('x', 'y', 'z'), "pushAll appends the whole array");
+  return t.report();
+}
+
+export string test_little_endian_writes() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.pushU16(0x1234);
+  b.pushU32(0xDEADBEEF);
+  // Low byte first in both cases. A big-endian mistake would reverse each group
+  // and still produce the right length.
+  t.eqBytes(b.bytes(), u8[](0x34, 0x12, 0xEF, 0xBE, 0xAD, 0xDE),
+    "u16 then u32, little-endian");
+  return t.report();
+}
+
+export string test_push_codepoint_widths() {
+  T t = T.create();
+  Buf a = Buf.create();
+  a.pushCodepoint('A');
+  t.eqBytes(a.bytes(), u8[](0x41), "ASCII is one byte");
+
+  Buf b = Buf.create();
+  b.pushCodepoint(0xE9);
+  t.eqBytes(b.bytes(), u8[](0xC3, 0xA9), "U+00E9 is two bytes");
+
+  Buf c = Buf.create();
+  c.pushCodepoint(0x65E5);
+  t.eqBytes(c.bytes(), u8[](0xE6, 0x97, 0xA5), "U+65E5 is three bytes");
+
+  Buf d = Buf.create();
+  d.pushCodepoint(0x1F600);
+  t.eqBytes(d.bytes(), u8[](0xF0, 0x9F, 0x98, 0x80), "U+1F600 is four bytes");
+
+  // Each width boundary, so no scalar can land in the wrong branch.
+  Buf e = Buf.create(); e.pushCodepoint(0x7F);
+  t.eqI32(e.len, 1, "U+007F still one");
+  Buf f = Buf.create(); f.pushCodepoint(0x80);
+  t.eqI32(f.len, 2, "U+0080 crosses to two");
+  Buf g = Buf.create(); g.pushCodepoint(0x7FF);
+  t.eqI32(g.len, 2, "U+07FF still two");
+  Buf h = Buf.create(); h.pushCodepoint(0x800);
+  t.eqI32(h.len, 3, "U+0800 crosses to three");
+  Buf i = Buf.create(); i.pushCodepoint(0xFFFF);
+  t.eqI32(i.len, 3, "U+FFFF still three");
+  Buf j = Buf.create(); j.pushCodepoint(0x10000);
+  t.eqI32(j.len, 4, "U+10000 crosses to four");
+  return t.report();
+}
+
+export string test_push_codepoint_rejects_non_scalars() {
+  T t = T.create();
+  // Not Unicode scalars, and UTF-8 has no encoding for any of them. They used to be encoded
+  // anyway: a surrogate came out as the CESU-8 form that strict decoders reject, and 0x110000 as a
+  // sequence with a five-byte lead. Each becomes U+FFFD — EF BF BD. GitHub wac-mono#16.
+  u8[] replacement = u8[](0xEF, 0xBF, 0xBD);
+  Buf a = Buf.create(); a.pushCodepoint(-1);
+  t.eqBytes(a.bytes(), replacement, "a negative value");
+  Buf b = Buf.create(); b.pushCodepoint(0xD800);
+  t.eqBytes(b.bytes(), replacement, "the first surrogate");
+  Buf c = Buf.create(); c.pushCodepoint(0xDFFF);
+  t.eqBytes(c.bytes(), replacement, "the last surrogate");
+  Buf d = Buf.create(); d.pushCodepoint(0x110000);
+  t.eqBytes(d.bytes(), replacement, "one past the last code point");
+
+  // And the values either side of each hole are untouched.
+  Buf e = Buf.create(); e.pushCodepoint(0xD7FF);
+  t.eqBytes(e.bytes(), u8[](0xED, 0x9F, 0xBF), "U+D7FF is below the surrogates");
+  Buf f = Buf.create(); f.pushCodepoint(0xE000);
+  t.eqBytes(f.bytes(), u8[](0xEE, 0x80, 0x80), "U+E000 is above them");
+  Buf g = Buf.create(); g.pushCodepoint(0x10FFFF);
+  t.eqBytes(g.bytes(), u8[](0xF4, 0x8F, 0xBF, 0xBF), "U+10FFFF is the last one");
+  Buf h = Buf.create(); h.pushCodepoint(0);
+  t.eqBytes(h.bytes(), u8[](0x00), "and NUL is a scalar like any other");
+  return t.report();
+}
+
+export string test_take_avoids_the_copy_when_exactly_full() {
+  T t = T.create();
+  // take() returns the buffer's own storage when len == capacity, so the caller
+  // owns it and the Buf must not be reused. The observable difference is that a
+  // later write through the returned array is visible in it — which is exactly
+  // why the contract is documented and why bytes() exists separately.
+  Buf full = Buf.withCapacity(16);
+  for (i32 i = 0; i < 16; i++) { full.push(i); }
+  u8[] taken = full.take();
+  t.eqI32(taken.len(), 16, "exact length");
+  t.eqI32(taken[15], 15, "contents intact");
+
+  // The buffer is emptied, so continuing to use it cannot write through the array
+  // it just handed away — the failure mode the doc comment used to only warn about.
+  t.eqI32(full.len, 0, "the taken buffer is empty");
+  full.push('z');
+  t.eqI32(taken[0], 0, "a later push does not reach the taken array");
+  t.eqBytes(full.bytes(), u8[]('z'), "and lands in fresh storage");
+
+  // Not exactly full: take() falls back to a copy, and the contents still match.
+  Buf partial = Buf.withCapacity(16);
+  partial.push('q');
+  u8[] copied = partial.take();
+  t.eqI32(copied.len(), 1, "trimmed to length");
+  t.eqI32(copied[0], 'q', "contents intact");
+  return t.report();
+}
+
+export string test_grows_from_zero_capacity() {
+  T t = T.create();
+  // A buffer with no capacity at all, which `take` now produces. Doubling zero is
+  // zero, so this is where a missing floor in `reserve` goes out of bounds.
+  Buf b = Buf.withCapacity(16);
+  for (i32 i = 0; i < 16; i++) { b.push(i); }
+  u8[] gone = b.take();
+  t.eqI32(gone.len(), 16, "the storage was handed over");
+  for (i32 i = 0; i < 40; i++) { b.push(i); }
+  t.eqI32(b.len, 40, "and the emptied buffer refills");
+  t.eqI32(b.get(39), 39, "with the right contents");
+  return t.report();
+}
+
+export string test_bulk_append_onto_a_partly_filled_buffer() {
+  T t = T.create();
+  // reserveFor's copy loop, which every existing test missed: they all bulk-append
+  // onto an empty buffer, so there was nothing to carry over.
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b', 'c'));
+  u8[] big = u8[100]();
+  for (i32 i = 0; i < 100; i++) { big[i] = i; }
+  b.pushAll(big);
+  t.eqI32(b.len, 103, "both parts are there");
+  t.eqI32(b.get(0), 'a', "the original bytes survived the growth");
+  t.eqI32(b.get(2), 'c', "including the last of them");
+  t.eqI32(b.get(3), 0, "and the appended block starts where it should");
+  t.eqI32(b.get(102), 99, "through to its end");
+  return t.report();
+}
+
+export string test_bulk_append_from_zero_capacity() {
+  T t = T.create();
+  // reserveFor's capacity floor. Reachable only when the buffer has no capacity at
+  // all, since 16 doubled already clears the floor — so only after `take`.
+  Buf b = Buf.withCapacity(16);
+  for (i32 i = 0; i < 16; i++) { b.push(i); }
+  u8[] taken = b.take();
+  t.eqI32(taken.len(), 16, "storage handed over");
+  b.pushAll(u8[]('x', 'y'));
+  t.eqI32(b.len, 2, "the emptied buffer takes a bulk append");
+  t.eqI32(b.get(1), 'y', "with the right contents");
+  return t.report();
+}
+
+export string test_bytes_is_a_copy() {
+  T t = T.create();
+  // bytes() must not alias, or a caller that keeps appending would see its
+  // earlier result change underneath it.
+  Buf b = Buf.create();
+  b.push('a');
+  u8[] first = b.bytes();
+  b.push('b');
+  t.eqI32(first.len(), 1, "the earlier result kept its length");
+  t.eqBytes(first, u8[]('a'), "and its contents");
+  t.eqBytes(b.bytes(), u8[]('a', 'b'), "while the buffer moved on");
+  return t.report();
+}
+
+export string test_to_str() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.pushAll(u8[]('h', 'i'));
+  t.eqStr(b.toStr(), "hi", "ASCII round-trips");
+
+  Buf u = Buf.create();
+  u.pushCodepoint(0x65E5);
+  t.eqStr(u.toStr(), "日", "so does a multi-byte scalar");
+
+  Buf empty = Buf.create();
+  t.eqStr(empty.toStr(), "", "and the empty buffer");
+  return t.report();
+}
+
+export string test_take_empties_the_buffer_when_it_copies() {
+  T t = T.create();
+  // The other `take` test covers the exactly-full case, where the buffer's own array is handed
+  // over and the reset is obvious. The copy path — every other length — did not reset, so `take`
+  // left the contents in place and the next push appended to bytes the caller had been given.
+  //
+  // Found by packages/url, the first caller to reuse a Buf across several takes: it parses a
+  // scheme, takes it, then accumulates the authority in the same buffer, and got "foo" glued to
+  // the front of every later field.
+  Buf b = Buf.create();
+  b.pushAll(u8[]('f', 'o', 'o'));
+  u8[] first = b.take();
+  t.eqBytes(first, u8[]('f', 'o', 'o'), "take returns what was pushed");
+  t.eqI32(b.len, 0, "and empties the buffer, even though it was not full");
+
+  b.pushAll(u8[]('b', 'a', 'r'));
+  t.eqBytes(b.take(), u8[]('b', 'a', 'r'), "so the next take sees only the new bytes");
+  t.eqBytes(first, u8[]('f', 'o', 'o'), "and the first result is untouched");
+  return t.report();
+}
+
+export string test_drop_front_shifts_what_is_left() {
+  T t = T.create();
+  // For a sliding window: the front has been handed away and the tail still has to be
+  // addressable. Written for gzip's streaming inflate, where the tail is the 32 KiB a
+  // back-reference can still reach.
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b', 'c', 'd', 'e'));
+
+  b.dropFront(2);
+  t.eqI32(b.len, 3, "the length drops by what was dropped");
+  t.eqI32(b.get(0), 'c', "and the rest moves to the front");
+  t.eqI32(b.get(2), 'e', "all of it, not just the first byte");
+
+  b.pushAll(u8[]('f'));
+  t.eqBytes(b.take(), u8[]('c', 'd', 'e', 'f'), "a push after a drop lands after the tail");
+  return t.report();
+}
+
+export string test_drop_front_at_the_edges() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.pushAll(u8[]('x', 'y', 'z'));
+
+  b.dropFront(0);
+  t.eqI32(b.len, 3, "dropping nothing keeps everything");
+  b.dropFront(-4);
+  t.eqI32(b.len, 3, "and so does a negative count, rather than corrupting the length");
+
+  b.dropFront(9);
+  t.eqI32(b.len, 0, "dropping more than there is empties it instead of going negative");
+
+  b.pushAll(u8[]('q'));
+  t.eqBytes(b.take(), u8[]('q'), "and it is reusable afterwards");
+  return t.report();
+}
+
+export string test_push_repeat_copies_from_earlier_in_the_buffer() {
+  T t = T.create();
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b', 'c', 'd'));
+
+  b.pushRepeat(1, 2);
+  t.eqBytes(b.bytes(), u8[]('a', 'b', 'c', 'd', 'b', 'c'), "a plain copy from the middle");
+
+  b.pushRepeat(0, 0);
+  t.eqI32(b.len, 6, "copying nothing changes nothing");
+  return t.report();
+}
+
+export string test_push_repeat_overlaps_to_make_a_run() {
+  T t = T.create();
+  // The case the method exists for. A match of five bytes from one back is how LZ77 and its
+  // descendants spell "repeat that byte five times" — the copy has to read what it is writing,
+  // one byte at a time, or the run comes out as a stale block instead.
+  Buf b = Buf.create();
+  b.pushAll(u8[]('x'));
+  b.pushRepeat(0, 5);
+  t.eqBytes(b.bytes(), u8[]('x', 'x', 'x', 'x', 'x', 'x'), "distance one is a run of one byte");
+
+  Buf c = Buf.create();
+  c.pushAll(u8[]('a', 'b'));
+  c.pushRepeat(0, 5);
+  t.eqBytes(c.bytes(), u8[]('a', 'b', 'a', 'b', 'a', 'b', 'a'), "distance two alternates");
+
+  // A copy longer than the buffer, which is only possible because it reads as it writes.
+  Buf d = Buf.create();
+  d.pushAll(u8[]('1', '2', '3'));
+  d.pushRepeat(0, 8);
+  t.eqBytes(d.bytes(), u8[]('1', '2', '3', '1', '2', '3', '1', '2', '3', '1', '2'),
+            "and a longer match repeats the whole run");
+  return t.report();
+}
+
+export string test_push_repeat_grows_the_buffer() {
+  T t = T.create();
+  // Past the initial capacity, so the copy happens after a reallocation rather than in place.
+  Buf b = Buf.create();
+  b.pushAll(u8[]('a', 'b', 'c', 'd'));
+  for (i32 i = 0; i < 8; i++) {
+    b.pushRepeat(0, 4);
+  }
+  t.eqI32(b.len, 36, "every copy landed");
+  u8[] out = b.bytes();
+  t.eqI32(out[35], 'd', "and the last byte is right after the growth");
+  t.eqI32(out[16], 'a', "as is one from the middle");
+  return t.report();
+}

@@ -1,0 +1,19 @@
+// `sha256sum` on its own: the same applet, built as its own program.
+//
+// Grants: Nothing at all, for the same reason — the hashing itself is this
+// repo's `crypto` package, which reaches for nothing.
+//
+// The applet file is imported unchanged. Splitting one per file was about readability, but
+// this is what it also bought: an entry point is four lines, and the thing it wraps did not
+// have to know it was ever part of a multicall binary.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { parseFrom } from "../lib/args.wac";
+import { sha256sum } from "../applets/sha256sum.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 main(Core core, Cli cli) {
+  // The host's filesystem, which is what a program built alone is standing on. `box` and a shell hand
+  // their applets an `Fs` for the same reason — see `box.wac` and wac-mono 0109.
+  return sha256sum(core, cli, Fs.onHost(cli, 0), parseFrom(cli, 0, "sha256sum"));
+}

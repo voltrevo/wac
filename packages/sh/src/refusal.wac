@@ -1,0 +1,74 @@
+// What a command answers with, and what it says about a flag it does not have.
+//
+// This is what is left of `program.wac`, which held twelve programs written in wac because
+// `packages/platform` could not start a process. It can now, `packages/box` has sixty applets held to
+// the same differential corpus against bash, and two implementations of `grep` disagreed for months
+// with nobody comparing them — so the twelve are gone and wac-mono 0103 is why.
+//
+// These two outlived them because neither is a program:
+//
+// - `Output` is the shape of *any* command's result — bytes out, bytes err, a status, and `found` to
+//   tell "ran and failed" from "no such command", because a shell reports 127 for one and the
+//   program's own code for the other and one integer cannot say both. Builtins return it, applets
+//   return it through `Shell.external`, and `packages/box`'s `shrun` speaks it.
+// - `optionRefusal` is the shell's own answer about its own builtins: `ls` is a builtin here, because
+//   a shell needs `ls` before it needs a toolbox, and a builtin refusing a flag is the same question
+//   the applets answer in `packages/box/src/lib/flags.wac`.
+
+/** The result of running a command: what it wrote, what it complained, and how it ended. */
+export struct Output {
+  u8[] out;
+  u8[] err;
+  i32 status;
+  /** False when no program of that name exists, which the shell reports as 127. */
+  bool found;
+
+  Output ok(u8[] out) { return Output(out, u8[0](), 0, true); }
+  Output fail(u8[] err, i32 status) { return Output(u8[0](), err, status, true); }
+  Output missing() { return Output(u8[0](), u8[0](), 127, false); }
+}
+
+/**
+ * Whether the real tool has this letter at all — the difference between "we have not done it" and
+ * "nobody has".
+ *
+ * The letters are the real tool's, read out of `--help` rather than remembered. `test/gaps.test.ts`
+ * checks the list against the installed coreutils, so it cannot quietly drift out of date. One name
+ * is left in it: `ls`, the one this file still answers for.
+ */
+bool gnuHas(string name, i32 letter) {
+  string letters = "";
+  if (name == "ls") { letters = "1aAbBcCdDfFgGhHiIklLmnNopqQrRsStTuUvwxXZ"; }
+  u8[] b = letters.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == letter) { return true; }
+  }
+  return false;
+}
+
+/** What to say about an option this command does not take, and whose gap it is. */
+export string optionRefusal(string name, string letter) {
+  u8[] b = letter.toBytes();
+  // A whole word rather than a letter: a long option. Read as a bundle of short ones it refused the
+  // *second dash* — `ls: invalid option -- '-'`, naming a character the caller never typed. This
+  // implements no long option, so that is the answer, and it needs no table; GNU's split between one
+  // it has and one nobody has is a distinction this cannot draw, so it draws neither.
+  if (b.len() > 1 && b[0] == '-' && b[1] == '-') {
+    return name + ": long options are not implemented: " + letter + "\n";
+  }
+  if (b.len() == 1 && gnuHas(name, b[0])) {
+    // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
+    return name + ": -" + letter + " is not implemented\n";
+  }
+  return name + ": invalid option -- '" + letter + "'\n" + tryHelp(name);
+}
+
+/**
+ * The second line GNU prints after a usage error, which it prints after *every* one.
+ *
+ * Only on the branches that are GNU's message rather than ours. It is derivable, so it is compared
+ * against the real tool's stderr rather than against an expectation written here.
+ */
+string tryHelp(string name) {
+  return "Try '" + name + " --help' for more information.\n";
+}

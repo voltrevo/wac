@@ -1,0 +1,13 @@
+// The current time, RFC 3339. The clock is a capability, so this is `Core` at work.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { format } from "../../../datetime/src/rfc3339.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 date(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  core.log(string.fromBytes(format(core.nowMillis().wait())));
+  return 0;
+}

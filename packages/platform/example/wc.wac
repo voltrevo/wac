@@ -1,0 +1,72 @@
+// A word-count application, entire. There is no TypeScript in this directory.
+//
+// `deno task app packages/platform/example/wc.wac --allow-read -- <file>`
+//
+// Two things are worth noticing. It reads a file with what looks like an ordinary function
+// call — behind that call the host is doing `await Deno.readFile` on another thread while
+// this one is parked — and it can reach nothing it was not handed, so `main`'s two
+// parameters are the complete list of what it can do.
+
+import { Cli, Core, FileResult } from "../src/platform.wac";
+
+export i32 main(Core core, Cli cli) {
+  // No argument means standard input, as `wc` has always meant it. That this works at all
+  // is the difference between a file-to-file tool and something you can put in a pipe.
+  u8[] data = u8[0]();
+  string label = "";
+  if (cli.argCount().wait() < 1) {
+    data = cli.readStdin().wait();
+  } else {
+    label = string.fromBytes(cli.arg(0).wait());
+    FileResult f = cli.readFile(label).wait();
+    if (!f.ok) {
+      core.warn("wc: " + label + ": " + f.error);
+      return 1;
+    }
+    data = f.bytes;
+  }
+
+  i64 startedAt = core.monotonicNanos().wait();
+  Counts c = count(data);
+  i64 tookNanos = core.monotonicNanos().wait() - startedAt;
+
+  string line = itoa(c.lines) + " " + itoa(c.words) + " " + itoa(c.bytes);
+  core.log(label == "" ? line : line + " " + label);
+
+  // Unset and empty are different things, which is why the capability returns `string?`.
+  u8[]? verboseRaw = cli.env("WC_VERBOSE").wait();
+  string? verbose = verboseRaw is null ? null : string.fromBytes(verboseRaw!);
+  if (verbose is null) { return 0; }
+  core.log("counted in " + itoa((tookNanos / 1000) as~ i32) + "us");
+  return 0;
+}
+
+struct Counts { i32 lines; i32 words; i32 bytes; }
+
+Counts count(u8[] data) {
+  i32 lines = 0;
+  i32 words = 0;
+  bool inWord = false;
+  for (i32 i = 0; i < data.len(); i++) {
+    // A packed element already reads as an i32, which is what a character literal is.
+    i32 b = data[i];
+    if (b == '\n') { lines++; }
+    bool space = b == ' ' || b == '\n' || b == '\t' || b == '\r';
+    if (space) { inWord = false; }
+    else if (!inWord) { inWord = true; words++; }
+  }
+  return Counts(lines, words, data.len());
+}
+
+/** Decimal, without pulling `fmt` in for a demonstration. */
+string itoa(i32 n) {
+  if (n == 0) { return "0"; }
+  i32 v = n < 0 ? 0 - n : n;
+  u8[] digits = u8[12](fill: 0);
+  i32 at = 12;
+  // An array element takes an i32 and truncates at the store; there is no u8 value form.
+  while (v > 0) { at--; digits[at] = '0' + (v % 10); v = v / 10; }
+  u8[] used = u8[12 - at](fill: 0);
+  used.copyFrom(digits, at, 0, 12 - at);
+  return n < 0 ? "-" + string.fromBytes(used) : string.fromBytes(used);
+}

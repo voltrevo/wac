@@ -1,0 +1,80 @@
+// A Tor client, entire.
+//
+//   deno task app packages/tor/src/app.wac --allow-net --allow-read -- \
+//     <seed-file> <authorities-file> <path>
+//
+// No TypeScript. The socket comes from the platform world, and everything above it —
+// the link handshake, ntor, the onion, the directory and its verification, path selection —
+// is the wac in this package. `Core` and `Cli` are the complete list of what this can reach,
+// so the shebang of a built copy states it: `--allow-net --allow-read` and nothing else.
+//
+// ## What the two files are
+//
+// `<seed-file>` is one line: `host port identityHex ntorOnionKeyBase64`. It is this
+// program's stand-in for the fallback directory mirrors a real client compiles in, and it
+// is *not* trusted — it is somewhere to ask, and the answer is checked against the
+// authorities regardless of who gave it.
+//
+// `<authorities-file>` is one uppercase hex fingerprint per line. That list is the whole
+// basis of trust, which is why it is a file the user chooses rather than something read out
+// of the directory being checked. A real client compiles it in.
+//
+// ## Timeouts
+//
+// Every read and every dial is bounded, by `waitAny`'s deadline. A relay that completes a TCP
+// handshake and then says nothing is not a hypothetical: relays are strangers chosen from a
+// public directory, and one that can hold a client indefinitely is in a position worth paying
+// for.
+//
+// One thing the platform is explicit about and this depends on: cancelling a ticket stops the
+// *waiting*, not the work — so a timed-out read also closes the socket, which is what actually
+// ends it.
+//
+// Issue 0023 is fixed, and this was rewritten with it (agent-a). It used to race a
+// `core.sleepMillis` ticket in the `waitAny` list, which is what the platform offered at the
+// time; the deadline is a parameter of the wait now, so there is no timer ticket to bind, to
+// cancel on the winning path, or to leak on the losing one. The values below are unchanged.
+//
+// ## What this is not
+//
+// Not an anonymity tool. It fetches one path over a fresh three-hop circuit and exits, which
+// is a demonstration of the machinery rather than a way to use it. `socks.wac` is the program
+// that makes it usable by something other than itself; the two share `link.wac`.
+
+
+import { Core, Cli, FileResult } from "../../platform/src/platform.wac";
+import { Network, Session, bootstrap, buildCircuit } from "./bootstrap.wac";
+import { fetchOverCircuit, itoa } from "./link.wac";
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 3) {
+    core.warn("usage: tor <seed-file> <authorities-file> <path>");
+    core.warn("  seed-file:        one line, `host port identityHex ntorOnionKeyBase64`");
+    core.warn("  authorities-file: one uppercase hex fingerprint per line");
+    return 2;
+  }
+  FileResult seedFile = cli.readFile(string.fromBytes(cli.arg(0).wait())).wait();
+  if (!seedFile.ok) { core.warn("tor: " + seedFile.error); return 1; }
+  FileResult authFile = cli.readFile(string.fromBytes(cli.arg(1).wait())).wait();
+  if (!authFile.ok) { core.warn("tor: " + authFile.error); return 1; }
+  string path = string.fromBytes(cli.arg(2).wait());
+
+  Network net = bootstrap(core, cli, seedFile.bytes, authFile.bytes, true);
+  if (!net.ok) { return 1; }
+
+  // Port 0: this fetches a directory document, which any exit can carry. A program carrying
+  // a stream to a particular port has to say so, or it may build a circuit that cannot.
+  Session s = buildCircuit(core, cli, net, 0, 0x80000002);
+  if (!s.ok) { return 1; }
+  // Progress on the error channel, so stdout carries the fetched document and nothing else. Without
+  // this `tor … /tor/status-vote/current/consensus > cons.txt` writes a file with three lines of
+  // commentary above the document, which every consumer then has to strip.
+  core.warn("path: " + s.description);
+  core.warn("circuit built, " + itoa(s.circ.length()) + " hops");
+
+  u8[] body = fetchOverCircuit(s.link, s.circ, path);
+  cli.closeSocket(s.link.sock);
+  if (body.len() == 0) { return 1; }
+  cli.write(body);
+  return 0;
+}

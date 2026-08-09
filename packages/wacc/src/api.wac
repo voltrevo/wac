@@ -1,0 +1,91 @@
+// The wacc entry points that cross the JavaScript boundary.
+//
+// Everything else in this package traffics in structs and sum types, which bindgen
+// cannot marshal — and should not, since an AST is not a value to hand across a
+// boundary. So the surface is bytes in, text out: the caller passes source and gets
+// the canonical dump that `test/parse.test.ts` compares against the reference.
+
+import { lex, Lexed } from "./lex.wac";
+import { P, parseProgram } from "./parse.wac";
+import { Program } from "./ast.wac";
+import { Pr, printProgram } from "./print.wac";
+import { checkProgram } from "./check.wac";
+import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked } from "./emit.wac";
+
+/** Lex, parse, and render the AST in canonical form. */
+export string dump(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  Pr w = Pr.create(src, lexed.tokens, lexed.tokenCount);
+  return printProgram(w, prog);
+}
+
+/**
+ * The parser's errors, as (code, line, col) triples.
+ *
+ * Separate from `dump` because a caller comparing ASTs and a caller comparing
+ * diagnostics want different things, and returning both would mean a struct.
+ */
+export i32[] dumpErrors(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  parseProgram(p);
+  i32[] out = i32[p.errorCount * 3]();
+  for (i32 i = 0; i < p.errorCount * 3; i++) { out[i] = p.errors[i]; }
+  return out;
+}
+
+/**
+ * The type checker's diagnostics, as `(code, line, col)` triples — rung 3's oracle surface.
+ *
+ * The same shape `dumpErrors` returns for the parser, and for the same reason: our side reports
+ * numeric codes and the reference reports English, so the comparison is by code, order and position.
+ */
+export i32[] dumpTypeErrors(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  return checkProgram(src, lexed.tokens, lexed.tokenCount, prog);
+}
+
+/**
+ * Rung 4's surface: a wasm module for the program, as bytes.
+ *
+ * Bytes out rather than a structure, for the same reason everything else here is bytes in — and
+ * because the oracle for this rung is that the caller can *run* what comes back.
+ */
+export u8[] emit(u8[] src) {
+  return emitModule(src);
+}
+
+/** Why a module was not emitted in full — the feature that stopped it, or `""`. */
+export string blocked(u8[] src) {
+  return emitBlocked(src);
+}
+
+/** The emitted functions in order, so a wasm "function #N" can be turned back into a name. */
+export string names(u8[] src) {
+  return emitNames(src);
+}
+
+/**
+ * Rung 4 across files: one module for an entry and everything it imports.
+ *
+ * The file set comes from the caller because this compiler is a wasm module with no filesystem —
+ * the same reason the reference takes a map of path to source rather than a directory. Passing more
+ * files than the entry needs is fine; what is emitted is the closure, not the table.
+ */
+export u8[] emitFiles(string[] paths, string[] sources, string entry) {
+  return emitLinked(paths, sources, entry);
+}
+
+/** Why a linked module was not emitted in full, or `""`. */
+export string blockedFiles(string[] paths, string[] sources, string entry) {
+  return blockedLinked(paths, sources, entry);
+}
+
+/** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
+export string namesFiles(string[] paths, string[] sources, string entry) {
+  return namesLinked(paths, sources, entry);
+}

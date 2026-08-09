@@ -1,0 +1,438 @@
+// Hosting an onion service: the cells a service sends that a client never does.
+//
+// Design 0002 step 6. Everything in `hsconnect.wac`, `hsfetch.wac` and `hsintro.wac` is the *client*
+// half — fetching a descriptor, sending INTRODUCE1, receiving RENDEZVOUS2. A service does the mirror
+// of each, and the mirrors are not symmetric: the client proves nothing about itself and the service
+// proves everything, so every cell here carries a signature or a MAC that the client's equivalent
+// does not.
+//
+// ## ESTABLISH_INTRO, and the two spans that are easy to get wrong
+//
+// The layout is tor's `src/trunnel/hs/cell_establish_intro.trunnel`, and the two `@ptr` markers in it
+// are the whole difficulty:
+//
+//     auth_key_type   1        <- start_cell
+//     auth_key_len    2
+//     auth_key       32
+//     extensions      1 + …
+//                              <- end_mac_fields
+//     handshake_mac  32
+//                              <- end_sig_fields
+//     sig_len         2
+//     sig            64
+//
+//   - the **MAC** covers `start_cell .. end_mac_fields` — everything before the MAC itself
+//   - the **signature** covers `start_cell .. end_sig_fields`, which **includes the MAC and excludes
+//     `sig_len`**
+//
+// That second one is the trap. `end_sig_fields` sits between `handshake_mac` and `sig_len`, so a
+// signature computed over "everything before the signature" — the obvious reading — includes two
+// bytes tor does not sign, and tor rejects the cell with `signature not as expected`. Nothing about
+// the cell's shape hints at it; only the position of a marker in a trunnel file does. Both spans are
+// pinned against tor's own parser in `test/hsservice_wac.test.ts`, which reads them out of the parsed
+// cell rather than recomputing them, so this comment cannot drift from what tor does.
+//
+// ## What the MAC is keyed with
+//
+// `circuitKH` is the circuit's `rend_circ_nonce` — the KH from the CREATE handshake with the
+// introduction point, 20 bytes. It ties the cell to *this* circuit, so a recorded ESTABLISH_INTRO
+// cannot be replayed onto another one. It is a MAC and not a signature because the intro point
+// already knows the value and nobody else needs to check it.
+//
+// The MAC construction is `crypto_mac_sha3_256`, which `hsMac` already is: SHA3-256 over the key
+// length as eight big-endian bytes, then the key, then the message.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { aesCtr } from "../../crypto/src/aesctr.wac";
+import { hsMac, serviceIntroduceKeys } from "./hsntor.wac";
+import { ed25519Sign, ed25519Verify } from "../../crypto/src/ed25519.wac";
+import { ctEqual } from "../../crypto/src/ct.wac";
+
+/** ed25519, and the only type this builds. Tor's own check rejects anything else before verifying. */
+export const i32 AUTH_KEY_TYPE_ED25519 = 2;
+
+/** What tor prepends before verifying the signature — `strlen`, so no terminating NUL. */
+export const string ESTABLISH_INTRO_SIG_PREFIX = "Tor establish-intro cell v1";
+
+/**
+ * The body of an ESTABLISH_INTRO cell, or empty if the inputs are not the right sizes.
+ *
+ * `authPublic` and `authSeed` are the introduction point authentication keypair — per-intro-point and
+ * per-service, not the service's identity key, which never appears in a cell. The secret half is the
+ * 32-byte *seed*, which is what `ed25519Sign` takes and what a service stores.
+ *
+ * Empty rather than a partly-built cell: an intro point that receives a malformed one closes the
+ * circuit, and the service learns only that the circuit died.
+ */
+export u8[] establishIntroCell(u8[] authPublic, u8[] authSeed, u8[] circuitKH) {
+  if (authPublic.len() != 32 || authSeed.len() != 32 || circuitKH.len() == 0) { return u8[0](); }
+
+  Buf b = Buf.create();
+  b.push(AUTH_KEY_TYPE_ED25519);
+  b.push(0);
+  b.push(32);
+  b.pushAll(authPublic);
+  // No extensions. The count is still written: a reader consumes one byte here whatever it says, and
+  // omitting it shifts everything after it.
+  b.push(0);
+
+  // `end_mac_fields` is here.
+  u8[] macSpan = b.bytes();
+  u8[] mac = hsMac(circuitKH, macSpan);
+  if (mac.len() != 32) { return u8[0](); }
+  b.pushAll(mac);
+
+  // `end_sig_fields` is here — after the MAC, before `sig_len`. See the header.
+  u8[] sigSpan = b.bytes();
+  u8[] sig = ed25519Sign(authSeed, prefixed(sigSpan));
+  if (sig.len() != 64) { return u8[0](); }
+
+  b.push(0);
+  b.push(64);
+  b.pushAll(sig);
+  return b.bytes();
+}
+
+/**
+ * The auth key out of an INTRODUCE1 or INTRODUCE2's *unencrypted* header, or empty.
+ *
+ * The two cells are byte-identical — an introduction point forwards the body unchanged and only the
+ * command differs — so one reader serves both, and this is the part a relay can read without holding
+ * any key at all. That is the whole mechanism: the relay learns which circuit to forward down and
+ * nothing else about the introduction.
+ *
+ * The validation is tor's `validate_introduce1_parsed_cell`: the legacy key id must be twenty zero
+ * bytes, the key type must be ed25519, and the length must be exactly thirty-two. A relay that
+ * skipped these would look up a key it read from the wrong offset.
+ */
+export u8[] introduceAuthKey(u8[] cell) {
+  if (cell.len() < 55) { return u8[0](); }
+  for (i32 i = 0; i < 20; i++) {
+    if (cell[i] != 0) { return u8[0](); }
+  }
+  if (cell[20] != AUTH_KEY_TYPE_ED25519) { return u8[0](); }
+  if (cell[21] != 0 || cell[22] != 32) { return u8[0](); }
+  return sub(cell, 23, 55);
+}
+
+/** What an introduction point learns from an ESTABLISH_INTRO it accepts. */
+export struct EstablishedIntro {
+  bool ok;
+  /** The key a later INTRODUCE1 names to say which circuit it is for. */
+  u8[] authKey;
+}
+
+/**
+ * The **relay's** side: is this a cell we should accept, and what does it claim?
+ *
+ * `establishIntroCell` builds one; this is what an introduction point does with it, and the two are
+ * here together because the spans they agree about are the whole difficulty. The service side has
+ * been pinned against tor's own cells since the beginning; this direction had nothing at all — no
+ * relay in this repo could be an introduction point, so a service could establish one only against a
+ * C tor.
+ *
+ * Both proofs are required and they prove different things:
+ *
+ *   - **the MAC**, keyed with the circuit's KH, proves the sender is the party this circuit was built
+ *     with. Without it a cell captured from one circuit could be replayed onto another — which is
+ *     precisely why the nonce exists and why it is per-circuit.
+ *   - **the signature**, by the auth key over the prefixed span, proves the sender holds the secret
+ *     half of the key it is asking to be filed under. Without it anyone could claim somebody else's
+ *     introduction point and receive their INTRODUCE1 cells.
+ *
+ * Checking the MAC first is not required by anything, and is what tor does: it is the cheaper of the
+ * two, and a cell that fails it was not sent by the party we are talking to.
+ */
+export EstablishedIntro parseEstablishIntro(u8[] cell, u8[] circuitKH) {
+  if (circuitKH.len() == 0) { return EstablishedIntro(false, u8[0]()); }
+  // AUTH_KEY_TYPE[1] AUTH_KEY_LEN[2] AUTH_KEY[32] N_EXT[1] ... MAC[32] SIG_LEN[2] SIG[64]
+  if (cell.len() < 1 + 2 + 32 + 1 + 32 + 2 + 64) { return EstablishedIntro(false, u8[0]()); }
+  if (cell[0] != AUTH_KEY_TYPE_ED25519) { return EstablishedIntro(false, u8[0]()); }
+  if (cell[1] != 0 || cell[2] != 32) { return EstablishedIntro(false, u8[0]()); }
+  u8[] authKey = sub(cell, 3, 35);
+
+  u8[] macSpan = macSpanOf(cell);
+  u8[] sigSpan = sigSpanOf(cell);
+  if (macSpan.len() == 0 || sigSpan.len() == 0) { return EstablishedIntro(false, u8[0]()); }
+
+  // The MAC sits immediately after the span it covers.
+  i32 macAt = macSpan.len();
+  if (macAt + 32 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  if (!ctEqual(hsMac(circuitKH, macSpan), sub(cell, macAt, macAt + 32))) {
+    return EstablishedIntro(false, u8[0]());
+  }
+
+  // Then SIG_LEN and the signature. The length is read rather than assumed: a cell claiming a shorter
+  // signature and padding the rest would otherwise verify against bytes nobody signed.
+  i32 sigLenAt = sigSpan.len();
+  if (sigLenAt + 2 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  i32 sigLen = (cell[sigLenAt] * 256) + cell[sigLenAt + 1];
+  if (sigLen != 64 || sigLenAt + 2 + 64 > cell.len()) { return EstablishedIntro(false, u8[0]()); }
+  u8[] sig = sub(cell, sigLenAt + 2, sigLenAt + 2 + 64);
+
+  if (!ed25519Verify(authKey, prefixed(sigSpan), sig)) { return EstablishedIntro(false, u8[0]()); }
+  return EstablishedIntro(true, authKey);
+}
+
+/** The bytes tor signs: the prefix, then the span. */
+export u8[] prefixed(u8[] span) {
+  Buf b = Buf.create();
+  b.pushAll(ESTABLISH_INTRO_SIG_PREFIX.toBytes());
+  b.pushAll(span);
+  return b.bytes();
+}
+
+/**
+ * The span the MAC covers, taken from a finished cell.
+ *
+ * Exported because the test compares it against the span tor's parser reports, which is the only way
+ * to know the boundary is where tor thinks it is rather than where this file thinks it is.
+ */
+export u8[] macSpanOf(u8[] cell) {
+  i32 end = macEnd(cell);
+  return end < 0 ? u8[0]() : head(cell, end);
+}
+
+/** The span the signature covers — the MAC span plus the 32-byte MAC. */
+export u8[] sigSpanOf(u8[] cell) {
+  i32 end = macEnd(cell);
+  if (end < 0 || end + 32 > cell.len()) { return u8[0](); }
+  return head(cell, end + 32);
+}
+
+/**
+ * Where the MAC span ends: past the auth key and the extensions.
+ *
+ * The extension count is a byte and each extension is a type byte and a length byte followed by that
+ * many bytes, so the end is found by walking rather than by arithmetic on a fixed size. −1 for a cell
+ * that runs out while being walked, which is what a truncated one does.
+ */
+i32 macEnd(u8[] cell) {
+  if (cell.len() < 4) { return -1; }
+  i32 keyLen = cell[1] * 256 + cell[2];
+  i32 at = 3 + keyLen;
+  if (at >= cell.len()) { return -1; }
+  i32 count = cell[at];
+  at = at + 1;
+  for (i32 i = 0; i < count; i++) {
+    if (at + 2 > cell.len()) { return -1; }
+    i32 len = cell[at + 1];
+    at = at + 2 + len;
+    if (at > cell.len()) { return -1; }
+  }
+  return at;
+}
+
+u8[] head(u8[] s, i32 n) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = s[i]; }
+  return out;
+}
+
+
+// ── INTRODUCE2, and answering it ─────────────────────────────────────────────
+
+/**
+ * What a service recovers from an INTRODUCE2 cell.
+ *
+ * `ok` is false for anything that did not check out, and every other field is then empty. A struct
+ * with a flag rather than an optional because a caller handed keys plus a boolean tends to use the
+ * keys — the same reasoning `clientIntroduceKeys` gives for returning empty instead.
+ */
+export struct Introduce2 {
+  bool ok;
+  u8[] authKey;          // 32: which introduction point this arrived through
+  u8[] clientPublic;     // 32: the client's ephemeral key, CLIENT_PK
+  u8[] rendCookie;       // 20: what to present at the rendezvous point
+  u8[] rendOnionKey;     // 32: the rendezvous point's ntor key
+  u8[] linkSpecifiers;   // how to reach the rendezvous point, verbatim
+}
+
+Introduce2 noIntroduce2() {
+  return Introduce2(false, u8[0](), u8[0](), u8[0](), u8[0](), u8[0]());
+}
+
+/**
+ * Where the ENCRYPTED section begins, or -1 if the header does not parse.
+ *
+ * Exported because a service has to hash exactly this span *before* deciding whether to do any of the
+ * work below: tor's replay cache is keyed on the ENCRYPTED section and is checked before the ntor
+ * keys are derived and before the MAC is verified, so a replayed cell costs one SHA-256 rather than a
+ * curve25519 handshake. Recomputing the offset beside that check would be a second copy of this
+ * arithmetic, and the two drifting would mean caching a span that is not the one being verified.
+ */
+export i32 encryptedSectionFrom(u8[] cell) {
+  if (cell.len() < 56) { return -1; }
+  i32 at = 55;
+  i32 extensions = cell[at];
+  at = at + 1;
+  for (i32 i = 0; i < extensions; i++) {
+    if (at + 2 > cell.len()) { return -1; }
+    at = at + 2 + cell[at + 1];
+    if (at > cell.len()) { return -1; }
+  }
+  return at;
+}
+
+/** The ENCRYPTED section itself — what the replay cache remembers. Empty if the header is bad. */
+export u8[] encryptedSectionOf(u8[] cell) {
+  i32 at = encryptedSectionFrom(cell);
+  if (at < 0 || at + 32 + 32 > cell.len()) { return u8[0](); }
+  return sub(cell, at, cell.len());
+}
+
+/**
+ * Parse and decrypt an INTRODUCE2 cell.
+ *
+ * An INTRODUCE2 is byte-for-byte an INTRODUCE1 — the introduction point relays the body unchanged and
+ * only the command differs — so this is the inverse of `introduce1Cell` and `introduce1Plaintext` in
+ * `hsintro.wac`, and it is tested against a cell **tor built**, not against those.
+ *
+ * `introEncSecret` is the service's curve25519 secret whose public half is the `enc-key ntor` in its
+ * descriptor; `subcredential` is the one for the period the client used.
+ *
+ * ## The MAC covers the whole cell
+ *
+ * Including the twenty zero bytes of `LEGACY_KEY_ID` at the front, and including `CLIENT_PK`, and
+ * stopping just before the MAC itself. The specification says "from the AUTH_KEY", which is a
+ * different span — and because those twenty bytes are zeros, a MAC over the wrong one differs only in
+ * its length prefix, so nothing local tells the two apart. `packages/tor/README.md` records the same
+ * trap being hit from the client side; this is the same fact, verified from the other end.
+ *
+ * ## The IV is zero
+ *
+ * `crypto_cipher_new_with_bits` in tor's `hs_cell.c` builds an AES-256-CTR cipher with no IV
+ * argument, and tor's `crypto_cipher_t` starts at an all-zero counter. There is no nonce anywhere in
+ * the cell, which is safe only because `ENC_KEY` is derived per-handshake from the client's ephemeral
+ * key — a service that reused a key across cells would be reusing a keystream.
+ */
+export Introduce2 parseIntroduce2(
+  u8[] cell, u8[] introAuthKey, u8[] introEncSecret, u8[] subcredential
+) {
+  if (introAuthKey.len() != 32) { return noIntroduce2(); }
+  // 20 legacy id, 1 type, 2 key len, 32 key, 1 extension count, then CLIENT_PK and a MAC at least.
+  if (cell.len() < 56 + 32 + 32) { return noIntroduce2(); }
+  for (i32 i = 0; i < 20; i++) {
+    if (cell[i] != 0) { return noIntroduce2(); }
+  }
+  if (cell[20] != 2) { return noIntroduce2(); }               // AUTH_KEY_TYPE: ed25519
+  if (cell[21] != 0 || cell[22] != 32) { return noIntroduce2(); }
+
+  // **The auth key is ours, not the cell's.** tor sets `data.auth_pk` from the introduction point's
+  // own keypair (`hs_circuit.c`: `data.auth_pk = &ip->auth_key_kp.pubkey`) and never compares the
+  // cell's AUTH_KEY field against it — the field is decorative on this side, and the real binding is
+  // that a client had to use the *right* key to compute a MAC we will accept.
+  //
+  // Reading it out of the cell instead, as this did until 2026-08-07, hands the attacker an input to
+  // our own key derivation: a client can name any auth key, we derive the MAC key from that same
+  // wrong value, and the MAC verifies. The cell is then accepted where tor would reject it, and the
+  // field that is supposed to say *which introduction point this arrived through* says whatever the
+  // sender preferred. A tampered byte was still caught — the MAC covers the field — which is why the
+  // test for it passed and the hole stayed open: tampering and a self-consistent forgery are
+  // different attacks and only the first was being tried.
+  //
+  // The field itself is **not** compared against ours, and that is deliberate. tor does not compare
+  // it, so a client that MACs with the right key and writes anything it likes in the field is a cell
+  // tor accepts — and refusing it here would be stricter than the network, which is its own failure
+  // mode and one this package has already been bitten by twice. There is nothing to gain: a cell with
+  // a correct MAC was built by somebody holding the descriptor, which is every legitimate client.
+  //
+  // The security property is not in the comparison. It is that the key feeding the derivation is ours.
+  u8[] authKey = introAuthKey;
+
+  i32 at = encryptedSectionFrom(cell);
+  if (at < 0) { return noIntroduce2(); }
+
+  // ENCRYPTED = CLIENT_PK | ENCRYPTED_DATA | MAC.
+  if (at + 32 + 32 > cell.len()) { return noIntroduce2(); }
+  u8[] clientPublic = sub(cell, at, at + 32);
+  i32 dataFrom = at + 32;
+  i32 macFrom = cell.len() - 32;
+  if (macFrom <= dataFrom) { return noIntroduce2(); }
+
+  u8[] keys = serviceIntroduceKeys(authKey, introEncSecret, clientPublic, subcredential);
+  if (keys.len() != 64) { return noIntroduce2(); }
+  u8[] encKey = sub(keys, 0, 32);
+  u8[] macKey = sub(keys, 32, 64);
+
+  u8[] want = hsMac(macKey, sub(cell, 0, macFrom));
+  if (!ctEqual(want, sub(cell, macFrom, cell.len()))) { return noIntroduce2(); }
+
+  u8[] plain = aesCtr(encKey, u8[16](), sub(cell, dataFrom, macFrom));
+  return parseIntroducePlaintext(plain, authKey, clientPublic);
+}
+
+/** The decrypted section: cookie, extensions, the rendezvous point's onion key, link specifiers. */
+Introduce2 parseIntroducePlaintext(u8[] plain, u8[] authKey, u8[] clientPublic) {
+  if (plain.len() < 20 + 1 + 1 + 2 + 32) { return noIntroduce2(); }
+  u8[] cookie = sub(plain, 0, 20);
+  i32 at = 20;
+  i32 extensions = plain[at];
+  at = at + 1;
+  for (i32 i = 0; i < extensions; i++) {
+    if (at + 2 > plain.len()) { return noIntroduce2(); }
+    at = at + 2 + plain[at + 1];
+    if (at > plain.len()) { return noIntroduce2(); }
+  }
+  if (at + 3 > plain.len()) { return noIntroduce2(); }
+  if (plain[at] != 1) { return noIntroduce2(); }              // ONION_KEY_TYPE: ntor
+  if (plain[at + 1] != 0 || plain[at + 2] != 32) { return noIntroduce2(); }
+  at = at + 3;
+  if (at + 32 > plain.len()) { return noIntroduce2(); }
+  u8[] onionKey = sub(plain, at, at + 32);
+  at = at + 32;
+
+  // The link specifier list, and **exactly** the list. The rest of the plaintext is padding: tor
+  // pads an INTRODUCE1 to a fixed size so its length says nothing about the rendezvous point, and
+  // `hs_cell_build_introduce1` does it whether or not the specification dwells on it.
+  //
+  // Returning the remainder verbatim — which this did at first — hands a caller two hundred zero
+  // bytes appended to a one-entry list. `linkSpecifiersValid` requires the list to be exactly
+  // consumed, so it refuses the result, and the service fails to build a rendezvous circuit for a
+  // cell that was perfectly good.
+  //
+  // **Our own client's builder does not pad**, so a round trip through `introduce1Plaintext` agrees
+  // with the wrong answer. Only a cell tor wrote shows it — which is the whole argument for the
+  // asymmetric oracle, caught here in the act.
+  i32 listFrom = at;
+  if (at >= plain.len()) { return noIntroduce2(); }
+  i32 count = plain[at];
+  if (count == 0) { return noIntroduce2(); }
+  at = at + 1;
+  for (i32 i = 0; i < count; i++) {
+    if (at + 2 > plain.len()) { return noIntroduce2(); }
+    at = at + 2 + plain[at + 1];
+    if (at > plain.len()) { return noIntroduce2(); }
+  }
+  return Introduce2(true, authKey, clientPublic, cookie, onionKey, sub(plain, listFrom, at));
+}
+
+/**
+ * The body of a RENDEZVOUS1 cell: the client's cookie, then the handshake reply.
+ *
+ * `handshakeInfo` is `Y | AUTH` — the service's ephemeral public key and the 32-byte authentication
+ * MAC from `serviceRendezvousKeys`. The rendezvous point reads only the cookie: it matches the
+ * circuit that presented the same one in ESTABLISH_RENDEZVOUS, forwards the rest as a RENDEZVOUS2,
+ * and never learns which service it joined.
+ */
+export u8[] rendezvous1Cell(u8[] rendCookie, u8[] handshakeInfo) {
+  if (rendCookie.len() != 20 || handshakeInfo.len() != 64) { return u8[0](); }
+  Buf b = Buf.create();
+  b.pushAll(rendCookie);
+  b.pushAll(handshakeInfo);
+  return b.bytes();
+}
+
+/**
+ * Compare in time that does not depend on where the difference is.
+ *
+ * A service is answering strangers, and a MAC check that returns at the first differing byte tells
+ * whoever sent the cell how much of their guess was right. That turns forging a MAC from 2^256 work
+ * into 32 × 256, which is the whole reason this is not `==`.
+ */
+
+u8[] sub(u8[] s, i32 from, i32 to) {
+  u8[] out = u8[to - from]();
+  for (i32 i = 0; i < out.len(); i++) { out[i] = s[from + i]; }
+  return out;
+}

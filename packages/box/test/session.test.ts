@@ -1,0 +1,121 @@
+// A session whose filesystem is its own.
+//
+// wac-mono 0067, and the payoff for threading the filesystem through the shell as a *value*: `bin/sh.wac`
+// is a shell on the host, `bin/sealedsh.wac` is the same shell handed `Fs.inMemory()`, and the difference
+// is one line at the top of the program.
+//
+// It lived in `packages/sh` until the twelve programs there were deleted (wac-mono 0103). What it asks
+// about is a *filesystem*, and every question about a filesystem is asked with a *command* — so it moved
+// to the package that has the commands, along with `backings`, `imaged`, `unnameable`, `node_shell` and
+// `fs`'s `synth`, all for the same reason. `sealed.test.ts` beside this one asks whether the applets can
+// reach the host; this one asks what the session's own world contains.
+//
+// The strongest part of this is not what the tests assert but how the binary is built: **no filesystem
+// grants at all**. `buildApp(..., {})` means the world has no `fs`, so the program could not reach the host
+// if it tried — a sealed session is enforced by the capability world and demonstrated by the mount table,
+// rather than being a promise about what the code does.
+
+import { buildApp } from "../../platform/build.ts";
+import "../../../harness/spawnRetry.ts";
+
+/** Local, because this repo has no third-party dependencies. */
+function assertEquals<T>(got: T, want: T, msg?: string): void {
+  if (got !== want) {
+    throw new Error(
+      `assertEquals failed${msg === undefined ? "" : ` — ${msg}`}\n` +
+        `  got:  ${JSON.stringify(got)}\n  want: ${JSON.stringify(want)}`,
+    );
+  }
+}
+
+const sealed = await Deno.makeTempFile({ prefix: "wac-sealed-" });
+globalThis.addEventListener("unload", () => {
+  try {
+    Deno.removeSync(sealed);
+  } catch {
+    // Already gone, or never built.
+  }
+});
+// No grants. Not `{ read: false }` — absent, which is how this world spells "no such capability".
+// `coverage: false` because the assertion below is about an ordinary build: under `WAC_PROFILE`
+// this repo builds instrumented programs, and one of those carries a scoped `--allow-write` for
+// its coverage dump. That is a genuine difference in what the shebang says, and not the thing
+// this file is checking. wac-mono 0024.
+await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {}, "deno", false, { coverage: false });
+
+function run(script: string, cwd: string) {
+  const r = new Deno.Command(sealed, {
+    args: ["-c", script],
+    cwd,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+    // `PATH` because the shebang is `#!/usr/bin/env -S deno run …` and `env` needs to find `deno`. Without
+    // it the binary never starts and every assertion here reads as "the shell printed nothing", which is
+    // exactly what the first run of this test said.
+    env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+    clearEnv: true,
+  }).outputSync();
+  const dec = new TextDecoder();
+  return { code: r.code, out: dec.decode(r.stdout), err: dec.decode(r.stderr) };
+}
+
+Deno.test("a sealed shell has a filesystem, and it is not the host's", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-sealed-host-" });
+  try {
+    await Deno.writeTextFile(`${dir}/host-only.txt`, "the host's\n");
+
+    // It has a working filesystem: directories, files, reads, listings.
+    assertEquals(run("mkdir d; echo hi > d/f; cat d/f", dir).out, "hi\n");
+    assertEquals(run("mkdir a; mkdir a/b; ls a", dir).out, "b\n");
+    assertEquals(run("echo x > f; wc -c f", dir).out, "2 f\n");
+    assertEquals(run("echo one > f; echo two > f; cat f", dir).out, "two\n");
+    assertEquals(run("mkdir w; cd w; echo x > f; rm f; ls; echo status=$?", dir).out, "status=0\n");
+
+    // And the root holds `/dev` and `/proc` and nothing else — a *system*, not the host's root with a
+    // filter over it. design/0001 step 6; before it, this was empty.
+    assertEquals(run("ls /", dir).out, "bin\ndev\nproc\ntmp\n");
+    // Which a sealed session gets without any grant at all, because `randomBytes` is a host function
+    // rather than a permission. This is the one that would be surprising if it stopped being true.
+    assertEquals(run("head -c 8 /dev/urandom | wc -c", dir).out, "8\n");
+    assertEquals(run("cat /dev/null; echo [$?]", dir).out, "[0]\n");
+
+    // The host's files are not there, including the one in the directory it was started from — a sealed
+    // session's cwd is its own, so `.` is not where the process stands.
+    const passwd = run("cat /etc/passwd", dir);
+    assertEquals(passwd.err.includes("No such file or directory"), true, passwd.err);
+    assertEquals(passwd.code, 1);
+    assertEquals(run("cat host-only.txt", dir).code, 1, "it read a file from the host directory");
+
+    // Nothing it did reached the host. This is the assertion the whole thread exists for.
+    const after = [...Deno.readDirSync(dir)].map((e) => e.name).sort();
+    assertEquals(after.join(","), "host-only.txt", `the host directory changed: ${after.join(",")}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("two sealed sessions share nothing", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "wac-sealed-two-" });
+  try {
+    // Each run is a fresh filesystem, which is what "in the process" means. A test that wants state across
+    // commands puts them in one script — and an image, when there is one, is what will change that
+    // (design/0001 step 2).
+    assertEquals(run("echo remembered > f; cat f", dir).out, "remembered\n");
+    const second = run("cat f; echo status=$?", dir);
+    assertEquals(second.out, "status=1\n", `the second session saw the first's file: ${second.out}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the sealed binary asks for no filesystem capability at all", async () => {
+  // The shebang states what a program may do, so this is checkable rather than a claim: a sealed session
+  // that could reach the host would say `--allow-read` here even if it never used it.
+  const first = (await Deno.readTextFile(sealed)).split("\n")[0];
+  assertEquals(
+    first.includes("--allow-read") || first.includes("--allow-write"),
+    false,
+    `a sealed shell must not ask for the filesystem: ${first}`,
+  );
+});

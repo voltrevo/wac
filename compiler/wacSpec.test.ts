@@ -4,8 +4,8 @@
 //            buffer.md, strings.md, grammar.md
 
 import { wacCompile } from "./wacCompile.ts";
-import { fuzz } from "../../tools/fuzz.ts";
-import { fuzzBoundary } from "../../tools/fuzzBoundary.ts";
+import { fuzz } from "../tools/fuzz.ts";
+import { fuzzBoundary } from "../tools/fuzzBoundary.ts";
 // The instantiation-count test needs the resolver directly: the count is not visible from a
 // compiled module, and "correct but duplicated" is exactly what it exists to catch.
 import { wacResolve } from "./wacResolve.ts";
@@ -2920,7 +2920,7 @@ Deno.test("[§wac-buf-pop-empty-c7jw3kf] testPopEmpty() traps", async () => {
  * once each multi-block example declares which of its neighbours it is compiled with.
  */
 Deno.test("every block the spec marks `// error:` is still an error", async () => {
-  const dir = new URL("../../spec", import.meta.url).pathname;
+  const dir = new URL("../spec", import.meta.url).pathname;
   const files: string[] = [];
   const walk = async (at: string) => {
     for await (const e of Deno.readDir(at)) {
@@ -2982,7 +2982,7 @@ Deno.test("every §wac-* tag in spec/ is named by some test", async () => {
       }
     }
   };
-  const specDir = new URL("../../spec", import.meta.url).pathname;
+  const specDir = new URL("../spec", import.meta.url).pathname;
   const atomsDir = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
   const claimed = new Map<string, string>();
   const tested = new Map<string, string>();
@@ -4328,7 +4328,7 @@ Deno.test("[§wac-ll-front-back-q8kn2wp] push_front(10) push_back(20) → front*
 // notes/audit-*.md and notes/spec-changes-applied.md in the repo root).
 // Each test asserts the now-spec-compliant behavior and is EXPECTED TO FAIL
 // against the current implementation — that's intentional. Do not edit
-// these tests to make them pass; fix atoms/wac/*.ts instead, one at a time.
+// these tests to make them pass; fix compiler/*.ts instead, one at a time.
 //
 // A few fields referenced below (CompileDiagnostic.contextStart, .severity,
 // CompileResult.diagnostics) don't exist on the real types yet, so those
@@ -8779,7 +8779,7 @@ Deno.test("spec/tour.wac compiles and its selfTest() returns true", async () => 
   // `selfTest()` at the bottom returns true". Nothing checked either, so it rotted: narrowing made
   // the `as!` in its dynamic-dispatch example an error — an upcast to a type the value already has
   // — and the tour went on claiming otherwise for as long as no test compiled it.
-  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
+  const src = await Deno.readTextFile(new URL("../spec/tour.wac", import.meta.url));
   const r = wacCompile(new Map([["tour.wac", src]]), "tour.wac");
   if (!r.ok) {
     const lines = r.diagnostics.map((d) => `  ${d.line}:${d.col} ${d.message}`);
@@ -8794,7 +8794,10 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   // "the next free number". Two files answering to one number makes every commit message
   // and cross-reference that cites it ambiguous, so this is worth a test rather than
   // vigilance.
-  const dir = new URL("../../issues/", import.meta.url);
+  // `issues/lang/` since the merge — the language issues. `issues/system/` is the packages' tree
+  // and has its own INDEX with the same invariants; both numbered from 0001 and 79 numbers collide,
+  // which is why they are two directories rather than one renumbered sequence.
+  const dir = new URL("../issues/lang/", import.meta.url);
   const seen = new Map<string, string[]>();
   for (const state of ["open", "closed"]) {
     for await (const f of Deno.readDir(new URL(`${state}/`, dir))) {
@@ -8873,7 +8876,7 @@ Deno.test(`[§wac-grammar-keywords-h4mq7wn] grammar.md's keyword list matches KE
   // This block has drifted from the implementation three times, each time found
   // by someone writing wac rather than reading the spec (issue 0020). Comparing
   // the two directly is cheaper than noticing again.
-  const md = await Deno.readTextFile(new URL("../../spec/spec/grammar.md", import.meta.url));
+  const md = await Deno.readTextFile(new URL("../spec/spec/grammar.md", import.meta.url));
   const m = md.match(/### Keywords\n\n```\n([\s\S]*?)```/);
   if (!m) throw new Error("could not find the keyword block in grammar.md");
   const documented = m[1].split(/\s+/).filter(Boolean).sort();

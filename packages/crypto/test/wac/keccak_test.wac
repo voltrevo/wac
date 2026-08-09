@@ -1,0 +1,256 @@
+// Keccak-f[1600], SHA-3 and SHAKE, against node:crypto.
+//
+// The conversion fixed a hole rather than just moving the tests. SHAKE has no WebCrypto
+// implementation, so the TypeScript this replaces reached for an OpenSSL 3.5 subprocess
+// and marked the whole test `ignore` when that binary was absent — which is most machines,
+// including CI. `node:crypto` has shake128 and shake256 built in, so the extendable-output
+// functions are now checked on every run rather than skipped with a green tick.
+//
+// ## Where a sponge goes wrong
+//
+// The **rate**, and only at its boundaries. SHA3-256 absorbs 136 bytes at a time, SHA3-512
+// seventy-two, SHAKE128 a hundred and sixty-eight — and the padding is interesting exactly
+// one byte short of a block, where the domain byte and the final bit land in the same
+// byte and have to be ored rather than written in turn.
+//
+// The **squeeze**, which must permute *between* output blocks and not before the first.
+// Getting that backwards gives a correct 32-byte digest and a wrong 64-byte one, so only
+// an output longer than the rate can see it.
+//
+// The **domain byte**, 0x06 for SHA-3 and 0x1F for SHAKE, which is the only thing
+// separating SHA3-256 from a SHAKE256 truncated to 32 bytes. They share a rate.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { keccak256, sha3_256, sha3_512, shake128, shake256, keccakF, Sha3_256 } from "../../src/keccak.wac";
+import { equal } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+
+const i32 SHA3_256 = 0;
+const i32 SHA3_512 = 1;
+const i32 SHAKE128 = 2;
+const i32 SHAKE256 = 3;
+u8[] fill(i32 n, i32 seed) {
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = (i * 37 + seed) & 0xFF; }
+  return out;
+}
+
+export string test_the_permutation_of_an_all_zero_state() {
+  // The narrowest check available, and the one that isolates the permutation from the
+  // sponge around it. If the rho offsets or the pi permutation were transcribed the wrong
+  // way round — the failure this file's derived tables exist to avoid — every other test
+  // would fail and none would say why.
+  //
+  // Sixteen bytes, not more. A longer prefix was written from memory once and was wrong
+  // past byte fifteen; the sixteen that matched are kept, because agreeing by chance on
+  // 128 bits is not a thing that happens, and the rest was removed rather than adjusted
+  // to whatever the implementation produced.
+  T t = T.create();
+  u64[] state = u64[25]();
+  keccakF(state);
+  u8[] first = u8[16]();
+  for (i32 i = 0; i < 16; i++) {
+    first[i] = ((state[i / 8] >> (((i % 8) * 8) as! u64)) & 255) as! i32;
+  }
+  t.eqBytes(first, decoded("e7dde140798f25f18a47c033f9ccd584"), "keccakF over a zero state");
+  return t.report();
+}
+
+export string test_sha3_agrees_with_the_host(fn[u8[](i32, u8[], i32)] ref) {
+  // Every rate boundary from both sides, plus the empty input and a multi-block one.
+  T t = T.create();
+  i32[] rates = i32[](136, 72);
+  i32[] algos = i32[](SHA3_256, SHA3_512);
+  for (i32 a = 0; a < algos.len(); a++) {
+    i32 rate = rates[a];
+    i32[] lens = i32[](0, 1, 2, rate - 2, rate - 1, rate, rate + 1,
+                       2 * rate - 1, 2 * rate, 2 * rate + 1, 500);
+    for (i32 li = 0; li < lens.len(); li++) {
+      u8[] m = fill(lens[li], lens[li]);
+      u8[] got = algos[a] == SHA3_256 ? sha3_256(m) : sha3_512(m);
+      t.eqBytes(got, ref(algos[a], m, got.len()),
+                "sha3 at rate " + itoa64(rate as i64) + " length " + itoa64(lens[li] as i64));
+    }
+  }
+  return t.report();
+}
+
+export string test_shake_agrees_with_the_host(fn[u8[](i32, u8[], i32)] ref) {
+  // The functions ML-KEM leans on hardest — the matrix comes out of SHAKE128 and the noise
+  // out of SHAKE256, both squeezed far past one block. This is the test that used to be
+  // skipped whenever OpenSSL 3.5 was missing.
+  T t = T.create();
+  i32[] rates = i32[](168, 136);
+  i32[] algos = i32[](SHAKE128, SHAKE256);
+  for (i32 a = 0; a < algos.len(); a++) {
+    i32 rate = rates[a];
+    i32[] inLens = i32[](0, 1, rate - 1, rate, rate + 1, 300);
+    i32[] outLens = i32[](1, 31, 32, rate - 1, rate, rate + 1, 2 * rate, 400);
+    for (i32 i = 0; i < inLens.len(); i++) {
+      for (i32 o = 0; o < outLens.len(); o++) {
+        u8[] m = fill(inLens[i], inLens[i]);
+        u8[] got = algos[a] == SHAKE128 ? shake128(m, outLens[o]) : shake256(m, outLens[o]);
+        t.eqBytes(got, ref(algos[a], m, outLens[o]),
+                  "shake rate " + itoa64(rate as i64) + " in " + itoa64(inLens[i] as i64) +
+                  " out " + itoa64(outLens[o] as i64));
+      }
+    }
+  }
+  return t.report();
+}
+
+export string test_a_longer_squeeze_extends_a_shorter_one() {
+  // A sponge's output is a stream: asking for more must not change what came before. An
+  // implementation that permuted before the first read rather than between blocks, or
+  // that mixed the requested length into the state, passes every fixed-length comparison
+  // above and fails this. No oracle needed — it is a relation between our own outputs.
+  T t = T.create();
+  u8[] m = fill(50, 3);
+  u8[] long128 = shake128(m, 512);
+  u8[] long256 = shake256(m, 512);
+  i32[] lens = i32[](1, 17, 136, 137, 168, 169, 336, 511);
+  for (i32 i = 0; i < lens.len(); i++) {
+    i32 n = lens[i];
+    u8[] a = shake128(m, n);
+    u8[] b = shake256(m, n);
+    bool okA = true;
+    bool okB = true;
+    for (i32 j = 0; j < n; j++) {
+      if (a[j] != long128[j]) { okA = false; }
+      if (b[j] != long256[j]) { okB = false; }
+    }
+    t.isTrue(okA, "shake128 is a prefix at " + itoa64(n as i64));
+    t.isTrue(okB, "shake256 is a prefix at " + itoa64(n as i64));
+  }
+  return t.report();
+}
+
+export string test_the_domain_separation_actually_separates() {
+  // SHA3-256 and SHAKE256 share a rate and differ only in the padding's first byte. If
+  // that byte were dropped or shared, a SHAKE256 truncated to 32 bytes would equal the
+  // SHA3-256 of the same input — the collapse domain separation exists to prevent, and
+  // one no comparison against a single algorithm would notice.
+  T t = T.create();
+  i32[] lens = i32[](0, 1, 135, 136, 200);
+  for (i32 i = 0; i < lens.len(); i++) {
+    u8[] m = fill(lens[i], 9);
+    t.isFalse(equal(sha3_256(m), shake256(m, 32)),
+              "sha3-256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
+  }
+  return t.report();
+}
+
+export string test_keccak256_matches_the_published_vectors() {
+  // **No oracle for this one.** This machine's OpenSSL and node have SHA-3 and the SHAKEs and no
+  // keccak256 — the original padding predates the standard and nothing ships it. So the check is three
+  // constants that Ethereum quotes constantly, at three different message lengths, and the argument that
+  // the machinery under them is already verified: `sha3_256` and both SHAKEs agree with `node:crypto`
+  // above, which pins the permutation, the rate handling and the squeeze. What those cannot pin is the
+  // domain byte, and the empty message is where it is the *only* thing the permutation sees.
+  T t = T.create();
+
+  // KECCAK_EMPTY — the code hash of an account with no code.
+  t.eqBytes(keccak256(u8[0]()),
+            decoded("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+            "keccak256 of the empty string");
+
+  // The root of an empty Merkle-Patricia trie, which is keccak256 of RLP's empty string: one byte, 0x80.
+  t.eqBytes(keccak256(u8[](0x80)),
+            decoded("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+            "keccak256 of the single byte 0x80 — the empty trie root");
+
+  // ERC-20's `transfer` selector: the first four bytes of the keccak256 of the signature, over 25 bytes
+  // of input, which is a partial block with the padding well inside it.
+  u8[] sig = keccak256("transfer(address,uint256)".toBytes());
+  u8[] selector = u8[4]();
+  for (i32 i = 0; i < 4; i++) { selector[i] = sig[i]; }
+  t.eqBytes(selector, decoded("a9059cbb"), "the ERC-20 transfer selector");
+
+  return t.report();
+}
+
+export string test_keccak256_is_not_sha3_256() {
+  // The failure this exists for: one wrong padding byte gives a hash function that looks entirely
+  // healthy — right length, avalanching, self-consistent — and is the other algorithm. Both directions
+  // are asserted, because "they differ" is also satisfied by a keccak256 that is broken in some third
+  // way, and the vectors above are what say which of the two this is.
+  T t = T.create();
+  i32[] lens = i32[](0, 1, 135, 136, 137, 272);
+  for (i32 i = 0; i < lens.len(); i++) {
+    u8[] m = fill(lens[i], 5);
+    u8[] k = keccak256(m);
+    t.eqI32(k.len(), 32, "keccak256 is 32 bytes at " + itoa64(lens[i] as i64));
+    t.isFalse(equal(k, sha3_256(m)),
+              "keccak256 and sha3-256 differ at " + itoa64(lens[i] as i64) + " bytes");
+    // And not a truncated SHAKE either, which shares the rate and differs only in the same byte.
+    t.isFalse(equal(k, shake256(m, 32)),
+              "keccak256 and shake256 differ at " + itoa64(lens[i] as i64) + " bytes");
+  }
+  return t.report();
+}
+
+export string test_the_running_sha3_agrees_with_the_one_shot() {
+  // A running hash and a one-shot over the same bytes must be the same value, at every buffer
+  // boundary — the rate is 136 bytes and an off-by-one in the buffering shows up only at a multiple
+  // of it.
+  T t = T.create();
+  i32[] lengths = i32[](0, 1, 135, 136, 137, 271, 272, 273, 500, 1000);
+  for (i32 k = 0; k < lengths.len(); k++) {
+    i32 n = lengths[k];
+    u8[] msg = u8[n]();
+    for (i32 i = 0; i < n; i++) { msg[i] = (i * 31 + 7) & 0xFF; }
+    Sha3_256 h = Sha3_256.create();
+    h.update(msg);
+    t.isTrue(sameBytes(h.peek(), sha3_256(msg)),
+             "running == one-shot at " + itoa64(n as i64) + " bytes");
+  }
+
+  // Fed in pieces, at every split of a message that crosses two blocks.
+  u8[] msg = u8[300]();
+  for (i32 i = 0; i < 300; i++) { msg[i] = (i * 13 + 5) & 0xFF; }
+  u8[] want = sha3_256(msg);
+  i32 wrong = 0;
+  for (i32 split = 0; split <= 300; split += 7) {
+    Sha3_256 h = Sha3_256.create();
+    u8[] a = u8[split]();
+    for (i32 i = 0; i < split; i++) { a[i] = msg[i]; }
+    u8[] b = u8[300 - split]();
+    for (i32 i = 0; i < 300 - split; i++) { b[i] = msg[split + i]; }
+    h.update(a);
+    h.update(b);
+    if (!sameBytes(h.peek(), want)) { wrong = wrong + 1; }
+  }
+  t.eqI32(wrong, 0, "every two-part split gives the same digest");
+  return t.report();
+}
+
+export string test_peeking_does_not_end_the_hash() {
+  // The property the relay digest depends on: peek, absorb more, peek again — and the second peek
+  // must be the hash of everything, not of the tail, and not of a sponge that was already padded.
+  T t = T.create();
+  u8[] first = "the first part".toBytes();
+  u8[] second = "and the second".toBytes();
+  u8[] both = u8[first.len() + second.len()]();
+  for (i32 i = 0; i < first.len(); i++) { both[i] = first[i]; }
+  for (i32 i = 0; i < second.len(); i++) { both[first.len() + i] = second[i]; }
+
+  Sha3_256 h = Sha3_256.create();
+  h.update(first);
+  u8[] afterFirst = h.peek();
+  t.isTrue(sameBytes(afterFirst, sha3_256(first)), "the first peek is the hash of the first part");
+  u8[] again = h.peek();
+  t.isTrue(sameBytes(again, afterFirst), "peeking twice gives the same answer");
+  h.update(second);
+  t.isTrue(sameBytes(h.peek(), sha3_256(both)),
+           "after absorbing more, the digest is of everything — peek did not finalise the sponge");
+  return t.report();
+}
+
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) {
+    if (a[i] != b[i]) { return false; }
+  }
+  return true;
+}

@@ -1,0 +1,549 @@
+// A relay answering CREATE2, and carrying cells afterwards.
+//
+// The client half of this handshake is already checked against tor's own `test-ntor-cl`
+// (`ntor_test.wac`), and the server half is checked there too — so the ntor arithmetic is not what
+// is at stake here. What is:
+//
+//   - **the cell layer**: a CREATE2 payload read the way tor writes one, and a CREATED2 written the
+//     way our client reads one;
+//   - **the direction of the key material**, which the client never had to think about. A relay's
+//     forward is the client's backward, and a relay that got it wrong would have every cell
+//     unrecognised in both directions — a broken circuit, not a key error.
+//
+// Client and relay are both ours here, so this is not a differential. It says so; the differential
+// is a C tor client building a circuit through this relay, which is `design/0002` step 3's *done*
+// condition.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { Circuit } from "../../src/circuit.wac";
+import { NTOR_KEY_MATERIAL } from "../../src/relay.wac";
+import { itoa64 } from "../../../wactest/src/itoa64.wac";
+import { x25519Base } from "../../../crypto/src/x25519.wac";
+import {
+  Created, Inbound, answerCreate2, create2Handshake, created2Cell, destroyCell,
+  receiveFromClient, sendToClient, HOP_KEY_LEN, NTOR_REQUEST_LEN, NTOR_REPLY_LEN,
+  DESTROY_PROTOCOL, Extend, parseExtend2, extendTarget, extendIdentity, extended2Body,
+  mayExtendTo,
+  kdfTor, answerCreateFast, CREATE_FAST_LEN,
+  LS_IPV4, LS_IPV6, LS_LEGACY_IDENTITY, LS_ED25519_IDENTITY, Begin, parseBegin,
+} from "../../src/relaycircuit.wac";
+import { ntorClientRequest, ntorClientFinish } from "../../src/ntor.wac";
+import { Hop, encryptRelay, decryptRelay, relayRecognized, relayCommand, relayStreamId,
+         relayPayload, relayData, relayBegin, beginBody } from "../../src/relay.wac";
+import {
+  encodeCreate2, decodeCreated2, cellPayload, cellCommand, cellCircId, cmdCreated2, cmdDestroy,
+  handshakeNtor,
+} from "../../src/cell.wac";
+import { equal, slice } from "../../../bytes/src/slice.wac";
+import { decoded } from "../../../codec/src/hex.wac";
+
+u8[] fill(i32 n, i32 seed) {
+  u8[] o = u8[n]();
+  for (i32 i = 0; i < n; i++) { o[i] = (i * 31 + seed * 7 + 5) & 0xFF; }
+  return o;
+}
+/** A curve25519 secret, clamped as the scalar must be. */
+u8[] scalar(i32 seed) {
+  u8[] s = fill(32, seed);
+  s[0] = s[0] & 248;
+  s[31] = (s[31] & 127) | 64;
+  return s;
+}
+
+export string test_a_client_and_this_relay_agree_on_a_circuit() {
+  // The whole handshake: the client builds a CREATE2, the relay answers, and both derive the same
+  // keys. Then four relay cells in each direction, because a *running* digest that advances on only
+  // one side survives the first cell and fails on the second.
+  T t = T.create();
+  u8[] identity = fill(20, 1);
+  u8[] onionPriv = scalar(2);
+  u8[] onionKey = x25519Base(onionPriv);
+  u8[] clientEph = scalar(3);
+  u8[] serverEph = scalar(4);
+
+  u8[] request = ntorClientRequest(identity, onionKey, clientEph);
+  t.eqI32(request.len(), NTOR_REQUEST_LEN, "an ntor request is 84 bytes");
+  u8[] createCell = encodeCreate2(7, handshakeNtor(), request);
+
+  Created answer = answerCreate2(7, cellPayload(createCell, 0), identity, onionPriv, serverEph);
+  t.isTrue(answer.cell.len() > 0, "the relay answered");
+  t.eqI32(cellCommand(answer.cell, 0), cmdCreated2(), "with a CREATED2 cell");
+  t.eqI32(cellCircId(answer.cell, 0), 7, "on the circuit the client named");
+
+  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0));
+  t.eqI32(reply.len(), NTOR_REPLY_LEN, "the reply is 64 bytes");
+
+  // The client completes it. `ntorClientFinish` returns empty if the AUTH does not match, which is
+  // the check that the relay is who the client asked for.
+  u8[] clientKeys = ntorClientFinish(identity, onionKey, clientEph, reply, HOP_KEY_LEN);
+  t.eqI32(clientKeys.len(), HOP_KEY_LEN, "the client accepted the relay's authentication");
+
+  // Cells both ways. The client's hop is built the ordinary way; the relay's came out of
+  // `answerCreate2` already reversed.
+  Hop clientHop = Hop.create(clientKeys);
+  i32 bad = 0;
+  for (i32 n = 0; n < 4; n++) {
+    // Client to relay.
+    u8[] payload = fill(80 + n, 10 + n);
+    u8[] wire = encryptRelay(clientHop, relayData(), 3 + n, payload);
+    Inbound got = receiveFromClient(answer.hop, wire);
+    if (!got.recognized) { bad = bad + 1; }
+    if (got.command != relayData()) { bad = bad + 1; }
+    if (got.streamId != 3 + n) { bad = bad + 1; }
+    if (!equal(got.data, payload)) { bad = bad + 1; }
+
+    // Relay to client.
+    u8[] back = fill(40 + n, 20 + n);
+    u8[] cell = sendToClient(answer.hop, 7, relayData(), 3 + n, back);
+    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0));
+    if (!relayRecognized(clientHop, body)) { bad = bad + 1; }
+    if (!equal(relayPayload(body), back)) { bad = bad + 1; }
+  }
+  t.eqI32(bad, 0, "four cells each way, recognised and byte-identical");
+  return t.report();
+}
+
+export string test_the_relays_key_material_is_the_other_way_round() {
+  // The assertion that the reversal is doing something. Build the relay's hop the *client's* way
+  // from the same material and nothing must be recognised — if it were, the swap would be a no-op
+  // and the circuit would only work by accident.
+  T t = T.create();
+  u8[] identity = fill(20, 5);
+  u8[] onionPriv = scalar(6);
+  u8[] onionKey = x25519Base(onionPriv);
+  u8[] clientEph = scalar(7);
+
+  u8[] request = ntorClientRequest(identity, onionKey, clientEph);
+  Created answer = answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), request), 0),
+                                 identity, onionPriv, scalar(8));
+  u8[] reply = decodeCreated2(cellPayload(answer.cell, 0));
+  u8[] material = ntorClientFinish(identity, onionKey, clientEph, reply, HOP_KEY_LEN);
+  t.eqI32(material.len(), HOP_KEY_LEN, "both sides derived key material");
+
+  Hop clientHop = Hop.create(material);
+  Hop wrongWay = Hop.create(material);        // the relay, built as if it were the client
+  u8[] wire = encryptRelay(clientHop, relayData(), 1, "hello".toBytes());
+  t.isFalse(relayRecognized(wrongWay, decryptRelay(wrongWay, wire)),
+            "a relay using the client's key assignment recognises nothing");
+
+  Hop rightWay = Hop.createReversed(material);
+  t.isTrue(relayRecognized(rightWay, decryptRelay(rightWay, wire)),
+           "and the reversed one recognises it");
+  return t.report();
+}
+
+export string test_a_middle_relay_forwards_what_is_not_for_it() {
+  // The whole of onion routing in one boolean. A cell addressed to a later hop decrypts to
+  // something this hop does not recognise, and must be passed on with only this layer removed —
+  // not dropped, and not treated as malformed.
+  T t = T.create();
+  u8[] material = fill(HOP_KEY_LEN, 9);
+  Hop mine = Hop.createReversed(material);
+  Hop somebodyElse = Hop.create(fill(HOP_KEY_LEN, 11));
+
+  u8[] notForUs = encryptRelay(somebodyElse, relayData(), 1, "onwards".toBytes());
+  Inbound got = receiveFromClient(mine, notForUs);
+  t.isFalse(got.recognized, "a cell for a later hop is not recognised");
+  t.eqI32(got.payload.len(), 509, "and comes out as a full payload to pass along");
+  t.eqI32(got.command, -1, "with no command read from it");
+  t.eqI32(got.data.len(), 0, "and no data — reading either would be reading somebody else's cell");
+
+  // The layer really was removed: decrypting again with the same hop must not give the same bytes.
+  t.isFalse(equal(got.payload, notForUs), "our layer was stripped");
+  return t.report();
+}
+
+export string test_a_create2_that_is_not_ntor_is_refused() {
+  // TAP is dead, ntor-v3 is a different handshake, and guessing would hand `ntorServerRespond` the
+  // wrong shape — which traps, because it asserts its own length. Refusing is not defensive noise:
+  // a relay talks to strangers and a trap is a denial of service.
+  T t = T.create();
+  u8[] identity = fill(20, 12);
+  u8[] onionPriv = scalar(13);
+  u8[] good = ntorClientRequest(identity, x25519Base(onionPriv), scalar(14));
+
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), good), 0)).len(),
+          NTOR_REQUEST_LEN, "an ntor CREATE2 reads");
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 1, good), 0)).len(), 0,
+          "handshake type 1, TAP, is refused");
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, 3, good), 0)).len(), 0,
+          "handshake type 3, ntor-v3, is refused");
+  t.eqI32(create2Handshake(cellPayload(encodeCreate2(1, handshakeNtor(), fill(83, 1)), 0)).len(), 0,
+          "an 83-byte ntor request is refused");
+  t.eqI32(create2Handshake(u8[3]()).len(), 0, "a payload too short for a header is refused");
+
+  // A length field claiming more than the payload holds.
+  u8[] lying = u8[509]();
+  lying[1] = 2;                     // HTYPE = 2, ntor
+  lying[2] = 255;                   // HLEN = 65535
+  lying[3] = 255;
+  t.eqI32(create2Handshake(lying).len(), 0, "a length past the payload is refused");
+
+  // A *well-formed* header on a short payload — HLEN exactly 84, but only 50 bytes present. The
+  // exact-length check above does not catch this one, and without the bounds check the read runs off
+  // the end of the buffer and traps. Found by planting: removing the bounds check survived every
+  // other case here, because they were all caught by HLEN not being 84.
+  u8[] truncated = u8[50]();
+  truncated[1] = 2;                 // HTYPE = 2, ntor
+  truncated[2] = 0;                 // HLEN = 84, which is correct and still does not fit
+  truncated[3] = 84;
+  t.eqI32(create2Handshake(truncated).len(), 0, "a correct length on a truncated payload is refused");
+
+  // And `answerCreate2` refuses the same things rather than trapping.
+  Created bad = answerCreate2(1, lying, identity, onionPriv, scalar(15));
+  t.eqI32(bad.cell.len(), 0, "the relay declines to answer");
+  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0),
+                        fill(19, 1), onionPriv, scalar(15)).cell.len(), 0,
+          "a 19-byte identity is refused");
+  t.eqI32(answerCreate2(1, cellPayload(encodeCreate2(1, handshakeNtor(), good), 0),
+                        identity, fill(31, 1), scalar(15)).cell.len(), 0,
+          "a 31-byte onion key is refused");
+  return t.report();
+}
+
+export string test_a_destroy_cell_says_why() {
+  T t = T.create();
+  u8[] cell = destroyCell(42, DESTROY_PROTOCOL);
+  t.eqI32(cellCommand(cell, 0), cmdDestroy(), "a DESTROY cell");
+  t.eqI32(cellCircId(cell, 0), 42, "on the right circuit");
+  t.eqI32(cellPayload(cell, 0)[0], DESTROY_PROTOCOL, "carrying the reason");
+  t.eqI32(cell.len(), 514, "and padded to a full cell like any other");
+  return t.report();
+}
+
+export string test_an_extend2_names_a_next_hop_and_carries_a_handshake_untouched() {
+  // The client builds this cell for the *last* hop, which reads the specifiers, connects, and passes
+  // the handshake on as a CREATE2 without looking inside it. A relay that could read the handshake
+  // could impersonate the hop it is extending to, so "untouched" is the property, not an efficiency.
+  T t = T.create();
+  u8[] identity = fill(20, 30);
+  u8[] handshake = ntorClientRequest(identity, x25519Base(scalar(31)), scalar(32));
+
+  // Specifiers in the order tor-spec asks for: IPv4, legacy identity, ed25519 identity.
+  u8[] ed = fill(32, 33);
+  u8[] specs = u8[1 + 8 + 22 + 34]();
+  specs[0] = 3;
+  specs[1] = LS_IPV4;
+  specs[2] = 6;
+  specs[3] = 127; specs[4] = 0; specs[5] = 0; specs[6] = 1;
+  specs[7] = 0x14; specs[8] = 0x0A;                       // port 5130
+  specs[9] = LS_LEGACY_IDENTITY;
+  specs[10] = 20;
+  for (i32 i = 0; i < 20; i++) { specs[11 + i] = identity[i]; }
+  specs[31] = LS_ED25519_IDENTITY;
+  specs[32] = 32;
+  for (i32 i = 0; i < 32; i++) { specs[33 + i] = ed[i]; }
+
+  u8[] payload = u8[specs.len() + 4 + handshake.len()]();
+  for (i32 i = 0; i < specs.len(); i++) { payload[i] = specs[i]; }
+  payload[specs.len() + 1] = handshakeNtor();
+  payload[specs.len() + 2] = (handshake.len() >> 8) & 0xFF;
+  payload[specs.len() + 3] = handshake.len() & 0xFF;
+  for (i32 i = 0; i < handshake.len(); i++) { payload[specs.len() + 4 + i] = handshake[i]; }
+
+  Extend e = parseExtend2(payload);
+  t.isTrue(e.ok, "the cell parses");
+  t.eqI32(e.handshakeType, handshakeNtor(), "an ntor handshake");
+  t.isTrue(equal(e.handshake, handshake), "carried through byte for byte");
+  t.isTrue(equal(e.linkSpecifiers, specs), "and the specifiers whole and in order");
+
+  u8[] target = extendTarget(e.linkSpecifiers);
+  t.eqI32(target.len(), 6, "an IPv4 target");
+  t.eqI32(target[0], 127, "127.");
+  t.eqI32(target[3], 1, "…0.0.1");
+  t.eqI32((target[4] * 256) + target[5], 5130, "port 5130, big-endian");
+  t.isTrue(equal(extendIdentity(e.linkSpecifiers), identity), "and the identity to expect there");
+
+  // The reply goes back with the same shape a CREATED2 has, because that is what it is.
+  u8[] body = extended2Body(fill(64, 34));
+  t.eqI32(body.len(), 66, "EXTENDED2 is a two-byte length and the reply");
+  t.eqI32((body[0] * 256) + body[1], 64, "with the length big-endian");
+  return t.report();
+}
+
+export string test_an_extend2_that_is_malformed_is_refused() {
+  // A relay is asked to extend by strangers, so every length in this cell is somebody else's claim.
+  T t = T.create();
+  t.isFalse(parseExtend2(u8[0]()).ok, "an empty payload");
+  t.isFalse(parseExtend2(u8[1]()).ok, "zero specifiers");
+
+  // A specifier running past the end.
+  u8[] over = u8[4]();
+  over[0] = 1;
+  over[1] = LS_IPV4;
+  over[2] = 200;
+  t.isFalse(parseExtend2(over).ok, "a specifier longer than the payload");
+
+  // Two legacy identities: a request to extend to two relays at once, which tor-spec says to reject.
+  u8[] two = u8[1 + 22 + 22 + 4]();
+  two[0] = 2;
+  two[1] = LS_LEGACY_IDENTITY;
+  two[2] = 20;
+  two[23] = LS_LEGACY_IDENTITY;
+  two[24] = 20;
+  t.isFalse(parseExtend2(two).ok, "two legacy identities are rejected");
+
+  // An identity of the wrong width is not an identity.
+  u8[] shortId = u8[1 + 21 + 4]();
+  shortId[0] = 1;
+  shortId[1] = LS_LEGACY_IDENTITY;
+  shortId[2] = 19;
+  t.isFalse(parseExtend2(shortId).ok, "a 19-byte legacy identity is rejected");
+
+  // A handshake length past the end.
+  u8[] lying = u8[1 + 8 + 4]();
+  lying[0] = 1;
+  lying[1] = LS_IPV4;
+  lying[2] = 6;
+  lying[10] = 255;
+  lying[11] = 255;
+  t.isFalse(parseExtend2(lying).ok, "a handshake length past the payload");
+
+  // No IPv4 specifier at all: nothing to connect to, and an IPv6 one is not a substitute here.
+  u8[] v6only = u8[1 + 20 + 4]();
+  v6only[0] = 1;
+  v6only[1] = LS_IPV6;
+  v6only[2] = 18;
+  t.isTrue(parseExtend2(v6only).ok, "an IPv6-only list still parses");
+  t.eqI32(extendTarget(parseExtend2(v6only).linkSpecifiers).len(), 0,
+          "but offers no address this relay can dial");
+
+  // An unrecognised specifier that happens to be six bytes must not be read as an address. Found by
+  // planting: dropping the type check from `extendTarget` survived every case above, because the
+  // first six-byte specifier in each was in fact the IPv4 one.
+  //
+  // This is not hypothetical — tor-spec says nodes MUST ignore unrecognised specifiers and MUST
+  // accept multiple instances of them, so a six-byte one from a future extension is expected traffic.
+  u8[] decoy = u8[1 + 8 + 8]();
+  decoy[0] = 2;
+  decoy[1] = 9;                   // an unknown type, six bytes long
+  decoy[2] = 6;
+  decoy[3] = 10; decoy[4] = 9; decoy[5] = 8; decoy[6] = 7;
+  decoy[7] = 0xFF; decoy[8] = 0xFF;
+  decoy[9] = LS_IPV4;
+  decoy[10] = 6;
+  decoy[11] = 192; decoy[12] = 168; decoy[13] = 0; decoy[14] = 5;
+  decoy[15] = 0x1F; decoy[16] = 0x90;                     // port 8080
+  u8[] found = extendTarget(decoy);
+  t.eqI32(found.len(), 6, "the IPv4 specifier is found past an unknown one");
+  t.eqI32(found[0], 192, "and it is the IPv4 one, not the six-byte decoy");
+  t.eqI32((found[4] * 256) + found[5], 8080, "with its own port");
+  t.eqI32(extendIdentity(decoy).len(), 0, "and no identity is invented from the decoy");
+  t.eqI32(extended2Body(u8[0]()).len(), 0, "and an empty reply makes no EXTENDED2");
+  return t.report();
+}
+
+export string test_create_fast_agrees_with_kdf_tor() {
+  // KDF-TOR is a SHA-1 counter chain over `X | Y`. The expected values below were computed with
+  // Python's hashlib, so they are an independent answer rather than a round trip — and they have to
+  // be, because a wrong KDF here produces a circuit both ends agree on and no real client can use.
+  //
+  // The layout is KH, Df, Db, Kf, Kb: 20, 20, 20, 16, 16. `KH` goes back in the reply to prove the
+  // relay derived the same key, and the remaining 72 bytes are an ordinary hop.
+  T t = T.create();
+  u8[] x = u8[20]();
+  u8[] y = u8[20]();
+  for (i32 i = 0; i < 20; i++) {
+    x[i] = (i * 7 + 1) & 0xFF;
+    y[i] = (i * 11 + 3) & 0xFF;
+  }
+  u8[] k0 = u8[40]();
+  for (i32 i = 0; i < 20; i++) { k0[i] = x[i]; }
+  for (i32 i = 0; i < 20; i++) { k0[20 + i] = y[i]; }
+
+  u8[] k = kdfTor(k0, 92);
+  t.eqI32(k.len(), 92, "KH, Df, Db, Kf, Kb");
+  t.isTrue(equal(slice(k, 0, 20), decoded("75b3852b0170087ed080a8a96147791f47e46423")),
+           "KH agrees with an independently computed KDF-TOR");
+  t.isTrue(equal(slice(k, 20, 40), decoded("9296d9bd66de03163a7191c588020feeee3f04eb")),
+           "and so does Df");
+  t.isTrue(equal(slice(k, 60, 76), decoded("a2429f1a2281bff1ad72ecd550bb24f1")),
+           "and Kf");
+
+  // The reply is `Y | KH`, and the hop's keys are what follows KH.
+  Created answer = answerCreateFast(9, x, y);
+  t.isTrue(answer.cell.len() > 0, "a CREATED_FAST was produced");
+  t.eqI32(cellCircId(answer.cell, 0), 9, "on the right circuit");
+  u8[] payload = cellPayload(answer.cell, 0);
+  t.isTrue(equal(slice(payload, 0, 20), y), "Y comes first");
+  t.isTrue(equal(slice(payload, 20, 40), slice(k, 0, 20)),
+           "then KH, which is what proves we derived the same key");
+
+  // Every input matters, and a wrong width is refused rather than padded.
+  t.isFalse(equal(cellPayload(answerCreateFast(9, x, x).cell, 0), payload), "Y is part of the key");
+  t.eqI32(answerCreateFast(9, x, u8[19]()).cell.len(), 0, "a 19-byte Y is refused");
+  t.eqI32(answerCreateFast(9, u8[19](), y).cell.len(), 0, "and a 19-byte X");
+
+  // The counter really counts: a KDF that reused block zero would give identical 20-byte runs.
+  t.isFalse(equal(slice(k, 0, 20), slice(k, 20, 40)), "the blocks differ, so the counter advances");
+  t.isFalse(equal(slice(k, 20, 40), slice(k, 40, 60)), "and keeps advancing");
+
+  // **And the hop it produced carries cells.** Checking only the cell left the hop untested, and
+  // two plants proved it: taking the hop's keys from KH rather than from what follows it, and
+  // building the hop unreversed, both survived. A client's side of the same handshake is the other
+  // end of the exchange.
+  u8[] clientKeys = slice(k, 20, 92);
+  Hop clientHop = Hop.create(clientKeys);
+  i32 bad = 0;
+  for (i32 n = 0; n < 3; n++) {
+    u8[] out = fill(60 + n, 40 + n);
+    Inbound got = receiveFromClient(answer.hop, encryptRelay(clientHop, relayData(), 5 + n, out));
+    if (!got.recognized) { bad = bad + 1; }
+    if (!equal(got.data, out)) { bad = bad + 1; }
+    u8[] back = fill(30 + n, 50 + n);
+    u8[] cell = sendToClient(answer.hop, 9, relayData(), 5 + n, back);
+    u8[] body = decryptRelay(clientHop, cellPayload(cell, 0));
+    if (!relayRecognized(clientHop, body)) { bad = bad + 1; }
+    if (!equal(relayPayload(body), back)) { bad = bad + 1; }
+  }
+  t.eqI32(bad, 0, "three cells each way over a CREATE_FAST circuit");
+  return t.report();
+}
+
+
+export string test_a_begin_says_where_to_connect() {
+  T t = T.create();
+
+  // What the client writes, read back by the exit. `beginBody` is validated by our client opening
+  // streams through real relays, so the format it produces is not a guess.
+  Begin ordinary = parseBegin(beginBody("127.0.0.1:8080"));
+  t.isTrue(ordinary.ok, "an ordinary host and port parse");
+  t.eqStr(ordinary.host, "127.0.0.1", "the host");
+  t.eqI32(ordinary.port, 8080, "the port");
+  t.isFalse(ordinary.ownAddress, "and it is not the relay's own address");
+
+  // A leading colon is how a rendezvous stream is opened — `hsconnect.wac` sends exactly this — and an
+  // exit that called it malformed would refuse the one case an onion service needs.
+  Begin rendezvous = parseBegin(beginBody(":80"));
+  t.isTrue(rendezvous.ok, "a bare port parses");
+  t.eqI32(rendezvous.port, 80, "its port");
+  t.isTrue(rendezvous.ownAddress, "and it names this relay");
+
+  // The last colon, not the first: an IPv6 literal has several and cutting at the first halves it.
+  Begin v6 = parseBegin(beginBody("[::1]:443"));
+  t.isTrue(v6.ok, "an IPv6 literal parses");
+  t.eqStr(v6.host, "[::1]", "kept whole");
+  t.eqI32(v6.port, 443, "with its port");
+
+  // Refusals. The NUL matters: without it the four flag bytes are read as part of the address.
+  t.isFalse(parseBegin("127.0.0.1:80".toBytes()).ok, "no NUL, no stream");
+  t.isFalse(parseBegin(beginBody("127.0.0.1")).ok, "no port at all");
+  t.isFalse(parseBegin(beginBody("127.0.0.1:0")).ok, "port zero");
+  t.isFalse(parseBegin(beginBody("127.0.0.1:65536")).ok, "port past the end of the range");
+  t.isFalse(parseBegin(beginBody("127.0.0.1:8o")).ok, "a port that is not digits");
+  t.isFalse(parseBegin(u8[0]()).ok, "an empty body");
+  return t.report();
+}
+
+/**
+ * Both ends of one handshake arrive at the same KH.
+ *
+ * This is what makes an introduction point possible at all: a service MACs its ESTABLISH_INTRO with
+ * the nonce it derived, and the relay checks it with the nonce *it* derived. If the two ends took it
+ * from different places — or one of them did not take it at all, which is where both ends were until
+ * now — every ESTABLISH_INTRO would be refused and the only symptom would be a circuit that closes.
+ *
+ * The agreement is not the interesting half: two implementations of one KDF agreeing proves only that
+ * they are the same code. What pins the *value* is `ntor_wac.test.ts`, where tor's own `test-ntor-cl`
+ * produces all ninety-two bytes and our client reproduces them. This checks the plumbing on top of
+ * that: that the responder keeps what it derived, and keeps the right twenty bytes of it.
+ */
+export string test_both_ends_agree_about_the_circuit_nonce() {
+  T t = T.create();
+  u8[] identity = fill(20, 61);
+  u8[] onionPriv = scalar(62);
+  u8[] onionKey = x25519Base(onionPriv);
+  u8[] clientEphemeral = scalar(63);
+
+  u8[] request = ntorClientRequest(identity, onionKey, clientEphemeral);
+  Created answered = answerCreate2(9, cellPayload(encodeCreate2(9, handshakeNtor(), request), 0),
+                                   identity, onionPriv, scalar(64));
+  t.isTrue(answered.cell.len() > 0, "the relay answered the handshake");
+  t.eqI32(answered.kh.len(), 20, "and kept a nonce");
+
+  // The client's side of the same handshake, expanded to the full length.
+  u8[] material = ntorClientFinish(identity, onionKey, clientEphemeral,
+                                   decodeCreated2(cellPayload(answered.cell, 0)),
+                                   NTOR_KEY_MATERIAL);
+  t.eqI32(material.len(), NTOR_KEY_MATERIAL, "the client accepted the reply");
+  Circuit c = Circuit.create(9, material);
+  t.eqBytes(c.kh, answered.kh, "and both ends hold the same nonce");
+
+  // CREATE_FAST derives one too, and tor takes it from `reply_out + DIGEST_LEN` — which is the
+  // derivative half of the reply, the very bytes the client checks to know the relay ran the KDF. So
+  // the nonce is not a fourth thing to derive: it is already in the cell, and keeping it costs a copy.
+  // Onion circuits use ntor rather than CREATE_FAST, so this path is unexercised by a service and is
+  // asserted here rather than left to be discovered wrong by whoever first needs it.
+  Created fast = answerCreateFast(11, fill(CREATE_FAST_LEN, 70), fill(CREATE_FAST_LEN, 71));
+  t.isTrue(fast.cell.len() > 0, "the relay answered a CREATE_FAST");
+  t.eqI32(fast.kh.len(), CREATE_FAST_LEN, "and kept a nonce");
+  u8[] fastPayload = cellPayload(fast.cell, 0);
+  t.eqBytes(fast.kh, slice(fastPayload, CREATE_FAST_LEN, CREATE_FAST_LEN * 2),
+            "which is the derivative half of the reply, as tor reads it");
+
+  // A different handshake gives a different nonce, or the value is not doing any work.
+  Created other = answerCreate2(10,
+    cellPayload(encodeCreate2(10, handshakeNtor(),
+                              ntorClientRequest(identity, onionKey, scalar(65))), 0),
+    identity, onionPriv, scalar(64));
+  t.isTrue(other.cell.len() > 0, "a second handshake answered");
+  t.isTrue(!sameBytes(other.kh, answered.kh), "and its nonce is its own");
+  return t.report();
+}
+
+bool sameBytes(u8[] a, u8[] b) {
+  if (a.len() != b.len()) { return false; }
+  for (i32 i = 0; i < a.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+/**
+ * A relay never extends to itself.
+ *
+ * tor refuses in `connection_or_connect` — *"Client asked me to connect to myself. Refusing."* — and
+ * refuses again on the ed25519 identity. `design/0002` carried this for days as an unexplained
+ * handshake failure: a relay asked to extend to its own port failed somewhere in an uninstrumented
+ * VERSIONS exchange, and the note said *a relay extending to itself is the case to look at, and tor is
+ * entitled to ask for it*. tor is entitled to ask. The answer is no, and everything the handshake did
+ * was downstream of a connection that should never have been opened.
+ */
+export string test_a_relay_will_not_extend_to_itself() {
+  T t = T.create();
+  u8[] ours = idBytes(1);
+  u8[] theirs = idBytes(2);
+
+  t.isTrue(mayExtendTo(specsFor(theirs), ours), "another relay is fine");
+  t.isTrue(!mayExtendTo(specsFor(ours), ours), "our own identity is refused");
+
+  // One byte apart is another relay. A comparison that stopped early would refuse a stranger, which
+  // is a relay that cannot be extended through — the failure would look like unreachability.
+  u8[] nearly = idBytes(1);
+  nearly[19] = nearly[19] ^ 1;
+  t.isTrue(mayExtendTo(specsFor(nearly), ours), "one byte apart is somebody else");
+  u8[] alsoNearly = idBytes(1);
+  alsoNearly[0] = alsoNearly[0] ^ 1;
+  t.isTrue(mayExtendTo(specsFor(alsoNearly), ours), "and so is one byte apart at the front");
+
+  // A cell naming nobody is *not* refused here. It fails later for naming nobody, and answering
+  // "may not extend" would conflate asking for something forbidden with asking for nothing.
+  t.isTrue(mayExtendTo(u8[1](), ours), "a list with no identity is not this check's business");
+  t.isTrue(mayExtendTo(u8[0](), ours), "nor is an empty list");
+  t.isTrue(mayExtendTo(specsFor(ours), u8[0]()), "and a relay with no identity refuses nothing");
+  return t.report();
+}
+
+/** A link specifier list carrying one legacy identity, which is what an EXTEND2 names a relay by. */
+u8[] specsFor(u8[] identity) {
+  u8[] out = u8[1 + 2 + 20]();
+  out[0] = 1;
+  out[1] = 2;      // LS_LEGACY_IDENTITY
+  out[2] = 20;
+  for (i32 i = 0; i < 20; i++) { out[3 + i] = identity[i]; }
+  return out;
+}
+
+u8[] idBytes(i32 role) {
+  u8[] out = u8[20]();
+  for (i32 i = 0; i < 20; i++) { out[i] = (role * 53 + i * 11 + 7) & 0xFF; }
+  return out;
+}

@@ -1,0 +1,56 @@
+// Lines in reverse order — as distinct from `rev`, which reverses within a line.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, operandCount, readInput } from "../lib/input.wac";
+import { joinLines, splitLines } from "../lib/lines.wac";
+import { slice } from "../../../bytes/src/slice.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 tac(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // **Each file reversed, in the order they were named** — not the concatenation reversed. `tac a b`
+  // prints `a` backwards and then `b` backwards, which is what the real one does and is not what
+  // "reverse the input" would give you. Measured against it: reversing the join puts `b`'s lines first,
+  // and the difference is invisible on a file whose lines happen to be a palindrome, which is exactly the
+  // fixture I first tried it on.
+  i32 files = operandCount(a, 0);
+  i32 count = files == 0 ? 1 : files;
+  i32 status = 0;
+
+  // **Every operand is read before anything is written**, which is this tool's own rule rather than the
+  // family's. GNU's `tac` complains about all of them first: `tac big missing other` prints the
+  // complaint before `big`'s reversed contents, even with output unbuffered, so it is a decision rather
+  // than a buffering artefact — measured with `stdbuf -o0`, because the same experiment on `rev` shows
+  // the opposite and its apparent ordering *is* the artefact.
+  //
+  // It costs nothing here: `tac` already holds each file whole, since the last line is the first one out.
+  u8[][] held = u8[][count](fill: u8[0]());
+  bool[] got = bool[count](fill: false);
+  for (i32 f = 0; f < count; f++) {
+    Input in = readInput(core, cli, fs, a, f);
+    // Reported, skipped, and the status at the end — GNU's rule for every operand-taking filter here.
+    if (!in.ok) { status = 1; continue; }
+    held[f] = in.bytes;
+    got[f] = true;
+  }
+
+  for (i32 f = 0; f < count; f++) {
+    if (!got[f]) { continue; }
+    u8[] bytes = held[f];
+    u8[][] lines = splitLines(bytes);
+    i32 n = lines.len();
+    u8[][] out = u8[][n](fill: u8[0]());
+    for (i32 i = 0; i < n; i++) { out[i] = lines[n - 1 - i]; }
+    u8[] text = joinLines(out, n);
+    // **A file with no final newline keeps none**, and that last line comes *first* here — so the
+    // missing newline moves to the front of the output, where GNU also leaves it off the end. This
+    // added one and nothing noticed, because every fixture ended in a newline.
+    i32 keep = text.len();
+    bool ended = bytes.len() > 0 && bytes[bytes.len() - 1] == 10;
+    if (!ended && keep > 0 && text[keep - 1] == 10) { keep = keep - 1; }
+    cli.write(slice(text, 0, keep));
+  }
+  return status;
+}

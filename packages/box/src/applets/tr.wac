@@ -1,0 +1,150 @@
+// Translate, delete or squeeze bytes: `tr a-z A-Z`, `tr -d 0-9`, `tr -s ' '`.
+//
+// The 256-entry table is built once and every chunk maps through it, so this holds one chunk however long
+// the input is — and `-s` needs one byte of memory across chunks, which is the only state there is.
+//
+// **It used to take its sets literally and have no flags at all.** `tr '\n' ' '` looked for a backslash
+// and an `n`, found neither, and copied its input through unchanged; `tr -d 0-9` read `-d` as a flag it
+// ignored and then complained about a missing operand. wac-mono 0098 reported the first, found by typing
+// into the browser terminal rather than by any test, and 0103's corpus measurement found forty-four
+// scripts turning on the two of them together. `lib/trset.wac` is the set language; this is what the
+// flags do with it.
+//
+// **No file operand.** This used to take one — `tr a-z A-Z file` — and GNU does not: it reads standard
+// input and nothing else, and answers `extra operand 'file'`. The extension was documented in the usage
+// line and was still a divergence, and a tool named after a real one either matches it or says where it
+// does not. `tr a-z A-Z < file` is the spelling that has always worked in both.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Chunk, Input, openStream, nextChunk } from "../lib/input.wac";
+import { TrSet, complementOf, parseSet } from "../lib/trset.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Feed } from "../../../platform/src/stream.wac";
+
+export i32 tr(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  u8[] flags = a.flags.toBytes();
+  for (i32 i = 0; i < flags.len(); i++) {
+    if (!known(flags[i])) {
+      core.warn(a.name + ": invalid option -- '" + string.fromBytes(u8[1](fill: flags[i])) + "'");
+      core.warn("Try '" + a.name + " --help' for more information.");
+      return 1;
+    }
+  }
+  bool del = has(a, 'd');
+  bool squeeze = has(a, 's');
+  bool comp = has(a, 'c') || has(a, 'C');
+  bool trunc = has(a, 't');
+
+  // GNU's four operand rules, each with its own sentence. Two sets to translate, one to delete or
+  // squeeze on its own, and two to do both.
+  i32 sets = a.rest.len();
+  if (sets == 0) {
+    core.warn(a.name + ": missing operand");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
+  if (sets > 2) {
+    core.warn(a.name + ": extra operand '" + a.rest[2] + "'");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
+  if (!del && !squeeze && sets != 2) {
+    core.warn(a.name + ": missing operand after '" + a.rest[0] + "'");
+    // GNU says why here too, and this had the first line and neither of the others — so `tr a` told the
+    // caller something was missing without saying what, in the one case where the answer is not obvious.
+    core.warn("Two strings must be given when translating.");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
+  if (del && !squeeze && sets != 1) {
+    core.warn(a.name + ": extra operand '" + a.rest[1] + "'");
+    // GNU says *why* here and nowhere else, because the rule is not guessable from the first line: a
+    // second set means something under `-s` and nothing under `-d` alone.
+    core.warn("Only one string may be given when deleting without squeezing repeats.");
+    core.warn("Try '" + a.name + " --help' for more information.");
+    return 1;
+  }
+
+  TrSet s1 = parseSet(a.name, a.rest[0].toBytes(), -1);
+  if (!s1.ok) { core.warn(trimmed(s1.error)); return 1; }
+  // Set2 is parsed knowing set1's length, which is what `[x*]` pads out to.
+  TrSet s2 = sets == 2 ? parseSet(a.name, a.rest[1].toBytes(), s1.bytes.len()) : TrSet(true, u8[0](), "");
+  if (!s2.ok) { core.warn(trimmed(s2.error)); return 1; }
+
+  u8[] from = comp ? complementOf(s1.bytes) : s1.bytes;
+  u8[] to = s2.bytes;
+  if (!del && sets == 2 && s1.bytes.len() > 0 && to.len() == 0) {
+    core.warn(a.name + ": when not truncating set1, string2 must be non-empty");
+    return 1;
+  }
+  // `-t`: the pairs stop where set2 does, rather than set2's last byte standing in for the rest.
+  if (trunc && to.len() < from.len()) {
+    u8[] cut = u8[to.len()]();
+    cut.copyFrom(from, 0, 0, to.len());
+    from = cut;
+  }
+
+  u8[] deleted = u8[256](fill: 0);
+  u8[] map = u8[256](fill: 0);
+  for (i32 i = 0; i < 256; i++) { map[i] = i; }
+  if (del) {
+    for (i32 i = 0; i < from.len(); i++) { deleted[from[i]] = 1; }
+  } else {
+    for (i32 i = 0; i < from.len(); i++) {
+      // A short replacement set repeats its last member, as the real one does.
+      if (to.len() > 0) { map[from[i]] = i < to.len() ? to[i] : to[to.len() - 1]; }
+    }
+  }
+
+  // **`-s` squeezes the last set given**, which is set2 when there is one and set1 when there is not —
+  // and it squeezes what comes *out*, so `tr -s 'ab' 'x'` collapses the x's the translation produced.
+  u8[] squeezed = u8[256](fill: 0);
+  if (squeeze) {
+    // **The last set given**, whichever flags are on: with two operands that is set2, and `-ds` is the
+    // case that makes the rule visible — GNU deletes SET1 and *then* squeezes SET2, so `tr -ds a b` on
+    // "aabb" is "b". Squeezing set1 there left "bb", which is a plausible answer and the wrong one.
+    u8[] which = sets == 2 ? to : from;
+    for (i32 i = 0; i < which.len(); i++) { squeezed[which[i]] = 1; }
+  }
+
+  Input in = openStream(core, cli, fs, a, 2, -1);
+  if (!in.ok) { return 1; }
+
+  Feed fed = in.fed;
+
+  i32 last = -1;
+  while (true) {
+    Chunk got = nextChunk(core, cli, fed, a, in.label);
+    if (!got.ok) { return 1; }
+    if (!got.more) { return 0; }
+    u8[] chunk = got.bytes;
+    u8[] out = u8[chunk.len()]();
+    i32 at = 0;
+    for (i32 i = 0; i < chunk.len(); i++) {
+      i32 c = chunk[i];
+      if (del && deleted[c] == 1) { continue; }
+      i32 v = map[c];
+      // The squeeze runs across chunk boundaries, which is the whole of this program's state.
+      if (squeeze && squeezed[v] == 1 && v == last) { continue; }
+      last = v;
+      out[at] = v;
+      at++;
+    }
+    u8[] send = u8[at]();
+    send.copyFrom(out, 0, 0, at);
+    if (!cli.write(send)) { return 0; }
+  }
+  return 0;
+}
+
+bool known(i32 letter) {
+  return letter == 'c' || letter == 'C' || letter == 'd' || letter == 's' || letter == 't';
+}
+
+/** `parseSet`'s messages end with a newline, and `core.warn` adds one. */
+string trimmed(string s) {
+  return s.len() > 0 && s.slice(s.len() - 1, s.len()) == "\n" ? s.slice(0, s.len() - 1) : s;
+}

@@ -10,7 +10,7 @@
 import { wapyOf } from "./wapyPrint.ts";
 
 // Local helpers rather than a JSR import, matching the house pattern in
-// `atoms/wac/*.test.ts` — this repo has no third-party dependencies and should not gain one
+// `compiler/*.test.ts` — this repo has no third-party dependencies and should not gain one
 // for two assertions.
 function assertEquals(got: unknown, want: unknown, msg = ""): void {
   const g = JSON.stringify(got), w = JSON.stringify(want);
@@ -28,7 +28,7 @@ function wapy(src: string): string {
 }
 
 Deno.test("the language tour prints with no unhandled construct", async () => {
-  const src = await Deno.readTextFile(new URL("../../spec/tour.wac", import.meta.url));
+  const src = await Deno.readTextFile(new URL("../spec/tour.wac", import.meta.url));
   const { text, unhandled } = wapyOf(src, "spec/tour.wac");
   assertEquals(unhandled, [], `unhandled: ${unhandled.join(", ")}`);
   // A printer that emitted nothing would also have no unhandled constructs.

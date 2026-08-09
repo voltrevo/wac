@@ -1,0 +1,290 @@
+# tls
+
+TLS 1.3 (RFC 8446) in wac. **Not for production** — see the note at the bottom.
+
+A package of [wac-mono](../../README.md). All commands run from the repo root.
+
+## What is here
+
+| file | what |
+|---|---|
+| `src/keyschedule.wac` | HKDF-Expand-Label, Derive-Secret, and the secret chain (§7.1) |
+| `src/record.wac` | the record layer: AEAD sealing, nonce construction, framing (§5) |
+| `src/wire.wac` | big-endian length-prefixed reading and writing, bounds-checked |
+| `src/handshake.wac` | handshake messages (§4) |
+| `src/server.wac` | the server state machine |
+| `src/asn1.wac` | a DER reader, bounds-checked and strict about what DER forbids |
+| `src/x509.wac` | certificate parsing, path building, chain and host-name verification |
+| `src/client.wac` | the client state machine |
+| `src/hybrid.wac` | X25519MLKEM768, the post-quantum hybrid key agreement |
+| `host/serve.ts` | the socket and the randomness, which wasm does not have |
+| `host/connect.ts` | the same, for the client |
+
+## Run it
+
+```sh
+deno run -A packages/tls/host/serve.ts 8443
+
+openssl s_client -connect 127.0.0.1:8443 -tls1_3 -servername wac.test
+curl --noproxy '*' --cacert packages/tls/test/data/ca.pem \
+     --resolve wac.test:8443:127.0.0.1 https://wac.test:8443/
+```
+
+And the client, against anything that speaks Ed25519:
+
+```sh
+openssl s_server -accept 8500 -cert packages/tls/test/data/leaf.pem \
+                 -key packages/tls/test/data/leaf.key -tls1_3 -www -quiet &
+deno run -A packages/tls/host/connect.ts wac.test 8500 packages/tls/test/data/ca.pem
+```
+
+Three clients complete the handshake today: OpenSSL 3.0, rustls (through Deno's TLS
+client, which also verifies the certificate chain) and curl. The first two run in
+`test/handshake_interop.test.ts` on every `deno task test`, and one of those checks that
+the shutdown is seen as a `close_notify` rather than as a truncation.
+
+`openssl s_client -quiet` still prints "unexpected eof while reading" at the end. That is
+its own stdin handling rather than a missing alert: curl exits 0 with no stderr and
+rustls reads a clean end-of-stream, both of which would fail if the alert were absent or
+malformed.
+
+## What works
+
+Both ends. TLS_AES_128_GCM_SHA256 and TLS_CHACHA20_POLY1305_SHA256; **X25519MLKEM768**,
+X25519 and secp256r1 key exchange; and Ed25519, ECDSA-P256, ECDSA-P384 and RSA
+certificates.
+
+X25519MLKEM768 is the post-quantum hybrid from
+[draft-ietf-tls-ecdhe-mlkem](https://datatracker.ietf.org/doc/html/draft-ietf-tls-ecdhe-mlkem),
+offered first by the client and preferred by the server. Both ends negotiate it with
+OpenSSL 3.5.7 configured to accept nothing else, which is in the suite.
+
+The concatenation order is the part worth knowing: X25519MLKEM768 puts ML-KEM first and
+SecP256r1MLKEM768 puts the ECDHE half first. Two hybrids in one document, ordered
+differently — a fact about the registry rather than a principle, and precisely the sort
+of thing a reader assumes is consistent. It was taken from the draft and then confirmed
+against a real ClientHello, which offers 1216 bytes for this group. Full 1-RTT handshake, application data both ways, alerts,
+close_notify, KeyUpdate, and the compatibility fields — the legacy version, the echoed
+session id, the meaningless ChangeCipherSpec — that middleboxes need to see.
+
+**A server can present an RSA certificate**, not only an Ed25519 one. TLS 1.3 removed PKCS#1
+v1.5 from signing, so an RSA certificate means `rsa_pss_rsae_sha256` in CertificateVerify and
+nothing else — `tlsServerInitRsa` is a separate entry point rather than a widened one, so nothing
+that already has an Ed25519 server has to say anything about RSA. Which scheme a connection uses
+is decided by whether it holds RSA key material rather than by a flag, because a flag can
+disagree with the certificate and this cannot.
+
+The PSS salt is derived from the server random and the transcript hash rather than passed in. It
+does not need to be secret — the verifier recovers it from the signature, so it is public by
+construction — and what it must not be is repeated under one key, which it cannot be, since the
+server random is unique per connection and a server signs CertificateVerify once. Deriving it
+also keeps the property this file is built around: the host supplies the ephemeral key and the
+server random, everything else follows, and a handshake stays reproducible against a recorded
+trace.
+
+The proof is OpenSSL on both ends that are not ours: it generates the key and the self-signed
+certificate, our server signs with them, and its `s_client` completes a 1.3 handshake and reads
+the body. A PSS signer and a PSS verifier that are both ours could be wrong together and agree.
+This is what closed `packages/tor`'s relay fingerprint, since tor's link certificate is RSA and
+ours was Ed25519 — visible to anyone on the path before a single Tor cell.
+
+The client verifies three things before it sends a byte, and refuses if any fails: a
+path from the leaf, through whatever intermediates the server sent, to a root in the
+trust store it was given, in date and covering the name asked for; the CertificateVerify
+signature, binding that identity to *this* transcript; and the server's Finished. Each
+refusal has its own test, paired with the connection that must still succeed — a client
+that refuses everything passes every rejection test.
+
+### It reaches the actual web
+
+`host/connect.ts` points the client at a real host with the system trust store:
+
+```
+deno run -A packages/tls/host/connect.ts github.com 443
+```
+
+which returns `HTTP/1.1 200 OK` from github.com, having built and verified the path
+against `/etc/ssl/certs/ca-certificates.crt` — 121 roots, none of them fixtures.
+
+Two real chains, two shapes, and both were needed to find the gaps. github.com is
+leaf → Sectigo E36 → **Sectigo Public Server Authentication Root E46**: every certificate
+below the top is P-256, and the root is P-384. A client without P-384 parses the whole
+chain, walks the path all the way up, and then reports "unknown authority" about a root
+sitting right there in the store — which is what happened, and is why P-384 exists here.
+raw.githubusercontent.com is the other shape: leaf → Let's Encrypt YR2 → ISRG Root YR
+**cross-signed by ISRG Root X1**, where the anchor is three certificates up and the last
+certificate the server sends is not in the store at all. Anything that assumes the chain
+ends at a root fails that one.
+
+It offers both key shares in its first flight rather than one. That costs about a
+hundred bytes and saves a whole round trip when a server prefers P-256, which matters
+because this client cannot answer a HelloRetryRequest.
+
+Three certificate types, three encoding quirks, each a place a parser is right for two
+and wrong for the third:
+
+| type | the quirk |
+|---|---|
+| Ed25519 | the key is the BIT STRING and that is all |
+| ECDSA | the *curve* is in the algorithm parameters, not the key — ignore them and a P-384 key reads as P-256. The parameters use a different OID arc for each curve: P-256 is under ANSI's 1.2.840.10045, P-384 only ever got registered by SECG under 1.3.132 |
+| RSA | the modulus is a DER INTEGER, so one with its top bit set carries a leading zero that is not part of the key |
+
+And ECDSA signatures arrive as a SEQUENCE of two INTEGERs that must be unwrapped and
+zero-padded back to the curve's width — 32 bytes for P-256, 48 for P-384. A shorter `r`
+is not a smaller signature, it is the same number with fewer digits.
+
+The hash and the curve are independent, too. `ecdsa-with-SHA384` says nothing about which
+curve signed it, and a P-384 key signing with SHA-256 is legal and occurs; the hash comes
+from the signature algorithm and the curve from the *signer's key*. Pairing them the
+other way round verifies every chain where they happen to agree, which is most of them.
+
+## What is missing
+
+No PSK or session resumption, no 0-RTT, no HelloRetryRequest, no client certificates
+and no session tickets. Each is a real part of TLS 1.3; both sides send an alert rather
+than pretending.
+
+**No backtracking in path building, and no revocation.** `tlsClientInit` takes a trust
+store and the client builds a path from the leaf up through whatever intermediates the
+server sent, stopping at the first root that both matches by name and verifies. A
+cross-signed root arriving as an intermediate is followed like any other link. What it
+does not do is try an alternative issuer when a link verifies but leads nowhere, so a
+chain with two possible paths where only the second reaches a root is reported as
+untrusted. There is no CRL or OCSP checking of any kind.
+
+**No Ed448, no P-521, no RSA below SHA-256.** An unsupported algorithm leaves a
+certificate's key type at zero and path building skips it, rather than trapping — the
+system trust store here holds 121 roots and some use things this does not implement, and
+one exotic root must not take down the parse of the other 120.
+
+**An RSA server key must be 1024-bit.** Not a design decision — a 2048-bit private-key operation
+does not finish in any time a peer would wait, which is
+[0099](../../issues/open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md): more than
+3500x for a change the arithmetic says should cost about 8x, so the suspicion is `modPow` rather
+than "big numbers are slow". Nothing in `packages/tor` is blocked, since tor's link and identity
+keys are 1024-bit, and every test in the tree uses that size — which is exactly why nothing saw
+it until a server tried a real certificate.
+
+**PSS parameters are assumed, not parsed.** A certificate signed with RSASSA-PSS carries
+its hash and salt length in the algorithm parameters; this assumes SHA-256 with a
+matching salt, which is what certificate authorities issue. Anything else fails closed.
+
+The HelloRetryRequest gap has a visible consequence: a client offering no X25519 key
+share gets `handshake_failure`, where a complete server would ask it to try again with
+one. Every mainstream client offers X25519, so this is rarely hit and is still wrong.
+
+Alerts, `close_notify` and KeyUpdate *are* handled. A peer's mistake produces the alert
+RFC 8446 §6 names for it rather than a dropped connection — the difference between a
+client that can report what went wrong and one that has to guess.
+
+The certificate is presented, not parsed — a server sends a DER blob it was handed. A
+client would need X.509 parsing and chain validation, which is a much larger job than
+producing one.
+
+Built on [crypto](../crypto/README.md), which already had everything the record layer
+and key schedule need — AES-GCM, ChaCha20-Poly1305, HKDF, SHA-256 — and gained X25519
+and Ed25519 for the handshake.
+
+## How it is tested
+
+**Most of the suite is written in wac**, in `test/wac/` — the record layer, the
+key schedule, the wire cursor, the hybrid, and certificate path building. The
+host supplies only what it must: an AEAD or an HMAC as a synchronous callback,
+or, for the certificates, a loader that hands over fixture bytes because wac
+cannot read a file. See [`wactest`](../wactest/) for the shapes that takes.
+
+What stays in TypeScript, and why:
+
+- **the refusals.** Where a rejection is a `trap` it unwinds the module rather
+  than returning, so only the host can catch one. That is still true of the
+  record layer, and deliberately — see the precondition discussion below.
+
+  It is **no longer true of the certificate path**, and the difference is who
+  sends the bytes. `recordOpen` runs on input that has already authenticated;
+  `parseCert` runs on a chain handed over by anyone who can complete a TCP
+  handshake, so a trap there is a remote crash rather than a refusal. `Der`
+  carries a shared failure cell that every cursor over the same buffer sees,
+  `Cert` carries `wellFormed`, and `verifyChain` answers 13 for a chain it could
+  not parse. Nine traps came out of `asn1.wac` for this.
+
+  The rule that came out of it: **a trap is a fine way to refuse input you have
+  authenticated, and never a way to refuse input from a stranger.**
+- **interop.** OpenSSL, rustls and curl. A live peer's next byte depends on ours,
+  which is not something a vector or an invariant can express.
+- **the real trust store**, which reads `/etc/ssl` and reports on 121 real roots.
+
+## Not for production
+
+**Side channels are measured rather than assumed, and the measurement is not a clean bill
+of health.** `packages/crypto` traces each routine twice with different secrets and compares
+the branches taken *and* the memory indices used: `sha256`, `chachaBlock`, `poly1305` and the
+x25519 ladder come out uniform — the ladder across 1.6 million events — while **AES and GHASH
+leak**, by construction rather than by accident, because a table indexed by a secret byte
+touches a cache line chosen by the key. Both suites are offered, so the choice matters: a
+`TLS_CHACHA20_POLY1305_SHA256` connection runs on the routines that measured uniform, and a
+`TLS_AES_128_GCM_SHA256` one runs on the two that did not. See [crypto's README](../crypto/README.md) for the table and the line numbers.
+
+Uniform under that trace is **not** the same as constant-time. It is dynamic, it sees only
+what wasm does, and it cannot see that an instruction's own latency may depend on its
+operands. Beyond that, none of this has been reviewed by anyone, it has no protection against
+the implementation mistakes TLS deployments spend their lives avoiding, and it exists because
+building it is how you find out what the packages underneath are missing. **Do not use it
+where an attacker can observe timing.**
+
+## Not only sockets
+
+`TlsStream` runs over anything with `Deno.Conn`'s read/write/close, and is itself one, so it
+composes both ways: TLS over a socket, TLS over a Tor stream, HTTP over either. The shape is
+`Deno.Conn`'s rather than a nicer one of our own precisely so that no adapter is needed at
+any boundary — a real socket satisfies it structurally, and so does anything written to
+match.
+
+## Fuzzing
+
+`test/wac/fuzz_test.wac` feeds the record layer, the wire reader and the whole client bytes
+a server chose. This is a stricter position than most parsing in the repo: nothing has
+authenticated when these run, and `parseCert` in particular runs on a chain *before* the
+chain is verified, because you cannot check a signature you have not parsed.
+
+It found one thing. `tlsClientFeed` aborted when handed anything after the connection had
+already failed — nothing below the failure check expects to run without keys, so a record
+arriving late reached the decrypt path and trapped. An unknown content type followed by any
+record at all was enough.
+
+Being accurate about it: a peer can cause the failure but not the second call, and every
+caller in this repo checks the failure code first, so it was a footgun and not a remote
+crash. It is fixed because an undocumented precondition whose penalty is killing the process
+is too sharp an edge on the one function a caller drives in a loop.
+
+Two things the fuzzer flagged were **my assumptions, not bugs**: `recordLength` answers with
+the length a header *claims*, which is deliberately not bounded by what has arrived, and
+`recordType` traps on an all-padding record because RFC 8446 §5.4 says to treat that as
+`unexpected_message` — and `recordOpen` refuses such a record before it is reached. Both
+tests now assert the real contract.
+
+`tlsClientFeed` requires whole records and traps otherwise. That is a precondition rather
+than something to be lenient about: a parser that guessed at a partial record would have to
+buffer, and then two places would decide where a record ends.
+
+**A caller got this wrong for a year.** `packages/tor`'s link layer handed `tlsClientFeed`
+whatever `recv` returned, and survived because directory fetches arrive as a few small
+records that a TCP segment does not usually split. The first bulk transfer through its SOCKS
+proxy arrived as 44KB in one chunk — eighty records with the last one cut in half — and the
+client aborted. It is a fast-connection bug, not a slow-connection one, which is the opposite
+of where anyone looks for a framing fault.
+
+The root cause was an **asymmetric API**. The server side has had `tlsRecordNeeded` since it
+was written; the client side had only `recordLength`, so every client-side caller was invited
+to write the loop itself — and of the two that did, one was correct and one was silently
+wrong. That is the expected score for an unwritten convention.
+
+So the loop is now `recordsReady(buf)` in `record.wac`, next to the framing it belongs to.
+Accumulate raw bytes, ask it how much is whole, feed that prefix, keep the remainder.
+`tor/src/link.wac` uses it; `box/src/applets/gets.wac` still has its own correct copy and
+should adopt it (issue 0026).
+
+Both helpers are wanted and they answer different questions. `tlsRecordNeeded` says how many
+more bytes until *one* record is complete, which suits a reader sizing its next read.
+`recordsReady` says how much of what you are already holding is whole records, which suits a
+reader handed an arbitrary chunk that may contain eighty. The tor bug was the second question
+answered with the first one's shape.

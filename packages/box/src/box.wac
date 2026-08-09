@@ -1,0 +1,250 @@
+// A busybox-shaped application: one program, many applets, chosen by the first argument.
+//
+//   box grep -i wac README.md
+//   cat README.md | box sort -u | box wc -l
+//   box gzip data | box gunzip | box sha256sum
+//   box serve -8080
+//
+// This file is the dispatcher and nothing else. One applet per file under `applets/`, so
+// finding one takes no thought: it is `applets/<name>.wac`, always. The shared parts —
+// argument parsing, line splitting, byte and number helpers, the line reader, the atomic
+// write — are under `lib/`.
+//
+// The imports below are the table of contents. wac has no re-export, so this is the one
+// place that has to know every applet exists, which is the right place for it.
+//
+// Many of these are a few lines over a package from this monorepo: `gzip`, `zstd`, `json`,
+// `sha256sum`, `date`, `serve` and `get` are all thin. That is the point of them — those
+// packages were written to be called from TypeScript through bindgen and needed no change
+// at all to become the inside of a program.
+//
+// **A multicall binary weakens the permission story**, and that is worth saying rather
+// than hiding. `box`'s grants are the *union* of what its applets need, so running `box
+// echo` carries the filesystem *and network* access `box cp` and `box get` would want. One
+// applet per file means each could also be built alone, with only what it needs — `bin/`
+// does exactly that for four of them, and measures what it saves.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Args, parseArgs } from "./lib/args.wac";
+
+import { base32 } from "./applets/base32.wac";
+import { base64 } from "./applets/base64.wac";
+import { basename } from "./applets/basename.wac";
+import { cat } from "./applets/cat.wac";
+import { cp } from "./applets/cp.wac";
+import { crc32 } from "./applets/crc32.wac";
+import { fsdump } from "./applets/fsdump.wac";
+import { cut } from "./applets/cut.wac";
+import { date } from "./applets/date.wac";
+import { diff } from "./applets/diff.wac";
+import { dirname } from "./applets/dirname.wac";
+import { du } from "./applets/du.wac";
+import { echo } from "./applets/echo.wac";
+import { find } from "./applets/find.wac";
+import { fold } from "./applets/fold.wac";
+import { get } from "./applets/get.wac";
+import { gets } from "./applets/gets.wac";
+import { grep } from "./applets/grep.wac";
+import { gunzip } from "./applets/gunzip.wac";
+import { gzip } from "./applets/gzip.wac";
+import { head } from "./applets/head.wac";
+import { hex } from "./applets/hex.wac";
+import { init } from "./applets/init.wac";
+import { httpd } from "./applets/httpd.wac";
+import { json } from "./applets/json.wac";
+import { ls } from "./applets/ls.wac";
+import { mkdir } from "./applets/mkdir.wac";
+import { mv } from "./applets/mv.wac";
+import { nc } from "./applets/nc.wac";
+import { nl } from "./applets/nl.wac";
+import { paste } from "./applets/paste.wac";
+import { ps } from "./applets/ps.wac";
+import { rev } from "./applets/rev.wac";
+import { rm } from "./applets/rm.wac";
+import { rmdir } from "./applets/rmdir.wac";
+import { seq } from "./applets/seq.wac";
+import { serve } from "./applets/serve.wac";
+import { sha256sum } from "./applets/sha256sum.wac";
+import { sha512sum } from "./applets/sha512sum.wac";
+import { shuf } from "./applets/shuf.wac";
+import { sort } from "./applets/sort.wac";
+import { split } from "./applets/split.wac";
+import { sponge } from "./applets/sponge.wac";
+import { stat } from "./applets/stat.wac";
+import { strings } from "./applets/strings.wac";
+import { tac } from "./applets/tac.wac";
+import { tail } from "./applets/tail.wac";
+import { tar } from "./applets/tar.wac";
+import { tee } from "./applets/tee.wac";
+import { touch } from "./applets/touch.wac";
+import { tr } from "./applets/tr.wac";
+import { uniq } from "./applets/uniq.wac";
+import { unzstd } from "./applets/unzstd.wac";
+import { urldecode } from "./applets/urldecode.wac";
+import { urlencode } from "./applets/urlencode.wac";
+import { uuid } from "./applets/uuid.wac";
+import { wc } from "./applets/wc.wac";
+import { wget } from "./applets/wget.wac";
+import { yes } from "./applets/yes.wac";
+import { zstd } from "./applets/zstd.wac";
+import { Fs } from "../../fs/src/fs.wac";
+
+export i32 main(Core core, Cli cli) {
+  if (cli.argCount().wait() < 1) { return usage(core); }
+  string applet = string.fromBytes(cli.arg(0).wait());
+  // **The filesystem an applet reads is a value now, not the host by assumption.** Standing alone, `box`
+  // is a program on the real machine and hands its applets exactly that; a shell holding an image hands
+  // them the image, and no applet knows the difference (wac-mono 0109).
+  i32 code = dispatch(core, cli, Fs.onHost(cli, 0), parseArgs(cli), applet);
+  if (code != UNKNOWN) { return code; }
+
+  core.warn("box: unknown applet '" + applet + "'");
+  return usage(core);
+}
+
+/**
+ * What `dispatch` answers for a name it does not have, distinct from any applet's own status.
+ *
+ * -1 because no applet returns it: statuses here are 0, 1, 2 and occasionally an exit code from
+ * something else, all non-negative. A caller that cannot tell "no such applet" from "it ran and
+ * failed" reports the wrong thing — which is the same distinction `packages/sh` needs `found` for.
+ */
+export const i32 UNKNOWN = -1;
+
+/**
+ * The table, and the only copy of it.
+ *
+ * Split out of `main` when `packages/sh` began running applets in-process: the shell has argv and
+ * standard input of its own, so it cannot go through `main`, and a second table would have been
+ * two lists of sixty names drifting apart. `main` is now the argv-reading half and this is the
+ * choosing half.
+ */
+export i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
+  if (applet == "base32")    { return base32(core, cli, fs, a); }
+  if (applet == "base64")    { return base64(core, cli, fs, a); }
+  if (applet == "basename")  { return basename(core, cli, fs, a); }
+  if (applet == "cat")       { return cat(core, cli, fs, a); }
+  if (applet == "cp")        { return cp(core, cli, fs, a); }
+  if (applet == "crc32")     { return crc32(core, cli, fs, a); }
+  if (applet == "fsdump")    { return fsdump(core, cli, fs, a); }
+  if (applet == "cut")       { return cut(core, cli, fs, a); }
+  if (applet == "date")      { return date(core, cli, fs, a); }
+  if (applet == "diff")      { return diff(core, cli, fs, a); }
+  if (applet == "dirname")   { return dirname(core, cli, fs, a); }
+  if (applet == "du")        { return du(core, cli, fs, a); }
+  if (applet == "echo")      { return echo(core, cli, fs, a); }
+  if (applet == "find")      { return find(core, cli, fs, a); }
+  if (applet == "fold")      { return fold(core, cli, fs, a); }
+  if (applet == "get")       { return get(core, cli, fs, a); }
+  if (applet == "gets")      { return gets(core, cli, fs, a); }
+  if (applet == "grep")      { return grep(core, cli, fs, a); }
+  if (applet == "gunzip")    { return gunzip(core, cli, fs, a); }
+  if (applet == "gzip")      { return gzip(core, cli, fs, a); }
+  if (applet == "head")      { return head(core, cli, fs, a); }
+  // **Asked for is not got wrong.** `usage` answers 2 because reaching it means the command line was
+  // not understood; `box help`, `box --help` and `box -h` are a person asking, and a person who asked
+  // gets 0. Every tool this package imitates does the same, and a script testing `box --help` for
+  // success is a reasonable thing to write.
+  if (applet == "help" || applet == "--help" || applet == "-h") { usage(core); return 0; }
+  if (applet == "hex")       { return hex(core, cli, fs, a); }
+  if (applet == "init")      { return init(core, cli, fs, a); }
+  if (applet == "httpd")     { return httpd(core, cli, fs, a); }
+  if (applet == "json")      { return json(core, cli, fs, a); }
+  if (applet == "ls")        { return ls(core, cli, fs, a); }
+  if (applet == "mkdir")     { return mkdir(core, cli, fs, a); }
+  if (applet == "mv")        { return mv(core, cli, fs, a); }
+  if (applet == "nc")        { return nc(core, cli, fs, a); }
+  if (applet == "nl")        { return nl(core, cli, fs, a); }
+  if (applet == "paste")     { return paste(core, cli, fs, a); }
+  if (applet == "ps")        { return ps(core, cli, fs, a); }
+  if (applet == "rev")       { return rev(core, cli, fs, a); }
+  if (applet == "rm")        { return rm(core, cli, fs, a); }
+  if (applet == "rmdir")     { return rmdir(core, cli, fs, a); }
+  if (applet == "seq")       { return seq(core, cli, fs, a); }
+  if (applet == "serve")     { return serve(core, cli, fs, a); }
+  if (applet == "sha256sum") { return sha256sum(core, cli, fs, a); }
+  if (applet == "sha512sum") { return sha512sum(core, cli, fs, a); }
+  if (applet == "shuf")      { return shuf(core, cli, fs, a); }
+  if (applet == "sort")      { return sort(core, cli, fs, a); }
+  if (applet == "split")     { return split(core, cli, fs, a); }
+  if (applet == "sponge")    { return sponge(core, cli, fs, a); }
+  if (applet == "stat")      { return stat(core, cli, fs, a); }
+  if (applet == "strings")   { return strings(core, cli, fs, a); }
+  if (applet == "tac")       { return tac(core, cli, fs, a); }
+  if (applet == "tail")      { return tail(core, cli, fs, a); }
+  if (applet == "tar")       { return tar(core, cli, fs, a); }
+  if (applet == "tee")       { return tee(core, cli, fs, a); }
+  if (applet == "touch")     { return touch(core, cli, fs, a); }
+  if (applet == "tr")        { return tr(core, cli, fs, a); }
+  if (applet == "uniq")      { return uniq(core, cli, fs, a); }
+  if (applet == "unzstd")    { return unzstd(core, cli, fs, a); }
+  if (applet == "urldecode") { return urldecode(core, cli, fs, a); }
+  if (applet == "urlencode") { return urlencode(core, cli, fs, a); }
+  if (applet == "uuid")      { return uuid(core, cli, fs, a); }
+  if (applet == "wc")        { return wc(core, cli, fs, a); }
+  if (applet == "wget")      { return wget(core, cli, fs, a); }
+  if (applet == "yes")       { return yes(core, cli, fs, a); }
+  if (applet == "zstd")      { return zstd(core, cli, fs, a); }
+
+  // `true` and `false` have no body: the dispatcher returning a constant *is* the whole
+  // applet, and a file containing one `return` would be ceremony rather than clarity.
+  if (applet == "true")      { return 0; }
+  if (applet == "false")     { return 1; }
+
+  return UNKNOWN;
+}
+
+/**
+ * Every name `dispatch` answers to, in one place.
+ *
+ * `usage` wraps this rather than spelling the names out again, and `packages/sh`'s `help` shows it
+ * when the applets have been wired into a shell — so a new applet cannot be missing from either.
+ * It was five hand-typed lines of `core.warn` before, which is exactly the shape that goes stale:
+ * the browser terminal advertised sixty programs and `help` listed twelve.
+ */
+export string[] appletNames() {
+  return string[](
+    "base32", "base64", "basename", "cat", "cp", "crc32", "cut", "date", "diff", "dirname",
+    "du", "echo", "false", "find", "fold", "fsdump", "get", "gets", "grep", "gunzip", "gzip", "head",
+    "help", "hex", "httpd", "init", "json", "ls", "mkdir", "mv", "nc", "nl", "paste", "ps", "rev", "rm", "rmdir",
+    "seq", "serve", "sha256sum", "sha512sum", "shuf", "sort", "split", "sponge", "stat",
+    "strings", "tac", "tail", "tar", "tee", "touch", "tr", "true", "uniq", "unzstd",
+    "urldecode", "urlencode", "uuid", "wc", "wget", "yes", "zstd"
+  );
+}
+
+i32 usage(Core core) {
+  core.warn("usage: box <applet> [-flags] [args]");
+  core.warn(wrapped(appletNames(), "  ", 74));
+  core.warn("flags: grep -ivnc   sort -run   uniq -c   wc -lwc   mkdir -p   rm -rf   json -c");
+  core.warn("       a value attaches or not: head -n2 / -2, fold -w40 / -40, cut -f2 -d, / -f 2 -d ,");
+  core.warn("       signs and units: head -n -2, tail -n +2, head -c 3, tail -c +3");
+  core.warn("net:   get <host> [path] [-<port>] [-i]   wget <host> <path> <out>\n"
+            + "       serve [-<port>] [-o]   httpd [-<port>] [dir] [-o] [-x]\n"
+            + "       gets <host> <path> <root.der> [-<port>]   (TLS 1.3)\n"
+            + "       nc <host> <port>   nc -<port> -l");
+  return 2;
+}
+
+/**
+ * The names the usage message prints, which must be the ones the dispatcher answers to.
+ *
+ * Hand-maintained, because wac has no reflection — so `test/box.test.ts` compares this list against the
+ * `if (applet == "…")` branches in this file and fails on any difference. It found the first one: `help`
+ * was dispatched and not listed, so `box help` worked and nothing said so, and the three counts a reader
+ * could arrive at — 57 source files, 59 names here, 60 branches — were all different and all defensible.
+ */
+/** Names in lines no wider than `width`, each indented with `lead`. */
+export string wrapped(string[] ns, string lead, i32 width) {
+  string out = "";
+  string line = lead;
+  for (i32 i = 0; i < ns.len(); i++) {
+    // The first name on a line always goes on it, however long: wrapping to nothing would loop.
+    if (line.len() > lead.len() && line.len() + 1 + ns[i].len() > width) {
+      out = out + line + "\n";
+      line = lead;
+    }
+    line = line == lead ? line + ns[i] : line + " " + ns[i];
+  }
+  return line == lead ? out : out + line;
+}

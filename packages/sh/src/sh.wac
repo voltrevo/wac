@@ -1,0 +1,51 @@
+// `sh` — the shell as a program, entire, in wac.
+//
+//   deno task app packages/sh/src/sh.wac --allow-read --allow-env -- -c 'echo hi | rev'
+//   deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-env -o wacsh
+//   ./wacsh script.sh
+//
+// Usage:
+//
+//   sh -c 'script'      run the argument
+//   sh file             run the file
+//   sh                  run standard input
+//
+// External commands are a spawned `$WACPATH` program, then whatever was wired into
+// `Shell.external`, and that is all there is. This entry wires nothing, so `wacsh` on its own is the
+// shell *language* and its builtins: `help` lists what there is, and anything else is 127.
+//
+// It used to be more, and the difference is wac-mono 0103. This package carried twelve programs
+// written in wac because nothing could start a process; `packages/box` has sixty applets now, held to
+// this package's own differential corpus against bash, and keeping both meant two `grep`s that
+// disagreed for months with nothing comparing them. `packages/box/src/bin/sh.wac` is this same shell
+// with those applets wired in, and it is four lines — the shell being handed its programs rather than
+// containing them is the point of the seam, and this file is what the seam looks like from the other
+// side.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Shell } from "./exec.wac";
+import { shellMain } from "./entry.wac";
+import { Fs } from "../../fs/src/fs.wac";
+
+/**
+ * The shell, and nothing else — there is no multi-call branch here any more.
+ *
+ * There was one: `wacsh seq 1 5` ran this bundle's own `seq`, because the shell spawning its own
+ * programs as real children is what let a pipeline's stages run at once and `head` stop `seq`
+ * (wac-mono 0061). The programs are deleted, so the branch has nothing to dispatch to.
+ *
+ * `packages/box` is still a multi-call binary and still spawns — `box sort` is `box` with `sort` as
+ * its first argument — so nothing about that design was wrong; it moved to the package that has the
+ * programs.
+ */
+export i32 main(Core core, Cli cli) {
+  Shell sh = Shell.create(core, cli);
+  // Spawnable, though nothing is wired in here: `$WACPATH` is the route a person has, and a spawned
+  // child is a real boundary with its own grants. Two platform bugs had to be fixed before that
+  // worked at all — a non-UTF-8 argument did not survive a spawn (wac-mono 0065: the argv wire format
+  // decoded arguments as text, and now carries bytes), and a spawned child did not receive what the
+  // shell had left of its standard input (wac-mono 0066: `Shell.heldInput`).
+  sh.externalSpawnable = true;
+  return shellMain(core, cli, sh, 0);
+}

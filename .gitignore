@@ -1,10 +1,17 @@
 node_modules
+node_modules/
 dist
 *.log
 *.tsbuildinfo
+.cache/
 
-# The demos are build output from wac-mono — `tools/syncDemos.ts` writes them and CI runs it on
-# every deploy. Committing them meant a megabyte of generated HTML in git that was stale by the
-# next day. The rest of `public/` is hand-written and stays.
-public/*.html
-public/demos.json
+# The demos are build output — `site/tools/syncDemos.ts` writes them from `packages/box` and
+# `packages/platform`, and CI runs it on every deploy. Committing them meant a megabyte of
+# generated HTML in git that was stale by the next day. The rest of `site/public/` is
+# hand-written and stays.
+site/public/*.html
+site/public/demos.json
+
+# cargo's build directory for the native host — 567 MB of it, and every byte reproducible from
+# `Cargo.toml` and `Cargo.lock`.
+native/target/

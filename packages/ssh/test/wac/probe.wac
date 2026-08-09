@@ -1,0 +1,451 @@
+// The transport pieces at the host boundary.
+//
+// Flat functions over `u8[]` and `i32`, because that is what crosses the bindgen boundary
+// cleanly. The scanning helpers are called more than once over the same buffer and recompute each
+// time, which is fine for a driver and a test and is not how the client will be shaped once there
+// is state worth keeping — that arrives with the keys.
+
+import { Reader, Writer } from "../../src/wire.wac";
+import { Framed, Status, frame, unframe, minBlock, paddingFor } from "../../src/packet.wac";
+import { Found, Version, clientVersion, clientVersionLine, scanVersion, speaksV2 }
+  from "../../src/version.wac";
+import { Proposal, clientProposal, decode, encode, negotiate } from "../../src/kexinit.wac";
+
+// ── Version exchange ──────────────────────────────────────────────────────────
+
+export u8[] sshClientVersion() { return clientVersion(); }
+export u8[] sshClientVersionLine() { return clientVersionLine(); }
+
+/** 0 = ok, 1 = incomplete, 2 = bad. */
+export i32 sshScanStatus(u8[] buf) {
+  Version v = scanVersion(buf, 0, buf.len());
+  match (v.status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+export i32 sshScanUsed(u8[] buf) { return scanVersion(buf, 0, buf.len()).used; }
+export u8[] sshScanLine(u8[] buf) { return scanVersion(buf, 0, buf.len()).line; }
+export bool sshSpeaksV2(u8[] line) { return speaksV2(line); }
+
+// ── Packet framing ────────────────────────────────────────────────────────────
+
+export i32 sshMinBlock() { return minBlock(); }
+export i32 sshPaddingFor(i32 n, i32 block) { return paddingFor(n, block); }
+export u8[] sshFrame(u8[] payload, u8[] random, i32 block) { return frame(payload, random, block); }
+
+/** 0 = ok, 1 = incomplete, 2 = malformed. */
+export i32 sshUnframeStatus(u8[] buf) {
+  Framed f = unframe(buf, 0, buf.len());
+  match (f.status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+export i32 sshUnframeUsed(u8[] buf) { return unframe(buf, 0, buf.len()).used; }
+export u8[] sshUnframePayload(u8[] buf) { return unframe(buf, 0, buf.len()).payload; }
+
+// ── KEXINIT ───────────────────────────────────────────────────────────────────
+
+export u8[] sshKexInit(u8[] cookie) { return encode(clientProposal(), cookie); }
+
+/** Which list to pull out of a parsed KEXINIT, by wire position. */
+export u8[] sshProposalField(u8[] payload, i32 which) {
+  Proposal? p = decode(payload);
+  if (p is null) { return u8[0](); }
+  if (which == 0) { return p!.kex; }
+  if (which == 1) { return p!.hostKey; }
+  if (which == 2) { return p!.cipherToServer; }
+  if (which == 3) { return p!.cipherToClient; }
+  if (which == 4) { return p!.macToServer; }
+  if (which == 5) { return p!.macToClient; }
+  if (which == 6) { return p!.compToServer; }
+  if (which == 7) { return p!.compToClient; }
+  return u8[0]();
+}
+
+export bool sshProposalOk(u8[] payload) { return decode(payload) is not null; }
+
+/** Our choice against theirs, by the same field numbering. Empty means no overlap. */
+export u8[] sshNegotiate(u8[] serverPayload, i32 which) {
+  Proposal? theirs = decode(serverPayload);
+  if (theirs is null) { return u8[0](); }
+  Proposal ours = clientProposal();
+  if (which == 0) { return negotiate(ours.kex, theirs!.kex); }
+  if (which == 1) { return negotiate(ours.hostKey, theirs!.hostKey); }
+  if (which == 2) { return negotiate(ours.cipherToServer, theirs!.cipherToServer); }
+  if (which == 3) { return negotiate(ours.cipherToClient, theirs!.cipherToClient); }
+  return u8[0]();
+}
+
+// ── Wire types, exercised directly ────────────────────────────────────────────
+
+export u8[] sshWriteMpint(u8[] magnitude) {
+  Writer w = Writer.create();
+  w.mpint(magnitude);
+  return w.take();
+}
+
+export u8[] sshWriteString(u8[] v) {
+  Writer w = Writer.create();
+  w.str(v);
+  return w.take();
+}
+
+/** Read a string back out, or empty if the buffer does not hold one. */
+export u8[] sshReadString(u8[] buf) {
+  Reader r = Reader.over(buf);
+  u8[] v = r.str();
+  return r.ok ? v : u8[0]();
+}
+
+export bool sshReadStringOk(u8[] buf) {
+  Reader r = Reader.over(buf);
+  r.str();
+  return r.ok;
+}
+
+// ── The range-taking forms ────────────────────────────────────────────────────
+//
+// How a client actually calls these: it holds one growing buffer and parses at an offset, rather
+// than slicing a fresh array per message. The bounds checks in `Reader.create`, `unframe` and
+// `scanVersion` exist for exactly these callers, so they are reachable only through this shape.
+
+export i32 sshUnframeStatusAt(u8[] buf, i32 at, i32 end) {
+  match (unframe(buf, at, end).status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+
+export i32 sshScanStatusAt(u8[] buf, i32 at, i32 end) {
+  match (scanVersion(buf, at, end).status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+
+export bool sshReadStringOkAt(u8[] buf, i32 at, i32 end) {
+  Reader r = Reader.create(buf, at, end);
+  r.str();
+  return r.ok;
+}
+
+/** Our KEXINIT with `first_kex_packet_follows` set, which we never send but must encode. */
+export u8[] sshKexInitFirst(u8[] cookie, bool first) {
+  Proposal p = clientProposal();
+  p.firstKexFollows = first;
+  return encode(p, cookie);
+}
+
+// ── Key exchange ──────────────────────────────────────────────────────────────
+
+import { ed25519PublicKey } from "../../../crypto/src/ed25519.wac";
+import { EcdhReply, deriveKey, ecdhInit, ephemeralPublic, exchangeHash, msgKexEcdhReply,
+         parseEcdhReply, sharedSecret, verifyEd25519Host } from "../../src/kex.wac";
+
+export i32 sshMsgKexEcdhReply() { return msgKexEcdhReply(); }
+export u8[] sshEphemeralPublic(u8[] secret) { return ephemeralPublic(secret); }
+export u8[] sshEcdhInit(u8[] qc) { return ecdhInit(qc); }
+export bool sshEcdhReplyOk(u8[] payload) { return parseEcdhReply(payload) is not null; }
+
+/** 0 = host key blob, 1 = server public, 2 = signature blob. */
+export u8[] sshEcdhReplyField(u8[] payload, i32 which) {
+  EcdhReply? r = parseEcdhReply(payload);
+  if (r is null) { return u8[0](); }
+  if (which == 0) { return r!.hostKey; }
+  if (which == 1) { return r!.serverPublic; }
+  if (which == 2) { return r!.signature; }
+  return u8[0]();
+}
+
+/** Empty when the peer's point is low-order, which must abort rather than continue. */
+export u8[] sshSharedSecret(u8[] secret, u8[] peerPublic) {
+  u8[]? k = sharedSecret(secret, peerPublic);
+  return k is null ? u8[0]() : k!;
+}
+
+export u8[] sshExchangeHash(u8[] vc, u8[] vs, u8[] ic, u8[] isrv, u8[] ks,
+                            u8[] qc, u8[] qs, u8[] k) {
+  return exchangeHash(vc, vs, ic, isrv, ks, qc, qs, k);
+}
+
+export bool sshVerifyHostKey(u8[] hostKey, u8[] signature, u8[] h) {
+  return verifyEd25519Host(hostKey, signature, h);
+}
+
+export u8[] sshDeriveKey(u8[] k, u8[] h, u8[] sessionId, i32 letter, i32 needed) {
+  return deriveKey(k, h, sessionId, letter, needed);
+}
+
+// ── The cipher ────────────────────────────────────────────────────────────────
+
+import { Opened, Plain, aeadPaddingFor, keyLength, open, peekLength, seal, sealBody, tagLength }
+  from "../../src/cipher.wac";
+
+export i32 sshCipherKeyLength() { return keyLength(); }
+export i32 sshCipherTagLength() { return tagLength(); }
+export i32 sshAeadPaddingFor(i32 n, i32 block) { return aeadPaddingFor(n, block); }
+export u8[] sshSeal(u8[] key, i32 seq, u8[] payload, u8[] random, i32 block) {
+  return seal(key, seq, payload, random, block);
+}
+export i32 sshPeekLength(u8[] key, i32 seq, u8[] src, i32 at) { return peekLength(key, seq, src, at); }
+
+/** 0 = ok, 1 = incomplete, 2 = bad. */
+export i32 sshOpenStatus(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
+  match (open(key, seq, src, at, end, maxPacket).status) {
+    case Ok: return 0;
+    case Incomplete: return 1;
+    else: return 2;
+  }
+}
+export u8[] sshOpenPayload(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
+  return open(key, seq, src, at, end, maxPacket).payload;
+}
+export i32 sshOpenUsed(u8[] key, i32 seq, u8[] src, i32 at, i32 end, i32 maxPacket) {
+  return open(key, seq, src, at, end, maxPacket).used;
+}
+
+/** A packet that authenticates but whose body is whatever the caller says. */
+export u8[] sshSealBody(u8[] key, i32 seq, u8[] body) { return sealBody(key, seq, body); }
+
+// ── Private keys and authentication ───────────────────────────────────────────
+
+import { KeyError, PrivateKey, readEd25519 } from "../../src/privatekey.wac";
+import { msgServiceAccept, msgUserAuthFailure, msgUserAuthSuccess, publicKeyRequest,
+         serviceRequest, signedData } from "../../src/auth.wac";
+
+/** 0 ok, 1 not-openssh, 2 unsupported, 3 malformed, 4 bad passphrase, 5 not ed25519. */
+export i32 sshReadKeyStatus(u8[] pem, u8[] passphrase) {
+  match (readEd25519(pem, passphrase).error) {
+    case Ok: return 0;
+    case NotOpenSsh: return 1;
+    case Unsupported: return 2;
+    case Malformed: return 3;
+    case BadPassphrase: return 4;
+    else: return 5;
+  }
+}
+export u8[] sshReadKeySeed(u8[] pem, u8[] passphrase) { return readEd25519(pem, passphrase).seed; }
+export u8[] sshReadKeyPublic(u8[] pem, u8[] passphrase) { return readEd25519(pem, passphrase).publicBlob; }
+
+export i32 sshMsgUserAuthSuccess() { return msgUserAuthSuccess(); }
+export i32 sshMsgUserAuthFailure() { return msgUserAuthFailure(); }
+export i32 sshMsgServiceAccept() { return msgServiceAccept(); }
+export u8[] sshServiceRequest() { return serviceRequest(); }
+export u8[] sshSignedData(u8[] sessionId, u8[] user, u8[] publicBlob) {
+  return signedData(sessionId, user, publicBlob);
+}
+export u8[] sshPublicKeyRequest(u8[] sessionId, u8[] user, u8[] publicBlob, u8[] seed) {
+  return publicKeyRequest(sessionId, user, publicBlob, seed);
+}
+
+// ── known_hosts ───────────────────────────────────────────────────────────────
+
+import { Verdict, lookUp } from "../../src/knownhosts.wac";
+
+/** 0 unknown, 1 match, 2 mismatch, 3 revoked. */
+export i32 sshKnownHost(u8[] file, u8[] host, i32 port, u8[] keyType, u8[] keyBlob) {
+  match (lookUp(file, host, port, keyType, keyBlob)) {
+    case Unknown: return 0;
+    case Match: return 1;
+    case Mismatch: return 2;
+    else: return 3;
+  }
+}
+
+// ── Channels ──────────────────────────────────────────────────────────────────
+
+import { Incoming, Window, channelClose, channelData, channelEof, defaultMaxPacket,
+         defaultWindow, execRequest, extendedDataStderr, msgChannelData,
+         msgChannelExtendedData, msgChannelOpenConfirmation, msgChannelOpenFailure,
+         msgChannelClose, msgChannelEof, msgChannelRequest, msgChannelSuccess,
+         msgChannelWindowAdjust, openSession, parse, windowAdjust } from "../../src/channel.wac";
+
+export i32 sshDefaultWindow() { return defaultWindow(); }
+export i32 sshDefaultMaxPacket() { return defaultMaxPacket(); }
+export i32 sshExtendedDataStderr() { return extendedDataStderr(); }
+export i32 sshMsgChannelData() { return msgChannelData(); }
+export i32 sshMsgChannelExtendedData() { return msgChannelExtendedData(); }
+export i32 sshMsgChannelOpenConfirmation() { return msgChannelOpenConfirmation(); }
+export i32 sshMsgChannelOpenFailure() { return msgChannelOpenFailure(); }
+export i32 sshMsgChannelClose() { return msgChannelClose(); }
+export i32 sshMsgChannelEof() { return msgChannelEof(); }
+export i32 sshMsgChannelRequest() { return msgChannelRequest(); }
+export i32 sshMsgChannelSuccess() { return msgChannelSuccess(); }
+export i32 sshMsgChannelWindowAdjust() { return msgChannelWindowAdjust(); }
+
+export u8[] sshOpenSession(i32 channel, i32 window, i32 maxPacket) {
+  return openSession(channel, window, maxPacket);
+}
+export u8[] sshExecRequest(i32 channel, u8[] command, bool wantReply) {
+  return execRequest(channel, command, wantReply);
+}
+export u8[] sshWindowAdjust(i32 channel, i32 increment) { return windowAdjust(channel, increment); }
+export u8[] sshChannelEof(i32 channel) { return channelEof(channel); }
+export u8[] sshChannelClose(i32 channel) { return channelClose(channel); }
+export u8[] sshChannelData(i32 channel, u8[] data) { return channelData(channel, data); }
+
+/** 0 kind, 1 channel, 2 senderChannel, 3 window, 4 extra, 5 ok. */
+export i32 sshIncomingField(u8[] payload, i32 which) {
+  Incoming m = parse(payload);
+  if (which == 0) { return m.kind; }
+  if (which == 1) { return m.channel; }
+  if (which == 2) { return m.senderChannel; }
+  if (which == 3) { return m.window; }
+  if (which == 4) { return m.extra; }
+  return m.ok ? 1 : 0;
+}
+export u8[] sshIncomingData(u8[] payload) { return parse(payload).data; }
+
+// The window is a struct with state, so it is driven through a handle the host keeps.
+export Window sshWindowCreate(i32 initial) { return Window.create(initial); }
+export i32 sshWindowConsume(Window w, i32 n) { return w.consume(n); }
+export i32 sshWindowLeft(Window w) { return w.left; }
+
+// ── The server half ───────────────────────────────────────────────────────────
+
+import { Match, lookUp as authLookUp } from "../../src/authorizedkeys.wac";
+import { AuthRequest, authFailure, authSuccess, byApplication, channelClose as srvClose,
+         disconnect as srvDisconnect, openFailure as srvOpenFailure,
+         readOpenChannel as srvReadOpenChannel,
+         channelData as srvData, channelEof as srvEof, channelFailure as srvChanFailure,
+         channelStderr, channelSuccess, disconnect, ecdhReply, exchangeHash as srvHash,
+         ephemeralPublic as srvEphemeral, sharedSecret as srvShared,
+         execCommand, exitStatus, hostKeyBlob, openConfirmation, openFailure, parseAuthRequest,
+         parseEcdhInit, pkOk, serverProposal, serviceAccept, verifyAuth } from "../../src/server.wac";
+
+/** 0 unknown, 1 ok, 2 restricted. */
+export i32 sshAuthorized(u8[] file, u8[] keyType, u8[] keyBlob) {
+  match (authLookUp(file, keyType, keyBlob)) {
+    case Unknown: return 0;
+    case Ok: return 1;
+    else: return 2;
+  }
+}
+
+export u8[] sshServerProposalField(i32 which) {
+  Proposal p = serverProposal();
+  if (which == 0) { return p.kex; }
+  if (which == 1) { return p.hostKey; }
+  if (which == 2) { return p.cipherToServer; }
+  return p.cipherToClient;
+}
+
+export u8[] sshHostKeyBlob(u8[] publicKey) { return hostKeyBlob(publicKey); }
+export u8[] sshParseEcdhInit(u8[] payload) { return parseEcdhInit(payload); }
+export u8[] sshEcdhReply(u8[] hostKey, u8[] qs, u8[] h, u8[] seed) {
+  return ecdhReply(hostKey, qs, h, seed);
+}
+export u8[] sshServerExchangeHash(u8[] vc, u8[] vs, u8[] ic, u8[] isrv, u8[] ks,
+                                  u8[] qc, u8[] qs, u8[] k) {
+  return srvHash(vc, vs, ic, isrv, ks, qc, qs, k);
+}
+
+/** 0 ok, 1 hasSignature, 2 user len, 3 method len. */
+export i32 sshAuthRequestField(u8[] payload, i32 which) {
+  AuthRequest a = parseAuthRequest(payload);
+  if (which == 0) { return a.ok ? 1 : 0; }
+  if (which == 1) { return a.hasSignature ? 1 : 0; }
+  if (which == 2) { return a.user.len(); }
+  return a.method.len();
+}
+export u8[] sshAuthRequestUser(u8[] payload) { return parseAuthRequest(payload).user; }
+export u8[] sshAuthRequestMethod(u8[] payload) { return parseAuthRequest(payload).method; }
+export bool sshVerifyAuth(u8[] payload, u8[] sessionId) {
+  return verifyAuth(parseAuthRequest(payload), sessionId);
+}
+
+export u8[] sshAuthFailure() { return authFailure(); }
+export u8[] sshAuthSuccess() { return authSuccess(); }
+export u8[] sshPkOk(u8[] keyType, u8[] blob) { return pkOk(keyType, blob); }
+export u8[] sshServiceAccept(u8[] name) { return serviceAccept(name); }
+export u8[] sshDisconnect(u8[] why) { return disconnect(byApplication(), why); }
+export u8[] sshOpenConfirmation(i32 client, i32 ours, i32 window, i32 maxPacket) {
+  return openConfirmation(client, ours, window, maxPacket);
+}
+export u8[] sshOpenFailure(i32 client, i32 reason, u8[] why) {
+  return openFailure(client, reason, why);
+}
+export u8[] sshChannelSuccessMsg(i32 channel) { return channelSuccess(channel); }
+export u8[] sshServerData(i32 channel, u8[] data) { return srvData(channel, data); }
+export u8[] sshServerStderr(i32 channel, u8[] data) { return channelStderr(channel, data); }
+export u8[] sshExitStatus(i32 channel, i32 status) { return exitStatus(channel, status); }
+export u8[] sshExecCommand(u8[] payload) { return execCommand(payload); }
+
+/** The public point for a seed, so a test can build a key pair without leaving wac. */
+export u8[] sshEphemeralPublicForSeed(u8[] seed) { return ed25519PublicKey(seed); }
+
+export u8[] sshServerEphemeral(u8[] secret) { return srvEphemeral(secret); }
+export u8[] sshServerShared(u8[] secret, u8[] peer) {
+  u8[]? k = srvShared(secret, peer);
+  return (k is null) ? u8[0]() : k!;
+}
+export u8[] sshServerChannelFailure(i32 channel) { return srvChanFailure(channel); }
+export u8[] sshServerChannelEof(i32 channel) { return srvEof(channel); }
+export u8[] sshServerChannelClose(i32 channel) { return srvClose(channel); }
+
+// ── Every message number, so the constants have an oracle ─────────────────────
+//
+// A function returning a constant is invisible to a test that only ever compares it against
+// itself: `parse` reads a byte and checks it against `msgChannelEof()`, and both sides move
+// together if the number is wrong. Mutation testing found six of these unkilled — `msgIgnore`,
+// `msgDebug`, `msgUnimplemented`, `msgDisconnect`, `msgUserAuthFailure`, `msgChannelEof` — all
+// replaceable with zero while every test stayed green.
+//
+// The oracle is RFC 4250 §4.1.2, plus RFC 8308 for EXT_INFO and RFC 5656 for the ECDH pair. A
+// number is exported here and asserted against the RFC on the TypeScript side, which is the one
+// comparison that is not against ourselves.
+
+import { msgDisconnect, msgIgnore, msgUnimplemented, msgDebug, msgExtInfo, msgNewKeys }
+  from "../../src/conn.wac";
+import { msgKexEcdhInit } from "../../src/kex.wac";
+import { msgKexInit } from "../../src/kexinit.wac";
+import { msgUserAuthRequest, msgServiceRequest } from "../../src/auth.wac";
+import { msgChannelOpen, msgChannelFailure } from "../../src/channel.wac";
+
+/** Every message number, in a fixed order the test knows. */
+export i32[] sshMessageNumbers() {
+  i32[] out = i32[25](fill: 0);
+  out[0] = msgDisconnect();
+  out[1] = msgIgnore();
+  out[2] = msgUnimplemented();
+  out[3] = msgDebug();
+  out[4] = msgServiceRequest();
+  out[5] = msgServiceAccept();
+  out[6] = msgExtInfo();
+  out[7] = msgKexInit();
+  out[8] = msgNewKeys();
+  out[9] = msgKexEcdhInit();
+  out[10] = msgKexEcdhReply();
+  out[11] = msgUserAuthRequest();
+  out[12] = msgUserAuthFailure();
+  out[13] = msgUserAuthSuccess();
+  out[14] = msgChannelOpen();
+  out[15] = msgChannelOpenConfirmation();
+  out[16] = msgChannelOpenFailure();
+  out[17] = msgChannelWindowAdjust();
+  out[18] = msgChannelData();
+  out[19] = msgChannelExtendedData();
+  out[20] = msgChannelEof();
+  out[21] = msgChannelClose();
+  out[22] = msgChannelRequest();
+  out[23] = msgChannelSuccess();
+  out[24] = msgChannelFailure();
+  return out;
+}
+
+/** The two refusal messages a client only sees when something has gone wrong. */
+export u8[] sshServerDisconnect(i32 reason, u8[] description) {
+  return srvDisconnect(reason, description);
+}
+export u8[] sshServerOpenFailure(i32 channel, i32 reason, u8[] description) {
+  return srvOpenFailure(channel, reason, description);
+}
+export i32 sshByApplication() { return byApplication(); }
+
+export i32 sshServerReadOpenChannel(u8[] payload) { return srvReadOpenChannel(payload); }

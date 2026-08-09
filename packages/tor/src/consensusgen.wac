@@ -1,0 +1,232 @@
+// Building a consensus: what the authorities agree the network is, and the document a client
+// bootstraps from.
+//
+// The *reading* half is `consensus.wac`, which decides whether to believe one. This is the writing
+// half, and the two are deliberately separate files: a client needs the reader and never the writer,
+// and an authority's own output must not be validated by the code that produced it.
+//
+// Built on `vote.wac`, because the two documents share the machinery that matters — the same signed
+// span, the same router status entries in the same order. What differs is structure, and the
+// differences are not the ones a reader guesses from having seen a vote:
+//
+//   - `consensus-method` is singular where a vote lists `consensus-methods` it would accept.
+//   - There is no `published` line. A vote says when it was made; a consensus only says when it applies.
+//   - `known-flags` comes **before** the `recommended-*` and `required-*` lines. In a vote it comes
+//     after them. Same keywords, opposite order, and tor's parser accepts either order in neither
+//     document — the order is part of the format.
+//   - Each authority contributes a `dir-source` / `contact` / **`vote-digest`** triple, the last being
+//     the digest of the vote it cast. A vote has one dir-source and no vote-digest.
+//   - No certificate is embedded. A vote carries its own so it can be verified alone; a consensus
+//     cannot, because its signatures come from authorities whose certificates a client fetches
+//     separately. This is exactly why `networkstatus_parse_vote_from_string` verifies a vote's
+//     signature and not a consensus's — see wac-mono issue 0081.
+//   - `w` lines carry `Unmeasured=1` where no bandwidth authority has measured the relay, and status
+//     entries carry no `id` line in a consensus this method produces.
+//   - The footer holds `bandwidth-weights` and then one `directory-signature` per signing authority,
+//     all over the same digest — the span ends at the *first* one.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa, itoa64 } from "../../fmt/src/itoa.wac";
+import { rsaSignRawPkcs1 } from "../../crypto/src/rsa.wac";
+import { AuthorityKeys, plainFingerprint } from "./authcert.wac";
+import { microdescLine, microdescriptor } from "./microdesc.wac";
+import {
+  descriptorIdentity, pemBlock, publishedTime, routerStatusLine, routerStatusLineMicrodesc,
+  rsaFingerprint,
+} from "./routerdesc.wac";
+import {
+  RelayOpinion, signatureKeywordText, signedLength, sortedDescriptors, voteSignatureDigest,
+} from "./vote.wac";
+import { equal } from "../../bytes/src/slice.wac";
+
+/** One authority's contribution to the consensus, as the document records it. */
+export struct ConsensusVoter {
+  string nickname;
+  u8[] identityDigest;      // 20 bytes
+  string address;
+  string ip;
+  i32 dirPort;
+  i32 orPort;
+  string contact;
+  u8[] voteDigest;          // 20 bytes: the digest of the vote this authority cast
+}
+
+/** The period and the method. */
+export struct ConsensusInfo {
+  i32 consensusMethod;
+  i64 validAfter;
+  i64 freshUntil;
+  i64 validUntil;
+  i32 voteSeconds;
+  i32 distSeconds;
+  string bandwidthWeights;
+}
+
+/**
+ * A consensus, signed by one authority.
+ *
+ * One signature because a testnet of one authority is what this is for; the format takes any number,
+ * all over the same digest, and adding more is appending more blocks after this one's.
+ *
+ * Empty if the signature cannot be made or a relay's descriptor is unusable.
+ */
+export u8[] consensusDocument(
+  ConsensusInfo info, ConsensusVoter[] voters, RelayOpinion[] relays, AuthorityKeys signer
+) {
+  return consensusFlavoured(info, voters, relays, signer, false);
+}
+
+/**
+ * The **microdesc** flavour of the same consensus.
+ *
+ * This is the one a client bootstraps from by default, and until it existed no client in this package
+ * could bootstrap from an authority in this package: `dirclient.wac` asks for
+ * `/tor/status-vote/current/consensus-microdesc` and then fetches microdescriptors by the digest on
+ * each entry's `m` line. An authority producing only the ns flavour answered that with a 404 — two
+ * halves of this repo that had each been validated against C tor and never against each other, which
+ * is the seam design 0002's D1 is about.
+ *
+ * Four differences from the ns flavour, all from tor's `dirvote.c`:
+ *
+ *   - the version line carries the flavour: `network-status-version 3 microdesc`
+ *   - the `r` line omits the descriptor digest, being one field shorter rather than one field blank
+ *   - an `m` line names the microdescriptor, and it comes **before** the `s` line, not after it
+ *   - there is no `p` line: the policy summary moves into the microdescriptor
+ *
+ * A relay whose microdescriptor cannot be built is omitted from the document entirely — which is
+ * tor's rule (`with no microdescriptor digest, we omit the entry entirely`) and not an error, because
+ * a consensus listing a relay a client can never fetch keys for is worse than one that does not.
+ */
+export u8[] microdescConsensusDocument(
+  ConsensusInfo info, ConsensusVoter[] voters, RelayOpinion[] relays, AuthorityKeys signer
+) {
+  return consensusFlavoured(info, voters, relays, signer, true);
+}
+
+u8[] consensusFlavoured(
+  ConsensusInfo info, ConsensusVoter[] voters, RelayOpinion[] relays, AuthorityKeys signer,
+  bool microdesc
+) {
+  u8[] identityFp = rsaFingerprint(signer.identityN, signer.identityE);
+  u8[] signingFp = rsaFingerprint(signer.signingN, signer.signingE);
+  if (identityFp.len() != 20 || signingFp.len() != 20) { return u8[0](); }
+
+  Buf d = Buf.create();
+  d.pushAll(microdesc ? "network-status-version 3 microdesc\n".toBytes()
+                      : "network-status-version 3\n".toBytes());
+  d.pushAll("vote-status consensus\n".toBytes());
+  d.pushAll(("consensus-method " + itoa(info.consensusMethod) + "\n").toBytes());
+  d.pushAll(("valid-after " + publishedTime(info.validAfter) + "\n").toBytes());
+  d.pushAll(("fresh-until " + publishedTime(info.freshUntil) + "\n").toBytes());
+  d.pushAll(("valid-until " + publishedTime(info.validUntil) + "\n").toBytes());
+  d.pushAll(("voting-delay " + itoa(info.voteSeconds) + " " + itoa(info.distSeconds) +
+             "\n").toBytes());
+  // Empty and still present, with the trailing space a real consensus has: the keyword asserts that
+  // the authorities agreed on no recommendation, which is not the same as saying nothing.
+  d.pushAll("client-versions \n".toBytes());
+  d.pushAll("server-versions \n".toBytes());
+  d.pushAll(("known-flags " + CONSENSUS_FLAGS + "\n").toBytes());
+  d.pushAll(("recommended-client-protocols " + CLIENT_PROTOCOLS + "\n").toBytes());
+  d.pushAll(("recommended-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
+  d.pushAll(("required-client-protocols " + REQUIRED_CLIENT + "\n").toBytes());
+  d.pushAll(("required-relay-protocols " + RELAY_PROTOCOLS + "\n").toBytes());
+
+  for (i32 i = 0; i < voters.len(); i++) {
+    ConsensusVoter v = voters[i];
+    if (v.identityDigest.len() != 20 || v.voteDigest.len() != 20) { return u8[0](); }
+    d.pushAll(("dir-source " + v.nickname + " " + plainFingerprint(v.identityDigest) + " " +
+               v.address + " " + v.ip + " " + itoa(v.dirPort) + " " + itoa(v.orPort) +
+               "\n").toBytes());
+    d.pushAll(("contact " + v.contact + "\n").toBytes());
+    d.pushAll(("vote-digest " + plainFingerprint(v.voteDigest) + "\n").toBytes());
+  }
+
+  u8[][] descriptors = u8[][relays.len()]();
+  for (i32 i = 0; i < relays.len(); i++) { descriptors[i] = relays[i].descriptor; }
+  u8[][] order = sortedDescriptors(descriptors);
+  for (i32 i = 0; i < order.len(); i++) {
+    RelayOpinion r = opinionFor(relays, order[i]);
+    u8[] line = microdesc ? routerStatusLineMicrodesc(order[i]) : routerStatusLine(order[i]);
+    if (line.len() == 0) { return u8[0](); }
+
+    if (microdesc) {
+      u8[] md = microdescriptor(order[i], r.exitPolicy);
+      // Omitted rather than refused: tor drops an entry it has no microdescriptor digest for, and a
+      // document that listed a relay whose keys no client can fetch is the worse of the two.
+      if (md.len() == 0) { continue; }
+      d.pushAll(line);
+      d.push(10);
+      d.pushAll((microdescLine(md) + "\n").toBytes());
+    } else {
+      d.pushAll(line);
+      d.push(10);
+    }
+
+    d.pushAll(("s " + r.flags + "\n").toBytes());
+    d.pushAll(("v Tor " + TOR_VERSION + "\n").toBytes());
+    d.pushAll(("pr " + RELAY_SUBPROTOCOLS + "\n").toBytes());
+    // Unmeasured, because nothing here runs a bandwidth authority. Saying so is the honest form; a
+    // consensus that omitted it would claim the number came from a measurement.
+    d.pushAll(("w Bandwidth=" + itoa64(r.bandwidth) + " Unmeasured=1\n").toBytes());
+    // The policy summary lives in the microdescriptor for that flavour, so writing it here too would
+    // state it twice, in a document whose reader does not expect it.
+    if (!microdesc) { d.pushAll(("p " + r.exitPolicy + "\n").toBytes()); }
+  }
+
+  d.pushAll("directory-footer\n".toBytes());
+  d.pushAll(("bandwidth-weights " + info.bandwidthWeights + "\n").toBytes());
+
+  d.pushAll(signatureKeywordText());
+  u8[] digest = voteSignatureDigest(d.bytes());
+  if (digest.len() != 20) { return u8[0](); }
+  d.pushAll((plainFingerprint(identityFp) + " " + plainFingerprint(signingFp) + "\n").toBytes());
+  u8[] sig = rsaSignRawPkcs1(signer.signingN, signer.signingD, digest);
+  if (sig.len() == 0) { return u8[0](); }
+  d.pushAll(pemBlock("SIGNATURE", sig));
+
+  return d.bytes();
+}
+
+/**
+ * The opinion holding `descriptor`.
+ *
+ * By identity rather than by comparing formatted status lines back, which is what this did before the
+ * microdesc flavour arrived: two flavours format the same relay differently, so a match on the
+ * formatted line silently returned the wrong opinion — the first relay's — for every entry.
+ */
+RelayOpinion opinionFor(RelayOpinion[] relays, u8[] descriptor) {
+  u8[] want = descriptorIdentity(descriptor);
+  for (i32 i = 0; i < relays.len(); i++) {
+    u8[] have = descriptorIdentity(relays[i].descriptor);
+    if (have.len() == want.len() && want.len() > 0 && equal(have, want)) { return relays[i]; }
+  }
+  return relays[0];
+}
+
+
+/** `NoEdConsensus` appears here and not in a vote: it is a thing authorities can fail to agree on. */
+const string CONSENSUS_FLAGS =
+  "Authority Exit Fast Guard HSDir NoEdConsensus Running Stable StaleDesc Sybil V2Dir Valid";
+const string TOR_VERSION = "0.4.7.13";
+const string CLIENT_PROTOCOLS =
+  "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 Link=4-5 Microdesc=2 Relay=2";
+const string RELAY_PROTOCOLS =
+  "Cons=2 Desc=2 DirCache=2 HSDir=2 HSIntro=4 HSRend=2 Link=4-5 LinkAuth=3 Microdesc=2 Relay=2";
+const string REQUIRED_CLIENT = "Cons=2 Desc=2 Link=4 Microdesc=2 Relay=2";
+/**
+ * What a relay in this consensus claims to speak.
+ *
+ * **`FlowCtrl=1`, not `1-2`.** Version 2 is proposal 324 congestion control, whose window starts
+ * small and only grows as the receiver returns SENDMEs — and `relayd.wac` sends none. Advertising it
+ * meant a client opened a circuit with a congestion window of a few kilobytes, filled it, and waited
+ * forever for credit that was never coming: an upload stopped after about eight cells with no error
+ * anywhere. Version 1's window is 500 cells per stream, which nothing has yet exhausted.
+ *
+ * The descriptor already said `FlowCtrl=1` (`routerdesc.wac`) while this said `1-2`, so the two
+ * documents describing one relay disagreed — and tor negotiates from the consensus. Claiming a
+ * capability we do not have is what the `V2Dir` and `HSDir` episodes were about; this is the same
+ * mistake in a place where the symptom was a stall rather than a refusal.
+ */
+const string RELAY_SUBPROTOCOLS =
+  "Cons=1-2 Desc=1-2 DirCache=2 FlowCtrl=1 HSDir=2 HSIntro=4-5 HSRend=1-2 Link=1-5 " +
+  "LinkAuth=1,3 Microdesc=1-2 Padding=2 Relay=1-4";

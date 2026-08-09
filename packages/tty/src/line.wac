@@ -1,0 +1,339 @@
+// A line discipline: what a terminal does to your keystrokes before a program sees them.
+//
+// design/0001 step 5. Echo, erase, kill, `^C`, `^D` — the editing that happens *between* the keyboard
+// and the program, and that a program reading a line has always been able to take for granted because
+// the kernel did it. Nothing here does it for us: an ssh channel hands over raw bytes, and so does a
+// browser's keydown loop. Both want the same module, which is why this is a package rather than a
+// corner of `packages/ssh`.
+//
+// ## The rules are measured, not remembered
+//
+// Every rule below was read off the **kernel's own line discipline** — a pty running `cat`, fed a byte
+// sequence, and the bytes that came back. `test/line.test.ts` is that comparison, run against
+// `script -qec cat /dev/null`, so this cannot drift away from the thing it imitates.
+//
+// Some of them are not what you would guess:
+//
+// - **`^H` is not erase.** Only DEL (0x7f) erases; `^H` is an ordinary control character, echoed `^H`
+//   and delivered as a byte. (`stty erase ^H` changes that, and nothing here reads a `stty`.)
+// - **`^W`'s idea of a word is narrower than "not a space".** It skips back over everything that is
+//   not a letter or a digit and then eats the letters and digits behind that, so `a b.c^W` leaves
+//   `a b.` and `ls /usr/bin^W` leaves `ls /usr/`, while `one two   ^W` leaves `one `. Every one of
+//   those was measured; a rule written as "back to the previous space" gets three of the four wrong.
+// - **A control character is echoed as a caret pair and still delivered**: `a^Ab` echoes `a^Ab` and
+//   hands the program `a\x01b`. The echo is a rendering; the line is the bytes.
+// - **`^C` echoes `^C` and nothing more** — no newline. The newline you see at a prompt is the shell's.
+// - **`^\` is the other signalling key**, and it is not `^C`: it asks for `SIGQUIT` rather than
+//   `SIGINT`. It throws the line away exactly as `^C` does, which is why `Typed` carries a signal
+//   *number* rather than a flag — a flag can only say that one of the two happened.
+// - **`^R` reprints the line**: it echoes `^R`, breaks the line, and draws what has been typed again.
+//   It is what you reach for when a program's output has scribbled over what you were editing.
+// - **DEL renders as `^?`**, which is the one caret pair that goes *down* sixty-four rather than up.
+// - **`^D` on a non-empty line is not end of input.** It delivers what has been typed *without* a
+//   newline, and the next `^D` — now on an empty line — is the end. That is why `cat` needs two of them
+//   after a line that has no `\n`.
+//
+// ## What is not here
+//
+// **No job control**: `^Z` is delivered as an ordinary control character rather than suspending
+// anything, because there is nothing to suspend until design/0001 step 3 puts a process table in. It is
+// not approximated — `stopped` is not a state this reports.
+//
+// **No terminal modes.** Canonical with echo, always: there is no `stty`, no `ICANON` off, no `raw`.
+// A program that wants a keystroke at a time — an editor, a pager — needs that switch, and it is the
+// next thing this module wants rather than something it pretends to have.
+//
+// What is in the way is the *oracle*, not the code. Every rule above was measured through a pty, and
+// the harness for that is `script -qec cat`, which will not hold an `stty`: `stty -echo; cat` echoes
+// anyway, and `-icanon` leaves the oracle waiting for an EOF that raw mode does not deliver. Deno
+// cannot allocate a pty itself, which is why `script` is there at all. Modes could be written from the
+// termios manual in an afternoon — and then this module's own claim, that it was measured rather than
+// remembered, would stop being true of a third of it. That trade is design/0001's to make, and it is
+// in its open questions rather than settled here.
+//
+// **No `^S`/`^Q` flow control and no `^O` discard.** Those stop and start the *output*, which is
+// something a terminal does to a stream this module never sees — it edits input. `^O` is delivered as
+// an ordinary control character, which is what the pty comparison shows the kernel doing to the input
+// side of it too.
+//
+// **No cursor movement.** Left arrow, `^A`, `^E` and the rest are control characters and escape
+// sequences, and the kernel does not handle them either: readline does, in the program. Erase is
+// backwards-only, which is what a line discipline is.
+
+import { Buf } from "../../bytes/src/buf.wac";
+
+/** DEL, the erase character. Not `^H` — see the header. */
+i32 ERASE() { return 127; }
+/** `^U`, kill the whole line. */
+i32 KILL() { return 21; }
+/** `^W`, erase the word behind the cursor, and the punctuation behind it. */
+i32 WERASE() { return 23; }
+/** `^C`, interrupt. */
+i32 INTR() { return 3; }
+/** `^D`, end of file — or end of *line*, when there is something on it. */
+i32 EOFC() { return 4; }
+/** `^V`, take the next character literally however it would otherwise be read. */
+i32 LNEXT() { return 22; }
+/** `^\`, quit — like `^C` but a different signal, and traditionally the one that dumps core. */
+i32 QUIT() { return 28; }
+/** `^R`, reprint: echo the line again, so you can see what you have after something scribbled on it. */
+i32 REPRINT() { return 18; }
+
+/** POSIX's numbers for the two signals a terminal can ask for. `proc.wac`'s `SIGNALS` names them too. */
+i32 SIGINT() { return 2; }
+i32 SIGQUIT() { return 3; }
+
+/**
+ * What one keystroke did.
+ *
+ * Four things can happen at once — a byte can be echoed, complete a line, and end the input — so this
+ * is a record rather than an enum. `echo` is what to write back to the terminal, and it is *always*
+ * what to write: a caller that ignores it has a terminal that shows nothing.
+ */
+export struct Typed {
+  /** Bytes to send back to the terminal, which may be empty. */
+  u8[] echo;
+  /** A line for the program, **with** its newline, when `hasLine`. */
+  u8[] line;
+  bool hasLine;
+  /** `^D` on an empty line: the program's read should answer end of input. */
+  bool eof;
+  /**
+   * The signal this keystroke asks for, or 0 — and whatever was being typed is gone when it is not 0.
+   *
+   * **A number rather than the `bool interrupt` this was**, because there are two of them and they are
+   * not the same signal: `^C` is `SIGINT` and `^\` is `SIGQUIT`, which a program may handle
+   * differently and which a core dump traditionally depends on. A flag could only say "one of them
+   * happened", so `^\` was delivered as an ordinary control character — the line kept it, and the
+   * kernel had thrown the line away and signalled.
+   *
+   * POSIX's numbering, which is also `packages/fs/src/proc.wac`'s `signalNumber`. Named there rather
+   * than imported from there: a line discipline knowing about a process table would be the wrong way
+   * round, and these two numbers are a standard rather than a decision either module owns.
+   */
+  i32 signal;
+
+  Typed nothing() { return Typed(u8[0](), u8[0](), false, false, 0); }
+  Typed echoed(u8[] echo) { return Typed(echo, u8[0](), false, false, 0); }
+
+  /** Whether a signal was asked for at all, which is what most callers want. */
+  bool interrupted(const this) { return this.signal != 0; }
+}
+
+/**
+ * The line being typed, and the rules for editing it.
+ *
+ * Feed it bytes as they arrive from wherever the keyboard is — an ssh `CHANNEL_DATA` payload, a
+ * browser's keydown — and it answers what to echo and what, if anything, the program should read.
+ */
+export struct Line {
+  /** What has been typed and not yet delivered. */
+  Buf held;
+  /**
+   * Whether the next byte is taken literally, because the last one was `^V`.
+   *
+   * The kernel echoes `^` for the `^V` itself, then a backspace over it, then the literal character's
+   * own echo — so the caret appears and is rubbed out as the character arrives. Measured; it looks
+   * like nothing on a terminal and is very visible in a byte comparison.
+   */
+  bool literal;
+
+  Line create() { return Line(Buf.create(), false); }
+
+  /** Whether anything has been typed on the line so far. */
+  bool pending(const this) { return this.held.len > 0; }
+
+  /**
+   * One byte from the keyboard.
+   *
+   * The order of the tests below is the order the kernel applies them, which matters in one place:
+   * `^V` wins over everything, so `^V^C` is a byte in the line rather than an interrupt.
+   */
+  Typed feed(this, i32 b) {
+    if (this.literal) {
+      this.literal = false;
+      this.held.push(b);
+      // The `^` from the `^V` is already on the screen; back over it and show what actually arrived.
+      Buf out = Buf.create();
+      out.push(8);
+      out.pushAll(render(b));
+      return Typed.echoed(out.take());
+    }
+    if (b == LNEXT()) {
+      this.literal = true;
+      return Typed.echoed("^".toBytes());
+    }
+    if (b == 13 || b == 10) {
+      // ICRNL: a carriage return *is* a newline to the program, and the echo is a full CRLF because a
+      // terminal's cursor does not return on its own.
+      Buf line = Buf.create();
+      line.pushAll(this.held.take());
+      line.push(10);
+      return Typed(crlf(), line.take(), true, false, 0);
+    }
+    if (b == ERASE()) {
+      if (this.held.len == 0) { return Typed.nothing(); }
+      // **The columns the character occupied, not one.** A control character is shown as `^A`, so
+      // erasing it takes two backspaces — this rubbed out one and left a stray caret on the screen,
+      // which the kernel comparison caught on the first run and which no test of *delivered lines*
+      // could ever see.
+      i32 wide = columns(this.held.get(this.held.len - 1));
+      this.dropLast();
+      return Typed.echoed(rubOut(wide));
+    }
+    if (b == KILL()) {
+      i32 n = this.width();
+      this.held = Buf.create();
+      return Typed.echoed(rubOut(n));
+    }
+    if (b == WERASE()) {
+      // **Bytes to drop and columns to rub out are two numbers**, and they differ the moment a word
+      // holds a control character: `^A` is one byte and two columns. Using one for both is the same
+      // mistake the erase branch above made, one word wider.
+      i32 from = this.wordStart();
+      i32 wide = this.widthFrom(from);
+      while (this.held.len > from) { this.dropLast(); }
+      return Typed.echoed(rubOut(wide));
+    }
+    if (b == INTR()) {
+      this.held = Buf.create();
+      // `^C` and no newline: what follows it belongs to whoever is interrupted.
+      return Typed("^C".toBytes(), u8[0](), false, false, SIGINT());
+    }
+    if (b == QUIT()) {
+      this.held = Buf.create();
+      // **The line goes, exactly as `^C`'s does.** This was an ordinary control character until now, so
+      // `ab^\z` delivered `ab\x1cz` where the kernel delivers `z` and signals — measured through the
+      // pty, which is the oracle this module claims and which nothing had asked about `^\`.
+      return Typed("^\\".toBytes(), u8[0](), false, false, SIGQUIT());
+    }
+    if (b == REPRINT()) {
+      // `^R` echoes itself, breaks the line, and **draws what you have typed again**. It is what you
+      // reach for when a program's output has scribbled over the line you were editing, and it was
+      // being delivered as a `\x12` in the middle of the line instead.
+      Buf out = Buf.create();
+      out.pushAll("^R".toBytes());
+      out.pushAll(crlf());
+      for (i32 i = 0; i < this.held.len; i++) { out.pushAll(render(this.held.get(i))); }
+      return Typed.echoed(out.take());
+    }
+    if (b == EOFC()) {
+      if (this.held.len == 0) { return Typed(u8[0](), u8[0](), false, true, 0); }
+      // A line without a newline on it. The program sees exactly what was typed, and the terminal shows
+      // nothing, because nothing was typed *at* the terminal.
+      return Typed(u8[0](), this.held.take(), true, false, 0);
+    }
+    this.held.push(b);
+    return Typed.echoed(render(b));
+  }
+
+  /** A run of bytes, as one arrival — an ssh payload rather than a keystroke. */
+  Typed[] feedAll(this, u8[] bytes) {
+    Typed[] out = Typed[bytes.len()](fill: Typed.nothing());
+    for (i32 i = 0; i < bytes.len(); i++) { out[i] = this.feed(bytes[i]); }
+    return out;
+  }
+
+  /** Drop the last byte of the line. */
+  void dropLast(this) {
+    u8[] all = this.held.take();
+    Buf keep = Buf.create();
+    for (i32 i = 0; i < all.len() - 1; i++) { keep.push(all[i]); }
+    this.held = keep;
+  }
+
+  /**
+   * How many *columns* the line occupies, which is not how many bytes it holds.
+   *
+   * A control character is two columns wide because it is shown as `^X`, so rubbing one out takes two
+   * backspaces. Getting this wrong leaves half a caret on the screen — invisible in any test that
+   * compares delivered lines, and the first thing a person sees.
+   */
+  i32 width(const this) { return this.widthFrom(0); }
+
+  /**
+   * Where `^W` erases back to: past whatever is not a word character, and then past the word itself.
+   *
+   * Two passes, and the first is why `abc def^W^W` takes back `def` and then `abc ` rather than
+   * stopping at the space it just uncovered.
+   */
+  i32 wordStart(const this) {
+    u8[] all = this.held.bytes();
+    i32 at = all.len();
+    while (at > 0 && !isWordChar(all[at - 1])) { at = at - 1; }
+    while (at > 0 && isWordChar(all[at - 1])) { at = at - 1; }
+    return at;
+  }
+
+  /** The columns occupied from byte `from` to the end of the line. */
+  i32 widthFrom(const this, i32 from) {
+    u8[] all = this.held.bytes();
+    i32 w = 0;
+    for (i32 i = from; i < all.len(); i++) { w = w + columns(all[i]); }
+    return w;
+  }
+}
+
+/**
+ * Whether this byte is part of a word, for `^W`.
+ *
+ * Letters and digits, and nothing else — which is the kernel's `ALTWERASE` rule and is what this
+ * machine does. So a dot, a slash, a tab and a control character all end a word, and `ls /usr/bin^W`
+ * takes back `bin` rather than `/usr/bin`. A byte over 127 is not a word character here either: a UTF-8
+ * letter arrives as two or three of those, and treating them as one is a question about characters that
+ * a *byte* discipline does not get to answer.
+ */
+bool isWordChar(i32 b) {
+  return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z');
+}
+
+/** How wide this byte is on the screen: a control character is shown as a caret pair. */
+i32 columns(i32 b) {
+  if (b == 9) { return 1; }
+  return b < 32 || b == 127 ? 2 : 1;
+}
+
+/**
+ * What a byte looks like on a terminal.
+ *
+ * Printable bytes are themselves, including bytes over 127 — a UTF-8 character arrives as two or three
+ * of those and is echoed as it came, which is why this is a byte function and not a character one.
+ * Everything below space becomes `^` and a letter, except tab, which the terminal expands itself.
+ */
+u8[] render(i32 b) {
+  // **DEL is a caret pair too, and this said it was one column of itself.** `columns` has always
+  // answered 2 for 0x7f and this answered a bare DEL byte, so the two halves of the same module
+  // disagreed about the same character: a `^V DEL` echoed one raw byte where the kernel echoes `^?`,
+  // and the erase arithmetic then rubbed out two columns for something that had drawn one. Measured
+  // against the pty, which is what the whole module is for and what nothing had asked about DEL.
+  if (b == 127) {
+    u8[] del = u8[2](fill: '^');
+    // `^?`, not `^` plus sixty-four along — DEL is the one that goes the other way, 127 - 64.
+    del[1] = 63;
+    return del;
+  }
+  if (b == 9 || b >= 32) { return u8[1](fill: b); }
+  u8[] out = u8[2](fill: '^');
+  // `^@` for NUL through `^_` for 0x1f: the character sixty-four along, which is the pair the terminal
+  // shows and the arithmetic every terminal does.
+  out[1] = b + 64;
+  return out;
+}
+
+/** Back over `n` columns, erasing as it goes: the three bytes a terminal needs per column. */
+u8[] rubOut(i32 n) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < n; i++) {
+    out.push(8);
+    out.push(32);
+    out.push(8);
+  }
+  return out.take();
+}
+
+/** A newline as a terminal needs it: return, then feed. */
+u8[] crlf() {
+  u8[] out = u8[2](fill: 13);
+  out[1] = 10;
+  return out;
+}

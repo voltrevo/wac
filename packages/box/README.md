@@ -1,0 +1,396 @@
+# box — a busybox, written in wac
+
+63 applets in one program, chosen by the first argument — 62 tools and `help`, which prints the list. No TypeScript: `src/` is
+wac and the only thing outside it is the test suite.
+
+That number is a digit rather than a word because it kept going stale: it said fifty-nine when
+the dispatcher had sixty, and before that forty-two in one paragraph and something else in
+another. `test/box.test.ts` now compares it to the dispatcher, so adding an applet and
+forgetting the sentence is a failing test.
+
+It exists to exercise `packages/platform`'s capability world more widely than a single
+example could, and to be honest about what that world cannot yet do. Where an applet
+falls short of the real tool, it says so in its own file.
+
+```sh
+deno task app:build packages/box/src/box.wac --allow-read --allow-write -o box
+./box grep -i wac README.md
+cat README.md | ./box sort -u | ./box wc -l
+./box du packages
+./box gzip data | ./box gunzip | ./box sha256sum
+```
+
+```
+base32 base64 basename cat cp crc32 cut date diff dirname du echo false find
+fold fsdump get gets grep gunzip gzip head hex httpd init json ls mkdir mv nl paste
+nc ps rev rm rmdir seq serve sha256sum sha512sum shuf sort split sponge stat
+strings tac tail
+tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
+```
+
+111K, drawing on this repo's `crypto`, `codec`, `regex`, `gzip`, `datetime` and `url`
+packages, so it is the widest composition here.
+
+**Several applets are a few lines over a package.** `gzip` is `gzipBest`, `date` is the
+clock capability and `rfc3339.format`, `crc32` and `urlencode` likewise. Those packages
+were written to be called from TypeScript through bindgen and needed no change at all to
+become the inside of a program instead — which is the thing worth showing.
+
+**One applet per file.** `applets/<name>.wac`, always — finding one takes no thought, and
+two people editing different applets do not collide in a 561-line file. `box.wac` is the
+dispatcher and its forty imports are the table of contents; shared parts live in
+`lib/` (`args`, `bytes`, `num`, `lines`, `input`). Splitting thirty files cost 12ms of
+build time, measured before and after.
+
+`true` and `false` are the exception: the dispatcher returning a constant *is* the whole
+applet, and a file containing one `return` would be ceremony rather than clarity. Its tests are differential against the system tools rather than against
+my idea of them: `cat rev nl tac sort sort -r sort -u uniq -c base32 base64 sha256sum
+sha512sum grep grep -i grep -v grep -n grep -c find` all match byte for byte, `du` matches
+`du -sb`, and `head -N`, `tail -n N`, `wc -l/-w/-c` match the real ones' output. `grep`
+returns 1 on no match and 2 on a bad pattern, as it should. The second batch is checked the
+same way: `cut -d -f`, `tr` with ranges, `fold -w` and `strings -n` against the system
+tools, and `gzip`/`gunzip` against the system `gzip` in *both* directions, so neither side
+can be wrong in a way the other cancels out.
+
+Three things it exercises that nothing else did. **One shared option parser** — without it
+`head` was fixed at ten lines and `wc` could not do `-l`, so a dozen applets were
+approximate rather than real. **A recursive walk**, in `find` and `du`, which is the first
+thing to push on `readDir` and `stat` beyond one level. **The write path**, in `cp` and
+`tee`; `cp` needed no new capability at all, being `readFile` and `writeFile` — though it
+is now `readFile`, `writeFile` and `rename`, so that an interrupted copy cannot leave a
+half-written destination.
+
+**It also shows what a multicall binary costs.** `box`'s grants are the *union* of what
+its applets need, so `box echo` carries the filesystem access `box cat` wants. Built as
+separate executables, each would state its own: `wc` needs nothing at all and its shebang
+would say `deno run` with no flags. One binary with 61 entry points is the shape
+BusyBox has to take; it is not the shape this model is best at.
+
+## In a browser
+
+`example/` holds two browser pages, built with `--target browser` and served with the two
+cross-origin isolation headers `SharedArrayBuffer` needs — `box httpd -x` sends them, which
+makes the whole loop wac.
+
+**`example/term.wac` is `packages/sh` in a tab**: pipelines, loops, variables, arithmetic and
+redirection into a filesystem that survives a reload, with the shell unchanged — **and every
+applet in this package as a command you can type**, which is `src/shrun.wac` and one line of
+wiring:
+
+```wac
+sh.external = boxRun;
+```
+
+`sort`, `sha256sum`, `gzip`, `cut`, `diff`, `shuf`, `strings`, `tar`: the same code that runs on a
+command line, in the page. It **spawns** them: a worker can create a worker, and `spawnSelf` needs no
+filesystem, so `sort` is this bundle again with `sort` as its first argument — its own instance, its
+own `SharedArrayBuffer`, its own grants. This paragraph used to say the opposite, because `spawn` was
+Deno-only and `platform` grew `pushChild`/`popChild` instead: they give a function its own argv,
+standard input and working directory and keep what it writes, and an applet cannot tell which way it
+was run.
+
+That is still the fallback, and being indistinguishable is the reason
+[0030](../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md)
+needed a test that could tell them apart: a *called* applet's output is captured and capped at 8 MiB,
+so `seq 1 1500000 | wc -c` truncates, while a *spawned* one's queue drains as the next stage reads it
+and answers what GNU answers. `platform/test/browser_live.test.ts` checks that in a real Chromium.
+
+A `$WACPATH` program still needs a filesystem of worker bundles and so still does not run in a page —
+which is why "run me again with different arguments" is the route that matters here.
+
+Typing into that terminal is also how `sort -n` was found missing: the flag parsed, nothing read
+it, and `seq 1 20 | sort -n` answered 1, 10, 11. The words fixture in the differential test could
+not catch it — every line counts as zero, so honouring the flag and ignoring it agree. There are
+numbers in that test now.
+
+**`example/hash.wac`** hashes and compresses what you type as you type it, from `crypto` and
+`gzip` unchanged: 18KB of text to a SHA-256 and 131 gzipped bytes in about a millisecond, on a
+worker, so the typing stays smooth.
+
+They live here rather than in `packages/platform/example/` because they need `crypto`, `gzip`
+and `sh`, and platform is the package all three sit on top of.
+
+`bin/` shows the other shape, and measures it rather than asserting it. Four applets are
+also built alone — the entry point is four lines and imports the applet file unchanged:
+
+| built alone | shebang | size |
+| --- | --- | --- |
+| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 47K |
+| `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 51K |
+| `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 59K |
+| `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 47K |
+| `box` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 111K |
+
+`wc` and `sha256sum` come out with **no permissions at all** — they read standard input
+and write a line, and a program that only does that needs nothing from anyone. Handed a
+filename, that `wc` says `wc: README.md: filesystem read not granted` and exits 1; it
+cannot be talked past its shebang. Under `box` the same applet carries `--allow-write`,
+because `cp` is in the binary.
+
+That is also why `Args` carries a `name`. A program in this model is never handed its own
+argv[0] — argv starts at its first real argument — so the standalone `wc` would otherwise
+have reported errors as `box:`. Under `box` the name is the applet's; in `bin/` the entry
+point passes it.
+
+## nc, and why it took this long
+
+```sh
+box nc host 80              # stdin to the socket, socket to stdout, both at once
+box nc -8080 -l             # or listen, and relay one connection
+```
+
+I refused to write this three times, and the reason each time was the same: a relay has to
+watch **two** sources. Wait on the socket alone and a client that speaks first is never
+heard; wait on standard input alone and a server that greets you is never printed. Polling
+both with `isDone` spins a core to avoid parking.
+
+`packages/platform` grew `waitAny`, and standard input became handle 0, so both sides are
+the same primitive — two `recv` calls in flight and a park on whichever answers:
+
+```wac
+Pending<u8[]> fromPeer = cli.recv(peer.handle);
+Pending<u8[]> fromUser = cli.recv(0);
+i32 which = core.waitAny(i32[](fromPeer.id, fromUser.id), -1);
+```
+
+The test makes the peer greet *before* reading, so a relay that serviced standard input
+first would hang and one that serviced the socket first would never send. Only watching
+both passes.
+
+## The five that are not filters
+
+```sh
+box serve -8080                          # the built-in routes
+box httpd -8080 ./public                 # a directory, over HTTP
+box get example.com /                    # an HTTP client
+box wget example.com /a.txt out.txt      # ...into a file
+box gets host / ca.der                   # ...over TLS 1.3
+```
+
+`gets` is **TLS 1.3, in wac, over a raw socket**. `packages/tls` needed no changes:
+`tlsClientInit` and `tlsClientFeed` are a state machine over byte arrays, exactly like
+`packages/server`'s, and a state machine is what a socket wants. The applet is the driver
+and the record framing, and nothing else.
+
+Two things to know before reaching for it. It trusts **the one certificate it is handed**,
+because `packages/tls` takes a trust store rather than a flag to skip verification, and
+shipping a copy of Mozilla's list is a different job — so this is a demonstration, not a
+`curl`. And the ephemeral keys come from `randomBytes`, so the world's one unprivileged
+source of entropy is what the handshake's secrecy rests on.
+
+The test runs it against Deno's own TLS server, and checks that a root which did *not*
+sign the certificate is refused with no body produced at all.
+
+`httpd` is the first applet that composes the **network and the filesystem**: accept,
+parse with `packages/http`, map the path to a file, answer. Its path check is the part to
+read — a request target is the one input here that is *supposed* to be hostile, so `..` is
+refused outright rather than resolved, because resolving is where traversal bugs live.
+
+`wget` is `get` with three lines changed: `openOutput` moves where `cli.write` goes, so
+the fetch itself is unchanged and does not know it is writing to a file. `split` is the
+only applet that opens more than one output — everything else opens a file, writes it and
+closes it.
+
+`serve` is `packages/server`'s `serve(input, now)` — a pure state machine, bytes in and a
+response out — wrapped in a socket loop. `get` sends a request and hands the reply to
+`packages/http`'s parser. Neither package needed a change to be put on a socket, which is
+the thing worth showing: they were written for TypeScript bindings and tested against
+byte fixtures.
+
+`serve` handles **one connection at a time**, because the world has no `poll`. That is the
+honest limit of a synchronous capability world. It is also why there is no `nc`: netcat
+must watch standard input and a socket at once, and nothing here can.
+
+`-o` serves one connection and exits. Not `-1` — a leading digit is how this argument
+parser spells a number, so `serve -8080 -1` listened on port 1.
+
+## tar and diff
+
+```sh
+box tar dir | box gzip > x.tgz     # GNU tar can read it
+box diff old new                   # unified, byte-identical to diff -u
+```
+
+`tar` is the widest applet here — `readDir` and `stat` to walk a tree, `readFile` per
+entry, `write` to stream it out. It writes **ustar**, and the test extracts with GNU
+`tar` and compares the trees, rather than round-tripping with its own reader: a checksum
+that is wrong in a self-consistent way would pass the round trip and fail the real
+extractor. It does not do symlinks, permissions, ownership, or names over 100 bytes, and
+refuses each rather than truncating.
+
+`diff` is the only applet that is an algorithm rather than plumbing. Longest common
+subsequence, hunks with three lines of context, and the same exit status as the real one
+— 0 same, 1 different, 2 trouble. The LCS table is O(n·m) in *memory* as well as time, so
+it refuses a pair over 4000 lines rather than dying on it; Myers is what a real diff
+wants. Fourteen shapes are compared byte for byte against `diff -u`.
+
+## sponge, and why the mutation tier exists
+
+```sh
+box sort f | box sponge f     # works
+box sort f > f                # truncates f before sort reads it
+```
+
+`sponge` soaks up all of standard input and only then touches the target, through
+`lib/safe.wac`'s write-beside-and-rename. It is the applet that makes the point of the
+mutation tier visible rather than buried inside `cp`.
+
+## What streams and what does not
+
+Memory scales with the input only where it has to. The audit is worth stating explicitly,
+because "cannot stream" turned out to be wrong twice:
+
+| | applets | why |
+|---|---|---|
+| **Streams** | cat wc hex crc32 sha256sum sha512sum tr strings gzip gunzip head tail nl rev uniq grep cut fold cp split sponge | bounded by a chunk, a line, or a flag |
+| **Cannot** | sort tac | need every line before emitting the first |
+| **Cannot** | fsdump | an image's checksum covers the whole file, so a prefix says nothing |
+| **Cannot** | tee | two sinks at once, and the world has one current output |
+| **Could, given an API** | base64 base32 | `codec` encodes a whole array, including the padding, so a chunk cannot be encoded on its own |
+| **Could, given an API** | zstd unzstd | `packages/zstd` has no streaming form — a package limit, not the world's, and the only row left |
+| **Not worth it** | urlencode urldecode basename dirname date echo seq json stat uuid shuf paste tar diff get wget serve httpd | the input is a line, or the job needs all of it anyway |
+
+Two that are easy to get wrong: **`tail` streams** — it has to *reach* the end but only
+has to *hold* N lines, so a ring of N costs what the flag asks for. **`head` need not
+reach the end at all**, and stops reading once it has its lines: `head -1` of a 176MB file
+returns in 0.036s.
+
+`cp` streams through `lib/safe.wac`, which writes beside the target and renames into
+place. That needed `openOutput`: without it a program could not produce more output to a
+file than fits in memory, and `cp` of a 176MB file peaked near a gigabyte.
+
+## Layout
+
+```
+src/box.wac        the dispatcher, and the table of contents
+src/applets/       one applet per file, always src/applets/<name>.wac
+src/lib/           args, bytes, num, lines, input, reader, safe
+src/bin/           four applets as standalone programs, and three shells:
+                   sh (the host), sealedsh (memory, no grants), imaged (a file)
+test/box.test.ts   every applet against the utility it imitates
+```
+
+## The tests are differential
+
+Each applet is compared against the real tool rather than against anyone's idea of it.
+That is not a stylistic preference: it is how `nl` numbering blank lines and `rev`
+reversing bytes rather than characters were both found, months of use apart, and a
+hand-written expectation would have enshrined both.
+
+It also caught that a missing final newline is not handled uniformly by the real tools —
+`head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
+reasoning from first principles would have produced.
+
+**What a failure says is compared too, not only what a success prints.** Every applet here answers a
+fault category rather than a host sentence, and `platform.wac`'s `reasonOf` turns it into the words the
+real tool uses — so `mkdir` says `File exists` on Deno, on Node, in a browser and under wasmtime, rather
+than four spellings of it with an errno attached. Ten applets printed `c.message` raw until 2026-08-09,
+and two of them had inlined a *one-row* copy of the phrase table beside it, which is drift a row at a
+time. `test/notdir.test.ts` compares the whole `f/g`-where-`f`-is-a-file family against GNU.
+
+**One difference stays, and it is sequencing rather than wording.** GNU's `cp f f/g` and `mv f f/g` say
+`cannot stat 'f/g'`, because coreutils stats the destination first — it has to, to know whether `f/g` is
+a directory to copy *into*. Neither applet here has copy-into-a-directory behaviour, so neither has a
+reason to stat first, and printing "cannot stat" about something never stat'd would be a worse kind of
+wrong than a different prefix. They say GNU's sentence for the failure they actually have: `cannot
+create regular file 'f/g'` and `cannot move 'f' to 'f/g'`. The reason matches; the frame does not, and
+the test asserts that rather than choosing kinder cases.
+
+**Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
+runs each applet with each flag and compares against the counterpart — judging only the flags the real
+tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing
+either. The first answer was **64 accepted and ignored against 5 refused**. A flag accepted and ignored is
+the worst of the three answers this repo ranks: the caller asked for it by name and got no error.
+`base64 -d` re-encoded, `uniq -d` and `-u` filtered nothing, and `echo -n` printed the newline it exists
+to suppress.
+
+**It is now 0 ignored against 7 refused**, over the same 375 flags and 43 applets (wac-mono 0105). Five
+were implemented; the rest are *refused by name* from
+`lib/flags.wac`, which is one table of what each applet reads and one of what the real tool documents,
+and picks between two sentences:
+
+```
+$ box sort -k2      sort: -k is not implemented
+$ box sort -Q       sort: invalid option -- 'Q'
+                    Try 'sort --help' for more information.
+```
+
+The distinction is the whole point. Calling `-k` invalid says the *command* is wrong when only this
+program is unfinished, and it sends a caller to re-read a manual that was right. Both tables are measured
+rather than remembered — `test/flags.test.ts` reads the installed tools' `--help` and the applets' own
+source — which caught three letters missing from the table on the side that produces exactly that wrong
+sentence: `tr -C`, `rm -R` and `split -C`, all of them the *second* spelling on a line GNU writes as
+`-r, -R, --recursive`.
+
+**A long option is one thing, not a run of short ones.** `sort --key=2` went through the loop that reads
+`-iv` and came out refusing the *dash* — `sort: invalid option -- '-'`, naming a character the caller did
+not type. `Args.longOpt` keeps it whole, and since no applet here implements a single long option, the
+answer needs no table:
+
+```
+$ box ls --all      ls: long options are not implemented: --all
+```
+
+That is the one statement that is true of every applet, so this half of the check runs for all of them
+rather than only the twenty-eight with a short-flag table — and GNU's own split between "unrecognized"
+and a real option we lack is one this cannot make honestly, so it claims neither.
+
+Two applets stay outside it, and both are facts about the real tools. `echo` is not a getopt program —
+`echo -x` prints `-x`, so a refusal there would invent an error GNU does not have. And a short
+`acceptedFlags` list holds letters where ignoring *is* GNU's behaviour: `cat -u`, documented as ignored,
+and `tar -c`, which names the only mode this tar has.
+
+**Three divergences are deliberate**, found by the same sweep and not gaps: `stat` prints a one-line
+summary where GNU prints a block, `diff` defaults to unified output where GNU defaults to normal, and
+`du` counts bytes where GNU counts blocks. Each is a different format for the same fact rather than a
+missing answer, which is why none of them is refused.
+
+**`tr` reads the set language**, which it did not: escapes (`\n`, `\t`, `\NNN`), ranges, the twelve
+character classes, `[=c=]` and `[x*n]`, plus `-c -d -s -t`. It took its operands *literally*, so
+`tr '\n' ' '` looked for a backslash and an `n`, found neither, and copied its input through — a no-op
+that looks like working software until you check the bytes (wac-mono 0098, found by typing into the
+browser terminal). `lib/trset.wac` is the language and the applet is what the flags do with it. It takes
+no file operand, because GNU's does not: `tr a-z A-Z < file`.
+
+**`grep` reads basic regular expressions**, as the real one does with no `-E`: `|`, `+`, `?`, `{` and the
+parentheses are literals and their backslashed forms are the operators. It compiled *extended* until
+wac-mono 0104, so `grep 'a|b'` matched a-or-b where GNU matches three characters — a wrong answer with
+nothing said about it. `-E` selects extended, and `packages/regex/src/basic.wac` is the one translation
+both this and `packages/sh`'s grep go through.
+
+**A flag's value attaches or not**, as GNU's do: `cut -f2 -d,` and `cut -f 2 -d ,` are one
+command, `fold -w 40` works as well as `fold -40`, and `head -n 2` as well as `head -2`.
+Only the attached form used to parse, because a detached value would have been left among
+the operands where a filename lives — so `cut -f 2`, which is how `cut` is documented
+everywhere, was a usage error. `takesValue` in `lib/args.wac` is the per-applet table that
+makes the difference: a letter listed there consumes its value, and a letter not listed
+stays a boolean, which is what keeps `grep -n pattern` from swallowing its pattern and
+`sort -n` from swallowing a filename.
+
+**A value that has to be a number is checked, and its sign is read.** `takesValue` says a letter
+consumes its value; it does not say what the value has to *be*, so a value that was not digits was
+consumed and then ignored — `head -n x` printed the default ten lines and exited 0, turning a mistake in
+the command into an answer. `takesNumber` is the second table, and a value that fails it comes back as
+`Args.badNum` with GNU's own sentence, which differs per tool: "invalid number of lines", "…of columns"
+for `fold`, "invalid line count" for `shuf`, and `strings`, being binutils, "invalid integer argument"
+with no quotes at all. Apostrophes rather than typographic quotes, because `LC_ALL=C` is what this repo
+compares in.
+
+`-c` is the same flag in the other unit, and it was not there at all: it parsed as a boolean, so its
+value became an operand and `head -c 3 f` answered "head: 3: No such file or directory" — blaming the
+caller for a real GNU spelling — while `head -c3 f` printed the whole file. Both units take all three
+signed forms, and the noun in a refusal follows the flag, because GNU says "bytes" for `-c` and "lines"
+for `-n` from the same tool.
+
+The sign was dropped the same way. It is not part of the number — it selects a different question, and
+only in one direction per tool: **`head -n -2` is all but the last two** and **`tail -n +2` is from line
+two**, while `head -n +2` and `tail -n -2` are plain. Both are implemented now and both stream: `head`
+holds the last N lines back, `tail` holds nothing at all. Before, `+2` read as 2, so `tail -n +2`
+answered the *last* two — a different answer rather than a missing one, which is worse.
+
+Two answers changed with it, both found by the same sweep. `sort -n` over lines with equal
+numeric keys is byte order, not input order — GNU's *last-resort comparison*, which `-u`
+alone skips, since uniqueness is the key's and `1` and `01` are one line. And `shuf -n 0`
+printed everything, because "absent" and "none" were the same value: the bug closed as
+0034 for `head` and `tail`, surviving in the one applet where nothing could reach it until
+a detached `-n 0` parsed at all.

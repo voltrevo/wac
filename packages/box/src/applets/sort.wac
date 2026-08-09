@@ -1,0 +1,59 @@
+// Lines in byte order. `-r` reverses, `-u` drops duplicates, `-n` orders by the number a line
+// begins with.
+//
+// `-n` was missing and *silently* so: the flag parsed, nothing read it, and `seq 1 20 | sort -n`
+// answered 1, 10, 11 — which is the right answer to a question nobody asked. Found by typing it
+// into the browser shell the day `box`'s applets became commands there.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, readAll } from "../lib/input.wac";
+import { cmpBytes, cmpNumeric, cmpNumericThenBytes, joinLines, mergeSortWith, splitLines } from "../lib/lines.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 sort(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  Input in = readAll(core, cli, fs, a, 0);
+  // **2, not 1.** GNU's `sort` reserves 1 for "the input was not sorted" under `-c` and answers 2 for
+  // anything that went wrong, which a caller checking `$?` can tell apart. `grep` does the same.
+  if (!in.ok) { return 2; }
+  bool reverse = has(a, 'r');
+  bool unique = has(a, 'u');
+  bool numeric = has(a, 'n');
+
+  u8[][] lines = splitLines(in.bytes);
+  i32 n = lines.len();
+  // GNU's *last-resort comparison*: lines whose keys compare equal are ordered by their whole bytes, so
+  // `sort -n` over `b`, `a`, `1` answers `a b 1` where this answered the input's order and called it
+  // stability. `-u` is the exception, and the reason the comparison is chosen here rather than inside
+  // `cmpNumeric`: uniqueness is the key's alone, so `1` and `01` are one line and the survivor is the
+  // first in input order — which is the stable sort's answer with no last resort applied.
+  fn[i32(u8[], u8[])] order = cmpBytes;
+  if (numeric) { order = unique ? cmpNumeric : cmpNumericThenBytes; }
+  u8[][] sorted = mergeSortWith(lines, n, order);
+
+  u8[][] out = u8[][n](fill: u8[0]());
+  i32 at = 0;
+  for (i32 i = 0; i < n; i++) {
+    // `-u` drops what the *sort* considers equal, so `-nu` over `1` and `01` keeps one of them,
+    // as GNU does. Comparing bytes here instead would have made `-nu` mean two different things
+    // depending on how the duplicates were spelled.
+    // `i > 0` first: the comparison reads `sorted[i - 1]`, so hoisting it above the guard reads
+    // index -1 on the first line. It did, and every `sort` in the suite went from a listing to
+    // "array element access out of bounds".
+    bool same = i > 0 &&
+      (numeric
+        ? cmpNumeric(sorted[i], sorted[i - 1]) == 0
+        : cmpBytes(sorted[i], sorted[i - 1]) == 0);
+    if (unique && same) { continue; }
+    out[at] = sorted[i];
+    at++;
+  }
+  if (!reverse) { cli.write(joinLines(out, at)); return 0; }
+
+  u8[][] flipped = u8[][at](fill: u8[0]());
+  for (i32 i = 0; i < at; i++) { flipped[i] = out[at - 1 - i]; }
+  cli.write(joinLines(flipped, at));
+  return 0;
+}

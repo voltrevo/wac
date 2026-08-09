@@ -1,0 +1,796 @@
+// DEFLATE decompressor (RFC 1951) and gzip reader (RFC 1952).
+//
+// Decoding is the mirror of encoding, with one asymmetry that matters: the
+// decoder is fed bytes it did not produce, so every field is untrusted. Bad
+// input must trap rather than read out of bounds or loop forever.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Read } from core;
+import { Tables } from "./tables.wac";
+import { crc32, crc32Start, crc32Finish, crc32Update, crcTable8 } from "./crc32.wac";
+
+i32 maxBits() { return 15; }
+
+// ── Bit reader ────────────────────────────────────────────────────────────────
+
+/**
+ * LSB-first bit reader with lookahead.
+ *
+ * Buffers up to 24 bits so a decoder can *peek* at the next several bits without
+ * consuming them, look the whole code up in a table, and then skip exactly its
+ * length. Reading one bit at a time cannot do that — you have to consume a bit
+ * before you know whether you needed it.
+ *
+ * Peeking past the end of the stream pads with zero bits rather than trapping,
+ * because the last real code in a stream is legitimately shorter than the
+ * lookahead window. Consuming more bits than exist is what traps.
+ */
+struct BitReader {
+  u8[] data;
+  i32 pos;       // next byte to pull into the buffer
+  i32 bitBuf;    // bits not yet consumed, LSB first
+  i32 bitCount;  // how many bits of bitBuf are live
+
+  // Where more input comes from when `data` runs out, or null when `data` is the whole of
+  // it. This is the only difference between decoding a buffer and decoding a stream: the
+  // decoder above never asks where a bit came from, so nothing else in the file changes
+  // shape. `drained` remembers that the source said "no more", so it is asked once.
+  fn[Read()]? source;
+  bool drained;
+  /** Empty unless a read failed: the host's message, so a caller can say why it stopped. */
+  string broken;
+
+  BitReader create(u8[] data, i32 start) {
+    return BitReader(data, start, 0, 0, null, false, "");
+  }
+
+  /** A reader fed by `source`, which says whether it ended or broke. */
+  BitReader streaming(fn[Read()] source) {
+    return BitReader(u8[0](), 0, 0, 0, source, false, "");
+  }
+
+  /** Pull bytes in until at least `need` bits are buffered, or input runs out. */
+  void fill(this, i32 need) {
+    while (this.bitCount < need) {
+      if (this.pos >= this.data.len()) {
+        // Whole-buffer read, or the source is spent: peeking past the end is allowed and
+        // pads with zeros, so this returns rather than trapping. Consuming those bits is
+        // what traps, in `skip`.
+        if ((this.source is null) || this.drained) { return; }
+        // A failed read is treated as the source being spent, and the *caller* is told through
+        // `broken` — trapping here would turn a disk error into an "invalid archive", which is a
+        // diagnosis of the wrong thing.
+        match (this.source!()) {
+          case Data(bytes): { this.data = bytes; this.pos = 0; }
+          case End: { this.drained = true; return; }
+          case Failed(why): { this.drained = true; this.broken = why; return; }
+        }
+      }
+      this.bitBuf |= this.data[this.pos] << this.bitCount;
+      this.pos++;
+      this.bitCount += 8;
+    }
+  }
+
+  /** The next `count` bits without consuming them, zero-padded past the end. */
+  i32 peek(this, i32 count) {
+    this.fill(count);
+    return this.bitBuf & ((1 << count) - 1);
+  }
+
+  /** Consume `count` bits, which must actually be present. */
+  void skip(this, i32 count) {
+    if (count > this.bitCount) { trap; }   // ran off the end of the stream
+    this.bitBuf >>>= count;
+    this.bitCount -= count;
+  }
+
+  i32 readBit(this) {
+    i32 b = this.peek(1);
+    this.skip(1);
+    return b;
+  }
+
+  i32 readBits(this, i32 count) {
+    if (count == 0) { return 0; }
+    i32 v = this.peek(count);
+    this.skip(count);
+    return v;
+  }
+
+  /**
+   * Drop to the next byte boundary.
+   *
+   * Only the partial byte goes; whole bytes stay buffered. This used to push them back by
+   * rewinding `pos` instead, which is equivalent for anyone reading through the buffer and
+   * impossible for a stream — rewinding assumes the bytes behind `pos` are still there, and
+   * with a pull source they may belong to a chunk that has been replaced.
+   *
+   * The one caller that read *around* the buffer, the stored-block copy, now reads through
+   * it. That was the only thing the rewind was for.
+   */
+  void alignByte(this) {
+    i32 drop = this.bitCount & 7;
+    this.bitBuf >>>= drop;
+    this.bitCount -= drop;
+  }
+
+  /** The next whole byte, consumed. Traps at end of input. */
+  i32 readByte(this) {
+    return this.readBits(8);
+  }
+
+  /**
+   * Copy `count` bytes straight into `out`, from a byte-aligned position.
+   *
+   * A stored block is most of an incompressible stream, so this is a hot loop and reading it
+   * a bit at a time is what makes it slow: `readByte` costs a peek, a fill and a skip per
+   * byte, and measured 42% slower over stored input than the array indexing this replaces.
+   *
+   * Assumes `alignByte` has been called, so what remains in the bit buffer is whole bytes.
+   */
+  void copyBytes(this, Window out, i32 count) {
+    i32 left = count;
+
+    // Whole bytes still sitting in the bit buffer, before touching the array.
+    while (left > 0 && this.bitCount >= 8) {
+      out.push(this.bitBuf & 0xFF);
+      this.bitBuf >>>= 8;
+      this.bitCount -= 8;
+      left--;
+    }
+
+    while (left > 0) {
+      if (this.pos >= this.data.len()) {
+        // Running out here is a truncated block, not a legitimate end of stream.
+        if ((this.source is null) || this.drained) { trap; }
+        match (this.source!()) {
+          case Data(bytes): { this.data = bytes; this.pos = 0; }
+          // Running out mid-block is a truncated archive; a failed read is a failed read. Both stop,
+          // and `broken` is what tells them apart afterwards.
+          case End: { this.drained = true; trap; }
+          case Failed(why): { this.drained = true; this.broken = why; trap; }
+        }
+      }
+      i32 n = this.data.len() - this.pos;
+      if (n > left) { n = left; }
+      out.pushBytes(this.data, this.pos, n);
+      this.pos += n;
+      left -= n;
+    }
+  }
+}
+
+// ── Output window ─────────────────────────────────────────────────────────────
+
+/** How far a DEFLATE back-reference can reach. Nothing older than this is ever needed. */
+i32 windowSize() { return 32768; }
+
+/** The longest match the format can express, and so the most one token can write. */
+i32 maxMatch() { return 258; }
+
+/**
+ * Retained output at which a streaming decode hands the front away.
+ *
+ * Emitting costs a copy of everything kept, so a bigger figure means fewer, larger copies:
+ * at 128 KiB the decoder hands over 96 KiB and copies 32 KiB back, one byte copied per
+ * three produced. Dropping it to the window size would copy a byte for every byte.
+ */
+i32 flushAt() { return 1 << 17; }
+
+/**
+ * Output written so far, minus whatever has already been handed away.
+ *
+ * A back-reference reaches up to 32 KiB behind the current position, so that much output
+ * has to stay addressable — but nothing older does. A whole-buffer decode keeps everything
+ * because its caller wants it all at the end; a streaming one gives the front to `sink` and
+ * drops it, which is what bounds memory to the window instead of to the output.
+ *
+ * Positions are **absolute** — bytes ever written — so they do not move when the front is
+ * dropped. `base` is the absolute position of `data[0]`, and the single point where the two
+ * coordinate systems meet.
+ *
+ * The storage is inline rather than a `Buf`, and `flushLimit` is a number rather than a test
+ * of whether there is a sink, both for the same reason: `push` runs once per byte of output,
+ * so anything it does per call is the cost of the decoder. Wrapping a `Buf` put a second
+ * call in that path and measured 14-23% slower on a whole-buffer decode. What is left is one
+ * call and one compare, which is what it was before any of this.
+ *
+ * The checksum is folded in here rather than computed at the end, because by the end a
+ * streaming decode no longer has the bytes to compute it over.
+ */
+struct Window {
+  u8[] data;
+  i32 len;                   // bytes held in `data`
+  i32 base;                  // absolute position of data[0]
+  i32 flushLimit;            // `len` at which to hand the front over
+  fn[bool(u8[])]? sink;      // null for a whole-buffer decode
+  u32[] crcTable;
+  u32 crc;
+
+  /** A window that keeps everything, for a caller that wants the whole output back. */
+  Window create(i32 hint) {
+    i32 cap = hint;
+    if (cap < 64) { cap = 64; }
+    // A limit nothing can reach, so `push` needs no test for whether a sink exists.
+    return Window(u8[cap](), 0, 0, 0x7FFFFFFF, null, u32[0](), 0);
+  }
+
+  /** A window that hands its front to `sink` as it fills, and keeps only what it must. */
+  Window streaming(fn[bool(u8[])] sink) {
+    return Window(u8[flushAt()](), 0, 0, flushAt(), sink, crcTable8(), crc32Start());
+  }
+
+  /** Total bytes ever written, which is also the next absolute position. */
+  i32 total(const this) { return this.base + this.len; }
+
+  void push(this, i32 v) {
+    if (this.len == this.data.len()) { this.grow(); }
+    this.data[this.len] = v;
+    this.len++;
+    if (this.len >= this.flushLimit) { this.emit(); }
+  }
+
+  /**
+   * Copy `len` bytes from absolute position `src`, which may overlap what is being written.
+   *
+   * One call per match rather than one per byte. That matters because it is the inner loop
+   * of every compressible stream — and because handing the front away *before* the copy,
+   * rather than during it, is what lets `base` be read once instead of every iteration.
+   *
+   * Byte at a time inside, deliberately: when the distance is less than the length the copy
+   * reads bytes this same loop is writing, which is how DEFLATE encodes runs. A bulk copy
+   * would read stale bytes.
+   */
+  void pushMatch(this, i32 src, i32 len) {
+    if (this.len + len >= this.flushLimit) { this.emit(); }
+    while (this.len + len > this.data.len()) { this.grow(); }
+    i32 at = src - this.base;
+    i32 to = this.len;
+
+    // The bulk copy moves like `memmove`, which is right when the ranges are apart and wrong
+    // when they overlap: a run wants the bytes this loop is writing, not the ones that were
+    // there before. Most matches are far enough back to take the fast path.
+    if (at + len <= to) {
+      this.data.copyFrom(this.data, at, to, len);
+    } else {
+      u8[] d = this.data;
+      for (i32 k = 0; k < len; k++) {
+        d[to + k] = d[at + k];
+      }
+    }
+    this.len = to + len;
+  }
+
+  /** Append `count` bytes of `src`, growing once rather than per byte. */
+  void pushBytes(this, u8[] src, i32 start, i32 count) {
+    while (this.len + count > this.data.len()) { this.grow(); }
+    this.data.copyFrom(src, start, this.len, count);
+    this.len += count;
+    if (this.len >= this.flushLimit) { this.emit(); }
+  }
+
+  void grow(this) {
+    // `create` never starts below 64, so doubling cannot land under it.
+    i32 cap = this.data.len() * 2;
+    u8[] bigger = u8[cap]();
+    bigger.copyFrom(this.data, 0, 0, this.len);
+    this.data = bigger;
+  }
+
+  /**
+   * Hand over everything except what a back-reference can still need.
+   *
+   * `windowSize() + maxMatch()` rather than `windowSize()`, which is what makes it safe to
+   * call this from inside `push`: a match copy reads bytes the same loop is writing, so an
+   * emit part-way through one must not drop anything it is about to read back. The furthest
+   * back it reads is 32 KiB, and the most it can write before the loop ends is 258 — keeping
+   * both means the read position can never fall behind `base`.
+   *
+   * A sink that returns false has stopped caring, and there is nothing useful to do about it
+   * here: the bytes are dropped either way, so the decode keeps its memory bound, and the
+   * refusal surfaces as the caller's own return value.
+   */
+  void emit(this) {
+    // Every caller reaches this only once `len` is past `flushLimit`, which is far above
+    // `keep`, so there is always something to hand over.
+    i32 keep = windowSize() + maxMatch();
+    i32 n = this.len - keep;
+    u8[] out = u8[n]();
+    out.copyFrom(this.data, 0, 0, n);
+    this.crc = crc32Update(this.crcTable, this.crc, out);
+    this.sink!(out);
+
+    // A self-copy towards the front, which `memmove` semantics get right.
+    this.data.copyFrom(this.data, n, 0, keep);
+    this.len = keep;
+    this.base += n;
+  }
+
+  /** End of stream: nothing more can be referenced, so nothing needs keeping. */
+  void finish(this) {
+    if (this.sink is null) { return; }
+    if (this.len == 0) { return; }
+    u8[] out = u8[this.len]();
+    out.copyFrom(this.data, 0, 0, this.len);
+    this.crc = crc32Update(this.crcTable, this.crc, out);
+    this.sink!(out);
+    this.base += this.len;
+    this.len = 0;
+  }
+
+  /**
+   * The whole output, for the non-streaming path.
+   *
+   * The exactly-full case hands the array over rather than copying it, which is not a
+   * micro-optimisation: a gzip member carries its output size in its trailer, so the buffer
+   * is allocated at exactly the right length and this is the case that always happens.
+   * Copying instead costs a memcpy of the entire output, and measured 10-15% of the decode.
+   */
+  u8[] take(this) {
+    if (this.len == this.data.len()) {
+      u8[] out = this.data;
+      this.data = u8[0]();
+      this.len = 0;
+      return out;
+    }
+    u8[] out = u8[this.len]();
+    for (i32 i = 0; i < this.len; i++) {
+      out[i] = this.data[i];
+    }
+    this.data = u8[0]();
+    this.len = 0;
+    return out;
+  }
+}
+
+// ── Canonical Huffman decoding ────────────────────────────────────────────────
+
+// Root table width. A 9-bit table is 512 entries, small enough to build per
+// block and wide enough that almost every symbol in real data is one lookup:
+// literals in a dynamic block are typically 6-9 bits. Codes longer than this fall
+// back to the bit-by-bit walk, which is rare enough not to matter.
+i32 rootBits() { return 9; }
+
+/** Reverse the low `len` bits of `code` — see Decoder.build for why. */
+i32 reverseBits(i32 code, i32 len) {
+  i32 out = 0;
+  for (i32 i = 0; i < len; i++) {
+    out = (out << 1) | ((code >>> i) & 1);
+  }
+  return out;
+}
+
+/**
+ * A canonical code in two forms: a root lookup table for the common case, and the
+ * count/symbol arrays for codes too long to fit in it.
+ *
+ * The table is indexed by the next `rootBits()` bits of the stream *as they
+ * arrive*. Huffman codes go most-significant-bit first while the reader hands
+ * bits back least-significant-first, so a code's table index is its bit-reversal
+ * — and every index sharing those low bits maps to the same symbol, which is what
+ * makes one lookup replace a loop.
+ *
+ * Entries pack length and symbol as (len << 16) | sym. Zero means "no code here",
+ * which is unambiguous because a real entry always has len >= 1.
+ */
+struct Decoder {
+  i32[] count;    // count[len], len 0..15
+  i32[] symbol;   // symbols sorted by (len, symbol)
+  i32[] fast;     // 1 << rootBits() entries
+
+  Decoder build(i32[] lengths, i32 n) {
+    i32[] count = i32[maxBits() + 1]();
+    for (i32 i = 0; i < n; i++) {
+      count[lengths[i]]++;
+    }
+    count[0] = 0;   // unused symbols are not codes
+
+    // Offset of each length's first symbol in the sorted table.
+    i32[] offs = i32[maxBits() + 2]();
+    for (i32 len = 1; len <= maxBits(); len++) {
+      offs[len + 1] = offs[len] + count[len];
+    }
+
+    i32[] symbol = i32[n]();
+    for (i32 i = 0; i < n; i++) {
+      if (lengths[i] > 0) {
+        symbol[offs[lengths[i] + 1 - 1]] = i;
+        offs[lengths[i] + 1 - 1]++;
+      }
+    }
+
+    // Walk the code space in canonical order, filling every table slot that a
+    // short code claims. A code of length L owns all indices congruent to its
+    // reversal modulo 2^L, because the bits above L are not part of it.
+    i32 size = 1 << rootBits();
+    i32[] fast = i32[size]();
+    i32 code = 0;
+    i32 next = 0;
+    for (i32 len = 1; len <= maxBits(); len++) {
+      for (i32 k = 0; k < count[len]; k++) {
+        i32 sym = symbol[next];
+        next++;
+        if (len <= rootBits()) {
+          i32 entry = (len << 16) | sym;
+          i32 step = 1 << len;
+          for (i32 idx = reverseBits(code, len); idx < size; idx += step) {
+            fast[idx] = entry;
+          }
+        }
+        code++;
+      }
+      code <<= 1;
+    }
+
+    return Decoder(count, symbol, fast);
+  }
+
+  /**
+   * Read one symbol.
+   *
+   * One table lookup for codes up to rootBits() long. Otherwise fall through to
+   * the canonical walk: `code` accumulates bits, `first` is the first code of the
+   * current length and `index` its position in the symbol table, so a code inside
+   * this length's range names a symbol directly.
+   *
+   * The walk reads from a peeked window rather than consuming as it goes, so
+   * nothing is consumed until the length is known — which is what lets the fast
+   * path skip exactly the right number of bits.
+   */
+  i32 decode(const this, BitReader br) {
+    i32 entry = this.fast[br.peek(rootBits())];
+    if (entry != 0) {
+      br.skip(entry >>> 16);
+      return entry & 0xFFFF;
+    }
+
+    i32 window = br.peek(maxBits());
+    i32 code = 0;
+    i32 first = 0;
+    i32 index = 0;
+    for (i32 len = 1; len <= maxBits(); len++) {
+      code |= (window >>> (len - 1)) & 1;
+      i32 count = this.count[len];
+      if (code - first < count) {
+        br.skip(len);
+        return this.symbol[index + (code - first)];
+      }
+      index += count;
+      first = (first + count) << 1;
+      code <<= 1;
+    }
+    trap;   // no code matched in 15 bits — corrupt stream
+  }
+}
+
+// ── Fixed and dynamic code construction ───────────────────────────────────────
+
+/** The fixed literal/length code lengths, RFC 1951 section 3.2.6. */
+i32[] fixedLitLengths() {
+  i32[] lengths = i32[288]();
+  for (i32 i = 0; i <= 143; i++)   { lengths[i] = 8; }
+  for (i32 i = 144; i <= 255; i++) { lengths[i] = 9; }
+  for (i32 i = 256; i <= 279; i++) { lengths[i] = 7; }
+  for (i32 i = 280; i <= 287; i++) { lengths[i] = 8; }
+  return lengths;
+}
+
+i32[] fixedDistLengths() {
+  i32[] lengths = i32[30]();
+  for (i32 i = 0; i < 30; i++) {
+    lengths[i] = 5;
+  }
+  return lengths;
+}
+
+// The code-length code order from RFC 1951 §3.2.7. A module-level constant, so
+// it is built once at instantiation rather than on every call.
+const i32[] CL_ORDER = i32[](16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15);
+
+/**
+ * Read a dynamic block's two code tables. Returns the literal/length lengths
+ * followed by the distance lengths, with the split at `hlit` — returned via the
+ * array's own layout because wac has no tuples.
+ */
+i32[] readDynamicLengths(BitReader br, i32[] outSplit) {
+  i32 hlit = br.readBits(5) + 257;
+  i32 hdist = br.readBits(5) + 1;
+  i32 hclen = br.readBits(4) + 4;
+  if (hlit > 286 || hdist > 30) { trap; }   // beyond what the format defines
+
+  // The code-length code, sent in a fixed permuted order.
+  i32[] order = CL_ORDER;
+  i32[] clLengths = i32[19]();
+  for (i32 i = 0; i < hclen; i++) {
+    clLengths[order[i]] = br.readBits(3);
+  }
+  Decoder cl = Decoder.build(clLengths, 19);
+
+  // Both tables arrive as one run-length encoded sequence.
+  i32 total = hlit + hdist;
+  i32[] lengths = i32[total]();
+  i32 i = 0;
+  while (i < total) {
+    i32 sym = cl.decode(br);
+    if (sym < 16) {
+      lengths[i] = sym;
+      i++;
+    } else if (sym == 16) {
+      if (i == 0) { trap; }                 // nothing to repeat
+      i32 prev = lengths[i - 1];
+      i32 run = br.readBits(2) + 3;
+      for (i32 k = 0; k < run; k++) {
+        if (i >= total) { trap; }           // run overflows the table
+        lengths[i] = prev;
+        i++;
+      }
+    } else if (sym == 17) {
+      i32 run = br.readBits(3) + 3;
+      for (i32 k = 0; k < run; k++) {
+        if (i >= total) { trap; }
+        lengths[i] = 0;
+        i++;
+      }
+    } else {
+      i32 run = br.readBits(7) + 11;
+      for (i32 k = 0; k < run; k++) {
+        if (i >= total) { trap; }
+        lengths[i] = 0;
+        i++;
+      }
+    }
+  }
+
+  outSplit[0] = hlit;
+  outSplit[1] = hdist;
+  return lengths;
+}
+
+// ── Block decoding ────────────────────────────────────────────────────────────
+
+/** Decode one Huffman-coded block into `out`, literal by literal and match by match. */
+void inflateBlock(BitReader br, Window out, Tables t, Decoder lit, Decoder dist) {
+  bool endOfBlock = false;
+  while (!endOfBlock) {
+    i32 sym = lit.decode(br);
+    if (sym < 256) {
+      out.push(sym);
+    } else if (sym == 256) {
+      endOfBlock = true;
+    } else {
+      i32 li = sym - 257;
+      if (li >= 29) { trap; }               // 286 and 287 are not valid lengths
+      i32 len = t.lenBase[li] + br.readBits(t.lenExtra[li]);
+
+      i32 di = dist.decode(br);
+      // Unreachable as things stand, and kept anyway. `decode` only returns symbols
+      // from the table it was built with, and both distance decoders are built with at
+      // most 30 entries — the fixed one with exactly 30, the dynamic one with `hdist`,
+      // which `readDynamicLengths` has already bounded at 30. So `di` cannot reach 30,
+      // and a stream using distance code 30 or 31 traps inside `decode` for want of a
+      // matching code rather than here.
+      //
+      // The literal/length check above is *not* in the same position, which is the
+      // asymmetry worth knowing: the fixed literal code is built with 288 entries, so
+      // the two reserved symbols 286 and 287 decode successfully and have to be caught
+      // right here. The fixed distance code stops at 30 and never produces its own
+      // reserved pair.
+      //
+      // Left in because it is one compare, and it stops being dead the moment either
+      // of those two facts changes — widening the fixed distance table to the 32
+      // patterns a 5-bit code can express is a change some implementations make.
+      if (di >= 30) { trap; }
+      i32 d = t.distBase[di] + br.readBits(t.distExtra[di]);
+      if (d > out.base + out.len) { trap; } // reference before the start of output
+
+      // Byte at a time, deliberately: when d < len the copy reads bytes this
+      // same loop is writing, which is how DEFLATE encodes runs. A bulk copy
+      // would read stale bytes.
+      out.pushMatch(out.base + out.len - d, len);
+    }
+  }
+}
+
+/**
+ * Largest output size hint that will be trusted for pre-allocation.
+ *
+ * The hint comes from the gzip trailer, which is attacker-controlled: a stream can
+ * claim any size at all. Allocating on that would turn a 30-byte input into a
+ * 4 GB request, so an implausible hint is ignored and the buffer grows normally
+ * instead. Getting the hint wrong costs speed, never correctness.
+ */
+i32 maxSizeHint() { return 1 << 26; }   // 64 MiB
+
+/**
+ * Decode every DEFLATE block from `br` into `out`.
+ *
+ * The whole of the format, and the only copy of it: a buffer decode and a stream decode
+ * differ in where `br` gets its bytes and what `out` does with them, not here.
+ */
+void inflateInto(BitReader br, Window out) {
+  Tables t = Tables.create();
+
+  bool last = false;
+  while (!last) {
+    last = br.readBit() == 1;
+    i32 btype = br.readBits(2);
+
+    if (btype == 0) {
+      // Stored: byte-aligned, with a length and its complement.
+      // Through the reader rather than indexing the input array, which a stream does not
+      // have in one piece. Running off the end now traps inside `skip` instead of against
+      // an explicit bounds check — same outcome, and it works when the end moves.
+      br.alignByte();
+      i32 len = br.readBits(16);
+      i32 nlen = br.readBits(16);
+      if ((len ^ 0xFFFF) != nlen) { trap; }  // the check the format builds in
+      br.copyBytes(out, len);
+    } else if (btype == 1) {
+      inflateBlock(br, out, t,
+        Decoder.build(fixedLitLengths(), 288),
+        Decoder.build(fixedDistLengths(), 30));
+    } else if (btype == 2) {
+      i32[] split = i32[2]();
+      i32[] lengths = readDynamicLengths(br, split);
+      i32 hlit = split[0];
+      i32 hdist = split[1];
+
+      i32[] litLengths = i32[hlit]();
+      for (i32 i = 0; i < hlit; i++) {
+        litLengths[i] = lengths[i];
+      }
+      i32[] distLengths = i32[hdist]();
+      for (i32 i = 0; i < hdist; i++) {
+        distLengths[i] = lengths[hlit + i];
+      }
+      inflateBlock(br, out, t,
+        Decoder.build(litLengths, hlit),
+        Decoder.build(distLengths, hdist));
+    } else {
+      trap;   // BTYPE 11 is reserved
+    }
+  }
+}
+
+/**
+ * Decompress a raw DEFLATE stream starting at `start`.
+ *
+ * `sizeHint` is the expected output length, or 0 if unknown. When it is right —
+ * which it is for any well-formed gzip member — the output buffer is allocated
+ * once at the correct size and handed back without a copy.
+ */
+u8[] inflateFrom(u8[] data, i32 start, i32 sizeHint) {
+  i32 hint = sizeHint;
+  if (hint < 0 || hint > maxSizeHint()) { hint = 0; }
+  Window out = Window.create(hint);
+  inflateInto(BitReader.create(data, start), out);
+  out.finish();          // a no-op for a window with no sink, and says so in one place
+  return out.take();
+}
+
+/** Decompress a raw DEFLATE stream. */
+export u8[] inflate(u8[] data) {
+  return inflateFrom(data, 0, 0);
+}
+
+/**
+ * Read a gzip member: validate the header, inflate the payload, and check both
+ * trailer fields. A CRC or length mismatch traps — silently returning data that
+ * failed its own integrity check would defeat the point of carrying one.
+ */
+export u8[] gunzipBytes(u8[] gz) {
+  if (gz.len() < 18) { trap; }                    // header + empty body + trailer
+  if (gz[0] != 0x1F || gz[1] != 0x8B) { trap; }   // magic
+  if (gz[2] != 8) { trap; }                       // CM must be deflate
+
+  i32 flg = gz[3];
+  i32 pos = 10;                                   // fixed header size
+
+  if ((flg & 4) != 0) {                           // FEXTRA
+    i32 xlen = gz[pos] | (gz[pos + 1] << 8);
+    pos += 2 + xlen;
+  }
+  if ((flg & 8) != 0) {                           // FNAME, NUL-terminated
+    while (pos < gz.len() && gz[pos] != 0) { pos++; }
+    pos++;
+  }
+  if ((flg & 16) != 0) {                          // FCOMMENT, NUL-terminated
+    while (pos < gz.len() && gz[pos] != 0) { pos++; }
+    pos++;
+  }
+  if ((flg & 2) != 0) {                           // FHCRC
+    pos += 2;
+  }
+  if (pos >= gz.len()) { trap; }
+
+  // Trailer: CRC-32 then ISIZE, both little-endian, in the last 8 bytes. ISIZE is
+  // read before inflating so it can size the output buffer — it is a hint only,
+  // and still checked against the actual output below.
+  i32 n = gz.len();
+  // The trailer CRC is a bit pattern, so it is a u32 — which is also what
+  // crc32 returns, so the comparison needs no cast either way.
+  u32 wantCrc = (gz[n - 8] | (gz[n - 7] << 8) | (gz[n - 6] << 16) | (gz[n - 5] << 24)) as@ u32;
+  i32 wantSize = gz[n - 4] | (gz[n - 3] << 8) | (gz[n - 2] << 16) | (gz[n - 1] << 24);
+
+  u8[] out = inflateFrom(gz, pos, wantSize);
+  if (crc32(out) != wantCrc) { trap; }
+  if (out.len() != wantSize) { trap; }
+  return out;
+}
+
+// ── Streaming ─────────────────────────────────────────────────────────────────
+
+/**
+ * Read a gzip member from `read` and hand the decompressed bytes to `write` as they appear.
+ *
+ * The streaming counterpart to `gunzipBytes`, and the reason the two exist side by side is
+ * the trailer. A buffer decode reads the CRC and length from the *last* eight bytes before
+ * it starts, which is how it can pre-size the output — a stream has no last eight bytes
+ * until it gets there, so it checksums as it goes and checks at the end. Same guarantees,
+ * opposite order.
+ *
+ * `read` says whether the input ended or broke; `write` returns false to stop caring about the rest.
+ * **Returns 0 on success and 1 when the input failed**, and traps on a malformed member or a failed
+ * integrity check, exactly as `gunzipBytes` does — returning data that failed its own checksum would
+ * defeat the point of carrying one.
+ *
+ * A read that fails and a member that is truncated are different things, and only the first is worth
+ * reporting as an I/O error: the second is a corrupt archive. `Read` is what tells them apart, and
+ * before it existed both arrived as "no more bytes" and this trapped for either.
+ *
+ * The shape is the one `wac-mono/packages/stream` drives, so this streams through a
+ * `wacTransformStream` with no glue.
+ */
+export i32 gunzipStream(fn[Read()] read, fn[bool(u8[])] write) {
+  BitReader br = BitReader.streaming(read);
+
+  if (br.readByte() != 0x1F || br.readByte() != 0x8B) { trap; }   // magic
+  if (br.readByte() != 8) { trap; }                               // CM must be deflate
+
+  i32 flg = br.readByte();
+  br.readBits(16);                                // MTIME, low half
+  br.readBits(16);                                // MTIME, high half
+  br.readByte();                                  // XFL
+  br.readByte();                                  // OS
+
+  if ((flg & 4) != 0) {                           // FEXTRA
+    i32 xlen = br.readBits(16);
+    for (i32 i = 0; i < xlen; i++) { br.readByte(); }
+  }
+  if ((flg & 8) != 0) {                           // FNAME, NUL-terminated
+    while (br.readByte() != 0) { }
+  }
+  if ((flg & 16) != 0) {                          // FCOMMENT, NUL-terminated
+    while (br.readByte() != 0) { }
+  }
+  if ((flg & 2) != 0) {                           // FHCRC
+    br.readBits(16);
+  }
+
+  Window out = Window.streaming(write);
+  inflateInto(br, out);
+  out.finish();
+
+  // The trailer starts at the next byte boundary after the compressed data.
+  br.alignByte();
+  u32 wantCrc = (br.readByte() | (br.readByte() << 8)
+              | (br.readByte() << 16) | (br.readByte() << 24)) as@ u32;
+  i32 wantSize = br.readByte() | (br.readByte() << 8)
+              | (br.readByte() << 16) | (br.readByte() << 24);
+
+  if (crc32Finish(out.crc) != wantCrc) { trap; }
+  if (out.total() != wantSize) { trap; }
+  // **A source failure and a corrupt archive are indistinguishable from here**, and this used to claim
+  // otherwise: it ended `return br.broken == "" ? 0 : 1`, over a comment about telling a caller that
+  // its output is only the first part of its data. The `1` is unreachable. wac-mono 0102 has the
+  // argument and it holds — after a failed read the reader is drained with at most 32 bits, and every
+  // path to here still needs an eight-byte trailer, so the read traps before this line.
+  //
+  // What it would take is not a line: the two places that run out of input — `skip`, and `copyBytes`'s
+  // loop — trap, and a decoder cannot report anything past a trap. Not trapping means threading a
+  // status back through every symbol read, and a decoder that keeps going after a failed read with a
+  // status nobody checked is how silent corruption is written. So the promise is withdrawn rather than
+  // half-kept, and `0102` records the shape a real fix has.
+  return 0;
+}

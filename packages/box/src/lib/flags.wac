@@ -1,0 +1,189 @@
+// What each applet's flags are, and what to say about one it does not have.
+//
+// wac-mono 0105 measured that 64 flags across these applets were **accepted and ignored**: a caller wrote
+// `sort -k2`, got no error, and got output sorted the way `sort` sorts without a key. `gaps.test.ts` in
+// `packages/sh` states this repo's ranking of the three things a gap can do, and that is the worst of
+// them — worse than refusing, because nothing about it looks wrong.
+//
+// This is the refusal, in one place, with the same two sentences `packages/sh`'s `optionRefusal` uses and
+// for the same reason:
+//
+//   - a letter the **real tool has** and this one does not is *our* gap: `sort: -k is not implemented`;
+//   - a letter the real tool does not have either is a mistake in the command, and gets GNU's own
+//     `sort: invalid option -- 'Q'` and its `Try …` line.
+//
+// Saying "invalid option" for a real flag blames the caller for something they read in a manual. Saying
+// "not implemented" for a letter that never existed sends them looking for a feature nobody has.
+//
+// **Both tables are measured, not remembered.** `gnuFlags` is what the installed tool's own `--help`
+// documents, and `test/flags.test.ts` re-reads it so this cannot drift from the coreutils on this
+// machine — the same guard `packages/sh/test/gaps.test.ts` is. `implementedFlags` is what the applet
+// actually reads, which is a different question from what it was meant to read, and the difference is
+// what 0105 is about.
+
+import { Core } from "../../../platform/src/platform.wac";
+import { needsValue } from "./operands.wac";
+import { Args } from "./args.wac";
+
+/**
+ * Refuse any flag this applet does not implement. True when it did, and the caller should stop.
+ *
+ * An applet not in `flagsChecked` is left alone: "implements no flags" and "not in the table" are
+ * different facts and an empty string cannot tell them apart, so the two are asked separately. Refusing
+ * everything for an applet nobody listed would be a worse failure than the one this fixes.
+ */
+export bool refuseFlags(Core core, Args a) {
+  // A flag that takes a value and was given none — `head -n`, `fold -w`. The parser records it because
+  // it has no `Core` to complain through; this is the first place that does.
+  //
+  // Through `needsValue`, which is where that sentence lives. It was written there and copied here, so
+  // there were two of them and only this one ran — `deno task dead` found the other by noticing that
+  // nothing called it, which is what an unused name usually means when a duplicate is nearby.
+  if (a.missingValue != "") {
+    needsValue(core, a.name, a.missingValue);
+    return true;
+  }
+  // **No applet here implements a single long option**, so there is no table for them and no need of
+  // one: the statement that covers every case is that this program takes short options only. GNU
+  // separates "a long option we do not have" from "a long option nobody has" and this cannot, so it
+  // claims neither — saying "unrecognized" would blame a caller who wrote `--reverse`, which is real.
+  if (a.longOpt != "") {
+    core.warn(a.name + ": long options are not implemented: " + a.longOpt);
+    return true;
+  }
+  if (!flagsChecked(a.name)) { return false; }
+  string mine = implementedFlags(a.name);
+  string free = acceptedFlags(a.name);
+  u8[] flags = a.flags.toBytes();
+  for (i32 i = 0; i < flags.len(); i++) {
+    if (contains(mine, flags[i]) || contains(free, flags[i])) { continue; }
+    string letter = string.fromBytes(u8[1](fill: flags[i]));
+    if (contains(gnuFlags(a.name), flags[i])) {
+      // Our gap, so our words: GNU's "Try --help" would be pointing at the wrong manual.
+      core.warn(a.name + ": -" + letter + " is not implemented");
+    } else {
+      core.warn(a.name + ": invalid option -- '" + letter + "'");
+      core.warn("Try '" + a.name + " --help' for more information.");
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The letters each applet actually acts on.
+ *
+ * Read out of the applets rather than out of their documentation: what a program *reads* is the only
+ * honest answer, and the gap between that and what it advertises is the whole of 0105. A numeric flag
+ * that arrives through `Args.num` — `head -n`, `fold -w`, `split -l` — counts as implemented here even
+ * though the applet never names it with `has`.
+ */
+export string implementedFlags(string name) {
+  if (name == "base32" || name == "base64") { return "dw"; }
+  if (name == "cat") { return "AETbenstv"; }
+  if (name == "cut") { return "bcdf"; }
+  if (name == "grep") { return "EILacilnqvx"; }
+  if (name == "head") { return "cn"; }
+  if (name == "tail") { return "cn"; }
+  if (name == "sort") { return "nru"; }
+  if (name == "uniq") { return "cdu"; }
+  if (name == "wc") { return "clw"; }
+  if (name == "tr") { return "Ccdst"; }
+  if (name == "fold") { return "w"; }
+  if (name == "split") { return "l"; }
+  if (name == "shuf") { return "n"; }
+  if (name == "strings") { return "n"; }
+  if (name == "mkdir") { return "p"; }
+  if (name == "rm") { return "Rfr"; }
+  if (name == "nl") { return ""; }
+  if (name == "paste") { return ""; }
+  if (name == "ps") { return ""; }
+  if (name == "tac") { return ""; }
+  if (name == "du") { return ""; }
+  if (name == "stat") { return ""; }
+  if (name == "basename") { return ""; }
+  if (name == "dirname") { return ""; }
+  if (name == "sha256sum" || name == "sha512sum") { return ""; }
+  if (name == "rev") { return ""; }
+  if (name == "seq") { return ""; }
+  return "";
+}
+
+/**
+ * Letters accepted without being read, because doing nothing with them *is* the real tool's behaviour.
+ *
+ * A short list on purpose, and each entry has to be a fact about the real tool rather than about our
+ * convenience. `cat -u` is documented as "ignored, for POSIX compatibility" and GNU ignores it too, so
+ * accepting it agrees with GNU rather than papering over a gap. `tar -c` asks for the archive this
+ * applet unconditionally makes — it is the only mode there is here, so the flag names what already
+ * happens. Anything whose absence a caller could *observe* belongs in `implementedFlags` or nowhere.
+ */
+export string acceptedFlags(string name) {
+  if (name == "cat") { return "u"; }
+  if (name == "tar") { return "c"; }
+  return "";
+}
+
+/**
+ * Whether this applet is one whose flags are checked at all.
+ *
+ * Separate from `implementedFlags` because an applet that implements *no* flags — `nl`, `tac`, `rev` —
+ * still wants every flag refused, and an empty string cannot say the difference between "no flags" and
+ * "not in the table". Getting that wrong would have made `nl -b` silently allowed, which is where it
+ * started.
+ */
+export bool flagsChecked(string name) {
+  // Not `echo`: it is not a getopt program. `echo -x` prints `-x`, so a refusal there would be an error
+  // the real tool does not have — the same blaming-the-caller failure this whole file exists to avoid.
+  return name == "base32" || name == "base64" || name == "cat" || name == "grep"
+      || name == "head" || name == "tail" || name == "sort" || name == "uniq" || name == "wc"
+      || name == "tr" || name == "fold" || name == "split" || name == "shuf" || name == "strings"
+      || name == "mkdir" || name == "rm" || name == "nl" || name == "tac" || name == "du"
+      || name == "stat" || name == "basename" || name == "dirname" || name == "sha256sum"
+      || name == "sha512sum" || name == "rev" || name == "seq" || name == "tar" || name == "cut" || name == "paste" || name == "ps";
+}
+
+/**
+ * The short options each real tool documents, from its own `--help`.
+ *
+ * `test/flags.test.ts` reads the installed tools and compares, so a table that drifts from the coreutils
+ * on this machine fails rather than quietly mis-classifying a refusal.
+ */
+export string gnuFlags(string name) {
+  if (name == "base32" || name == "base64") { return "diw"; }
+  if (name == "sha256sum" || name == "sha512sum") { return "bctwz"; }
+  if (name == "basename") { return "asz"; }
+  if (name == "cat") { return "AETbenstuv"; }
+  if (name == "cut") { return "Mbcdfnsz"; }
+  if (name == "dirname") { return "z"; }
+  if (name == "paste") { return "dsz"; }
+  if (name == "du") { return "BDHLPSXabcdhklmstx"; }
+  if (name == "fold") { return "bsw"; }
+  if (name == "grep") { return "ABCDEFGHILPRTUVZabcdefhilmnoqrsvwxz"; }
+  if (name == "head") { return "cnqvz"; }
+  if (name == "mkdir") { return "Zmpv"; }
+  if (name == "nl") { return "bdfhilnpsvw"; }
+  if (name == "rev") { return "Vh"; }
+  if (name == "rm") { return "IRdfirv"; }
+  if (name == "seq") { return "fsw"; }
+  if (name == "shuf") { return "einorz"; }
+  if (name == "sort") { return "CMRSTVbcdfghikmnorstuz"; }
+  if (name == "split") { return "Cabdelntux"; }
+  if (name == "stat") { return "Lcft"; }
+  if (name == "strings") { return "TUadefhnostvw"; }
+  if (name == "tac") { return "brs"; }
+  if (name == "tail") { return "Fcfnqsvz"; }
+  if (name == "tar") { return "ABCFGHIJKLMNOPRSTUVWXZabcdfghijklmnoprstuvwxz"; }
+  if (name == "tr") { return "Ccdst"; }
+  if (name == "uniq") { return "Dcdfisuwz"; }
+  if (name == "wc") { return "Lclmw"; }
+  return "";
+}
+
+bool contains(string letters, i32 c) {
+  u8[] b = letters.toBytes();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == c) { return true; }
+  }
+  return false;
+}

@@ -1,0 +1,129 @@
+// A file cut into pieces of N lines. `box split -1000 big.txt part-`.
+//
+// The first applet that opens more than one output. Everything else opens a file, writes
+// it and closes it; this switches the current output for each piece, which is the part of
+// `openOutput` nothing had exercised.
+
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
+import { Args, badNumberMessage } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { Input, openStream } from "../lib/input.wac";
+import { Feed, Line, Lines, emit, nextLine } from "../../../platform/src/stream.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { Buf } from "../../../bytes/src/buf.wac";
+
+export i32 split(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  if (extraOperand(core, a, 2)) { return 1; }
+  if (a.rest.len() < 1) {
+    core.warn("usage: " + a.name + " [-<lines>] <file> [prefix]");
+    return 2;
+  }
+  if (a.badNum != "") { core.warn(badNumberMessage(a)); return 1; }
+  i32 per = a.hasNum ? a.num : 1000;
+  // Zero lines a piece is not a small piece, it is no piece: the counter never reaches the limit and every
+  // line lands in the first file, or — depending where the check goes — a new file is opened per line
+  // for ever. `split -0` used to exit 0 having done nothing at all, which is the worst of the three.
+  if (per <= 0) {
+    core.warn(a.name + ": invalid number of lines: '" + itoa(per) + "'");
+    return 1;
+  }
+  string prefix = a.rest.len() > 1 ? a.rest[1] : "x";
+
+  Input in = openStream(core, cli, fs, a, 0, -1);
+  if (!in.ok) { return 1; }
+
+  Lines s = Lines.create();
+  // The feed the opener chose — see `lib/input.wac`; not the process's own input.
+  Feed fed = in.fed;
+  // **Which way the pieces are written is decided by the filesystem, not assumed.** `openOutput`
+  // redirects this process's standard output to a file, which is a capability the host has and a memory
+  // image does not — so on anything but a host mount the piece is collected and written with one
+  // `writeFile`. It is the same split `lib/input.wac` makes for reading and `lib/safe.wac` for the
+  // atomic write, and without it `split` in a sealed session refused every piece for want of a grant it
+  // should never have needed (wac-mono 0109's write side).
+  bool streaming = fs.isHostPath(prefix + suffix(0));
+  i32 piece = 0;
+  i32 written = 0;
+  bool open = false;
+  Buf held = Buf.create();
+  string name = "";
+  while (true) {
+    Line l = nextLine(s, fed);
+    if (!l.ok) { break; }
+    if (!open) {
+      name = prefix + suffix(piece);
+      if (streaming) {
+        Change opened = cli.openOutput(name).wait();
+        if (!opened.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(opened)); return 1; }
+      } else {
+        held = Buf.create();
+      }
+      open = true;
+      written = 0;
+    }
+    if (streaming) { emit(cli, l.bytes, l.nl); }
+    else {
+      held.pushAll(l.bytes);
+      if (l.nl) { held.push(10); }
+    }
+    written++;
+    if (written == per) {
+      if (!open || streaming) {} else {
+        Change wrote = fs.writeFile(name, held.take());
+        if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
+      }
+      piece++;
+      open = false;
+    }
+  }
+  // The last piece, which is short: the loop above only closes one that filled up.
+  if (open && !streaming) {
+    Change wrote = fs.writeFile(name, held.take());
+    if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
+  }
+  // Back to standard output, which closes the last piece — a file left open is a file that
+  // may not be on disk yet.
+  if (streaming) { cli.openOutput("").wait(); }
+  return 0;
+}
+
+/**
+ * `aa`, `ab`, … `yz`, `zaaa`, `zaab`, … — the suffixes GNU's `split` actually produces.
+ *
+ * The rule is not "two letters, then three": a leading `z` is **reserved** as the marker that the
+ * suffix has grown, so two-letter names run `aa` to `yz` and the next one is `zaaa`. Measured
+ * against the real thing rather than guessed, because the guess here was `"z" + itoa(n)` — which
+ * left the alphabet entirely after 676 pieces and produced `z676`, a name the real one never emits
+ * and a sort order that no longer matches the split order. GitHub wac-mono#14.
+ *
+ * So at level k the name is k `z`s followed by k+2 counter letters, whose first letter runs `a` to
+ * `y` for the same reason. That gives 25·26^(k+1) names per level: 650, then 16900, then 439400.
+ */
+string suffix(i32 n) {
+  i32 level = 0;
+  i32 remaining = n;
+  i32 span = 650;                       // 25 * 26, the two-letter names
+  while (remaining >= span) {
+    remaining = remaining - span;
+    level++;
+    span = span * 26;
+    // A suffix this long means billions of pieces; the arithmetic would overflow before the
+    // filesystem obliged, so stop pretending and let the caller see a name it can complain about.
+    if (span <= 0) { return "z" + itoa(n); }
+  }
+
+  i32 digits = level + 2;
+  u8[] out = u8[level + digits](fill: 'z');
+  // The counter, least significant last. Every position but the first is base 26; the first is
+  // base 25 because `z` there would be indistinguishable from the marker.
+  i32 rest = remaining;
+  for (i32 i = level + digits - 1; i > level; i--) {
+    out[i] = 'a' + (rest % 26);
+    rest = rest / 26;
+  }
+  out[level] = 'a' + rest;
+  return string.fromBytes(out);
+}

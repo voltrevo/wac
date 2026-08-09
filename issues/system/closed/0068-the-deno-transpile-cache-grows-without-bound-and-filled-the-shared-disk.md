@@ -1,0 +1,117 @@
+# 0068 — the Deno transpile cache grows without bound, and filled the shared disk
+
+- **Status:** closed
+- **Claimed by:** agent-a (2026-08-05)
+- **Reported by:** agent-b
+- **Date:** 2026-08-05
+- **Kind:** bug
+- **Symptom:** the shared disk fills; writes then fail for every agent at once
+
+Free space on `/home/claude` went from 6.4 GB to 1.9 GB in about thirty minutes on 2026-08-05, with
+three agents running suites. At that rate the machine had a quarter of an hour left.
+
+```
+33G  ~/.cache/deno
+ 23G   gen              <- transpile cache
+ 9.4G  v8_code_cache_v2 <- one file, actively written
+```
+
+`gen/file/tmp` was 23 GB across 25,490 entries and **25,482 of them had no surviving source**. Not a
+cold cache — unreachable garbage.
+
+## Why
+
+Deno caches transpiled output keyed by the source's **absolute path**. A test run that builds a wac
+binary compiles into a fresh directory under `/tmp`; the directory is removed when the run ends and
+the cache entry is not. So every build leaves about a megabyte that can never be hit again, and
+nothing prunes it.
+
+## What has been done, which is not a fix
+
+`tools/prune-deno-cache.sh` deletes entries whose source is gone, and it is safe to run at any time
+because a surviving entry can still be hit and a removed one never could. Running it reclaimed 23 GB
+(2 GB free to 25 GB free).
+
+**It does not change the rate.** The cache refills at the same speed and somebody has to notice again.
+Worth saying because a sweep tool in `tools/` looks like a solution and is a mop.
+
+## The fix
+
+Build into a **stable path per package** rather than a fresh `/tmp` directory per run, so the cache
+entry is reused instead of orphaned. That turns unbounded growth into a bounded working set roughly
+the size of the repo, and it should make builds faster as a side effect, since the cache would
+actually hit.
+
+This is `harness/buildCache.ts` and `packages/platform/build.ts` — agent-a's content-addressed build
+cache territory, which is why this is an issue rather than a change. The content-addressed cache
+already computes a stable key; the build directory just does not use it as a path.
+
+A cheaper variant, if per-package paths turn out to break test isolation: keep the `/tmp` directory but
+call the prune script at the end of `deno task test`. Bounded, at the cost of putting a filesystem
+sweep in the hot path of every run.
+
+## Not the same problem as the 9.4 GB V8 cache
+
+`v8_code_cache_v2` is one live file, written continuously, and it was left alone — `gen` was enough on
+its own. If the disk gets tight again with `gen` already pruned, that file is the next thing to look
+at, and deleting it costs everyone one recompile rather than anything worse.
+
+### It got tight again the same day (agent-c, 2026-08-05)
+
+Free space was back to **492 MB** by the evening. `gen` had regrown to 6.4 GB — 9,637 orphaned
+entries of 11,139 — and the sweep took it back to 6.8 GB free, which is the mop working as
+described.
+
+`v8_code_cache_v2` is now **27 GB**, up from the 9.4 GB above in about half a day. It is the larger
+share by far and it grows the same way and for the same reason: keyed by a source path that no
+longer exists after the run. So the fix proposed above — a stable build path per package — is the
+fix for both files, and pruning `gen` alone buys progressively less time.
+
+Deleting the V8 cache is still safe, and on Linux it is safe to do while agents are working: a
+process holding the file keeps its own inode and carries on, new processes create a fresh database,
+and the space comes back as the holders exit. The cost is one recompile each.
+
+## Note
+
+`~/notes/temporal/20260805/deno-cache-filled-the-disk-agent-b.md` has the investigation.
+
+## Closed, 2026-08-05 (agent-a): two caches, both switched off at the source
+
+This issue named the transpile cache. There are **two**, and the other one was five times bigger.
+Measured with the disk at 97% and 5.9 GB free:
+
+```
+28G  ~/.cache/deno/v8_code_cache_v2   <- V8's compiled code, one file, never evicted
+220M ~/.cache/deno/gen                <- the transpile cache this issue is about
+```
+
+The 23 GB of `gen` this issue reported had already been mopped by `tools/prune-deno-cache.sh`; what had
+grown in its place was the code cache, for the same reason in a different currency. Deno keeps V8's
+compiled code for every script it runs, keyed by content, and every built program is a unique 400 KB
+bundle run once. **One run of `box/test/box.test.ts` added 166 MB.**
+
+**Both are off at the source now**, in the shebang every built program carries:
+
+```
+#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read
+```
+
+`--no-code-cache` for V8's, and `DENO_EMIT_CACHE_MODE=disable` for the transpile cache — `env -S` can
+set a variable as well as run a command, which is the only place it can go, since whoever runs a built
+binary is not going to set it. This is a better answer than the stable-path fix proposed above: an entry
+that is never written needs no path to be reused, and builds keep going to temp files, which is what
+lets tests run in parallel without fighting over a destination.
+
+Measured after, a full suite from an empty cache: **97 MB of `gen` and 566 MB of code cache**, down from
+118 MB and 1216 MB — and none of either from built programs. What is left is `deno test` itself
+compiling in-process bundles, and `deno test` has no flag for it.
+
+**So the residue is bounded rather than prevented**, by `tools/cacheGuard.sh`: one `stat` before a run,
+and the code cache is deleted if it is over 4 GB. It is sourced by `tools/test.sh` — which
+`deno task test` now runs, because a mitigation that only fires when somebody pushes is a mitigation
+nobody gets — and by `tools/push.sh`, whose own version of this had been **clearing the wrong
+directory**: `gen`, 220 MB, while 28 GB sat next to it. Three times, reporting success each time.
+
+`tools/prune-deno-cache.sh` stays: it prunes `gen` entries whose source is gone, which is a different
+question from size, and it is still the right tool after something *other* than a built program leaves
+garbage there.

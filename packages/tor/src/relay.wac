@@ -1,0 +1,455 @@
+// Relay cells: the layer that carries anything useful. tor-spec §5.5 and §6.
+//
+// A CREATE2 gets you a circuit to one relay and nothing to say over it. Everything after
+// that — extending to a second hop, opening a TCP stream, sending a byte — is a RELAY cell,
+// which is an ordinary fixed cell whose 509-byte payload has been through the onion.
+//
+// ## The payload, before encryption
+//
+//   Relay command   1
+//   Recognized      2      always zero when we write it
+//   StreamID        2
+//   Digest          4      the first four bytes of the running hash
+//   Length          2      how much of Data is real
+//   Data            498
+//
+// ## Why "recognized" is not a checksum
+//
+// A relay in the middle of a circuit peels one layer off every cell it sees and has to
+// decide, without any marker, whether the result is a cell addressed to it or a cell it
+// should pass further along still encrypted. The test is: are the two Recognized bytes zero
+// *and* does the digest field match the running hash. Zeroes alone would fire by accident
+// once in 65536 cells, which is why the digest is checked as well; the digest alone would
+// mean hashing at every hop for every cell, which is why the cheap test comes first.
+//
+// So Recognized is not integrity, it is a fast negative. The digest is the real check.
+//
+// ## The running digest is the part that is easy to get wrong
+//
+// Df and Db are not per-cell hashes. Each is a SHA-1 seeded at the handshake and updated
+// with the *whole payload of every relay cell* sent in that direction, digest field zeroed,
+// and the four bytes written into the cell are the first four of the hash at that point.
+// Three consequences:
+//
+//   - the digest must be computed with its own field zeroed, since the recipient has to
+//     reproduce the hash before it knows what the field should contain;
+//   - a cell that fails to verify cannot be skipped. Its bytes are already in the sender's
+//     hash, so ignoring it desynchronises every cell after it. The circuit is dead.
+//   - `peek`, not `finish` — the stream continues. That is why sha1.wac has one.
+
+import { Sha3_256 } from "../../crypto/src/keccak.wac";
+import { Sha1 } from "../../crypto/src/sha1.wac";
+import { CtrStream } from "../../crypto/src/aesctr.wac";
+
+const i32 PAYLOAD_LEN = 509;
+const i32 RELAY_HEADER_LEN = 11;
+export i32 relayDataLen() { return PAYLOAD_LEN - RELAY_HEADER_LEN; }
+
+// dead-exports: exempt — as in `cell.wac`, the numbering is tor-spec's and its completeness is what
+// makes this file checkable against §6.1. Seven have no caller: EXTEND/EXTENDED are the v0 forms this
+// replaces with EXTEND2, TRUNCATE/TRUNCATED end a circuit from the far end, DROP is padding, and
+// RESOLVE/RESOLVED are the DNS commands nothing here asks for. Each is a command a relay may send us.
+/** Relay commands, from tor-spec §6.1. */
+export i32 relayBegin() { return 1; }
+export i32 relayData() { return 2; }
+export i32 relayEnd() { return 3; }
+export i32 relayConnected() { return 4; }
+export i32 relaySendme() { return 5; }
+export i32 relayExtend() { return 6; }
+export i32 relayExtended() { return 7; }
+export i32 relayTruncate() { return 8; }
+export i32 relayTruncated() { return 9; }
+export i32 relayDrop() { return 10; }
+export i32 relayResolve() { return 11; }
+export i32 relayResolved() { return 12; }
+export i32 relayBeginDir() { return 13; }
+export i32 relayExtend2() { return 14; }
+export i32 relayExtended2() { return 15; }
+
+// The onion-service commands, tor-spec §6.1 and rend-spec-v3. A client sends ESTABLISH_RENDEZVOUS
+// and INTRODUCE1 and receives the three replies; the other two are the service's side of the same
+// conversation and are here so that a cell carrying one is recognisable rather than merely unknown.
+export i32 relayEstablishIntro() { return 32; }
+export i32 relayEstablishRendezvous() { return 33; }
+export i32 relayIntroduce1() { return 34; }
+export i32 relayIntroduce2() { return 35; }
+export i32 relayRendezvous1() { return 36; }
+export i32 relayRendezvous2() { return 37; }
+export i32 relayIntroEstablished() { return 38; }
+export i32 relayRendezvousEstablished() { return 39; }
+export i32 relayIntroduceAck() { return 40; }
+
+/**
+ * One hop's cryptographic state: two keystreams and two running digests.
+ *
+ * Built from the 72 bytes the ntor handshake produces, in the order tor-spec §5.2.2 lays
+ * them out: Df | Db | Kf | Kb. The digests are seeded with their 20 bytes as if those bytes
+ * were the first thing hashed, and both ciphers start from an all-zero counter — safe only
+ * because the keys themselves are fresh per circuit.
+ */
+/**
+ * One hop's crypto: a running digest each way, and a keystream each way.
+ *
+ * **Two flavours, and `wide` says which.** An ordinary relay hop uses SHA-1 and AES-128, as
+ * tor-spec §5.1.4 has always specified. The hop between a client and a *hidden service* — the one
+ * that exists only after a rendezvous — uses SHA3-256 and AES-256 instead (rend-spec-v3 §3.3.2).
+ *
+ * Both digest pairs are held and one is unused, which is not elegant. wac has no sum types and no
+ * closures, so the alternatives are two `Hop` types that `Circuit` would have to hold a mixture of,
+ * or a facade of function pointers. A boolean and two spare hash states is the smallest of the three,
+ * and the branch is in the two places that take a digest rather than spread through the file.
+ */
+/**
+ * How many bytes to expand from an ntor handshake: the hop's own seventy-two, then KH.
+ *
+ * `onion_crypto.c` asks for `keys_out_len + DIGEST_LEN` and reads the nonce from
+ * `keys_tmp + keys_out_len`, so the two are one expansion rather than two derivations. Named because
+ * it is passed at every handshake call site, and a site that quietly went back to seventy-two would
+ * produce a circuit that works for everything except hosting an onion service — a failure that only
+ * shows up as an introduction point refusing an ESTABLISH_INTRO whose MAC was keyed with nothing.
+ */
+export const i32 NTOR_KEY_MATERIAL = 92;
+
+/** The hop's share of it — two digests and two keys. The rest is the circuit's. */
+export const i32 HOP_KEY_MATERIAL = 72;
+
+export struct Hop {
+  bool wide;
+  Sha1 forwardDigest;
+  Sha1 backwardDigest;
+  Sha3_256 forwardDigest3;
+  Sha3_256 backwardDigest3;
+  CtrStream forwardCipher;
+  CtrStream backwardCipher;
+
+  /**
+   * A hop from ntor key material.
+   *
+   * **72 or 92.** The first seventy-two bytes are this hop's — two digests and two keys. A ninety-two
+   * byte expansion carries twenty more, the nonce tor calls `rend_circ_nonce` and the specification
+   * calls KH, which a service keys ESTABLISH_INTRO's MAC with. It belongs to the *circuit* rather
+   * than to the hop's crypto, so it is read off by `Circuit` and ignored here — but the length is
+   * accepted rather than trapped on, because trapping would mean every caller that wants a KH has to
+   * slice before calling and the two lengths would drift apart at each call site.
+   */
+  Hop create(u8[] material) {
+    if (material.len() != HOP_KEY_MATERIAL && material.len() != NTOR_KEY_MATERIAL) { trap; }
+    u8[] df = u8[20]();
+    u8[] db = u8[20]();
+    u8[] kf = u8[16]();
+    u8[] kb = u8[16]();
+    for (i32 i = 0; i < 20; i++) { df[i] = material[i]; }
+    for (i32 i = 0; i < 20; i++) { db[i] = material[20 + i]; }
+    for (i32 i = 0; i < 16; i++) { kf[i] = material[40 + i]; }
+    for (i32 i = 0; i < 16; i++) { kb[i] = material[56 + i]; }
+
+    Sha1 fd = Sha1.create();
+    fd.update(df);
+    Sha1 bd = Sha1.create();
+    bd.update(db);
+    return Hop(false, fd, bd, Sha3_256.create(), Sha3_256.create(),
+               CtrStream.create(kf, u8[16]()), CtrStream.create(kb, u8[16]()));
+  }
+
+  /**
+   * The same 72 bytes, from the **responder's** point of view.
+   *
+   * tor's `relay_crypto_init(..., reverse)` swaps the forward and backward halves for a relay,
+   * because "forward" means towards the exit and the two ends of a hop disagree about which way that
+   * is. Our forward digest and key are the client's backward ones and the other way round.
+   *
+   * Getting this wrong is not a subtle failure and not an obvious one either: every cell is
+   * unrecognised in both directions at once, which looks like a broken circuit rather than a key
+   * that is the wrong way round.
+   */
+  Hop createReversed(u8[] material) {
+    if (material.len() != 72) { trap; }
+    u8[] swapped = u8[72]();
+    for (i32 i = 0; i < 20; i++) {
+      swapped[i] = material[20 + i];          // their Db is our Df
+      swapped[20 + i] = material[i];
+    }
+    for (i32 i = 0; i < 16; i++) {
+      swapped[40 + i] = material[56 + i];     // their Kb is our Kf
+      swapped[56 + i] = material[40 + i];
+    }
+    return Hop.create(swapped);
+  }
+
+  /**
+   * The rendezvous hop: SHA3-256 and AES-256, from 128 bytes of `Df | Db | Kf | Kb`.
+   *
+   * Same layout as `create`, four times as wide in the digest keys and twice in the cipher keys.
+   * The IV is still sixteen zero bytes — that is the block size, not the key size, and AES-256-CTR
+   * counts from zero exactly as AES-128-CTR does.
+   */
+  Hop createWide(u8[] material) {
+    if (material.len() != 128) { trap; }
+    u8[] df = u8[32]();
+    u8[] db = u8[32]();
+    u8[] kf = u8[32]();
+    u8[] kb = u8[32]();
+    for (i32 i = 0; i < 32; i++) { df[i] = material[i]; }
+    for (i32 i = 0; i < 32; i++) { db[i] = material[32 + i]; }
+    for (i32 i = 0; i < 32; i++) { kf[i] = material[64 + i]; }
+    for (i32 i = 0; i < 32; i++) { kb[i] = material[96 + i]; }
+
+    Sha3_256 fd = Sha3_256.create();
+    fd.update(df);
+    Sha3_256 bd = Sha3_256.create();
+    bd.update(db);
+    return Hop(true, Sha1.create(), Sha1.create(), fd, bd,
+               CtrStream.create(kf, u8[16]()), CtrStream.create(kb, u8[16]()));
+  }
+
+  /**
+   * The rendezvous hop as the **service** holds it.
+   *
+   * `createWide` is the client's view: its forward keys carry cells towards the service. The service
+   * is the other end of the same hop, so its forward is the client's backward, exactly as
+   * `createReversed` is to `create`. There is one key expansion and the two ends read it in opposite
+   * directions — deriving a second one would be a different circuit.
+   *
+   * The failure mode is the one `createReversed` describes: every cell is unrecognised in both
+   * directions at once, which reads as a broken circuit rather than as keys the wrong way round.
+   */
+  Hop createWideReversed(u8[] material) {
+    if (material.len() != 128) { trap; }
+    u8[] swapped = u8[128]();
+    for (i32 i = 0; i < 32; i++) {
+      swapped[i] = material[32 + i];          // their Db is our Df
+      swapped[32 + i] = material[i];
+      swapped[64 + i] = material[96 + i];     // their Kb is our Kf
+      swapped[96 + i] = material[64 + i];
+    }
+    return Hop.createWide(swapped);
+  }
+}
+
+/** The plaintext body of a relay cell, with the digest field left zero. */
+u8[] buildBody(i32 command, i32 streamId, u8[] data) {
+  if (data.len() > relayDataLen()) { trap; }
+  u8[] body = u8[PAYLOAD_LEN]();
+  body[0] = command;
+  // Recognized: bytes 1 and 2, left zero.
+  body[3] = (streamId >> 8) & 0xFF;
+  body[4] = streamId & 0xFF;
+  // Digest: bytes 5 to 8, left zero until the hash is taken over this exact buffer.
+  body[9] = (data.len() >> 8) & 0xFF;
+  body[10] = data.len() & 0xFF;
+  for (i32 i = 0; i < data.len(); i++) { body[RELAY_HEADER_LEN + i] = data[i]; }
+  return body;
+}
+
+/**
+ * A relay cell payload, digested and encrypted for one hop.
+ *
+ * Mutates the hop: both the digest and the keystream advance, so calling this and
+ * discarding the result desynchronises the circuit just as surely as dropping a cell would.
+ */
+export u8[] encryptRelay(Hop hop, i32 command, i32 streamId, u8[] data) {
+  u8[] body = buildBody(command, streamId, data);
+  u8[] digest = u8[0]();
+  if (hop.wide) {
+    hop.forwardDigest3.update(body);
+    digest = hop.forwardDigest3.peek();
+  } else {
+    hop.forwardDigest.update(body);
+    digest = hop.forwardDigest.peek();
+  }
+  for (i32 i = 0; i < 4; i++) { body[5 + i] = digest[i]; }
+  return hop.forwardCipher.apply(body);
+}
+
+/**
+ * Peel one layer off an incoming payload.
+ *
+ * Returns the decrypted body whether or not it verified — `relayRecognized` is the question
+ * of whether it did. Splitting the two would mean either decrypting twice or returning a
+ * sentinel that the caller could forget to check.
+ *
+ * The digest is only advanced when the cell verifies. A cell that does not verify was not
+ * sent by this hop, so folding it into the hash would break every later cell that was.
+ */
+export u8[] decryptRelay(Hop hop, u8[] payload) {
+  if (payload.len() != PAYLOAD_LEN) { trap; }
+  return hop.backwardCipher.apply(payload);
+}
+
+/**
+ * Add this hop's layer to an opaque payload — no relay header, no digest.
+ *
+ * For a cell travelling back from a hop beyond this one. It was built and digested by whoever holds
+ * the further hop's keys, and this relay's only job is to wrap it: the running digest belongs to the
+ * cells this hop *originates*, and advancing it here would corrupt the hash for those. `encryptRelay`
+ * is the one that builds a body and digests it; this is the forwarding half.
+ *
+ * The cipher is `forwardCipher` because a responder's `Hop` has the two directions swapped relative
+ * to a client's — the same reversal `decryptRelay` relies on.
+ */
+export u8[] wrapForClient(Hop hop, u8[] payload) {
+  if (payload.len() != PAYLOAD_LEN) { trap; }
+  return hop.forwardCipher.apply(payload);
+}
+
+/**
+ * Whether a decrypted body is a cell for us, advancing the digest if it is.
+ *
+ * The two Recognized bytes first, because they are free and reject almost everything. Then
+ * the digest, computed over the body with its own digest field zeroed — which means copying
+ * the body rather than zeroing in place, since the caller still needs the real bytes.
+ */
+export bool relayRecognized(Hop hop, u8[] body) {
+  if (body.len() != PAYLOAD_LEN) { trap; }
+  if (body[1] != 0 || body[2] != 0) { return false; }
+
+  u8[] zeroed = u8[PAYLOAD_LEN]();
+  for (i32 i = 0; i < PAYLOAD_LEN; i++) { zeroed[i] = body[i]; }
+  for (i32 i = 0; i < 4; i++) { zeroed[5 + i] = 0; }
+
+  // Against a copy of the digest state: if this is not our cell, the hash must be left
+  // exactly as it was, and there is no way to un-update a SHA-1.
+  u8[] expect = u8[0]();
+  if (hop.wide) {
+    Sha3_256 trial3 = hop.backwardDigest3.clone();
+    trial3.update(zeroed);
+    expect = trial3.peek();
+  } else {
+    Sha1 trial = hop.backwardDigest.clone();
+    trial.update(zeroed);
+    expect = trial.peek();
+  }
+  bool ok = true;
+  for (i32 i = 0; i < 4; i++) {
+    if (expect[i] != body[5 + i]) { ok = false; }
+  }
+  if (ok) {
+    if (hop.wide) { hop.backwardDigest3.update(zeroed); }
+    else { hop.backwardDigest.update(zeroed); }
+  }
+  return ok;
+}
+
+export i32 relayCommand(u8[] body) { return body[0]; }
+export i32 relayStreamId(u8[] body) { return (body[3] << 8) | body[4]; }
+
+/**
+ * Whether the body's length field fits inside the body.
+ *
+ * The field is two bytes chosen by whoever sent the cell, so it reaches 65535 and the body
+ * holds 498. This used to be a `trap` inside `relayPayload`, which meant a single malformed
+ * cell from a hop in our own path aborted the client — found by fuzzing, and reachable by
+ * any relay we build a circuit through. Authenticated is not the same as friendly: a hop is
+ * exactly the adversary the rest of the design assumes.
+ *
+ * Separate from `relayPayload` because an empty payload is legitimate — a stream SENDME has
+ * none — so a caller has to be able to tell "nothing" from "nonsense".
+ */
+export bool relayLengthValid(u8[] body) {
+  return ((body[9] << 8) | body[10]) <= relayDataLen();
+}
+
+/**
+ * The real data out of a relay cell body, using its length field.
+ *
+ * Empty when the length is out of range. Callers that must distinguish that from a genuinely
+ * empty payload ask `relayLengthValid` first; `Circuit.receive` does, and treats a bad
+ * length as a dead circuit rather than as a cell with nothing in it.
+ */
+export u8[] relayPayload(u8[] body) {
+  i32 len = (body[9] << 8) | body[10];
+  if (len > relayDataLen()) { return u8[0](); }
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = body[RELAY_HEADER_LEN + i]; }
+  return out;
+}
+
+// ── Streams ──────────────────────────────────────────────────────────────────
+
+/**
+ * A RELAY_BEGIN body: "host:port\0" then four zero flag bytes.
+ *
+ * The address is sent as text and resolved by the exit, not by us. That is not a
+ * convenience — resolving it here would leak the destination to whoever answers our DNS,
+ * which is the one party the circuit exists to keep it from.
+ */
+export u8[] beginBody(string hostPort) {
+  u8[] h = hostPort.toBytes();
+  u8[] out = u8[h.len() + 1 + 4]();
+  for (i32 i = 0; i < h.len(); i++) { out[i] = h[i]; }
+  return out;
+}
+
+/** The reason code from a RELAY_END body, or 0 if it carries none. */
+export i32 endReason(u8[] body) {
+  u8[] data = relayPayload(body);
+  return data.len() >= 1 ? data[0] : 0;
+}
+
+/**
+ * Build the body of a RELAY_EXTEND2, asking the current last hop to reach a further relay.
+ *
+ * Two link specifiers: where the relay is, and who it must prove to be. The identity is not
+ * decoration — without it the hop we are asking could connect us to any relay it liked and
+ * we would run the ntor handshake against whatever key it offered.
+ *
+ *   NSPEC (1) | { LSTYPE (1) | LSLEN (1) | LSPEC } * | HTYPE (2) | HLEN (2) | HDATA
+ */
+export u8[] extend2Body(u8[] ipv4, i32 port, u8[] identity, u8[] handshake) {
+  if (ipv4.len() != 4 || identity.len() != 20) { trap; }
+  i32 n = 1 + (2 + 6) + (2 + 20) + 4 + handshake.len();
+  u8[] out = u8[n]();
+  i32 at = 0;
+  out[at] = 2; at += 1;              // two link specifiers
+
+  out[at] = 0; at += 1;              // LSTYPE 0: TLS-over-TCP, IPv4
+  out[at] = 6; at += 1;
+  for (i32 i = 0; i < 4; i++) { out[at + i] = ipv4[i]; }
+  at += 4;
+  out[at] = (port >> 8) & 0xFF; at += 1;
+  out[at] = port & 0xFF; at += 1;
+
+  out[at] = 2; at += 1;              // LSTYPE 2: legacy RSA identity fingerprint
+  out[at] = 20; at += 1;
+  for (i32 i = 0; i < 20; i++) { out[at + i] = identity[i]; }
+  at += 20;
+
+  out[at] = 0; at += 1;              // HTYPE: ntor
+  out[at] = 2; at += 1;
+  out[at] = (handshake.len() >> 8) & 0xFF; at += 1;
+  out[at] = handshake.len() & 0xFF; at += 1;
+  for (i32 i = 0; i < handshake.len(); i++) { out[at + i] = handshake[i]; }
+  return out;
+}
+
+/**
+ * The ntor reply out of a RELAY_EXTENDED2 body: HLEN (2) | HDATA.
+ *
+ * Empty when the length runs past the end, rather than trapping. The hop that sent this
+ * chose both the length and the data, and an empty reply fails the ntor AUTH check a moment
+ * later — which is the answer we want anyway, reached without aborting the process.
+ */
+export u8[] extended2Reply(u8[] data) {
+  if (data.len() < 2) { return u8[0](); }
+  i32 len = (data[0] << 8) | data[1];
+  if (2 + len > data.len()) { return u8[0](); }
+  u8[] out = u8[len]();
+  for (i32 i = 0; i < len; i++) { out[i] = data[2 + i]; }
+  return out;
+}
+
+/**
+ * A version-1 SENDME body: VERSION (1) | DATA_LEN (2) | the digest.
+ *
+ * Version 0 is an empty body and is what stream-level SENDMEs still use — there is nothing
+ * to authenticate there, since a stream's credit is bounded by its circuit's.
+ */
+export u8[] sendmeBodyV1(u8[] digest) {
+  if (digest.len() != 20) { trap; }
+  u8[] out = u8[23]();
+  out[0] = 1;
+  out[1] = 0;
+  out[2] = 20;
+  for (i32 i = 0; i < 20; i++) { out[3 + i] = digest[i]; }
+  return out;
+}

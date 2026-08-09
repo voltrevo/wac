@@ -14,8 +14,8 @@
 // It receives the *compiled* module rather than the source, because the page already compiled it
 // for the export list and the diagnostics, and `WacCompiled` is plain data that clones.
 
-import type { WacCompiled } from "../../atoms/wac/wacCompile.ts";
-import { wacInstance, type WacArg, type WacVal } from "../../atoms/wac/wacInstance.ts";
+import type { WacCompiled } from "../../../compiler/wacCompile.ts";
+import { wacInstance, type WacArg, type WacVal } from "../../../compiler/wacInstance.ts";
 
 export type RunRequest = {
   compiled: WacCompiled;

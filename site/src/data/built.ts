@@ -2,7 +2,7 @@
 //
 // Regenerate with a wac-mono checkout beside this one:
 //
-//   deno run --allow-read --allow-write tools/syncMap.ts ../wac-mono
+//   deno run --allow-read --allow-write site/tools/syncMap.ts
 //
 // The committed copy is a fallback, for a checkout with no wac-mono beside it. The Pages build
 // does have one and runs this script before building, so what the site serves is current as of
@@ -26,19 +26,19 @@ export const TOTALS = {
   programs: 48,
   pages: 4,
   /**
-   * Both suites: wac-mono's packages (1527), its harness and tools (92),
-   * and this repo's compiler (1222).
+   * Both suites: wac-mono's packages (1527), its harness and tools (95),
+   * and this repo's compiler (19).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 2841,
+  testsAll: 1641,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 817,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
   applets: 63,
   /** Test files written in wac rather than in the host language. */
-  wacTests: 131,
+  wacTests: 132,
 };
 
 /** In dependency order, as MAP.md lists them: nothing imports anything above it. */
