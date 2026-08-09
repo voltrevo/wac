@@ -5,6 +5,8 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0084](open/0084-increment-as-a-value-on-a-packed-array-element.md) | `++` as a *value* on a packed array element emits `array.get`, so the module is invalid | bug | invalid wasm |
+| [0083](open/0083-a-parent-declared-after-its-child-emits-an-invalid-supertype.md) | a struct whose parent is declared after it emits an invalid supertype | bug | invalid wasm |
 | [0081](open/0081-bindgen-does-not-resolve-an-imported-type-alias-in-an-exported-signature.md) | bindgen does not resolve an imported type alias in an exported signature — [gh#10](https://github.com/voltrevo/wac/issues/10) | bug | compile error |
 | [0080](open/0080-bind-helper-exports-collide-for-same-named-structs-in-different-modules.md) | bind helper exports collide for same-named structs in different modules — [gh#9](https://github.com/voltrevo/wac/issues/9) | bug | invalid wasm |
 | [0082](open/0082-increment-of-an-i64-field-or-element-emits-an-i32-one.md) | `++` on an `i64` field or element emits an `i32` one, so the module is invalid | bug | invalid wasm |
@@ -28,7 +30,7 @@ has been fixed and why.
 
 ## Closed
 
-82 issues, 62 closed.
+84 issues, 62 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

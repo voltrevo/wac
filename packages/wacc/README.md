@@ -1273,7 +1273,7 @@ different answer.
 
 Three files left that a feature would fix, and each names one:
 
-- **`struct Rect : Shape`** — subtyping. `Rect(1.0, 2.0, 10.0, 20.0)` is "a construction of Rect
+- **`struct Rect : Shape`** — subtyping. a four-argument construction of `Rect` is "a construction of Rect
   with 4 of 2 fields" because nothing here knows a subtype's fields begin with its parent's. This is
   wasm's `sub` in the type section, and it is the largest single feature the corpus still wants.
 - **`Option.Some(v)` where the type argument comes from context** — `Option<i32> get(…)` returns
@@ -1281,6 +1281,57 @@ Three files left that a feature would fix, and each names one:
 - **`mapOption(some, double)`** — a generic function whose `T` comes from an argument and whose `U`
   comes from a callback's return type. Generic *types* are instantiated here; generic *functions*
   are not.
+
+### Subtyping is an offset — and two bugs in the compiler it is measured against
+
+`struct Rect : Shape` is WasmGC's `sub`, and the whole of it here is **one offset**. A subtype does
+not inherit fields in the format, it *repeats* them: its parent's, in order, then its own. That is
+what makes a `struct.get` compiled against `Shape` read the right slot of a `Rect`, and it means
+every accessor needs the same thing — how many fields come before this struct's own — rather than a
+special case each. `Env.inheritedCount` is that number, and `fieldIndex`, `fieldTypeAt`,
+`fieldNullableAt` and `fieldType` each gained one line using it.
+
+The rest followed from what the format already knows:
+
+- **A widening emits nothing.** `Shape s = r;` was declined as "an assignment between related
+  reference types" because a subtype's reference *is* its parent's reference once the types say so.
+  The decline now asks `isSubtypeOf` first, and the answer is silence.
+- **`s is Circle` is `ref.test`**, in its non-null form, which gives a null `Shape` the same answer
+  the null test gives: no.
+- **An inherited method is a lookup that walks up.** `getX` on a `Rect` finds nothing under it, and the
+  child's own is found first — which is exactly `override`, and exactly the language's rule that
+  dispatch is by the *static* type, because the lookup is handed the type the call site knows and
+  there is no vtable anywhere to disagree with it. Statics do not inherit, so they do not walk.
+- **A supertype must be declared before its subtype.** One rec group makes the members mutually
+  visible; it does not make a later one *defined*. `struct Kid : Par` written above `Par` is
+  "invalid supertype" from the type section, so the structs are ordered parents-first before the
+  section is written.
+
+Twenty-three programs went into the sweep, and the point of every one is an *answer* rather than a
+valid module: an emitter that forgets the offset reads `w` where the program said `x` and returns a
+plausible number. Three fields, two levels, a widening, an override, a test that fails, a chain
+three deep, a parent written after its child.
+
+**Two of the twenty-three do not compare, because the reference cannot compile them** — and finding
+that out is what the canary is for. `deno task test` counts a program the reference refuses as *not
+valid wac* and a module it cannot instantiate as a *trap*; both are silent, and silence reads as
+agreement. Filed as `issues/lang/0083` and `0084`:
+
+- a struct whose parent is declared after it produces an invalid supertype, which is the same fact
+  the ordering pass above is for — one compiler orders and the other does not;
+- `a[1]++` **as a value** on a `u8[]` emits `array.get` where the element is packed, so the module
+  is refused. The statement form is fine, and so is `i32[]` — it is the extra read that the value
+  form needs.
+
+| | before | after |
+|---|---|---|
+| whole files | 332 | 332 of 338 |
+| invalid | 0 | 0 |
+| sweep | 4,392 programs, 3,984 compared | **4,416 programs, 4,007 compared, 0 mismatched** |
+
+The corpus count does not move, because the language tour needs `i31ref` and `anyref` as well — it
+declines two sections later, at "cast to an unsupported type". Subtyping is done and measured; the
+tour is one feature away.
 
 ### One reader, because two disagreed
 
