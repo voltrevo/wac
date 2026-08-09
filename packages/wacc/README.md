@@ -1833,9 +1833,35 @@ errors in the checker.
 | false alarms on the repository | 0 of 341 | **0 of 341** |
 | generated-program sweeps | unchanged | unchanged |
 
-The nine that remain are the honest tail: a file that imports a *prefix* (`import * as x`), which
-this filter does not model, and diagnostics that need a body from another file rather than a
-declaration.
+The nine that remain were guessed at, in this paragraph, as prefix imports and cross-file bodies.
+**Both guesses were wrong**, which is what the next slot found by classifying them instead: none of
+the nine is in a file with a prefix import. Seven are calls whose receiver is a type the importing
+file never *names* — `Cli.readFile` returns a `Pending<…>` and the file imported only `Cli` — and the
+last two are an arity rule reached through a shape this checker types as unknown.
+
+### What a reachable type costs, measured rather than argued
+
+A type reachable *through* an imported declaration is part of what the file asked for, even though its
+name appears nowhere in it. Letting the filter reach — a second round that admits any declaration
+something already declared mentions — takes recall on broken real code from **96% to 98%**.
+
+It also puts **forty-one false alarms** back, and for the reason the per-file filter existed: reaching
+is by *name*, so a second file's `Item` is admitted the moment any signature anywhere mentions an
+`Item`. The rule that would work has to be narrower again — a reached name is safe only when exactly
+one file in the closure declares it — and that needs a per-file declaration census this checker does
+not have. Reverted, and the number to beat is 41.
+
+Kept from the attempt, because it costs nothing and is right on its own: **a binary of two literals
+has the family they share.** `("46316…" + "…").toBytes(1)` is a `string` receiver however many pieces
+it was written in, and both sides answering unknown separately made the whole thing unknown. Only
+where the two agree — `1 + x` is still the slot's business and this must not decide it.
+
+| | |
+|---|---|
+| recall on broken real code | 241 of 250 (96%), unchanged |
+| generated mutation sweep | 920 → **921** of 980 |
+| false alarms | 0, everywhere |
+| the reaching experiment | 98% recall, 41 false alarms — not committed |
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

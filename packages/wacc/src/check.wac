@@ -1736,6 +1736,19 @@ i32 literalDigits(C c, Expr e) {
 }
 
 string naturalTypeOf(C c, Expr e) {
+  // **Two literals joined are still a literal's family.** `("46316…" + "…").toBytes(1)` is a string
+  // receiver however many pieces it was written in, and `typeOfExpr` answers unknown for it because
+  // each side answers unknown on its own. Only where the two agree: `1 + x` is still the slot's
+  // business, and this must not decide it.
+  match (e.kind) {
+    case Binary(op, left, right): {
+      if (litKindOf(left) == litNone() || litKindOf(right) == litNone()) { return typeOfExpr(c, e); }
+      string ln = naturalTypeOf(c, left);
+      string rn = naturalTypeOf(c, right);
+      return ln == rn ? ln : typeNone();
+    }
+    else: { }
+  }
   i32 lk = litKindOf(e);
   if (lk == litInteger()) {
     // **Only when it certainly fits.** An integer literal is polymorphic over `i32 i64 u32 u64`, and
