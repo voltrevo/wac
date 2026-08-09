@@ -46,9 +46,26 @@
 // which is what this looked like embedded in a page; `justify-content: flex-end` is the top in a
 // reversed column, so a short session starts at the top and a long one still ends at the bottom.
 //
-// **History is a ring in a local.** Up and Down arrive as `keydown` events with the key in
-// `Event.value`, so the whole feature is a `string[]` and two integers in the loop — no state
-// outside the program, and nothing the page has to know about.
+// **History is a ring in a local.** Up and Down arrive as `keydown` events with the bytes a terminal
+// would send in `Event.value`, so the whole feature is a `string[]` and two integers in the loop — no
+// state outside the program, and nothing the page has to know about.
+//
+// ## What this is still not, and the decision it waits on
+//
+// design/0001 step 5 asks for "one module for both the ssh channel and the browser's keydown loop",
+// and `packages/tty` is that module — echo, erase, `^U`, `^W`, `^C`, `^D`, `^V`, every rule read off
+// the kernel's own discipline through a pty. **This page does not use it.** Keystrokes now arrive as
+// the bytes a terminal sends, which is the half that was in the way; what is left is that the editing
+// happens in an `<input>` and the browser does it.
+//
+// That is a decision rather than an oversight, and it is not free either way. Taking the editing over
+// means `packages/tty` decides what the line is, so `^C`, `^D`, `^U` and `^W` work here exactly as
+// they do over ssh — and it means giving up what the `<input>` supplies for nothing: the block caret
+// the CSS below goes to some length for, IME composition for every language that needs one, and
+// paste. Over ssh those are the client's terminal's problem; in a page they would become ours.
+//
+// So: the vocabulary is shared, the discipline is not yet, and the cost of sharing it is written down
+// here rather than discovered by whoever tries.
 
 import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
 import { Shell, runScript } from "../../sh/src/exec.wac";
@@ -56,6 +73,18 @@ import { Shell, runScript } from "../../sh/src/exec.wac";
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
 import { itoa } from "../../fmt/src/itoa.wac";
 import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
+
+/**
+ * The bytes a terminal sends for the three keys this loop reads.
+ *
+ * Written as bytes rather than as escapes in a string literal because that is what they are, and
+ * because a reader should be able to check them against `infocmp` without decoding an escape twice.
+ */
+string cr() { return string.fromCodepoint(13); }
+/** `^C`. The same byte `packages/tty`'s discipline calls `INTR`. */
+string intr() { return string.fromCodepoint(3); }
+string upArrow() { return string.fromCodepoint(27) + "[A"; }
+string downArrow() { return string.fromCodepoint(27) + "[B"; }
 
 /** How many commands to remember. A ring, so the oldest falls off rather than growing forever. */
 const i32 HISTORY = 64;
@@ -241,8 +270,14 @@ export i32 page(Core core, Cli cli, Page page) {
 
     // Up and Down walk the ring. Held here rather than in the page because the history *is*
     // program state: it is what this shell has been asked to do.
-    if (e.value == "ArrowUp" || e.value == "ArrowDown") {
-      i32 depth = e.value == "ArrowUp" ? cursor + 1 : cursor - 1;
+    //
+    // **The escape sequences a terminal sends**, not the key names a browser uses. A `keydown` used
+    // to arrive as `ev.key` — "ArrowUp", "Enter" — and a program in a page therefore saw a vocabulary
+    // nothing else in this system speaks; `packages/tty`'s discipline consumes bytes, because a
+    // terminal is a byte stream. The host translates at the edge now (`terminalBytes` in
+    // `host/entryBrowser.ts`), so above that line everything is bytes, here as over ssh.
+    if (e.value == upArrow() || e.value == downArrow()) {
+      i32 depth = e.value == upArrow() ? cursor + 1 : cursor - 1;
       i32 have = count < HISTORY ? count : HISTORY;
       if (depth > have) { depth = have; }
       if (depth < 0) { depth = 0; }
@@ -251,7 +286,26 @@ export i32 page(Core core, Cli cli, Page page) {
       continue;
     }
 
-    if (e.value != "Enter") { continue; }
+    // **`^C` at a prompt throws away what has been typed and starts a fresh line**, which is exactly
+    // what it does at an ssh prompt — `packages/ssh`'s session loop echoes `^C` and a newline and
+    // moves on. The same key, the same effect, in both places, which is the whole of what step 5
+    // means by one system rather than two ports of the idea. It could not be done here at all until
+    // keystrokes arrived as bytes: `Ctrl-C` and `c` were the same `keydown` value.
+    //
+    // What `^C` still does *not* do here is end a running command, which is step 5's own criterion
+    // and is the same blocker in both places: nothing reads a keystroke while a command runs.
+    if (e.value == intr()) {
+      screen = screen + prompt(sh) + " " + page.getValue("cmd").wait() + "^C\n";
+      page.setValue("cmd", "").wait();
+      page.setText("scr", screen).wait();
+      cursor = 0;
+      continue;
+    }
+
+    // CR, which is what the Enter key puts on the wire; the discipline is what turns it into a
+    // newline. `packages/tty` implements that rule and this page does not reach it yet — see the
+    // note above `main`.
+    if (e.value != cr()) { continue; }
 
     string line = page.getValue("cmd").wait();
     page.setValue("cmd", "").wait();

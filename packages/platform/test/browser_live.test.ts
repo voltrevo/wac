@@ -386,6 +386,19 @@ Deno.test({
       // obvious way to make prompt, command and cursor one line — silently clips it back to a bar.
       // Nothing about that shows up in the DOM, so what is checked is the condition that causes
       // it: the field is wider than the text in it.
+      // **`^C` at the prompt throws the line away**, as it does at an ssh prompt — and it is only
+      // possible because a keydown now arrives as the byte a terminal sends. Before this, `Ctrl-C`
+      // and `c` were the same event value and the page could not tell them apart.
+      await page.fill("#cmd", "rm -rf /");
+      await page.press("#cmd", "Control+c");
+      // `inputValue` rather than a `waitForFunction` over the DOM: this file has no DOM lib, which
+      // is deliberate — it drives a browser from outside rather than describing one.
+      await page.waitForFunction("document.getElementById('cmd').value === ''", { timeout: 10_000 });
+      const afterIntr = await page.textContent("#scr");
+      if (!afterIntr?.includes("rm -rf /^C")) {
+        throw new Error(`\`^C\` did not abandon the line: ${JSON.stringify(afterIntr?.slice(-120))}`);
+      }
+
       await page.fill("#cmd", "echo hi");
       const caret = await page.evaluate(`(() => {
         const el = document.getElementById("cmd");

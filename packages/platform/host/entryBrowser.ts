@@ -98,9 +98,10 @@ type Ctx = {
   createImageData(w: number, h: number): ImageDataLike;
 };
 type ImageDataLike = { data: { set(src: Uint8Array, at?: number): void } };
-type Ev = {
+export type Ev = {
   target: El | null;
   key?: string;
+  ctrlKey?: boolean;
   offsetX?: number;
   offsetY?: number;
   dataTransfer?: { files: { length: number; item(i: number): FileLike | null } };
@@ -111,6 +112,59 @@ type Doc = {
   getElementById(id: string): El | null;
   addEventListener(kind: string, fn: (ev: Ev) => void): void;
 };
+
+/**
+ * What a terminal would put on the wire for this keystroke.
+ *
+ * **A `keydown` used to arrive as `ev.key`** — the strings "a", "Enter", "ArrowUp", "Control" — so a
+ * program in a page saw *key names*, which nothing else in this system speaks. `packages/tty`'s line
+ * discipline consumes **bytes**, because it is a terminal discipline and a terminal is a byte stream;
+ * a browser terminal built on key names could not use it, and `box/example/term.wac` grew its own
+ * editing out of an `<input>` instead. design/0001 step 5 asks for "one module for both the ssh
+ * channel and the browser's keydown loop", and two disciplines is what there was.
+ *
+ * So the translation happens here, at the edge, where the browser's vocabulary is. Above this line
+ * everything is bytes. The values are `stty`'s and `infocmp`'s, and two are worth knowing:
+ *
+ *   - **Backspace sends DEL (0x7f), not BS.** `packages/tty` erases on 0x7f and deliberately does not
+ *     erase on 0x08, because the kernel does not — `^H` is a distinct thing you can type. A page
+ *     sending 0x08 would have a backspace key that did nothing, and the module would be right.
+ *   - **Enter sends CR, not LF.** The discipline is what turns it into a newline.
+ *
+ * The empty string for a key that sends nothing by itself — `Shift`, `Control`, `F1`. Returning the
+ * key's *name* there is what would put the word "Shift" into somebody's line.
+ */
+export function terminalBytes(ev: Ev): string {
+  const key = ev.key ?? "";
+  if (key === "") return "";
+  // `Ctrl` with a letter is that letter's control code: `Ctrl-A` is 1 … `Ctrl-Z` is 26, which is
+  // exactly `uppercase - 64`. `Ctrl-C` being 3 is what makes `^C` reach a line discipline at all.
+  if (ev.ctrlKey === true && key.length === 1) {
+    const c = key.toUpperCase().charCodeAt(0);
+    if (c >= 64 && c <= 95) return String.fromCharCode(c - 64);
+    if (key === "?") return "\x7f";
+    if (key === " ") return "\x00";
+    // A `Ctrl` chord with no control code sends nothing rather than the bare character: `Ctrl-1` is
+    // not "1" on a terminal, and passing it through would put a digit in the line.
+    return "";
+  }
+  // A single character is itself — including a space, which `key` spells as " ".
+  if (key.length === 1) return key;
+  switch (key) {
+    case "Enter": return "\r";
+    case "Tab": return "\t";
+    case "Backspace": return "\x7f";
+    case "Delete": return "\x1b[3~";
+    case "Escape": return "\x1b";
+    case "ArrowUp": return "\x1b[A";
+    case "ArrowDown": return "\x1b[B";
+    case "ArrowRight": return "\x1b[C";
+    case "ArrowLeft": return "\x1b[D";
+    case "Home": return "\x1b[H";
+    case "End": return "\x1b[F";
+    default: return "";
+  }
+}
 
 /**
  * The document, as the small string-shaped thing `browser.ts` asks for.
@@ -221,7 +275,7 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
           deliver({
             kind,
             id: hit.id,
-            value: kind === "keydown" ? (ev.key ?? "") : (target.value ?? ""),
+            value: kind === "keydown" ? terminalBytes(ev) : (target.value ?? ""),
             x: Math.round((ev.offsetX ?? 0) * sx),
             y: Math.round((ev.offsetY ?? 0) * sy),
           });
