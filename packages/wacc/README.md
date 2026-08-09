@@ -1183,6 +1183,37 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Stage 2 equals stage 3 — wacc reproduces itself
+
+The whole of rung 5, in one number: **wacc compiled by wacc compiles wacc to the same 140,590 bytes,
+checksum 1072049381.**
+
+Stage A is `wacc` built by the reference. Stage B is `wacc` built by stage A. Stage C is what stage B
+produces when it is handed `wacc`'s own nine sources. B and C are byte-identical, which is what a
+bootstrap means and what nothing short of running it can show.
+
+The boundary problem solved itself once it was looked at from the other side. `emitFiles(string[],
+string[], string)` cannot be called from JavaScript on a module emitted here by hand — but the driver
+is *wac*, and wac can build a `string[]`. So every source in the entry's import closure is embedded
+in a generated driver as chunked literals, and the driver hands them to `emitFiles` from **inside**
+the module. 532 KiB of generated source, which the reference compiles in a second and this emitter in
+a fifth of one.
+
+Two canaries and a third opinion, because a bootstrap test that compares nothing is the easiest test
+in the world to write:
+
+- Stage A must **decline nothing** — two eight-byte headers agree about nothing at all. (This fired
+  immediately: the first run carried only `packages/wacc/src/*.wac` and reported 41 characters of
+  reason, which is exactly *"an import of a file that was not supplied"*. One of wacc's sources
+  reaches into `bytes/src/buf.wac`, so the closure is nine files and not eight.)
+- Stage A's module must be over 100,000 bytes, so "it emitted something" is not "it emitted a header".
+- And stage B's bytes must equal what the **harness** gets from `emitFiles` directly — the number
+  every other test in this package has been measuring all along.
+
+The ladder is climbed. What remains is not the ladder: generics (27 files), a capability import (22,
+which needs a host to import *from*), and whatever the next thing this compiler cannot yet do turns
+out to be — with three oracles now watching it, one of which is the compiler itself.
+
 ### The fixed point, and an `else` that ran first
 
 Reading is half a compiler. The last slot showed the emitted `wacc` can lex, parse, print and check
