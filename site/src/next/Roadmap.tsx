@@ -80,7 +80,7 @@ export default function Roadmap() {
             ["a second host with no JavaScript in it", "done"],
             ["process table, users and login, a line discipline", "done"],
             ["init — services as a file in the image", "done"],
-            ["a spawned stage inheriting the session's filesystem", "not started"],
+            ["a spawned stage reaching the session's filesystem", "done"],
             ["a desktop", "not started"],
           ]}
         />
