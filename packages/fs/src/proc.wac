@@ -1,6 +1,6 @@
 // The process table: pids, parents, states and exit statuses that belong to the system.
 //
-// [design/0001](../../../design/0001-a-self-contained-system.md) step 3. The design's criterion is that
+// [design/0001](../../../design/system/0001-a-self-contained-system.md) step 3. The design's criterion is that
 // `ps` in the ssh demo shows the pipeline you are running and `kill` ends one, and the reason it is the
 // keystone is that four separate things wait on it: `ps`, `kill`, `jobs` and `&`, a `^C` that has
 // somewhere to go, and `/proc/<pid>`.

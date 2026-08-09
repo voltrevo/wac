@@ -25,8 +25,14 @@
 //     the repository and the other two see nothing, and every listing differs for a reason that has
 //     nothing to do with the backing.
 //
-// What is *not* levelled is anything about behaviour. A difference that survives those two is a
-// difference worth reading.
+// A third is levelled since 2026-08-09, and it had been six permanent false positives: a script naming
+// an absolute path outside `/tmp` reaches the *real* filesystem on the host shell and nothing in the
+// other two, so `[ -d /etc ]` is true on this machine and false in a fresh session. Those are compared
+// on memory against image — the pair that says anything about a VFS — and the count is printed.
+//
+// What is *not* levelled is anything about behaviour. A difference that survives those three is a
+// difference worth reading, and now that is true: before it, six lines of expected noise were the
+// output every time, which is exactly how a seventh goes unread.
 
 import { buildApp } from "../packages/platform/build.ts";
 import { CORPUS } from "../packages/sh/test/corpus.ts";
@@ -108,10 +114,56 @@ const cases = CORPUS.slice(from, from + count);
 let agree = 0;
 const hung: string[] = [];
 const differ: string[] = [];
+/** How many were compared on the two of ours only, because the third would be answering about Linux. */
+let machineOnly = 0;
+
+/**
+ * Whether this script names an absolute path that **exists on this machine**.
+ *
+ * `/tmp` is levelled already — every script runs after `mkdir -p /tmp` — so it is the one absolute
+ * path all three backings have. Anything else absolute reaches the real filesystem on the host shell
+ * and nothing in a sealed session.
+ *
+ * **The existence check is the point, and the first version did without it.** Naming an absolute path
+ * is not enough: `/nosuchfile` is absent on the machine *and* in a session, so all three agree and the
+ * comparison is worth keeping. Excluding on the name alone dropped the host arm for 34 scripts where
+ * only 6 could ever have differed — 28 scripts quietly compared on two backings instead of three,
+ * which is the coverage this file exists to have.
+ */
+function reachesTheMachine(script: string): boolean {
+  for (const m of script.matchAll(/(?:^|[\s"'<>|=(])(\/[A-Za-z][\w./-]*)/g)) {
+    const path = m[1];
+    if (path === "/tmp" || path.startsWith("/tmp/")) continue;
+    try {
+      Deno.statSync(path);
+      return true;
+    } catch {
+      // Not on this machine either, so the host shell is answering the same question as the other two.
+    }
+  }
+  return false;
+}
 for (const [i, script] of cases.entries()) {
   const r = three(script, i + 1);
   if (r.memory.hung || r.image.hung || r.host.hung) {
     hung.push(script);
+    continue;
+  }
+  // **The third difference, and it is the machine rather than the backing.** A script naming an
+  // absolute path outside `/tmp` reaches the *real* filesystem on the host shell and nothing at all in
+  // the other two: `[ -d /etc ]` is true on this machine and false in a fresh session, and so is
+  // `ls /etc/passwd`. Six of the corpus's scripts do that, and every one of them "survived" the two
+  // levellings above and was reported as a difference worth reading. It is not — memory and image
+  // agreed with each other throughout, which is the comparison that says anything about a VFS.
+  //
+  // So those scripts are compared **memory against image** and the host is left out of it, and the
+  // count is printed rather than quietly dropped: a sweep that silently narrows what it covers reports
+  // a better number for checking less.
+  if (reachesTheMachine(script)) {
+    if (same(r.memory, r.image)) { agree++; machineOnly++; continue; }
+    differ.push(
+      `${JSON.stringify(script)}  (host not compared: names an absolute path)\n` +
+      `  memory ${show(r.memory)}\n  image  ${show(r.image)}`);
     continue;
   }
   if (same(r.memory, r.image) && same(r.memory, r.host)) {
@@ -125,6 +177,11 @@ for (const [i, script] of cases.entries()) {
 
 await Deno.remove(dir, { recursive: true });
 console.log(`${agree} of ${cases.length} scripts agree across memory, image and a host mount`);
+if (machineOnly > 0) {
+  console.log(
+    `  ${machineOnly} of those named an absolute path and were compared on memory and image only — ` +
+      `the host shell would be answering about this machine, not about a backing`);
+}
 // Said rather than dropped: a sweep that silently skipped what it could not run would report a
 // coverage it did not have.
 if (hung.length > 0) {

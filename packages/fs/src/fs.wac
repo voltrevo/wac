@@ -1,6 +1,6 @@
 // A filesystem that belongs to the system rather than to the host.
 //
-// [design/0001](../../../design/0001-a-self-contained-system.md) step 1, filed as wac-mono 0067. Every
+// [design/0001](../../../design/system/0001-a-self-contained-system.md) step 1, filed as wac-mono 0067. Every
 // filesystem capability a program has today is the *host's*, so `packages/ssh`'s demo hands each session
 // the real disk of whatever ran the daemon and the browser terminal hands it the tab's Origin Private
 // File System. There is nothing that belongs to the system: nothing to seal a session inside, nothing to
@@ -25,7 +25,7 @@
 // A name is bytes — anything but `/` and NUL — because that is what a name is on the systems being
 // imitated. The one wrinkle is that names arrive here as wac strings, which are byte arrays, so nothing
 // is lost on the way in; what a *host* does with them is
-// [0065](../../../issues/open/0065-a-spawned-programs-arguments-are-not-byte-exact.md).
+// [0065](../../../issues/system/closed/0065-a-spawned-programs-arguments-are-not-byte-exact.md).
 
 import { Map } from "../../std/src/map.wac";
 import { Vec } from "../../std/src/vec.wac";

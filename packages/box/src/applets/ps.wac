@@ -1,6 +1,6 @@
 // What is running, read out of `/proc`.
 //
-// [design/0001](../../../../design/0001-a-self-contained-system.md) step 3. The process table lives in
+// [design/0001](../../../../design/system/0001-a-self-contained-system.md) step 3. The process table lives in
 // `packages/fs`'s `proc.wac` and is rendered by the `/proc` mount; this applet has **no channel to it**
 // beyond the filesystem every other applet already has, which is the point. `ps` on a real system reads
 // `/proc` and nothing else, so a `ps` here that was handed the table directly would work in a build
