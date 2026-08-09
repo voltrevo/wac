@@ -463,16 +463,17 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>338 of 341 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>334 of 341 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
         <P>
           The type checker is the one worth reading the numbers for, because it was finished against{" "}
-          <em>three</em> independent corpora rather than one: every rejection the language&rsquo;s
-          own specification documents, the reference compiler&rsquo;s own test suite, and a
+          <em>four</em> independent corpora rather than one: every rejection the language&rsquo;s
+          own specification documents, the reference compiler&rsquo;s own test suite, a
           generated sweep over the cross product of type against context —{" "}
-          <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead>. It reports a subset of the
+          <Lead>10,013 programs, 0 false alarms, 0 contradictions</Lead> — and, most recently, the
+          repository&rsquo;s own 341 wac files, with no false alarm among them. It reports a subset of the
           reference&rsquo;s diagnostics at its exact positions and never invents one.
         </P>
         <P>
@@ -491,9 +492,11 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>338 of the repository&rsquo;s 341 wac
-          files</Lead> whole, and the three that remain are blocked on the harness not supplying a
-          file's import rather than on anything the language does. Every answer it gives for the
+          It is nearly finished — the emitter compiles <Lead>334 of the repository&rsquo;s 341 wac
+          files</Lead> whole. That is four fewer than last week, and the direction is worth stating
+          plainly: the corpus is the live repository, so code written for other reasons walks in
+          using things this emitter has not reached yet. Four files now block on a member it cannot
+          type, three on an import the harness does not supply. Every answer it gives for the
           specification&rsquo;s own cases agrees — 322 of 322, from the 235 of 275 programs it emits
           whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 341
           produces an invalid module</em>, which is the property that had to hold before the
