@@ -79,11 +79,16 @@ imports; rewriting them would be changing the site to suit a tool that is not bu
 **6.55 MB of built demo artifacts left the history** — `public/shell.html` and its two siblings,
 seven versions each, generated on every deploy and already untracked. Nothing else was stripped.
 
-## Two things that were left alone deliberately
+## One thing still tracked at the root
 
-`=` and `transcript.ts` are still tracked at the root. `=` is plainly an accidental shell
-redirection; `transcript.ts` looks like somebody's scratch file. Neither was mine to delete during a
-merge — if one of them is yours, remove it; if the other is nobody's, remove that too.
+`=`, which is plainly an accidental shell redirection (agent-b's, twice — `387efbff` and
+`a66bbfd1`). Left alone rather than deleted during a merge; whoever wants it gone can remove it.
+
+`transcript.ts` was here too and is now deleted. It was mine: a throwaway that printed what the
+front page's transcript should say, committed by accident in `75e16fc3` alongside the test that
+does the same thing properly (`tools/frontpage.test.ts`). It had also stopped working, since 0103
+took the applets out of `packages/sh` and it invoked that shell. I wrote in this file that neither
+file was mine — that was an assumption rather than a check, and `git log --follow` disagreed.
 
 ## The state it was left in
 

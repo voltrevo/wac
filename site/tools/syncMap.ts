@@ -1,19 +1,18 @@
 #!/usr/bin/env -S deno run --allow-read --allow-write
-// Regenerate `src/data/built.ts` from wac-mono's generated MAP.md.
+// Regenerate `src/data/built.ts` from the repository's generated MAP.md.
 //
-//   deno run --allow-read --allow-write tools/syncMap.ts [path-to-wac-mono]
+//   deno run --allow-read --allow-write site/tools/syncMap.ts
 //
-// The site's landing page claims what has been built in wac — thirty-odd packages with their
-// sizes and test counts. Those numbers belong to the other repo, and typing them into JSX means
-// they are wrong by the end of the week. wac-mono generates `MAP.md` from its own tree and its
-// suite fails when that file is stale, so it is the closest thing to a source of truth that
-// exists for this, and this reads it.
+// The site claims what has been built in wac — thirty-odd packages with their sizes and test
+// counts, the corpus, the applets. Those numbers belong to the tree, and typing them into JSX means
+// they are wrong by the end of the week: this file exists because the front page said 652
+// differential scripts against a corpus of 817, in four places. `MAP.md` is generated and its
+// staleness is a failing test, so it is the closest thing to a source of truth there is.
 //
-// Not run in CI, deliberately: GitHub Pages builds this repo alone and has no wac-mono beside
-// it. So the generated file is committed, and the freshness of the numbers is a thing somebody
-// refreshes when they notice, not a thing that can break a deploy. Rounded on the page for the
-// same reason — see `src/data/built.ts`.
-
+// The generated file is committed, so a checkout can build the site without running this. The Pages
+// build runs it first, so what the site serves is current as of that deploy. The page still rounds
+// the headline figures: a snapshot of a moving tree should not pretend to four significant digits.
+//
 const mono = // The repository root. Run from there — these shell out to `deno task`, which needs the
 // root's deno.json, and they read `packages/` and `MAP.md`. It used to be a sibling
 // checkout of wac-mono; the merge made it the tree this file is in.
@@ -51,9 +50,8 @@ if (rows.length === 0) {
 /**
  * `Deno.test(` declarations under `dirs`, recursively, in `*.test.ts` only.
  *
- * MAP.md's test count is wac-mono's *packages*, which is the right number beside a package table
- * and is not the size of either suite: it leaves out wac-mono's own harness and tools, and it
- * knows nothing about this repo, where the compiler's 1,200-odd tests live.
+ * MAP.md's test count is the *packages*, which is the right number beside a package table and is
+ * not the size of the suite: it leaves out the harness, the tools and the compiler's own 1,200-odd.
  *
  * Counted the same way `map.ts` counts a package's host tests, so the two halves are commensurable.
  * It is an *undercount* of what the suites report — a test generated inside a helper or a loop is
@@ -138,8 +136,9 @@ async function wacTestFiles(root: string): Promise<number> {
 }
 
 const here = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const compilerTests = await testDecls(here, ["atoms", "tools", "src"]);
-const monoOtherTests = await testDecls(mono, ["harness", "tools"]);
+// Everything outside `packages/`, which is what MAP.md counts. One repository since 2026-08-09, so
+// this used to be two walks over two checkouts and is now one over four directories.
+const otherTests = await testDecls(mono, ["compiler", "harness", "tools", "site/tools"]);
 const corpus = await corpusSize(mono);
 const applets = await appletCount(mono);
 const wacTests = await wacTestFiles(mono);
@@ -173,13 +172,13 @@ export const TOTALS = {
   programs: ${num(totals[4])},
   pages: ${num(totals[5])},
   /**
-   * Both suites: wac-mono's packages (${num(totals[3])}), its harness and tools (${monoOtherTests}),
-   * and this repo's compiler (${compilerTests}).
+   * The whole repository: the packages (${num(totals[3])}), and the compiler, harness and tooling
+   * around them (${otherTests}).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: ${num(totals[3]) + monoOtherTests + compilerTests},
+  testsAll: ${num(totals[3]) + otherTests},
   /** Scripts in the bash differential corpus — \`packages/sh/test/corpus.ts\`. */
   corpus: ${corpus},
   /** Applets \`packages/box\` dispatches, which is what \`boxNames()\` returns and \`/bin\` lists. */
@@ -197,5 +196,5 @@ ${rows.map((r) => `  { name: ${JSON.stringify(r.name)}, what: ${JSON.stringify(r
 await Deno.mkdir(new URL("../src/data", import.meta.url).pathname, { recursive: true });
 await Deno.writeTextFile(new URL("../src/data/built.ts", import.meta.url).pathname, out);
 console.log(`src/data/built.ts: ${rows.length} packages, ${totals[3]} package tests, ` +
-  `${monoOtherTests} in wac-mono's harness and tools, ${compilerTests} in the compiler, ` +
+  `${otherTests} in the compiler, harness and tools, ` +
   `${corpus} corpus scripts, ${applets} applets, ${wacTests} wac test files`);

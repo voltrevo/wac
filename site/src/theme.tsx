@@ -15,7 +15,6 @@ import { tags } from "@lezer/highlight";
 import { wac as wacLang, wapy as wapyLang } from "./editor/wac-language";
 
 export const GITHUB = "https://github.com/voltrevo/wac";
-export const MONO = "https://github.com/voltrevo/wac-mono";
 
 // Reuse the same highlight palette everywhere
 export const hl = {

@@ -7,11 +7,11 @@
 // makes the rest of the page credible.
 
 import { TOTALS } from "../data/built";
-import { A, Caveat, Code, Lead, m, P, Page, Section, Table } from "./ui";
+import { BLOB, A, Caveat, Code, Lead, m, P, Page, Section, Table } from "./ui";
 import { c, font } from "./tokens";
 
-const DESIGN = "https://github.com/voltrevo/wac-mono/blob/master/design";
-const ISSUES = "https://github.com/voltrevo/wac-mono/blob/master/issues/open";
+
+
 const WAC_DESIGN = "https://github.com/voltrevo/wac/blob/master/design";
 
 const SEALED = `$ ssh -p 2222 user@host
@@ -100,7 +100,7 @@ export default function Roadmap() {
           {m({ children: "/bin" })} its own spawned programs cannot see. That is one decision about
           what {m({ children: "spawnSelf" })} hands a child rather than a missing feature, and it is
           the thing between here and &ldquo;the same system in a tab&rdquo;.{" "}
-          <A href={`${DESIGN}/0001-a-self-contained-system.md`} external>design/0001</A>
+          <A href={`${BLOB}/design/system/0001-a-self-contained-system.md`} external>design/0001</A>
         </P>
       </Section>
 
@@ -157,7 +157,7 @@ export default function Roadmap() {
           <em>out of order</em>, waited on together, each resolving its own value, where a runtime
           that answered everything immediately would pass the types and fail that. It passes, and it
           was checked to fail: gutting the sleep so every ticket settles at once makes the test say
-          so by name. <A href={`${ISSUES}/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md`} external>Issue 0087</A>{" "}
+          so by name. <A href={`${BLOB}/issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md`} external>Issue 0087</A>{" "}
           is closed, and what it bought is on{" "}
           <A href="#/checked/two-hosts">the method page</A>, because a second host is a kind of
           evidence rather than a feature.
@@ -210,7 +210,7 @@ export default function Roadmap() {
           been reviewed, for as long as that is true.
         </Caveat>
         <P>
-          <A href={`${DESIGN}/0003-an-ethereum-centric-reference-distribution.md`} external>design/0003</A>
+          <A href={`${BLOB}/design/system/0003-an-ethereum-centric-reference-distribution.md`} external>design/0003</A>
         </P>
       </Section>
 

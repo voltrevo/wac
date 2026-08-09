@@ -6,24 +6,24 @@
 // browser, and find out. That is the strongest evidence here and it belongs on its own page.
 //
 // Sizes are fetched at run time from `demos.json`, written beside the pages by `tools/syncDemos.ts`
-// when CI builds them out of wac-mono. So the number beside a demo is that build's, and a checkout
+// when CI builds them. So the number beside a demo is that build's, and a checkout
 // without them shows the links and no number rather than a stale one.
 
 import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
 import { EX_ENUM } from "../snippets";
 import { TOTALS } from "../data/built";
-import { A, Code, Lead, m, P, Page, Section, Table } from "./ui";
+import { BLOB, A, Code, Lead, m, P, Page, Section, Table } from "./ui";
 import { ASSETS, c, font, space } from "./tokens";
 
-const MONO_SRC = "https://github.com/voltrevo/wac-mono/blob/master/packages";
+
 
 const DEMOS: { file: string; title: string; what: string; src: string; key: string }[] = [
   {
     file: `${ASSETS}shell.html`,
     key: "shell",
     title: "A shell, in a tab",
-    src: `${MONO_SRC}/box/example/term.wac`,
+    src: `${BLOB}/packages/box/example/term.wac`,
     what:
       `packages/sh with a keyboard in front of it, and all ${TOTALS.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.`,
   },
@@ -31,7 +31,7 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     file: `${ASSETS}hash.html`,
     key: "hash",
     title: "Hash and compress, as you type",
-    src: `${MONO_SRC}/box/example/hash.wac`,
+    src: `${BLOB}/packages/box/example/hash.wac`,
     what:
       "SHA-256 and DEFLATE keeping up with your keystrokes — or with a file you drop on the page, which comes back compressed as a .gz your own gunzip will open.",
   },
@@ -39,7 +39,7 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     file: `${ASSETS}pixels.html`,
     key: "pixels",
     title: "A Mandelbrot set, recomputed on every zoom",
-    src: `${MONO_SRC}/platform/example/pixels.wac`,
+    src: `${BLOB}/packages/platform/example/pixels.wac`,
     what:
       "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
   },
@@ -86,7 +86,7 @@ export default function Run() {
               </div>
               <div style={{ color: c.dim, fontSize: 14.5, lineHeight: 1.55 }}>{what}</div>
               <div style={{ fontFamily: font.mono, fontSize: 12, color: c.faint, marginTop: 8 }}>
-                source: {src.replace("https://github.com/voltrevo/wac-mono/blob/master/", "")}
+                source: {src.replace(`${BLOB}/`, "")}
               </div>
             </a>
           ))}

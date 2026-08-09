@@ -6,13 +6,13 @@
 // possible at all, then the four things that would be hard to fake, then the whole inventory.
 //
 // Prose carried over from the pages this replaces, which had been corrected against the sources
-// several times; the numbers come from `../data/built`, generated from wac-mono's own generated map.
+// several times; the numbers come from `../data/built`, generated from the repository's own generated map.
 
 import { BUILT, TOTALS } from "../data/built";
-import { A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
+import { TREE, A, Caveat, Code, Facts, Lead, m, P, Page, Section, Sub, Table } from "./ui";
 import { c, font, space } from "./tokens";
 
-const MONO_SRC = "https://github.com/voltrevo/wac-mono/tree/master/packages";
+
 
 const EX_WC = `// packages/platform/example/wc.wac — a complete application, with no TypeScript beside it
 export i32 main(Core core, Cli cli) {
@@ -463,8 +463,8 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>under way</span>],
-            [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.dim }}>not started</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>248 of 337 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
         <P>
@@ -482,6 +482,21 @@ export default function Stack() {
             have nothing further to say, which is a narrower thing and the only one that was
             measured.
           </span>
+        </P>
+        <P>
+          <Lead>The last rung is reached, which is the one the others were for.</Lead> Take wacc,
+          compile it with the reference to get stage A; compile wacc <em>with stage A</em> to get
+          stage B; then ask stage B to compile wacc, and compare. <Lead>B and C are the same
+          bytes.</Lead> A compiler that reproduces itself is what a bootstrap means, and nothing
+          short of running it can show it.
+        </P>
+        <P>
+          It is not finished — the emitter compiles 248 of the repository&rsquo;s 337 wac files
+          whole, and what blocks the rest is named rather than counted: an import from a capability,
+          a generic function, a few narrower shapes. But <em>none of the 337 produces an invalid
+          module</em>, which is the property that had to hold before the fixpoint meant anything: a
+          walk that approves a function the emitter cannot actually emit would reach a fixpoint on
+          garbage.
         </P>
         <Sub id="wacc-emitter" title="Why the emitter is not checked on its bytes">
           <P>
@@ -544,14 +559,14 @@ export default function Stack() {
 
       <Section id="packages" kicker="all of it" title="Every package">
         <P>
-          In dependency order — nothing imports anything above it. Generated from wac-mono&rsquo;s
+          In dependency order — nothing imports anything above it. Generated from the repository&rsquo;s
           own generated map, so these numbers are the tree&rsquo;s rather than a claim about it.
         </P>
         <Table
           head={["package", "what it is", "lines", "tests"]}
           align={["left", "left", "right", "right"]}
           rows={BUILT.map((p) => [
-            <a href={`${MONO_SRC}/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
+            <a href={`${TREE}/packages/${p.name}`} target="_blank" rel="noopener" style={{ fontFamily: font.mono, color: c.accent, textDecoration: "none", whiteSpace: "nowrap" }}>{p.name}</a>,
             <span style={{ color: c.dim }}>{p.what}</span>,
             <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.lines.toLocaleString()}</span>,
             <span style={{ fontFamily: font.mono, fontVariantNumeric: "tabular-nums" }}>{p.tests}</span>,

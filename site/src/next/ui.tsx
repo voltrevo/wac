@@ -9,7 +9,10 @@ import { CodeBlock, type Lang } from "../theme";
 import { c, font, COLUMN, space } from "./tokens";
 
 export const GITHUB = "https://github.com/voltrevo/wac";
-export const MONO_REPO = "https://github.com/voltrevo/wac-mono";
+/** A directory in the repository, and a file in it. The language and the packages were two
+ *  repositories until 2026-08-09; every link on this site pointed into whichever one it meant. */
+export const TREE = `${GITHUB}/tree/master`;
+export const BLOB = `${GITHUB}/blob/master`;
 
 export type Route = "home" | "language" | "run" | "stack" | "checked" | "roadmap" | "playground";
 
@@ -256,9 +259,9 @@ function Footer() {
   return (
     <footer style={{ borderTop: `1px solid ${c.line}`, marginTop: space.section, padding: "26px 0 60px", display: "flex", gap: 22, flexWrap: "wrap", fontSize: 13, color: c.faint, fontFamily: font.mono }}>
       <a href="#/playground" style={{ color: c.dim, textDecoration: "none" }}>playground</a>
-      <a href={`${GITHUB}/tree/master/spec`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>spec</a>
-      <a href={GITHUB} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>wac</a>
-      <a href={MONO_REPO} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>wac-mono</a>
+      <a href={`${TREE}/spec`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>spec</a>
+      <a href={GITHUB} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>source</a>
+      <a href={`${TREE}/packages`} target="_blank" rel="noopener" style={{ color: c.dim, textDecoration: "none" }}>packages</a>
       <span style={{ marginLeft: "auto", maxWidth: "48ch", lineHeight: 1.6 }}>
         Every snippet is real source from those repositories, abridged only by removing lines.
       </span>
