@@ -64,6 +64,10 @@ function fixture(): void {
   Deno.writeTextFileSync(`${tmp}/tree/f`, "a\nb\nc\n");
   Deno.writeTextFileSync(`${tmp}/tree/n`, "3\n1\n2\n");
   Deno.writeTextFileSync(`${tmp}/tree/sub/deep`, "x\n");
+  // A symlink, because `linkStat` is the one filesystem question no two-host script used to ask. It
+  // has to be made from here: there is no `ln` in this system, so a script cannot create its own.
+  Deno.symlinkSync("f", `${tmp}/tree/link`);
+  Deno.symlinkSync("nosuch", `${tmp}/tree/dangling`);
 }
 
 type Run = { code: number; out: string; err: string };
@@ -148,6 +152,28 @@ const AGREED = [
   "test -e f/g; echo st=$?",
   "cd f/g",
   "echo y > f/g",
+  // ── `linkStat`: the difference between a link and what it points at ──
+  "test -h link; echo st=$?",
+  "test -h f; echo st=$?",
+  "test -h dangling; echo st=$?",
+  "test -h nosuch; echo st=$?",
+  // `-e` follows, so it disagrees with `-h` on both of them — the pair is what says the two calls are
+  // actually different calls rather than one answering for both.
+  "test -e link; echo st=$?",
+  "test -e dangling; echo st=$?",
+  "cat link",
+  "cat dangling",
+  "wc -c link",
+  // ── A *path* that is not a program. A name with a slash is not searched for and does not fall back
+  // to a builtin, so what the shell says about it is what the filesystem says — on both hosts, and the
+  // same as GNU. All four of these used to be `command not found` and 127.
+  "./nosuch",
+  "./sub",
+  "sub/",
+  "./nosuch a b",
+  "./sub | cat; echo st=$?",
+  "cat f | ./sub; echo st=$?",
+  "./nosuch | wc -l; echo st=$?",
 ];
 
 /** Scripts where the real tool prints more than this system has, so the two hosts are the oracle. */
@@ -186,6 +212,38 @@ Deno.test("wacsh over the real filesystem agrees with GNU on both hosts", async 
   // The canary: GNU must actually have answered something, or every assertion above holds vacuously.
   fixture();
   assertEquals(gnu("cat f").out, "a\nb\nc\n", "bash did not run — nothing was compared");
+});
+
+// A file that exists, is not a directory, and is not a program. The three cases above are the
+// filesystem's to answer and are the same everywhere; **this one is the runtime's**, and the two
+// runtimes do not have the same answer to give. A JavaScript host would run a worker bundle and this
+// is not one; the native host cannot run a foreign program at all, whatever it contains — see
+// `Cap::Spawn` in `native/src/main.rs`, which answers -1 with a reason rather than -2 so that the
+// shell reports the program rather than giving up on spawning.
+//
+// So the sentences are pinned rather than compared. What *is* the same on both, and is what a script
+// can see, is the status and the shell naming the path it was given. If someone makes the two agree,
+// this fails and says so — which is the right way round for a difference nobody has decided to keep.
+Deno.test("the two hosts each say why a file is not a program, and differ", async () => {
+  const native = await nativeBinary();
+  fixture();
+  const js = runIt(deno, ["-c", "cd tree; ./f"]);
+  assertEquals(js.code, 126, "deno status");
+  assertEquals(js.err, "sh: ./f: not a wac worker bundle: build one with --worker\n", "deno");
+  // GNU's is `Permission denied` and neither host can say that: there is no execute bit in this
+  // system to have refused. What both hosts do say is 126, which is the part a script reads.
+  fixture();
+  assertEquals(gnu("./f").code, 126, "bash disagrees about the status, which is the comparable part");
+  if (native === null) return;
+  fixture();
+  const rs = runIt(native, [manifest, "-c", "cd tree; ./f"]);
+  assertEquals(rs.code, 126, "native status");
+  assertEquals(
+    rs.err,
+    "sh: ./f: spawning a program from its source is not implemented in the native runtime; " +
+      "spawnSelf works\n",
+    "native",
+  );
 });
 
 Deno.test("the two hosts agree where the real tool prints more than this system has", async () => {

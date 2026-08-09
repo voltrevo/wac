@@ -86,11 +86,11 @@ const COVERAGE: Record<string, Cover> = {
   WRITE_FILE: { where: "native_hostfs: `touch`, and write-only grants" },
   STAT: { where: "native_hostfs: `stat f`" },
   LINK_STAT: {
-    gap: "two callers now — `test -h` in the shell and `tar`, both through `Fs.linkStat`, which " +
-      "dispatches rather than answering `stat` everywhere (that is what let `tar` ask the *host* " +
-      "about a path in an image). Still no two-host script reaches it: the corpus has no `tar` and " +
-      "no `test -h`. `find .` is compared on both hosts and does *not* reach this — it calls " +
-      "`stat`, which I had assumed otherwise when first writing this ledger",
+    where: "native_hostfs: `test -h` over a real symlink and a real dangling one, against GNU on " +
+      "both hosts, with `test -e` beside each — the pair is what says these are two different calls " +
+      "rather than one answering for both. The fixture makes the links itself because there is no " +
+      "`ln` in this system, so no script could make its own; that absence is why this sat as a gap " +
+      "while `Fs.linkStat` had two callers",
   },
   READ_DIR: { where: "native_hostfs: `ls`" },
   MKDIR: { where: "native_hostfs: `mkdir d2; ls; rmdir d2`" },
@@ -167,8 +167,15 @@ const COVERAGE: Record<string, Cover> = {
   },
   SEND: { where: "native_shell: as RECV, and the same traffic" },
   SPAWN: {
-    gap: "only `spawnSelf` is compared. `spawn` of a *foreign* program has no two-host test, and it " +
-      "is the one whose grant intersection differs most between runtimes",
+    gap: "**not implemented in the native runtime**, which is the answer rather than a missing test. " +
+      "What `spawn` takes is a program's *source*, and on the JavaScript hosts that means a worker " +
+      "bundle — an artifact no wasmtime host could run whatever it did with it. `native/src/main.rs` " +
+      "answers -1 with a reason (not -2, which would mean this world cannot spawn at all and would " +
+      "make the shell give up on `spawnSelf` too, which works). So there is nothing here for two " +
+      "hosts to agree *about*, and what is compared instead is everything around it: `native_hostfs` " +
+      "runs a path that is not a program on both and pins each runtime's sentence, and the three " +
+      "cases the *filesystem* settles — missing, a directory, a path in a pipeline — are compared " +
+      "against GNU on both hosts, where all of them used to be `command not found` and 127",
   },
   PUSH_CHILD: {
     gap: "**no longer exercised constantly**, which is what this entry used to say. wac-mono 0116 " +

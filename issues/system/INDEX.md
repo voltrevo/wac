@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0127](open/0127-a-pipeline-that-cannot-stream-traps-on-an-unbounded-producer.md) | a pipeline `canStream` refuses traps the shell outright when its producer does not end | bug | trap |
 | [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |
 | [0125](open/0125-yes-wc-l-answers-4194304-where-bash-never-finishes.md) | `yes \| wc -l` answers 4194304 — the 8 MiB queue cap — where bash never finishes | bug | wrong answer |
 | [0123](open/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md) | `closeSocket` stops a child outright on one host and cooperatively on the other | bug | wrong answer |
@@ -36,7 +37,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-138 issues, 114 closed.
+139 issues, 114 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
