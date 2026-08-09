@@ -1863,6 +1863,41 @@ where the two agree — `1 + x` is still the slot's business and this must not d
 | false alarms | 0, everywhere |
 | the reaching experiment | 98% recall, 41 false alarms — not committed |
 
+### It was never about the imports — 96% to 97%
+
+The census got built. It works: count how many files in the closure declare each name, and let a
+reached type in only when the answer is one. It did **not** move recall, and finding out why is the
+whole of this entry.
+
+Two false starts first, both instructive. Reaching a second time over the same files re-declares
+what the first round declared, and a struct's *fields* do not de-duplicate the way its name does —
+`Fp2` got four fields, and `Fp2(a, b)` became a constructor with the wrong count in forty-one files
+at once. Opening the second round to files the entry imports nothing from added nine more and still
+no recall.
+
+Then the trace that should have come first: `cli.readFile(path).wait(1)` misses because
+`Pending<T>` is **generic**, and this checker returns early on a generic receiver — "a generic's
+methods are not recorded". The imports had nothing to do with it. Seven of the nine remaining
+diagnostics were that one guard, and all seven are a `Pending<…>` from the platform.
+
+**A method's parameter count does not depend on its type arguments.** `Pending<T>.wait` takes none
+whatever `T` is, so `.wait(1)` is wrong for every instantiation at once. Types stay unmodelled;
+arity does not need them, and the guard now checks the count before it declines the rest.
+
+The census and the reaching round are not in the tree. They cost a second parse of every closure
+file and bought nothing, and the diff that mattered is twelve lines.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 241 of 250 (96%) | **243 of 250 (97%)** |
+| false alarms | 0 | 0 |
+| both generated sweeps | unchanged | unchanged |
+
+Two of the seven turned out not to be the guard, which is where the next slot starts — and the
+lesson to carry is the order: **trace one case before building the mechanism the description
+suggests.** Three of my last four theories about this tail were wrong, and each was checkable in
+about two minutes.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
