@@ -1368,9 +1368,40 @@ start failing when 0085 is fixed.
 | spec answers | 251/251 | **284/284** — thirty-three more programs reach the comparison |
 | sweep | 4,416 programs, 4,007 compared | **4,434 programs, 4,025 compared, 0 mismatched** |
 
-The tour is one feature further on: `Counter.inc` as a *value* — a method reference, where `this`
-becomes the first parameter. That is what "unresolved name Counter" now means, and it is the next
-thing between this corpus and 333.
+### A method reference is the unbound one — 332 to 333, and the tour is whole
+
+`Counter.inc` with no parentheses is a value: a reference to the function the method compiled to,
+whose first parameter is the receiver. `c.inc` — a method already bound to an object — is the thing
+that cannot exist here, and for the reason the whole language is built around: there are no
+closures, so there is nowhere for the object to live. The tour says so two lines above the code that
+needed this.
+
+The work was one distinction. A method is *registered* with its declared parameters, because a call
+site pushes the object itself and then walks the arguments; a **reference** to one has to say the
+other thing, since the function that was actually emitted takes the receiver first. One table
+recording which functions have a `this` is the difference between `fn[void()]` and `fn[void(Counter)]`,
+and the second is the type the program declares.
+
+The decline it replaced is worth keeping in mind: *"unresolved name Counter"*. That was a true
+statement — nothing declares `Counter` as a value — arrived at by walking the left-hand side of the
+member as an expression. A name that resolves to a type is not an expression, and the fix is to ask
+that question before descending rather than to soften the answer.
+
+Nine programs went into the sweep: called twice, called inline, with an argument, passed to a
+function that takes a `fn[…]`, beside a bare function of the same signature, in an array of them,
+and through a parent — where the reference's type is the parent's, because that is the function that
+exists. All nine compare, none mismatch.
+
+| | before | after |
+|---|---|---|
+| whole files | 332 | **333 of 338** |
+| invalid | 0 | 0 |
+| sweep | 4,434 programs, 4,025 compared | **4,443 programs, 4,034 compared, 0 mismatched** |
+
+Five files left. Three import files the corpus does not contain, and the last two are the same
+feature from two sides: **`Option.Some(v)` whose type argument comes from the return type**, and
+**`mapOption(some, double)`**, a generic function whose `T` comes from an argument and whose `U`
+comes from a callback. Generic *types* are instantiated here; generic *functions* are not.
 
 ### One reader, because two disagreed
 

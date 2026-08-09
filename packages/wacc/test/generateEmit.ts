@@ -911,6 +911,38 @@ export function generateEmit(): Cell[] {
       `struct Q { i31ref r; }\nexport i32 f() { Q q = Q(5 as! i31ref); return q.r as i32; }`);
   }
 
+  // **A method reference is the unbound one.** `Counter.inc` is a value whose first parameter is the
+  // receiver; `c.inc` is a method already bound to an object, which has no representation here
+  // because there are no closures. So every shape below passes the object explicitly.
+  {
+    const C = `struct Counter {\n  i32 count;\n  Counter create(i32 initial) { return Counter(initial); }\n` +
+      `  void inc(this) { this.count++; }\n  i32 plus(this, i32 n) { return this.count + n; }\n}\n`;
+    add("a method reference called twice",
+      `${C}export i32 f() { fn[void(Counter)] bump = Counter.inc; Counter c = Counter(0); bump(c); bump(c); return c.count; }`);
+    add("a static reference builds a value",
+      `${C}export i32 f() { fn[Counter(i32)] make = Counter.create; return make(7).count; }`);
+    add("a method reference called inline",
+      `${C}export i32 f() { Counter c = Counter(1); (Counter.inc)(c); return c.count; }`);
+    add("a method reference with an argument",
+      `${C}export i32 f() { fn[i32(Counter,i32)] p = Counter.plus; return p(Counter(10), 5); }`);
+    add("a method reference passed to a function",
+      `${C}i32 twice(fn[i32(Counter,i32)] g, Counter c) { return g(c, 1) + g(c, 2); }\n` +
+      `export i32 f() { return twice(Counter.plus, Counter(10)); }`);
+    add("a method reference and a bare function in one signature",
+      `${C}i32 bare(Counter c, i32 n) { return c.count * n; }\n` +
+      `export i32 f() { fn[i32(Counter,i32)] g = bare; fn[i32(Counter,i32)] h = Counter.plus;\n` +
+      `  return g(Counter(3), 4) * 100 + h(Counter(3), 4); }`);
+    add("a method reference reassigned",
+      `${C}export i32 f() { fn[void(Counter)] b = Counter.inc; Counter c = Counter(5); b(c); b = Counter.inc; b(c); return c.count; }`);
+    add("a method reference in an array",
+      `${C}export i32 f() { fn[i32(Counter,i32)][] t = fn[i32(Counter,i32)][](Counter.plus, Counter.plus);\n` +
+      `  return t[0](Counter(2), 3) * 10 + t[1](Counter(4), 5); }`);
+    add("a method reference through the parent",
+      `struct Base { i32 v; i32 get(const this) { return this.v; } }\n` +
+      `struct Derived : Base { i32 w; }\n` +
+      `export i32 f() { fn[i32(Base)] g = Base.get; return g(Derived(6, 7)); }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);

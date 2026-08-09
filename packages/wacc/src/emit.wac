@@ -329,10 +329,27 @@ string emittedSig(Env env, u8[] src, Lexed lexed, Ty returnType, Param[] params,
 }
 
 /** The signature a registered function has, spelled the way a `fn[...]` type is. */
+/**
+ * The function slot `Owner.name` names when it is used as a *value*, or -1.
+ *
+ * Only a name that resolves to a **type** can be one: `c.inc` is a method already bound to an
+ * object, which is exactly what has no representation here, and asking for it is the error the tour
+ * points at rather than a thing to emit.
+ */
+i32 methodRefAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+  string own = staticOwner(src, lexed, env, obj);
+  if (own == "") { return -1; }
+  return env.funcAt(own + "." + tokenTextOf(src, lexed, nameTok));
+}
+
 string signatureOf(Env env, i32 at) {
   string out = "fn[" + env.funcReturns[at] + "(";
+  // **The receiver is a parameter of the function that was emitted**, so a reference to a method has
+  // it first and a call through that reference passes the object where `this` was.
+  string recv = env.funcRecv[at];
+  if (recv != "") { out = out + recv; }
   for (i32 i = 0; i < env.funcParamCount[at]; i++) {
-    if (i > 0) { out = out + ","; }
+    if (i > 0 || recv != "") { out = out + ","; }
     out = out + env.paramTypeAt(at, i);
   }
   return out + ")]";
@@ -761,6 +778,15 @@ export struct Env {
   string[] structParents;
   /** The parent's name token, kept until every struct is declared and the key can be resolved. */
   i32[] structParentToks;
+  /**
+   * Each function's receiver type, or `""` — the owner of a method declared with `this`.
+   *
+   * A method is registered with its *declared* parameters, because a call site pushes the object
+   * itself and then walks the arguments. A **reference** to one has to say the other thing: its type
+   * is `fn[void(Counter)]`, receiver first, since that is the signature of the function that was
+   * actually emitted. This is what tells the two apart.
+   */
+  string[] funcRecv;
 
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
@@ -1088,7 +1114,7 @@ export struct Env {
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024]());
+               string[1024](), i32[1024](), string[4096]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -3648,6 +3674,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         emitVariantNew(fb, src, lexed, env, vnew2, Expr?[0]());
         return;
       }
+      i32 mref2 = methodRefAt(src, lexed, env, obj, nameTok);
+      if (mref2 >= 0 && env.funcIndex[mref2] >= 0) {
+        fb.byte(210);   // ref.func — the same instruction a bare function name emits
+        fb.u32leb(env.funcIndex[mref2]);
+        return;
+      }
       string ot2 = typeOfE(src, lexed, env, obj);
       if (!env.isStructName(ot2)) { return; }
       emitExpr(fb, src, lexed, env, obj);
@@ -3808,6 +3840,11 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       // `Circle`, which is what makes `s.radius` resolve to one slot in the arm that narrowed it.
       string vn3 = variantOfMember(src, lexed, env, obj, nameTok);
       if (vn3 != "") { return vn3; }
+      // **`Counter.inc` with no parentheses is a value**: a reference to the function the method
+      // compiled to, whose first parameter is the receiver. `this` cannot be captured — there are no
+      // closures — so a method reference is the *unbound* one and nothing else can be spelled.
+      i32 mref = methodRefAt(src, lexed, env, obj, nameTok);
+      if (mref >= 0) { return signatureOf(env, mref); }
       string o = typeOfE(src, lexed, env, obj);
       if (env.enumOf(o) != "" || env.isEnumName(o)) {
         i32 sl = enumSlot(env, o, tokenTextOf(src, lexed, nameTok));
@@ -4832,6 +4869,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       // The variant question comes **first**, because the object of `Shape.Point` is a bare name
       // that is not a local and every other path here would decline it as one.
       if (variantOfMember(src, lexed, env, obj, nameTok) != "") { return ""; }
+      // A method reference resolves through the *name* on the left, so the object is not an
+      // expression to walk — asking about it produces "unresolved name Counter", which is a true
+      // statement about a type name and a useless one.
+      i32 mr = methodRefAt(src, lexed, env, obj, nameTok);
+      if (mr >= 0) {
+        return env.funcOk[mr] ? "" : "a method reference to a declined function";
+      }
       string o = unsupportedExpr(src, lexed, env, obj);
       if (o != "") { return o; }
       string ot3 = typeOfE(src, lexed, env, obj);
@@ -5566,6 +5610,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           }
           env.addFunc(owner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
                       typeOfTyName(env, src, lexed, methods[i].returnType), mpts);
+          env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? owner : "";
         }
       }
       else: { }
