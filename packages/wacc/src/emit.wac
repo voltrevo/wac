@@ -745,6 +745,17 @@ export struct Env {
   /** And which name it was, because a category is not a diagnosis. */
   string ambiguousName;
 
+  /**
+   * Each struct's parent, or `""` — `struct Rect : Shape` maps to WasmGC's `sub`.
+   *
+   * Held beside the names rather than folded into the field table, because a subtype's fields are
+   * *its parent's followed by its own* and the parent may be declared later in the file. Resolving
+   * the chain when a field is asked for costs a lookup and keeps registration order irrelevant.
+   */
+  string[] structParents;
+  /** The parent's name token, kept until every struct is declared and the key can be resolved. */
+  i32[] structParentToks;
+
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
     for (i32 i = this.localCount - 1; i >= 0; i--) {
@@ -906,20 +917,70 @@ export struct Env {
     return false;
   }
 
+  /**
+   * Whether one struct is the other, or descends from it.
+   *
+   * A widening needs **no instruction**: a `Rect` reference already is a `Shape` reference to wasm
+   * once the type section says `sub`, so the only thing this answers is whether the emitter may stay
+   * silent. Nothing narrows implicitly, which is why the question is asked in one direction.
+   */
+  bool isSubtypeOf(const this, string derived, string base) {
+    if (derived == base) { return true; }
+    string p = this.parentOf(derived);
+    return p == "" ? false : this.isSubtypeOf(p, base);
+  }
+
+  /**
+   * A method's slot, looked up **through the parent chain**.
+   *
+   * The child's own is found first, which is what makes `override` work — and makes it work the way
+   * the language says: dispatch is by the *static* type, because this lookup is handed the type the
+   * call site knows and there is no vtable anywhere to disagree with it. Statics do not come this
+   * way: `Rect.create` is an error when only `Shape` declares one.
+   */
+  i32 methodAt(const this, string owner, string name) {
+    i32 at = this.funcAt(owner + "." + name);
+    if (at >= 0) { return at; }
+    string p = this.parentOf(owner);
+    return p == "" ? -1 : this.methodAt(p, name);
+  }
+
+  /** A struct's parent, or `""`. */
+  string parentOf(const this, string owner) {
+    for (i32 i = 0; i < this.structCount; i++) {
+      if (this.structNames[i] == owner) { return this.structParents[i]; }
+    }
+    return "";
+  }
+
+  /**
+   * How many fields a struct inherits — the offset every one of its own fields sits at.
+   *
+   * **A subtype's fields are its parent's followed by its own**, which is not this emitter's choice:
+   * wasm requires a subtype to repeat its supertype's fields in order before appending, so that a
+   * `struct.get` compiled against the parent reads the same slot on a child. The whole of inheritance
+   * here is that one offset, applied by every accessor below.
+   */
+  i32 inheritedCount(const this, string owner) {
+    string p = this.parentOf(owner);
+    return p == "" ? 0 : this.fieldCountOf(p);
+  }
+
   /** Which of a struct's fields this is, in declaration order, or -1. */
   i32 fieldIndex(const this, string owner, string field) {
+    i32 base = this.inheritedCount(owner);
     i32 n = 0;
     for (i32 i = 0; i < this.fieldCount; i++) {
       if (this.fieldOwners[i] != owner) { continue; }
-      if (this.fieldNames[i] == field) { return n; }
+      if (this.fieldNames[i] == field) { return base + n; }
       n = n + 1;
     }
-    return -1;
+    return base == 0 ? -1 : this.fieldIndex(this.parentOf(owner), field);
   }
 
   /** How many fields a struct has, which decides whether a bare `P()` is a default construction. */
   i32 fieldCountOf(const this, string owner) {
-    i32 n = 0;
+    i32 n = this.inheritedCount(owner);
     for (i32 f = 0; f < this.fieldCount; f++) {
       if (this.fieldOwners[f] == owner) { n = n + 1; }
     }
@@ -928,7 +989,9 @@ export struct Env {
 
   /** Whether the `i`th field admits null, which decides whether its default is one. */
   bool fieldNullableAt(const this, string owner, i32 i) {
-    i32 n = 0;
+    i32 base3 = this.inheritedCount(owner);
+    if (i < base3) { return this.fieldNullableAt(this.parentOf(owner), i); }
+    i32 n = base3;
     for (i32 f = 0; f < this.fieldCount; f++) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldNullable[f]; }
@@ -939,7 +1002,9 @@ export struct Env {
 
   /** The `i`th field's type, for a positional construction. */
   string fieldTypeAt(const this, string owner, i32 i) {
-    i32 n = 0;
+    i32 base4 = this.inheritedCount(owner);
+    if (i < base4) { return this.fieldTypeAt(this.parentOf(owner), i); }
+    i32 n = base4;
     for (i32 f = 0; f < this.fieldCount; f++) {
       if (this.fieldOwners[f] != owner) { continue; }
       if (n == i) { return this.fieldTypes[f]; }
@@ -990,7 +1055,8 @@ export struct Env {
     for (i32 i = 0; i < this.fieldCount; i++) {
       if (this.fieldOwners[i] == owner && this.fieldNames[i] == field) { return this.fieldTypes[i]; }
     }
-    return "";
+    string p2 = this.parentOf(owner);
+    return p2 == "" ? "" : this.fieldType(p2, field);
   }
 
   /**
@@ -1010,7 +1076,8 @@ export struct Env {
                bool[4096](), i32[4096](), 0,
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
-               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "");
+               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
+               string[1024](), i32[1024]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1524,6 +1591,38 @@ u8[] bareModule() {
  * way. The count is the only thing that has to survive the join — an imported file's `export` means
  * "visible to the file that imported me", not "visible to JavaScript".
  */
+/**
+ * A struct's fields, **its parent's first** — the shape wasm's `sub` requires of a subtype.
+ *
+ * A subtype does not inherit fields in the format: it repeats them. That is what makes a
+ * `struct.get` compiled against `Shape` read the right slot of a `Rect`, and it is the reason the
+ * offset in `Env.inheritedCount` is the whole of inheritance here rather than a special case in
+ * every accessor.
+ */
+i32 countStructFields(Env env, string owner) {
+  i32 n = 0;
+  for (i32 f = 0; f < env.fieldCount; f++) {
+    if (env.fieldOwners[f] == owner) { n = n + 1; }
+  }
+  string p = env.parentOf(owner);
+  return p == "" ? n : n + countStructFields(env, p);
+}
+
+void writeStructFields(B types, Env env, string owner) {
+  string p = env.parentOf(owner);
+  if (p != "") { writeStructFields(types, env, p); }
+  for (i32 f = 0; f < env.fieldCount; f++) {
+    if (env.fieldOwners[f] != owner) { continue; }
+    writeValType(types, env, env.fieldTypes[f]);
+    types.byte(1);   // mutable, which every wac field is
+  }
+}
+
+void emitStructFields(B types, Env env, string owner) {
+  types.u32leb(countStructFields(env, owner));
+  writeStructFields(types, env, owner);
+}
+
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
@@ -1834,17 +1933,18 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     types.byte(1);    // mutable, which every wac array is
   }
   for (i32 i = 0; i < env.structCount; i++) {
+    // **Every struct is written as an open subtype**, with a supertype list of one or of none.
+    // A type is *final* by default and a final type cannot be extended, so a parent has to be
+    // declared open before its child exists — and since a parent is only known to be one by
+    // reading its children, declaring all of them open is the answer that needs no second pass.
+    types.byte(80);   // sub
+    string parent = env.structParents[i];
+    types.u32leb(parent == "" ? 0 : 1);
+    if (parent != "") { types.u32leb(env.structType(parent)); }
     types.byte(95);   // struct
-    i32 n = 0;
-    for (i32 f = 0; f < env.fieldCount; f++) {
-      if (env.fieldOwners[f] == env.structNames[i]) { n = n + 1; }
-    }
-    types.u32leb(n);
-    for (i32 f = 0; f < env.fieldCount; f++) {
-      if (env.fieldOwners[f] != env.structNames[i]) { continue; }
-      writeValType(types, env, env.fieldTypes[f]);
-      types.byte(1);   // mutable
-    }
+    // Its parent's fields come first, in order, because that is what makes a `struct.get` compiled
+    // against the parent read the right slot of a child.
+    emitStructFields(types, env, env.structNames[i]);
   }
 
   // The signatures, after the structs and before the per-function types. A function reference's
@@ -3486,7 +3586,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           }
           // A method call pushes the receiver first and is otherwise a call. The receiver *is* the
           // first parameter, which is the whole of what a method is here.
-          i32 at = env.funcAt(ot + "." + mname);
+          i32 at = env.methodAt(ot, mname);
           if (at < 0 || env.funcIndex[at] < 0) { return; }
           emitExpr(fb, src, lexed, env, obj);
           for (i32 i = 0; i < args.len(); i++) {
@@ -3564,6 +3664,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           emitExpr(fb, src, lexed, env, left);
           fb.byte(209);   // ref.is_null
           if (!negated) { fb.byte(69); }   // i32.eqz — `is T` is *not* null
+          return;
+        }
+        // **A target further down the chain is what `ref.test` is for.** `s is Circle` on a `Shape`
+        // is the format's own question once the types say `sub`, and the non-null form is the right
+        // one: a null `Shape` is not a `Circle`, which is the same answer the null test above gives.
+        if (env.isStructName(tt3) &&
+            env.isSubtypeOf(env.canonType(tt3), env.canonType(typeOfE(src, lexed, env, left)))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(251);
+          fb.u32leb(20);   // ref.test (ref $T)
+          fb.i32leb(env.structType(env.canonType(tt3)));
+          if (negated) { fb.byte(69); }
           return;
         }
         return;
@@ -3702,7 +3814,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
-          i32 mi = env.funcAt(ot + "." + mn);
+          i32 mi = env.methodAt(ot, mn);
           return mi < 0 ? "" : env.funcReturns[mi];
         }
       }
@@ -4306,8 +4418,12 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       // Shape.Point;` differs only in the name, and the flat representation is what makes that true.
       // Canonicalising before the comparison is the whole of the difference between an enum this
       // emitter can do and one it declines on its first line.
+      // **Except up the chain**, where they are related in the way the format understands: a
+      // subtype's reference is its parent's reference, and the widening is the absence of an
+      // instruction rather than the presence of one.
       if (g0 != "" && env.canonType(g0) != env.canonType(t) && valType(g0) == valType(t) &&
-          (isArrayType(t) || env.isStructName(t))) {
+          (isArrayType(t) || env.isStructName(t)) &&
+          !env.isSubtypeOf(env.canonType(g0), env.canonType(t))) {
         return "an assignment between related reference types";
       }
       return "";
@@ -4821,7 +4937,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
             }
             return "";
           }
-          i32 ma = env.funcAt(ot + "." + mn);
+          i32 ma = env.methodAt(ot, mn);
           if (ma < 0) { return "no method " + ot + "." + mn; }
           if (!env.funcOk[ma]) { return "a method " + ot + "." + mn + ", declined"; }
           for (i32 i = 0; i < args.len(); i++) {
@@ -4879,8 +4995,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         if (lt3 != "") { return lt3; }
         string lty = env.canonType(typeOfE(src, lexed, env, left));
         if (isRefType(env, ty3) && lty == env.canonType(ty3)) { return ""; }
-        // A test against a *different* type is a subtype test, and this emitter gives every struct
-        // a type of its own — there is no hierarchy in the module for it to ask about.
+        // A test against a *different* type asks about the hierarchy, and there is one now — but
+        // only downwards. `aRect is Shape` is a question with a constant answer, and `x is Y` where
+        // the two are unrelated is one the format would refuse to type.
+        if (env.isStructName(ty3) && env.isSubtypeOf(env.canonType(ty3), lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);
@@ -5085,6 +5203,8 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (env.structCount >= env.structNames.len()) { env.full = true; }
             if (env.structCount < env.structNames.len()) {
               env.structNames[env.structCount] = inst;
+              env.structParentToks[env.structCount] = -1;
+              env.structParents[env.structCount] = "";
               env.structCount = env.structCount + 1;
             }
             for (i32 f = 0; f < fields.len(); f++) {
@@ -5124,6 +5244,8 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             if (env.structCount >= env.structNames.len()) { env.full = true; }
             if (env.structCount < env.structNames.len()) {
               env.structNames[env.structCount] = inst;
+              env.structParentToks[env.structCount] = -1;
+              env.structParents[env.structCount] = "";
               env.structCount = env.structCount + 1;
             }
             if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
@@ -5217,6 +5339,10 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         if (env.structCount >= env.structNames.len()) { env.full = true; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = sname;
+          // The *token*, not the key: the parent may be declared further down this file, so the
+          // name it resolves to is not known until every struct in the program has been declared.
+          env.structParentToks[env.structCount] = parentTok;
+          env.structParents[env.structCount] = "";
           env.structCount = env.structCount + 1;
         }
         for (i32 i = 0; i < fields.len(); i++) {
@@ -5245,6 +5371,8 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
         if (env.structCount >= env.structNames.len()) { env.full = true; }
         if (env.structCount < env.structNames.len()) {
           env.structNames[env.structCount] = ename;
+          env.structParentToks[env.structCount] = -1;
+          env.structParents[env.structCount] = "";
           env.structCount = env.structCount + 1;
         }
         if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
@@ -5285,6 +5413,39 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
       }
       else: { }
     }
+  }
+
+  // **Now** the parents can be named: every struct in the program is declared, so `Shape` resolves
+  // to the same key whether it was written above its child or below it.
+  for (i32 i = 0; i < env.structCount; i++) {
+    if (env.structParentToks[i] < 0) { continue; }
+    env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
+  }
+  // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
+  // mutually visible is not the same as being defined, and wasm answers a child written first with
+  // "invalid supertype" from the type section. A struct declares its parent by name and the source
+  // may name it in either order, so the order is fixed here rather than required of the author.
+  for (i32 pass = 0; pass < env.structCount; pass++) {
+    bool moved = false;
+    for (i32 i = 0; i < env.structCount; i++) {
+      if (env.structParents[i] == "") { continue; }
+      i32 pi = -1;
+      for (i32 j = 0; j < env.structCount; j++) {
+        if (env.structNames[j] == env.structParents[i]) { pi = j; }
+      }
+      if (pi <= i) { continue; }
+      string tn = env.structNames[i];
+      env.structNames[i] = env.structNames[pi];
+      env.structNames[pi] = tn;
+      string tp = env.structParents[i];
+      env.structParents[i] = env.structParents[pi];
+      env.structParents[pi] = tp;
+      i32 tt = env.structParentToks[i];
+      env.structParentToks[i] = env.structParentToks[pi];
+      env.structParentToks[pi] = tt;
+      moved = true;
+    }
+    if (!moved) { break; }
   }
 
   for (i32 d = 0; d < prog.decls.len(); d++) {

@@ -810,6 +810,73 @@ export function generateEmit(): Cell[] {
       `export i32 f() { S1 s = S1 { b: "xy", a: "z" }; return s.a.len() * 10 + s.b.len(); }`);
   }
 
+  // **Subtyping**, which is `sub` in the type section and nothing at all at the use site: a `Rect`
+  // reference already is a `Shape` reference once the types say so. What can go wrong is *slots* —
+  // a subtype repeats its parent's fields before appending its own, so an emitter that forgets the
+  // offset reads `w` where the program said `x` and returns a plausible number. Hence answers.
+  {
+    const H = `struct Shape { i32 x; i32 y; i32 name(const this) { return 1; } i32 getX(const this) { return this.x; } }\n` +
+      `struct Rect : Shape { i32 w; i32 h; override i32 name(const this) { return 2; } i32 area(const this) { return this.w * this.h; } }\n` +
+      `struct Circle : Shape { i32 r; override i32 name(const this) { return 3; } }\n`;
+    add("subtype construction takes parent fields first",
+      `${H}export i32 f() { Rect r = Rect(1, 2, 10, 20); return r.x * 1000 + r.y * 100 + r.w * 10 + r.h; }`);
+    add("a subtype's own field after the inherited ones",
+      `${H}export i32 f() { Rect r = Rect(1, 2, 10, 20); return r.w * 100 + r.h; }`);
+    add("an inherited field read through the child",
+      `${H}export i32 f() { Rect r = Rect(7, 8, 1, 1); return r.x * 10 + r.y; }`);
+    add("an inherited field written through the child",
+      `${H}export i32 f() { Rect r = Rect(1, 2, 3, 4); r.x = 9; r.h = 5; return r.x * 10 + r.h; }`);
+    add("widening to the parent needs no instruction",
+      `${H}export i32 f() { Rect r = Rect(4, 5, 6, 7); Shape s = r; return s.x * 10 + s.y; }`);
+    add("an inherited method on the child",
+      `${H}export i32 f() { Rect r = Rect(4, 5, 6, 7); return r.getX(); }`);
+    add("an inherited method through the parent",
+      `${H}export i32 f() { Rect r = Rect(4, 5, 6, 7); Shape s = r; return s.getX(); }`);
+    add("an override is chosen by the static type",
+      `${H}export i32 f() { Rect r = Rect(1, 2, 3, 4); Shape s = r; return r.name() * 10 + s.name(); }`);
+    add("the child's own method",
+      `${H}export i32 f() { Rect r = Rect(1, 2, 3, 4); return r.area(); }`);
+    add("a subtype passed where the parent is wanted",
+      `${H}i32 g(Shape s) { return s.x + s.y; }\nexport i32 f() { return g(Rect(3, 4, 0, 0)) * 10 + g(Circle(1, 2, 9)); }`);
+    add("a subtype returned as the parent",
+      `${H}Shape mk(bool c) { if (c) { return Circle(1, 2, 3); } return Rect(4, 5, 6, 7); }\n` +
+      `export i32 f() { return mk(true).x * 10 + mk(false).x; }`);
+    add("a type test down the chain",
+      `${H}Shape mk(bool c) { if (c) { return Circle(1, 2, 3); } return Rect(4, 5, 6, 7); }\n` +
+      `export bool f() { return mk(true) is Circle; }`);
+    add("a type test that fails",
+      `${H}Shape mk(bool c) { if (c) { return Circle(1, 2, 3); } return Rect(4, 5, 6, 7); }\n` +
+      `export bool f() { return mk(false) is Circle; }`);
+    add("a negated type test",
+      `${H}Shape mk(bool c) { if (c) { return Circle(1, 2, 3); } return Rect(4, 5, 6, 7); }\n` +
+      `export bool f() { return mk(false) is not Circle; }`);
+    add("two type tests pick the arm",
+      `${H}Shape mk(bool c) { if (c) { return Circle(1, 2, 3); } return Rect(4, 5, 6, 7); }\n` +
+      `export i32 f() { Shape s = mk(false); if (s is Circle) { return 1; } if (s is Rect) { return 2; } return 0; }`);
+    add("a null parent is not a subtype",
+      `${H}export bool f() { Shape? s = null; return s is Circle; }`);
+    add("an array of the parent holding children",
+      `${H}export i32 f() { Shape[] a = Shape[](Rect(1, 2, 3, 4), Circle(5, 6, 7)); return a[0].x * 10 + a[1].x; }`);
+    add("a field of the parent type holding a child",
+      `${H}struct Box { Shape s; }\nexport i32 f() { Box b = Box(Rect(8, 9, 1, 2)); return b.s.x * 10 + b.s.y; }`);
+    add("a defaulted subtype",
+      `${H}export i32 f() { Rect r = Rect(); return r.x + r.y + r.w + r.h; }`);
+    add("a three-deep chain",
+      `struct A { i32 a; }\nstruct B : A { i32 b; }\nstruct C : B { i32 c; }\n` +
+      `export i32 f() { C v = C(1, 2, 3); A w = v; return v.a * 100 + v.b * 10 + v.c + w.a; }`);
+    add("a three-deep chain tested from the top",
+      `struct A { i32 a; }\nstruct B : A { i32 b; }\nstruct C : B { i32 c; }\n` +
+      `A mk() { return C(1, 2, 3); }\nexport bool f() { return (mk() is C) && (mk() is B); }`);
+    add("a parent declared after its child",
+      `struct Kid : Par { i32 k; }\nstruct Par { i32 p; }\n` +
+      `export i32 f() { Kid v = Kid(1, 2); return v.p * 10 + v.k; }`);
+    add("a subtype with a string field",
+      `struct S { string a; }\nstruct T : S { string b; }\n` +
+      `export i32 f() { T v = T("xy", "z"); return v.a.len() * 10 + v.b.len(); }`);
+    add("a named construction of a subtype",
+      `${H}export i32 f() { Rect r = Rect { h: 4, x: 1, w: 3, y: 2 }; return r.x * 1000 + r.y * 100 + r.w * 10 + r.h; }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);
