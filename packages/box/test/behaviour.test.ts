@@ -1,6 +1,7 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+import { pool } from "../../../harness/inFlight.ts";
 // The flags these applets **do** implement, against the tools they imitate.
 //
 // Two sweeps came before this one and both were about refusals: `test/flags.test.ts` asks what an applet
@@ -114,18 +115,27 @@ Deno.test({
       const two = await run("bash", "echo two");
       if (one.out === two.out || one.out === "") throw new Error("the harness is not comparing anything");
 
-      const bad: string[] = [];
-      for (const script of CASES) {
+      // Four at a time rather than one, which is what the two sibling corpora already do — every case
+      // is an independent pair of processes and the loop was waiting on each before starting the next.
+      // The pool also names what is still in flight if the run wedges, which a bare loop cannot: a
+      // stall here used to report the test's name and none of the thirty-two scripts. wac-mono 0082.
+      //
+      // Results are kept **by index** rather than pushed as they finish, so the report reads in the
+      // order the cases are written however the pool interleaves them.
+      const found: (string | undefined)[] = new Array(CASES.length);
+      await pool(CASES, 4, async (script, i, note) => {
+        note("bash");
         const want = await run("bash", script);
+        note("ours");
         const got = await run(built, script);
         if (want.out !== got.out || want.code !== got.code) {
-          bad.push(
+          found[i] =
             `$ ${script}\n  bash ${JSON.stringify(want.out.slice(0, 200))} exit ${want.code}\n` +
             `  ours ${JSON.stringify(got.out.slice(0, 200))} exit ${got.code}` +
-            (got.err.trim() === "" ? "" : `\n  err  ${got.err.trim().split("\n")[0]}`),
-          );
+            (got.err.trim() === "" ? "" : `\n  err  ${got.err.trim().split("\n")[0]}`);
         }
-      }
+      });
+      const bad = found.filter((x): x is string => x !== undefined);
       if (bad.length > 0) {
         throw new Error(`${bad.length} of ${CASES.length} invocations differ from the real tools:\n\n${bad.join("\n\n")}`);
       }

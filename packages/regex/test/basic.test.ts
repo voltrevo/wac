@@ -33,26 +33,58 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-/** Whether GNU grep finds `pattern` in `line`, in whichever dialect `flags` selects. */
-async function gnuMatches(pattern: string, line: string, flags: string[] = []): Promise<boolean | "rejected"> {
+/**
+ * Whether GNU grep finds `pattern` in each of `lines`, in whichever dialect `flags` selects.
+ *
+ * **One grep for the whole batch, because the batch is what costs.** This asked grep once per
+ * (pattern, line) and the four sweeps below are 26 patterns against every byte, 400 generated
+ * patterns and two hand-written lists — around eighteen thousand processes for four thousand
+ * questions about the same twenty-six patterns. A pattern is what grep compiles; the lines are what
+ * it then reads, which is the shape a line-oriented tool already has.
+ *
+ * `-n` rather than `-c`: the count says how many lines matched and the question here is *which*, so
+ * the numbers come back and the caller reads its own subjects out of them. A rejection is still a
+ * property of the pattern, so exit 2 refuses the whole batch, which is what asking one at a time did.
+ *
+ * **A subject with a newline in it would silently misalign every answer after it**, since the
+ * mapping is line number to index — so that is refused rather than trusted. None of the callers
+ * below has one; the check is here so a later one cannot quietly acquire it.
+ */
+async function gnuMatchesAll(
+  pattern: string,
+  lines: string[],
+  flags: string[] = [],
+): Promise<(boolean | "rejected")[]> {
+  for (const l of lines) {
+    if (l.includes("\n")) throw new Error(`a batched subject contains a newline: ${JSON.stringify(l)}`);
+  }
   const child = new Deno.Command("/bin/grep", {
-    args: [...flags, "-c", "-e", pattern],
+    args: [...flags, "-n", "-e", pattern],
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
     env: { LC_ALL: "C" },
     clearEnv: true,
   }).spawn();
+  // Started before the write, not after: grep answers as it reads, and a batch big enough to fill
+  // the stdout pipe would park it there while this side was still writing stdin — both ends blocked
+  // on each other. Draining concurrently is what makes the batch safe at any size.
+  const outcome = child.output();
   const w = child.stdin.getWriter();
   try {
-    await w.write(enc.encode(`${line}\n`));
+    await w.write(enc.encode(lines.map((l) => `${l}\n`).join("")));
     await w.close();
   } catch {
     // grep exited before reading, which a bad pattern does.
   }
-  const r = await child.output();
-  if (r.code === 2) return "rejected";
-  return dec.decode(r.stdout).trim() === "1";
+  const r = await outcome;
+  if (r.code === 2) return lines.map(() => "rejected" as const);
+  const hit = new Set<number>();
+  for (const out of dec.decode(r.stdout).split("\n")) {
+    const colon = out.indexOf(":");
+    if (colon > 0) hit.add(Number(out.slice(0, colon)));
+  }
+  return lines.map((_, i) => hit.has(i + 1));
 }
 
 function ours(pattern: string, line: string): boolean | "rejected" {
@@ -88,8 +120,9 @@ Deno.test("basic patterns mean what GNU grep says they mean", async () => {
   ];
   let checked = 0;
   for (const p of patterns) {
-    for (const s of subjects) {
-      const want = await gnuMatches(p, s);
+    const wants = await gnuMatchesAll(p, subjects);
+    for (const [i, s] of subjects.entries()) {
+      const want = wants[i];
       const got = ours(p, s);
       assertEquals(
         got,
@@ -119,8 +152,10 @@ Deno.test("generated basic patterns mean what GNU grep says they mean", async ()
   for (let i = 0; i < 400; i++) {
     const p = atoms[next(atoms.length)] + tails[next(tails.length)] +
       (next(2) === 0 ? atoms[next(atoms.length)] : "");
-    for (const subject of ["", "a", "ab", "a|b", "a+b", "aab", "(a)", "a?b", "a.b"]) {
-      const want = await gnuMatches(p, subject);
+    const gen = ["", "a", "ab", "a|b", "a+b", "aab", "(a)", "a?b", "a.b"];
+    const wants = await gnuMatchesAll(p, gen);
+    for (const [i, subject] of gen.entries()) {
+      const want = wants[i];
       const got = ours(p, subject);
       assertEquals(
         got,
@@ -155,15 +190,24 @@ Deno.test("bracket expressions mean what GNU grep says they mean, byte by byte",
   ];
   // One byte per subject, every byte a line can hold. NUL cannot reach `grep` through argv or a line
   // here, and LF is the line terminator itself.
+  // Every byte a line can hold, as one batch per (pattern, dialect). NUL cannot reach `grep` through
+  // a line here, and LF is the line terminator itself.
+  const bytes: number[] = [];
+  for (let byte = 1; byte <= 255; byte++) {
+    if (byte !== 10) bytes.push(byte);
+  }
+  const lines = bytes.map((byte) => String.fromCharCode(byte));
   let checked = 0;
   for (const pattern of patterns) {
-    for (let byte = 1; byte <= 255; byte++) {
-      if (byte === 10) continue;
-      const line = String.fromCharCode(byte);
-      for (const { flags, run } of DIALECTS) {
-        const want = await gnuMatches(pattern, line, flags);
+    for (const { flags, run } of DIALECTS) {
+      const wants = await gnuMatchesAll(pattern, lines, flags);
+      for (const [i, line] of lines.entries()) {
         const got = run(pattern, line);
-        assertEquals(got, want, `grep ${flags.join(" ")} ${JSON.stringify(pattern)} against byte ${byte}`);
+        assertEquals(
+          got,
+          wants[i],
+          `grep ${flags.join(" ")} ${JSON.stringify(pattern)} against byte ${bytes[i]}`,
+        );
         checked++;
       }
     }
@@ -186,11 +230,11 @@ Deno.test("GNU's backslash anchors are anchors, in both dialects", async () => {
   ];
   let checked = 0;
   for (const pattern of patterns) {
-    for (const subject of subjects) {
-      for (const { flags, run } of DIALECTS) {
-        const want = await gnuMatches(pattern, subject, flags as string[]);
+    for (const { flags, run } of DIALECTS) {
+      const wants = await gnuMatchesAll(pattern, subjects, flags as string[]);
+      for (const [i, subject] of subjects.entries()) {
         const got = run(pattern, subject);
-        assertEquals(got, want, `grep ${(flags as string[]).join(" ")} ${JSON.stringify(pattern)} against ${JSON.stringify(subject)}`);
+        assertEquals(got, wants[i], `grep ${(flags as string[]).join(" ")} ${JSON.stringify(pattern)} against ${JSON.stringify(subject)}`);
         checked++;
       }
     }
