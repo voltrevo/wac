@@ -1183,6 +1183,44 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The spec's own tests, and the nineteen answers nobody had asked about
+
+wacc is meant to become the primary compiler, so the question stopped being *how much of the corpus
+compiles* and became **how much of the spec is right**. `compiler/wacSpec.test.ts` is the reference's
+conformance suite — 529 tests, each named for the `[§tag]` in `spec/spec/*.md` it covers — and
+nothing had ever asked wacc about it. Its oracles were its own corpus and its own generated sweep,
+both of which measure agreement on programs *someone here thought to write*.
+
+Extracting those programs and running them found **nineteen wrong answers**, in three clusters, none
+of which 337 corpus files and 3,853 generated programs had caught:
+
+- **Float literals.** `1_000.5` read as `1`, `1e6` as `1`, `2e-3` as `0.0020000000000000005`, and
+  `tau` a unit in the last place short. Underscores were not skipped — the third literal spelling to
+  be silently wrong here, after `0xff` and `' '` — and the fraction was accumulated by multiplying a
+  running `0.1`, which is several roundings where one will do. The mantissa is an integer scaled
+  once now.
+- **A `for` loop's variable outlived its loop.** `i32 i = 99; for (i32 i = 0; …) {} return i;`
+  returned 10. The init is emitted outside the body, so the loop's `i` stayed in the enclosing scope
+  and `localAt` found it afterwards — it searches backwards. This one was a **regression** from the
+  slot that introduced block scoping, and the spec had a case for it all along.
+- **Defaults are values, not nulls.** `S()` fills a `string` field with `""` and `string[3]()` is
+  three empty strings; this emitter used `struct.new_default` and `array.new_default`, which fill
+  references with null — typechecks, then traps on the first `.len()`. Defaults are now built
+  field by field, with a guard for a struct that reaches itself, and `null` written in the *source*
+  is a separate question from a slot nobody wrote into. Which is exactly the distinction that made
+  a `P?` field default to a defaulted `P` for one round: the type name cannot say `?`, so the field
+  table carries a column that can.
+
+| | before | after |
+|---|---|---|
+| spec answers agreeing | 230/249 | **246/249** |
+| spec rejections wacc also makes | 72/84 | 72/84 |
+| corpus | 316 whole, 0 invalid | unchanged |
+
+`specEmit.test.ts` keeps both numbers, as floors, because they are meant to rise. The second one is
+the honest measure of what is left: **wacc accepts twelve programs the reference rejects**, and a
+compiler that will replace the reference has to reject all of them.
+
 ### `fill`, and the slot on the left of an assignment — 310 to 316
 
 Two more of the tail, and both are the same shape as the last three: a slot the walk had, and was not

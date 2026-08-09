@@ -411,6 +411,21 @@ void popSubstitution(Env env, i32 n) {
   env.curGeneric = "";
 }
 
+/**
+ * Whether a type as *written* admits null — which its name cannot say.
+ *
+ * `T?` and `T` are one wasm type here, deliberately: every reference this emitter writes is
+ * nullable, so the difference is the checker's to keep. It matters in exactly one place, and this
+ * is why the flag exists rather than a spelling: the **default** of a `P?` is null, and the default
+ * of a `P` is a defaulted `P`.
+ */
+bool isNullableTy(Ty t) {
+  match (t.kind) {
+    case Nullable(inner): { return true; }
+    else: { return false; }
+  }
+}
+
 /** Whether a type is a function reference, which is decided by its spelling. */
 bool isFuncrefType(string t) {
   return t.len() > 3 && t.slice(0, 3) == "fn[";
@@ -588,6 +603,9 @@ export struct Env {
   string curInst;
   string curGeneric;
   /** Every instantiation the module names, the template each is of, and whether one is new. */
+  /** The structs whose defaults are being built, so one that reaches itself stops at a null. */
+  string[] building;
+  i32 buildingCount;
   string[] instName;
   string[] instOf;
   i32 instCount;
@@ -625,6 +643,8 @@ export struct Env {
   string[] fieldOwners;
   string[] fieldNames;
   string[] fieldTypes;
+  /** Whether each field was written as `T?`, which is the whole of what its default turns on. */
+  bool[] fieldNullable;
   i32 fieldCount;
   string[] funcs;
   /** Each function's return type, so a call has one without re-reading the declaration. */
@@ -903,6 +923,17 @@ export struct Env {
     return n;
   }
 
+  /** Whether the `i`th field admits null, which decides whether its default is one. */
+  bool fieldNullableAt(const this, string owner, i32 i) {
+    i32 n = 0;
+    for (i32 f = 0; f < this.fieldCount; f++) {
+      if (this.fieldOwners[f] != owner) { continue; }
+      if (n == i) { return this.fieldNullable[f]; }
+      n = n + 1;
+    }
+    return false;
+  }
+
   /** The `i`th field's type, for a positional construction. */
   string fieldTypeAt(const this, string owner, i32 i) {
     i32 n = 0;
@@ -967,11 +998,11 @@ export struct Env {
    */
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[1024](), 0,
-               string[256](), string[256](), 0, "", "", string[512](), string[512](), 0, false,
+               string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
                "", "",
                string[512](), i32[512](), string[512](), Expr?[512](), 0,
                string[1024](), 0,
-               string[16384](), string[16384](), string[16384](), 0,
+               string[16384](), string[16384](), string[16384](), bool[16384](), 0,
                string[4096](), string[4096](), string[16384](), i32[4096](), i32[4096](), 0,
                bool[4096](), i32[4096](), 0,
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
@@ -2146,10 +2177,82 @@ i32 enumSlot(Env env, string ty, string field) {
  * two. A reference field takes a null — which is why every reference this emitter writes is the
  * nullable `0x63` and not `0x64`, a decision made one slot ago for arrays and paid off here.
  */
-void emitDefault(B fb, Env env, string t) {
+/**
+ * A null of the right type — which is a different question from a default, and was the same one
+ * until `S()` had to produce a `""` rather than a trap. `null` written in the source means this;
+ * a slot nobody wrote into means `emitDefault`.
+ */
+void emitNull(B fb, Env env, string t) {
   if (t == "string") { fb.byte(208); fb.i32leb(env.arrayType("i8[]")); return; }
   if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
+  if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
   if (env.isStructName(t)) { fb.byte(208); fb.i32leb(env.structType(t)); return; }
+  emitDefault(fb, env, t);
+}
+
+/**
+ * The value a slot holds when nothing is written into it — which for a reference is **not null**.
+ *
+ * `string`'s default is `""`, an array's is an empty one, and a struct's is a struct whose fields
+ * are all defaulted in turn. `S()` and `string[3]()` are both spec'd to produce those, and emitting
+ * `ref.null` for them typechecked and then trapped on the first `.len()`.
+ *
+ * A struct that reaches itself is the one case that must stop: a field of a struct's own type has
+ * to be nullable for the type to be inhabitable at all, so `null` is its right answer and the guard
+ * below is not an approximation.
+ */
+void emitDefault(B fb, Env env, string t) {
+  if (t == "string") {
+    fb.byte(65);
+    fb.i32leb(0);
+    fb.byte(251);
+    fb.u32leb(7);   // array.new_default — an empty i8[], which is ""
+    fb.u32leb(env.arrayType("i8[]"));
+    return;
+  }
+  if (isArrayType(t)) {
+    fb.byte(65);
+    fb.i32leb(0);
+    fb.byte(251);
+    fb.u32leb(7);
+    fb.u32leb(env.arrayType(t));
+    return;
+  }
+  if (env.isStructName(t)) {
+    string canon = env.canonType(t);
+    for (i32 i = 0; i < env.buildingCount; i++) {
+      if (env.building[i] == canon) {
+        fb.byte(208);
+        fb.i32leb(env.structType(t));
+        return;
+      }
+    }
+    // An enum has no default — a tag of 0 is a variant, and choosing one would be inventing a
+    // value the source did not write.
+    if (env.isEnumName(canon)) {
+      fb.byte(208);
+      fb.i32leb(env.structType(t));
+      return;
+    }
+    if (env.buildingCount < env.building.len()) {
+      env.building[env.buildingCount] = canon;
+      env.buildingCount = env.buildingCount + 1;
+    }
+    i32 n = env.fieldCountOf(canon);
+    for (i32 i = 0; i < n; i++) {
+      // A field written `N?` defaults to null; one written `N` defaults to a defaulted `N`.
+      if (env.fieldNullableAt(canon, i)) {
+        emitNull(fb, env, env.fieldTypeAt(canon, i));
+        continue;
+      }
+      emitDefault(fb, env, env.fieldTypeAt(canon, i));
+    }
+    fb.byte(251);
+    fb.u32leb(0);   // struct.new
+    fb.u32leb(env.structType(t));
+    env.buildingCount = env.buildingCount - 1;
+    return;
+  }
   if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
   i32 v = valType(t);
   if (v == 126) { fb.byte(66); fb.i64leb(0); return; }
@@ -2176,7 +2279,7 @@ void emitVariantNew(B fb, u8[] src, Lexed lexed, Env env, string vname, Expr?[] 
         continue;
       }
     }
-    emitDefault(fb, env, ft);
+    emitNull(fb, env, ft);
   }
   fb.byte(251);
   fb.u32leb(0);   // struct.new
@@ -2547,8 +2650,14 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.continueAt = savedC;
     }
     case For(init, cond, update, inner): {
+      // **The loop's own scope.** `for (i32 i = …)` beside an outer `i` is two locals, and the
+      // init is emitted outside the body — so without this the loop's `i` stayed in the enclosing
+      // scope and `localAt` found it afterwards, since it searches backwards. The spec has a case
+      // for exactly this and it read 10 where the outer `i` was 99.
+      i32 savedFor = env.localCount;
       if (!(init is null)) { emitStmt(fb, src, lexed, env, init!); }
       emitLoop(fb, src, lexed, env, cond is null ? null : cond, inner, update);
+      retireFrom(env, savedFor);
     }
     case Break: {
       fb.byte(12);
@@ -2946,12 +3055,12 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
           if (env.isStructName(cname)) {
-            // `Line()` with no arguments is every field's default, which wasm has an instruction for.
-            // Pushing nothing and calling `struct.new` asks for two operands that were never there.
+            // `Line()` with no arguments is every field's default — and wasm's `struct.new_default`
+            // is *not* that: it fills a reference field with null, where the language says a
+            // `string` field defaults to `""` and a struct field to a defaulted struct. So the
+            // defaults are emitted one by one and the ordinary `struct.new` takes them.
             if (args.len() == 0 && env.fieldCountOf(cname) > 0) {
-              fb.byte(251);
-              fb.u32leb(1);   // struct.new_default
-              fb.u32leb(env.structType(cname));
+              emitDefault(fb, env, cname);
               return;
             }
             for (i32 i = 0; i < args.len(); i++) {
@@ -3004,6 +3113,19 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       }
       // `T[]()` names no size and means none: the length is zero, and `array.new_default` still
       // wants to be told so.
+      //
+      // **A reference element is defaulted, not nulled.** `string[3]()` is three empty strings, so
+      // the element's default is built and `array.new` repeats it — `array.new_default` would put
+      // a null in every slot, which typechecks and traps on the first `.len()`.
+      if (isRefType(env, et) && !isNullableTy(elem)) {
+        emitDefault(fb, env, et);
+        if (size is null) { fb.byte(65); fb.i32leb(0); }
+        else { emitAt(fb, src, lexed, env, size!, "i32"); }
+        fb.byte(251);
+        fb.u32leb(6);      // array.new
+        fb.u32leb(ti);
+        return;
+      }
       if (size is null) { fb.byte(65); fb.i32leb(0); }
       else { emitAt(fb, src, lexed, env, size!, "i32"); }
       fb.byte(251);
@@ -3264,7 +3386,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // The same question `isRefType` answers everywhere else. Asked inline here, it was one kind of
       // reference short the moment a new one existed, and a `null` that emits nothing is an argument
       // that never arrives.
-      if (isRefType(env, want)) { emitDefault(fb, env, want); }
+      if (isRefType(env, want)) { emitNull(fb, env, want); }
     }
     // `x!` asserts and **traps** where the assertion fails. Emitting nothing would be the same value
     // with the same type — our references are all nullable — and a different answer: the reference
@@ -3702,18 +3824,37 @@ i32 imm(i32 signed, i32 unsigned, bool u) { return u ? unsigned : signed; }
 /** A decimal float literal's value. */
 f64 parseFloat(string s) {
   u8[] a = s.toBytes();
+  // **The mantissa as an integer, scaled once.** Reading the fraction by multiplying a running
+  // `0.1` accumulates its own error: `2e-3` came out `0.0020000000000000005` and `tau` was a unit
+  // in the last place short. Digits into one number and a single divide by a power of ten is one
+  // rounding instead of several, which is what the reference gets by handing the text to a library.
+  //
+  // And **underscores are separators wherever they appear** — `1_000.5` read as `1`, which is the
+  // third time a literal spelling nobody generated has been silently wrong here.
   f64 v = 0.0;
+  i32 frac = 0;
   i32 i = 0;
-  while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
-    v = v * 10.0 + (a[i] - 48) as f64;
+  while (i < a.len()) {
+    i32 c = a[i];
+    if (c == 95) {
+      i = i + 1;
+      continue;
+    }
+    if (c < 48 || c > 57) { break; }
+    v = v * 10.0 + (c - 48) as f64;
     i = i + 1;
   }
   if (i < a.len() && a[i] == 46) {
     i = i + 1;
-    f64 scale = 0.1;
-    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
-      v = v + (a[i] - 48) as f64 * scale;
-      scale = scale * 0.1;
+    while (i < a.len()) {
+      i32 c2 = a[i];
+      if (c2 == 95) {
+        i = i + 1;
+        continue;
+      }
+      if (c2 < 48 || c2 > 57) { break; }
+      v = v * 10.0 + (c2 - 48) as f64;
+      frac = frac + 1;
       i = i + 1;
     }
   }
@@ -3725,16 +3866,24 @@ f64 parseFloat(string s) {
       neg = a[i] == 45;
       i = i + 1;
     }
-    while (i < a.len() && a[i] >= 48 && a[i] <= 57) {
-      exp = exp * 10 + (a[i] - 48);
+    while (i < a.len()) {
+      i32 c3 = a[i];
+      if (c3 == 95) {
+        i = i + 1;
+        continue;
+      }
+      if (c3 < 48 || c3 > 57) { break; }
+      exp = exp * 10 + (c3 - 48);
       i = i + 1;
     }
   }
-  if (exp > 400) { exp = 400; }
-  for (i32 e = 0; e < exp; e++) {
-    if (neg) { v = v * 0.1; } else { v = v * 10.0; }
-  }
-  return v;
+  i32 e = (neg ? 0 - exp : exp) - frac;
+  if (e > 400) { e = 400; }
+  if (e < 0 - 400) { e = 0 - 400; }
+  f64 pow = 1.0;
+  i32 n = e < 0 ? 0 - e : e;
+  for (i32 k = 0; k < n; k++) { pow = pow * 10.0; }
+  return e < 0 ? v / pow : v * pow;
 }
 
 /** The largest value the target type holds, as the `i64` the comparison needs. */
@@ -4045,19 +4194,17 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
       return unsupportedIn(src, lexed, env, inner);
     }
     case For(init, cond, update, inner): {
-      if (!(init is null)) {
-        string a = unsupportedStmt(src, lexed, env, init!);
-        if (a != "") { return a; }
-      }
-      if (!(cond is null)) {
-        string b = unsupportedExpr(src, lexed, env, cond!);
-        if (b != "") { return b; }
-      }
-      if (!(update is null)) {
-        string u = unsupportedStmt(src, lexed, env, update!);
-        if (u != "") { return u; }
-      }
-      return unsupportedIn(src, lexed, env, inner);
+      // The same scope the emitter gives it: a `for`'s own variable is not in the scope that
+      // follows the loop, and a walk that thinks otherwise types the code after it against the
+      // wrong local.
+      i32 savedFor = env.localCount;
+      string r2 = "";
+      if (r2 == "" && !(init is null)) { r2 = unsupportedStmt(src, lexed, env, init!); }
+      if (r2 == "" && !(cond is null)) { r2 = unsupportedExpr(src, lexed, env, cond!); }
+      if (r2 == "" && !(update is null)) { r2 = unsupportedStmt(src, lexed, env, update!); }
+      if (r2 == "") { r2 = unsupportedIn(src, lexed, env, inner); }
+      env.localCount = savedFor;
+      return r2;
     }
     case Block(inner): { return unsupportedIn(src, lexed, env, inner); }
     case Switch(subject, cases): {
@@ -4735,6 +4882,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldOwners[env.fieldCount] = inst;
               env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[f].nameTok);
               env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[f].type);
+              env.fieldNullable[env.fieldCount] = isNullableTy(fields[f].type);
               env.fieldCount = env.fieldCount + 1;
             }
             for (i32 m = 0; m < methods.len(); m++) {
@@ -4770,6 +4918,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               env.fieldOwners[env.fieldCount] = inst;
               env.fieldNames[env.fieldCount] = " tag";
               env.fieldTypes[env.fieldCount] = "i32";
+              env.fieldNullable[env.fieldCount] = false;
               env.fieldCount = env.fieldCount + 1;
             }
             i32 eslot = 1;
@@ -4869,6 +5018,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldOwners[env.fieldCount] = sname;
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
           env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[i].type);
+          env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
       }
@@ -4889,6 +5039,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldOwners[env.fieldCount] = ename;
           env.fieldNames[env.fieldCount] = " tag";
           env.fieldTypes[env.fieldCount] = "i32";
+          env.fieldNullable[env.fieldCount] = false;
           env.fieldCount = env.fieldCount + 1;
         }
         i32 slot = 1;
@@ -4913,6 +5064,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
             env.fieldNames[env.fieldCount] = vname + "." +
               tokenTextOf(src, lexed, variants[v].fields[i].nameTok);
             env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, variants[v].fields[i].type);
+            env.fieldNullable[env.fieldCount] = isNullableTy(variants[v].fields[i].type);
             env.fieldCount = env.fieldCount + 1;
           }
           slot = slot + variants[v].fields.len();
