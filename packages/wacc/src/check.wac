@@ -1454,6 +1454,15 @@ export string typeOfExpr(C c, Expr e) {
         case Member(obj, nameTok): {
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
+          // **A field holding a funcref answers what its signature says.** `Cli`'s members are
+          // `fn[Pending<i32>()] argCount` and friends — fields, not methods — so `cli.readFile(p)`
+          // had no type at all, and `.wait(1)` on the result had no receiver to be wrong about. Three
+          // files' worth of missed diagnostics were downstream of this one unknown.
+          string fref = c.isStruct(recvT) ? c.fieldType(recvT, tokenText(c, nameTok)) : "";
+          if (startsWithFn(fref)) {
+            string fret = funcrefReturn(fref);
+            return fret == "" ? typeNone() : substituteType(c, recvT, fret);
+          }
           // **The builtins answer something too**, and nothing here knew what: `return a.len();`
           // from a `string` function was silent because the returned expression had no type to be
           // wrong with, not because the rule was missing. Same closed surface the missing-method
@@ -2280,6 +2289,28 @@ i32 funcrefArity(string t) {
   return empty ? 0 : n;
 }
 
+/**
+ * What a funcref answers — the `T` of `fn(i32) -> T` — or `""` when the type is not one.
+ *
+ * The arrow is the separator and the *last* one is the right one: `fn(fn(i32) -> i32) -> bool`
+ * takes a funcref and answers a bool, and splitting on the first would have said `i32`.
+ */
+string funcrefReturn(string t) {
+  if (!startsWithFn(t)) { return ""; }
+  u8[] a = t.toBytes();
+  i32 at = -1;
+  for (i32 i = 0; i + 3 < a.len(); i++) {
+    if (a[i] == 41 && a[i + 1] == 32 && a[i + 2] == 45 && a[i + 3] == 62) { at = i + 4; }
+  }
+  if (at < 0) { return ""; }
+  string out = "";
+  for (i32 i = at; i < a.len(); i++) {
+    if (a[i] == 32 && out == "") { continue; }
+    out = out + t[i];
+  }
+  return out;
+}
+
 /** Whether a type name is a funcref, which this spells `fn(` and nothing else does. */
 bool startsWithFn(string t) {
   u8[] a = t.toBytes();
@@ -3079,6 +3110,14 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
     return;
   }
   bool recvConst = !isStatic && constExpr(c, obj);
+  // **An instantiation answers to its template here.** `cli.readFile(path)` is a
+  // `Pending<FileResult>`, and the struct table holds `Pending` — so the gate below saw a name that
+  // is not a struct and returned, which is why `.wait(1)` went unreported in three files. Everything
+  // this function decides — is there such a method, how many arguments does it take, is the receiver
+  // const — is the template's business and not the type arguments'. What *is* theirs is the return
+  // type, and that is `typeOfExpr`'s question, asked elsewhere and still asked of the instance.
+  string recvBase = genericBase(recv);
+  if (recvBase != "" && !c.isStruct(recv) && c.isStruct(recvBase)) { recv = recvBase; }
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
   // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an

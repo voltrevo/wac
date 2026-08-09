@@ -1898,6 +1898,32 @@ lesson to carry is the order: **trace one case before building the mechanism the
 suggests.** Three of my last four theories about this tail were wrong, and each was checkable in
 about two minutes.
 
+### `Cli`'s members are fields — 97% to 98%
+
+Taking that lesson at its word: the next three misses were all `.wait(1)` on the result of a call to
+the platform, and the trace ran three steps before it found anything worth changing.
+
+`Pending` is imported by name, so it is declared. The method-call check gates on `isStruct`, and a
+`Pending<FileResult>` is not one — the table holds `Pending` — so an instantiation now answers to its
+template there, which is right and fixed nothing. The step that mattered was one further back:
+**`Cli`'s members are `fn[Pending<i32>()] argCount` and friends — fields holding funcrefs, not
+methods.** So `cli.readFile(path)` had no type at all, and `.wait(1)` on the result had no receiver
+to be wrong about. Everything downstream of that unknown was invisible.
+
+A field holding a funcref answers what its signature says, which needed the return type pulled out of
+the `fn(…) -> T` spelling — from the *last* arrow, since `fn(fn(i32) -> i32) -> bool` takes a funcref
+and answers a bool.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 243 of 250 (97%) | **244 of 250 (98%)** |
+| false alarms | 0 | 0 |
+| both generated sweeps | unchanged | unchanged |
+
+Six left, in four shapes, and each is now written down rather than guessed at: `JsonValue.nofield`
+(a member that is no variant of an imported enum), `xs.len(1)` where `xs` came from a call,
+`("…" + "…").toBytes(1)`, and two more `.wait(1)`s whose receiver is a call *inside* a call.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
