@@ -1183,6 +1183,38 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Monomorphisation: what an attempt established, and where it stops
+
+Generics are 51 of the 89 files left, so a slot went at them. **The result is not in the tree** — the
+emitter is unchanged — because what it produced compiles the corpus into 57 invalid modules, and a
+compiler that emits wrong code is worth less than one that declines. What the attempt did establish
+is worth the next slot's time, so it is written down here rather than rediscovered.
+
+**The design works.** `Vec<T>` is a template and `Vec<i32>` a type, so a template is compiled once
+per instantiation with the arguments substituted throughout. The substitution belongs in the
+environment, because `typeOfTyName` already takes it and every place a type can be named goes
+through there — no parameter has to be threaded anywhere. Registration is a fixed point, since a
+field can name an instantiation nothing else mentions. On simple shapes it works: seven of eight
+hand-written cases agreed with the reference, including `Box<Box<i32>>`, a box of an array, a struct
+field of instance type, and an instance passed through a function.
+
+Three things it turned up, each of which the next attempt should start from:
+
+- **The call spelling is `Vec.create()`, not `Vec<i32>.create()`.** The latter parses as three
+  comparisons — `Vec < i32 > .create()` — in *both* compilers, which is the language's own rule
+  (`spec/spec/generics.md` writes `Vec<i32> w = Vec.create();`). So a static on a template takes its
+  instantiation **from the slot the answer goes into**, which means the walk has to ask about that
+  call where it has a `want` in hand, and `typeOfE` cannot answer it at all.
+- **Two type parameters break it and one does not.** `P2<A, B>` emits a call whose argument count
+  does not match the function it calls, with a one-argument method — so it is the *substitution*,
+  not the arity, and it reproduces in four lines.
+- **Single-parameter templates still leave 57 invalid modules across the corpus**, so the shapes that
+  matter there — `Vec<Vec<i32>>`, a generic enum (`Option<T>`), a method calling another method of
+  the same instance — go beyond what the hand-written cases reached. The corpus invariant is what
+  said so, on a run where every hand-written case passed.
+
+The honest state is the one in the tree: `Vec` and `Map` are declined by name, and the 51 files wait.
+
 ### Stage 2 equals stage 3 — wacc reproduces itself
 
 The whole of rung 5, in one number: **wacc compiled by wacc compiles wacc to the same 140,590 bytes,
