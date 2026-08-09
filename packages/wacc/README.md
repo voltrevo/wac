@@ -1183,6 +1183,37 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### One reader, because two disagreed
+
+Asked how the reference handles the same conversion, the answer is: it doesn't. `wacFloatLit.ts` is
+nine lines — `parseFloat(raw.replace(/_/g, ""))` — because JavaScript's `parseFloat` is correctly
+rounded by its own specification, so the host does the hard part and the compiler only strips
+underscores. wacc has no such host, which is why the big-integer conversion above exists at all.
+
+The interesting half of that file is *why it is a file*. Its comment says the emitter, the type
+checker and the constant evaluator each called `parseFloat` on the raw text and disagreed — their
+issue 0044 — so the interpretation was moved to one place.
+
+**wacc had the same split, and it was live.** `check.wac` had a float reader of its own, the old
+`× 0.1` kind, and it did not know about underscores:
+
+```wac
+export f32 f() { return 1_0e38; }   // the reference: out of range. wacc: accepted.
+```
+
+The checker's reader stopped at the `_`, saw `1`, and let a literal through that is a thousand times
+too big for an `f32`. So `lit.wac` now holds the conversion and both read it — which is the shape
+the reference arrived at, reached from the other direction and for the same reason.
+
+| | |
+|---|---|
+| wacc's own sources | 9, all compiling whole |
+| self-host | 10 files, 156,791 bytes, byte-identical between stages |
+| spec | 249/249 answers, 84/84 rejections |
+
+A ninth source file is worth noticing on its own: rung 5's tests counted eight and asserted it, so
+they now count what is there instead of what was there.
+
 ### A literal rounds once — issue 0124, closed
 
 `spec/spec/types.md` says a float literal rounds to *nearest*, and nearest is not something floating

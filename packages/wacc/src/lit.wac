@@ -1,0 +1,267 @@
+// ── What a literal denotes, in one place ─────────────────────────────────────
+//
+// The emitter needs a float literal's value to write a constant, and the checker needs it to decide
+// whether the constant fits. When each read the text itself they disagreed — `f32 x = 1_0e38;` is
+// out of range and the checker's reader stopped at the underscore, saw `1`, and let it through.
+//
+// The reference learned this first: `compiler/wacFloatLit.ts` exists because its emitter, checker
+// and constant evaluator each called `parseFloat` and `parseFloat("1_000.5")` is `1` — its issue
+// 0044. It can then delegate to a host that converts correctly; there is no such host here, so the
+// conversion is written out below, and the reason for one copy is the same either way.
+
+//
+// `spec/spec/types.md` says a literal rounds to *nearest*, and nearest is not something floating
+// point can be asked for while it is doing the asking: scaling a mantissa by ten repeatedly rounds
+// at every step, and `1e300` came out a unit in the last place away. So the value is computed
+// exactly — as one integer over another — and rounded once, at the end, where the answer is decided.
+//
+// The integers are base-2^16 limbs in an `i32[]`, which keeps every product inside an `i32` and
+// makes the whole of this ordinary arithmetic. `10^350` is seventy-three limbs; a literal with eight
+// hundred digits is under two hundred. Nothing here allocates per digit.
+
+/** How many limbs a big integer is using — its length with the leading zeros dropped. */
+i32 bigLen(i32[] a, i32 n) {
+  i32 k = n;
+  while (k > 0 && a[k - 1] == 0) { k = k - 1; }
+  return k;
+}
+
+/** Its width in bits, which is what the alignment below is really asking about. */
+i32 bigBits(i32[] a, i32 n) {
+  i32 k = bigLen(a, n);
+  if (k == 0) { return 0; }
+  i32 top = a[k - 1];
+  i32 bits = 0;
+  while (top > 0) {
+    bits = bits + 1;
+    top = top >> 1;
+  }
+  return (k - 1) * 16 + bits;
+}
+
+/** `a = a * m + add`, with `m` and `add` small enough that a limb's product stays in an `i32`. */
+i32 bigMulSmall(i32[] a, i32 n, i32 m, i32 add) {
+  i32 carry = add;
+  for (i32 i = 0; i < n; i++) {
+    i32 cur = a[i] * m + carry;
+    a[i] = cur & 65535;
+    carry = cur >> 16;
+  }
+  i32 k = n;
+  while (carry > 0) {
+    if (k >= a.len()) { return k; }
+    a[k] = carry & 65535;
+    carry = carry >> 16;
+    k = k + 1;
+  }
+  return k;
+}
+
+/** `a = a << k`, which is how the two sides are aligned before the division. */
+i32 bigShl(i32[] a, i32 n, i32 k) {
+  if (k == 0) { return n; }
+  i32 limbs = k / 16;
+  i32 bits = k % 16;
+  i32 len = n + limbs + 1;
+  if (len > a.len()) { len = a.len(); }
+  for (i32 i = len - 1; i >= 0; i--) {
+    i32 lo = i - limbs;
+    i32 hi = lo - 1;
+    i32 v = 0;
+    if (lo >= 0 && lo < n) { v = (a[lo] << bits) & 65535; }
+    if (bits > 0 && hi >= 0 && hi < n) { v = v | (a[hi] >> (16 - bits)); }
+    a[i] = v;
+  }
+  return len;
+}
+
+/** -1, 0 or 1, comparing two big integers by magnitude. */
+i32 bigCmp(i32[] a, i32 na, i32[] b, i32 nb) {
+  i32 ka = bigLen(a, na);
+  i32 kb = bigLen(b, nb);
+  if (ka != kb) { return ka < kb ? 0 - 1 : 1; }
+  for (i32 i = ka - 1; i >= 0; i--) {
+    if (a[i] != b[i]) { return a[i] < b[i] ? 0 - 1 : 1; }
+  }
+  return 0;
+}
+
+/** `a = a - b`, where `a >= b`. */
+void bigSub(i32[] a, i32 na, i32[] b, i32 nb) {
+  i32 borrow = 0;
+  for (i32 i = 0; i < na; i++) {
+    i32 sub = borrow;
+    if (i < nb) { sub = sub + b[i]; }
+    i32 cur = a[i] - sub;
+    if (cur < 0) {
+      cur = cur + 65536;
+      borrow = 1;
+    } else {
+      borrow = 0;
+    }
+    a[i] = cur;
+  }
+}
+
+/**
+ * The `f64` nearest to `digits × 10^exp10`, with ties to even — the bits, rather than the number.
+ *
+ * Assembling the pattern rather than computing the value is the point: every step above is integer
+ * arithmetic, and the one rounding that happens is the one the specification names.
+ */
+f64 decimalToF64(u8[] digits, i32 count, i32 exp10) {
+  i32[] num = i32[400]();
+  i32[] den = i32[400]();
+  num[0] = 0;
+  den[0] = 1;
+  i32 nn = 1;
+  i32 dn = 1;
+  bool any = false;
+  for (i32 i = 0; i < count; i++) {
+    nn = bigMulSmall(num, nn, 10, digits[i] - 48);
+    if (digits[i] != 48) { any = true; }
+  }
+  if (!any) { return 0.0; }
+
+  // `digits × 10^e` is one side or the other, exactly: a positive exponent multiplies the numerator
+  // and a negative one the denominator, and neither is ever approximated.
+  i32 e = exp10;
+  while (e > 0) {
+    nn = bigMulSmall(num, nn, 10, 0);
+    e = e - 1;
+  }
+  while (e < 0) {
+    dn = bigMulSmall(den, dn, 10, 0);
+    e = e + 1;
+  }
+
+  // **Align so the quotient is in [1, 2), then take fifty-three of its bits.** The loop below
+  // produces one bit per turn from the top, which is only the quotient's binary expansion while the
+  // ratio starts in that interval — aligning it into [2^52, 2^53) instead makes the first turn
+  // subtract the whole of the leading bit and every turn after it produce a zero. Every answer came
+  // out an exact power of two, which is what that looks like from outside.
+  i32 exp2 = 0;
+  i32 diff = bigBits(num, nn) - bigBits(den, dn);
+  if (diff > 0) {
+    dn = bigShl(den, dn, diff);
+    exp2 = exp2 + diff;
+  }
+  if (diff < 0) {
+    nn = bigShl(num, nn, 0 - diff);
+    exp2 = exp2 + diff;
+  }
+  if (bigCmp(num, nn, den, dn) < 0) {
+    nn = bigShl(num, nn, 1);
+    exp2 = exp2 - 1;
+  }
+
+  // **A subnormal is taken to a fixed place rather than to a fixed width.** Its last bit weighs
+  // 2^-1074 whatever its leading bit is, so the count of bits shrinks as the exponent falls.
+  i32 want = 53;
+  if (exp2 < 0 - 1022) { want = exp2 + 1075; }
+  if (want < 0) { want = 0; }
+
+  i64 q = 0;
+  for (i32 b = 0; b < want; b++) {
+    q = q * 2;
+    if (bigCmp(num, nn, den, dn) >= 0) {
+      bigSub(num, nn, den, dn);
+      q = q + 1;
+    }
+    nn = bigShl(num, nn, 1);
+  }
+  // One more bit decides the rounding and whatever is left over decides a tie — half to even.
+  i32 roundBit = 0;
+  if (bigCmp(num, nn, den, dn) >= 0) {
+    bigSub(num, nn, den, dn);
+    roundBit = 1;
+  }
+  bool sticky = bigLen(num, nn) > 0;
+  if (roundBit == 1 && (sticky || (q & 1) == 1)) { q = q + 1; }
+
+  if (want < 53) {
+    // The subnormal pattern *is* the integer: a mantissa of 2^52 with a zero exponent field is
+    // read as the smallest normal, which is exactly what rounding up to it should produce.
+    return f64.fromBits(q as@ u64);
+  }
+  // A carry out of the mantissa is a larger exponent, not a wider mantissa.
+  // Two to the fifty-third is one past the top of the mantissa: rounding that far is a carry.
+  if (q >= 9007199254740992) {
+    q = q / 2;
+    exp2 = exp2 + 1;
+  }
+  i64 biased = (exp2 + 1023) as i64;
+  if (biased >= 2047) { return f64.fromBits(9218868437227405312 as@ u64); }
+  if (biased <= 0) { return 0.0; }
+  // The implicit bit is two to the **fifty-second**, not the fifty-third. Taking the larger one
+  // away made the mantissa negative, which borrows from the exponent — so every answer came out
+  // exactly half of itself, which is a wrong number that looks like a rounding bug.
+  return f64.fromBits((biased * 4503599627370496 + (q - 4503599627370496)) as@ u64);
+}
+
+/**
+ * A float literal's value, exactly.
+ *
+ * The text is split into its digits and a decimal exponent, and the arithmetic is left to
+ * `decimalToF64`, which does it in integers. Underscores are separators wherever they appear —
+ * `1_000.5` read as `1` before anyone looked, which is the third literal spelling to be silently
+ * wrong here after `0xff` and `' '`.
+ */
+export f64 floatLit(string s) {
+  u8[] a = s.toBytes();
+  u8[] digits = u8[a.len() + 1]();
+  i32 count = 0;
+  i32 frac = 0;
+  i32 i = 0;
+  while (i < a.len()) {
+    i32 c = a[i];
+    if (c == 95) {
+      i = i + 1;
+      continue;
+    }
+    if (c < 48 || c > 57) { break; }
+    digits[count] = c;
+    count = count + 1;
+    i = i + 1;
+  }
+  if (i < a.len() && a[i] == 46) {
+    i = i + 1;
+    while (i < a.len()) {
+      i32 c2 = a[i];
+      if (c2 == 95) {
+        i = i + 1;
+        continue;
+      }
+      if (c2 < 48 || c2 > 57) { break; }
+      digits[count] = c2;
+      count = count + 1;
+      frac = frac + 1;
+      i = i + 1;
+    }
+  }
+  i32 exp = 0;
+  bool neg = false;
+  if (i < a.len() && (a[i] == 101 || a[i] == 69)) {
+    i = i + 1;
+    if (i < a.len() && (a[i] == 43 || a[i] == 45)) {
+      neg = a[i] == 45;
+      i = i + 1;
+    }
+    while (i < a.len()) {
+      i32 c3 = a[i];
+      if (c3 == 95) {
+        i = i + 1;
+        continue;
+      }
+      if (c3 < 48 || c3 > 57) { break; }
+      exp = exp * 10 + (c3 - 48);
+      i = i + 1;
+    }
+  }
+  i32 e10 = (neg ? 0 - exp : exp) - frac;
+  // Past these the answer is zero or infinity whatever the digits are, and the exact path would be
+  // asked for a power of ten with three thousand digits in it.
+  if (e10 > 400) { e10 = 400; }
+  if (e10 < 0 - 400) { e10 = 0 - 400; }
+  return decimalToF64(digits, count, e10);
+}

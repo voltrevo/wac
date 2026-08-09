@@ -22,7 +22,7 @@ Deno.test("rung 5: how much of wacc can wacc compile", async () => {
   const sources = entries.map(([, src]) => src);
 
   const own = paths.filter((p) => p.startsWith("packages/wacc/src/"));
-  if (own.length !== 8) throw new Error(`expected wacc's 8 sources, found ${own.length}`);
+  if (own.length < 8) throw new Error(`expected wacc's sources, found only ${own.length}`);
 
   let whole = 0;
   let invalid = 0;
@@ -47,5 +47,7 @@ Deno.test("rung 5: how much of wacc can wacc compile", async () => {
   }
   // A floor rather than an equality: this is meant to rise, and a slot that adds a feature must not
   // quietly lose one.
-  if (whole < 6) throw new Error(`only ${whole} of wacc's 8 sources compile whole, down from 6`);
+  if (whole < own.length) {
+    throw new Error(`only ${whole} of wacc's ${own.length} sources compile whole`);
+  }
 });
