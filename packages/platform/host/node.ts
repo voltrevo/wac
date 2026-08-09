@@ -330,6 +330,14 @@ export function nodeWorld(
       log(unstr(p));
       return EMPTY;
     },
+    /**
+     * Nobody can ask this host to interrupt, so the answer is no — the answer, not a stub.
+     *
+     * `Core.askInterrupt` is answered by whoever owns the keyboard. Here the terminal belongs to
+     * whatever started the process, and over ssh to `sshd`, which is a wac program on the far side of
+     * an encrypted socket. A host that cannot be asked truthfully reports that it has not been.
+     */
+    [OP.ASK_INTERRUPT]: () => i32le(0),
     [OP.WARN]: (p) => {
       if (kids.warn(lineOf(p))) return EMPTY;
       warn(unstr(p));

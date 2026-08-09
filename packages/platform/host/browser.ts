@@ -179,6 +179,19 @@ export type BrowserWorldOptions = {
    * to that corner. Absent means every `Page` capability is refused.
    */
   dom?: Dom;
+
+  /**
+   * How this world answers `Core.askInterrupt` — separate from `dom`, and deliberately.
+   *
+   * A child is given no `dom` because **a child that could draw would be drawing over the program
+   * that started it**. Learning that the user pressed `^C` is not drawing: it is a fact about the
+   * keyboard, it grants nothing, and a child is exactly who needs it — a running applet in a page is
+   * a spawned worker, and it is the one that has to stop. Bundling the two authorities together is
+   * what made the first version of this answer "no" for every applet in the terminal.
+   *
+   * Defaults to the `dom`'s own reader, so a page that passes a `Dom` gets it without asking.
+   */
+  askInterrupt?: () => boolean;
 };
 
 /**
@@ -204,12 +217,30 @@ export type Dom = {
   nextFile(): Promise<{ ok: boolean; name: string; bytes: Uint8Array; error: string }>;
   /** Hand bytes back to the user as a download. */
   offerDownload(name: string, bytes: Uint8Array): void;
+  /**
+   * Whether a `^C` has arrived since this was last asked, clearing it — `OP.ASK_INTERRUPT`'s answer.
+   *
+   * On the `Dom` because that is the object the page hands in, and the page is where the keystroke
+   * is: `pageDom` installs the listener and `serveHostCalls` answers the bridge, both on the main
+   * thread. A `Dom` that does not implement it — a headless test double — simply never interrupts.
+   */
+  takeInterrupt?(): boolean;
 };
 
 /** A path resolved to the directory that holds it, and its last component. */
 type Resolved = { dir: DirHandle; name: string };
 
 export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
+  /**
+   * The one reader, resolved once: the explicit option, or the `Dom`'s own if a page passed one.
+   *
+   * Children are handed *this*, not `opts.askInterrupt`, so a page that supplied only a `Dom` still
+   * gives its children the answer — which is the case that matters, since every applet in the
+   * browser terminal is a spawned child.
+   */
+  const asked = (): boolean =>
+    opts.askInterrupt !== undefined ? opts.askInterrupt() : opts.dom?.takeInterrupt?.() === true;
+
   const args = opts.args ?? [];
   const log = opts.log ?? ((l: string) => console.log(l));
   const warn = opts.warn ?? ((l: string) => console.warn(l));
@@ -257,6 +288,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       const enc = new TextEncoder();
       return serveHostCalls(bridgeOf(sab), browserWorld({
         args: cargs,
+        // Not `dom` — see `askInterrupt` above. A child may learn that the user interrupted and may
+        // not draw, and those are two authorities rather than one.
+        askInterrupt: asked,
         // A line of output is bytes on the handle, with the newline `log` implies. The parent cannot
         // tell `log` from `write`, and neither can a pipe — which is the point.
         log: async (l: string) => { await out.push(enc.encode(l + "\n")); },
@@ -543,6 +577,16 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       log(unstr(p));
       return EMPTY;
     },
+    /**
+     * **The one host that can answer yes**, because in a page the keydown listener and the code
+     * servicing this bridge are the same thread — so while the worker is parked here, the page has
+     * already had its chance to see the keystroke.
+     *
+     * This is what makes design/system/0001 step 5's criterion reachable: a running applet is inside
+     * `dispatch`, so the shell's own check points are not executing, and an applet holds `Core` and
+     * never a `Page`.
+     */
+    [OP.ASK_INTERRUPT]: () => i32le(asked() ? 1 : 0),
     [OP.WARN]: (p) => {
       if (kids.warn(lineOf(p))) return EMPTY;
       warn(unstr(p));

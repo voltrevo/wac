@@ -121,6 +121,15 @@ export function coreOf(
       if (settled === null) return -1;
       return tickets.findIndex((t) => t.slot === settled.slot && t.gen === settled.gen);
     },
+
+    /*= askInterrupt */
+    // **A round trip per ask, and that is also why it works.** Every opcode parks this worker —
+    // `hostCall` is submit-then-collect, and `waitAny` above is *not* a counter-example: it is
+    // answered from this worker's own memory and involves no host at all. So there is no free poll to
+    // build on. But while the worker is parked the page's main thread is running, and in a page that
+    // is exactly where a keydown arrives and where the bridge is serviced — so the parking is what
+    // gives the host a chance to have seen the `^C`.
+    () => readI32le(hostCall(b, OP.ASK_INTERRUPT, EMPTY)),
   );
 }
 

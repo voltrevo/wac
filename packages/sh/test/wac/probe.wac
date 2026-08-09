@@ -44,10 +44,12 @@ Pending<u8[]> fakeRandom(i32 n) { return Pending.of(n, resolveBytes, alwaysSettl
 Pending<i64> fakeSleep(i32 millis) { return Pending.of(0, resolveZero, alwaysSettled, ignoreDrop); }
 void fakeLog(string s) {}
 void fakeWarn(string s) {}
+/** Nothing here has a keyboard, so nobody has ever asked to interrupt. */
+i32 fakeInterrupt() { return 0; }
 
 Core fakeCore() {
   return Core.of(fakeNow, fakeMonotonic, fakeSleep, fakeRandom, fakeLog, fakeWarn,
-                 fakeWaitAny);
+                 fakeWaitAny, fakeInterrupt);
 }
 
 // ── Cli ───────────────────────────────────────────────────────────────────────

@@ -383,6 +383,38 @@ export struct Core {
    */
   fn[i32(i32[], i32)] waitAny;
 
+  /**
+   * Whether the user has asked to interrupt what is running — `^C`, and nothing else.
+   *
+   * **The seam design/system/0001 step 5 was missing, and it is on `Core` rather than on the shell.**
+   * A signal here is cooperative: `kill` writes on a row in the process table and the receiver
+   * collects it at its next check point. That reaches a shell *between* commands and cannot reach a
+   * running one, because a running applet is inside `dispatch` and the shell's check points are not
+   * executing. An applet is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page` or a `Conn`, so
+   * whatever it polls must be one of those four.
+   *
+   * **Only a host that owns the keyboard can answer yes.** In a page the keydown listener and the
+   * code that services the bridge are both on the main thread, so while the worker is parked waiting
+   * for this very answer the page is free to have seen the keystroke. Under Deno, Node and wasmtime
+   * the terminal belongs to whatever started the program — over ssh, to `sshd` on the far side of an
+   * encrypted socket — so those answer *no*. That is the true answer where nothing can ask, not a stub.
+   *
+   * Reading clears it, so two callers do not both act on one `^C`.
+   *
+   * `i32` because that is what crosses; `interrupted()` is the read.
+   */
+  fn[i32()] askInterrupt;
+
+  /**
+   * Whether the user has asked to interrupt. Call it once per *block* of work, never per byte:
+   * every opcode parks the worker, so this is a round trip.
+   *
+   *     while (cli.write(block)) { if (core.interrupted()) { return 130; } }
+   *
+   * 130 is `128 + SIGINT`, which is what a shell reports for a program a `^C` ended.
+   */
+  bool interrupted(const this) { return this.askInterrupt() != 0; }
+
   Core of(
     fn[Pending<i64>()] nowMillis,
     fn[Pending<i64>()] monotonicNanos,
@@ -390,9 +422,11 @@ export struct Core {
     fn[Pending<u8[]>(i32)] randomBytes,
     fn[void(string)] log,
     fn[void(string)] warn,
-    fn[i32(i32[], i32)] waitAny
+    fn[i32(i32[], i32)] waitAny,
+    fn[i32()] askInterrupt
   ) {
-    return Core(nowMillis, monotonicNanos, sleepMillis, randomBytes, log, warn, waitAny);
+    return Core(nowMillis, monotonicNanos, sleepMillis, randomBytes, log, warn, waitAny,
+                askInterrupt);
   }
 }
 

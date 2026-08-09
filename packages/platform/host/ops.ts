@@ -52,6 +52,13 @@ export const OP = {
   LINK_STAT: 47,
   WRITE_STDERR: 48,
   SPAWN_SELF: 49,
+  /**
+   * "Has the user asked to interrupt?" — see `Core.askInterrupt` in `platform.wac`.
+   *
+   * Answered from what the host already knows, so it starts nothing; it still parks the worker like
+   * every opcode, and that is the point rather than the cost — see the note in `provider.ts`.
+   */
+  ASK_INTERRUPT: 50,
 } as const;
 
 /**

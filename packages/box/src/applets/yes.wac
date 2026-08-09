@@ -21,6 +21,19 @@ export i32 yes(Core core, Cli cli, Fs fs, Args a) {
   u8[] block = u8[one.len() * per](fill: 0);
   for (i32 i = 0; i < per; i++) { block.copyFrom(one, 0, i * one.len(), one.len()); }
 
-  while (cli.write(block)) { }
+  // **`^C` ends it**, which is design/system/0001 step 5's own criterion and the first thing in this
+  // system that stops a *running* command. A signal cannot reach here the way `kill` reaches a shell:
+  // this applet is inside `dispatch`, so the shell's check points are not executing, and an applet is
+  // handed `Core`, `Cli`, `Fs` and `Args` and never a `Page`. So it asks the capability.
+  //
+  // Once per *block* rather than once per line: every opcode parks the worker, so this is a round
+  // trip, and a block is already 4096 lines. 130 is `128 + SIGINT`, which is what a shell reports for
+  // a program a `^C` ended.
+  //
+  // Only a host that owns the keyboard ever answers yes — a page does, Deno and wasmtime do not, and
+  // say so. So this costs one extra host call per 4096 lines everywhere and does something in one.
+  while (cli.write(block)) {
+    if (core.interrupted()) { return 130; }
+  }
   return 0;
 }

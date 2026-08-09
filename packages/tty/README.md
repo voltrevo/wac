@@ -78,7 +78,10 @@ That is not one blocker. It is two, and they want different answers:
   reads the channel until the command has finished — and nothing else can read it, because the bytes
   are encrypted and `Conn` holds the cipher state. No poll fixes that; a second thread or worker
   reading the channel does.
-- **In a page it needs a capability an applet can reach.** The event queue is the host's, not an
+- **In a page it needed a capability an applet can reach, and has one.** `Core.askInterrupt`, answered
+  by the page because its keydown listener and its bridge service are the same thread. `^C` ends a
+  running `yes` in a real Chromium.
+- The original statement of that half: The event queue is the host's, not an
   encrypted stream, so it *can* be polled — `Pending.isDone` is exactly that and needs no closures. But
   a running `yes` is inside `dispatch`, so the shell's own check points are not reached, and an applet
   is handed `Core`, `Cli`, `Fs` and `Args` and never a `Page`. The seam therefore belongs on the

@@ -399,6 +399,24 @@ Deno.test({
         throw new Error(`\`^C\` did not abandon the line: ${JSON.stringify(afterIntr?.slice(-120))}`);
       }
 
+      // **`^C` ends a running command** — design/system/0001 step 5's own criterion, and the first
+      // thing in this system that stops something already running. `yes` never returns on its own;
+      // what stops it is `Core.askInterrupt`, which only a page can answer yes to, because here the
+      // keydown listener and the code servicing the bridge are the same thread. While the worker is
+      // parked asking, the page has already seen the keystroke.
+      //
+      // Driven as a person would: type it, let it run, press the key. The assertion is the *status* —
+      // 130 is `128 + SIGINT` — because "the page came back" alone would also be true of a command
+      // that finished, and `yes` never does.
+      await page.fill("#cmd", "yes");
+      await page.press("#cmd", "Enter");
+      await new Promise((r) => setTimeout(r, 400));
+      await page.press("#cmd", "Control+c");
+      await page.waitForFunction(
+        "document.getElementById('scr').textContent.includes('[exit 130]')",
+        { timeout: 20_000 },
+      );
+
       await page.fill("#cmd", "echo hi");
       const caret = await page.evaluate(`(() => {
         const el = document.getElementById("cmd");

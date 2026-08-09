@@ -84,6 +84,8 @@ struct PendingHooks {
 /// the exhaustiveness check names every one that is missing when a capability is added.
 #[derive(Clone, Debug)]
 enum Cap {
+    /// `Core.askInterrupt` — nothing here owns a keyboard, so it is always "no". See below.
+    Interrupted,
     Log,
     Warn,
     Write,
@@ -697,6 +699,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "accept") => Cap::Accept,
         ("Cli", "recv") => Cap::Recv,
         ("Cli", "send") => Cap::Send,
+        ("Core", "askInterrupt") => Cap::Interrupted,
         ("Cli", "closeSocket") => Cap::CloseSocket,
         ("Cli", "spawn") => Cap::Spawn,
         ("Cli", "spawnSelf") => Cap::SpawnSelf,
@@ -1440,6 +1443,17 @@ fn dispatch(
             if let Some(c) = child_of(caller, h) {
                 c.stdin.finish();
             }
+        }
+        Cap::Interrupted => {
+            // **Nobody can ask this host to interrupt, so the answer is no** — and that is the answer
+            // rather than a stub. `Core.askInterrupt` is answered by whoever owns the keyboard; here
+            // the terminal belongs to whatever started the program, and over ssh to `sshd`, which is a
+            // wac program on the far side of an encrypted socket. Only a page can say yes, because
+            // there the keydown listener and the code servicing this bridge are the same thread.
+            // Direct, not a ticket: `askInterrupt` is `fn[i32()]` in `platform.wac`, the same shape as
+            // `waitAny` below. Settling a ticket here would answer a `Pending<i32>` the caller never
+            // asked for.
+            results[0] = Val::I32(0);
         }
         Cap::WaitAny => {
             let ids = read_i32_array(caller, &params[1])?;

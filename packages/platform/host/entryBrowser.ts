@@ -179,6 +179,16 @@ export function terminalBytes(ev: Ev): string {
  * place entirely.
  */
 export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
+  /**
+   * Whether a `^C` has arrived and nobody has collected it — `Core.askInterrupt`'s answer.
+   *
+   * A single boolean rather than a queue: an interrupt is not something you can be owed several of,
+   * the same reason `packages/fs`'s `Proc.pending` holds one signal rather than a set. It is set by
+   * the keydown listener below, on this thread, and read by `browserWorld`'s `OP.INTERRUPTED` — also
+   * on this thread, because the page both listens and services the bridge. That is the whole of why
+   * a running applet can be interrupted in a page and not over ssh.
+   */
+  let interruptAsked = false;
   type PageEvent = { kind: string; id: string; value: string; x: number; y: number };
   type PickedFile = { ok: boolean; name: string; bytes: Uint8Array; error: string };
 
@@ -233,6 +243,7 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
   };
 
   return {
+    takeInterrupt: () => { const asked = interruptAsked; interruptAsked = false; return asked; },
     render: (html) => { root.innerHTML = html; },
     setText: (id, text) => {
       const el = doc.getElementById(id);
@@ -272,10 +283,15 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
           const sy = target.height !== undefined && rect !== undefined && rect.height > 0
             ? target.height / rect.height
             : 1;
+          // `^C`, noticed on the way past. It is still delivered as an event as well — a terminal
+          // wants to echo `^C` and clear its line — so this is a side channel rather than a
+          // diversion, and a page that ignores `Core.askInterrupt` behaves exactly as before.
+          const bytes = kind === "keydown" ? terminalBytes(ev) : "";
+          if (bytes === "\x03") interruptAsked = true;
           deliver({
             kind,
             id: hit.id,
-            value: kind === "keydown" ? terminalBytes(ev) : (target.value ?? ""),
+            value: kind === "keydown" ? bytes : (target.value ?? ""),
             x: Math.round((ev.offsetX ?? 0) * sx),
             y: Math.round((ev.offsetY ?? 0) * sy),
           });

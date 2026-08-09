@@ -58,7 +58,11 @@ const FOREIGN = new Set([
   "get_time_period_length", "MAX",
   // Placeholders in prose: `x(…)` is any capability, `chooser()` any of several. `Box` is the
   // spec's own example generic — `struct Box<T>` appears in generics.md and nowhere in the tree.
-  "x", "chooser", "feed", "cliFeed", "transform", "page", "Box",
+  // `S` joined them on 2026-08-09: `packages/wacc/README.md` explains that `S()` fills a `string`
+  // field with `""` rather than null, and `S` is an example struct that exists nowhere in the tree.
+  // It reached master red — the prose is right and the check is right, and a one-letter example type
+  // is exactly what this group is for.
+  "x", "chooser", "feed", "cliFeed", "transform", "page", "Box", "S",
   // The language's own surface. These exist, but no package declares them — they are builtins the
   // compiler knows about, so there is nothing for this check to resolve them against.
   "f64.toBits", "f64.fromBits", "f32.toBits", "f32.fromBits",

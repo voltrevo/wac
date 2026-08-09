@@ -181,6 +181,10 @@ Deno.test("the manifest carries the field order rather than the runtime holding 
     "log",
     "warn",
     "waitAny",
+    // Appended, not inserted, and that is the whole discipline this test enforces: a capability added
+    // in the *middle* of `Core` shifts every field after it, and a runtime with its own idea of the
+    // order would build a `Core` whose `log` is the previous field's function.
+    "askInterrupt",
   ]);
   // Every field names a signature that is actually in the callback table — the lookup the runtime does.
   for (const f of core.fields) {
