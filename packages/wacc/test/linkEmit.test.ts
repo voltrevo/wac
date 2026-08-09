@@ -80,6 +80,26 @@ const cases: [string, Record<string, string>][] = [
     "/main.wac": `import { P as Point } from "./a.wac";\nexport i32 f() { Point p = Point(3, 4); return p.x * p.y; }`,
     "/a.wac": `export struct P { i32 x; i32 y; }`,
   }],
+  // `core` is not a file: it ships inside the compiler, and both compilers have to agree about what
+  // it holds. `Read` is the one type in it, and a `match` over its three variants is the whole of
+  // what a consumer does with one.
+  ["a capability import", {
+    "/main.wac": `import { Read } from core;\nexport i32 f() { Read r = Read.Data(u8[](1, 2, 3)); ` +
+      `match (r) { case Data(b): { return b.len(); } case End: { return 0; } case Failed(w): { return -1; } } }`,
+  }],
+  ["a capability across files", {
+    "/main.wac": `import { Read } from core;\nimport { mk } from "./lib.wac";\n` +
+      `export i32 f() { match (mk(2)) { case Data(b): { return b.len() * 10; } case End: { return 1; } ` +
+      `case Failed(w): { return w.len(); } } }`,
+    "/lib.wac": `import { Read } from core;\nexport Read mk(i32 n) { if (n == 0) { return Read.End; } ` +
+      `if (n == 1) { return Read.Failed("io"); } return Read.Data(u8[n]()); }`,
+  }],
+  ["a capability through a funcref", {
+    "/main.wac": `import { Read } from core;\nRead once() { return Read.Data(u8[](9)); }\n` +
+      `i32 total(fn[Read()] source) { match (source()) { case Data(b): { return b.len(); } ` +
+      `case End: { return 0; } case Failed(w): { return -1; } } }\n` +
+      `export i32 f() { return total(once); }`,
+  }],
   ["three deep", {
     "/main.wac": `import { b } from "./b.wac";\nexport i32 f() { return b(); }`,
     "/b.wac": `import { c } from "./c.wac";\nexport i32 b() { return c() * 2; }`,
