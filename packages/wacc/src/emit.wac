@@ -1129,24 +1129,51 @@ void collectArrayTypes(Env env, u8[] src, Lexed lexed, Stmt[] body) {
   for (i32 i = 0; i < body.len(); i++) {
     match (body[i].kind) {
       case Var(type, nameTok, init, isConst): {
-        string t = typeOfTyName(env, src, lexed, type);
-        registerNamed(env, t);
+        registerNamed(env, typeOfTyName(env, src, lexed, type));
+        collectArrayTypesOfExpr(env, src, lexed, init);
       }
+      // **The expressions too.** This walk looked only at what a `var` *declared*, so a type named
+      // by a construction, a cast or an argument was invisible until the moment it was emitted —
+      // which is one type past the end of a section already written.
+      case ExprStmt(e2): { collectArrayTypesOfExpr(env, src, lexed, e2); }
+      case Return(value): {
+        if (!(value is null)) { collectArrayTypesOfExpr(env, src, lexed, value!); }
+      }
+      case Assign(target, op, rhs): { collectArrayTypesOfExpr(env, src, lexed, rhs); }
       case Block(inner): { collectArrayTypes(env, src, lexed, inner); }
       case If(cond, then, els): {
+        collectArrayTypesOfExpr(env, src, lexed, cond);
         collectArrayTypes(env, src, lexed, then);
         collectArrayTypes(env, src, lexed, els);
       }
-      case While(cond, inner): { collectArrayTypes(env, src, lexed, inner); }
-      case DoWhile(inner, cond): { collectArrayTypes(env, src, lexed, inner); }
-      case For(init, cond, update, inner): { collectArrayTypes(env, src, lexed, inner); }
+      case While(cond, inner): {
+        collectArrayTypesOfExpr(env, src, lexed, cond);
+        collectArrayTypes(env, src, lexed, inner);
+      }
+      case DoWhile(inner, cond): {
+        collectArrayTypesOfExpr(env, src, lexed, cond);
+        collectArrayTypes(env, src, lexed, inner);
+      }
+      case For(init, cond, update, inner): {
+        if (!(init is null)) { collectArrayTypes(env, src, lexed, Stmt[](init!)); }
+        if (!(cond is null)) { collectArrayTypesOfExpr(env, src, lexed, cond!); }
+        if (!(update is null)) { collectArrayTypes(env, src, lexed, Stmt[](update!)); }
+        collectArrayTypes(env, src, lexed, inner);
+      }
       case Switch(subject, cases): {
-        for (i32 c = 0; c < cases.len(); c++) { collectArrayTypes(env, src, lexed, cases[c].body); }
+        collectArrayTypesOfExpr(env, src, lexed, subject);
+        for (i32 c = 0; c < cases.len(); c++) {
+          if (!(cases[c].value is null)) {
+            collectArrayTypesOfExpr(env, src, lexed, cases[c].value!);
+          }
+          collectArrayTypes(env, src, lexed, cases[c].body);
+        }
       }
       // **An arm is a block.** The enum spec says five separate walks were missing this case, and
       // each failure was a type or a name reachable only through an arm — invisible here, and
       // reported by wasm as something else entirely.
       case Match(subject, arms): {
+        collectArrayTypesOfExpr(env, src, lexed, subject);
         for (i32 a = 0; a < arms.len(); a++) { collectArrayTypes(env, src, lexed, arms[a].body); }
       }
       else: { }
@@ -4524,7 +4551,11 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
-        if (typeParams.len() > 0) { return "a generic function"; }
+        // A generic function is a **template**, and a template emits nothing: `mapOption<T, U>` is
+        // not a function until its arguments say which one. Declining the declaration declined every
+        // file that merely imports the file it lives in — which is most of `std`'s consumers, none
+        // of which call it.
+        if (typeParams.len() > 0) { continue; }
         canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -4629,6 +4660,11 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               for (i32 a = 0; a < methods[m].params.len(); a++) {
                 mpts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
               }
+              // **The body too, under this substitution.** A template's method names types that
+              // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
+              // type first named while that method is being emitted is one the section was already
+              // written without.
+              collectArrayTypes(env, src, lexed, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
             }
@@ -4685,6 +4721,11 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               for (i32 a = 0; a < methods[m].params.len(); a++) {
                 empts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
               }
+              // **The body too, under this substitution.** A template's method names types that
+              // exist only once its arguments are known — `Vec<i32>.push` names `i32[]` — and a
+              // type first named while that method is being emitted is one the section was already
+              // written without.
+              collectArrayTypes(env, src, lexed, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
             }
@@ -5147,15 +5188,58 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
   match (e.kind) {
     case ArrNew(elem, size, fill, elements): {
       string t = typeOfTyName(env, src, lexed, elem);
-      if (t != "") { env.arrayType(t + "[]"); }
+      if (t != "") { registerNamed(env, t + "[]"); }
       for (i32 i = 0; i < elements.len(); i++) {
         collectArrayTypesOfExpr(env, src, lexed, elements[i]);
       }
       if (!(fill is null)) { collectArrayTypesOfExpr(env, src, lexed, fill!); }
       if (!(size is null)) { collectArrayTypesOfExpr(env, src, lexed, size!); }
     }
+    // **A construction names its type**, and `Vec<i32>(…)` names an instantiation nothing else in
+    // the file has to mention. Registering it here is what stops the type table growing while the
+    // section that declares it is being written.
     case Construct(ctype, args, named): {
+      registerNamed(env, typeOfTyName(env, src, lexed, ctype));
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
+      for (i32 i = 0; i < named.len(); i++) {
+        collectArrayTypesOfExpr(env, src, lexed, named[i].value);
+      }
+    }
+    case Cast(op, operand, target): {
+      registerNamed(env, typeOfTyName(env, src, lexed, target));
+      collectArrayTypesOfExpr(env, src, lexed, operand);
+    }
+    case Is(left, target, other, negated): {
+      if (!(target is null)) { registerNamed(env, typeOfTyName(env, src, lexed, target!)); }
+      collectArrayTypesOfExpr(env, src, lexed, left);
+      if (!(other is null)) { collectArrayTypesOfExpr(env, src, lexed, other!); }
+    }
+    case Call(callee, args): {
+      collectArrayTypesOfExpr(env, src, lexed, callee);
+      for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
+    }
+    case Member(obj, nameTok): { collectArrayTypesOfExpr(env, src, lexed, obj); }
+    case Index(arr, index): {
+      collectArrayTypesOfExpr(env, src, lexed, arr);
+      collectArrayTypesOfExpr(env, src, lexed, index);
+    }
+    case Unary(op, operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    case Unwrap(operand): { collectArrayTypesOfExpr(env, src, lexed, operand); }
+    case Binary(op, left, right): {
+      collectArrayTypesOfExpr(env, src, lexed, left);
+      collectArrayTypesOfExpr(env, src, lexed, right);
+    }
+    case Ternary(cond, then, els): {
+      collectArrayTypesOfExpr(env, src, lexed, cond);
+      collectArrayTypesOfExpr(env, src, lexed, then);
+      collectArrayTypesOfExpr(env, src, lexed, els);
+    }
+    case MatchExpr(subject, arms): {
+      collectArrayTypesOfExpr(env, src, lexed, subject);
+      for (i32 a = 0; a < arms.len(); a++) {
+        if (arms[a].value is null) { continue; }
+        collectArrayTypesOfExpr(env, src, lexed, arms[a].value!);
+      }
     }
     else: { }
   }

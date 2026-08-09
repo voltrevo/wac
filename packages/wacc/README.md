@@ -1183,6 +1183,38 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A template declaration is not a function, and the pre-pass never read an expression — 248 to 279
+
+Three changes, and the first two lines of the first one were worth twelve files.
+
+**A generic function is a template.** `mapOption<T, U>` is not a function until its arguments say
+which one, so its *declaration* emits nothing — and declining that declaration declined every file
+whose closure merely contains `std/src/option.wac`, which is most of `std`'s consumers and almost
+none of `mapOption`'s callers.
+
+That left nineteen files stopped by the guard added last slot, *"a type this emitter names only
+while emitting"* — which is exactly what a guard is for: it turned a class of invalid module into a
+named decline, and then into a diagnosis. Two things were naming types too late:
+
+- **The pre-pass never looked at an expression.** It read what a `var` *declared* and nothing else,
+  so a type named by a construction, a cast, an `is`, or an argument was invisible until the moment
+  it was emitted. It walks every expression of every statement now, which is the same
+  *every-place-a-type-can-be-named* rule this pass has been extended by four times.
+- **A template's method bodies were never walked at all.** `Vec<i32>.push` names `i32[]`, and that
+  is a type which exists only once `T` is known — so instances now walk their methods' bodies with
+  the substitution in force, inside the fixed point that registers them.
+
+| | before | after |
+|---|---|---|
+| whole files | 248 | **279** |
+| invalid | 0 | 0 |
+| blocked by the growth guard | 19 | 0 |
+
+**279 of 337, and what is left is no longer generics.** The largest remaining category is `an import
+from a capability` (35) — which needs a host to import *from*, and is a different kind of work than
+anything on the ladder. Behind it are singles: five `null`s, three files whose imports are not in the
+corpus, three arms naming a variant of another enum.
+
 ### Generic enums, and the comma that made two type parameters fail
 
 `Option<T>` is a generic **enum**, and `std`'s `Vec.get` returns one — which is why compiling `Vec`
