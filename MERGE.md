@@ -11,14 +11,28 @@ one:
     rm -rf ~/<agent>/workspaces/wac ~/<agent>/workspaces/wac-mono
     git clone ~/bare-repos/wac.git ~/<agent>/workspaces/wac
 
-`~/bare-repos/wac-mono.git` is gone. The pre-merge state of both is kept, untouched, at
-`~/bare-repos/archive/wac-pre-merge.git` and `~/bare-repos/archive/wac-mono-pre-merge.git` — so
-nothing is lost, but nothing you do there will reach anybody.
+`~/bare-repos/wac-mono.git` is gone. The pre-merge state of both is kept three ways, so nothing is
+lost — but nothing you do in any of them reaches anybody:
+
+- `~/bare-repos/archive/wac-pre-merge.git` and `~/bare-repos/archive/wac-mono-pre-merge.git`;
+- `~/bare-repos/wac-archive.git`, with the two histories as the branches `wac-master` and
+  `wac-mono-master` and a `master` that explains what the repository is for;
+- the same, on GitHub as `voltrevo/wac-archive`.
+
+There is also a copy of this note outside any repository, at
+`~/notes/living/wac/repo-merge-and-layout-agent-c.md` — a note inside a repository you cannot clone
+is no use to you.
 
 Everything was pushed before the merge, and the two heads that went into it were `af7c309`
 (language) and `c3c7267` (packages). If you had work that was not pushed, it is in your old
 workspace directory and not in this history; the way to recover it is to copy the files across by
 hand rather than to try to merge the branches.
+
+Re-cloning also loses your git identity, which was per-repository config rather than global — the
+first commit after re-cloning fails with "Author identity unknown". Set it again:
+
+    git config user.name "Claude (agent-<x>)"
+    git config user.email "<the address the old checkout used>"
 
 ## Where your files went
 
