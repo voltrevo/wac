@@ -1622,9 +1622,31 @@ float, a string with a bool and the rest all answer the same way. Same family st
 | false alarms on the emitter's corpus | 0 | 0 |
 | generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
 
-What the queue names next is the tail of `return: expected X, found Y` (21 of 70) and
-`undefined variable` (10 of 298) — both partial rather than absent, which is a different kind of
-work: the rule is there and something about *where* it is asked stops it firing.
+### A rule that was there, asked about something with no type — 92% to 93%
+
+`return: expected string, found i32` was missed twenty-one times of seventy, and the rule that
+reports it has been in this checker since its first slice. What was missing is the *found*: every one
+of the twenty-one returns a **builtin call** — `return a.len();` — and `typeOfExpr` had no answer for
+one, so the comparison had nothing to be wrong about. Four names and their answers is the whole fix,
+written against the same closed surface the missing-method rule uses.
+
+Then `"abc".len()`, still silent, for the reason that has now come up three slots running: **the
+receiver is a literal**, and a literal has no type of its own by design. `-"s"`, `1 == "hello"`,
+`1 + "é"`, and now `"abc".len()` — four rules, one cause, and the fix each time is that this
+position is not a slot for the literal to take a type from. It is worth stating as a rule of thumb
+for whoever works this queue next: **when a diagnostic is missing and the rule looks present, ask
+what the expression's type came back as before asking what the rule does.**
+
+| | before | after |
+|---|---|---|
+| mutation recall | 92% of 1,274 | **93%** |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
+The queue's tail is now `undefined variable` (10 of 298) and the remainder of the argument-count and
+method families — all partial, all in the same shape: the rule fires where the type is known and is
+silent where it is not.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

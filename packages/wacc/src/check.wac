@@ -1424,6 +1424,12 @@ export string typeOfExpr(C c, Expr e) {
         case Member(obj, nameTok): {
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
+          // **The builtins answer something too**, and nothing here knew what: `return a.len();`
+          // from a `string` function was silent because the returned expression had no type to be
+          // wrong with, not because the rule was missing. Same closed surface the missing-method
+          // rule is written against, one question further on.
+          string bret = builtinReturnType(recvT, tokenText(c, nameTok));
+          if (bret != "") { return bret; }
           // **A static on a template does not say which instance it builds.** `Box.of(5)` returns
           // `Box<T>` as written, and `T` is bound by the *slot* the call fills rather than by
           // anything here — so answering with the declaration's own text claims `Box<i32> b =
@@ -2663,7 +2669,10 @@ string receiverType(C c, Expr obj) {
       if (c.isStruct(n)) { return n; }
       return typeNone();
     }
-    else: { return typeOfExpr(c, obj); }
+    // **A literal receiver has the type of its own family**, which is the third place this checker
+    // has needed that: `"abc".len()` is a `string`'s builtin however the string was written, and
+    // asking `typeOfExpr` about a literal answers unknown by design.
+    else: { return naturalTypeOf(c, obj); }
   }
 }
 
@@ -2874,6 +2883,19 @@ bool isPlainName(Expr e) {
  * saying the surface was larger than `len` and had not been measured. It is four names and three
  * names, and both lists are closed — so the measurement was one grep, and the comment outlived it.
  */
+string builtinReturnType(string recv, string name) {
+  if (isArrayName(recv) && name == "len") { return "i32"; }
+  if (recv == "string") {
+    if (name == "len") { return "i32"; }
+    if (name == "indexOf") { return "i32"; }
+    if (name == "slice") { return "string"; }
+    if (name == "toBytes") { return "u8[]"; }
+  }
+  // `fill` and `copyFrom` are deliberately absent: they answer nothing, and an expression with no
+  // type is what `typeNone` already means everywhere else here.
+  return "";
+}
+
 bool isArrayBuiltin(string name) {
   return name == "len" || name == "copyFrom" || name == "fill";
 }
