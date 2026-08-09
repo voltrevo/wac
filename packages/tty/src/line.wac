@@ -39,9 +39,18 @@
 // anything, because there is nothing to suspend until design/0001 step 3 puts a process table in. It is
 // not approximated — `stopped` is not a state this reports.
 //
-// **No terminal modes.** Canonical with echo, always: there is no `stty`, no `ICANON` off, no `raw`.
-// A program that wants a keystroke at a time — an editor, a pager — needs that switch, and it is the
-// next thing this module wants rather than something it pretends to have.
+// **Three modes, and each was measured.** `Line.create()` is canonical with echo, `Line.noEcho()` is
+// `ICANON` without `ECHO` — a password prompt, where the editing still happens and is simply not
+// drawn — and `Line.cbreak()` is neither, a byte at a time for a pager or an editor. Compared against
+// a pty in each of those settings by `test/modes.test.ts`; `tools/discipline.py` is the pty, because
+// `script -qec cat` cannot hold an `stty` and Deno cannot allocate one.
+//
+// Two of the rules are not what their names suggest, which is the argument for measuring them:
+// **`ECHO` off does not stop the editing**, and **`^R` stops reprinting and becomes a byte in the
+// line**, because reprint *is* an echo and there is nothing to draw again.
+//
+// **`cbreak`, not raw.** `stty raw` also clears `ISIG` and `IEXTEN`, which would make `^C` an ordinary
+// byte; it is not one here. Naming it raw would be a claim about two flags nobody set.
 //
 // What is in the way is the *oracle*, not the code. Every rule above was measured through a pty, and
 // the harness for that is `script -qec cat`, which will not hold an `stty`: `stty -echo; cat` echoes
@@ -138,7 +147,45 @@ export struct Line {
    */
   bool literal;
 
-  Line create() { return Line(Buf.create(), false); }
+  /**
+   * `ICANON`: whether this collects a line before delivering it, or delivers each byte as it arrives.
+   *
+   * On means the editing above happens — erase, kill, word erase, the lot — and the program sees a
+   * line when one is finished. Off is *cbreak*: every byte is handed over the moment it arrives, none
+   * of the editing characters mean anything, and `^D` is a byte rather than an end of input. That is
+   * what a pager or an editor wants, and it is why they draw their own screens.
+   */
+  bool canonical;
+
+  /**
+   * `ECHO`: whether what is typed is drawn back to the terminal.
+   *
+   * **Off does not mean the editing stops** — that is `canonical` — and the two are separate here
+   * because they are separate in `termios` and because the combination that surprises people is
+   * `ICANON` with `ECHO` off: a password prompt, where backspace still works and nothing appears.
+   * Measured through `tools/discipline.py`: `ab<DEL>c` with echo off delivers `ac` and draws nothing.
+   */
+  bool echo;
+
+  /** Canonical, with echo — a terminal as it comes, and what every caller had before modes existed. */
+  Line create() { return Line(Buf.create(), false, true, true); }
+
+  /**
+   * `ICANON` without `ECHO`: the arrangement a password prompt wants.
+   *
+   * Editing still happens and is simply not drawn.
+   */
+  Line noEcho() { return Line(Buf.create(), false, true, false); }
+
+  /**
+   * Neither: a byte at a time, nothing drawn — *cbreak*, and deliberately not "raw".
+   *
+   * `stty raw` also clears `ISIG` and `IEXTEN`, which would make `^C` an ordinary byte. It is not one
+   * here: `feed` still answers a signal for it, because that is what `-icanon -echo` does and because
+   * a program that wanted `^C` to be data would have to say so. Naming this `raw` would be a claim
+   * about two flags nobody set.
+   */
+  Line cbreak() { return Line(Buf.create(), false, false, false); }
 
   /** Whether anything has been typed on the line so far. */
   bool pending(const this) { return this.held.len > 0; }
@@ -149,7 +196,51 @@ export struct Line {
    * The order of the tests below is the order the kernel applies them, which matters in one place:
    * `^V` wins over everything, so `^V^C` is a byte in the line rather than an interrupt.
    */
+  /**
+   * One byte from the keyboard, through whichever mode this line is in.
+   *
+   * The two flags are applied here rather than threaded through the rules below, and the shape is
+   * deliberate: `canonical` chooses *which* function runs, and `echo` only decides whether what it
+   * decided to draw is returned. Editing and drawing are separate in `termios` and separate here, so
+   * `ICANON` with `ECHO` off keeps every rule below and shows none of it — which is a password
+   * prompt, and the combination a reader is most likely to expect to behave otherwise.
+   *
+   * One rule is not merely undrawn when the echo goes: **`^R` stops reprinting and becomes a byte in
+   * the line.** Reprint *is* an echo — with nothing on the screen there is nothing to draw again — so
+   * the kernel delivers `\x12` instead. Measured through `tools/discipline.py`, and the reason this
+   * is a branch rather than a blanked field.
+   */
   Typed feed(this, i32 b) {
+    if (!this.canonical) { return this.feedByte(b); }
+    if (!this.echo && b == REPRINT()) {
+      this.held.push(b);
+      return Typed.nothing();
+    }
+    Typed t = this.feedLine(b);
+    if (!this.echo) { t.echo = u8[0](); }
+    return t;
+  }
+
+  /**
+   * A byte at a time, nothing edited and nothing drawn — the non-canonical half.
+   *
+   * Every byte is a line of its own with no newline on it, which is what "delivered as it arrives"
+   * means to a caller that reads lines. None of the editing characters mean anything: `^U`, `^W` and
+   * DEL are bytes, and so is `^D`, so a program in this mode has no end of input from the terminal —
+   * that is the mode rather than an omission.
+   *
+   * `^C` and `^\` still answer a signal, because `ISIG` is a third flag and nothing here clears it.
+   * See `cbreak` above for why this is not called raw.
+   */
+  Typed feedByte(this, i32 b) {
+    u8[] drawn = this.echo ? render(b) : u8[0]();
+    if (b == INTR()) { return Typed(drawn, u8[0](), false, false, SIGINT()); }
+    if (b == QUIT()) { return Typed(drawn, u8[0](), false, false, SIGQUIT()); }
+    return Typed(drawn, u8[1](fill: b), true, false, 0);
+  }
+
+  /** The canonical rules, unchanged — what `feed` was before there were modes. */
+  Typed feedLine(this, i32 b) {
     if (this.literal) {
       this.literal = false;
       this.held.push(b);
