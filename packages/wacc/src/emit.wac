@@ -742,6 +742,8 @@ export struct Env {
   bool full;
   /** Whether any name had to be guessed at — see `keyAt`. A module with one is not emitted. */
   bool ambiguous;
+  /** And which name it was, because a category is not a diagnosis. */
+  string ambiguousName;
 
   /** A local's wac type, or `""` when the name is not one. */
   string localType(const this, string name) {
@@ -1008,7 +1010,7 @@ export struct Env {
                bool[4096](), i32[4096](), 0,
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
-               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false);
+               string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "");
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1053,6 +1055,10 @@ export struct Env {
    * emitter accepts more than the language does and the checker one rung down says no.
    */
   string keyAt(this, string name, i32 line) {
+    // **A local shadows every file in the module, so it is not an ambiguous global.** Callers reach
+    // here speculatively — `ch.toBytes()` asks whether `ch` names a type before deciding it does not
+    // — and a speculative question whose answer is discarded must not leave the module unemittable.
+    if (this.localAt(name) >= 0) { return name; }
     i32 f = this.fileOf(line);
     // This file's own declaration first — shadowing, as the language has it.
     for (i32 i = 0; i < this.declCount; i++) {
@@ -1082,7 +1088,10 @@ export struct Env {
         imported = this.declKeys[i];
       }
     }
-    if (importedCandidates > 1) { this.ambiguous = true; }
+    if (importedCandidates > 1) {
+      this.ambiguous = true;
+      if (this.ambiguousName == "") { this.ambiguousName = name; }
+    }
     if (imported != "") { return imported; }
     // And then anyone — but **only when there is one candidate**. Reaching a name a file neither
     // declares nor imports is the permissive part of linking, and it is safe exactly while the
@@ -1095,7 +1104,10 @@ export struct Env {
       if (found != this.declKeys[i]) { candidates = candidates + 1; }
       found = this.declKeys[i];
     }
-    if (candidates > 1) { this.ambiguous = true; }
+    if (candidates > 1) {
+      this.ambiguous = true;
+      if (this.ambiguousName == "") { this.ambiguousName = name; }
+    }
     return found == "" ? name : found;
   }
 
@@ -2515,7 +2527,8 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(33);   // local.set
       fb.u32leb(env.localCount - 1);
     }
-    case Assign(target, op, rhs): {
+    case Assign(rawTarget, op, rhs): {
+      Lvalue target = peelLv(rawTarget);
       match (target.kind) {
         case LField(base, nameTok): {
           string ot3 = typeOfLv(src, lexed, env, base);
@@ -2712,7 +2725,8 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       env.depth = env.depth - 1;
       env.breakAt = savedS;
     }
-    case IncrStmt(target, op): {
+    case IncrStmt(rawTarget, op): {
+      Lvalue target = peelLv(rawTarget);
       // `i++` is the commonest `for` update in the language and had **no arm here at all**, so the
       // update emitted nothing and the loop never advanced. It did not fail: it validated and span,
       // and the test hung rather than reporting — which is the failure mode this rung's oracle was
@@ -2875,6 +2889,90 @@ void emitCompound(B fb, Env env, i32 k, string t) {
  * operands and an opcode, because the right one may not be evaluated at all. Each becomes an `if`
  * with a value type — the one place this emitter writes a block that produces something.
  */
+/**
+ * `x++` and `++x` **as expressions**, which is what `spec/spec/expressions.md` says they are.
+ *
+ * The difference between the two is only *when* the value is taken, so both forms are the same
+ * instructions in a different order rather than two implementations. The base of a field or an
+ * element is put in a scratch and read twice from there: `f().x++` must call `f` once, and an
+ * emitter that reaches for `emitLvalue` a second time calls it twice.
+ */
+void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op, bool prefix) {
+  Lvalue target = peelLv(rawTarget);
+  i32 kind = lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus();
+  match (target.kind) {
+    // Peeled above, so this cannot arrive — but the language wants every variant named.
+    case LUnwrap(base): { emitIncrExpr(fb, src, lexed, env, base, op, prefix); }
+    case LIdent(tok): {
+      i32 at = env.localAt(tokenTextOf(src, lexed, tok));
+      if (at < 0) { return; }
+      string t = env.localTypes[at];
+      fb.byte(32); fb.u32leb(at);
+      if (prefix) {
+        if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+        emitBinary(fb, kind, t);
+        fb.byte(34); fb.u32leb(at);        // local.tee — the new value is the answer
+        return;
+      }
+      fb.byte(32); fb.u32leb(at);          // the old value stays underneath
+      if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+      emitBinary(fb, kind, t);
+      fb.byte(33); fb.u32leb(at);
+    }
+    case LField(base, nameTok): {
+      string ot = typeOfLv(src, lexed, env, base);
+      if (!env.isStructName(ot)) { return; }
+      string fname = tokenTextOf(src, lexed, nameTok);
+      bool en = env.enumOf(ot) != "" || env.isEnumName(ot);
+      i32 slot = en ? enumSlot(env, ot, fname) : env.fieldIndex(ot, fname);
+      string ft = en ? env.fieldTypeAt(env.canonType(ot), slot) : env.fieldType(ot, fname);
+      i32 b = env.scratchNamed("iebase", ot);
+      i32 v = env.scratchNamed("ieval", ft);
+      emitLvalue(fb, src, lexed, env, base);
+      fb.byte(33); fb.u32leb(b);
+      if (!prefix) {
+        fb.byte(32); fb.u32leb(b);
+        fb.byte(251); fb.u32leb(2); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
+      }
+      fb.byte(32); fb.u32leb(b);
+      fb.byte(32); fb.u32leb(b);
+      fb.byte(251); fb.u32leb(2); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
+      if (valType(ft) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+      emitBinary(fb, kind, ft);
+      if (prefix) { fb.byte(34); fb.u32leb(v); }
+      fb.byte(251); fb.u32leb(5); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
+      if (prefix) { fb.byte(32); fb.u32leb(v); }
+    }
+    case LIndex(base, index): {
+      string bt = typeOfLv(src, lexed, env, base);
+      if (!isArrayType(bt)) { return; }
+      string et = elemOf(bt);
+      i32 a = env.scratchNamed("iearr", bt);
+      i32 i = env.scratchNamed("ieidx", "i32");
+      i32 v2 = env.scratchNamed("ieval", et);
+      emitLvalue(fb, src, lexed, env, base);
+      fb.byte(33); fb.u32leb(a);
+      emitAt(fb, src, lexed, env, index, "i32");
+      fb.byte(33); fb.u32leb(i);
+      if (!prefix) {
+        fb.byte(32); fb.u32leb(a);
+        fb.byte(32); fb.u32leb(i);
+        emitArrayGet(fb, env, bt);
+      }
+      fb.byte(32); fb.u32leb(a);
+      fb.byte(32); fb.u32leb(i);
+      fb.byte(32); fb.u32leb(a);
+      fb.byte(32); fb.u32leb(i);
+      emitArrayGet(fb, env, bt);
+      if (valType(et) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+      emitBinary(fb, kind, et);
+      if (prefix) { fb.byte(34); fb.u32leb(v2); }
+      fb.byte(251); fb.u32leb(14); fb.u32leb(env.arrayType(bt));
+      if (prefix) { fb.byte(32); fb.u32leb(v2); }
+    }
+  }
+}
+
 void emitExpr(B fb, u8[] src, Lexed lexed, Env env, Expr e) {
   emitExprAt(fb, src, lexed, env, e, "");
 }
@@ -3480,6 +3578,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitExpr(fb, src, lexed, env, operand);
       fb.byte(212);   // ref.as_non_null
     }
+    case Incr(target, op, prefix): { emitIncrExpr(fb, src, lexed, env, target, op, prefix); }
     case Ternary(cond, then, els): {
       // **The branches' type, not `i32`.** A block that produces a value declares which, and this
       // declared `i32` for every ternary — so `n == 0 ? x : y` on two `u64`s was a block promising an
@@ -3496,7 +3595,6 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       emitExprAt(fb, src, lexed, env, els, tt);
       fb.byte(11);
     }
-    else: { }
   }
 }
 
@@ -3606,6 +3704,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
       return typeOfE(src, lexed, env, right);
     }
     case Is(left, target, other, negated): { return "bool"; }
+    case Incr(target, op, prefix): { return typeOfLv(src, lexed, env, peelLv(target)); }
     case Unwrap(operand): { return typeOfE(src, lexed, env, operand); }
     case MatchExpr(subject, arms): {
       // **With the arm's names in scope.** An arm whose value is its own binding — `case B(x): x`,
@@ -3971,10 +4070,27 @@ void emitArrayGet(B fb, Env env, string arrayType) {
   fb.u32leb(env.arrayType(arrayType));
 }
 
+/**
+ * An lvalue with its `!`s peeled off — `nodes[i]!.up = true` writes to the same place `nodes[i].up`
+ * does.
+ *
+ * **Unwrapping is addressing-transparent here** because `T?` and `T` are one wasm type: the write
+ * goes to the same field of the same struct, and a null still traps at the access rather than
+ * needing a check of its own. So the assertion says something to the *checker* and nothing to the
+ * emitter, and peeling is the whole of honouring it.
+ */
+Lvalue peelLv(Lvalue lv) {
+  match (lv.kind) {
+    case LUnwrap(base): { return peelLv(base); }
+    else: { return lv; }
+  }
+}
+
 /** An lvalue's wac type, which a write through an index needs to know which array it is. */
 string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { return env.localType(tokenTextOf(src, lexed, tok)); }
+    case LUnwrap(base): { return typeOfLv(src, lexed, env, base); }
     case LIndex(base, index): {
       string b = typeOfLv(src, lexed, env, base);
       return isArrayType(b) ? elemOf(b) : "";
@@ -3983,7 +4099,6 @@ string typeOfLv(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       string b = typeOfLv(src, lexed, env, base);
       return env.isStructName(b) ? env.fieldType(b, tokenTextOf(src, lexed, nameTok)) : "";
     }
-    else: { return ""; }
   }
 }
 
@@ -3996,6 +4111,7 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
       fb.byte(32);
       fb.u32leb(at);
     }
+    case LUnwrap(base): { emitLvalue(fb, src, lexed, env, base); }
     case LIndex(base, index): {
       string bt = typeOfLv(src, lexed, env, base);
       emitLvalue(fb, src, lexed, env, base);
@@ -4011,7 +4127,6 @@ void emitLvalue(B fb, u8[] src, Lexed lexed, Env env, Lvalue lv) {
       fb.u32leb(env.structType(bt2));
       fb.u32leb(env.fieldIndex(bt2, tokenTextOf(src, lexed, nameTok)));
     }
-    else: { }
   }
 }
 
@@ -4269,6 +4384,7 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
 string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { return ""; }
+    case LUnwrap(base): { return unsupportedLvalue(src, lexed, env, base); }
     case LIndex(base, index): {
       string b = unsupportedLvalue(src, lexed, env, base);
       if (b != "") { return b; }
@@ -4280,7 +4396,6 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
       if (b != "") { return b; }
       return env.isStructName(typeOfLv(src, lexed, env, base)) ? "" : "field of an unknown type";
     }
-    else: { return "an lvalue kind"; }
   }
 }
 
@@ -4689,7 +4804,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         }
       }
     }
-    case Incr(target, op, prefix): { return "increment as an expression"; }
+    case Incr(target, op, prefix): {
+      string it = typeOfLv(src, lexed, env, peelLv(target));
+      if (it != "i32" && it != "i64" && it != "u8" && it != "u32" && it != "u64" && it != "i8" &&
+          it != "i16" && it != "u16") {
+        return "increment of " + (it == "" ? "an unknown type" : it);
+      }
+      return unsupportedLvalue(src, lexed, env, target);
+    }
     case Is(left, target, other, negated): {
       if ((target is null) && (other is null)) {
         string nl = unsupportedValue(src, lexed, env, left);
@@ -4877,7 +4999,7 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
   }
   // Asked last, because it is discovered by the walk above rather than before it: a name only turns
   // out to be a guess when something reaches for it.
-  if (env.ambiguous) { return "a name more than one file declares"; }
+  if (env.ambiguous) { return "the name " + env.ambiguousName + ", which more than one file declares"; }
   if (env.full) { return "more declarations than this emitter has room for"; }
   if (env.blocked == "" && grewTypesWhileEmitting(src, entryDecls, starts, edges, names)) {
     return "a type this emitter names only while emitting";

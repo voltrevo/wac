@@ -1222,6 +1222,49 @@ Two mistakes in the helper, both about **order**:
 What is left is twelve files: five where a name means two things in one module, three whose imports
 are not in the corpus at all, and four singles.
 
+### A question nobody asked out loud — 326 of 338 to 332
+
+The five ambiguous files were one line, and finding it took making the decline **name the name**.
+`"a name more than one file declares"` names a category; `"the name ch, which more than one file
+declares"` is a diagnosis, and the three names it produced — `ch`, `sub`, `head` — were all *locals*.
+
+`ch` is `string ch = s[i];` in `atoi`. The line that condemned the module is `ch.toBytes()`, where
+the emitter asks whether `ch` is a type before concluding it is a value. That question is
+**speculative**: its answer is thrown away a line later. But asking it walked the declaration table,
+found `ch` in both `sha256.wac` and `sha512.wac`, and set the flag that makes a module unemittable —
+so a discarded answer decided the fate of five files.
+
+A local shadows every file in the module, so a name that is a local right now is not an ambiguous
+global. One line at the top of `keyAt` says exactly that, and the five files emit.
+
+**`nodes[i]!.up = true`** was the next one, and it is the same shape as `string?`: `T?` and `T` are
+one wasm type here, so `!` on the *left* of an assignment is addressing-transparent — the write goes
+to the same field of the same struct, and a null still traps at the access rather than needing a
+check of its own. Peeling the assertion is the whole of honouring it. Adding the variant made the
+compiler report three `else` arms as unreachable, which is a checker telling you your change was
+total.
+
+**`x++` is an expression**, prefix and postfix, on integer lvalues — `spec/tour.wac` says so at line
+190 and the emitter had only ever seen the statement. The two forms differ only in *when* the value
+is taken, so they are one function with the load moved; the base of a field or an element goes in a
+scratch and is read twice from there, because `f().x++` must call `f` once.
+
+The lesson was in the test, not the emitter. Fifty-seven generated programs went in, the sweep said
+**0 mismatched**, and a canary said 27 of them were never compared: packed locals (`u8 x` is not a
+variable), `i32[3](5)` for `i32[3](fill: 5)`, and an `i64` narrowed with `as` where the language
+wants `as!`. A program the reference refuses is counted as *not valid wac* and skipped — silently,
+correctly, and it looks exactly like agreement. Two more turned out to be a fact rather than a
+mistake: `for (…; …; ++i)` is a parse error, so a `for` update takes the postfix form only.
+
+| | before | after |
+|---|---|---|
+| whole files | 326 | **332 of 338** |
+| invalid | 0 | 0 |
+| sweep | 4,323 programs, 3,919 compared | **4,378 programs, 3,970 compared, 0 mismatched** |
+
+Six files left: three whose imports the corpus does not contain, and three singles — `Option`
+unresolved, a generic *function* call whose type argument is inferred, and a named construction.
+
 ### One reader, because two disagreed
 
 Asked how the reference handles the same conversion, the answer is: it doesn't. `wacFloatLit.ts` is
