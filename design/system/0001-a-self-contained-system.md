@@ -446,7 +446,7 @@ as well as of the shell.
 
 ## Open questions
 
-- **Terminal modes have no oracle this repo can drive.** `packages/tty` exists because every rule in it
+- ~~**Terminal modes have no oracle this repo can drive.**~~ **Answered on 2026-08-09, and the answer was that the question was wrong.** `packages/tty/tools/discipline.py` allocates a pty, sets `termios` on it before the child starts, and runs `cat` — canonical, `noecho` and `cbreak`. It reproduces `script -qec cat` byte for byte on the cases `line.test.ts` already compares, so it is a drop-in for the oracle already trusted rather than a second opinion. The blocker was recorded as a property of the problem and was a property of the *tool*: Deno cannot allocate a pty, and this repository has driven reference implementations from Python since `packages/tor/tools/capture-*.py`. Two rules fell straight out, neither of them what the names suggest — **`noecho` still edits** (`ab<DEL>c` delivers `ac`, it is simply not drawn), and **`^R` stops reprinting and becomes a byte in the line**, because reprint is an echo feature. What is left is the implementation in `Line`, which now has something to be written against. The paragraph this replaces: `packages/tty` exists because every rule in it
   was measured against Linux's own discipline through a pty, and modes are the module's own named next
   step — canonical off for an editor, echo off for a password. The comparison runs `script -qec cat`,
   and `script` will not hold an `stty`: `stty -echo; cat` echoes anyway, and `-icanon` leaves the

@@ -66,6 +66,12 @@ keystroke. What is still not wired is the *editing*: `box/example/term.wac` uses
 browser does it, and taking that over costs the block caret, IME composition and paste — a decision
 with a price, written up beside the loop there.
 
+**Modes have an oracle now.** `tools/discipline.py` is a pty with `termios` set before the child
+starts, so the comparison this module lives by extends to `noecho` and `cbreak` — which `script -qec
+cat` could not hold. `test/modes.test.ts` pins that it reproduces the existing oracle byte for byte in
+canonical mode, and records what the kernel does in the other two. The module still implements one
+arrangement; what changed is that the next one can be measured rather than remembered.
+
 **Delivery is done and the criterion is still not met, and those are two different sentences.** `^C`
 sets a signal on a row and `packages/sh` collects it before every command and on every turn of a loop,
 so `kill -INT $$` ends a script with 130 and `kill %1` ends a background job. The step's own criterion —
