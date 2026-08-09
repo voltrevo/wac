@@ -461,5 +461,22 @@ export function generateEmit(): Cell[] {
   for (const bad of [55296, 57343, 1114112]) {
     add(`fromCodepoint ${bad} traps`, `export i32 f() { return string.fromCodepoint(${bad}).len(); }`);
   }
+
+  // `slice` clamps and never traps, so every combination of arguments has an answer and all of them
+  // are cells; `indexOf` answers -1 as readily as a position, and an empty needle is found at 0.
+  for (const [a, b] of [[0, 5], [1, 3], [3, 99], [9, 99], [3, 1], [-2, 3], [2, 2], [0, 0], [-9, -1]]) {
+    add(`slice ${a},${b}`, `export i32 f() { return "hello".slice(${a}, ${b}).len(); }`);
+    add(`slice ${a},${b} of a computed string`,
+      `export i32 f() { string s = "he" + "llo"; return s.slice(${a}, ${b}).len(); }`);
+    add(`slice ${a},${b} equals itself`,
+      `export bool f() { return "hello".slice(${a}, ${b}) == "hello".slice(${a}, ${b}); }`);
+  }
+  for (const n of ['"world"', '"o"', '"hello world"', '""', '"zz"', '"h"', '"d"', '"lo w"']) {
+    add(`indexOf ${n}`, `export i32 f() { return "hello world".indexOf(${n}); }`);
+    add(`indexOf ${n} in an empty string`, `export i32 f() { return "".indexOf(${n}); }`);
+    add(`indexOf ${n} then slice`,
+      `export i32 f() { string s = "hello world"; i32 at = s.indexOf(${n}); ` +
+      `return at < 0 ? -1 : s.slice(at, s.len()).len(); }`);
+  }
   return out;
 }

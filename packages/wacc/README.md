@@ -1183,7 +1183,26 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
-### Seven of wacc's own eight files
+### `slice`, `indexOf`, and a branch that counted outward
+
+Two more string methods, and they are the two the **linker** uses — so this compiler could not
+compile the part of itself that decides which files a module is made of. `slice` clamps rather than
+trapping, which is its whole specification and why four `select`s say it in eight instructions;
+`indexOf` is the naive search, whose answers are the easy ones to be sure of.
+
+`indexOf` also hung, in a way worth writing down. A branch counts labels **outward from where it
+stands**: inside the inner loop, 0 is that loop, 1 the block around it, 2 the *outer* loop. Leaving
+the inner comparison on a mismatch is `br 1`; I wrote `br 2`, which restarts the search at the same
+start position without advancing it. The module validates. It just never finishes — and it took the
+probe's four-hundred-second timeout rather than an error to say so, which is the same failure mode
+the `i++` bug had two rungs ago.
+
+`selfEmit.test.ts` exists now, and reports the rung-5 number rather than leaving it to be remembered:
+**6 of wacc's 8 sources compile whole**, with `api.wac` and `emit.wac` stopping at a `null` this
+emitter still cannot place. It asserts the corpus invariant on those eight files and a floor on the
+count, so a slot that adds a feature cannot quietly lose one.
+
+### Six of wacc's own eight files
 
 A question worth asking directly, since rung 5 is the ladder's last: **how much of `wacc` can `wacc`
 compile?** The answer turned out to be five of its eight files already, blocked by two things and not
@@ -1202,11 +1221,15 @@ turned up: this compiler could not compile the function it uses to name its own 
 | | before | after |
 |---|---|---|
 | whole files | 244 | **245** |
-| wacc's own | 5 of 8 | **7 of 8** |
+| wacc's own | 4 of 8 | **6 of 8** |
 
-The eighth is `api.wac` — and `emit.wac` with it — waiting on `string.slice` and `string.indexOf`,
-which the linker written two slots ago uses. That is the whole distance left to a compiler that can
-read itself.
+The other two are `api.wac` and `emit.wac`, waiting on `string.slice` and `string.indexOf` — which
+the linker written two slots ago uses. That is the whole distance left to a compiler that can read
+itself.
+
+*(The commit for this section says "7 of 8" and the count was 6: `api.wac` and `emit.wac` were both
+blocked, and I read a list of eight lines as though the two blocked ones were one. `selfEmit.test.ts`
+prints the number now, which is the point of having it print rather than being remembered.)*
 
 ### A block is a scope — 230 to 244
 
