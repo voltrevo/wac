@@ -384,5 +384,43 @@ export function generateEmit(): Cell[] {
     `i32 one(i32 x) { return x + 1; }\n` +
     `fn[i32(i32)] outer(fn[i32(i32)] g) { return g; }\n` +
     `export i32 f() { fn[fn[i32(i32)](fn[i32(i32)])] h = outer; return h(one)(41); }`);
+
+  // Module-level constants with identity. A scalar constant is inlined and has none; an array or a
+  // struct is one value shared by every use, which is why it lives in a global — and why the cells
+  // below ask *which* value as well as what it holds.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    add(`const ${t} array`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\nexport ${t} f() { return A[0] + A[1]; }`);
+    add(`const ${t} array is one array`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\n${t}[] g() { return A; }\n` +
+      `export bool f() { return g() is A; }`);
+    add(`const ${t} array through a function`,
+      `const ${t}[] A = ${t}[](${v}, ${w});\n${t} sum(${t}[] xs) { return xs[0] + xs[1]; }\n` +
+      `export ${t} f() { return sum(A); }`);
+    add(`const ${t} struct`,
+      `struct P { ${t} x; }\nconst P Q = P(${v});\nexport ${t} f() { return Q.x; }`);
+    add(`const ${t} computed`,
+      `const ${t}[] A = ${t}[2](fill: ${v});\nexport ${t} f() { return A[0] + A[1]; }`);
+  }
+  // The ones wasm cannot write in a global at all — a concatenation and a call are not constant
+  // expressions, so the value arrives when the start function runs rather than when the module is
+  // declared, and the only way to tell is to read it.
+  add("const built by a call",
+    `u8[] mk(i32 n) { return u8[n](); }\nconst u8[] T = mk(5);\nexport i32 f() { return T.len(); }`);
+  add("const built by concatenation",
+    `const string S = "ab" + "cd";\nexport i32 f() { return S.len(); }`);
+  add("const built from another const",
+    `const string A = "xy";\nconst string B = A + A;\nexport i32 f() { return B.len(); }`);
+  add("const built by arithmetic",
+    `const i32[] A = i32[](0 - 5, 3 * 4);\nexport i32 f() { return A[0] + A[1]; }`);
+  add("const struct built by a call",
+    `struct P { i32 x; }\nP mk() { return P(9); }\nconst P Q = mk();\nexport i32 f() { return Q.x; }`);
+  add("const array of a computed length",
+    `i32 n() { return 3; }\nconst i32[] A = i32[n()]();\nexport i32 f() { return A.len(); }`);
+  add("const read before and after",
+    `const string S = "a" + "b";\ni32 first() { return S.len(); }\n` +
+    `export i32 f() { return first() + S.len(); }`);
   return out;
 }

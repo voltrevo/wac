@@ -1183,6 +1183,44 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A constant wasm cannot write down — 173 to 230
+
+The largest decline left was *"a constant whose value is not a constant expression"*, 59 files, and
+the message was accurate about wasm and wrong about what follows from it. wasm's idea of a constant
+expression is narrow — literals, `ref.null`, `ref.func`, and the GC allocations — and wac's is not:
+
+```wac
+const string S = "ab" + "cd";       // a call
+const u8[] T = mk(5);               // a call
+const i32[] A = i32[](0 - 5, 3);    // arithmetic
+```
+
+None of those can be written in a global's initialiser. All of them can be **assigned** to one. So a
+constant this emitter cannot express as a constant expression now gets a mutable global holding
+null, and a synthesized **start function** — wasm's `start` section, which runs at instantiation —
+fills them in declaration order. The value arrives a moment later and no observer can tell, which is
+the whole of the trick.
+
+Two things fell out of it that are worth naming:
+
+- **The question changed from "is it a constant expression" to "can this emitter emit it at all"**,
+  which is the question the rest of the emitter already answers. `assignGlobals` asks
+  `unsupportedValueAt` now, and the answer can change once the functions an initialiser calls have
+  settled — so the pair of passes runs twice.
+- The start function is a function like any other: it needs its signature in the shared table, a
+  slot in the element segment, and its own locals header, because an initialiser that needs a
+  scratch local gets one.
+
+| | before | after |
+|---|---|---|
+| whole files | 173 | **230** |
+| invalid | 0 | 0 |
+| blocked by a constant | 59 | 0 |
+
+**230 of 336 files, and two thirds of the corpus now compiles whole.** What is left is four things
+and not a long tail: generics (27), a capability import (22, which needs a host to import *from*),
+block scoping (14), and a method on a struct this emitter skipped (12).
+
 ### An import says which name — 118 to 173
 
 Two slots ago a name a file reached that two of its imports declared was declined, because "the

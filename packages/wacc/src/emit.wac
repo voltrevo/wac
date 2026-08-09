@@ -1327,6 +1327,11 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     idx[1] = "i32";
     env.addFunc(" str_idx", "string", idx);
   }
+  // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
+  // and the answer can change once the functions it calls have settled. Cheap, and the alternative
+  // is a global assigned from a function that was skipped.
+  bool startNeeded = needsStartFunction(env, src, lexed);
+  if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
   if (env.full) { return bareModule(); }
   settleEmittable(env, src, lexed, prog);
   // Settling walked every function, so an ambiguous name has been reached by now if there is one.
@@ -1418,7 +1423,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
-  i32 helpers = needsStrings ? 5 : 0;
+  i32 helpers = (needsStrings ? 5 : 0) + (startNeeded ? 1 : 0);
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
@@ -1443,6 +1448,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
       else: { }
     }
   }
+  if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
     env.sigType("fn[bool(string,string)]");
     env.sigType("fn[string(string,string)]");
@@ -1560,18 +1566,35 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     for (i32 i = 0; i < env.constCount; i++) {
       if (env.constGlobal[i] != g) { continue; }
       writeValType(globals, env, env.constTypes[i]);
-      globals.byte(0);   // immutable, which is what a `const` is
-      if (!(env.constInits[i] is null)) {
+      bool here = !(env.constInits[i] is null) && isConstExpr(src, lexed, env, env.constInits[i]!);
+      // Immutable is what a `const` is, and what it can be only when its value can be written here.
+      // The rest are mutable and null until the start function has run, which is the one moment
+      // anything is allowed to write them.
+      globals.byte(here ? 0 : 1);
+      if (here) {
         emitExprAt(globals, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
       }
+      if (!here) { emitDefault(globals, env, env.constTypes[i]); }
       globals.byte(11);  // end of the initialiser expression
     }
+  }
+
+  // The start function goes last, so every index the constants can name is already assigned.
+  if (startNeeded) {
+    env.localCount = 0;
+    env.paramCount = 0;
+    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 5 : 0), declTypes);
   }
 
   section(out, 1, types);
   section(out, 3, funcs);
   if (globalCount > 0) { section(out, 6, globals); }
   section(out, 7, exports);
+  if (startNeeded) {
+    B st = B.create();
+    st.u32leb(count + (needsStrings ? 5 : 0));
+    section(out, 8, st);
+  }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
   // mentions is *"undeclared function reference"* — a rule that exists so an engine knows which
   // functions can escape, and that costs one segment listing them all.
@@ -4272,13 +4295,67 @@ bool isConstExpr(u8[] src, Lexed lexed, Env env, Expr e) {
  * whose initialiser is not a constant expression gets neither — it is declined by name, which is the
  * only honest answer when the language allows something the format does not.
  */
+/**
+ * Whether any constant has to be filled in at instantiation rather than declared with its value.
+ *
+ * `const u8[] TAG = "x".toBytes();` is a constant in wac and a *call* in wasm, and a call is not a
+ * constant expression. The global exists either way; this asks whether something has to run to put
+ * a value in it.
+ */
+bool needsStartFunction(Env env, u8[] src, Lexed lexed) {
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (env.constGlobal[i] < 0) { continue; }
+    if (env.constInits[i] is null) { continue; }
+    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The function that assigns them, run by wasm's `start` section at instantiation.
+ *
+ * In declaration order, which is the order a file reads and the order one constant may refer to
+ * another in.
+ */
+void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 index, i32 declTypes) {
+  funcs.u32leb(env.sigType("fn[void()]"));
+
+  B insns = B.create();
+  for (i32 i = 0; i < env.constCount; i++) {
+    if (env.constGlobal[i] < 0) { continue; }
+    if (env.constInits[i] is null) { continue; }
+    if (isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
+    emitExprAt(insns, src, lexed, env, env.constInits[i]!, env.constTypes[i]);
+    insns.byte(36);   // global.set
+    insns.u32leb(env.constGlobal[i]);
+  }
+
+  B fb = B.create();
+  // The locals declaration, which is where `scratch` ends up if an initialiser needed one — so the
+  // body is built first and the header written around it, as every other function here is.
+  i32 extra = env.localCount - env.paramCount;
+  fb.u32leb(extra);
+  for (i32 i = env.paramCount; i < env.localCount; i++) {
+    fb.u32leb(1);
+    writeValType(fb, env, env.localTypes[i]);
+  }
+  fb.bytes(insns);
+  fb.byte(11);
+  code.u32leb(fb.len);
+  code.bytes(fb);
+}
+
 void assignGlobals(Env env, u8[] src, Lexed lexed) {
   i32 next = 0;
   for (i32 i = 0; i < env.constCount; i++) {
     string t = env.constTypes[i];
     if (!isArrayType(t) && !env.isStructName(t)) { continue; }
     if (env.constInits[i] is null) { continue; }
-    if (!isConstExpr(src, lexed, env, env.constInits[i]!)) { continue; }
+    // **Not only the constant expressions.** wasm's sense of one is far narrower than wac's — no
+    // arithmetic, no call, no concatenation — and a constant it cannot express is not a constant it
+    // cannot *have*: the global is declared mutable and assigned at instantiation instead. What
+    // still has to hold is that the initialiser is an expression this emitter can emit at all.
+    if (unsupportedValueAt(src, lexed, env, env.constInits[i]!, env.constTypes[i]) != "") { continue; }
     env.constGlobal[i] = next;
     next = next + 1;
   }
