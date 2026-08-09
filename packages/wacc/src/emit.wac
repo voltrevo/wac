@@ -1329,6 +1329,15 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     string[] one3 = string[1]();
     one3[0] = "i32";
     env.addFunc(" str_fromcp", "string", one3);
+    string[] three = string[3]();
+    three[0] = "string";
+    three[1] = "i32";
+    three[2] = "i32";
+    env.addFunc(" str_slice", "string", three);
+    string[] two3 = string[2]();
+    two3[0] = "string";
+    two3[1] = "string";
+    env.addFunc(" str_index_of", "i32", two3);
   }
   // A **second round** of the two passes: `assignGlobals` asks whether an initialiser is emittable,
   // and the answer can change once the functions it calls have settled. Cheap, and the alternative
@@ -1426,7 +1435,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
-  i32 helpers = (needsStrings ? 6 : 0) + (startNeeded ? 1 : 0);
+  i32 helpers = (needsStrings ? 8 : 0) + (startNeeded ? 1 : 0);
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount);
   code.u32leb(count + helpers);
@@ -1459,6 +1468,8 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     env.sigType("fn[string(u8[])]");
     env.sigType("fn[string(string,i32)]");
     env.sigType("fn[string(i32)]");
+    env.sigType("fn[string(string,i32,i32)]");
+    env.sigType("fn[i32(string,string)]");
   }
 
   i32 declTypes = env.arrayCount + env.structCount + env.sigCount;
@@ -1549,6 +1560,8 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitBytesCopy(types, funcs, code, env, index + 3, declTypes, "i8[]", "u8[]");
     emitStringIndex(types, funcs, code, env, index + 4, declTypes);
     emitStringFromCp(funcs, code, env);
+    emitStringSlice(funcs, code, env);
+    emitStringIndexOf(funcs, code, env);
   }
 
   B out = B.create();
@@ -1588,7 +1601,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   if (startNeeded) {
     env.localCount = 0;
     env.paramCount = 0;
-    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 6 : 0), declTypes);
+    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 8 : 0), declTypes);
   }
 
   section(out, 1, types);
@@ -1597,7 +1610,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 6 : 0));
+    st.u32leb(count + (needsStrings ? 8 : 0));
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -2602,6 +2615,25 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // `a.len()` is an instruction rather than a call, which is the one method wasm has itself.
           // `s.toBytes()` and `string.fromBytes(b)` are copies between two array types of the same
           // shape, which is a helper rather than an instruction — the reference's own bytes say so.
+          if (ot == "string" && mname == "slice" && args.len() == 2) {
+            i32 sl = env.funcAt(" str_slice");
+            if (sl < 0 || env.funcIndex[sl] < 0) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            emitExprAt(fb, src, lexed, env, args[0], "i32");
+            emitExprAt(fb, src, lexed, env, args[1], "i32");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[sl]);
+            return;
+          }
+          if (ot == "string" && mname == "indexOf" && args.len() == 1) {
+            i32 io = env.funcAt(" str_index_of");
+            if (io < 0 || env.funcIndex[io] < 0) { return; }
+            emitExpr(fb, src, lexed, env, obj);
+            emitExprAt(fb, src, lexed, env, args[0], "string");
+            fb.byte(16);
+            fb.u32leb(env.funcIndex[io]);
+            return;
+          }
           if (ot == "string" && mname == "toBytes") {
             i32 tb = env.funcAt(" str_to_bytes");
             if (tb < 0 || env.funcIndex[tb] < 0) { return; }
@@ -2830,6 +2862,8 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes") { return "u8[]"; }
+          if (ot == "string" && mn == "slice") { return "string"; }
+          if (ot == "string" && mn == "indexOf") { return "i32"; }
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
@@ -3796,6 +3830,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           if (o != "") { return o; }
           string ot = typeOfE(src, lexed, env, obj);
           if (ot == "string" && mn == "toBytes" && args.len() == 0) { return ""; }
+          if (ot == "string" && mn == "slice" && args.len() == 2) {
+            string s1 = unsupportedValueAt(src, lexed, env, args[0], "i32");
+            if (s1 != "") { return s1; }
+            return unsupportedValueAt(src, lexed, env, args[1], "i32");
+          }
+          if (ot == "string" && mn == "indexOf" && args.len() == 1) {
+            return unsupportedValueAt(src, lexed, env, args[0], "string");
+          }
           if (isArrayType(ot) && mn == "copyFrom" && args.len() == 4) {
             // The source has to be an array this emitter can name, and the two element types have to
             // match — `array.copy` takes both type indices and wasm checks they agree.
@@ -4662,6 +4704,134 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
   code.bytes(b);
 }
 
+/**
+ * `string str_slice(string s, i32 from, i32 to)` — the overlap of a range with the string.
+ *
+ * **It clamps rather than trapping**, which is the whole of its specification: every combination of
+ * arguments has an answer, a reversed range is empty, and a negative start is zero. Four `select`s
+ * say that in eight instructions, and they are why this is not four nested `if`s.
+ */
+void emitStringSlice(B funcs, B code, Env env) {
+  i32 at = env.arrayType("i8[]");
+  funcs.u32leb(env.sigType("fn[string(string,i32,i32)]"));
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(3); b.byte(127);                // locals 3, 4, 5: the length and the clamped bounds
+  b.u32leb(1); b.byte(99); b.i32leb(at);   // local 6: the result
+
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);   // array.len
+  b.byte(33); b.u32leb(3);
+
+  // from, clamped up to 0 and down to the length.
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(0); b.byte(72);   // from < 0
+  b.byte(27);                                                     // select
+  b.byte(33); b.u32leb(4);
+  b.byte(32); b.u32leb(3);
+  b.byte(32); b.u32leb(4);
+  b.byte(32); b.u32leb(4); b.byte(32); b.u32leb(3); b.byte(74);   // a > len
+  b.byte(27);
+  b.byte(33); b.u32leb(4);
+
+  // to, the same, and then never below from — a reversed range is empty rather than an error.
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(2);
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(0); b.byte(72);
+  b.byte(27);
+  b.byte(33); b.u32leb(5);
+  b.byte(32); b.u32leb(3);
+  b.byte(32); b.u32leb(5);
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(3); b.byte(74);
+  b.byte(27);
+  b.byte(33); b.u32leb(5);
+  b.byte(32); b.u32leb(4);
+  b.byte(32); b.u32leb(5);
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(4); b.byte(72);   // b < a
+  b.byte(27);
+  b.byte(33); b.u32leb(5);
+
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(4); b.byte(107);  // n = b - a
+  b.byte(251); b.u32leb(7); b.u32leb(at);                         // array.new_default
+  b.byte(33); b.u32leb(6);
+  b.byte(32); b.u32leb(6);
+  b.byte(65); b.i32leb(0);
+  b.byte(32); b.u32leb(0);
+  b.byte(32); b.u32leb(4);
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(4); b.byte(107);
+  b.byte(251); b.u32leb(17); b.u32leb(at); b.u32leb(at);          // array.copy
+  b.byte(32); b.u32leb(6);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * `i32 str_index_of(string hay, string needle)` — the first byte offset, or -1.
+ *
+ * The naive search, which is the one whose answers are easy to be sure of: every start position,
+ * every byte, and an empty needle found immediately at 0.
+ */
+void emitStringIndexOf(B funcs, B code, Env env) {
+  i32 at = env.arrayType("i8[]");
+  funcs.u32leb(env.sigType("fn[i32(string,string)]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(4); b.byte(127);   // locals 2..5: the two lengths and the two cursors
+
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15);
+  b.byte(33); b.u32leb(2);
+  b.byte(32); b.u32leb(1); b.byte(251); b.u32leb(15);
+  b.byte(33); b.u32leb(3);
+
+  b.byte(65); b.i32leb(0);
+  b.byte(33); b.u32leb(4);
+
+  // The outer loop over start positions, wrapped in a block so a failure can leave it with -1.
+  b.byte(2); b.byte(64);            // block
+  b.byte(3); b.byte(64);            // loop
+  // Past the last position it could still fit at: not found.
+  b.byte(32); b.u32leb(4); b.byte(32); b.u32leb(3); b.byte(106);
+  b.byte(32); b.u32leb(2); b.byte(74);        // i + nl > hl
+  b.byte(13); b.u32leb(1);                    // br_if out of the block
+  b.byte(65); b.i32leb(0);
+  b.byte(33); b.u32leb(5);
+  // The inner comparison, in its own block so a mismatch can leave it.
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(5); b.byte(32); b.u32leb(3); b.byte(78);   // j >= nl — matched
+  b.byte(4); b.byte(64);
+  b.byte(32); b.u32leb(4);
+  b.byte(15);                                                     // return i
+  b.byte(11);
+  b.byte(32); b.u32leb(0);
+  b.byte(32); b.u32leb(4); b.byte(32); b.u32leb(5); b.byte(106);
+  b.byte(251); b.u32leb(13); b.u32leb(at);                        // hay[i + j]
+  b.byte(32); b.u32leb(1);
+  b.byte(32); b.u32leb(5);
+  b.byte(251); b.u32leb(13); b.u32leb(at);                        // needle[j]
+  b.byte(71);                                                     // i32.ne
+  // **`1`, not `2`.** A branch counts labels outward from where it stands: 0 is the inner loop, 1
+  // the inner block, 2 the *outer loop* — and branching there restarts the search at the same start
+  // position without advancing it, which is a module that validates and never finishes.
+  b.byte(13); b.u32leb(1);                                        // br_if out of the inner block
+  b.byte(32); b.u32leb(5); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(5);
+  b.byte(12); b.u32leb(0);                                        // br to the inner loop
+  b.byte(11);
+  b.byte(11);
+  b.byte(32); b.u32leb(4); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(4);
+  b.byte(12); b.u32leb(0);                                        // br to the outer loop
+  b.byte(11);
+  b.byte(11);
+  b.byte(65); b.i32leb(-1);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
 /**
  * `string str_fromcp(i32 cp)` — the one-character string whose scalar is `cp`, UTF-8 encoded.
  *
