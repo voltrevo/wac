@@ -593,27 +593,142 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
  * - **The shell's output needs `\r\n`.** A terminal in raw mode does not return the cursor on a bare
  *   newline, so output written with `\n` stair-steps down the screen. That translation is `ONLCR`, and
  *   it belongs here rather than in the shell, which is writing bytes rather than talking to a terminal.
- * - **`^C` still cannot interrupt a running command, and the reason has moved.** It is no longer that
- *   there is nothing to deliver: step 3's delivery half is in, and `kill -INT $$` ends a script here
- *   with 130. It is this loop's shape. `runScript` below is a blocking call, so while a line runs
- *   nothing reads the channel, and the `^C` the client sends sits in the socket until the command it
- *   was meant to end has finished. `^C` at a prompt throws away what has been typed and starts a fresh
- *   line, which is right and is all this can do.
+ * - **`^C` ends a running command**, which is design/0001 step 5's own criterion and was the last
+ *   thing this loop could not do. It was never for want of something to deliver: step 3's delivery
+ *   half has been in for a while and `kill -INT $$` ends a script here with 130. It was this loop's
+ *   shape — `runScript` is a blocking call, so while a line ran nothing read the channel and the
+ *   `^C` sat in the socket until the command it was meant to end had finished.
  *
- *   What it wants is a way for a shell that is already busy to ask whether a keystroke has arrived.
- *   The machinery exists — `Core.waitAny(ids, 0)` is "which is ready right now", and standard input
- *   has a handle precisely so `waitAny` can watch it — but the channel is *this* function's socket
- *   rather than the shell's input, and wac has no closures, so handing the shell a way to ask means a
- *   funcref plus a token rather than a bound method. That is a design decision and it is not made
- *   here. Not approximated: `^C` does nothing to a running command, and says nothing either.
+ *   The fix is `Shell.askInterrupt`: a funcref and an `anyref` context, so a shell that is already
+ *   busy can ask this session whether anything has arrived. `Conn.ready` is the non-blocking half —
+ *   `waitAny(ids, 0)` over a read this connection already has outstanding — and `keystrokeArrived`
+ *   below is the answer. The note that used to be here proposed "a funcref plus a token", which
+ *   would have needed a registry to turn the token back into a connection; `anyref` is what the
+ *   language grew since, and it carries the connection itself.
+ *
+ *   Type-ahead is kept: bytes read during a command go through the *same* `Line`, so a command typed
+ *   while another runs is there at the next prompt.
  */
+/**
+ * What a busy shell is handed so that it can ask this session whether a keystroke has arrived.
+ *
+ * The context half of `Shell.askInterrupt` — see the note there for why it is a funcref and an
+ * `anyref` rather than a bound method. Everything the poll needs and nothing else: the connection to
+ * read, the channel to echo on, and the *same* line discipline the session's own loop feeds, which
+ * is what keeps type-ahead. A person who types `ls` while a command is running has typed `ls`, and
+ * it must still be there at the next prompt.
+ */
+export struct Keystrokes {
+  Conn conn;
+  i32 channel;
+  Line tty;
+  /** Set when the discipline saw `^C`, and taken by the poll. */
+  bool interrupted;
+  /**
+   * Whole lines typed **while a command was running**, waiting for the session loop to run them.
+   *
+   * Type-ahead, and it has to be somewhere: the poll feeds bytes through the discipline to find a
+   * `^C`, and the discipline answers with completed lines whether anybody wanted them or not. The
+   * first version of this dropped them on the floor while its own comment claimed they were kept.
+   *
+   * Flushed by an interrupt, which is what a terminal does: `ISIG` without `NOFLSH` throws away the
+   * input queue as well as the line being edited, so `echo hi<Enter>^C` during a command runs
+   * nothing — the same rule that makes `^C` discard what you have half-typed.
+   */
+  Vec<u8[]> typed;
+  /**
+   * Whether `^D` arrived while a command was running.
+   *
+   * **Dropped by the first version of this**, which looked only for `^C` and for whole lines. So a
+   * `^D` typed during a command went nowhere and the session simply never ended — visible as a test
+   * that passed alone and hung under load, because whether the key landed during the command or at
+   * the prompt was a matter of how busy the machine was.
+   *
+   * Honoured after whatever was typed before it, which is the order it was typed in.
+   */
+  bool eof;
+}
+
+/**
+ * Read whatever has arrived **without waiting**, and say whether it was an interrupt.
+ *
+ * This is the half of design/0001 step 5 that `runScript` blocking made impossible. It does not
+ * block: `Conn.ready` is `waitAny(ids, 0)` over a read this connection already has outstanding, so
+ * a session with nothing to say costs one look in the worker's own memory.
+ *
+ * Everything that is *not* an interrupt is kept rather than dropped. The bytes go through the same
+ * `Line` the session's loop feeds, so a line typed during a command is a line at the next prompt,
+ * and its echo goes back as it is typed — which is what a terminal in raw mode looks like when the
+ * far end is doing the editing.
+ */
+bool keystrokeArrived(anyref ctx) {
+  Keystrokes k = ctx as! Keystrokes;
+  while (k.conn.ready()) {
+    u8[] p = k.conn.readPacket();
+    if (k.conn.failed()) {
+      // The client hung up mid-command. Reported as an interrupt because that is what it means for
+      // the thing that is running: nobody is waiting for its output any more.
+      return true;
+    }
+    Incoming m = parse(p);
+    if (!m.ok) { continue; }
+    if (m.kind == msgChannelEof() || m.kind == msgChannelClose()) { return true; }
+    if (m.kind != msgChannelData()) { continue; }
+    for (i32 i = 0; i < m.data.len(); i++) {
+      Typed t = k.tty.feed(m.data[i]);
+      if (t.echo.len() > 0) { k.conn.sendPacket(channelData(k.channel, t.echo)); }
+      if (t.interrupted()) {
+        k.conn.sendPacket(channelData(k.channel, crlf()));
+        k.interrupted = true;
+        // The input queue goes with the line being edited — see `Keystrokes.typed`.
+        k.typed = Vec.create();
+        continue;
+      }
+      if (t.eof) { k.eof = true; continue; }
+      if (t.hasLine) { k.typed.push(t.line); }
+    }
+  }
+  bool was = k.interrupted;
+  k.interrupted = false;
+  return was;
+}
+
 Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o, Fs fs, bool pty,
                           Terminal terminal) {
   Shell sh = sessionShell(core, cli, o, fs, terminal);
   Buf pending = Buf.create();
   Line tty = Line.create();
+  // **The seam, installed only where there is a terminal.** Without a pty the client sends whole
+  // lines and does its own editing, so there is no keystroke to notice and `^C` never reaches this
+  // end at all — it is the client's own terminal that turns it into a signal, and there is no signal
+  // to carry over a channel that has none. Said rather than approximated.
+  Keystrokes keys = Keystrokes(conn, channel, tty, false, Vec.create(), false);
+  if (pty) {
+    sh.askInterrupt = keystrokeArrived;
+    sh.interruptCtx = keys;
+  }
 
   while (true) {
+    // **Anything typed while the last command ran, first.** The poll takes bytes off the socket to
+    // find a `^C` and the discipline hands back whole lines as it goes; those are commands somebody
+    // typed and they run here, in order, before this loop waits for anything new.
+    while (keys.typed.len() > 0) {
+      u8[] held = keys.typed.get(0);
+      keys.typed = tailOf(keys.typed);
+      i32 end = held.len() > 0 && held[held.len() - 1] == 10 ? held.len() - 1 : held.len();
+      u8[] cmd = u8[end]();
+      cmd.copyFrom(held, 0, 0, end);
+      runScript(sh, string.fromBytes(cmd));
+      u8[] out = sh.outBuf.take();
+      u8[] err = sh.errOut.take();
+      if (out.len() > 0) { conn.sendPacket(channelData(channel, forTerminal(out))); }
+      if (err.len() > 0) { conn.sendPacket(channelStderr(channel, forTerminal(err))); }
+      if (sh.exiting) { return Result(u8[0](), u8[0](), sh.exitCode); }
+    }
+    // …and then a `^D` that arrived behind them, which ends the session exactly as it does when it
+    // is read at the prompt.
+    if (keys.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
+
     u8[] p = conn.readPacket();
     if (conn.failed()) {
       // The client hanging up ends the session; it is not an error to report.
@@ -633,6 +748,8 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
         Typed t = tty.feed(m.data[i]);
         if (t.echo.len() > 0) { conn.sendPacket(channelData(channel, t.echo)); }
         if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
+        // A line the *poll* completed while a command was running is held in the same `Line`, so it
+        // arrives here on the next keystroke rather than being lost — see `keystrokeArrived`.
         if (t.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
         if (!t.hasLine) { continue; }
         // The newline the discipline put on the end is for a program reading a stream; a command is a
@@ -685,6 +802,13 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
     if (err.len() > 0) { conn.sendPacket(channelStderr(channel, err)); }
   }
   return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status);
+}
+
+/** Everything but the first element. `Vec` has no `shift`, and a queue of typed lines needs one. */
+Vec<u8[]> tailOf(Vec<u8[]> v) {
+  Vec<u8[]> rest = Vec.create();
+  for (i32 i = 1; i < v.len(); i++) { rest.push(v.get(i)); }
+  return rest;
 }
 
 /** A newline as a terminal in raw mode needs it: return, then feed. */

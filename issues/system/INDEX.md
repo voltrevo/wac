@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0125](open/0125-yes-wc-l-answers-4194304-where-bash-never-finishes.md) | `yes \| wc -l` answers 4194304 — the 8 MiB queue cap — where bash never finishes | bug | wrong answer |
 | [0123](open/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md) | `closeSocket` stops a child outright on one host and cooperatively on the other | bug | wrong answer |
 | [0122](open/0122-randombytes-above-64-kib-fails-on-deno-and-the-browser.md) | `randomBytes` above 64 KiB fails on Deno and the browser — [gh#53](https://github.com/voltrevo/wac-mono/issues/53) | bug | trap |
 | [0121](open/0121-send-to-a-closed-child-feed-reports-success-and-drops-the-data.md) | `send` to a closed child feed reports success and drops the data — [gh#52](https://github.com/voltrevo/wac-mono/issues/52) | bug | wrong answer |
@@ -34,7 +35,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-136 issues, 114 closed.
+137 issues, 114 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

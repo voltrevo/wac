@@ -377,6 +377,141 @@ Deno.test({
   },
 });
 
+/**
+ * design/0001 step 5's own criterion: **`^C` ends a running command.**
+ *
+ * The last thing this loop could not do, and never for want of something to deliver — `kill -INT $$`
+ * has ended a script here with 130 for a while. It was that `runScript` blocks, so while a command
+ * ran nothing read the channel and the `^C` sat in the socket until the command it was meant to end
+ * had finished. `Shell.askInterrupt` is the seam: a funcref and an `anyref` context, so a shell that
+ * is already busy can ask this session whether anything has arrived.
+ *
+ * Three things are asked, because each could pass on its own while the feature was useless:
+ *
+ *   - the running command **stops** — `yes` writes for ever, so a session that came back at all is a
+ *     session that stopped it;
+ *   - the **shell survives** — a `^C` that ended the session would satisfy the first, and is exactly
+ *     what modelling the interrupt as a signal to the shell did, since `takeSignal` sets `exiting`.
+ *     bash does not exit when you press `^C` at a prompt;
+ *   - and `$?` is **130**, which is what every shell reports for a command an interrupt ended.
+ */
+Deno.test({
+  name: "`^C` ends a running command over ssh, and the session carries on — step 5's criterion",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    let s: Wacsshd | undefined;
+    try {
+      s = await startWacsshd();
+      const r = new Deno.Command("ssh", {
+        args: [
+          "-tt", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "BatchMode=yes", "claude@127.0.0.1",
+        ],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = r.stdin.getWriter();
+      // **A loop that cannot end on its own and cannot print its way out.** Two earlier versions of
+      // this line were wrong in the same way — they finished before the interrupt arrived, so the
+      // `^C` was read at the *prompt*, which is the case that already worked, and the test would
+      // have passed while touching nothing it exists to check:
+      //
+      //   `yes > /dev/null`  the server has no write grant, so the redirection failed instantly
+      //   `yes | wc -l`      ended at exactly 4194304 lines — `yes` hit the 8 MiB queue cap (0038)
+      //
+      // This one has no output, no filesystem and no cap to reach.
+      await w.write(new TextEncoder().encode("while true; do :; done\n"));
+      // Long enough that the command is genuinely running when the interrupt arrives. Without the
+      // wait, the `^C` could be read at the prompt, which is the case that already worked.
+      await new Promise((res) => setTimeout(res, 1500));
+      await w.write(new Uint8Array([3]));
+      await new Promise((res) => setTimeout(res, 500));
+      // The session is still there, and remembers what the interrupt did to `$?`.
+      await w.write(new TextEncoder().encode("echo alive=$?\n"));
+      await new Promise((res) => setTimeout(res, 500));
+      await w.write(new Uint8Array([4]));
+      await w.close();
+      const out = await r.output();
+      const got = text(out.stdout);
+
+      // **The loop must not have ended itself.** `while true` used to stop at 100000 iterations with
+      // status 2 — a bound put there because a shell that could not be interrupted must not hang the
+      // server — and this test passed once by luck when that happened *before* the `^C` arrived, so
+      // the interrupt was read at the prompt. The bound is gone where there is a terminal to
+      // interrupt from, and this is the assertion that says so rather than trusting the timing.
+      const err = text(out.stderr);
+      if (err.includes("loop ran 100000 times")) {
+        throw new Error(`the loop stopped itself, so the interrupt proved nothing: ${err}`);
+      }
+      if (!got.includes("alive=130")) {
+        throw new Error(
+          "`^C` did not end the command and leave a live session at 130: " +
+            JSON.stringify(got.slice(-400)) + " err=" + JSON.stringify(err.slice(-300)),
+        );
+      }
+    } finally {
+      await stopWacsshd(s);
+    }
+  },
+});
+
+Deno.test({
+  name: "a line typed while a command is running is still a command",
+  ignore: !haveSshd,
+  sanitizeResources: false,
+  fn: async () => {
+    // Type-ahead, which the interrupt poll would otherwise eat. The poll takes bytes off the socket
+    // to look for a `^C`, and the line discipline hands back whole lines whether anybody asked for
+    // them or not — so a version that only looked at the interrupt flag dropped them, while its own
+    // comment claimed they were kept.
+    let s: Wacsshd | undefined;
+    try {
+      s = await startWacsshd();
+      const r = new Deno.Command("ssh", {
+        args: [
+          "-tt", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "BatchMode=yes", "claude@127.0.0.1",
+        ],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = r.stdin.getWriter();
+      // Runs for about a second on its own — `yes` stops at the 8 MiB queue cap — so the next line
+      // is genuinely typed while it is still going.
+      await w.write(new TextEncoder().encode("yes | wc -l\n"));
+      await new Promise((res) => setTimeout(res, 200));
+      await w.write(new TextEncoder().encode("echo typed-ahead\n"));
+      // Generous, because the command has to have *finished* before the session is asked to end —
+      // and a `^D` that lands during it is now honoured after what was typed before it rather than
+      // dropped, which is what this waited on when it first went red under load.
+      await new Promise((res) => setTimeout(res, 6000));
+      await w.write(new Uint8Array([4]));
+      await w.close();
+      const out = await r.output();
+      const got = text(out.stdout);
+      if (!got.includes("typed-ahead")) {
+        throw new Error(`a line typed during a command was lost: ${JSON.stringify(got.slice(-300))}`);
+      }
+      // …and in order: the running command's answer comes before the typed line *runs*.
+      //
+      // `lastIndexOf`, and the reason is worth keeping: `typed-ahead` appears twice, and the first
+      // one is the **echo** of the line as it was typed — which happens during the command and is
+      // exactly right, since a terminal in raw mode shows you what you type when you type it. An
+      // `indexOf` comparison called that an ordering failure and was wrong about correct behaviour.
+      if (got.indexOf("4194304") > got.lastIndexOf("typed-ahead")) {
+        throw new Error(`type-ahead ran before the command it was typed during: ${JSON.stringify(got)}`);
+      }
+    } finally {
+      await stopWacsshd(s);
+    }
+  },
+});
+
 Deno.test({
   name: "an interactive session keeps its shell between lines",
   ignore: !haveSshd,
