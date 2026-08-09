@@ -1398,10 +1398,121 @@ exists. All nine compare, none mismatch.
 | invalid | 0 | 0 |
 | sweep | 4,434 programs, 4,025 compared | **4,443 programs, 4,034 compared, 0 mismatched** |
 
-Five files left. Three import files the corpus does not contain, and the last two are the same
-feature from two sides: **`Option.Some(v)` whose type argument comes from the return type**, and
-**`mapOption(some, double)`**, a generic function whose `T` comes from an argument and whose `U`
-comes from a callback. Generic *types* are instantiated here; generic *functions* are not.
+### A slot a ternary forgot to pass on — 333 to 334
+
+`return at < 0 ? Option.None : Option.Some(v);` was *"unresolved name Option"*, and the name was
+never the problem. Which instance of a template `Option.None` builds comes from the slot it fills,
+and a ternary is a slot that has to hand one on rather than have one of its own. The walk had arms
+for a member, a call and a null — every node whose meaning depends on where it is going — and no arm
+for a ternary, so the question fell through to the version with no slot to give, and the answer came
+back about the name.
+
+The emitter had the rule already: the branches' own type first, and the wanted type only when they
+have none. Two walks of the same program disagreeing about what is emittable is the recurring shape
+here, and it is always the walk that is behind.
+
+| | before | after |
+|---|---|---|
+| whole files | 333 | **334 of 338** |
+| invalid | 0 | 0 |
+| sweep | 4,443 programs, 4,034 compared | **4,449 programs, 4,040 compared, 0 mismatched** |
+
+### Generic functions, and the order a module is numbered in — 334 to 335
+
+`mapOption(some, double)` names no instance. `T` comes from the first argument's type and `U` from
+the *return type of the second*, which is the half of it a method could not have expressed and the
+reason it is a function at all. So the match is structural and one-sided: the declaration is the
+pattern, the argument's type is the subject, and a parameter used twice has to be given the same
+answer both times.
+
+Most of the work was not the inference. It was **where** the answer is allowed to appear.
+
+- **A call is only visible to a walk that has locals.** The arguments are local variables, so the
+  pre-pass that walks bodies for their array types types them all as nothing. The walk that knows
+  about locals is `canEmit`, so discovery runs that — over every body, inside the fixed point,
+  and throws the verdict away.
+- **And throws away what it recorded.** `canEmit` remembers the first thing that stopped it, for the
+  report. A walk run while half the instances do not exist yet stops constantly, and keeping that
+  named a round-zero shortage as the reason a file was not emitted.
+- **Discovery and registration are not the same order.** A function's index is its position in the
+  registration table, and the emission passes walk the *instance list*. Registering an instance the
+  moment it was discovered put a generic function ahead of the methods of an instance discovered
+  before it — and every call after that point reached the wrong function. So discovery only notes the
+  name; `collectInstances` registers, in instance order.
+- **Building one counts as progress.** A body walked before an instance exists stops at the first
+  thing it cannot resolve, so a call further down it is not reached until the round after. The fixed
+  point left on "no new instance was named", which is exactly the round that could not have named
+  one.
+- **A literal has no type of its own, and here there is no slot to take one from.** a call passing a bare `7` to a `T` parameter binds
+  `T` from the literal itself — `i32`, the default of its family. It is the one place in this emitter
+  where a literal's type comes from the literal.
+- **A generic that calls a generic** names an instance whose arguments are its own parameters, so an
+  instance's body gets the same locals-aware walk its callers got.
+
+Eleven programs in the sweep, and one of them carries an issue number: an `Opt<string>` that exists
+only as a generic function's *return type* gets no methods in the reference — `issues/lang/0086`,
+minimised to the fact that writing `Opt<string> unused = Opt.None;` anywhere in the file fixes it.
+wacc instantiates them, so the sweep writes the extra line and the program becomes one both
+compilers agree on.
+
+| | before | after |
+|---|---|---|
+| whole files | 334 | **335 of 338** |
+| invalid | 0 | 0 |
+| spec answers | 289/289 | **322/322** — thirty-three more programs reach the comparison |
+| sweep | 4,449 programs, 4,040 compared | **4,460 programs, 4,051 compared, 0 mismatched** |
+
+### The checker had never been asked about anything the emitter learned
+
+Rung 3's sweep is ten thousand programs and reports 99% recall, and both numbers are true of the
+cross product its generator builds — type against context, a hundred and seventy lines of it.
+Meanwhile `generateEmit.ts` had grown to four and a half thousand programs covering everything the
+*emitter* learned this week: generics, subtyping, method references, narrowed enums, `is T` guards,
+named construction, `anyref`. **Nothing had ever put one of them to the checker.**
+
+Doing it cost one file and found **eighty-two false alarms** — valid programs this checker reported
+an error in. That is the invariant it may never break: a subset checker may miss anything and may
+not invent. Every one was the same shape underneath, a feature it does not model answered
+confidently rather than not at all:
+
+- **`Box.of(5)` returns `Box<T>` as written**, and `T` is bound by the slot the call fills. Answering
+  with the declaration's own text made `Box<i32> b = Box.of(5)` a mismatch.
+- **A generic function's body is a template**, so every type in it is written in parameters this
+  checker does not substitute. It is not checked at all now, for the same reason a generic struct's
+  fields were already not recorded.
+- **`p is P` on a `P?` asks whether it is *there*, not what it is.** Recording it as a retyping to
+  `P` made the name non-nullable, and the next thing such code does is `p!.v` — which it then refused
+  because there was nothing left to unwrap.
+- **`(C.inc)(c)` is a method reference called inline**, which reads as a static call and is not one.
+  The arity is still checked and counts the receiver, which is what the reference reports for
+  `P.get()`.
+- **`anyref` and `i31ref` are unmodelled**, and the test says so by name rather than tolerating a
+  count.
+
+And one that was a real gap rather than a shape to stay silent about: **a `case B:` arm narrows its
+subject**, exactly as `if (s is Circle)` does. Going silent on enum members instead would have cost
+the diagnostic for a field no variant declares — the generated sweep priced it immediately, 99% down
+to 98% — so the arm walk retypes the subject for its body and puts it back, and both numbers hold.
+
+The mutation half of the same harness — take a valid program, break it one way, keep it if the
+reference now rejects it — is what found the **positions**: a compound assignment to a field was
+reported at the dot rather than at the start of the lvalue, one column later than the reference,
+which a differential oracle counts as a position the reference never mentions.
+
+| | before | after |
+|---|---|---|
+| false alarms on the emitter's corpus | 82 | **0**, over 4,097 programs |
+| rung 3 generated sweep | 99% recall, 0 false alarms | unchanged |
+| checker diagnostics | ~54 | ~54 — this slot bought correctness, not coverage |
+
+`test/checkSweep.test.ts` is the oracle, and it is the cheapest one in the package: the corpus was
+already there, and the only new thing is the question.
+
+**Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
+does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
+compiler change makes those exist. The next measurement has to come from somewhere other than this
+corpus: the checker is at ~54 diagnostics against the reference's ~190, and rung 3's oracles are
+saturated, so it wants a sharper one rather than more of the same.
 
 ### One reader, because two disagreed
 
