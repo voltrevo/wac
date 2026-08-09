@@ -604,6 +604,88 @@ Deno.test({
       assertEquals(twin.includes("parent: the child exited 0"), true, twin);
       assertEquals(twin.includes("[exit 0]"), true, twin);
 
+      // ── design/0001 step 8: a desktop, in a tab ──────────────────────────
+      //
+      // The design's own sentence is "a window manager in wac over the same system, with the terminal
+      // as one window", and the only way to know whether that is true is to open it and use it.
+      //
+      // The assertion that matters is the *shared system*: two windows, one shell, and a `cd` typed
+      // in the terminal changing what the files window lists. Two windows that each held their own
+      // world would pass every other check here and be a picture of a desktop rather than one.
+      await buildApp(
+        "packages/box/example/desk.wac",
+        `${dir}/desk.html`,
+        { read: true, write: true },
+        "browser",
+      );
+      await page.goto(`http://127.0.0.1:${port}/desk.html`, { waitUntil: "load" });
+      await page.waitForSelector("#cmd", { timeout: 30_000 });
+      // The desktop opens on a session that has already made something, so the files window has
+      // something to show — wait for it rather than for a timer.
+      await page.waitForFunction(
+        `document.getElementById('files').textContent.includes('home')`,
+        null,
+        { timeout: 60_000 },
+      );
+
+      const desk = async (line: string): Promise<void> => {
+        const before = (await page.textContent("#scr")) ?? "";
+        await page.fill("#cmd", line);
+        await page.press("#cmd", "Enter");
+        await page.waitForFunction(
+          `document.getElementById('scr').textContent !== ${JSON.stringify(before)}`,
+          null,
+          { timeout: 30_000 },
+        );
+      };
+
+      // Two windows exist, and the shell is one of them.
+      assertEquals((await page.locator(".win").count()), 2, "the desktop did not open two windows");
+      assertEquals((await page.textContent("#ps1")) ?? "", "/ $", "the prompt is the shell's own");
+
+      // **One system, two windows.** `cd` in the terminal moves the files window, because there is
+      // one filesystem and the files pane reads it directly.
+      await desk("cd /home/wac");
+      await page.waitForFunction(
+        `document.getElementById('files').textContent.includes('five')`,
+        null,
+        { timeout: 30_000 },
+      );
+      const shown = (await page.textContent("#files")) ?? "";
+      assertEquals(shown.includes("/home/wac"), true, `the files window did not follow cd: ${shown}`);
+
+      // …and a file made in the terminal appears in the other window without anything being told.
+      await desk("echo hi > note");
+      await page.waitForFunction(
+        `document.getElementById('files').textContent.includes('note')`,
+        null,
+        { timeout: 30_000 },
+      );
+
+      // The terminal in a window is the whole terminal: a pipeline of *spawned* applets over the
+      // session's own filesystem, which is what makes this the same system rather than a text box.
+      await desk("seq 1 20 | grep 7 | wc -l");
+      assertEquals(((await page.textContent("#scr")) ?? "").includes("\n2\n"), true, "the pipeline did not run");
+
+      // **Raising, and the line survives it.** `render` replaces the markup, so a manager that did
+      // not carry the half-typed command across would eat it — which is the one thing a window
+      // manager must not do to a terminal.
+      await page.fill("#cmd", "half typed");
+      await page.click("#bar1");
+      await page.waitForFunction(
+        `document.querySelectorAll('.win')[1].querySelector('.bar').id === 'bar1'`,
+        null,
+        { timeout: 30_000 },
+      );
+      assertEquals(await page.inputValue("#cmd"), "half typed", "raising a window ate the typed line");
+
+      // Closing takes a window away and leaves the other working.
+      await page.click("#cls1");
+      await page.waitForFunction(`document.querySelectorAll('.win').length === 1`, null, { timeout: 30_000 });
+      await page.fill("#cmd", "");
+      await desk("echo still here");
+      assertEquals(((await page.textContent("#scr")) ?? "").includes("still here"), true, "the shell stopped working");
+
       assertEquals(failures.join("\n"), "", "the page raised errors");
     } finally {
       await browser?.close();

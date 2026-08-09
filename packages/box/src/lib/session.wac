@@ -1,0 +1,122 @@
+// A terminal session with no terminal in it: the shell, the scrollback and the history.
+//
+// Everything `packages/box/example/term.wac` did between one keystroke and the next, with the page
+// taken out. It exists because there are two presentations of the same thing now — the full-frame
+// terminal the website embeds, and a **window** on the desktop of `example/desk.wac` (design/0001
+// step 8) — and a second copy of "what Enter does" is a second thing to be wrong.
+//
+// The split is along the line the two presentations disagree about. What they share is *state*: which
+// shell, what it has printed, what has been typed before. What they do not share is markup, ids,
+// where the caret is, and whether there is one of these or four. So none of that is here, and this
+// file imports no `Page`.
+//
+// ## What a session is
+//
+// One `Shell`, capturing, over `mountSystem`'s world — `/dev`, `/proc`, `/bin` and the applets — and
+// a screen that only grows. `feedLine` is the whole of the contract: hand it what the user typed and
+// the screen afterwards is `screen`.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Shell, runScript } from "../../../sh/src/exec.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Vec } from "../../../std/src/vec.wac";
+import { mountSystem } from "../../../fs/src/fs.wac";
+import { boxNames, boxRun } from "../shrun.wac";
+
+/** How many commands the ring remembers. */
+export i32 HISTORY() { return 64; }
+
+export struct Session {
+  Shell sh;
+  /** Everything printed so far, which is what a caller draws. */
+  string screen;
+  /**
+   * The ring, and how far Up has walked into it. `cursor` 0 means "at the prompt".
+   *
+   * A **ring** rather than a list that grows: the original bounded it at `HISTORY` and only the last
+   * that many are reachable anyway, so a growing list would keep every line a long session ever ran
+   * for nobody to read. Kept deliberately, because moving code is where a bound quietly becomes
+   * unbounded.
+   */
+  Vec<string> history;
+  i32 count;
+  i32 cursor;
+
+  /**
+   * A shell over this program's own system, with its applets.
+   *
+   * `name` is what `/proc` calls the session — `ps` shows it as the first process, so it is the
+   * program's own name rather than a label: a table that said "term" in a desktop would be
+   * describing something that is not running.
+   */
+  Session start(Core core, Cli cli, string name) {
+    Shell sh = Shell.create(core, cli);
+    // Captured, because "written" in a page means the host's log rather than anything a reader sees.
+    sh.capture = true;
+    Vec<string> argv = Vec.create();
+    argv.push(name);
+    mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+    sh.external = boxRun;
+    sh.externalNames = boxNames;
+    // Spawned rather than called, which is what makes an applet a real program here — see
+    // `shrun.wac`, and wac-mono 0116 for what it can see.
+    sh.externalSpawnable = true;
+    return Session(sh, "", Vec.fromArray(string[HISTORY()](fill: "")), 0, 0);
+  }
+
+  string prompt(const this) { return this.sh.cwd + " $"; }
+
+  /** Add to the screen without running anything — a banner, or an opening line. */
+  void say(this, string text) { this.screen = this.screen + text; }
+
+  /**
+   * Run one line, as pressing Enter does.
+   *
+   * The screen gets the prompt and the line, then whatever the command wrote, then `[exit N]` for a
+   * non-zero status — without which a command that failed silently and one that printed nothing look
+   * identical, since there is no `$?` in the prompt.
+   *
+   * `clear` is the *terminal's* and not the shell's: `sh` has no notion of a screen, and this is the
+   * first thing everybody types.
+   */
+  void feedLine(this, string line) {
+    this.cursor = 0;
+    if (line == "") { return; }
+    this.history.set(this.count % HISTORY(), line);
+    this.count = this.count + 1;
+    if (line == "clear") { this.screen = ""; return; }
+
+    this.screen = this.screen + this.prompt() + " " + line + "\n";
+    i32 status = runScript(this.sh, line);
+    this.screen = this.screen
+      + string.fromBytes(this.sh.outBuf.take())
+      + string.fromBytes(this.sh.errOut.take());
+    if (status != 0) { this.screen = this.screen + "[exit " + itoa(status) + "]\n"; }
+  }
+
+  /** `^C` at the prompt: the line is echoed, thrown away, and a fresh one begins. */
+  void interrupt(this, string typed) {
+    this.screen = this.screen + this.prompt() + " " + typed + "^C\n";
+    this.cursor = 0;
+  }
+
+  /**
+   * Walk the history one step and answer what the input should now hold.
+   *
+   * Held here rather than in the page because the history *is* program state: it is what this shell
+   * has been asked to do. Empty at depth 0, which is the prompt itself.
+   */
+  string recall(this, bool up) {
+    i32 depth = up ? this.cursor + 1 : this.cursor - 1;
+    i32 have = this.count < HISTORY() ? this.count : HISTORY();
+    if (depth > have) { depth = have; }
+    if (depth < 0) { depth = 0; }
+    this.cursor = depth;
+    if (depth == 0) { return ""; }
+    return this.history.get((this.count - depth) % HISTORY());
+  }
+
+  /** Whether the shell has exited, and with what — a caller decides what to do about it. */
+  bool over(const this) { return this.sh.exiting; }
+  i32 code(const this) { return this.sh.exitCode; }
+}
