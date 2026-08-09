@@ -50,10 +50,23 @@ import { Session } from "../src/lib/session.wac";
 /** This program is also its own applets, so the shell in a window can spawn them. */
 export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
 
-/** How many windows there are, which is fixed: opening more wants a launcher, which is not here. */
-i32 WINDOWS() { return 2; }
+/** What a window shows. */
 i32 SHELL() { return 0; }
 i32 FILES() { return 1; }
+
+/**
+ * One window: what it shows, its own session where it is a terminal, and the id its markup carries.
+ *
+ * **The id is allocated once and never reused**, which is what lets a window be closed without
+ * renumbering the others — the alternative is that `cls3` means a different window after every close,
+ * and the event that arrives is about whichever window has moved into that slot.
+ */
+struct Win {
+  i32 kind;
+  i32 id;
+  /** The session this window is a terminal for. Meaningless for a files window. */
+  Session sh;
+}
 
 string cr() { return string.fromCodepoint(13); }
 string intr() { return string.fromCodepoint(3); }
@@ -61,67 +74,136 @@ string upArrow() { return string.fromCodepoint(27) + "[A"; }
 string downArrow() { return string.fromCodepoint(27) + "[B"; }
 
 /** The window's title, which is also what its bar says. */
-string titleOf(i32 w) { return w == SHELL() ? "shell" : "files"; }
+string titleOf(Win w) { return w.kind == SHELL() ? "shell " + itoa(w.id) : "files"; }
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac desktop").wait();
 
-  Session s = Session.start(core, cli, "desk");
-  // Something in the filesystem to look at, so the files window is not an empty box on load. Run
-  // through the session's own shell, which means the terminal shows them as history — the desktop
-  // opening on a session that has already done something, as the terminal does.
-  s.feedLine("mkdir -p /home/wac");
-  s.feedLine("seq 1 5 > /home/wac/five");
+  // **One filesystem, and every window is on it.** The first session builds the system — `/dev`,
+  // `/proc`, `/bin`, the applets — and every terminal opened afterwards is `Session.startOn` over
+  // that same `Fs`. Two terminals each building their own would be two machines that look alike, and
+  // a desktop whose windows do not share a disk is a set of pictures.
+  Session first = Session.start(core, cli, "desk");
+  first.feedLine("mkdir -p /home/wac");
+  first.feedLine("seq 1 5 > /home/wac/five");
 
   // Stacking order, front last. A `Vec` rather than a z-index per window because "which is on top" is
   // an order, and keeping it as one means raising is a move rather than a search for the maximum.
-  Vec<i32> stack = Vec.create();
-  for (i32 i = 0; i < WINDOWS(); i++) { stack.push(i); }
-  bool[] open = bool[WINDOWS()](fill: true);
+  Vec<Win> wins = Vec.create();
+  wins.push(Win(SHELL(), 0, first));
+  wins.push(Win(FILES(), 1, first));
+  i32 nextId = 2;
 
-  draw(page, stack, open);
-  paint(page, s);
-  page.on("#cmd", "keydown").wait();
+  draw(page, wins);
+  paint(page, wins);
+  // Delegated selectors rather than ids: `render` replaces the elements, and a handler asked for by
+  // id would stop firing the moment a window opened. Which window an event is about comes from
+  // `Event.id`, which carries the element's own — see `idOf`.
+  page.on(".cmd", "keydown").wait();
   page.on(".bar", "mousedown").wait();
   page.on(".cls", "click").wait();
+  page.on(".lnch", "click").wait();
 
   while (true) {
     Event e = page.nextEvent().wait();
 
+    if (e.kind == "click" && e.id == "newterm") {
+      // A second shell on the same filesystem, and its own row in the shared process table.
+      wins.push(Win(SHELL(), nextId, Session.startOn(core, cli, first.sh.fs, "sh")));
+      nextId = nextId + 1;
+      redraw(page, wins);
+      continue;
+    }
+    if (e.kind == "click" && e.id == "newfiles") {
+      wins.push(Win(FILES(), nextId, first));
+      nextId = nextId + 1;
+      redraw(page, wins);
+      continue;
+    }
     if (e.kind == "mousedown" && startsWith(e.id, "bar")) {
-      i32 w = tailNumber(e.id, 3);
-      if (w >= 0) { raise(stack, w); redraw(page, stack, open, s); }
+      raise(wins, idOf(e.id, 3));
+      redraw(page, wins);
       continue;
     }
     if (e.kind == "click" && startsWith(e.id, "cls")) {
-      i32 w = tailNumber(e.id, 3);
-      if (w >= 0) { open[w] = false; redraw(page, stack, open, s); }
+      close(wins, idOf(e.id, 3));
+      redraw(page, wins);
       continue;
     }
-    if (e.kind != "keydown" || e.id != "cmd") { continue; }
+    if (e.kind != "keydown" || !startsWith(e.id, "cmd")) { continue; }
+
+    i32 at = indexOf(wins, idOf(e.id, 3));
+    if (at < 0) { continue; }
+    Win w = wins.get(at);
+    string field = "cmd" + itoa(w.id);
 
     if (e.value == upArrow() || e.value == downArrow()) {
-      page.setValue("cmd", s.recall(e.value == upArrow())).wait();
+      page.setValue(field, w.sh.recall(e.value == upArrow())).wait();
       continue;
     }
     if (e.value == intr()) {
-      s.interrupt(page.getValue("cmd").wait());
-      page.setValue("cmd", "").wait();
-      paint(page, s);
+      w.sh.interrupt(page.getValue(field).wait());
+      page.setValue(field, "").wait();
+      paint(page, wins);
       continue;
     }
     if (e.value != cr()) { continue; }
 
-    string line = page.getValue("cmd").wait();
-    page.setValue("cmd", "").wait();
-    s.feedLine(line);
-    paint(page, s);
-    if (s.over()) {
-      page.setText("scr", s.screen + "\n[the shell exited " + itoa(s.code()) + "]\n").wait();
-      return s.code();
+    string line = page.getValue(field).wait();
+    page.setValue(field, "").wait();
+    w.sh.feedLine(line);
+    // Every window, not just this one: a command in one terminal changes what the files windows list
+    // and what the *other* terminals would see, because there is one filesystem underneath.
+    paint(page, wins);
+    if (w.sh.over()) {
+      // A shell that exits closes its window rather than the desktop — which is what `exit` means in
+      // a terminal on a desktop, and the difference between a window manager and a program with
+      // windows drawn on it.
+      close(wins, w.id);
+      redraw(page, wins);
     }
   }
   return 0;
+}
+
+/** Where a window with this id sits in the stack, or -1. */
+i32 indexOf(Vec<Win> wins, i32 id) {
+  for (i32 i = 0; i < wins.len(); i++) { if (wins.get(i).id == id) { return i; } }
+  return -1;
+}
+
+/** Forget a window. Its id is not reused — see `Win.id`. */
+void close(Vec<Win> wins, i32 id) {
+  Vec<Win> left = Vec.create();
+  for (i32 i = 0; i < wins.len(); i++) {
+    if (wins.get(i).id != id) { left.push(wins.get(i)); }
+  }
+  replace(wins, left);
+}
+
+/** Put this window on top: move it to the end, which is the front. */
+void raise(Vec<Win> wins, i32 id) {
+  Vec<Win> order = Vec.create();
+  for (i32 i = 0; i < wins.len(); i++) {
+    if (wins.get(i).id != id) { order.push(wins.get(i)); }
+  }
+  for (i32 i = 0; i < wins.len(); i++) {
+    if (wins.get(i).id == id) { order.push(wins.get(i)); }
+  }
+  replace(wins, order);
+}
+
+/**
+ * Make `wins` hold exactly `order`.
+ *
+ * `Vec` has no truncate, and the caller holds the same object the loop above is reading — so the new
+ * order is built beside it and copied back, which also keeps `wins` the one a caller passed in.
+ */
+void replace(Vec<Win> wins, Vec<Win> order) {
+  while (wins.len() > order.len()) { wins.pop(); }
+  for (i32 i = 0; i < order.len(); i++) {
+    if (i < wins.len()) { wins.set(i, order.get(i)); } else { wins.push(order.get(i)); }
+  }
 }
 
 /**
@@ -130,41 +212,38 @@ export i32 page(Core core, Cli cli, Page page) {
  * Every window's markup is emitted in stacking order, so the document order *is* the z-order and no
  * `z-index` is needed — which also means raising is "move it to the end of the list" and nothing else.
  */
-void draw(Page page, Vec<i32> stack, bool[] open) {
-  string body = "<style>" + css() + "</style><div id=\"desk\">";
-  for (i32 i = 0; i < stack.len(); i++) {
-    i32 w = stack.get(i);
-    if (!open[w]) { continue; }
-    bool front = i == lastOpen(stack, open);
-    body = body + window(w, front);
+void draw(Page page, Vec<Win> wins) {
+  string body = "<style>" + css() + "</style><div id=\"desk\">" +
+    "<div id=\"launch\">" +
+    "  <button class=\"lnch\" id=\"newterm\">+ terminal</button>" +
+    "  <button class=\"lnch\" id=\"newfiles\">+ files</button>" +
+    "  <span id=\"hint\">one system; every window is on it</span>" +
+    "</div>";
+  for (i32 i = 0; i < wins.len(); i++) {
+    body = body + window(wins.get(i), i, i == wins.len() - 1);
   }
   body = body + "</div>";
   page.render(body).wait();
 }
 
-/** Where the front-most open window sits in the stack, or -1 when everything is closed. */
-i32 lastOpen(Vec<i32> stack, bool[] open) {
-  for (i32 i = stack.len() - 1; i >= 0; i--) {
-    if (open[stack.get(i)]) { return i; }
-  }
-  return -1;
-}
-
 /** One window's markup. `front` gets the accent border, which is the whole of "focused". */
-string window(i32 w, bool front) {
-  i32 n = itoaLen(w);
-  string id = itoa(w);
-  string pos = w == SHELL()
-    ? "left: 24px; top: 28px; width: min(62vw, 720px); height: min(66vh, 460px);"
-    : "left: min(62vw, 720px); top: 120px; width: min(30vw, 320px); height: min(46vh, 320px);";
-  string inner = w == SHELL()
-    ? "<div class=\"bod\" id=\"term\">" +
-      "  <pre id=\"scr\"></pre>" +
-      "  <div id=\"bar1\"><span id=\"ps1\">$</span>" +
-      "    <input id=\"cmd\" autofocus autocomplete=\"off\" spellcheck=\"false\"" +
+string window(Win w, i32 at, bool front) {
+  string id = itoa(w.id);
+  // A cascade: no dragging, so the manager decides, and each window sits a little below the last.
+  i32 left = 24 + at * 34;
+  i32 top = 60 + at * 30;
+  string pos = "left: " + itoa(left) + "px; top: " + itoa(top) + "px; " +
+    (w.kind == SHELL()
+      ? "width: min(58vw, 660px); height: min(58vh, 420px);"
+      : "width: min(28vw, 300px); height: min(40vh, 280px);");
+  string inner = w.kind == SHELL()
+    ? "<div class=\"bod term\">" +
+      "  <pre id=\"scr" + id + "\"></pre>" +
+      "  <div class=\"line\"><span class=\"ps1\" id=\"ps" + id + "\">$</span>" +
+      "    <input class=\"cmd\" id=\"cmd" + id + "\" autocomplete=\"off\" spellcheck=\"false\"" +
       "           autocapitalize=\"off\" autocorrect=\"off\"></div>" +
       "</div>"
-    : "<pre class=\"bod\" id=\"files\"></pre>";
+    : "<pre class=\"bod\" id=\"files" + id + "\"></pre>";
   return "<div class=\"win" + (front ? " front" : "") + "\" style=\"" + pos + "\">" +
          "  <div class=\"bar\" id=\"bar" + id + "\">" +
          "    <span class=\"ttl\">" + titleOf(w) + "</span>" +
@@ -172,46 +251,48 @@ string window(i32 w, bool front) {
          "  </div>" + inner + "</div>";
 }
 
-/** Digits in a small number, which is all this needs to place an id. */
-i32 itoaLen(i32 n) { return n < 10 ? 1 : 2; }
-
 /**
  * Re-render and put back everything a re-render throws away.
  *
- * `render` replaces the markup, so the half-typed command goes with it. Read before, restored after —
- * without which clicking a title bar while typing would silently eat the line.
+ * `render` replaces the markup, so a half-typed command goes with it. Every terminal's field is read
+ * before and restored after — without which clicking a title bar while typing would silently eat the
+ * line, in whichever window was being typed in.
  */
-void redraw(Page page, Vec<i32> stack, bool[] open, Session s) {
-  string typed = page.getValue("cmd").wait();
-  draw(page, stack, open);
-  paint(page, s);
-  page.setValue("cmd", typed).wait();
-}
-
-/** Put this window on top: move it to the end, which is the front. */
-void raise(Vec<i32> stack, i32 w) {
-  Vec<i32> rest = Vec.create();
-  for (i32 i = 0; i < stack.len(); i++) {
-    if (stack.get(i) != w) { rest.push(stack.get(i)); }
+void redraw(Page page, Vec<Win> wins) {
+  Vec<string> typed = Vec.create();
+  for (i32 i = 0; i < wins.len(); i++) {
+    Win w = wins.get(i);
+    typed.push(w.kind == SHELL() ? page.getValue("cmd" + itoa(w.id)).wait() : "");
   }
-  rest.push(w);
-  for (i32 i = 0; i < stack.len(); i++) { stack.set(i, rest.get(i)); }
+  draw(page, wins);
+  paint(page, wins);
+  for (i32 i = 0; i < wins.len(); i++) {
+    Win w = wins.get(i);
+    if (w.kind == SHELL()) { page.setValue("cmd" + itoa(w.id), typed.get(i)).wait(); }
+  }
 }
 
 /**
  * Everything the windows *show*, from the one system underneath them.
  *
- * The files pane reads the filesystem directly rather than running `ls` through the shell: the point
- * of two windows on one system is that they see the same thing, and routing this through the terminal
- * would put its own output in the terminal's scrollback and prove nothing about sharing.
+ * The files panes read the filesystem directly rather than running `ls` through a shell: the point of
+ * several windows on one system is that they see the same thing, and routing this through a terminal
+ * would put its own output in that terminal's scrollback and prove nothing about sharing.
  */
-void paint(Page page, Session s) {
-  page.setText("scr", s.screen).wait();
-  page.setText("ps1", s.prompt()).wait();
-  page.setText("files", listing(s)).wait();
+void paint(Page page, Vec<Win> wins) {
+  for (i32 i = 0; i < wins.len(); i++) {
+    Win w = wins.get(i);
+    string id = itoa(w.id);
+    if (w.kind == SHELL()) {
+      page.setText("scr" + id, w.sh.screen).wait();
+      page.setText("ps" + id, w.sh.prompt()).wait();
+    } else {
+      page.setText("files" + id, listing(w.sh)).wait();
+    }
+  }
 }
 
-/** The shell's working directory, as the files window shows it. */
+/** The shell's working directory, as a files window shows it. */
 string listing(Session s) {
   string[]? names = s.sh.fs.readDir(s.sh.cwd);
   if (names is null) { return s.sh.cwd + "\n  (not a directory)\n"; }
@@ -230,8 +311,8 @@ bool startsWith(string s, string prefix) {
   return true;
 }
 
-/** The number after a fixed-length prefix — `bar1` is 1. Negative when there is not one. */
-i32 tailNumber(string s, i32 from) {
+/** The window id after a fixed-length prefix — `bar12` is 12. Negative when there is not one. */
+i32 idOf(string s, i32 from) {
   u8[] b = s.toBytes();
   if (b.len() <= from) { return -1; }
   i32 n = 0;
@@ -263,11 +344,20 @@ string css() {
     ".bod { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; white-space: pre-wrap;" +
     "       word-break: break-word; scrollbar-width: thin;" +
     "       scrollbar-color: #2b3240 transparent; }" +
-    "#term { display: flex; flex-direction: column-reverse; cursor: text; }" +
-    "#scr { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
-    "#bar1 { display: flex; align-items: baseline; column-gap: 1ch; }" +
-    "#ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
-    "#cmd { flex: 1; min-width: 4ch; background: transparent; border: 0; outline: 0;" +
+    ".term { display: flex; flex-direction: column-reverse; cursor: text; }" +
+    ".term pre { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
+    ".line { display: flex; align-items: baseline; column-gap: 1ch; }" +
+    ".ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
+    ".cmd { flex: 1; min-width: 4ch; background: transparent; border: 0; outline: 0;" +
     "       color: inherit; font: inherit; padding: 0;" +
-    "       caret-color: #5eead4; caret-shape: block; }";
+    "       caret-color: #5eead4; caret-shape: block; }" +
+    // The launcher: a strip rather than a window, because it is the thing you reach for when there
+    // are no windows left and a window you could close would be the wrong shape for that.
+    "#launch { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center;" +
+    "          gap: 8px; padding: 8px 12px; background: #10141c;" +
+    "          border-bottom: 1px solid #232a36; }" +
+    ".lnch { background: #14201f; border: 1px solid #2f6f66; border-radius: 5px;" +
+    "        color: #9ff3e4; font: inherit; font-size: 12px; padding: 3px 9px; cursor: pointer; }" +
+    ".lnch:hover { background: #1b2b29; }" +
+    "#hint { color: #5b6472; font-size: 11.5px; margin-left: 4px; }";
 }
