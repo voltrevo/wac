@@ -1,0 +1,54 @@
+// Who this session is.
+//
+// **The system has had users since design/0001 step 4 and no way to be asked about them.** Found by
+// logging into a running `sshd -i` with a real client and typing the first thing anybody types:
+// `whoami: command not found`, in a system that reads `/etc/passwd` out of its image, matches a key
+// against each user's own `~/.ssh/authorized_keys`, sets `$USER`, and enforces `mode` and `owner` on
+// every file. Reading the code does not surface that; using it does immediately.
+//
+// The answer is `Fs.user` and nothing else — not `$USER`, which the shell holds and a script can
+// overwrite. GNU's `whoami` reports the *effective user id*, which is the identity the kernel
+// enforces with; ours reports the identity `packages/fs` enforces with, and those are the same claim.
+
+import { Cli, Core } from "../../../platform/src/platform.wac";
+import { Args } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { extraOperand } from "../lib/operands.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+
+export i32 whoami(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // GNU takes no operands at all: `whoami claude` is "extra operand ‘claude’".
+  if (extraOperand(core, a, 0)) { return 1; }
+
+  // **On the machine's own filesystem this system is not the one enforcing identity**, and answering
+  // `Fs.user` there would be a lie: a shell over a host mount is `root` because that is what every
+  // `Fs` is constructed as, while the process is running as whoever started it. Caught by comparing
+  // against GNU rather than by thinking about it — `wacsh -c whoami` said `root` and `whoami` said
+  // `claude`.
+  //
+  // **And there is nothing to answer with, so it says so.** The first version of this branch read
+  // `$USER` from the host's environment. That is a guess wearing the clothes of a fact — anything can
+  // set an environment variable, GNU's `whoami` reads the effective *user id*, and on this machine
+  // `USER` is not even set while `whoami` answers `claude`. Worse, `Cli.env` answers *absent* both for
+  // "not granted" and "not set", so the message could not have said which.
+  //
+  // No capability here reports the process's own identity. Saying that is the honest answer;
+  // inventing one from the environment is the approximation design/0001 D6 is about.
+  if (fs.isPlainHost()) {
+    core.warn(a.name + ": this filesystem is the machine's, and nothing here reports the machine's user");
+    return 1;
+  }
+
+  // **An unset user is nobody, and saying so beats printing an empty line.** `packages/fs` treats the
+  // empty name as owning nothing and getting the `other` bits everywhere; a session can be in that
+  // state, so this is a real answer rather than a defensive branch. GNU's own version of this failure
+  // is "cannot find name for user ID N", which names the id it could not resolve — there is no id
+  // here, so the sentence says what there is instead.
+  if (fs.user == "") {
+    core.warn(a.name + ": this session has no user");
+    return 1;
+  }
+  core.log(fs.user);
+  return 0;
+}

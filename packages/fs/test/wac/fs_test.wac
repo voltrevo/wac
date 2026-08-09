@@ -6,7 +6,7 @@
 // happens at the edges of a path.
 
 import { T } from "../../../wactest/src/assert.wac";
-import { Fs } from "../../src/fs.wac";
+import { Fs, ROOT } from "../../src/fs.wac";
 import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_A_DIR, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult }
   from "../../../platform/src/platform.wac";
 
@@ -188,6 +188,27 @@ export string test_a_private_file_is_private() {
 
   fs.setUser("ada");
   t.eqStr(string.fromBytes(fs.readFile("/home/ada/secret").bytes), "engine\n", "its owner can");
+
+  // **An unset user is nobody, not everybody.** `may`, `chmod` and `chown` each used to read
+  // `user != "" && user != "root"`, so the empty name was exempt alongside root — three copies of one
+  // condition, and the second meaning was invisible in each of them. Anybody writing `setUser("")` to
+  // mean *nobody* got a session that could read every private file in the image.
+  //
+  // Nothing reaches it today, which is why this is a test rather than a bug report: `Fs` starts as
+  // root and `packages/ssh` maps an unnameable key to root deliberately (issues/system/0126). A trap
+  // nothing has sprung is still a trap, and this is what keeps it shut.
+  fs.setUser("");
+  FileResult nobody = fs.readFile("/home/ada/secret");
+  t.isTrue(!nobody.ok, "an unset user cannot read a private file");
+  t.eqI32(nobody.fault, FAULT_DENIED(), "and is denied rather than told it is missing");
+  t.eqI32(fs.chmod("/home/ada/secret", 438).fault, FAULT_DENIED(), "nor widen it");
+  t.eqI32(fs.chown("/home/ada/secret", "nobody").fault, FAULT_DENIED(), "nor take it");
+  // ...and it can still read what is readable by anyone, which is what "nobody in particular" means.
+  fs.setUser(ROOT());
+  fs.writeFile("/home/ada/public", "open\n".toBytes());
+  fs.chmod("/home/ada/public", 420);           // 0644
+  fs.setUser("");
+  t.eqStr(string.fromBytes(fs.readFile("/home/ada/public").bytes), "open\n", "but reads a 0644 file");
   return t.report();
 }
 

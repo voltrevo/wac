@@ -1,0 +1,94 @@
+// The session's user and group ids, out of the image's own `/etc/passwd`.
+//
+// The companion to `whoami`, and the one that has to say what it cannot do. GNU's bare `id` prints
+//
+//     uid=1001(claude) gid=1001(claude) groups=1001(claude),27(sudo)
+//
+// and three of those five facts are not ours to give: group *names* and the supplementary group list
+// come from `/etc/group`, which this system does not have. So the forms that ask for a fact we hold
+// are implemented and the forms that do not are **refused by name**, rather than printed with the
+// missing parts quietly left out — a line that looks like `id`'s and is missing its groups is the
+// approximation design/0001 D6 exists to prevent.
+//
+// What is held: `uid`, `gid` and the user's name, from `/etc/passwd` (`packages/fs/src/passwd.wac`),
+// looked up by the identity `packages/fs` enforces with — the same source `whoami` answers from.
+
+import { Cli, Core, FileResult } from "../../../platform/src/platform.wac";
+import { Args, has } from "../lib/args.wac";
+import { refuseFlags } from "../lib/flags.wac";
+import { extraOperand } from "../lib/operands.wac";
+import { itoa } from "../../../fmt/src/itoa.wac";
+import { Fs } from "../../../fs/src/fs.wac";
+import { User, parsePasswd, userNamed } from "../../../fs/src/passwd.wac";
+import { Vec } from "../../../std/src/vec.wac";
+
+export i32 id(Core core, Cli cli, Fs fs, Args a) {
+  if (refuseFlags(core, a)) { return 1; }
+  // GNU takes USER operands — `id root` — which needs no more than the table this already reads, but
+  // is a different question from "who am I" and is not implemented rather than half-done.
+  if (extraOperand(core, a, 0)) { return 1; }
+
+  // `has(a, 'u')` rather than a private helper over `a.flags`: it is the house idiom, it is what
+  // `test/flags.test.ts` reads the source for — a numeric codepoint is invisible to it, and my first
+  // version was reported as claiming three flags it never read — and a second `has` beside the
+  // existing one is a copy waiting to drift.
+  bool wantUid = has(a, 'u');
+  bool wantGid = has(a, 'g');
+  bool wantName = has(a, 'n');
+
+  // GNU's own two refusals for the flag combinations that do not mean anything, word for word,
+  // because a caller who writes them has made a mistake the real tool already has a sentence for.
+  if (wantUid && wantGid) {
+    core.warn(a.name + ": cannot print \"only\" of more than one choice");
+    return 1;
+  }
+  if (wantName && !wantUid && !wantGid) {
+    core.warn(a.name + ": cannot print only names or real IDs in default format");
+    return 1;
+  }
+  // **The bare form, and the reason it is a refusal.** Every other branch below answers with a number
+  // or a name this system holds; this one would have to invent the group name and the group list.
+  if (!wantUid && !wantGid) {
+    core.warn(a.name + ": the default format needs group names, which need /etc/group; " +
+              "this system has no group table. -u, -un and -g answer from /etc/passwd");
+    return 1;
+  }
+
+  // The same boundary `whoami` draws, and for the same reason: on the machine's own filesystem the
+  // ids are the machine's and we have no capability that answers them. Refused rather than answered
+  // from a `/etc/passwd` that belongs to the host and describes somebody else's accounts.
+  if (fs.isPlainHost()) {
+    core.warn(a.name + ": this filesystem is the machine's, and its user and group ids are not ours to read");
+    return 1;
+  }
+  if (fs.user == "") {
+    core.warn(a.name + ": this session has no user");
+    return 1;
+  }
+  // The name is known without the table — it is what the filesystem enforces with — so `id -un`
+  // answers even in an image that has no `/etc/passwd` at all.
+  if (wantUid && wantName) {
+    core.log(fs.user);
+    return 0;
+  }
+
+  FileResult passwd = fs.readFile("/etc/passwd");
+  if (!passwd.ok) {
+    core.warn(a.name + ": /etc/passwd: " + passwd.error);
+    return 1;
+  }
+  Vec<User> users = parsePasswd(passwd.bytes);
+  User me = userNamed(users, fs.user);
+  if (me.name == "") {
+    // GNU's shape for a name it cannot resolve, with our name in it.
+    core.warn(a.name + ": '" + fs.user + "': no such user");
+    return 1;
+  }
+  if (wantGid && wantName) {
+    // The gid resolves to a *group* name, which is the thing there is no table for.
+    core.warn(a.name + ": -gn needs a group name, which needs /etc/group; this system has none");
+    return 1;
+  }
+  core.log(itoa(wantUid ? me.uid : me.gid));
+  return 0;
+}

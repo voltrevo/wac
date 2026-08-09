@@ -76,6 +76,7 @@ export i32 ASK_WRITE_OUT() { return 12; }
 export i32 ASK_CLOSE_OUT() { return 13; }
 export i32 ASK_IS_HOST_PATH() { return 14; }
 export i32 ASK_LINK_STAT() { return 15; }
+export i32 ASK_USER() { return 16; }
 
 /**
  * The channel to a filesystem in another process.
@@ -337,23 +338,30 @@ export Change remoteCloseOut(Chan c) {
 }
 
 /**
- * Whether there is a parent on the other end that is going to answer.
+ * **Who the parent is acting as**, or null when there is no parent to ask.
  *
- * One real question — the cheapest one — rather than a handshake byte, because a question is the
- * thing that has to work anyway and a handshake would be a second protocol to keep in step. Three
- * answers, and each is a fact the caller needs: an answer means a parent serving this child; end of
- * channel means a parent that said at spawn time it would not serve (`serveFs` false, which ends the
- * reply queue before the child runs); and a failure means this program was not spawned at all, so
- * `PARENT_FS` names nothing.
+ * One question that does two jobs, because they are the same question asked once. Three answers, and
+ * each is a fact the caller needs: a name means a parent serving this child; end of channel means a
+ * parent that said at spawn time it would not serve (`serveFs` false, which ends the reply queue
+ * before the child runs); and a failure means this program was not spawned at all, so `PARENT_FS`
+ * names nothing. The last two are both null and both mean "build a filesystem of your own".
+ *
+ * **It used to be a bare liveness probe** — `isHostPath("/")`, answered and thrown away — and a child
+ * then built its `Fs` with the constructor's default user, which is `root`. The permission *checks*
+ * were still right, because they happen in the parent against the parent's user; what was wrong was
+ * anything that read the field. `whoami` in a session logged in as `ada` answered `root`, and `root`
+ * is the one name every check exempts, so a child that ever checked locally would have been exempt
+ * too. Asking for the name costs exactly what the liveness probe cost.
  *
  * The `Chan` is left usable, so the caller keeps the channel it just proved rather than paying for a
  * second one.
  */
-export bool parentAnswers(Chan c) {
-  Buf b = request(ASK_IS_HOST_PATH());
-  putString(b, "/");
-  Reader r = ask(c, b);
-  return !r.bad;
+export string? parentUser(Chan c) {
+  Reader r = ask(c, request(ASK_USER()));
+  if (r.bad) { return null; }
+  string who = r.string();
+  if (r.bad) { return null; }
+  return who;
 }
 
 export bool remoteIsHostPath(Chan c, string path) {

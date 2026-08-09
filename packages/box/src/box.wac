@@ -30,6 +30,8 @@ import { Args, parseArgs } from "./lib/args.wac";
 import { base32 } from "./applets/base32.wac";
 import { base64 } from "./applets/base64.wac";
 import { basename } from "./applets/basename.wac";
+import { whoami } from "./applets/whoami.wac";
+import { id } from "./applets/id.wac";
 import { cat } from "./applets/cat.wac";
 import { cp } from "./applets/cp.wac";
 import { crc32 } from "./applets/crc32.wac";
@@ -123,6 +125,8 @@ export i32 dispatch(Core core, Cli cli, Fs fs, Args a, string applet) {
   if (applet == "base32")    { return base32(core, cli, fs, a); }
   if (applet == "base64")    { return base64(core, cli, fs, a); }
   if (applet == "basename")  { return basename(core, cli, fs, a); }
+  if (applet == "whoami")    { return whoami(core, cli, fs, a); }
+  if (applet == "id")        { return id(core, cli, fs, a); }
   if (applet == "cat")       { return cat(core, cli, fs, a); }
   if (applet == "cp")        { return cp(core, cli, fs, a); }
   if (applet == "crc32")     { return crc32(core, cli, fs, a); }
@@ -206,9 +210,10 @@ export string[] appletNames() {
   return string[](
     "base32", "base64", "basename", "cat", "cp", "crc32", "cut", "date", "diff", "dirname",
     "du", "echo", "false", "find", "fold", "fsdump", "get", "gets", "grep", "gunzip", "gzip", "head",
+    "id",
     "help", "hex", "httpd", "init", "json", "ls", "mkdir", "mv", "nc", "nl", "paste", "ps", "rev", "rm", "rmdir",
     "seq", "serve", "sha256sum", "sha512sum", "shuf", "sort", "split", "sponge", "stat",
-    "strings", "tac", "tail", "tar", "tee", "touch", "tr", "true", "uniq", "unzstd",
+    "strings", "tac", "tail", "tar", "tee", "touch", "tr", "true", "uniq", "unzstd", "whoami",
     "urldecode", "urlencode", "uuid", "wc", "wget", "yes", "zstd"
   );
 }

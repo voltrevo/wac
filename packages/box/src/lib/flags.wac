@@ -95,6 +95,9 @@ export string implementedFlags(string name) {
   if (name == "strings") { return "n"; }
   if (name == "mkdir") { return "p"; }
   if (name == "rm") { return "Rfr"; }
+  // `whoami` takes none at all, and `id` takes the three that answer from `/etc/passwd`.
+  if (name == "whoami") { return ""; }
+  if (name == "id") { return "gnu"; }
   if (name == "nl") { return ""; }
   if (name == "paste") { return ""; }
   if (name == "ps") { return ""; }
@@ -121,6 +124,9 @@ export string implementedFlags(string name) {
 export string acceptedFlags(string name) {
   if (name == "cat") { return "u"; }
   if (name == "tar") { return "c"; }
+  // GNU's own `--help` says of `id -a`: "ignore, for compatibility with other versions". Ignoring it
+  // is therefore exactly what the real tool does, which is the only thing that gets a letter in here.
+  if (name == "id") { return "a"; }
   return "";
 }
 
@@ -140,7 +146,8 @@ export bool flagsChecked(string name) {
       || name == "tr" || name == "fold" || name == "split" || name == "shuf" || name == "strings"
       || name == "mkdir" || name == "rm" || name == "nl" || name == "tac" || name == "du"
       || name == "stat" || name == "basename" || name == "dirname" || name == "sha256sum"
-      || name == "sha512sum" || name == "rev" || name == "seq" || name == "tar" || name == "cut" || name == "paste" || name == "ps";
+      || name == "sha512sum" || name == "rev" || name == "seq" || name == "tar" || name == "cut" || name == "paste" || name == "ps"
+      || name == "whoami" || name == "id";
 }
 
 /**
@@ -156,6 +163,8 @@ export string gnuFlags(string name) {
   if (name == "cat") { return "AETbenstuv"; }
   if (name == "cut") { return "Mbcdfnsz"; }
   if (name == "dirname") { return "z"; }
+  if (name == "whoami") { return ""; }
+  if (name == "id") { return "GZagnruz"; }
   if (name == "paste") { return "dsz"; }
   if (name == "du") { return "BDHLPSXabcdhklmstx"; }
   if (name == "fold") { return "bsw"; }
