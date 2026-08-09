@@ -3130,10 +3130,12 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       }
     }
     else: {
-      recv = typeOfExpr(c, obj);
-      // A string literal has no type of its own — like every literal it takes one from context —
-      // but as a receiver it is a `string` and nothing else, so `"hi".toBytes()` has a surface.
-      if (recv == typeNone() && litKindOf(obj) == litString()) { recv = "string"; }
+      // **The same answer `receiverType` gives**, which this had grown its own version of: a string
+      // literal was special-cased here and a *concatenation* of two was not, so
+      // `("aaa, " + "bbb").toBytes(1)` had no receiver and no complaint. A literal takes its type
+      // from context everywhere except here, where the receiver is the context — and that rule lives
+      // in one function now rather than in two that disagree.
+      recv = naturalTypeOf(c, obj);
     }
   }
   // **The two closed surfaces.** An array has three methods and a string four, and a name that is
@@ -3217,7 +3219,18 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
 
   // A field can hold a funcref, and `sh.externalNames()` calls the field rather than a method of
   // that name. `packages/sh` has four of them. A name that is a field is not a missing method.
-  if (c.hasField(recv, name)) { return; }
+  //
+  // **It still has an arity**, which is written in the field's own type: `fn(i32) -> bool` takes one
+  // however it is reached. Returning here without asking made a call through a field the one call
+  // shape this checker never counted — and `Cli`'s whole surface is fields.
+  if (c.hasField(recv, name)) {
+    string held = c.fieldType(recv, name);
+    i32 heldArity = funcrefArity(held);
+    if (heldArity >= 0 && args.len() != heldArity) {
+      c.report(errCallArity(), call.line, call.col);
+    }
+    return;
+  }
 
   // Statics are looked up on the struct itself; instance methods inherit.
   i32 at = isStatic ? c.ownMethodAt(recv, name) : c.methodAt(recv, name);
