@@ -25,6 +25,32 @@ export struct Arith {
   /** Set when something could not be evaluated; the result is then meaningless. */
   bool bad;
   string error;
+  /**
+   * Where the thing bash calls the **error token** starts, in `src`.
+   *
+   * bash names it in every arithmetic diagnostic and this did not, which is seven of the twenty-seven
+   * rows `tools/corpusStderr.ts` pins:
+   *
+   *     $ echo $((1+*2))     1+*2: syntax error: operand expected (error token is "*2")
+   *     $ echo $((a b c))    a b c: syntax error in expression (error token is "b c")
+   *     $ echo $((1/(2-2)))  1/(2-2): division by 0 (error token is "(2-2)")
+   *
+   * The rule, measured on bash rather than guessed at: **the token is the rest of the input from
+   * where the offending thing began**, with leading spaces dropped. For a syntax error that is the
+   * position the parser was at; for a division it is where the *divisor* started, which is why this
+   * is recorded at the failure rather than derived from `at` afterwards — by then the divisor has
+   * been consumed.
+   */
+  i32 tokenAt;
+  /**
+   * Where the last operator this parser consumed began.
+   *
+   * bash's token for `1+` is the **operator**, not the end of the input the parser reached — an
+   * operand was expected *after* it and none came. The binary operators are eaten in `parseSum` and
+   * `parseProduct` and the failure happens two calls deeper in `parsePrimary`, so the position rides
+   * on the state rather than being threaded through every level.
+   */
+  i32 lastOp;
 }
 
 /**
@@ -51,16 +77,37 @@ export i32 evaluate(string text, Arith state) {
   i32 v = parseOr(state);
   skipSpace(state);
   if (!state.bad && state.at < state.src.len()) {
-    fail(state, "unexpected character in arithmetic");
+    // Something the parser could not attach to what came before: `a b`, `9 9`. bash's words, and the
+    // token is the rest from here — `b c` rather than `b`.
+    fail(state, "syntax error in expression");
   }
   return v;
 }
 
-void fail(Arith a, string why) {
+void fail(Arith a, string why) { failAt(a, why, a.at); }
+
+/** The same, naming where the token starts — see `Arith.tokenAt`. */
+void failAt(Arith a, string why, i32 from) {
   if (!a.bad) {
     a.bad = true;
     a.error = why;
+    a.tokenAt = from;
   }
+}
+
+/**
+ * What bash calls the error token: the rest of the input from `tokenAt`, without leading spaces.
+ *
+ * Empty when the expression simply ran out — `$((1+))` fails *at* the end, and bash's token there is
+ * the operator it could not find an operand for, which `parsePrimary` records rather than this.
+ */
+export string errorToken(Arith a) {
+  i32 from = a.tokenAt;
+  while (from < a.src.len() && (a.src[from] == 32 || a.src[from] == 9)) { from++; }
+  if (from >= a.src.len()) { return ""; }
+  u8[] rest = u8[a.src.len() - from]();
+  rest.copyFrom(a.src, from, 0, a.src.len() - from);
+  return string.fromBytes(rest);
 }
 
 void skipSpace(Arith a) {
@@ -75,6 +122,8 @@ bool eat(Arith a, string text) {
   for (i32 i = 0; i < want.len(); i++) {
     if (a.src[a.at + i] != want[i]) { return false; }
   }
+  // Whatever was just consumed is what an operand would have followed — see `Arith.lastOp`.
+  a.lastOp = a.at;
   // No guard against a one-character operator swallowing the first half of a two-character one:
   // the callers try the longer form first, which is what actually decides it. A guard here as
   // well was unreachable — `eat("<")` only runs after `eat("<=")` has failed, and `&` and `|`
@@ -139,12 +188,16 @@ i32 parseProduct(Arith a) {
   while (!a.bad) {
     if (eat(a, "*")) { left = left * parseUnary(a); }
     else if (eat(a, "/")) {
+      // Where the divisor started, before parsing consumes it: bash's token for `1/(2-2)` is the
+      // whole `(2-2)`, which is unrecoverable once `at` has moved past it.
+      i32 from = a.at;
       i32 d = parseUnary(a);
-      if (d == 0) { fail(a, "division by 0"); return 0; }
+      if (d == 0) { failAt(a, "division by 0", from); return 0; }
       left = left / d;
     } else if (eat(a, "%")) {
+      i32 from = a.at;
       i32 d = parseUnary(a);
-      if (d == 0) { fail(a, "division by 0"); return 0; }
+      if (d == 0) { failAt(a, "division by 0", from); return 0; }
       left = left % d;
     } else { return left; }
   }
@@ -153,16 +206,22 @@ i32 parseProduct(Arith a) {
 
 i32 parseUnary(Arith a) {
   skipSpace(a);
+  // The operator's own position, so that a missing operand names the operator: bash's token for
+  // `1+` is `+` and for `2 & & 3` is `& 3`, both of which start at the operator rather than at the
+  // end of the input the parser reached.
+  i32 op = a.at;
   if (eat(a, "!")) { return parseUnary(a) == 0 ? 1 : 0; }
   if (eat(a, "-")) { return 0 - parseUnary(a); }
   if (eat(a, "+")) { return parseUnary(a); }
-  return parsePrimary(a);
+  return parsePrimary(a, op);
 }
 
-i32 parsePrimary(Arith a) {
+i32 parsePrimary(Arith a, i32 op) {
   skipSpace(a);
   if (a.at >= a.src.len()) {
-    fail(a, "arithmetic ended early");
+    // bash's words: an operand was expected here and the input ended. The token is what an operand
+    // would have followed — a unary operator this call ate, or the binary one that got us here.
+    failAt(a, "syntax error: operand expected", op < a.src.len() ? op : a.lastOp);
     return 0;
   }
   if (eat(a, "(")) {
@@ -180,6 +239,8 @@ i32 parsePrimary(Arith a) {
     }
     return v;
   }
-  fail(a, "unexpected character in arithmetic");
+  // Not a number, not a parenthesis, and not an operator we know: bash calls it a syntax error in
+  // the expression and names the rest of the input from here.
+  failAt(a, "syntax error: operand expected", op);
   return 0;
 }

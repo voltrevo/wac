@@ -10,7 +10,8 @@
 // differential over the thing those sentences are.
 //
 // Measured, the first time it ran: 735 of 821 scripts print nothing on either side, 28 matched, and
-// **58 differed**. Forty of those were one fact — a builtin's diagnostic did not name the shell, so
+// **58 differed**. After the shell learned to name itself and its arithmetic learned to name the token
+// it stopped at, 67 match and 19 differ. Forty of those were one fact — a builtin's diagnostic did not name the shell, so
 // this said `[: too many arguments` where bash says `bash: line 1: [: too many arguments`. That is
 // fixed (`prefixed` in `packages/sh/src/exec.wac`), and what is left is below.
 //
@@ -38,14 +39,7 @@ import "../harness/spawnRetry.ts";
 export const KNOWN: { script: string; bash: string; ours: string }[] = [
   { script: "seq 1 0 3; echo status=$?", bash: "seq: invalid Zero increment value: '0'\nTry 'seq --help' for more information.", ours: "seq: step must not be zero" },
   { script: "printf 'x\\n' | grep '[' ; echo status=$?", bash: "grep: Invalid regular expression", ours: "grep: Unmatched [, [^, [:, [., or [=" },
-  { script: "echo $((1/0))", bash: "sh: 1/0: division by 0 (error token is \"0\")", ours: "sh: 1/0: division by 0" },
-  { script: "echo $((1/0)); echo after", bash: "sh: 1/0: division by 0 (error token is \"0\")", ours: "sh: 1/0: division by 0" },
-  { script: "echo $((7%0))", bash: "sh: 7%0: division by 0 (error token is \"0\")", ours: "sh: 7%0: division by 0" },
-  { script: "echo $((1+))", bash: "sh: 1+: syntax error: operand expected (error token is \"+\")", ours: "sh: 1+: arithmetic ended early" },
-  { script: "echo $((a b))", bash: "sh: a b: syntax error in expression (error token is \"b\")", ours: "sh: a b: unexpected character in arithmetic" },
-  { script: "x=$((1/0)); echo [$x]", bash: "sh: 1/0: division by 0 (error token is \"0\")", ours: "sh: 1/0: division by 0" },
-  { script: "x=x; echo $((x))", bash: "sh: x: expression recursion level exceeded (error token is \"x\")", ours: "sh: x: expression recursion level exceeded" },
-  { script: "a=b; b=a; echo $((a))", bash: "sh: b: expression recursion level exceeded (error token is \"b\")", ours: "sh: a: expression recursion level exceeded" },
+  { script: "echo $((a b))", bash: "sh: a b: syntax error in expression (error token is \"b\")", ours: "sh: a b: syntax error in expression (error token is \"0\")" },
   { script: "x=abc; echo [${x!}]; echo after", bash: "sh: [${x!}]: bad substitution", ours: "sh: ${x!}: bad substitution" },
   { script: "x=abc; echo [${x:}]; echo after", bash: "sh: [${x:}]: bad substitution", ours: "sh: ${x:}: bad substitution" },
   { script: "printf", bash: "printf: usage: printf [-v var] format [arguments]", ours: "printf: usage: printf format [arguments]" },
@@ -68,16 +62,16 @@ export const KNOWN: { script: string; bash: string; ours: string }[] = [
  * Why each of the above differs, by group. Kept as prose rather than a field per row because the
  * twenty-seven are seven reasons, and a reason repeated twenty times is a reason nobody reads.
  *
- *   **`(error token is "x")`** — bash's arithmetic errors name the token they stopped at and ours do
- *   not. Ours are otherwise the same sentence. Seven rows.
+ *   **`$((a b))`, `$((a b c))`** — the last of the arithmetic rows, and the reason is structural.
+ *   bash evaluates names inline and names the offending token from the text as written; this shell
+ *   substitutes every name *before* evaluating — which is what reproduces `x=1+2; echo $((x))` being
+ *   3 — so by the time the parser fails, `a b c` is `0 0 0` and the offset it reports points into the
+ *   substituted text. bash says `b c` and this says `0 0`. Closing it means moving substitution into
+ *   the evaluator, which is a design change rather than a message fix.
  *
- *   **arithmetic wording** — `1+` is "syntax error: operand expected" to bash and "arithmetic ended
- *   early" here; `a b` is "syntax error in expression" and "unexpected character in arithmetic".
- *   Different words for the same refusal.
- *
- *   **`a=b; b=a; echo $((a))`** — bash names `b` as the variable it gave up on and we name `a`. Not
- *   wording: a different fact about where the recursion was noticed, and the one row here that is
- *   arguably a bug rather than a difference.
+ *   The other seven arithmetic rows are **gone**: the token bash names is now named
+ *   (`Arith.tokenAt`), the wording is bash's, and `a=b; b=a` blames `b` as bash does, by detecting
+ *   the cycle rather than counting rounds.
  *
  *   **`${x!}` and `${x:}`** — bash quotes the whole word including what surrounds it,
  *   `[${x!}]: bad substitution`; we quote the expansion alone.

@@ -38,7 +38,7 @@ import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
-import { Arith, evaluate } from "./arith.wac";
+import { Arith, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 /**
@@ -4351,7 +4351,7 @@ string expandText(Shell sh, string text) {
  * lookup bound to this call.
  */
 string expandArith(Shell sh, string text) {
-  Arith state = Arith(u8[0](), 0, false, "");
+  Arith state = Arith(u8[0](), 0, false, "", 0, 0);
   // Names are substituted here rather than by the ordinary expander, because the ordinary
   // expander *tokenizes* — and inside these parentheses the shell's operators are arithmetic.
   // Running `3>2` through it produced a redirection of fd 3 and the string `2`; `1&&0` split on
@@ -4365,9 +4365,17 @@ string expandArith(Shell sh, string text) {
   // "expression recursion level exceeded" and so, in its own words, does this.
   string expanded = text;
   bool settled = false;
-  for (i32 round = 0; round < 16 && !settled; round++) {
+  // **The cycle is detected rather than counted out**, and the difference is which name gets blamed.
+  // `a=b; b=a` walks `a`, `b`, `a`, … for ever; a bound of sixteen rounds stops on whichever parity
+  // sixteen happens to be, and this reported `a` where bash reports `b`. Stopping when a value comes
+  // round again blames the **last new one**, which is `b` — and for `x=x`, which repeats on its first
+  // step, it is `x`, which is what bash says there too.
+  Vec<string> seen = Vec.create();
+  for (i32 round = 0; round < 64 && !settled; round++) {
     string next = substituteNames(sh, expanded);
     if (next == expanded) { settled = true; }
+    else if (sawBefore(seen, next)) { break; }
+    seen.push(expanded);
     expanded = next;
   }
   // A self-reference reaches a fixed point rather than growing — `x=x` substitutes to `x` and
@@ -4375,7 +4383,9 @@ string expandArith(Shell sh, string text) {
   // becomes a value or `0`, and one still standing means it resolves to itself.
   if (settled && hasBareName(expanded)) { settled = false; }
   if (!settled) {
-    sh.err(("sh: " + text + ": expression recursion level exceeded\n").toBytes());
+    // The surviving name is both the subject and the token, as it is in bash.
+    sh.err(("sh: " + expanded + ": expression recursion level exceeded (error token is \"" +
+            expanded + "\")\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
@@ -4385,12 +4395,23 @@ string expandArith(Shell sh, string text) {
     // Fatal to the script, which is what bash does: `echo $((1/0)); echo after` prints neither
     // and exits 1. An expansion that cannot produce a value leaves the command with no sensible
     // argument, so carrying on would mean running it with something invented.
-    sh.err(("sh: " + text + ": " + state.error + "\n").toBytes());
+    // **bash names the token it stopped at**, and this did not — see `Arith.tokenAt`. The expression
+    // in the prefix is what was *written*; the token comes from the substituted text the evaluator
+    // actually read, which is the same thing wherever no variable was involved.
+    string token = errorToken(state);
+    sh.err(("sh: " + text + ": " + state.error +
+            (token == "" ? "" : " (error token is \"" + token + "\")") + "\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
   }
   return itoa(v);
+}
+
+/** Whether this text has already been through the substitution loop — see `expandArith`. */
+bool sawBefore(Vec<string> seen, string text) {
+  for (i32 i = 0; i < seen.len(); i++) { if (seen.get(i) == text) { return true; } }
+  return false;
 }
 
 /**
