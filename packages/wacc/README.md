@@ -1183,6 +1183,49 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The fixed point, and an `else` that ran first
+
+Reading is half a compiler. The last slot showed the emitted `wacc` can lex, parse, print and check
+the same as the reference-built one; this asks the other half — does it **emit** the same bytes?
+
+The shape is the same trick: a generated driver embeds a source file as chunked string literals
+(chunked because a literal is one `array.new_fixed` and an engine caps its element count, while
+concatenation does not), calls `emit` on it, and returns a checksum of every byte. Stage A is `wacc`
+built by the reference; stage B is `wacc` built by stage A. Nothing goes to disk — both compilers
+take a file map, so the driver exists only inside the test.
+
+The subject is `wacc`'s **own source**, because a toy program exercises a toy's worth of the emitter:
+
+| source | bytes in | module out | stage A vs stage B |
+|---|---|---|---|
+| `kinds.wac` | 6,162 | 1,555 | identical |
+| `ast.wac` | 11,181 | 770 | identical |
+| `lex.wac` | 21,105 | 2,689 | identical |
+| `print.wac` | 21,694 | 1,535 | identical |
+| `check.wac` | 161,610 | 11,798 | identical |
+
+**It did not start that way.** Stage B declined *every call in the language* with "untyped call", and
+the reduction ran from a 11 KB file down to four lines:
+
+```wac
+enum K { P(i32 t), Q }
+export K mk(i32 tok) { return K.P(tok); }
+```
+
+A payload-less variant was fine; one with a payload was not. The difference is that a construction
+with arguments is a `Call`, and `typeOfE`'s arm for one is a `match` whose **`else` is written
+first** — and this emitter emitted an arm's body *where the arm stood*. The default ran
+unconditionally, no `case` was ever reached, and every call came back untyped.
+
+An `else` arm is the default wherever it is written. Both match forms now emit the cases in order
+and the default in the innermost `else`, which for the expression form is also where the value has
+to go.
+
+The generated sweep had 3,729 programs and every one of them put `else` last, because that is where
+a generator puts it and where a person writes it. **A compiler compiling itself writes the code
+nobody would think to generate** — this is the second bug in two slots that only rung 5 could find,
+after `this.pos++` and the character literals.
+
 ### Rung 5: wacc, compiled by wacc, answering what wacc answers
 
 The last rung. `wacc` emits a whole module for all eight of its own sources, and that module — its

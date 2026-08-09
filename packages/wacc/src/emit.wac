@@ -1853,25 +1853,37 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   emitExprAt(fb, src, lexed, env, subject, en);
   fb.byte(33);
   fb.u32leb(subj);
-  i32 opened = 0;
+  // **The `else` arm is the default wherever it is written**, and this chain used to emit each arm
+  // where it stood — so an `else` written *first* had its body emitted unconditionally and no `case`
+  // was ever reached. `typeOfE` in this file has exactly that shape, which is why the compiler this
+  // compiler emits could not type a call: every one of them took the default.
+  i32 elseAt = -1;
+  i32 cases = 0;
   for (i32 a = 0; a < arms.len(); a++) {
-    string vn = arms[a].variantTok < 0 ? "" : nameKeyOf(env, src, lexed, arms[a].variantTok);
-    if (vn != "") {
-      emitTagOf(fb, env, subj, en);
-      fb.byte(65);
-      fb.i32leb(env.variantTags[env.variantAt(vn)]);
-      fb.byte(70);   // i32.eq
-      fb.byte(4);
-      fb.byte(64);
-      env.depth = env.depth + 1;
-      opened = opened + 1;
-    }
+    if (arms[a].variantTok < 0) { elseAt = a; } else { cases = cases + 1; }
+  }
+  i32 opened = 0;
+  i32 done = 0;
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (a == elseAt) { continue; }
+    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
+    emitTagOf(fb, env, subj, en);
+    fb.byte(65);
+    fb.i32leb(env.variantTags[env.variantAt(vn)]);
+    fb.byte(70);   // i32.eq
+    fb.byte(4);
+    fb.byte(64);
+    env.depth = env.depth + 1;
+    opened = opened + 1;
     i32 saved = env.localCount;
-    if (vn != "") { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
+    emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     emitBody(fb, src, lexed, env, arms[a].body);
     retireFrom(env, saved);
-    if (vn != "" && a < arms.len() - 1) { fb.byte(5); }   // else — the rest of the chain goes here
+    done = done + 1;
+    // The rest of the chain — and the default, if there is one — goes in this arm's `else`.
+    if (done < cases || elseAt >= 0) { fb.byte(5); }
   }
+  if (elseAt >= 0) { emitBody(fb, src, lexed, env, arms[elseAt].body); }
   for (i32 i = 0; i < opened; i++) {
     fb.byte(11);
     env.depth = env.depth - 1;
@@ -1902,11 +1914,22 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   emitExprAt(fb, src, lexed, env, subject, en);
   fb.byte(33);
   fb.u32leb(subj);
-  i32 opened = 0;
+  // The same reordering as the statement form, and for the same reason. What differs is which arm
+  // is *untested*: an `if` that produces a value must have an else branch, so the default goes there
+  // — and where there is no default, the last case does, since the match is exhaustive.
+  i32 elseAt = -1;
+  i32 cases = 0;
   for (i32 a = 0; a < arms.len(); a++) {
-    string vn = arms[a].variantTok < 0 ? "" : nameKeyOf(env, src, lexed, arms[a].variantTok);
-    bool last = a == arms.len() - 1;
-    if (vn != "" && !last) {
+    if (arms[a].variantTok < 0) { elseAt = a; } else { cases = cases + 1; }
+  }
+  i32 opened = 0;
+  i32 done = 0;
+  for (i32 a = 0; a < arms.len(); a++) {
+    if (a == elseAt) { continue; }
+    done = done + 1;
+    bool tail = elseAt < 0 && done == cases;
+    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
+    if (!tail) {
       emitTagOf(fb, env, subj, en);
       fb.byte(65);
       fb.i32leb(env.variantTags[env.variantAt(vn)]);
@@ -1917,10 +1940,13 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
       opened = opened + 1;
     }
     i32 saved = env.localCount;
-    if (vn != "") { emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject); }
+    emitArmNames(fb, src, lexed, env, subj, vn, arms[a].bindingToks, subject);
     if (!(arms[a].value is null)) { emitExprAt(fb, src, lexed, env, arms[a].value!, rt); }
     retireFrom(env, saved);
-    if (!last) { fb.byte(5); }
+    if (!tail) { fb.byte(5); }
+  }
+  if (elseAt >= 0 && !(arms[elseAt].value is null)) {
+    emitExprAt(fb, src, lexed, env, arms[elseAt].value!, rt);
   }
   for (i32 i = 0; i < opened; i++) {
     fb.byte(11);
