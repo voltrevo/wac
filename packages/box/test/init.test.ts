@@ -140,3 +140,51 @@ Deno.test("a service is a child with its own grants, not a call inside init", ()
     assertEquals(tried.out.includes(mine), false, `a service read the host's hostname: ${tried.out}`);
   }
 });
+
+Deno.test("a service can see the system it was started by", () => {
+  // **The half of step 7 that was missing and said it was done.** A service was started with
+  // `GRANT_NONE` and no filesystem channel, so it had no filesystem at all: an `/etc/init` saying
+  // `cat /etc/motd` started `cat`, which could not see the image that line was read out of, and
+  // exited 1. Every service that touched a file failed, on a system whose whole point is that what
+  // boots is data in the image.
+  //
+  // It asks `init` now, over the channel wac-mono 0116 built — and `init` is itself a spawned applet
+  // whose filesystem is the session's, so the question travels the chain to whoever holds the image.
+  // Grants stay `GRANT_NONE`: a service needs no capability of its own precisely because it asks.
+  const image = `${tmp}/reading.wacimg`;
+  const wrote = session(image, "mkdir /etc; echo hello from the image > /etc/motd; " +
+    "printf '%s' 'cat /etc/motd\nwc -l /etc/motd\n' > /etc/init");
+  if (wrote.code !== 0) throw new Error(`writing the image: ${wrote.err}`);
+
+  const boot = session(image, "init");
+  assertEquals(boot.code, 0, boot.out + boot.err);
+  const lines = boot.out.split("\n").filter((l) => l.length > 0);
+  assertEquals(lines, [
+    "init: started cat",
+    "init: started wc",
+    "hello from the image",
+    "init: cat exited 0",
+    "1 /etc/motd",
+    "init: wc exited 0",
+  ]);
+});
+
+Deno.test("a service that fails says why, which is the part an init system is for", () => {
+  // `init` read each service's standard output and **never its error stream**, so when every service
+  // was failing for want of a filesystem all a boot said was "exited 1". A service that dies is
+  // expected; a service that dies without saying why is a system nobody can fix.
+  const image = `${tmp}/complaining.wacimg`;
+  const wrote = session(image, "mkdir /etc; printf '%s' 'cat /etc/nosuch\n' > /etc/init");
+  if (wrote.code !== 0) throw new Error(`writing the image: ${wrote.err}`);
+
+  const boot = session(image, "init");
+  assertEquals(boot.code, 1, boot.out + boot.err);
+  // The service's own words, on the stream a diagnostic belongs on...
+  assertEquals(
+    boot.err.includes("cat: /etc/nosuch: No such file or directory"),
+    true,
+    `the service's complaint went nowhere: ${JSON.stringify(boot.err)}`,
+  );
+  // ...and before the line that says it ended, which is the same ordering the output half keeps.
+  assertEquals(boot.out.trimEnd().split("\n").pop(), "init: cat exited 1", boot.out);
+});

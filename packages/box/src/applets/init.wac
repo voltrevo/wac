@@ -35,7 +35,9 @@
 // The distinction matters because a "supervisor" that quietly did neither would look like the real
 // thing until the first service died.
 
-import { Child, Cli, Core, GRANT_NONE } from "../../../platform/src/platform.wac";
+import { Child, Cli, Core, GRANT_NONE, Pending } from "../../../platform/src/platform.wac";
+import { Chan } from "../../../fs/src/remote.wac";
+import { serveOn } from "../../../fs/src/serve.wac";
 import { argvOf } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 import { FileResult, readReason } from "../../../platform/src/platform.wac";
@@ -93,6 +95,10 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
 
   Vec<string> all = lines(f.bytes);
   Vec<i32> handles = Vec.create();
+  /** Each service's *error* stream, which nothing read — see the relay below. */
+  Vec<i32> errs = Vec.create();
+  /** Each service's filesystem channel, or null where this program serves none. */
+  Vec<Chan?> chans = Vec.create();
   Vec<string> names = Vec.create();
   for (i32 i = 0; i < all.len(); i++) {
     string[] argv = words(all.get(i));
@@ -101,7 +107,18 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // say what it should be given. That is a gap rather than a decision — an `/etc/init` that could
     // name grants per service is the next thing this file wants — and `GRANT_NONE` is the honest
     // floor rather than handing every service everything this program has.
-    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false, false).wait();
+    //
+    // **…and the system's filesystem, which is the thing it had none of.** A service started with no
+    // grants and no channel had no filesystem at all: `/etc/init` saying `cat /etc/motd` started
+    // `cat`, which could not see the image the line was read out of, and exited 1. Every service that
+    // touched a file failed, on a system whose whole point is that what boots is data in the image.
+    //
+    // It asks *this program* now, over the channel wac-mono 0116 built, and this program is itself a
+    // spawned applet whose filesystem is the session's — so the question travels the chain and is
+    // answered by whoever actually holds the image. Grants stay `GRANT_NONE`: a service needs no
+    // capability of its own precisely because it asks.
+    bool serve = !fs.isPlainHost();
+    Child kid = cli.spawnSelf(argvOf(argv), GRANT_NONE, "", false, serve).wait();
     if (kid.unavailable()) {
       core.warn("init: this world cannot spawn, so no service can start");
       return 1;
@@ -113,6 +130,8 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     // Nothing feeds a service's input, and a service that waits for one would wait for ever.
     cli.closeFeed(kid.handle);
     handles.push(kid.handle);
+    errs.push(kid.errHandle);
+    chans.push(serve && kid.fsHandle >= 0 ? Chan.of(cli, kid.fsHandle) : null);
     names.push(argv[0]);
     core.log("init: started " + argv[0]);
   }
@@ -134,16 +153,56 @@ export i32 init(Core core, Cli cli, Fs fs, Args a) {
     i32 h = handles.get(i);
     // Whatever the service wrote, before its status — otherwise a service's own words arrive after
     // the line saying it ended.
+    i32 eh = errs.get(i);
+    // **A service's diagnostics were thrown away.** This read `kid.handle` and never `errHandle`, so
+    // when every service was failing for want of a filesystem, all a boot said was "exited 1". For an
+    // init system the diagnostics are the part that matters: a service that dies is expected, and a
+    // service that dies without saying why is a system you cannot fix.
+    //
+    // **And all three streams at once**, for the reason `packages/sh` learned: a service blocked on a
+    // question this program has not answered writes nothing, so reading its output first would be
+    // waiting for a service that is waiting for this loop. The channels of *every* service are in the
+    // wait, not just this one's — they were all started before any of them is reaped, and a service
+    // further down the list must not be stalled by the one being read.
     bool reading = true;
-    while (reading) {
-      match (cli.recv(h).wait()) {
-        case Data(bytes): { cli.write(bytes); }
-        case End: { reading = false; }
-        case Failed(why): { reading = false; }
+    bool complaining = eh >= 0;
+    Pending<Read> outT = cli.recv(h);
+    Pending<Read> errT = complaining ? cli.recv(eh) : outT;
+    while (reading || complaining) {
+      i32 live = (reading ? 1 : 0) + (complaining ? 1 : 0);
+      for (i32 k = 0; k < chans.len(); k++) { if (!(chans.get(k) is null)) { live++; } }
+      i32[] ids = i32[live](fill: 0);
+      i32[] what = i32[live](fill: -1);
+      i32 at = 0;
+      if (reading) { ids[at] = outT.id; what[at] = -2; at++; }
+      if (complaining) { ids[at] = errT.id; what[at] = -3; at++; }
+      for (i32 k = 0; k < chans.len(); k++) {
+        if (!(chans.get(k) is null)) { ids[at] = chans.get(k)!.waitId(); what[at] = k; at++; }
+      }
+      i32 which = core.waitAny(ids, -1);
+      if (which < 0) { break; }
+      i32 kind = what[which];
+      if (kind >= 0) {
+        if (!serveOn(chans.get(kind)!, fs)) { chans.set(kind, null); }
+      } else if (kind == -2) {
+        match (outT.wait()) {
+          case Data(bytes): { cli.write(bytes); outT = cli.recv(h); }
+          case End: { reading = false; }
+          case Failed(why): { reading = false; }
+        }
+      } else {
+        match (errT.wait()) {
+          case Data(bytes): { cli.writeErr(bytes); errT = cli.recv(eh); }
+          case End: { complaining = false; }
+          case Failed(why): { complaining = false; }
+        }
       }
     }
+    // This service will ask nothing more; the others still might.
+    chans.set(i, null);
     i32 code = cli.exitCode(h).wait();
     cli.closeSocket(h);
+    if (eh >= 0) { cli.closeSocket(eh); }
     core.log("init: " + names.get(i) + " exited " + itoa(code));
     if (code != 0 && worst == 0) { worst = code; }
   }
