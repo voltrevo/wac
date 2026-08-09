@@ -106,7 +106,7 @@ silently measures nothing is exactly the shape this repo keeps finding (`crypto`
 
 Coverage needs an exercise, and an exercise only measures the code it drives, so each
 package supplies its own; `harness/wacCoverage.ts` is the shared half. The repo-level
-`deno task coverage` covers gzip only, which is [issues/0002](../../issues/closed/0002-coverage-and-mutate-only-see-gzip.md).
+`deno task coverage` covers gzip only, which is [issues/0002](../../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
 
 The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts
 from the test suite it is meant to measure. Twice now it has reported a branch as

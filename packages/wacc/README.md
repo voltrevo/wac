@@ -111,7 +111,7 @@ numbering has to be kept in sync with the harness by hand.
 
 The parser reads type parameters and type arguments — `struct Vec<T>`, `T max<T>(T a, T b)`,
 `Map<string, Vec<i32>>`, `Vec<i32>[2](fill: …)` — which is
-[wac-mono 0003](../../issues/closed/0003-wacc-parser-does-not-implement-generics.md). Until it did,
+[wac-mono 0003](../../issues/system/closed/0003-wacc-parser-does-not-implement-generics.md). Until it did,
 twenty-five files were skipped by name, including all of `packages/std`, which is the most
 generics-dense wac in existence: the corpus is the whole value of a differential test, and a blind
 spot in the newest part of the language is the worst place to have one.
@@ -1019,7 +1019,7 @@ generated axis rather than a curated one, which was the point of the file. Accep
 hole in a seventeen-type row: the reference's *parser* reports seven errors and its checker then says
 *"type 'null' is not an array"*, a type nothing in the program mentions. Sized array construction with
 a funcref element does not parse, while the unsized form, the parameter form, and every other element
-type do. That is [wac 0079](../../../wac/issues/open/0079-a-sized-array-of-funcrefs-does-not-parse.md).
+type do. That is [wac 0079](../../issues/lang/open/0079-a-sized-array-of-funcrefs-does-not-parse.md).
 
 The sweep now skips programs the reference's parser rejects, and says how many. That is the boundary
 rather than a workaround: rung 3 compares type checkers, and a program that did not parse has no type

@@ -219,4 +219,4 @@ every package here was at or near 100% branch coverage when mutation testing fou
 survivors, five of them real defects in crypto — including an AEAD that accepted a
 17-byte tag whose first sixteen bytes were valid.
 
-The remaining survivors are tracked in [0005](0005-mutation-testing-found-54-untested-behaviours.md).
+The remaining survivors are tracked in [0005](../open/0005-mutation-testing-found-54-untested-behaviours.md).

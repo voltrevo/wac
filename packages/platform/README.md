@@ -141,7 +141,7 @@ fails does so by throwing, and the bridge's error envelope now begins with the c
 '/tmp/x/missing'" where GNU prints four words, and the sentence differed by runtime — Node says
 "ENOENT: no such file or directory, open '…'" for the same fact. All nine now match GNU's stderr line
 for line, which a differential test checks against the installed coreutils.
-[0062](../../issues/closed/0062-a-read-failure-has-no-fault-category-so-nine-programs-print-the-hosts-wording.md).
+[0062](../../issues/system/closed/0062-a-read-failure-has-no-fault-category-so-nine-programs-print-the-hosts-wording.md).
 
 **In a browser the message is the category's own short phrase**, not the `DOMException`'s — for a
 failed *read* as much as a failed change, since one tab speaking two ways about the same failure is
@@ -578,7 +578,7 @@ Child kid = cli.spawnSelf(string[]("sort", "-n"), GRANT_READ).wait();
 A child runs `main` even when the program also exports `page`, because it was spawned: it has a handle
 and nowhere to draw. One bundle can therefore be both a terminal and the programs the terminal runs —
 see `packages/platform/example/twin.wac`, which is the whole idea in forty lines, and issue
-[0030](../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
+[0030](../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
 
 **A child has two handles, because a program has two output streams.** `recv(handle)` is its output
 and `recv(errHandle)` is its error output. Merged — which they were until a shell tried it — a
@@ -895,7 +895,7 @@ worker model and the event loop, and a design flaw common to all three is invisi
 them. The fourth is Rust on wasmtime, in `native/` at the repository root rather than in this
 package, because a crate inside `packages/` is a directory the test walkers have to be taught to
 skip. It closed
-[0087](../../issues/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
+[0087](../../issues/system/closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md).
 
 **Nothing was reimplemented.** The `SharedArrayBuffer`, the `Atomics.wait`, the sequence counters
 and the ring of slots have no counterpart there — a ticket is an entry in a table and a wait is a

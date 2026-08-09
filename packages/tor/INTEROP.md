@@ -133,7 +133,7 @@ tors. Those rows can still rot without anything going red.
 **The onion-service rows carry a caveat as of 2026-08-07.** A C tor does fetch a page from a service we
 host — reproduced on demand, not merely remembered — but only *sometimes*: four of ten attempts, each
 success in under eight seconds and each failure a sixty-second timeout. That is [issue
-0107](../../issues/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md), and
+0107](../../issues/system/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md), and
 it is why these rows are not in the suite. `live` remains the honest verdict for what was witnessed;
 it is not a claim about reliability, and this table has never distinguished the two before.
 

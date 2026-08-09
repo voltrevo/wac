@@ -7,7 +7,7 @@
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-Step 1 of [design/0001](../../design/0001-a-self-contained-system.md), which is where the reasoning and
+Step 1 of [design/0001](../../../design/system/0001-a-self-contained-system.md), which is where the reasoning and
 the decisions live. This issue is the actionable slice.
 
 ## What

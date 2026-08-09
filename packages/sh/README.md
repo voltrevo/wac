@@ -115,7 +115,7 @@ the one we already had. It also makes the whole thing opt-in: with `$WACPATH` un
 spawned and the behaviour is exactly what it was.
 
 There is no `/bin/ls`, and there is not going to be:
-[issue 0015](../../issues/closed/0015-platform-cannot-start-a-process-so-a-server-cannot-run-a-command.md)
+[issue 0015](../../issues/system/closed/0015-platform-cannot-start-a-process-so-a-server-cannot-run-a-command.md)
 was closed `wontfix`, so running host programs is a settled non-goal rather than a pending gap.
 What replaces it is a wac program run with grants the parent chooses — which is more than this
 package expected to settle for.
@@ -126,7 +126,7 @@ nothing — the property that matters was never that a child gets *nothing*, it 
 *more*. `GRANT_NONE` was here instead and was never a decision: it was the value the argument had when
 `spawn` grew one, and it meant a `$WACPATH` `wc file` could not open the file it was handed while the
 shell refusing on its behalf could read it perfectly well.
-[0028](../../issues/closed/0028-sh-decides-nothing-about-what-wacpath-programs-may-do.md) set out the
+[0028](../../issues/system/closed/0028-sh-decides-nothing-about-what-wacpath-programs-may-do.md) set out the
 three defensible answers — nothing, the shell's own, or a `WACGRANTS=` variable — and this is the
 second, which is what every other shell does.
 
@@ -145,12 +145,12 @@ spawn, including in a browser tab — `Shell.externalSpawnable` below is what sa
 this very bundle — and called through `platform`'s `pushChild`/`popChild` where it cannot, which gives
 a function its own argv, standard input and working directory and keeps what it wrote. Only the second
 of those has no isolation from the shell, and it is now the fallback rather than the only route:
-[0030](../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
+[0030](../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md).
 
 There used to be a **table of programs written in wac** underneath that, when nothing else answered:
 `cat wc head tail rev sort uniq grep tr seq nl printf`, twelve of them. They existed because, when they
 were written, nothing could be started and nothing could be handed over. Both of those stopped being
-true, and [0103](../../issues/closed/0103-what-stands-between-here-and-deleting-shs-twelve-programs.md)
+true, and [0103](../../issues/system/closed/0103-what-stands-between-here-and-deleting-shs-twelve-programs.md)
 deleted them.
 
 **The deletion was the point rather than the tidy-up.** Two implementations of one program do not
@@ -274,7 +274,7 @@ reader has finished is stopped.
 times it was right at the time: the seam was bytes in and bytes out, so a program had produced nothing
 until it had produced all of it, and stopping a stage stopped a worker that had already been asked to
 do the whole job. The programs write through a `Sink` as they go now
-([0061](../../issues/closed/0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)),
+([0061](../../issues/system/closed/0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)),
 so `seq 1 2000000000 | head -1` prints `1` in 0.13 seconds where it used to trap after five, and
 `seq 1 200000000 | wc -c` prints GNU's own answer where it printed nothing and exited 126.
 
@@ -307,13 +307,13 @@ authority said out loud.
 The first thing a shell trips over is a file on `$WACPATH` that is not a worker bundle, and there
 are two of those. One that does not parse is now a failed command with the host's reason and status
 126, distinct from the 127 of not existing —
-[0021](../../issues/closed/0021-a-spawned-worker-that-does-not-parse-kills-the-parent.md), where it
+[0021](../../issues/system/closed/0021-a-spawned-worker-that-does-not-parse-kills-the-parent.md), where it
 used to take the shell down with it. One that *parses* and never speaks the bridge protocol — a built
 program rather than a `--worker` bundle, most likely — used to hang for ever, and is now a failed
 command too: every bundle carries a marker on its first line, so a file that is not one is refused
 before a worker starts, and one that claims to be and then says nothing is failed by a five-second
 grace rather than waited on.
-[0033](../../issues/closed/0033-a-file-that-parses-but-is-not-a-worker-bundle-wedges-the-shell.md) is
+[0033](../../issues/system/closed/0033-a-file-that-parses-but-is-not-a-worker-bundle-wedges-the-shell.md) is
 why the marker had to come first: the timer alone would have traded the hang for a false "cannot
 execute" on a loaded machine.
 
@@ -483,7 +483,7 @@ not offer.
 and the programs themselves through `Sink` — but `> file` gathers the command's output in the shell and
 writes it afterwards, so a redirected command is bounded by memory however well it streams:
 `seq 1 2000000000 > out` traps where bash writes twenty gigabytes.
-[Issue 0070](../../issues/closed/0070-a-redirection-collects-a-childs-whole-output-before-writing-the-file.md)
+[Issue 0070](../../issues/system/closed/0070-a-redirection-collects-a-childs-whole-output-before-writing-the-file.md)
 is that, with `openOutput` named as the capability it wants. `2>` and `2>&1` are not implemented at
 all, and say so.
 
@@ -494,7 +494,7 @@ written and a refused write never happens. `sort` is the exception and it is a n
 line, because that is what sorting is, but as lines in a vector rather than one array of bytes, which is
 the difference between bounded by memory and bounded by one 1.9 GB wasm array. Its insertion sort became
 a bottom-up merge sort at the same time — 100,000 lines took four seconds and now takes one.
-[0071](../../issues/closed/0071-nine-of-shs-programs-read-all-of-their-input-before-answering.md) has the
+[0071](../../issues/system/closed/0071-nine-of-shs-programs-read-all-of-their-input-before-answering.md) has the
 table of what each program turned out to be doing wrong, which was three things nobody was looking for:
 `rev` added a newline that was not there, `nl` numbered blank lines, and `rev` took `-` as standard input
 where GNU takes it as a filename.
@@ -539,7 +539,7 @@ is what `2>&1` has to show. It used to be collected and flushed at the end throu
 the world had no byte-level error stream — so `echo one; nope; echo two` printed the complaint
 last however early it happened. `Shell.err` is the one place that decides: a capturing shell keeps
 the bytes for whoever asked for the capture, and a shell attached to a terminal writes them out.
-[Issue 0014](../../issues/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md) is
+[Issue 0014](../../issues/system/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md) is
 the capability that made it possible.
 
 ## Coverage
@@ -579,7 +579,7 @@ relational and literal mutants and is **3052 mutants**, which has never been run
 per-test selection in `tools/mutate.ts` does nothing at all for this package — every test file
 builds a binary and runs it as a child, so the coverage counters are in the wrong process and the
 tool reports `0/117 ran only the tests that reach them`. See
-[issue 0024](../../issues/closed/0024-mutation-selection-is-inert-for-subprocess-tests-and-the-fallback-runs-them-worst-first.md).
+[issue 0024](../../issues/system/closed/0024-mutation-selection-is-inert-for-subprocess-tests-and-the-fallback-runs-them-worst-first.md).
 
 The three measurements answer different questions and none replaces the others. bash says what is
 *right*; coverage says what has *run*; mutation says what is *noticed*.

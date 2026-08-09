@@ -107,7 +107,7 @@ to any applet. They are **spawned**: a worker can create a worker, and `spawnSel
 once — `yes | head -1` terminates the way it does in bash.
 
 Both of those paragraphs said the opposite until
-[0030](../../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md)
+[0030](../../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md)
 was finished: `spawn` was Deno-only, so `platform` grew `pushChild`/`popChild`, which give a function
 its own argv, standard input and working directory and keep what it writes. That route is still here as
 the fallback for a world that cannot spawn, and an applet cannot tell which way it was run — which is

@@ -184,7 +184,7 @@ The ranking is the durable measurement and the reason for splitting by shape in 
 
 These figures replace a table that had gone stale by roughly half: it was measured before
 `canonicalize` began handing back a `Canonical` struct, after which `deno task bench:json` threw on
-its first shape and could not regenerate them — [issue 0007](../../issues/closed/0007-json-throughput-bench-half-migrated-to-the-canonical-struct.md),
+its first shape and could not regenerate them — [issue 0007](../../issues/system/closed/0007-json-throughput-bench-half-migrated-to-the-canonical-struct.md),
 which warned that the numbers beside a broken bench keep being cited. They were, for two days.
 
 Numbers used to be the whole story — 19 MB/s for small integers, 0.5 for
@@ -293,7 +293,7 @@ package. Currently 100% — all four source files.
 
 Coverage needs an exercise, and an exercise only measures the code it drives, so each
 package supplies its own; `harness/wacCoverage.ts` is the shared half. The repo-level
-`deno task coverage` covers gzip only, which is [issues/0002](../../issues/closed/0002-coverage-and-mutate-only-see-gzip.md).
+`deno task coverage` covers gzip only, which is [issues/0002](../../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
 
 The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts
 from the test suite it is meant to measure. Twice now it has reported a branch as

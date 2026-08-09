@@ -44,6 +44,7 @@ in one request instead of thousands.
 The repo is archived as of 2025-10-21; `v1.6.0-beta.0` is the last release, so this is a fixed target.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -299,11 +300,26 @@ def tarball_path() -> str:
     if not tar.exists():
         url = (f"https://github.com/{REPO}/releases/download/v1.6.0-beta.0/general.tar.gz")
         print(f"  fetching {url} (211 MB, once)", file=sys.stderr)
-        r = subprocess.run(["curl", "-sSfL", "-o", str(tar), url])
+        # **Downloaded beside the target and renamed into place, never written to it.**
+        #
+        # `curl -o <final>` creates the file the instant it starts, so `tar.exists()` above answered
+        # true for a download that had barely begun — and a second process opened 211 MB of hole and
+        # got `EOFError: Compressed file ended before the end-of-stream marker was reached`.
+        #
+        # It is not a rare race. `ssz_generic_valid` and `ssz_generic_invalid` are two fixtures out of
+        # this one tarball, the suite runs their test files in parallel, and a cold cache is every
+        # fresh clone — so the first `deno task test` after a clone failed, every time, and looked
+        # enough like flakiness to be blamed on a busy machine.
+        #
+        # `os.replace` is atomic on one filesystem, so the name either does not exist or names a whole
+        # file. Two downloads can still happen at once; that wastes bandwidth and is *correct*, which
+        # is the right way round for a cache.
+        part = cache / f"general-{COMMIT[:12]}.{os.getpid()}.part"
+        r = subprocess.run(["curl", "-sSfL", "-o", str(part), url])
         if r.returncode != 0:
-            if tar.exists():
-                tar.unlink()
+            part.unlink(missing_ok=True)
             raise RuntimeError("could not download general.tar.gz")
+        os.replace(part, tar)
     return str(tar)
 
 

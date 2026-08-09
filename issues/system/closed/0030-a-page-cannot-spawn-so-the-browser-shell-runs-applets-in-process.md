@@ -100,7 +100,7 @@ GNU's. Verified failing when the expectation is perturbed, so it is not passing 
 The in-process route stays: a world that cannot spawn degrades to it rather than reporting a program
 broken, and the four READMEs that described it as the *only* route now say which is which.
 
-Still open next door: [0028](../open/0028-sh-decides-nothing-about-what-wacpath-programs-may-do.md) is
+Still open next door: [0028](0028-sh-decides-nothing-about-what-wacpath-programs-may-do.md) is
 the grants half for `$WACPATH` programs and remains nobody's decision — `trySelf` hands an applet the
 shell's own grants, which is a different question from what a program off a path may have. And a page
 still has no directory of worker bundles, so a real `$WACPATH` program does not run in a tab; that is a

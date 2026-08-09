@@ -79,7 +79,7 @@ must keep inheriting — `cat; cat` sharing one descriptor (issue 0042) and `pri
 
 Verified failing without the fix: the first case answers empty where bash answers two lines.
 
-Half of what [0061](../open/0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)
+Half of what [0061](0061-sh-applets-return-all-their-output-at-once-so-a-large-stage-dies.md)
 needs before `packages/sh` can spawn its own programs.
 [0065](0065-a-spawned-programs-arguments-are-not-byte-exact.md) is the other half and is bigger than it
 looked: the loss is not only in the wire format but in the *capability types* — `Pending<string>` forces a

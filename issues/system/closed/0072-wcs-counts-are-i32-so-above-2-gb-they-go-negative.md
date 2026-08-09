@@ -60,7 +60,7 @@ gives the number.
 
 `packages/wactest`'s pair stays, and the reason is recorded in a comment in `fmt/src/itoa.wac`: wac has
 no re-export, so unifying it means editing the import line of forty-odd wac test files, several of which
-another agent is writing today. That is now [wac 0073](../../../wac/issues/open/0073-named-re-export-so-a-library-can-have-one-entry-point.md),
+another agent is writing today. That is now [wac 0073](../../lang/open/0073-named-re-export-so-a-library-can-have-one-entry-point.md),
 where the operator's call is that no re-export is a missing feature rather than a principle.
 
 **Bookkeeping note:** the commit that did this work said "Closes 0072" and did not move the file. Caught

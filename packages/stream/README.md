@@ -17,7 +17,7 @@ wac has no way to suspend. A transform that wants its input in pieces therefore 
 a resumable state machine — every loop position, every partially-read unit and every phase turned
 into a field it can be re-entered from. For a UTF-8 case mapper that is mildly annoying; for
 DEFLATE it is block loop, symbol loop, extra bits and copy loop all rewritten — which is what
-[`issues/0006`](../../issues/closed/0006-streaming-gzip-is-now-representable.md) was about, and what
+[`issues/0006`](../../issues/system/closed/0006-streaming-gzip-is-now-representable.md) was about, and what
 this avoided.
 
 The observation here is that **the transform does not have to be the thing that suspends.** If the

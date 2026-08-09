@@ -159,7 +159,7 @@ one exotic root must not take down the parse of the other 120.
 
 **An RSA server key must be 1024-bit.** Not a design decision — a 2048-bit private-key operation
 does not finish in any time a peer would wait, which is
-[0099](../../issues/open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md): more than
+[0099](../../issues/system/open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md): more than
 3500x for a change the arithmetic says should cost about 8x, so the suspicion is `modPow` rather
 than "big numbers are slow". Nothing in `packages/tor` is blocked, since tor's link and identity
 keys are 1024-bit, and every test in the tree uses that size — which is exactly why nothing saw

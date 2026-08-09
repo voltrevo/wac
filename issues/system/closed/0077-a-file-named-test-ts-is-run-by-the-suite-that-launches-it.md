@@ -31,7 +31,7 @@ $ ps -o pid,ppid,etimes -p $(pgrep -d, -f "deno test --parallel")
 ## Why
 
 `tools/test.ts` was a wrapper: it capped `DENO_JOBS` and then spawned `deno test --parallel …`. It was
-added for good reasons ([0075](../open/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md)).
+added for good reasons ([0075](0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md)).
 
 `deno test` with no paths walks the working directory and imports every file matching
 `*_test.{ts,tsx,mts,js,mjs,jsx}`, `*.test.{…}` **or bare `test.{ts,js,mjs,mts}`**. That third pattern is
@@ -64,7 +64,7 @@ declares no tests, so it never appears in the output.
 Every generation inherited the same stdout, so the log read as one very slow suite — 14,000 `ok` lines
 and no summary — rather than as forty suites interleaved. From outside, "the machine is loaded and the
 suite is slow" and "the suite is forking itself" look identical, which is the same confusion
-[0031](../open/0031-a-mutation-sweep-starves-every-other-agent-on-this-machine.md) documents for sweeps.
+[0031](0031-a-mutation-sweep-starves-every-other-agent-on-this-machine.md) documents for sweeps.
 The process tree was the only place the truth showed, and I read it late.
 
 I also mis-attributed it twice in 0031 — first to a mutation sweep, then to another agent's checkout —
@@ -112,7 +112,7 @@ a type-check of the whole repo is the heaviest moment of a run.
 `tools/push.sh`'s own branches rule out two of the candidates: 124 and 137 have their own message, and
 this took the generic one, so the code was something else — probably 1. Deno exiting 1 immediately after
 type-checking with nothing printed is what a `--parallel` worker dying looks like from outside, and
-[0075](../open/0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md) has already seen
+[0075](0075-the-test-worker-cap-is-a-guess-and-needs-a-quiet-machine-to-set.md) has already seen
 exactly that: a worker killed for memory, reported as though the test were wrong. That is why the cap
 exists.
 

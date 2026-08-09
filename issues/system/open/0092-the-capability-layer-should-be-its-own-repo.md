@@ -22,7 +22,7 @@ That is not a library that happens to have a host. It is a platform: it juggles 
 messaging and binds external capabilities, and everything else here is built *on* it — `box`, `fs`,
 `sh`, `ssh` and `tor` all import it, and nothing it depends on runs the other way.
 
-The second reason is [0087](0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md). The
+The second reason is [0087](../closed/0087-wacland-under-wasmtime-a-second-host-with-no-javascript.md). The
 native runtime is a fourth host in **Rust**, and 0087 already records the operator's discomfort:
 "'no dependencies, everything in `src/`' is a stated property of this repo that '…and some Rust'
 muddies." A repo whose subject is the capability layer has an obvious place for a second
@@ -48,7 +48,7 @@ in `core`, the module the compiler ships, so both repos name one type.
 
 ## What actually blocks it
 
-**Step 3 of [wac's `design/0001`](../../../wac/design/0001-import-resolution-core-and-what-packages-inherit.md)
+**Step 3 of [wac's `design/0001`](../../../design/lang/0001-import-resolution-core-and-what-packages-inherit.md)
 — a directory provider.** Today every import here is a relative path, so the five dependent packages
 would have to reach platform as `../../../wac-platform/src/platform.wac`: a path out of one checkout
 and into a sibling, which is right only for whoever cloned things the way the author did.
