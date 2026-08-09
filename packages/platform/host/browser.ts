@@ -123,17 +123,27 @@ export type BrowserWorldOptions = {
    */
   args?: (string | Uint8Array)[];
   /** Where `log` and `warn` go. Defaults to the console. */
-  log?(line: string): void;
-  warn?(line: string): void;
+  /**
+   * **May answer a promise, and every caller awaits it.**
+   *
+   * Declared `void` and implemented `async` — which TypeScript permits, since a `Promise<void>` is
+   * assignable to `void` — this dropped the promise at each call site. Two consequences, one loud
+   * and one silent: a rejection became an *unhandled* one and took the process down (issue 0115,
+   * `yes | head -1` under load), and two writes could land in either order under backpressure,
+   * because the guest was released before the first had finished. A spawned child's output goes
+   * through here, and pushing to a queue is asynchronous exactly when the queue is full.
+   */
+  log?(line: string): void | Promise<void>;
+  warn?(line: string): void | Promise<void>;
   /** Where `write` goes — exact bytes, no newline. Defaults to the console, as text. */
-  write?(bytes: Uint8Array): void;
+  write?(bytes: Uint8Array): void | Promise<void>;
   /**
    * Where `writeErr` goes — exact bytes on the error stream, no newline.
    *
    * Defaults to `warn`'s destination decoded as text, because a page that has somewhere to put
    * diagnostics has somewhere to put these; a page that wants them apart passes this.
    */
-  writeErr?(bytes: Uint8Array): void;
+  writeErr?(bytes: Uint8Array): void | Promise<void>;
   /**
    * Where standard input comes from. A page has none; a *spawned child* does — what its parent
    * sent — and this is how the queue reaches it. The same option the Deno host takes, for the same
@@ -604,9 +614,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     },
     // `log` is standard output, so a child's lines are kept with the rest of its output rather
     // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: (p) => {
+    [OP.LOG]: async (p) => {
       if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      log(unstr(p));
+      await log(unstr(p));
       return EMPTY;
     },
     /**
@@ -619,9 +629,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * never a `Page`.
      */
     [OP.ASK_INTERRUPT]: () => i32le(asked() ? 1 : 0),
-    [OP.WARN]: (p) => {
+    [OP.WARN]: async (p) => {
       if (kids.warn(lineOf(p))) return EMPTY;
-      warn(unstr(p));
+      await warn(unstr(p));
       return EMPTY;
     },
 
@@ -655,7 +665,7 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         return EMPTY;
       }
       try {
-        if (sink === null) { write(p); return EMPTY; }
+        if (sink === null) { await write(p); return EMPTY; }
         await sink.write(p);
         return EMPTY;
       } catch (e) {
@@ -671,9 +681,9 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
      * does — but without a newline, and without going through a string, so bytes that are not valid
      * UTF-8 survive as far as the page's own decoder rather than being mangled here.
      */
-    [OP.WRITE_STDERR]: (p) => {
+    [OP.WRITE_STDERR]: async (p) => {
       if (kids.active) { kids.warn(p); return EMPTY; }
-      writeErr(p);
+      await writeErr(p);
       return EMPTY;
     },
 

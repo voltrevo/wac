@@ -504,10 +504,20 @@ struct World {
 
 /// How often the engine's epoch advances, and so the coarsest a stop can be.
 ///
-/// A child checks the counter constantly and cheaply; what costs is this thread waking. 5 ms is
-/// under the round trip of any capability call — every opcode parks the worker — so a stop is
-/// indistinguishable from immediate to anything that could observe it, and the thread wakes 200
+/// 5 ms is under the round trip of any capability call — every opcode parks the worker — so a stop
+/// is indistinguishable from immediate to anything that could observe it, and the thread wakes 200
 /// times a second whether or not anything is running. It is one thread for the whole process.
+///
+/// **What it costs, measured rather than asserted.** Enabling `epoch_interruption` puts a check on
+/// every loop back-edge and function entry in the compiled code, and that is the price, not this
+/// thread: `seq 1 200000 | wc -l` through the shell runs about 10% slower with it than without —
+/// two binaries alternated run by run, because measuring them one after the other on a shared
+/// machine says whatever the load was doing at the time (the first attempt read 34%, which was
+/// another agent's suite). Slowing the tick to 100 ms does not buy any of it back, which is what
+/// says the cost is the check rather than the ticking.
+///
+/// That is the price of `closeSocket` meaning what platform.wac says it means. The alternative was
+/// a guarantee that was false for any child that did not write.
 const EPOCH_TICK: Duration = Duration::from_millis(5);
 
 /// Advance the engine's epoch for as long as the process lives.

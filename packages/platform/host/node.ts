@@ -118,8 +118,18 @@ export type NodeWorldOptions = {
   selfSource?: string;
   /** Where relative paths resolve from, and what `cwd` reports. Absent means the process's own. */
   cwd?: string;
-  log?(line: string): void;
-  warn?(line: string): void;
+  /**
+   * **May answer a promise, and every caller awaits it.**
+   *
+   * Declared `void` and implemented `async` — which TypeScript permits, since a `Promise<void>` is
+   * assignable to `void` — this dropped the promise at each call site. Two consequences, one loud
+   * and one silent: a rejection became an *unhandled* one and took the process down (issue 0115,
+   * `yes | head -1` under load), and two writes could land in either order under backpressure,
+   * because the guest was released before the first had finished. A spawned child's output goes
+   * through here, and pushing to a queue is asynchronous exactly when the queue is full.
+   */
+  log?(line: string): void | Promise<void>;
+  warn?(line: string): void | Promise<void>;
   fs?: { read?: boolean; write?: boolean };
   net?: boolean;
   env?(name: string): string | undefined;
@@ -343,9 +353,9 @@ export function nodeWorld(
     },
     // `log` is standard output, so a child's lines are kept with the rest of its output rather
     // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: (p) => {
+    [OP.LOG]: async (p) => {
       if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      log(unstr(p));
+      await log(unstr(p));
       return EMPTY;
     },
     /**
@@ -356,9 +366,9 @@ export function nodeWorld(
      * an encrypted socket. A host that cannot be asked truthfully reports that it has not been.
      */
     [OP.ASK_INTERRUPT]: () => i32le(0),
-    [OP.WARN]: (p) => {
+    [OP.WARN]: async (p) => {
       if (kids.warn(lineOf(p))) return EMPTY;
-      warn(unstr(p));
+      await warn(unstr(p));
       return EMPTY;
     },
 
