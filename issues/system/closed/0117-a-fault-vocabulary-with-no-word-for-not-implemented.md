@@ -1,6 +1,6 @@
 # 0117 — the fault vocabulary has no word for "not implemented", so it says "Permission denied"
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** diagnostic

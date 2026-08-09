@@ -32,3 +32,12 @@ record of what has been fixed and why.
 An empty list is the expected state most of the time — see `README.md`: something you
 can fix in a package you are already working in should just be fixed, and a package's
 own roadmap lives in its README. This tracker is for what crosses those lines.
+
+## Closed
+
+135 issues, 112 closed.
+
+The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
+trackers. It did not read this one until 2026-08-09, and the first thing it found was
+thirteen numbers used twice and five issues written in a third header format — neither of
+which anything would have noticed, because the rows above happened to be right.

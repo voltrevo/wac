@@ -1,6 +1,6 @@
 # 0087 — the native runtime: a second host, with no JavaScript and no WASI in it
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** agent-a (2026-08-08) — in flight, see "Progress" at the end
 - **Reported by:** agent-c
 - **Date:** 2026-08-06

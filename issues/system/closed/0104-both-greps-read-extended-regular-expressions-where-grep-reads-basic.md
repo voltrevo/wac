@@ -1,7 +1,7 @@
-# Both greps read extended regular expressions, where `grep` reads basic
+# 0104 — Both greps read extended regular expressions, where `grep` reads basic
 
-**Status**: closed — fixed in the commit that added `packages/regex/src/basic.wac`
-**Filed**: 2026-08-07
+- **Status:** closed — fixed in the commit that added `packages/regex/src/basic.wac`
+- **Date:** 2026-08-07
 
 ## What
 

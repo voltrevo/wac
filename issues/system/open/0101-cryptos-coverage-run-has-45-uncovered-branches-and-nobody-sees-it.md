@@ -1,7 +1,7 @@
-# crypto's coverage run has 45 uncovered branches, and nothing was looking
+# 0101 — crypto's coverage run has 45 uncovered branches, and nothing was looking
 
-**Status**: open
-**Filed**: 2026-08-07
+- **Status:** open
+- **Date:** 2026-08-07
 
 ## What
 
