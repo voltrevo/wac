@@ -7,7 +7,7 @@
 
 import { T } from "../../../wactest/src/assert.wac";
 import { Fs } from "../../src/fs.wac";
-import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult }
+import { FAULT_DENIED, FAULT_EXISTS, FAULT_IS_DIR, FAULT_NONE, FAULT_NOT_A_DIR, FAULT_NOT_EMPTY, FAULT_NOT_FOUND, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult }
   from "../../../platform/src/platform.wac";
 
 export string test_a_file_written_reads_back() {
@@ -52,6 +52,31 @@ export string test_directories_and_their_faults() {
   // Both sides know now, and this is the assertion that they agree.
   t.eqI32(fs.readFile("/e").fault, FAULT_IS_DIR(), "reading a directory is refused, and says which");
   t.eqI32(fs.writeFile("/e", "no\n".toBytes()).fault, FAULT_IS_DIR(), "and so is writing over one");
+
+  // ── `FAULT_NOT_A_DIR`: a file where a directory was wanted ──
+  //
+  // The other half of `FAULT_IS_DIR`, and the one every operation can reach, since any path with a `/`
+  // walks components. This backing had **three** answers for it and none was the operating system's:
+  // `FAULT_OTHER` from `writeFile`, `FAULT_DENIED` from `mkdir` and from `rename` — a *denial* for a
+  // path nothing refused — and `find` collapsed a file-in-the-middle into "not there" before any of the
+  // three could see it. Asserted here rather than only through a shell, because the categories are what
+  // a program branches on and the sentences are only what a person reads.
+  t.eqI32(fs.writeFile("/nd", "x\n".toBytes()).fault, FAULT_NONE(), "a plain file to walk into");
+  t.eqI32(fs.writeFile("/nd/x", "".toBytes()).fault, FAULT_NOT_A_DIR(), "writing under a file");
+  t.eqI32(fs.mkdir("/nd/x", false).fault, FAULT_NOT_A_DIR(), "making a directory under a file");
+  t.eqI32(fs.remove("/nd/x", false).fault, FAULT_NOT_A_DIR(), "removing from under a file");
+  t.eqI32(fs.readFile("/nd/x").fault, FAULT_NOT_A_DIR(), "reading from under a file");
+  t.eqI32(fs.rename("/nd/x", "/e").fault, FAULT_NOT_A_DIR(), "moving out from under a file");
+  t.eqI32(fs.rename("/e", "/nd").fault, FAULT_NOT_A_DIR(), "and a directory onto a file, as rename(2) has it");
+  // Deeper than one component, which is `find`'s own branch rather than a caller's guard.
+  t.eqI32(fs.readFile("/nd/x/y/z").fault, FAULT_NOT_A_DIR(), "and however far down the file sits");
+  // **`stat` is the exception, and this is the assertion that keeps `test -e f/g` false.** The facts
+  // are sound — there is nothing there — so `exists` is false and `answered` stays true; the category
+  // rides along only so `ls`, `cd` and `stat` can say which absence it was.
+  t.isFalse(fs.stat("/nd/x").exists, "nothing is at a path through a file");
+  t.eqI32(fs.stat("/nd/x").fault, FAULT_NOT_A_DIR(), "and the stat says which kind of nothing");
+  t.isTrue(fs.stat("/nd/x").answered(), "without making the stat unanswerable");
+  t.isTrue(fs.remove("/nd/x", false).absent(), "which is what lets `rm -f` stay quiet, as GNU's does");
   return t.report();
 }
 

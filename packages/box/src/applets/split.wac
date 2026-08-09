@@ -4,7 +4,7 @@
 // it and closes it; this switches the current output for each piece, which is the part of
 // `openOutput` nothing had exercised.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
 import { Args, badNumberMessage } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
@@ -57,7 +57,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
       name = prefix + suffix(piece);
       if (streaming) {
         Change opened = cli.openOutput(name).wait();
-        if (!opened.ok()) { core.warn(a.name + ": " + name + ": " + opened.message); return 1; }
+        if (!opened.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(opened)); return 1; }
       } else {
         held = Buf.create();
       }
@@ -73,7 +73,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
     if (written == per) {
       if (!open || streaming) {} else {
         Change wrote = fs.writeFile(name, held.take());
-        if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + wrote.message); return 1; }
+        if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
       }
       piece++;
       open = false;
@@ -82,7 +82,7 @@ export i32 split(Core core, Cli cli, Fs fs, Args a) {
   // The last piece, which is short: the loop above only closes one that filled up.
   if (open && !streaming) {
     Change wrote = fs.writeFile(name, held.take());
-    if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + wrote.message); return 1; }
+    if (!wrote.ok()) { core.warn(a.name + ": " + name + ": " + reasonOf(wrote)); return 1; }
   }
   // Back to standard output, which closes the last piece — a file left open is a file that
   // may not be on disk yet.

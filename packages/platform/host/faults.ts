@@ -61,6 +61,26 @@ export const FAULT_IS_DIR = 8;
 export const FAULT_UNSUPPORTED = 9;
 
 /**
+ * A file where a directory was wanted — see `FAULT_NOT_A_DIR` in `platform.wac`, which carries the
+ * argument.
+ *
+ * The tenth, and the one every operation can reach: any path with a `/` walks components. Without it
+ * `ENOTDIR` fell to `FAULT_OTHER`, so the host's own sentence was the only information and every
+ * program printed `Not a directory (os error 20)` — with, for the mutating ones under Deno, the host's
+ * absolute path after it.
+ */
+export const FAULT_NOT_A_DIR = 10;
+
+/**
+ * The filesystem will not take a write at all — `EROFS`. See `FAULT_READ_ONLY` in `platform.wac`.
+ *
+ * Every case so far is on the wac side, where `packages/fs`'s synthesised backing knows `/dev` and
+ * `/proc` cannot be written. Here so a host can answer it too: a read-only bind mount reports `EROFS`
+ * and would otherwise reach a user as `Permission denied`, which sends them to `chmod`.
+ */
+export const FAULT_READ_ONLY = 11;
+
+/**
  * A fault a host had to name itself, because its filesystem does not report one.
  *
  * OPFS is the case that needs it: it has no exclusive create, so "already exists" is a question the
@@ -141,6 +161,10 @@ export function faultOf(e: unknown): number {
     // about the path or its mode refused, the program was built without the capability. It is the
     // same category `deno.ts` answers when it has no read grant at all, which is the same fact.
     if (isInstance(e, denoErrors.NotCapable)) return FAULT_NOT_GRANTED;
+    // Deno types this one, unlike `EISDIR` below, and sets `code` for it too — both are asked because
+    // `isInstance` is free and a runtime that keeps one and drops the other should not silently fall
+    // through to `FAULT_OTHER`, which is how `ENOTDIR` reached users as an errno in the first place.
+    if (isInstance(e, denoErrors.NotADirectory)) return FAULT_NOT_A_DIR;
   }
 
   // Node's errno codes, and Deno's too where it sets them.
@@ -151,6 +175,8 @@ export function faultOf(e: unknown): number {
     if (code === "EEXIST") return FAULT_EXISTS;
     if (code === "ENOTEMPTY") return FAULT_NOT_EMPTY;
     if (code === "EISDIR") return FAULT_IS_DIR;
+    if (code === "ENOTDIR") return FAULT_NOT_A_DIR;
+    if (code === "EROFS") return FAULT_READ_ONLY;
   }
 
   // The File System Access API throws `DOMException`s with names rather than codes.
@@ -171,6 +197,11 @@ export function faultOf(e: unknown): number {
   // A directory where a file was wanted. Deno throws a plain `Error` for a read of one — no typed
   // error, no `code` — so its os error number is the only structural marker, exactly as above.
   if (/is a directory|os error 21/i.test(message)) return FAULT_IS_DIR;
+  // And a file where a directory was wanted. Ordered after `is a directory` on purpose: the two phrases
+  // are one word apart and a message matching both would be `EISDIR`, since no host says "not a
+  // directory" about a directory.
+  if (/not a directory|os error 20/i.test(message)) return FAULT_NOT_A_DIR;
+  if (/read-only file system|os error 30/i.test(message)) return FAULT_READ_ONLY;
   // A grant this program was never given. This line said `FAULT_DENIED` for a year after the category
   // below it existed, which made the distinction it was added for unobservable from a message.
   if (/not granted/i.test(message)) return FAULT_NOT_GRANTED;
@@ -213,13 +244,30 @@ export const CHANGED_OK = new Uint8Array([FAULT_NONE]);
  * This is not inventing an explanation: the *category* was already established by `faultOf`, and
  * `FAULT_OTHER` — the case where the message is the only information — has no phrase and must not get
  * one. See `describeAsPhrase` in `browser.ts` for the policy that uses it.
+ *
+ * ## Capitalisation, which was inconsistent and is now a rule
+ *
+ * These land immediately after `rm: cannot remove 'f': `, which is the position `strerror` writes for —
+ * so the ones that *are* `strerror`'s are capitalised as `strerror` capitalises them, and the two that
+ * are our own prose stay lower case because they are not sentences of GNU's to copy. That is exactly
+ * the split `faultWords` in `platform.wac` already makes, and matching it is the point: the browser
+ * host and the Deno host must not word the same failure differently.
+ *
+ * Four of these were lower case, from before `faultWords` existed, and `faults_agree.test.ts` described
+ * the whole list as "lower case" — which one row had already stopped being. It went unseen because a
+ * category with words in `faultWords` never reaches a user through this function: every caller prefers
+ * the category's phrase, so this text survives only where a host puts the message somewhere raw.
  */
 export function phraseOf(fault: number): string {
-  if (fault === FAULT_NOT_FOUND) return "no such file or directory";
-  if (fault === FAULT_DENIED) return "permission denied";
-  if (fault === FAULT_EXISTS) return "already exists";
-  if (fault === FAULT_NOT_EMPTY) return "directory not empty";
+  if (fault === FAULT_NOT_FOUND) return "No such file or directory";
+  if (fault === FAULT_DENIED) return "Permission denied";
+  if (fault === FAULT_EXISTS) return "File exists";
+  if (fault === FAULT_NOT_EMPTY) return "Directory not empty";
   if (fault === FAULT_IS_DIR) return "Is a directory";
+  if (fault === FAULT_NOT_A_DIR) return "Not a directory";
+  if (fault === FAULT_READ_ONLY) return "Read-only file system";
+  // Ours, not `strerror`'s: a filesystem that can name every file has no phrase for the first, and a
+  // program the operating system started was handed everything it has, so it never needed the second.
   if (fault === FAULT_NOT_REPRESENTABLE) return "the name is not representable on this host";
   if (fault === FAULT_NOT_GRANTED) return "not granted to this application";
   return "";
@@ -293,13 +341,26 @@ export const STAT_FAULT = 20;
  * found" about a directory that is plainly there — a denial reported as absence, which is the failure
  * `Stat.fault` exists to prevent.
  *
- * Everything else means "nothing usable at this path", which is an answer and must stay one. `ENOTDIR` is
- * the case that decides the shape: `test -e f/g` where `f` is a file is *false* in bash, not an error, and
- * a fault there would make every shell of ours disagree with it. Absence with a fault attached would also
- * make `rm -f` and every "does it exist" check start reporting failures they are written to ignore.
+ * Everything else means "nothing usable at this path", which is an answer and must stay one. Absence with
+ * a fault attached would make `rm -f` and every "does it exist" check start reporting failures they are
+ * written to ignore.
+ *
+ * ## `ENOTDIR` is carried, and it is the fourth case
+ *
+ * `f/g` where `f` is a file was in the "everything else" above, and that lost real information: the three
+ * tools that report an absence to a person — `ls`, `cd` and `stat` — said `No such file or directory`
+ * where GNU says `Not a directory`, because by the time they saw the `Stat` there was nothing left to
+ * distinguish it with.
+ *
+ * It is carried without becoming unknowable, which is the distinction `Stat.answered` now draws: the
+ * facts are *sound* here — `exists = false` is exactly right — so `test -e f/g` stays plain false as
+ * bash has it, and `rm -f f/g` stays quiet. That is why this is a fourth case rather than a fourth entry
+ * in the list below. The paragraph this replaces argued that carrying it at all would break `test`, and
+ * it would have, on the old meaning of `answered`.
  */
 export function statFault(e: unknown, path: string): number {
   const fault = faultOfPath(e, path);
+  if (fault === FAULT_NOT_A_DIR) return fault;
   return fault === FAULT_NOT_REPRESENTABLE || fault === FAULT_DENIED || fault === FAULT_NOT_GRANTED
     ? fault
     : FAULT_NONE;

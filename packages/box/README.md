@@ -281,6 +281,21 @@ It also caught that a missing final newline is not handled uniformly by the real
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
 
+**What a failure says is compared too, not only what a success prints.** Every applet here answers a
+fault category rather than a host sentence, and `platform.wac`'s `reasonOf` turns it into the words the
+real tool uses — so `mkdir` says `File exists` on Deno, on Node, in a browser and under wasmtime, rather
+than four spellings of it with an errno attached. Ten applets printed `c.message` raw until 2026-08-09,
+and two of them had inlined a *one-row* copy of the phrase table beside it, which is drift a row at a
+time. `test/notdir.test.ts` compares the whole `f/g`-where-`f`-is-a-file family against GNU.
+
+**One difference stays, and it is sequencing rather than wording.** GNU's `cp f f/g` and `mv f f/g` say
+`cannot stat 'f/g'`, because coreutils stats the destination first — it has to, to know whether `f/g` is
+a directory to copy *into*. Neither applet here has copy-into-a-directory behaviour, so neither has a
+reason to stat first, and printing "cannot stat" about something never stat'd would be a worse kind of
+wrong than a different prefix. They say GNU's sentence for the failure they actually have: `cannot
+create regular file 'f/g'` and `cannot move 'f' to 'f/g'`. The reason matches; the frame does not, and
+the test asserts that rather than choosing kinder cases.
+
 **Every flag the real tool documents is now asked whether it does anything.** `deno task flags:ignored`
 runs each applet with each flag and compares against the counterpart — judging only the flags the real
 tool actually acts on for that input, since "changed nothing" proves nothing when GNU changes nothing

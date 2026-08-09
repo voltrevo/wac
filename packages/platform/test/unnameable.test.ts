@@ -17,6 +17,7 @@ import {
   faultOfPath,
   FAULT_DENIED,
   FAULT_NONE,
+  FAULT_NOT_A_DIR,
   FAULT_NOT_FOUND,
   FAULT_NOT_REPRESENTABLE,
   pathFailure,
@@ -72,10 +73,17 @@ Deno.test("`stat` reports a fault only where the answer is unknowable", () => {
   assertEquals(statFault(notFound(), "/tmp/x/missing"), FAULT_NONE);
   assertEquals(statFault(new Deno.errors.PermissionDenied("denied"), "/tmp/x/f"), FAULT_DENIED);
 
-  // `ENOTDIR` is the case that decides the shape: bash says `test -e f/g` is *false* where `f` is a file,
-  // not an error, so a fault there would make every shell of ours disagree with the oracle.
+  // **`ENOTDIR` is the exception**, and it used to be the case that decided the shape. The argument was
+  // that bash says `test -e f/g` is *false* where `f` is a file rather than an error, so a fault there
+  // would make every shell of ours disagree with the oracle — true of the `Stat.answered` of the time,
+  // which called any fault "the question could not be reached".
+  //
+  // It cost the three tools that report an absence to a person: `ls f/g`, `cd f/g` and `stat f/g` said
+  // "No such file or directory" where GNU says "Not a directory", because the category was discarded
+  // here before they could see it. `answered` now makes the distinction that lets both be true, and
+  // `packages/box/test/notdir.test.ts` runs `test -e f/g` against bash to keep it that way.
   const notDir = Object.assign(new Error("Not a directory (os error 20)"), { code: "ENOTDIR" });
-  assertEquals(statFault(notDir, "/tmp/x/file/inside"), FAULT_NONE);
+  assertEquals(statFault(notDir, "/tmp/x/file/inside"), FAULT_NOT_A_DIR);
 });
 
 Deno.test("the stat wire layout is one definition, since three hosts write it", () => {

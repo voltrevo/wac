@@ -523,8 +523,10 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
     const fixtureDir = await Deno.makeTempDir({ prefix: "wac-box-fail-" });
     // **A failed read says what the real tool says.** The words come from `faultWords` in
     // `platform.wac`, which exists because four copies of this list had already drifted — and nothing
-    // compared any of them to the tool they imitate. Replacing `lib/input`'s `whyUnread` with the empty
-    // string left every one of these messages ending in a bare colon, and the suite green.
+    // compared any of them to the tool they imitate. Replacing the lookup `lib/input` used with the
+    // empty string left every one of these messages ending in a bare colon, and the suite green. (That
+    // lookup was `whyUnread`, one of the four; it is `platform.wac`'s `readReason` now, beside the
+    // table, and `lib/input` calls it directly rather than wrapping it.)
     const denied = `${fixtureDir}/unreadable`;
     await Deno.writeTextFile(denied, "secret\n");
     await Deno.chmod(denied, 0o000);

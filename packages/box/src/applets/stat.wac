@@ -4,7 +4,7 @@
 // and `find` use it internally and never show it. The mtime goes through `datetime`, the
 // same pairing `date` uses.
 
-import { Cli, Core, faultWords, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { itoa64 } from "../../../fmt/src/itoa.wac";
@@ -21,8 +21,11 @@ export i32 stat(Core core, Cli cli, Fs fs, Args a) {
     if (!st.exists) {
       // `not found` was the only thing this could say, and it was a guess whenever the answer was not an
       // answer: no read capability, or a name the host cannot express, both arrived as `exists = false`.
-      string words = faultWords(st.fault);
-      core.warn(a.name + ": " + a.rest[i] + ": " + (words == "" ? "not found" : words));
+      //
+      // GNU's frame and GNU's default, which this had neither of: `stat: cannot statx 'f/g': Not a
+      // directory`. The fallback was the invented phrase `not found`, so a plain missing file printed
+      // something no real tool prints — and `f/g` printed it for an absence GNU words differently.
+      core.warn(a.name + ": cannot statx '" + a.rest[i] + "': " + st.words("No such file or directory"));
       code = 1;
       continue;
     }

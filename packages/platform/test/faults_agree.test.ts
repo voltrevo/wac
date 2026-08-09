@@ -20,16 +20,22 @@ import { wacBind } from "../../../harness/wacBind.ts";
 import {
   FAULT_DENIED,
   FAULT_EXISTS,
+  FAULT_IS_DIR,
   FAULT_NONE,
+  FAULT_NOT_A_DIR,
   FAULT_NOT_EMPTY,
   FAULT_NOT_FOUND,
   FAULT_NOT_GRANTED,
   FAULT_NOT_REPRESENTABLE,
   FAULT_OTHER,
+  FAULT_READ_ONLY,
+  FAULT_UNSUPPORTED,
   faultOf,
   phraseOf,
   statFault,
 } from "../host/faults.ts";
+// The whole module as well, so the list below can be *derived* from it rather than typed out again.
+import * as faults from "../host/faults.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -45,7 +51,14 @@ const probe = await wacBind("packages/platform/test/wac/faults_probe.wac") as Re
 const codes = probe.codes as () => Int32Array;
 const wordsOf = (fault: number) => new TextDecoder().decode((probe.words as (n: number) => Uint8Array)(fault));
 
-/** The order `faults_probe.wac` writes them in. Both lists are spelled out so a rename cannot slide. */
+/**
+ * The order `faults_probe.wac` writes them in. Both lists are spelled out so a rename cannot slide.
+ *
+ * **This stopped at the eighth for two categories.** `FAULT_IS_DIR` and `FAULT_UNSUPPORTED` were added
+ * to both copies of the numbering and to neither of these lists, so for two rounds of exactly the change
+ * this file exists to police, it policed nothing. Appending is the easy half to forget, because the test
+ * goes on passing — the length check below only compares the probe against *this*, and both were short.
+ */
 const NAMED: [string, number][] = [
   ["FAULT_NONE", FAULT_NONE],
   ["FAULT_NOT_FOUND", FAULT_NOT_FOUND],
@@ -55,7 +68,22 @@ const NAMED: [string, number][] = [
   ["FAULT_OTHER", FAULT_OTHER],
   ["FAULT_NOT_REPRESENTABLE", FAULT_NOT_REPRESENTABLE],
   ["FAULT_NOT_GRANTED", FAULT_NOT_GRANTED],
+  ["FAULT_IS_DIR", FAULT_IS_DIR],
+  ["FAULT_UNSUPPORTED", FAULT_UNSUPPORTED],
+  ["FAULT_NOT_A_DIR", FAULT_NOT_A_DIR],
+  ["FAULT_READ_ONLY", FAULT_READ_ONLY],
 ];
+
+/**
+ * Every `FAULT_*` the host file exports, found rather than listed.
+ *
+ * The list above is the two copies agreeing with *each other*, and it cannot notice a category that was
+ * added to both and typed into neither — which is exactly what happened to `FAULT_IS_DIR` and
+ * `FAULT_UNSUPPORTED`. A fourth hand-written list would have the same hole. This one is derived from the
+ * module, so adding a constant to `faults.ts` and stopping there fails here on the next run.
+ */
+const EXPORTED: [string, number][] = Object.entries(faults)
+  .filter(([k, v]) => k.startsWith("FAULT_") && typeof v === "number") as [string, number][];
 
 Deno.test("the two copies of the fault numbering agree", () => {
   const wac = [...codes()];
@@ -67,11 +95,25 @@ Deno.test("the two copies of the fault numbering agree", () => {
   assertEquals(new Set(wac).size, wac.length, "two categories share a number");
 });
 
+Deno.test("no category is missing from this file's lists", () => {
+  // The check the two lists above cannot make about themselves. `EXPORTED` comes from the module, so a
+  // `FAULT_*` added to `faults.ts` and to `platform.wac` — and to neither list — shows up here as a name
+  // nobody wrote down, instead of as two years of a test that passes and covers less each time.
+  const listed = new Set(NAMED.map(([name]) => name));
+  const missing = EXPORTED.map(([name]) => name).filter((name) => !listed.has(name));
+  assertEquals(
+    missing.join(", "),
+    "",
+    "host/faults.ts exports categories this file does not check; add them here and to faults_probe.wac",
+  );
+  assertEquals(EXPORTED.length, NAMED.length, "this file lists a category host/faults.ts does not export");
+});
+
 Deno.test("every category a `stat` can answer with has words", () => {
-  // `Stat` has no message field, so an empty phrase is an empty reason. These four are what a `stat` reply
-  // can carry: `statFault` narrows a host error to two of them, the hosts answer `FAULT_NOT_GRANTED`
+  // `Stat` has no message field, so an empty phrase is an empty reason. These are what a `stat` reply can
+  // carry: `statFault` narrows a host error to three of them, the hosts answer `FAULT_NOT_GRANTED`
   // themselves when the world has no read capability, and `FAULT_NONE` means the answer is the answer.
-  for (const fault of [FAULT_NOT_REPRESENTABLE, FAULT_DENIED, FAULT_NOT_GRANTED]) {
+  for (const fault of [FAULT_NOT_REPRESENTABLE, FAULT_DENIED, FAULT_NOT_GRANTED, FAULT_NOT_A_DIR]) {
     assertEquals(wordsOf(fault).length > 0, true, `category ${fault} would print an empty reason`);
   }
   assertEquals(wordsOf(FAULT_NONE), "", "FAULT_NONE is not a fault and has nothing to say");
@@ -105,11 +147,25 @@ Deno.test("a grant that was never given is not classified as denial", () => {
 });
 
 Deno.test("`statFault` still calls absence an answer", () => {
-  // Guarding the narrowness this file's neighbour argues for: everything except the two unknowable cases
-  // is `FAULT_NONE`, because `test -e f/g` where `f` is a file is *false* in bash rather than an error.
+  // Guarding the narrowness this file's neighbour argues for: everything except the unknowable cases is
+  // `FAULT_NONE`, because a `stat` that found nothing was answered.
   assertEquals(statFault(Object.assign(new Error("ENOENT"), { code: "ENOENT" }), "/x"), FAULT_NONE);
-  assertEquals(statFault(Object.assign(new Error("ENOTDIR"), { code: "ENOTDIR" }), "/x/y"), FAULT_NONE);
   assertEquals(statFault(Object.assign(new Error("EACCES"), { code: "EACCES" }), "/x"), FAULT_DENIED);
+  // And a category no `stat` should carry stays out: `EEXIST` cannot come from a `stat` at all, and if
+  // some host ever produced one the answer is still "nothing here" rather than a failure.
+  assertEquals(statFault(Object.assign(new Error("EEXIST"), { code: "EEXIST" }), "/x"), FAULT_NONE);
+});
+
+Deno.test("`ENOTDIR` reaches a `Stat` as a category, without making it unanswerable", () => {
+  // The one fault that rides along with sound facts. This asserted `FAULT_NONE` until 2026-08-08, on the
+  // argument that a fault here would break `test -e f/g` — true of the old `Stat.answered`, which called
+  // any fault unanswerable. It cost the three tools that report an absence to a person: `ls f/g`, `cd
+  // f/g` and `stat f/g` all said "No such file or directory" where GNU says "Not a directory", because
+  // the category was thrown away before they could see it.
+  assertEquals(statFault(Object.assign(new Error("ENOTDIR"), { code: "ENOTDIR" }), "/x/y"), FAULT_NOT_A_DIR);
+  // The half that keeps `test` honest is `Stat.answered` in `platform.wac`, and it is asserted where it
+  // lives — `packages/box/test/notdir.test.ts` runs `test -e f/g` against bash.
+  assertEquals(wordsOf(FAULT_NOT_A_DIR), "Not a directory", "GNU's own phrase, which is what tools print");
 });
 
 Deno.test("the third copy of the phrase list covers the same categories", () => {

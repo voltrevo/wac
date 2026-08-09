@@ -2,7 +2,7 @@
 // an interruption partway can hurt. See `lib/safe.wac` for why the temporary name is
 // worth the extra step.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
@@ -22,6 +22,14 @@ export i32 cp(Core core, Cli cli, Fs fs, Args a) {
   Feed fed = in.fed;
   Change wrote = streamAtomic(core, cli, fs, fed, a.rest[1]);
   if (wrote.ok()) { return 0; }
-  core.warn(a.name + ": " + a.rest[1] + ": " + wrote.message);
+  // GNU's frame for a destination it could not write: `cp: cannot create regular file 'x/y': …`.
+  //
+  // **Not every one of GNU's frames, and the difference is sequencing rather than wording.** `cp f f/g`
+  // says `cannot stat 'f/g'` there, because coreutils stats the destination before it opens anything —
+  // it has to, to know whether `f/g` is a directory to copy *into*. This `cp` has no copy-into-a-
+  // directory behaviour, so it has no reason to stat first and no honest way to print "cannot stat"
+  // about something it never stat'd. The reason matches; that prefix does not, and `notdir.test.ts`
+  // names it rather than choosing kinder cases.
+  core.warn(a.name + ": cannot create regular file '" + a.rest[1] + "': " + reasonOf(wrote));
   return 1;
 }

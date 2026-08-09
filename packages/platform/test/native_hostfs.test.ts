@@ -131,6 +131,23 @@ const AGREED = [
   "cp f copy; cat copy; rm copy",
   "mv f moved; ls; mv moved f",
   "cat sub/deep > out; wc -c out; rm out",
+  // `ENOTDIR`: `f` is a file, so every one of these walks into it. The failure any path can reach, and
+  // the last one with no fault category — it fell to `FAULT_OTHER`, so each host printed its own
+  // runtime's sentence and the two disagreed by construction: Deno's "Not a directory (os error 20)"
+  // against Rust's "Not a directory (os error 20)" only because both happen to wrap the same errno, and
+  // neither against GNU's four words. `FAULT_NOT_A_DIR` is the category, `fault_of` in `native/src`
+  // learned it at the same time, and these are what say both ends arrived.
+  "cat f/g",
+  "ls f/g",
+  "wc -c f/g",
+  "rm f/g",
+  "rm -f f/g; echo st=$?",
+  "mkdir f/g",
+  "rmdir f/g",
+  "touch f/g",
+  "test -e f/g; echo st=$?",
+  "cd f/g",
+  "echo y > f/g",
 ];
 
 /** Scripts where the real tool prints more than this system has, so the two hosts are the oracle. */
@@ -150,6 +167,14 @@ Deno.test("wacsh over the real filesystem agrees with GNU on both hosts", async 
     fixture();
     const js = runIt(deno, ["-c", `cd tree; ${script}`]);
     assertEquals(js.out, want.out, `deno: ${script}`);
+    // **And what it said when it failed.** Only stdout was compared against GNU here, with the two
+    // hosts' stderr compared against each other below — so `ls nosuch`, `cat nosuch` and `wc -l nosuch`
+    // sat in this list with the half that matters unchecked, and two hosts agreeing on a sentence GNU
+    // does not use would have passed. bash prefixes a *builtin's* failure with `bash: line N: ` and
+    // ours has no line number to give, which is the deliberate difference `sh/test/differential.test.ts`
+    // already strips.
+    const strip = (t: string) => t.replace(/^\S*bash: line \d+: /gm, "").replace(/^sh: /gm, "").trim();
+    assertEquals(strip(js.err), strip(want.err), `deno stderr: ${script}`);
     if (native === null) continue;
     fixture();
     const rs = runIt(native, [manifest, "-c", `cd tree; ${script}`]);

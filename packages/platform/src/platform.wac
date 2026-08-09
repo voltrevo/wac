@@ -470,6 +470,44 @@ export i32 FAULT_IS_DIR() { return 8; }
 export i32 FAULT_UNSUPPORTED() { return 9; }
 
 /**
+ * A file where a directory was wanted — `ENOTDIR`, the other half of `FAULT_IS_DIR`.
+ *
+ * The tenth, and it is the one the taxonomy could least afford to be without, because **every operation
+ * can hit it**: any path with a `/` in it walks components, and a component that turns out to be a file
+ * fails this way. `FAULT_IS_DIR` is one operation on one path; this is `f/g` for every `f` that is not a
+ * directory, and it had no category at all — so `cat f/g` said `Not a directory (os error 20)` and
+ * `mkdir f/g` said `Not a directory (os error 20): mkdir '/abs/path/f/g'`, an errno and the *host's*
+ * absolute path, in a world whose first claim is that a session cannot see the host it runs on.
+ *
+ * It is a genuinely different answer from absence, which is what it was arriving as. GNU distinguishes
+ * them everywhere — `cat: f/g: Not a directory` against `cat: f/g: No such file or directory` — and a
+ * person needs to: one means fix the name, the other means `f` is not what you thought it was.
+ *
+ * **`stat` is the exception, and deliberately.** `test -e f/g` is *false* in bash rather than an error,
+ * so a stat that hit this still answers "nothing there". It now carries the category alongside — see
+ * `statFault` in `host/faults.ts` — so `ls` and `cd` can say which absence it was without `test`
+ * changing its mind.
+ */
+export i32 FAULT_NOT_A_DIR() { return 10; }
+
+/**
+ * The filesystem will not take a write at all — `EROFS`.
+ *
+ * The eleventh, and it was found the same way `FAULT_NOT_A_DIR` was, one layer down: `packages/fs`'s
+ * synthesised backing answers this for `/dev` and `/proc` and had to say it in its *message*, as
+ * `FAULT_DENIED` with the words "read-only file system". That worked only for as long as callers
+ * printed the message — the moment `reasonOf` started preferring the category's phrase, which is the
+ * whole point of having categories, a write to `/dev/zero` began saying `Permission denied` and the
+ * one useful fact was gone.
+ *
+ * It is a different answer from `FAULT_DENIED` in the way that matters to whoever reads it: nothing
+ * about this file or this user refused, and no `chmod` will help. `strerror(EROFS)` is "Read-only file
+ * system" and that is what `faultWords` says, because it is what bash prints when a redirection lands
+ * on a read-only mount.
+ */
+export i32 FAULT_READ_ONLY() { return 11; }
+
+/**
  * A fault in the words the real tools use, or `""` where the category has none to give.
  *
  * One table, because there were four: `sh` had one for a `Change` and another for a `FileResult`, `box`
@@ -503,9 +541,42 @@ export string faultWords(i32 fault) {
   if (fault == FAULT_NOT_GRANTED()) { return "Not granted to this application"; }
   // Capitalised, like the rest here and like `strerror`, which is where GNU's wording comes from.
   if (fault == FAULT_IS_DIR()) { return "Is a directory"; }
+  // `strerror(ENOTDIR)`, and GNU prints exactly this and nothing else — no errno, no path beyond the one
+  // the user typed. Compared against `/bin/cat`, `/bin/mkdir` and the rest in `box/test/notdir.test.ts`.
+  if (fault == FAULT_NOT_A_DIR()) { return "Not a directory"; }
+  // `strerror(EROFS)`, which is what bash prints for a redirection onto a read-only mount.
+  if (fault == FAULT_READ_ONLY()) { return "Read-only file system"; }
   // `FAULT_UNSUPPORTED` falls through to `""` on purpose — see its own comment. The message says what
   // is unimplemented, and no fixed phrase could.
   return "";
+}
+
+/**
+ * Why a failed `Change` failed, in the words the tool this world imitates uses.
+ *
+ * A fault the world has a *category* for gets the category's phrase; anything else keeps the host's own
+ * message, which is then the only thing that knows. That distinction is what the fault numbers are for:
+ * the host's words differ per platform and per runtime — `File exists (os error 17): mkdir '/tmp/x'`
+ * under Deno, `EEXIST: file already exists, mkdir '/tmp/x'` under Node, `already exists` in a browser —
+ * while what happened does not.
+ *
+ * **Here rather than in `packages/sh`, which is where it was.** `sh`'s builtins had it and `box`'s
+ * applets did not, and they are the same programs: `mkdir` is a builtin of one and an applet of the
+ * other, so the same failure printed GNU's four words through the shell and an errno with the host's
+ * absolute path through the applet. Two applets had gone further and inlined a *one-row* copy of the
+ * table — `c.fault == FAULT_EXISTS() ? "File exists" : c.message` — which is the drift `faultWords`
+ * exists to stop, one row at a time. It belongs beside the phrases, where anything holding a fault can
+ * reach it.
+ */
+export string reasonOf(Change c) {
+  string words = faultWords(c.fault);
+  return words == "" ? c.message : words;
+}
+
+/** The same, for a read that failed: `FileResult` carries its host sentence as `error`. */
+export string readReason(FileResult f) {
+  string words = faultWords(f.fault);
+  return words == "" ? f.error : words;
 }
 
 /** What a filesystem change answered. */
@@ -520,13 +591,21 @@ export struct Change {
   bool ok(const this) { return this.fault == FAULT_NONE(); }
 
   /**
-   * Whether the thing was simply not there — the one case `rm -f` is allowed to ignore.
+   * Whether the thing was simply not there — the case `rm -f` is allowed to ignore.
    *
    * Before this, `remove` answered a message and `rm -f` had to ask `stat` first, which is both an
    * extra call and a race: a file can vanish between the two. Asking the failure itself cannot race
    * with anything.
+   *
+   * **`FAULT_NOT_A_DIR` counts, and this is what GNU does.** `rm -f f/g` where `f` is a file exits 0
+   * and says nothing, exactly as `rm -f nosuch` does, because both mean "there is nothing at that
+   * path". Ours failed with a diagnostic — first because `ENOTDIR` had no category at all and landed in
+   * `FAULT_OTHER`, then, once it had one, because this method still named only the one. The `-f` in
+   * `rm -rf build/x/y` is written for precisely this: a path whose middle turned out not to be there.
    */
-  bool absent(const this) { return this.fault == FAULT_NOT_FOUND(); }
+  bool absent(const this) {
+    return this.fault == FAULT_NOT_FOUND() || this.fault == FAULT_NOT_A_DIR();
+  }
 }
 
 export struct Stat {
@@ -563,6 +642,18 @@ export struct Stat {
    * reports to a person now has something true to say.
    *
    * So: **check `fault` before trusting `exists`.**
+   *
+   * ## The exception, which is `FAULT_NOT_A_DIR`
+   *
+   * There is one fault here that does *not* mean the question went unreached: `f/g` where `f` is a
+   * file. The host is certain, `exists = false` is exactly right, and the extra thing to say is which
+   * kind of nothing it is. Every real tool distinguishes them — `cat: f/g: Not a directory` against
+   * `cat: f/g: No such file or directory` — and bash's `test -e f/g` is nonetheless plain *false*
+   * rather than an error, so a caller that only wanted existence must not start failing.
+   *
+   * So this one rides along with the facts intact, and `answered` is what draws the line. `statFault`
+   * in `host/faults.ts` decides which faults reach a `Stat` at all, and `faults_agree.test.ts` holds
+   * the two ends together.
    */
   i32 fault;
 
@@ -571,8 +662,39 @@ export struct Stat {
     return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, fault);
   }
 
-  /** Whether this is an answer at all. Reads better than `st.fault == FAULT_NONE()` at a call site. */
-  bool answered(this) { return this.fault == FAULT_NONE(); }
+  /**
+   * Whether `exists`, `isFile` and `isDir` can be trusted.
+   *
+   * Not `fault == FAULT_NONE()`, which is what it was: `FAULT_NOT_A_DIR` is a fault whose facts are
+   * *sound* — see the field above — and every caller here treats a false answer as "the question could
+   * not be reached", which for that one would be untrue. `test -e f/g` would have begun exiting 2 with
+   * a diagnostic where bash says false.
+   *
+   * The list is short and belongs in one place rather than spelled out at each of the five call sites,
+   * which is the whole reason this method exists.
+   */
+  bool answered(this) {
+    return this.fault == FAULT_NONE() || this.fault == FAULT_NOT_A_DIR();
+  }
+
+  /**
+   * This `Stat`'s fault in a real tool's words, or `otherwise` where the category has none.
+   *
+   * The fallback is the caller's because it depends on what the caller already knows, and there were
+   * **four** of these written out separately — the shell's `ls` said `"Permission denied"` for a
+   * directory it could not list, the `ls` applet said the same thing a different way, `cd` and the
+   * `stat` applet hard-coded `"No such file or directory"` and `"not found"`, and `packages/sh` had a
+   * `statReason` saying `"cannot be examined"`. Four spellings of `words == "" ? something : words`,
+   * which is how the `ls` builtin came to say GNU's sentence for an absence and the `ls` applet an
+   * invented one, for the same fault, in the same binary.
+   *
+   * Three of those fallbacks were right for their call site; the fourth (`"not found"`) was a phrase no
+   * real tool prints. Passing it in keeps that judgement where it belongs and the lookup in one place.
+   */
+  string words(this, string otherwise) {
+    string found = faultWords(this.fault);
+    return found == "" ? otherwise : found;
+  }
 }
 
 /**
