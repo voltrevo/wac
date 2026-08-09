@@ -343,6 +343,7 @@ string typeArgAt(string inst, i32 want) {
       if (depth == 1) { from = i + 1; }
       continue;
     }
+    // This one already opened the angle bracket above, so it counts only the square ones.
     if (c == "[") { depth = depth + 1; }
     if (c == "]") { depth = depth - 1; }
     if (c == ">") {
@@ -426,8 +427,13 @@ string sigReturn(string t) {
   i32 depth = 0;
   for (i32 i = 3; i < t.len(); i++) {
     string c = t[i];
-    if (c == "[") { depth = depth + 1; }
-    if (c == "]") { depth = depth - 1; }
+    // **`<` nests too.** An instantiation is spelled `Result<i32,string>`, so a signature that
+    // mentions one has a comma *inside* a parameter — and a scanner that counts only brackets and
+    // parentheses reads `fn[bool(Result<i32,string>)]` as taking two. The function then declares one
+    // parameter and its type says two, which wasm reports as a `struct.get` on a number, in a
+    // method several functions away. This is what made two type parameters fail and one work.
+    if (c == "[" || c == "<") { depth = depth + 1; }
+    if (c == "]" || c == ">") { depth = depth - 1; }
     if (c == "(" && depth == 0) { return t.slice(3, i); }
   }
   return "";
@@ -441,8 +447,13 @@ i32 sigParamCount(string t) {
   bool any = false;
   for (i32 i = 3; i < t.len(); i++) {
     string c = t[i];
-    if (c == "[") { depth = depth + 1; }
-    if (c == "]") { depth = depth - 1; }
+    // **`<` nests too.** An instantiation is spelled `Result<i32,string>`, so a signature that
+    // mentions one has a comma *inside* a parameter — and a scanner that counts only brackets and
+    // parentheses reads `fn[bool(Result<i32,string>)]` as taking two. The function then declares one
+    // parameter and its type says two, which wasm reports as a `struct.get` on a number, in a
+    // method several functions away. This is what made two type parameters fail and one work.
+    if (c == "[" || c == "<") { depth = depth + 1; }
+    if (c == "]" || c == ">") { depth = depth - 1; }
     if (c == "(" && depth == 0 && start < 0) {
       start = i;
       depth = depth + 1;
@@ -466,8 +477,13 @@ string sigParamAt(string t, i32 want) {
   i32 n = 0;
   for (i32 i = 3; i < t.len(); i++) {
     string c = t[i];
-    if (c == "[") { depth = depth + 1; }
-    if (c == "]") { depth = depth - 1; }
+    // **`<` nests too.** An instantiation is spelled `Result<i32,string>`, so a signature that
+    // mentions one has a comma *inside* a parameter — and a scanner that counts only brackets and
+    // parentheses reads `fn[bool(Result<i32,string>)]` as taking two. The function then declares one
+    // parameter and its type says two, which wasm reports as a `struct.get` on a number, in a
+    // method several functions away. This is what made two type parameters fail and one work.
+    if (c == "[" || c == "<") { depth = depth + 1; }
+    if (c == "]" || c == ">") { depth = depth - 1; }
     if (c == "(" && depth == 0 && from < 0) {
       from = i + 1;
       depth = depth + 1;
@@ -1574,8 +1590,24 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
   // case, which had no strings and so no helpers, passed.
   for (i32 ii = 0; ii < env.instCount; ii++) {
+  // **Only the ones registration built.** An instance discovered after the fixed point gave up —
+  // or one whose template is not in this module — has no members in the tables, and emitting its
+  // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
+  // reports as a `struct.get` on a number several functions later.
+  if (!env.isStructName(env.instName[ii])) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                         env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+            countAt = countAt + 1;
+          }
+          popSubstitution(env, epushed);
+        }
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -1623,8 +1655,24 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
   // case, which had no strings and so no helpers, passed.
   for (i32 ii = 0; ii < env.instCount; ii++) {
+  // **Only the ones registration built.** An instance discovered after the fixed point gave up —
+  // or one whose template is not in this module — has no members in the tables, and emitting its
+  // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
+  // reports as a `struct.get` on a number several functions later.
+  if (!env.isStructName(env.instName[ii])) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                         env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                   methods[m].hasThis ? env.instName[ii] : ""));
+          }
+          popSubstitution(env, epushed);
+        }
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -1739,8 +1787,31 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // attempt at this compiled the corpus into fifty-seven invalid modules while every hand-written
   // case, which had no strings and so no helpers, passed.
   for (i32 ii = 0; ii < env.instCount; ii++) {
+  // **Only the ones registration built.** An instance discovered after the fixed point gave up —
+  // or one whose template is not in this module — has no members in the tables, and emitting its
+  // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
+  // reports as a `struct.get` on a number several functions later.
+  if (!env.isStructName(env.instName[ii])) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                         env.instOf[ii]);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcIndex[emitAt] < 0) {
+              emitAt = emitAt + 1;
+              continue;
+            }
+            emitAt = emitAt + 1;
+            emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                         "", methods[m].returnType, methods[m].params, methods[m].body,
+                         methods[m].hasThis ? env.instName[ii] : "", index, declTypes);
+            index = index + 1;
+          }
+          popSubstitution(env, epushed);
+        }
         case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -1930,14 +2001,34 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
 
 /** Statements, in order. */
 /**
+ * The variant an arm names, within the enum it is matching on.
+ *
+ * A template's variants belong to its **instances**: `Some` in `Option<i32>` and `Some` in
+ * `Option<string>` are two variants with one name, so an instance registers its own under a name
+ * that carries the instance with it. Every place an arm's text becomes a variant comes through here
+ * with the enum in hand — which is the only place that knows which `Some` is meant.
+ */
+string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
+  string raw = tokenTextOf(src, lexed, tok);
+  if (isInstance(en)) { return en + "." + raw; }
+  return env.keyAt(raw, tokenLine(lexed, tok));
+}
+
+/**
  * The variant a `Enum.Variant` names, or `""` when the member is an ordinary field access.
  *
  * `Shape.Point` and `p.x` are the same node — a member of something — and only the table can tell
  * them apart: the object is a bare name that is an *enum*, and the member is one of its variants.
  */
-string variantOfMember(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, string want) {
   match (obj.kind) {
     case Ident(tok): {
+      // `Option.Some(3)` names a **template**, and which instance it is comes from the slot — the
+      // same rule `Vec.create()` follows, because the instantiation is not in the call either way.
+      if (isInstance(want) && templateOf(want) == tokenTextOf(src, lexed, tok)) {
+        string vw = want + "." + tokenTextOf(src, lexed, nameTok);
+        return env.enumOf(vw) == want ? vw : "";
+      }
       string on = nameKeyOf(env, src, lexed, tok);
       if (!env.isEnumName(on)) { return ""; }
       string vn = nameKeyOf(env, src, lexed, nameTok);
@@ -1946,6 +2037,11 @@ string variantOfMember(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
     }
     else: { return ""; }
   }
+}
+
+/** The same question with no slot in hand, which is every use but a template's. */
+string variantOfMember(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok) {
+  return variantOfMemberAt(src, lexed, env, obj, nameTok, "");
 }
 
 /**
@@ -2105,7 +2201,7 @@ void emitMatchStmt(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
   i32 done = 0;
   for (i32 a = 0; a < arms.len(); a++) {
     if (a == elseAt) { continue; }
-    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
+    string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
     emitTagOf(fb, env, subj, en);
     fb.byte(65);
     fb.i32leb(env.variantTags[env.variantAt(vn)]);
@@ -2167,7 +2263,7 @@ void emitMatchExpr(B fb, u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arm
     if (a == elseAt) { continue; }
     done = done + 1;
     bool tail = elseAt < 0 && done == cases;
-    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
+    string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
     if (!tail) {
       emitTagOf(fb, env, subj, en);
       fb.byte(65);
@@ -2863,8 +2959,9 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
         case Member(obj, nameTok): {
           string mname = tokenTextOf(src, lexed, nameTok);
           // `Shape.Circle(2.0)` reaches here as a **call**, because that is what it looks like from
-          // the parser's side. It builds a value instead.
-          string vnew = variantOfMember(src, lexed, env, obj, nameTok);
+          // the parser's side. It builds a value instead — and for a template's variant, which
+          // instance it builds comes from the slot.
+          string vnew = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
           if (vnew != "") {
             Expr?[] vargs = Expr?[args.len()]();
             for (i32 i = 0; i < args.len(); i++) { vargs[i] = args[i]; }
@@ -3022,7 +3119,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Member(obj, nameTok): {
       // A payload-less variant is a **value and not a call** — `Shape.Point`, with no parentheses —
       // so the construction has to be recognised here as well as under `Call`.
-      string vnew2 = variantOfMember(src, lexed, env, obj, nameTok);
+      string vnew2 = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
       if (vnew2 != "") {
         emitVariantNew(fb, src, lexed, env, vnew2, Expr?[0]());
         return;
@@ -3751,7 +3848,7 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   if (!env.isEnumName(en)) { return "a match on something that is not an enum"; }
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0) { continue; }
-    string vn = nameKeyOf(env, src, lexed, arms[a].variantTok);
+    string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
     if (env.enumOf(vn) != en) { return "an arm naming a variant of another enum"; }
   }
   return "";
@@ -3767,7 +3864,8 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
 i32 pushArmNames(u8[] src, Lexed lexed, Env env, Arm arm, Expr subject) {
   i32 saved = env.localCount;
   if (arm.variantTok < 0) { return saved; }
-  string vn = nameKeyOf(env, src, lexed, arm.variantTok);
+  string vn = armVariant(env, src, lexed, arm.variantTok,
+                         env.canonType(typeOfE(src, lexed, env, subject)));
   i32 vi = env.variantAt(vn);
   if (vi < 0) { return saved; }
   string en = env.variantOwners[vi];
@@ -3941,11 +4039,31 @@ bool isRefType(Env env, string t) {
  */
 string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
+    // A payload-less variant of a template is a **value and not a call** — `Opt.None` — so it needs
+    // the slot in the same way and reaches it through a different node.
+    case Member(obj, nameTok): {
+      return variantOfMemberAt(src, lexed, env, obj, nameTok, want) != ""
+        ? "" : unsupportedValue(src, lexed, env, e);
+    }
     // A static on a template takes its instantiation from the slot, so it can only be asked about
     // where there is one — `typeOfE` has none and would call the whole call untyped.
     case Call(callee, args): {
       match (callee.kind) {
         case Member(obj, nameTok): {
+          // A **template's variant** — `Option.Some(3)` — before its statics, since both are written
+          // on the template and only the table can tell a variant from a method.
+          string vw = variantOfMemberAt(src, lexed, env, obj, nameTok, want);
+          if (vw != "") {
+            i32 vwi = env.variantAt(vw);
+            if (args.len() != env.variantArity[vwi]) { return "a variant with the wrong count"; }
+            string vwo = env.variantOwners[vwi];
+            for (i32 i = 0; i < args.len(); i++) {
+              string a7 = unsupportedValueAt(src, lexed, env, args[i],
+                                             env.fieldTypeAt(vwo, env.variantSlot[vwi] + i));
+              if (a7 != "") { return a7; }
+            }
+            return "";
+          }
           string tw = templateStatic(env, src, lexed, obj, want);
           if (tw == "") { return unsupportedValue(src, lexed, env, e); }
           string tn = tokenTextOf(src, lexed, nameTok);
@@ -4428,7 +4546,8 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
       // stops it, so returning "nothing wrong here" ends the scan before the functions are asked,
       // and the module then comes back empty while the report says it is whole.
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
-        if (typeParams.len() > 0) { return "a generic enum"; }
+        // A template emits nothing; its instances are enums of their own.
+        if (typeParams.len() > 0) { continue; }
         if (methods.len() > 0) { return "a method on an enum"; }
       }
       // An import is only a blocker when nothing resolved it. Linked, the names it brings in are
@@ -4515,12 +4634,71 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
             }
             popSubstitution(env, pushed);
           }
+          // A generic **enum** — `Option<T>` — laid out exactly as a plain one is: a tag, then a
+          // slot per payload field of every variant. Its variants are registered under the
+          // instance's own name, since `Some` belongs to `Option<i32>` and to `Option<string>` and
+          // they are not the same variant.
+          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+            if (typeParams.len() == 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
+            i32 epushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
+            if (env.structCount >= env.structNames.len()) { env.full = true; }
+            if (env.structCount < env.structNames.len()) {
+              env.structNames[env.structCount] = inst;
+              env.structCount = env.structCount + 1;
+            }
+            if (env.fieldCount >= env.fieldNames.len()) { env.full = true; }
+            if (env.fieldCount < env.fieldNames.len()) {
+              env.fieldOwners[env.fieldCount] = inst;
+              env.fieldNames[env.fieldCount] = " tag";
+              env.fieldTypes[env.fieldCount] = "i32";
+              env.fieldCount = env.fieldCount + 1;
+            }
+            i32 eslot = 1;
+            for (i32 v = 0; v < variants.len(); v++) {
+              string vname = inst + "." + tokenTextOf(src, lexed, variants[v].nameTok);
+              if (env.variantCount >= env.variantNames.len()) { env.full = true; }
+              if (env.variantCount < env.variantNames.len()) {
+                env.variantNames[env.variantCount] = vname;
+                env.variantOwners[env.variantCount] = inst;
+                env.variantTags[env.variantCount] = v;
+                env.variantSlot[env.variantCount] = eslot;
+                env.variantArity[env.variantCount] = variants[v].fields.len();
+                env.variantCount = env.variantCount + 1;
+              }
+              for (i32 fi = 0; fi < variants[v].fields.len(); fi++) {
+                if (env.fieldCount >= env.fieldNames.len()) {
+                  env.full = true;
+                  break;
+                }
+                env.fieldOwners[env.fieldCount] = inst;
+                env.fieldNames[env.fieldCount] = vname + "." +
+                  tokenTextOf(src, lexed, variants[v].fields[fi].nameTok);
+                env.fieldTypes[env.fieldCount] =
+                  typeOfTyName(env, src, lexed, variants[v].fields[fi].type);
+                env.fieldCount = env.fieldCount + 1;
+              }
+              eslot = eslot + variants[v].fields.len();
+            }
+            for (i32 m = 0; m < methods.len(); m++) {
+              string[] empts = string[methods[m].params.len()]();
+              for (i32 a = 0; a < methods[m].params.len(); a++) {
+                empts[a] = typeOfTyName(env, src, lexed, methods[m].params[a].type);
+              }
+              env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
+                          typeOfTyName(env, src, lexed, methods[m].returnType), empts);
+            }
+            popSubstitution(env, epushed);
+          }
           else: { }
         }
       }
     }
     if (!env.instDirty) { return; }
   }
+  // Eight rounds and still finding new ones: rather than emit a module built from half a table, say
+  // so — `full` is the flag every other table overflow already sets.
+  env.full = true;
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
@@ -4737,8 +4915,30 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
       }
     }
     for (i32 ii = 0; ii < env.instCount; ii++) {
+    // **Only the ones registration built.** An instance discovered after the fixed point gave up —
+    // or one whose template is not in this module — has no members in the tables, and emitting its
+    // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
+    // reports as a `struct.get` on a number several functions later.
+    if (!env.isStructName(env.instName[ii])) { continue; }
       for (i32 di = 0; di < prog.decls.len(); di++) {
         match (prog.decls[di].kind) {
+          case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+            if (typeParams.len() == 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+            i32 epushed = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                           env.instOf[ii]);
+            for (i32 m = 0; m < methods.len(); m++) {
+              if (env.funcOk[at] &&
+                  !canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                           methods[m].hasThis ? env.instName[ii] : "",
+                           typeOfTyName(env, src, lexed, methods[m].returnType))) {
+                env.funcOk[at] = false;
+                changed = true;
+              }
+              at = at + 1;
+            }
+            popSubstitution(env, epushed);
+          }
           case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
             if (typeParams.len() == 0) { continue; }
             if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }

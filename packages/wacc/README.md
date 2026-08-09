@@ -1183,6 +1183,43 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Generic enums, and the comma that made two type parameters fail
+
+`Option<T>` is a generic **enum**, and `std`'s `Vec.get` returns one — which is why compiling `Vec`
+moved no whole files last slot. Instances of an enum template are now laid out exactly as a plain
+enum is, a tag and a slot per payload, with their variants registered under the instance's own name:
+`Some` in `Option<i32>` and `Some` in `Option<string>` are two variants with one name, so every place
+an arm's text becomes a variant now passes the enum it is matching on.
+
+`Option.Some(3)` is written on the **template**, like `Vec.create()`, so which instance it builds
+comes from the slot — and a payload-less `Option.None` reaches the walk through a different node than
+`Option.Some(3)` does, so both had to be given the slot separately.
+
+**Then the bug that had been waiting two slots.** Two type parameters failed while one worked, and
+the reduction never explained why. It is the *signature strings*: a function's type is spelled
+`fn[bool(Result<i32,string>)]`, the scanners that read those count `[` and `(` as nesting — and not
+`<`. So the comma **inside** the instantiation reads as a parameter separator, the function declares
+one parameter while its type says two, and wasm reports it as a `struct.get` on a number in a method
+several functions away.
+
+```
+Compiling function #90 failed: struct.get[0] expected type (ref null 13), found local.get of type i32
+```
+
+Three characters in three scanners. It is the same lesson as the heap type and the `else` arm: **an
+encoding is a parser, and a parser that does not nest is wrong on the first input that nests.**
+
+| | |
+|---|---|
+| corpus | 248 whole, **0 invalid** |
+| what stops it now | `a generic function` (31), `an import from a capability` (35) |
+| sweep | 3,817 programs, 3,418 compared, 0 mismatched — 88 of them generic |
+
+The whole-file count is unmoved again, and again the reason is the next layer: `mapOption` is a
+generic **function**, `T max<T>(T a, T b)`, whose instantiation comes from its *arguments* rather
+than from a slot. That is inference, which is a different thing from substitution, and it is what
+these 31 files are waiting for.
+
 ### Monomorphisation, second attempt: the ordering was the bug
 
 The last attempt compiled the corpus into 57 invalid modules and was reverted. The cause was in the

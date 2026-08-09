@@ -559,5 +559,43 @@ export function generateEmit(): Cell[] {
   add("template beside the string helpers",
     BOX + `export i32 f() { Box<string> b = Box.of("a" + "b"); Box<i32> n = Box.of(3); ` +
     `return b.get().len() + n.get(); }`);
+
+  // Generic enums, and templates with **two** type parameters — which failed for a reason no
+  // one-parameter cell could show: a signature is spelled `fn[bool(Result<i32,string>)]`, and a
+  // scanner that nests brackets but not angle brackets reads the comma inside the instantiation as
+  // a parameter separator. The function then declared one parameter while its type said two.
+  const OPT = `enum Opt<T> { Some(T v), None\n` +
+    `  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }\n` +
+    `  T orElse(const this, T d) { match (this) { case Some(v): { return v; } case None: { return d; } } }\n}\n`;
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    add(`generic enum ${t} some`, OPT + `export ${t} f() { Opt<${t}> o = Opt.Some(${v}); return o.orElse(${w}); }`);
+    add(`generic enum ${t} none`, OPT + `export ${t} f() { Opt<${t}> o = Opt.None; return o.orElse(${w}); }`);
+    add(`generic enum ${t} tested`, OPT + `export bool f() { Opt<${t}> o = Opt.Some(${v}); return o.isSome(); }`);
+    add(`generic enum ${t} matched`,
+      OPT + `export ${t} f() { Opt<${t}> o = Opt.Some(${v}); ` +
+      `match (o) { case Some(x): { return x; } case None: { return ${w}; } } }`);
+    add(`generic enum ${t} beside another instance`,
+      OPT + `export ${t} f() { Opt<${t}> a = Opt.Some(${v}); Opt<bool> b = Opt.None; ` +
+      `return b.isSome() ? ${w} : a.orElse(${w}); }`);
+    add(`two type parameters ${t}`,
+      `struct Two<A, B> { A a; B b; Two<A,B> of(A x, B y) { return Two(x, y); } ` +
+      `A first(const this) { return this.a; } B second(const this) { return this.b; } }\n` +
+      `export ${t} f() { Two<${t}, bool> p = Two.of(${v}, true); ` +
+      `return p.second() ? p.first() : ${w}; }`);
+    add(`two type parameters ${t} reversed`,
+      `struct Two<A, B> { A a; B b; Two<A,B> of(A x, B y) { return Two(x, y); } ` +
+      `B second(const this) { return this.b; } }\n` +
+      `export ${t} f() { Two<bool, ${t}> p = Two.of(false, ${v}); return p.second(); }`);
+  }
+  add("two type parameters over references",
+    `struct Two<A, B> { A a; B b; Two<A,B> of(A x, B y) { return Two(x, y); } ` +
+    `i32 sizes(const this) { return this.a.len() + this.b.len(); } }\n` +
+    `export i32 f() { Two<string, i32[]> p = Two.of("abc", i32[](1, 2)); return p.sizes(); }`);
+  add("a generic enum with two parameters",
+    `enum Res<T, E> { Ok(T v), Err(E e)\n  bool isOk(const this) { return match (this) { case Ok(_): true, case Err(_): false }; }\n}\n` +
+    `export bool f() { Res<i32, string> r = Res.Ok(3); Res<i32, string> b = Res.Err("no"); ` +
+    `return r.isOk() && !b.isOk(); }`);
   return out;
 }
