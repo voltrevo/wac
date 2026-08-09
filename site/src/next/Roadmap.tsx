@@ -81,7 +81,7 @@ export default function Roadmap() {
             ["process table, users and login, a line discipline", "done"],
             ["init — services as a file in the image", "done"],
             ["a spawned stage reaching the session's filesystem", "done"],
-            ["a desktop", "not started"],
+            ["a desktop", "started"],
           ]}
         />
         <P>
@@ -93,14 +93,29 @@ export default function Roadmap() {
           session does not.
         </P>
         <P>
-          What is left is the row that keeps the strongest version of this honest. A pipeline stage
-          that is <em>spawned</em> gets a fresh instance, and a fresh instance is handed the
-          host&rsquo;s filesystem rather than the session&rsquo;s — so a sealed session is sealed
-          everywhere except through a spawn, and the browser terminal has a{" "}
-          {m({ children: "/bin" })} its own spawned programs cannot see. That is one decision about
-          what {m({ children: "spawnSelf" })} hands a child rather than a missing feature, and it is
-          the thing between here and &ldquo;the same system in a tab&rdquo;.{" "}
+          The row that kept the strongest version of this honest has closed. A spawned stage used to
+          be handed the host&rsquo;s filesystem rather than the session&rsquo;s, so a sealed session
+          was sealed everywhere except through a spawn; a child asks its parent over a channel now,
+          and the browser terminal&rsquo;s spawned programs see the same {m({ children: "/bin" })}{" "}
+          it does.
+        </P>
+        <P>
+          Closing it is also what made the rest visible, and that is the more useful thing to report.
+          Turning spawning on for sealed sessions made two latent leaks reachable within the day —{" "}
+          {m({ children: "tar" })} asking the host whether a path was a symbolic link, so the same
+          image archived differently depending on what the computer happened to have at that path —
+          and it turned out every service {m({ children: "init" })} started had no filesystem at all
+          and no way to say so. Both are fixed. Both were invisible while nothing spawned, which is
+          the argument for treating this direction as well exercised rather than finished.{" "}
           <A href={`${BLOB}/design/system/0001-a-self-contained-system.md`} external>design/0001</A>
+        </P>
+        <P>
+          The desktop is the last of the eight steps and has started: a window manager written in wac
+          over this system, with the terminal as one window. Its test is the one that makes it a
+          system rather than a picture of one —{" "}
+          {m({ children: "cd /home/wac" })} typed in the terminal moves what the files window lists.
+          What is still missing is above all of it: {m({ children: "init" })} starts services and
+          never stops one, and there is no restart policy, no dependency order and no readiness.
         </P>
       </Section>
 
