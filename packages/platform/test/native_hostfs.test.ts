@@ -230,6 +230,39 @@ Deno.test("the two hosts agree where the real tool prints more than this system 
  * granted to this application" against "this program was not granted reading") *and* named the
  * resolved absolute path of a machine the program is not supposed to be able to see.
  */
+Deno.test("`kill %1` ends a background job on both hosts", async () => {
+  // design/0001 step 3's criterion, and the one place a signal in this system does what a kernel's
+  // does: a background job is a separate instance, so nothing cooperative can reach it, and `kill`
+  // delivers by `closeSocket` — which both hosts implement and which is the whole reason `kill` can
+  // end a job where it cannot end a pipeline stage.
+  //
+  // Here rather than only in `packages/box` because the *mechanism* is the capability layer's, and
+  // the two hosts stop a child differently underneath: Deno terminates the worker, and the native
+  // runtime finishes the child's queues so that its next write answers false. For every program in
+  // this repo that is the same observable behaviour, which is what this asserts — and the difference
+  // itself is wac-mono 0123.
+  const native = await nativeBinary();
+  if (native === null) return;
+
+  const script = "seq 1 300000 & kill %1; wait";
+  fixture();
+  const js = runIt(deno, ["-c", script]);
+  fixture();
+  const rs = runIt(native, [manifest, "-c", script]);
+
+  const lines = (t: string) => t.trimEnd().split("\n").filter((l) => l.length > 0).length;
+  assertEquals(lines(js.out) < 1000, true, `deno: the kill did not stop it: ${lines(js.out)} lines`);
+  assertEquals(lines(rs.out) < 1000, true, `native: the kill did not stop it: ${lines(rs.out)} lines`);
+  assertEquals(rs.code, js.code, "the hosts disagree about the status");
+
+  // The canary: left alone the job really does produce all of it, on both. Without this, a job that
+  // failed to start would satisfy every assertion above.
+  fixture();
+  assertEquals(lines(runIt(deno, ["-c", "seq 1 300000 & wait"]).out), 300000, "deno ran no job");
+  fixture();
+  assertEquals(lines(runIt(native, [manifest, "-c", "seq 1 300000 & wait"]).out), 300000, "native ran no job");
+});
+
 Deno.test("every capability that needs a grant is refused, the same way, on both hosts", async () => {
   const native = await nativeBinary();
   if (native === null) return;

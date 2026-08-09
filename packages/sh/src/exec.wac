@@ -722,6 +722,19 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
       status = 1;
       continue;
     }
+    // **A background job is a separate instance, and writing on a row cannot reach it.** Its process
+    // table is its own — a spawned child runs `mountSystem` fresh, so its pid 1 is itself — and the
+    // row this shell keeps for it is a row nothing over there will ever read. `kill %1` therefore
+    // reported success and did nothing at all, for ever, by construction.
+    //
+    // What *can* reach it is the capability: `closeSocket` on a child's handle stops the child. So a
+    // signal to a job is delivered by closing it, which is the nearest thing this world has to what a
+    // kernel does — and the reason `kill` ends a background job where it cannot end a pipeline stage.
+    i32 job = jobOfPid(sh, pid);
+    if (job >= 0) {
+      endJob(sh, job, sig);
+      continue;
+    }
     if (!sh.fs.procs.signal(pid, sig)) {
       // Present in the table but not running: a row that has exited and not been reaped.
       err.pushAll(("kill: (" + given + ") - No such process\n").toBytes());
@@ -864,6 +877,42 @@ void runBackground(Shell sh, AndOr list) {
   // bash announces a job at the moment it starts, on *stderr* — `[1] 3353553` — and only when the
   // shell is interactive. A `-c` script gets nothing, which is what this matches.
   sh.status = 0;
+}
+
+/** The job holding `pid`, or -1. */
+i32 jobOfPid(Shell sh, i32 pid) {
+  for (i32 i = 0; i < sh.jobs.len(); i++) {
+    if (sh.jobs.get(i).pid == pid && !sh.jobs.get(i).done) { return i; }
+  }
+  return -1;
+}
+
+/**
+ * End a background job with `sig`, and take what it managed to say.
+ *
+ * `closeSocket` is the whole mechanism: it is documented as stopping the child outright, and it is the
+ * only thing in this world that can end a *separate instance*. Everything else about a signal here is
+ * cooperative, and a separate instance has nothing to cooperate with — its process table is its own.
+ *
+ * The status is `128 + sig`, which is what a shell reports for a child a signal ended, and it becomes
+ * the job's own so that a later `wait %1` answers it.
+ *
+ * **Closing comes first, and whatever the child had written and the shell had not read is lost.** The
+ * first version of this drained the child's output to its end and *then* closed — which reads as
+ * tidiness and is a lie: draining waits for the child to finish, so `seq 1 300000 & kill %1` printed
+ * all three hundred thousand lines and reported 143. The job was not killed; only the number was. A
+ * shell owns a background job's pipe here, so ending the child ends the pipe, and that is the honest
+ * meaning of a kill rather than a shortcoming to work around.
+ */
+void endJob(Shell sh, i32 index, i32 sig) {
+  Job j = sh.jobs.get(index);
+  sh.cli.closeSocket(j.handle);
+  if (j.errHandle >= 0) { sh.cli.closeSocket(j.errHandle); }
+  j.done = true;
+  j.handle = -1;
+  j.code = 128 + sig;
+  sh.fs.procs.exited(j.pid, j.code);
+  sh.fs.procs.reap(j.pid);
 }
 
 /** The job `%n` names, or -1. `%` and `%+` are the most recent, `%-` the one before it. */

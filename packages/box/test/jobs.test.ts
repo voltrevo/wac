@@ -162,3 +162,55 @@ Deno.test({
     }
   },
 });
+
+/**
+ * `kill %1` **ends** a background job — design/0001 step 3's own criterion, at last.
+ *
+ * The criterion is "`ps` shows the pipeline you are running and `kill` ends one", and until now `kill`
+ * could not end anything at all. Signals here are cooperative — a wasm function call cannot be
+ * interrupted from outside — so `kill` writes a signal on a row and the receiver picks it up at its
+ * next check. **A background job has no such row to read.** It is a separate instance with its own
+ * process table, where its own pid is 1; the row this shell keeps for it is one nothing over there
+ * will ever look at. So `kill %1` reported success and did nothing, for ever, by construction.
+ *
+ * What reaches a separate instance is the capability. `closeSocket` on a child's handle stops the
+ * child, so that is how a signal to a job is delivered — the one place in this system where a signal
+ * does what a kernel's does, and the reason `kill` ends a *job* where it cannot end a pipeline stage.
+ *
+ * The measurement is the line count, because a status alone cannot tell the difference: the first
+ * version of `endJob` drained the child's output before closing, so `seq 1 300000 & kill %1` printed
+ * all three hundred thousand lines and reported 143. The job was not killed; only the number was.
+ */
+Deno.test("`kill %1` ends a background job rather than relabelling it", () => {
+  const run = (script: string) =>
+    new Deno.Command(wacshBinary, {
+      args: ["-c", script],
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+      env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+      clearEnv: true,
+    }).outputSync();
+  const dec = new TextDecoder();
+
+  // Left alone, the job produces all of it — the canary, without which "few lines" below could mean
+  // the job never started.
+  const whole = dec.decode(run("seq 1 300000 & wait").stdout).trimEnd().split("\n");
+  assertEquals(whole.length, 300000, `an unkilled job produced ${whole.length} lines`);
+
+  // Killed, it does not. Not asserted as an exact count: how far a child gets before the close lands
+  // is a race, and pinning a number would be pinning this machine's scheduling. What is definite is
+  // that it is nowhere near all of them.
+  const killed = run("seq 1 300000 & kill %1; wait");
+  const lines = dec.decode(killed.stdout).trimEnd().split("\n").filter((l) => l.length > 0);
+  assertEquals(lines.length < 1000, true, `the kill did not stop it: ${lines.length} lines`);
+  assertEquals(killed.code, 0, dec.decode(killed.stderr));
+
+  // And the status is a shell's for a child a signal ended.
+  const status = run("seq 1 300000 & kill %1; wait %1; echo st=$?");
+  assertEquals(dec.decode(status.stdout).trimEnd().endsWith("st=143"), true, dec.decode(status.stdout));
+  // `kill -9` too, which is the one signal a reader will expect to be special. It is not special
+  // here — nothing can end a process except the capability — but it does reach a job.
+  const nine = run("seq 1 300000 & kill -9 %1; wait %1; echo st=$?");
+  assertEquals(dec.decode(nine.stdout).trimEnd().endsWith("st=137"), true, dec.decode(nine.stdout));
+});

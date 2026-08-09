@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0123](open/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md) | `closeSocket` stops a child outright on one host and cooperatively on the other | bug | wrong answer |
 | [0122](open/0122-randombytes-above-64-kib-fails-on-deno-and-the-browser.md) | `randomBytes` above 64 KiB fails on Deno and the browser — [gh#53](https://github.com/voltrevo/wac-mono/issues/53) | bug | trap |
 | [0121](open/0121-send-to-a-closed-child-feed-reports-success-and-drops-the-data.md) | `send` to a closed child feed reports success and drops the data — [gh#52](https://github.com/voltrevo/wac-mono/issues/52) | bug | wrong answer |
 | [0120](open/0120-child-output-sinks-are-not-awaited-so-backpressure-does-not-hold.md) | child output sinks are not awaited, so backpressure does not hold — [gh#51](https://github.com/voltrevo/wac-mono/issues/51) | bug | wrong answer |
