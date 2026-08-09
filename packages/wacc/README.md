@@ -1417,13 +1417,56 @@ here, and it is always the walk that is behind.
 | invalid | 0 | 0 |
 | sweep | 4,443 programs, 4,034 compared | **4,449 programs, 4,040 compared, 0 mismatched** |
 
-**One fixable file left**, and it is the largest remaining feature: `mapOption(some, double)` — a
-generic *function*, whose `T` comes from an argument's type and whose `U` comes from a callback's
-return type. Generic types are instantiated here because the source writes `Vec<i32>` and the
-instantiation can be read off the page; a generic function is never written with its arguments, so
-this one needs inference — match the declared parameter types against the actual ones, bind the
-parameters, and compile a copy per binding. The other three files import files the corpus does not
-contain, and no feature will fix those.
+### Generic functions, and the order a module is numbered in — 334 to 335
+
+`mapOption(some, double)` names no instance. `T` comes from the first argument's type and `U` from
+the *return type of the second*, which is the half of it a method could not have expressed and the
+reason it is a function at all. So the match is structural and one-sided: the declaration is the
+pattern, the argument's type is the subject, and a parameter used twice has to be given the same
+answer both times.
+
+Most of the work was not the inference. It was **where** the answer is allowed to appear.
+
+- **A call is only visible to a walk that has locals.** The arguments are local variables, so the
+  pre-pass that walks bodies for their array types types them all as nothing. The walk that knows
+  about locals is `canEmit`, so discovery runs that — over every body, inside the fixed point,
+  and throws the verdict away.
+- **And throws away what it recorded.** `canEmit` remembers the first thing that stopped it, for the
+  report. A walk run while half the instances do not exist yet stops constantly, and keeping that
+  named a round-zero shortage as the reason a file was not emitted.
+- **Discovery and registration are not the same order.** A function's index is its position in the
+  registration table, and the emission passes walk the *instance list*. Registering an instance the
+  moment it was discovered put a generic function ahead of the methods of an instance discovered
+  before it — and every call after that point reached the wrong function. So discovery only notes the
+  name; `collectInstances` registers, in instance order.
+- **Building one counts as progress.** A body walked before an instance exists stops at the first
+  thing it cannot resolve, so a call further down it is not reached until the round after. The fixed
+  point left on "no new instance was named", which is exactly the round that could not have named
+  one.
+- **A literal has no type of its own, and here there is no slot to take one from.** a call passing a bare `7` to a `T` parameter binds
+  `T` from the literal itself — `i32`, the default of its family. It is the one place in this emitter
+  where a literal's type comes from the literal.
+- **A generic that calls a generic** names an instance whose arguments are its own parameters, so an
+  instance's body gets the same locals-aware walk its callers got.
+
+Eleven programs in the sweep, and one of them carries an issue number: an `Opt<string>` that exists
+only as a generic function's *return type* gets no methods in the reference — `issues/lang/0086`,
+minimised to the fact that writing `Opt<string> unused = Opt.None;` anywhere in the file fixes it.
+wacc instantiates them, so the sweep writes the extra line and the program becomes one both
+compilers agree on.
+
+| | before | after |
+|---|---|---|
+| whole files | 334 | **335 of 338** |
+| invalid | 0 | 0 |
+| spec answers | 289/289 | **322/322** — thirty-three more programs reach the comparison |
+| sweep | 4,449 programs, 4,040 compared | **4,460 programs, 4,051 compared, 0 mismatched** |
+
+**Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
+does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
+compiler change makes those exist. The next measurement has to come from somewhere other than this
+corpus: the checker is at ~54 diagnostics against the reference's ~190, and rung 3's oracles are
+saturated, so it wants a sharper one rather than more of the same.
 
 ### One reader, because two disagreed
 

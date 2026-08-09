@@ -968,6 +968,48 @@ export function generateEmit(): Cell[] {
       `export i32 f() { return (pick(true) is null) ? pick(false)!.v : 0; }`);
   }
 
+  // **A generic function is never written with its arguments**, so every instance below is inferred
+  // from the types that turned up at the call. What can go wrong is the *count*: an instance is a
+  // whole extra function in the module, and a compiler that discovers one after it has numbered the
+  // functions numbers it twice. So these check answers, which is what a wrong index changes.
+  {
+    const G = `T ident<T>(T x) { return x; }\n` +
+      `T firstOf<T>(T[] a) { return a[0]; }\n` +
+      `U applyTo<T, U>(T x, fn[U(T)] f) { return f(x); }\n` +
+      `i32 dbl(i32 x) { return x * 2; }\n` +
+      `string desc(i32 x) { return x > 0 ? "pos" : "neg"; }\n`;
+    add("a generic identity at one type", `${G}export i32 f() { return ident(7); }`);
+    add("a generic identity at two types",
+      `${G}export i32 f() { return ident(7) + ident("abc").len(); }`);
+    add("a generic identity on a struct",
+      `struct P { i32 v; }\n${G}export i32 f() { return ident(P(9)).v; }`);
+    add("a generic over an array",
+      `${G}export i32 f() { i32[] a = i32[](4, 5); return firstOf(a); }`);
+    add("a generic over an array of strings",
+      `${G}export i32 f() { string[] a = string[]("xy", "z"); return firstOf(a).len(); }`);
+    add("two type parameters, the second from a callback",
+      `${G}export i32 f() { return applyTo(21, dbl); }`);
+    add("the same generic at two second-parameters",
+      `${G}export i32 f() { return applyTo(21, dbl) + applyTo(1, desc).len(); }`);
+    add("a generic calling a generic",
+      `${G}T twice<T>(T x) { return ident(ident(x)); }\nexport i32 f() { return twice(5) + twice("ab").len(); }`);
+    add("a generic used inside a method",
+      `${G}struct Q { i32 v; i32 get(const this) { return ident(this.v); } }\n` +
+      `export i32 f() { return Q(6).get(); }`);
+    add("a generic over a template instance",
+      `enum Opt<T> { Some(T v), None\n  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }\n}\n` +
+      `Opt<U> mapOpt<T, U>(Opt<T> o, fn[U(T)] f) { return match (o) { case Some(v): Opt.Some(f(v)), case None: Opt.None }; }\n` +
+      `i32 dbl2(i32 x) { return x * 2; }\nstring d2(i32 x) { return "n"; }\n` +
+      // `Opt<string> spelled` is not decoration: the reference gives an instance no methods when the
+      // only thing that names it is a generic function's return type, which is `issues/lang/0086`.
+      // Writing it once is what both compilers agree on, and the program is the same program.
+      `export i32 f() { Opt<i32> o = Opt.Some(21); Opt<i32> n = Opt.None; Opt<string> spelled = Opt.None;\n` +
+      `  return mapOpt(o, dbl2).orElse(0) + mapOpt(n, dbl2).orElse(1) + mapOpt(o, d2).orElse("?").len()\n` +
+      `    + (spelled.orElse("") == "" ? 0 : 100); }`);
+    add("a generic whose instance is only used once",
+      `${G}export i32 f() { return ident(true) ? 1 : 0; }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);

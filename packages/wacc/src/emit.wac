@@ -329,6 +329,122 @@ string emittedSig(Env env, u8[] src, Lexed lexed, Ty returnType, Param[] params,
 }
 
 /** The signature a registered function has, spelled the way a `fn[...]` type is. */
+/** The type a literal is when nothing else says — the default of its family, or `""`. */
+string naturalLiteralType(Expr e) {
+  match (e.kind) {
+    case IntLit(tok): { return "i32"; }
+    case FloatLit(tok): { return "f64"; }
+    case StrLit(tok): { return "string"; }
+    case BoolLit(value): { return "bool"; }
+    // A `null` says nothing about what it is a null *of*, so a type parameter it is the only
+    // evidence for cannot be inferred at all.
+    else: { return ""; }
+  }
+}
+
+/**
+ * Bind a generic function's type parameters by **matching its declared types against the actual ones**.
+ *
+ * `mapOption<T, U>(Option<T> o, fn[U(T)] f)` called with an `Option<i32>` and an `fn[string(i32)]`
+ * binds `T` from the first argument and `U` from the *return type of the second* — which is the half
+ * of it a method could not have expressed, and the reason this is a function in the first place.
+ *
+ * The match is structural and one-sided: the declaration is the pattern, the argument's type is the
+ * subject, and a parameter that appears twice has to be given the same answer both times.
+ */
+bool bindTypeParams(Env env, u8[] src, Lexed lexed, Ty t, string actual, i32[] tps, string[] out) {
+  match (t.kind) {
+    case Prim(tok): { return true; }
+    case Arr(elem): {
+      if (!isArrayType(actual)) { return false; }
+      return bindTypeParams(env, src, lexed, elem, elemOf(actual), tps, out);
+    }
+    case Nullable(inner): { return bindTypeParams(env, src, lexed, inner, actual, tps, out); }
+    case Funcref(ret, params): {
+      if (!isFuncrefType(actual)) { return false; }
+      if (sigParamCount(actual) != params.len()) { return false; }
+      if (!bindTypeParams(env, src, lexed, ret, sigReturn(actual), tps, out)) { return false; }
+      for (i32 i = 0; i < params.len(); i++) {
+        if (!bindTypeParams(env, src, lexed, params[i], sigParamAt(actual, i), tps, out)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case Named(tok, typeArgs): {
+      string nm = tokenTextOf(src, lexed, tok);
+      for (i32 i = 0; i < tps.len(); i++) {
+        if (tokenTextOf(src, lexed, tps[i]) != nm) { continue; }
+        if (actual == "") { return false; }
+        // Seen before: the two uses have to agree, or this is not the instance being called.
+        if (out[i] != "" && out[i] != actual) { return false; }
+        out[i] = actual;
+        return true;
+      }
+      if (typeArgs.len() == 0) { return true; }
+      if (!isInstance(actual) || templateOf(actual) != nm) { return false; }
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        if (!bindTypeParams(env, src, lexed, typeArgs[i], typeArgAt(actual, i), tps, out)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+}
+
+/**
+ * The instance a call to a generic function names — `mapOption<i32,string>` — or `""`.
+ *
+ * Spelled the same way a generic type's instance is, because it is the same thing: a name plus its
+ * arguments, registered on sight and compiled once. The difference is only where the arguments come
+ * from, and this is the function that answers that.
+ */
+string genericCallInstance(Env env, u8[] src, Lexed lexed, i32 tok, Expr[] args) {
+  if (env.prog is null) { return ""; }
+  string raw = tokenTextOf(src, lexed, tok);
+  Program pg = env.prog!;
+  for (i32 d = 0; d < pg.decls.len(); d++) {
+    match (pg.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        if (tokenTextOf(src, lexed, nameTok) != raw) { continue; }
+        if (params.len() != args.len()) { return ""; }
+        string[] bound = string[typeParams.len()]();
+        for (i32 i = 0; i < args.len(); i++) {
+          string at = typeOfE(src, lexed, env, args[i]);
+          // **A literal has no type of its own and here there is no slot to take one from**: the
+          // parameter is `T`, so what `T` is *is* the question the literal has to answer. Its natural
+          // type is the answer — `ident(7)` is `ident<i32>` — which is the one place in this emitter
+          // a literal's type comes from the literal.
+          if (at == "") { at = naturalLiteralType(args[i]); }
+          if (!bindTypeParams(env, src, lexed, params[i].type, at, typeParams, bound)) { return ""; }
+        }
+        string inst = raw + "<";
+        for (i32 i = 0; i < bound.len(); i++) {
+          // A parameter no argument mentions cannot be inferred, and guessing would compile a
+          // different function from the one that was called.
+          if (bound[i] == "") { return ""; }
+          if (i > 0) { inst = inst + ","; }
+          inst = inst + bound[i];
+        }
+        inst = inst + ">";
+        // **Noted on sight, registered in order.** Which instances exist is discovered here, by
+        // whichever walk reaches the call first; *registering* one — giving it an entry in the
+        // function table — happens in `collectInstances`, which walks the instances in the order
+        // they were discovered. The two have to be the same order, because the function table's
+        // order is the module's numbering and the emission passes iterate the instance list. Doing
+        // the registration here instead put a generic function's entry ahead of the methods of an
+        // instance discovered before it, and every call after that point reached the wrong index.
+        env.instantiate(inst, raw);
+        return inst;
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
 /**
  * The function slot `Owner.name` names when it is used as a *value*, or -1.
  *
@@ -779,6 +895,17 @@ export struct Env {
   /** The parent's name token, kept until every struct is declared and the key can be resolved. */
   i32[] structParentToks;
   /**
+   * The program itself, so a walk can find a *declaration* rather than only what was registered.
+   *
+   * A generic function is the one thing that cannot be registered up front: `mapOption<T, U>` has no
+   * instance until a call site says what `T` and `U` are, and it says so by the types of its
+   * arguments rather than in writing. The declaration therefore has to be readable from wherever a
+   * call is seen, which is several walkers deep and nowhere near the loop over `prog.decls`.
+   */
+  Program? prog;
+  /** Whether this round built an instance's members, which can unblock a walk in the next one. */
+  bool instBuilt;
+  /**
    * Each function's receiver type, or `""` — the owner of a method declared with `this`.
    *
    * A method is registered with its *declared* parameters, because a call site pushes the object
@@ -1114,7 +1241,7 @@ export struct Env {
                i32[512](), 0, i32[4096](), i32[4096](), string[4096](), string[4096](), 0,
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
-               string[1024](), i32[1024](), string[4096]());
+               string[1024](), i32[1024](), null, false, string[4096]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1842,9 +1969,17 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // or one whose template is not in this module — has no members in the tables, and emitting its
   // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
   // reports as a `struct.get` on a number several functions later.
-  if (!env.isStructName(env.instName[ii])) { continue; }
+  // A function instance builds no type, so it is "built" when its own entry is registered.
+  if (!env.isStructName(env.instName[ii]) && env.funcAt(env.instName[ii]) < 0) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        // One function per instance, in the same place in the order its registration put it.
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+          countAt = countAt + 1;
+        }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -1907,9 +2042,18 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // or one whose template is not in this module — has no members in the tables, and emitting its
   // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
   // reports as a `struct.get` on a number several functions later.
-  if (!env.isStructName(env.instName[ii])) { continue; }
+  // A function instance builds no type, so it is "built" when its own entry is registered.
+  if (!env.isStructName(env.instName[ii]) && env.funcAt(env.instName[ii]) < 0) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 fpushed2 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                          env.instOf[ii]);
+          env.sigType(emittedSig(env, src, lexed, returnType, params, ""));
+          popSubstitution(env, fpushed2);
+        }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -2040,9 +2184,24 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // or one whose template is not in this module — has no members in the tables, and emitting its
   // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
   // reports as a `struct.get` on a number several functions later.
-  if (!env.isStructName(env.instName[ii])) { continue; }
+  // A function instance builds no type, so it is "built" when its own entry is registered.
+  if (!env.isStructName(env.instName[ii]) && env.funcAt(env.instName[ii]) < 0) { continue; }
     for (i32 di = 0; di < prog.decls.len(); di++) {
       match (prog.decls[di].kind) {
+        // **Never exported.** An instance's name is not a name anybody wrote, and two modules that
+        // happened to infer the same one would collide on it.
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
+          emitAt = emitAt + 1;
+          i32 fpushed3 = pushSubstitution(env, src, lexed, typeParams, env.instName[ii],
+                                          env.instOf[ii]);
+          emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                       "", returnType, params, body, "", index, declTypes);
+          popSubstitution(env, fpushed3);
+          index = index + 1;
+        }
         case EnumDecl(nameTok, variants, exported, methods, typeParams): {
           if (typeParams.len() == 0) { continue; }
           if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
@@ -3377,6 +3536,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
             return;
           }
           i32 at = env.funcAt(cname);
+          if (at < 0) { at = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
           if (at < 0 || env.funcIndex[at] < 0) { return; }
           for (i32 i = 0; i < args.len(); i++) {
             emitExprAt(fb, src, lexed, env, args[i], env.paramTypeAt(at, i));
@@ -3943,6 +4103,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           string n2 = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n2)) { return n2; }
           i32 at = env.funcAt(n2);
+          if (at < 0) { at = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
           return at < 0 ? "" : env.funcReturns[at];
         }
         else: { return ""; }
@@ -4714,6 +4875,22 @@ string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
         else: { return unsupportedValue(src, lexed, env, e); }
       }
     }
+    // **And a `match` expression hands it to every arm**, for the same reason and one node over:
+    // `return match (o) { case Some(v): Opt.Some(f(v)), case None: Opt.None };` is a whole generic
+    // function's body, and which instance those variants build is written nowhere but the return
+    // type. The arm's own bindings go into scope first, exactly as the emitter puts them there.
+    case MatchExpr(subject, arms): {
+      string mm2 = unsupportedMatch(src, lexed, env, subject, arms);
+      if (mm2 != "") { return mm2; }
+      for (i32 a = 0; a < arms.len(); a++) {
+        if (arms[a].value is null) { return "an arm with no value"; }
+        i32 saved2 = pushArmNames(src, lexed, env, arms[a], subject);
+        string v2 = unsupportedValueAt(src, lexed, env, arms[a].value!, want);
+        env.localCount = saved2;
+        if (v2 != "") { return v2; }
+      }
+      return "";
+    }
     // **A ternary in a slot hands that slot to both branches.** `return c ? Option.None :
     // Option.Some(v);` has arms that know nothing on their own — which instance of a template they
     // build comes from the return type — and this walk had no arm for one, so the question reached
@@ -4973,6 +5150,10 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           if (named.len() > 0) { return "named arguments in a call"; }
           i32 fa = env.funcAt(n);
+          // A generic function is registered under the *instance* the arguments imply, never under
+          // the bare name — so a lookup that fails is the question "which instance is this?" not yet
+          // asked. `mapOption(some, double)` names `mapOption<i32,i32>`.
+          if (fa < 0) { fa = env.funcAt(genericCallInstance(env, src, lexed, tok, args)); }
           // **Named, not categorised.** "a call to something unknown" was the corpus's largest
           // category at 66 files and said nothing about any of them; the name turns a category into
           // a diagnosis, which is the difference between a slot of guessing and one of fixing.
@@ -5326,6 +5507,36 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
 void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 round = 0; round < 8; round++) {
     env.instDirty = false;
+    env.instBuilt = false;
+    // **Every body, walked the way the emitter walks it.** A call to a generic function is the only
+    // instance nothing declares, and its arguments are *locals* — so the walk that finds it has to be
+    // one that has locals in scope, which is `canEmit` and not the array-type pre-pass. It runs here
+    // rather than later because a function counted before its instance exists is one whose index
+    // nobody reserved: the answer is thrown away and the registration it caused is the point.
+    // **Its verdict is discarded, and so is what it recorded.** This walk runs while half the
+    // instances do not exist yet, so what stops it here says nothing about the program — and
+    // `canEmit` remembers the first thing that stopped it for the report. Keeping that would name a
+    // round-zero shortage as the reason a file was not emitted.
+    string savedBlocked = env.blocked;
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case Func(nameTok, returnType, params, body, exported, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
+        }
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          string sowner = nameKeyOf(env, src, lexed, nameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                    methods[m].hasThis ? sowner : "",
+                    typeOfTyName(env, src, lexed, methods[m].returnType));
+          }
+        }
+        else: { }
+      }
+    }
+    env.blocked = savedBlocked;
     for (i32 i = 0; i < env.instCount; i++) {
       string inst = env.instName[i];
       if (env.isStructName(inst)) { continue; }
@@ -5365,8 +5576,42 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               collectArrayTypes(env, src, lexed, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), mpts);
+              string savedM = env.blocked;
+              canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                      methods[m].hasThis ? inst : "",
+                      typeOfTyName(env, src, lexed, methods[m].returnType));
+              env.blocked = savedM;
             }
+            env.instBuilt = true;
             popSubstitution(env, pushed);
+          }
+          // A generic **function**. It has no type of its own to build — only a body to compile once
+          // per binding — so registering it is registering *one function* under the instance's name,
+          // with its parameters and return type resolved under the substitution the name carries.
+          case Func(nameTok, returnType, params, body, exported, typeParams): {
+            if (typeParams.len() == 0) { continue; }
+            if (tokenTextOf(src, lexed, nameTok) != env.instOf[i]) { continue; }
+            if (env.funcAt(inst) >= 0) { continue; }
+            i32 fpushed = pushSubstitution(env, src, lexed, typeParams, inst, env.instOf[i]);
+            string[] fpts = string[params.len()]();
+            for (i32 a = 0; a < params.len(); a++) {
+              fpts[a] = typeOfTyName(env, src, lexed, params[a].type);
+              registerNamed(env, fpts[a]);
+            }
+            string frt = typeOfTyName(env, src, lexed, returnType);
+            registerNamed(env, frt);
+            collectArrayTypes(env, src, lexed, body);
+            env.addFunc(inst, frt, fpts);
+            env.instBuilt = true;
+            // **The instance's own body, walked with its parameters in scope.** A generic function
+            // that calls a generic function names an instance whose arguments are its own locals —
+            // `twice<T>` calling `ident(x)` is `ident<T>` under this substitution — and a walk
+            // without locals types `x` as nothing and infers nothing. The verdict is discarded; the
+            // instances it discovers are the point.
+            string savedB = env.blocked;
+            canEmit(src, lexed, env, params, body, "", frt);
+            env.blocked = savedB;
+            popSubstitution(env, fpushed);
           }
           // A generic **enum** — `Option<T>` — laid out exactly as a plain one is: a tag, then a
           // slot per payload field of every variant. Its variants are registered under the
@@ -5429,6 +5674,7 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
               collectArrayTypes(env, src, lexed, methods[m].body);
               env.addFunc(inst + "." + tokenTextOf(src, lexed, methods[m].nameTok),
                           typeOfTyName(env, src, lexed, methods[m].returnType), empts);
+              env.instBuilt = true;
             }
             popSubstitution(env, epushed);
           }
@@ -5436,7 +5682,12 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
         }
       }
     }
-    if (!env.instDirty) { return; }
+    // **Building one counts as progress.** A body walked in the round before an instance existed
+    // stops at the first thing it cannot resolve, so the call further down it — the only place a
+    // generic *function*'s instance is ever named — is not reached until the round after. Leaving on
+    // "no new instance was named" therefore left on the round that could not have named one.
+    if (!env.instDirty && !env.instBuilt) { return; }
+    env.instBuilt = false;
   }
   // Eight rounds and still finding new ones: rather than emit a module built from half a table, say
   // so — `full` is the flag every other table overflow already sets.
@@ -5444,6 +5695,8 @@ void collectInstances(Env env, u8[] src, Lexed lexed, Program prog) {
 }
 
 void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
+  // Kept, so a call to a generic function can read the declaration it names from wherever it is seen.
+  env.prog = prog;
   // **A string literal names the `i8[]` type**, and nothing else in the file need mention it: a bare
   // `"hello".len()` declares no `string` anywhere. Scanning the tokens is complete by construction,
   // where walking declarations for it would be one more place to forget — which this pre-pass has
@@ -5704,7 +5957,8 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
     // or one whose template is not in this module — has no members in the tables, and emitting its
     // methods anyway shifts every index after it. The receiver comes out an `i32`, which wasm
     // reports as a `struct.get` on a number several functions later.
-    if (!env.isStructName(env.instName[ii])) { continue; }
+    // A function instance builds no type, so it is "built" when its own entry is registered.
+  if (!env.isStructName(env.instName[ii]) && env.funcAt(env.instName[ii]) < 0) { continue; }
       for (i32 di = 0; di < prog.decls.len(); di++) {
         match (prog.decls[di].kind) {
           case EnumDecl(nameTok, variants, exported, methods, typeParams): {
@@ -5945,6 +6199,18 @@ void collectArrayTypesOfExpr(Env env, u8[] src, Lexed lexed, Expr e) {
     // the file has to mention. Registering it here is what stops the type table growing while the
     // section that declares it is being written.
     case Construct(ctype, args, named): {
+      // **A call to a generic function is registered on sight**, exactly as a generic type written
+      // in the source is — the difference being that nothing here is written, so the instance has to
+      // be inferred from what the arguments turned out to be.
+      match (ctype.kind) {
+        case Named(tok, typeArgs): {
+          if (typeArgs.len() == 0) {
+            string gi = genericCallInstance(env, src, lexed, tok, args);
+            if (gi != "") { env.instantiate(gi, tokenTextOf(src, lexed, tok)); }
+          }
+        }
+        else: { }
+      }
       registerNamed(env, typeOfTyName(env, src, lexed, ctype));
       for (i32 i = 0; i < args.len(); i++) { collectArrayTypesOfExpr(env, src, lexed, args[i]); }
       for (i32 i = 0; i < named.len(); i++) {
