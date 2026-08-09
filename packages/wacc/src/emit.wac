@@ -1259,6 +1259,26 @@ string resolveImport(string from, string rel) {
   return dir + r;
 }
 
+/**
+ * `core`'s declarations, which ship inside the compiler rather than living in a file.
+ *
+ * `import { Read } from core;` is not a path — `core` is one thing everywhere, because wac has
+ * nominal types and no closures, so two declarations of a shape are two types and no adapter can
+ * join them across a repository boundary. The reference embeds this text; so does this, and for the
+ * same reason: a capability import is then an ordinary declaration and nothing downstream of the
+ * linker has to know it was special.
+ *
+ * Kept to the declarations. The comments in `compiler/wacCore.ts` are the argument for the type
+ * existing, and are not what a compiler needs.
+ */
+string coreSource() {
+  return "export enum Read {\n" +
+         "  Data(u8[] bytes),\n" +
+         "  End,\n" +
+         "  Failed(string why)\n" +
+         "}\n";
+}
+
 /** A file's text from the table the caller supplied, or `""` when it was not supplied. */
 string sourceOf(string[] paths, string[] sources, string path) {
   for (i32 i = 0; i < paths.len(); i++) {
@@ -1318,7 +1338,7 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     if (sn >= seen.len()) { return ""; }
     seen[sn] = path;
     sn = sn + 1;
-    string body = sourceOf(paths, sources, path);
+    string body = path == " core" ? coreSource() : sourceOf(paths, sources, path);
     if (body == "") { return ""; }
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
     // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
@@ -1331,9 +1351,23 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     for (i32 d = 0; d < prog.decls.len(); d++) {
       match (prog.decls[d].kind) {
         case Import(pathTok, prefixTok, items): {
-          // A capability import (`from core`) names no file. It is left for the walk to decline by
-          // name rather than treated as a missing one.
-          if (prefixTok >= 0) { continue; }
+          // A capability import names no file, so it cannot be resolved into one — it is *carried*
+          // instead, under a path no source can spell, which makes it a file to everything below.
+          if (prefixTok >= 0) {
+            if (tokenTextOf(b, lexed, prefixTok) != "core") { continue; }
+            if (qn >= queue.len()) { return ""; }
+            queue[qn] = " core";
+            qn = qn + 1;
+            for (i32 it = 0; it < items.len(); it++) {
+              if (en >= fromPath.len()) { continue; }
+              fromPath[en] = path;
+              toPath[en] = " core";
+              edgeName[en] = tokenTextOf(b, lexed, items[it].aliasTok) + " " +
+                             tokenTextOf(b, lexed, items[it].nameTok);
+              en = en + 1;
+            }
+            continue;
+          }
           string quoted = tokenTextOf(b, lexed, pathTok);
           if (quoted.len() < 2) { continue; }
           if (qn >= queue.len()) { return ""; }
@@ -4607,7 +4641,11 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
       // import of something this emitter has no way to supply.
       case Import(pathTok, prefixTok, items): {
         if (entryDecls < 0) { return "an import"; }
-        if (prefixTok >= 0) { return "an import from a capability"; }
+        // `core` is carried by the linker; anything else with a bare specifier is a module this
+        // compiler has never heard of, which is worth saying by name.
+        if (prefixTok >= 0 && tokenTextOf(src, lexed, prefixTok) != "core") {
+          return "an import from " + tokenTextOf(src, lexed, prefixTok);
+        }
       }
       case ConstDecl(nameTok, type, init, exported): {
         string ct = typeOfTyName(env, src, lexed, type);

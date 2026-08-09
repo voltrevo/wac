@@ -1183,6 +1183,39 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### `core` is a file that is not a file — 283 to 310
+
+The largest category left was `an import from a capability`, 35 files, and this README said it
+"needs a host to import *from*". That was a guess, and it was wrong. Compiling one with the
+reference and reading the sections back says so in a second: **there is no import section**. A module
+that says `import { Read } from core;` imports nothing.
+
+`core` is not a capability in the wasm sense at all. It is one enum — `Read`, with `Data(u8[])`,
+`End` and `Failed(string)` — that **ships inside the compiler** as wac source, because wac has
+nominal types and no closures, so two declarations of a shape are two types and no adapter can join
+them across a repository boundary. It is embedded rather than fetched for the same reason: a version
+diamond in it would be unresolvable rather than awkward.
+
+So the feature is: know that text. The linker carries it under a path no source can spell, `" core"`,
+and from there it is a file like any other — the enum machinery, the variant tables and the arms all
+work on it without knowing it came from anywhere unusual. Anything else with a bare specifier is now
+declined by *its own name*: `an import from platform` rather than a category.
+
+| | before | after |
+|---|---|---|
+| whole files | 283 | **310 of 337** |
+| invalid | 0 | 0 |
+| largest remaining reason | 35 | **7** |
+
+**The corpus no longer has a category in it.** What is left is 27 files across nine reasons, the
+largest being seven `null`s in a slot this emitter cannot name, four concatenations of a reference
+that want a helper, four names more than one file declares, and three files whose imports are not in
+the corpus at all.
+
+The lesson is one this package has written down before and paid for again: *the message said what it
+could not do, and I believed its explanation of why.* Reading the reference's output took a minute
+and turned a host-shaped problem into six lines of embedded text.
+
 ### Two `Ok`s in one module, and a slot the walk was not looking at — 279 to 283
 
 With generics done the corpus stopped being a category and became a list, and the list is where
