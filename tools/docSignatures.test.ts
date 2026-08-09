@@ -43,7 +43,7 @@ import type { Program, WacType } from "wac/wacParse.ts";
 /** Names that belong to something other than this repo, so a README may say them freely. */
 const FOREIGN = new Set([
   // JavaScript and the host
-  "Number", "String", "Buffer.from", "Date.UTC", "wacCompile", "DecompressionStream",
+  "Number", "String", "Buffer.from", "Date.UTC", "wacCompile", "DecompressionStream", "parseFloat",
   // Ours, but written in TypeScript, which this check does not parse — test harnesses and oracles.
   // `wacCompile` above is the same case. Listed rather than resolved because reading TS declarations
   // is a second parser for a handful of names, and the point of this file is that the wac half is
