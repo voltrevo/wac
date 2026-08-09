@@ -3118,12 +3118,51 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // the element's default is built and `array.new` repeats it — `array.new_default` would put
       // a null in every slot, which typechecks and traps on the first `.len()`.
       if (isRefType(env, et) && !isNullableTy(elem)) {
-        emitDefault(fb, env, et);
+        // **A struct element is a fresh struct per slot.** `array.new` repeats *one* reference, and
+        // the spec says `P[2]()` gives two: writing `a[0].v` must not be visible in `a[1]`. An
+        // empty string or an empty array has nothing to write, so sharing one is unobservable and
+        // the cheap path is right for them; a struct is the case that needs the loop.
+        bool distinct = env.isStructName(et) && !env.isEnumName(env.canonType(et));
+        if (!distinct) {
+          emitDefault(fb, env, et);
+          if (size is null) { fb.byte(65); fb.i32leb(0); }
+          else { emitAt(fb, src, lexed, env, size!, "i32"); }
+          fb.byte(251);
+          fb.u32leb(6);      // array.new
+          fb.u32leb(ti);
+          return;
+        }
+        i32 nLoc = env.scratchNamed("newn", "i32");
+        i32 iLoc = env.scratchNamed("newi", "i32");
+        i32 aLoc = env.scratchNamed("newa", et + "[]");
         if (size is null) { fb.byte(65); fb.i32leb(0); }
         else { emitAt(fb, src, lexed, env, size!, "i32"); }
-        fb.byte(251);
-        fb.u32leb(6);      // array.new
-        fb.u32leb(ti);
+        fb.byte(33); fb.u32leb(nLoc);          // local.set — a tee would leave the count under it
+        emitDefault(fb, env, et);
+        fb.byte(32); fb.u32leb(nLoc);
+        fb.byte(251); fb.u32leb(6); fb.u32leb(ti);
+        fb.byte(33); fb.u32leb(aLoc);
+        // Slot zero keeps the one that was made above; every other slot gets its own.
+        fb.byte(65); fb.i32leb(1);
+        fb.byte(33); fb.u32leb(iLoc);
+        fb.byte(2); fb.byte(64);
+        fb.byte(3); fb.byte(64);
+        fb.byte(32); fb.u32leb(iLoc);
+        fb.byte(32); fb.u32leb(nLoc);
+        fb.byte(78);                            // i32.ge_s
+        fb.byte(13); fb.u32leb(1);              // br_if out
+        fb.byte(32); fb.u32leb(aLoc);
+        fb.byte(32); fb.u32leb(iLoc);
+        emitDefault(fb, env, et);
+        fb.byte(251); fb.u32leb(14); fb.u32leb(ti);   // array.set
+        fb.byte(32); fb.u32leb(iLoc);
+        fb.byte(65); fb.i32leb(1);
+        fb.byte(106);
+        fb.byte(33); fb.u32leb(iLoc);
+        fb.byte(12); fb.u32leb(0);
+        fb.byte(11);
+        fb.byte(11);
+        fb.byte(32); fb.u32leb(aLoc);
         return;
       }
       if (size is null) { fb.byte(65); fb.i32leb(0); }
@@ -3718,6 +3757,17 @@ i64 parseInt(string s) {
  */
 void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (from == to) { return; }
+  // **A cast to `bool` is a test, not a reinterpretation.** `5 as~ bool` is `true`, which is the
+  // number 1 — and `bool` is an `i32` here, so the same-width rule below called it a no-op and left
+  // the 5 on the stack. `b == true` was then `5 == 1`.
+  if (to == "bool") {
+    if (valType(from) == 126) { fb.byte(80); }        // i64.eqz
+    else if (valType(from) == 125) { fb.byte(67); fb.f32bits(0.0); fb.byte(91); }   // f32.eq 0
+    else if (valType(from) == 124) { fb.byte(68); fb.f64bits(0.0); fb.byte(97); }   // f64.eq 0
+    else { fb.byte(69); }                             // i32.eqz
+    fb.byte(69);                                      // and again: zero is false, anything else true
+    return;
+  }
   // A sign change at the same width is **not** a no-op unless the spelling is raw: `-1 as~ u32` is 0.
   // This test used to come first and swallowed every one of them.
   if (valType(from) == valType(to) && !isFloat(from) && isUnsigned(from) != isUnsigned(to) &&
@@ -3880,10 +3930,20 @@ f64 parseFloat(string s) {
   i32 e = (neg ? 0 - exp : exp) - frac;
   if (e > 400) { e = 400; }
   if (e < 0 - 400) { e = 0 - 400; }
-  f64 pow = 1.0;
+  // **In steps, because the power itself can overflow.** `5.0e-324` is the smallest subnormal and
+  // wants ten to the three hundred and twenty-fifth, which is not a number — so building the scale
+  // first and dividing once gave `v / inf`, or zero. Twenty-two is the largest power of ten an
+  // `f64` holds exactly, so a step of that size is one rounding and no more.
   i32 n = e < 0 ? 0 - e : e;
-  for (i32 k = 0; k < n; k++) { pow = pow * 10.0; }
-  return e < 0 ? v / pow : v * pow;
+  f64 out = v;
+  while (n > 0) {
+    i32 step = n > 22 ? 22 : n;
+    f64 pow = 1.0;
+    for (i32 k = 0; k < step; k++) { pow = pow * 10.0; }
+    out = e < 0 ? out / pow : out * pow;
+    n = n - step;
+  }
+  return out;
 }
 
 /** The largest value the target type holds, as the `i64` the comparison needs. */

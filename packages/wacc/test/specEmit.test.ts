@@ -114,8 +114,9 @@ Deno.test("the spec's own cases, answered by wacc", async () => {
   if (compared < 200) throw new Error(`only ${compared} answers were compared`);
 
   // Floors. Both are meant to rise.
-  if (agreed < 246) {
-    throw new Error(`${compared - agreed} spec answers differ, was 3:\n  ` + differ.join("\n  "));
+  if (agreed < compared) {
+    throw new Error(`${compared - agreed} spec answers differ, and they all agreed:\n  ` +
+      differ.join("\n  "));
   }
   if (rejected < 84) {
     throw new Error(`wacc rejects only ${rejected} of ${reject.length} programs the reference ` +

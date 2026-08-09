@@ -1183,6 +1183,41 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Every answer the spec asks for — 246 of 249 to 249 of 249
+
+Three wrong answers were left, and wrong answers outrank missing diagnostics: a program that compiles
+and lies is worse than one that is refused.
+
+**`5 as~ bool` was `5`.** A cast to `bool` is a *test*, not a reinterpretation — and `bool` is an
+`i32` here, so the same-width rule two lines up called it a no-op and left the number on the stack.
+`b == true` was then `5 == 1`.
+
+**`P[2]()` gave one struct twice.** `array.new` repeats a single reference into every slot, so
+`a[0].v = 9` was visible through `a[1]`. Each slot now gets its own, built by a loop — but only for a
+*struct* element: an empty string and an empty array have nothing to write through, so sharing one
+is unobservable and the cheap path stays. Writing that loop, I used `local.tee` where `local.set`
+belonged and left the count under the array; six corpus modules said so before any hand-written case
+did, which is the invariant doing its job.
+
+**`f64.toBits(5.0e-324)` was 0.** The mantissa is scaled by a power of ten, and ten to the three
+hundred and twenty-fifth is not a number — so the scale came out infinity and the division gave
+zero. It is applied in steps of twenty-two now, which is the largest power an `f64` holds exactly.
+
+That last one is only *mostly* fixed, and the honest form of that is an issue rather than a silence:
+each step rounds, so `1e300` lands a unit in the last place from nearest and `spec/spec/types.md`
+says nearest. Every literal in the spec suite is exact, and every one in the corpus is within the
+range where a single step suffices — **issues/system 0124** has the three that are not, and what a
+correctly-rounded conversion would take.
+
+| | before | after |
+|---|---|---|
+| spec answers agreeing | 246/249 | **249/249** |
+| spec rejections wacc also makes | 84/84 | 84/84 |
+| corpus | 316 whole, 0 invalid | unchanged |
+
+The floor in `specEmit.test.ts` is now *every* answer rather than a number, because a number that has
+reached its ceiling should be spelled as one.
+
 ### Every rejection the spec asks for — 72 of 84 to 84 of 84
 
 wacc is to become the primary compiler, and the number that stood between it and that was not the

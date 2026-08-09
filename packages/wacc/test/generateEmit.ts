@@ -658,5 +658,29 @@ export function generateEmit(): Cell[] {
   add("null assigned to an element",
     `struct P { i32 x; }\nexport bool f() { P?[] ps = P?[2](); ps[0] = P(1); ps[0] = null; ` +
     `return ps[0] is null; }`);
+
+  // A cast to `bool` is a test, not a reinterpretation — and `bool` is an `i32` here, so the
+  // same-width rule called it a no-op and left the number on the stack.
+  for (const t of ["i32", "u32", "i64", "u64"]) {
+    for (const v of ["0", "1", "5", "255"]) {
+      add(`cast ${t} to bool`, `export bool f() { ${t} x = ${v}; return (x as~ bool) == (${v} != 0); }`);
+      add(`cast ${t} to bool then back`,
+        `export i32 f() { ${t} x = ${v}; bool b = x as~ bool; return b ? 1 : 0; }`);
+    }
+  }
+  // Every slot of `P[n]()` is its **own** struct: `array.new` repeats one reference, and writing
+  // through the first would then be visible through the second.
+  add("sized array of structs is distinct",
+    `struct P { i32 v; }\nexport i32 f() { P[] a = P[3](); a[0].v = 9; return a[1].v + a[2].v; }`);
+  add("sized array of structs, computed size",
+    `struct P { i32 v; }\nexport i32 f() { i32 n = 3; P[] a = P[n](); a[0].v = 9; a[2].v = 4; ` +
+    `return a[1].v * 100 + a[2].v; }`);
+  add("a fill shares one, deliberately",
+    `struct P { i32 v; }\nexport i32 f() { P[] a = P[2](fill: P(1)); a[0].v = 9; return a[1].v; }`);
+  add("sized array of nested structs is distinct",
+    `struct Q { i32 w; }\nstruct R { Q q; }\n` +
+    `export i32 f() { R[] a = R[2](); a[0].q.w = 7; return a[1].q.w; }`);
+  add("a sized array of strings still shares",
+    `export i32 f() { string[] a = string[2](); return a[0].len() + a[1].len(); }`);
   return out;
 }
