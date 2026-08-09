@@ -165,6 +165,23 @@ their own wording for "cannot open", and `sort` and `grep` exiting 1 where GNU e
 reach it: 171 of the corpus scripts use one and `packages/box` has none. `echo`, `test`, `ls`, `chmod`
 and `chown` are builtins for the same reason — a builtin is what the shell must answer itself.
 
+`kill` joined them, and it is the one where "must answer itself" is load-bearing rather than a
+convenience: `kill $$` has to reach *this* shell, and a `kill` that was a separate program would be
+signalling a pid that is about to go away anyway. It carries bash's messages, bash's statuses —
+`128 + signal`, so 143 for `TERM` and 130 for `INT` — and a `kill -l` table byte-identical to bash's
+for every signal Linux names. Delivery is cooperative, because a wasm function call cannot be
+interrupted from outside: the shell asks before every command and on every turn of a loop, which is
+where `unwinding` already looked. Two things it does not do, said here because they are the kind of
+thing a reader will assume: **`SIGKILL` is not special** — nothing here can end a process except the
+process itself, so `kill -9` on something that never reaches a check point does nothing — and a signal
+cannot reach a *stage of a running pipeline*, because the stage is a function call inside this shell
+and nothing else in the system is running to send one.
+
+`$$` came with it, and had been quietly empty: the lexer read it as a parameter named `$` all along
+and nothing gave it a value, so `echo $$` printed a blank line. A shell also enters *itself* in the
+process table now — it was the one process the system did not know about, so `ps` listed every command
+and never the shell running them.
+
 What made it safe to do at all was `deno task corpus:through`, which runs this package's own corpus
 through some *other* shell against bash: it read 563 of 632 the first time and 649 of 649 before the
 last program went. The precondition was measured rather than assumed, and the paragraph that used to

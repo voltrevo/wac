@@ -5,9 +5,11 @@
 // spawn, so every row `ps` prints describes a *function call* inside one program, and the host has no
 // idea any of it happened. If the table were the host's this file could not pass at all.
 //
-// `kill` is not implemented and is not tested here. What `packages/fs`'s `proc.test.ts` pins is that a
-// signal to something that has already exited is refused rather than recorded, which is the half of
-// `kill` that exists.
+// `kill` is a shell builtin now and is compared against bash in `packages/sh/test/differential.test.ts`
+// — messages, statuses and all. What is tested *here* is the part that only a sealed session can show:
+// that the shell is in its own table, so `kill $$` has something to name and `ps` lists the process
+// running the commands rather than only the commands. It was not: `mountSystem` enters the *program*,
+// and a shell that no program had entered — `wacsh` — had pid 0 and `$$` answered nothing.
 //
 // There is no differential against the host's `ps`: the processes are not the host's, so it has no
 // opinion to disagree with. The oracle for the *format* underneath is in `packages/fs/test/proc.test.ts`,
@@ -101,4 +103,33 @@ Deno.test("ps refuses what it has not got rather than ignoring it", async () => 
   assertEquals(flag.err.includes("invalid option -- 'e'"), true, flag.err);
   const long = await sh("ps --help");
   assertEquals(long.err.includes("long options are not implemented"), true, long.err);
+});
+
+Deno.test("the shell is in its own table, so `$$` names something `ps` shows", async () => {
+  // design/0001 step 3, the half that makes `kill` mean anything: a shell is a process. Before this,
+  // every row `ps` printed was a command and the thing running them was not there — which reads as a
+  // system where commands appear from nowhere, and left `$$` with no number to answer with.
+  const listed = await sh("ps");
+  const rows = listed.out.trim().split("\n");
+  assertEquals(rows.length >= 2, true, `ps showed no shell: ${listed.out}`);
+  // Row 1 is the shell: pid 1, no parent, and its own argv rather than the command it is running.
+  const shell = rows[1].trim().split(/\s+/);
+  assertEquals(shell[0], "1", `the shell is not pid 1: ${listed.out}`);
+  assertEquals(shell[1], "0", `the shell has a parent: ${listed.out}`);
+
+  // And `$$` is that pid — asked through `ps` rather than compared with a constant, so a change to
+  // where the shell lands in the table fails here rather than quietly making the two disagree.
+  const pid = (await sh("echo $$")).out.trim();
+  assertEquals(pid, shell[0], `\`$$\` and ps disagree: ${pid} against ${listed.out}`);
+
+  // The whole point of the number: it can be signalled, and the shell notices.
+  const killed = await sh("kill $$; echo not-reached");
+  assertEquals(killed.out, "", `something ran after \`kill $$\`: ${killed.out}`);
+  assertEquals(killed.code, 143, "a shell ended by SIGTERM should exit 143");
+
+  // A signal to a pid the table does not have is refused rather than silently accepted, which is what
+  // stops `kill` reporting success for a process that is not there.
+  const nosuch = await sh("kill 4242; echo st=$?");
+  assertEquals(nosuch.out.trim(), "st=1", nosuch.out);
+  assertEquals(nosuch.err.includes("No such process"), true, nosuch.err);
 });
