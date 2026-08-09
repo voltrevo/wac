@@ -422,5 +422,31 @@ export function generateEmit(): Cell[] {
   add("const read before and after",
     `const string S = "a" + "b";\ni32 first() { return S.len(); }\n` +
     `export i32 f() { return first() + S.len(); }`);
+
+  // Block scoping. A name declared in two blocks is two locals, and the pair that matters is two
+  // blocks declaring it at two *types* — which is exactly what a name-to-slot table cannot hold, and
+  // what this emitter used to decline the whole function for.
+  for (const [a, b] of [["i32", "i64"], ["i32", "f64"], ["u8[]", "i32"], ["string", "i32"]] as const) {
+    const av = a === "u8[]" ? "u8[](1, 2)" : a === "string" ? '"ab"' : VALUES[a][1];
+    const bv = VALUES[b][1];
+    const asize = a === "u8[]" || a === "string" ? "k.len()" : "k as~ i32";
+    add(`scope ${a} then ${b}`,
+      `export i32 f() { i32 n = 0; { ${a} k = ${av}; n = n + ${asize}; } ` +
+      `{ ${b} k = ${bv}; n = n + (k as~ i32); } return n; }`);
+    add(`scope ${a} shadowed by ${b}`,
+      `export i32 f() { ${a} k = ${av}; i32 n = ${asize}; { ${b} k = ${bv}; n = n + (k as~ i32); } ` +
+      `return n + ${asize}; }`);
+    add(`scope ${a} in a loop then ${b}`,
+      `export i32 f() { i32 n = 0; for (i32 i = 0; i < 2; i++) { ${a} k = ${av}; n = n + ${asize}; } ` +
+      `{ ${b} k = ${bv}; n = n + (k as~ i32); } return n; }`);
+    add(`scope ${a} in both arms`,
+      `export i32 f() { i32 n = 0; if (n == 0) { ${a} k = ${av}; n = ${asize}; } ` +
+      `else { ${b} k = ${bv}; n = k as~ i32; } return n; }`);
+  }
+  add("scope two loops one name",
+    `export i32 f() { i32 n = 0; for (i32 i = 0; i < 3; i++) { n = n + i; } ` +
+    `for (i64 i = 0; i < 3; i++) { n = n + (i as~ i32); } return n; }`);
+  add("scope a name declared after a block that had it",
+    `export i32 f() { { i32 k = 5; } i64 k = 7; return k as~ i32; }`);
   return out;
 }

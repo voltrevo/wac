@@ -1183,6 +1183,33 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A block is a scope — 230 to 244
+
+`two types for the local k` was a decline with a good reason: wasm has one flat frame per function
+and the language has block scopes, so `for (i32 k …)` in one block and `i64 k = …` in another are two
+locals with one name, and a name-to-slot table cannot hold both. Searching from the end gave the
+*later* one to the earlier block — an `i32.const` into an `i64` slot — so the function was declined.
+
+The table was the problem. Locals are no longer collected by a pre-pass at all: a `var` **claims its
+slot where it is written**, and the block retires its names when it ends — by renaming rather than
+dropping, since the slot still has to be declared in the function's header. Two `k`s are then two
+slots, `localAt` searches backwards so the inner one shadows, and neither block can see the other's.
+
+This is the mechanism the enum arms already used for their bindings, which is the argument for it:
+one way of introducing a name, used by every construct that introduces one.
+
+The walk does the same thing, and has to. It is the pass that decides whether a name is a local, and
+if it decided that differently from the emitter it would approve a body the emitter cannot resolve.
+Both now push at the `var` and pop at the end of the block.
+
+| | before | after |
+|---|---|---|
+| whole files | 230 | **244** |
+| invalid | 0 | 0 |
+
+**244 of 336.** What remains is generics (27), a capability import (22 — it needs a host to import
+*from*), a method on a struct this emitter skipped (12), and a scattering of single files.
+
 ### A constant wasm cannot write down — 173 to 230
 
 The largest decline left was *"a constant whose value is not a constant expression"*, 59 files, and
