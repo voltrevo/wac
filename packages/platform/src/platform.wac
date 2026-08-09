@@ -1081,6 +1081,13 @@ export struct Cli {
    * `send(handle, bytes)` carries becomes its standard input; `closeSocket(handle)` stops
    * it. `exitCode(handle)` waits for it to finish.
    *
+   * **What "stops it" means differs between the hosts, and the weaker one is the contract.** The
+   * JavaScript host terminates the worker outright; the native runtime finishes all three of the
+   * child's queues, so the child stops at its *next write*, which answers false. Every program in this
+   * repo writes, so the two are the same to watch — `kill %1` on a background `seq` ends it on both —
+   * but a child that computed without writing would keep going on one host and not the other. Depend
+   * on the streams ending, not on the instant. wac-mono 0123.
+   *
    * **`grants` is what the child may do beyond those streams**, as `GRANT_*` flags — and it
    * is a *ceiling of the parent's own*, intersected by the host rather than trusted. A parent
    * built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error, and
