@@ -6,11 +6,11 @@
 
 import InlineDemo from "../editor/InlineDemo";
 import { TOTALS } from "../data/built";
-import { A, Code, Lead, m, P, Page, Pair, Section, Sub } from "./ui";
+import { TREE, BLOB, A, Code, Lead, m, P, Page, Pair, Section, Sub } from "./ui";
 import { c, font, space } from "./tokens";
 
 const GITHUB = "https://github.com/voltrevo/wac";
-const MONO = "https://github.com/voltrevo/wac-mono";
+
 
 
 import {
@@ -180,7 +180,8 @@ export default function Language() {
         <P>
           What stops a second surface becoming a permanent tax is a round trip:{" "}
           {m({ children: "wac → wapy → wac" })} must give back the <em>same syntax tree</em>, over{" "}
-          {m({ children: "spec/tour.wac" })} and all 155 wac-mono sources. Trees rather than text,
+          {m({ children: "spec/tour.wac" })} and every wac source in the repository — 220 files. Trees
+          rather than text,
           so the printer&rsquo;s canonicalisations are allowed and a change in meaning is not — and
           a feature added to one surface and forgotten in the other turns the suite red instead of
           drifting.
@@ -247,8 +248,8 @@ export default function Language() {
         <P>
           Each of those is an issue in the repository with a measurement attached rather than a
           complaint:{" "}
-          <A href={`${GITHUB}/tree/master/issues/open`} external>the open list</A>, and{" "}
-          <A href={`${GITHUB}/blob/master/WASM-WISHLIST.md`} external>the wishlist</A> with the
+          <A href={`${TREE}/issues/lang/open`} external>the open list</A>, and{" "}
+          <A href={`${BLOB}/WASM-WISHLIST.md`} external>the wishlist</A> with the
           numbers.
         </P>
       </Section>

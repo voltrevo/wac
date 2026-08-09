@@ -308,7 +308,8 @@ Deno.test("[§wac-wapy-matchexpr-3jx8rvc] a match expression drops the parenthes
 
 // ── §wac-wapy-roundtrip-5vd2qnw — asserted in full by wapyRoundTrip.test.ts ─
 //
-// That file converts `spec/tour.wac` and all 155 wac-mono sources and compares syntax trees.
+// That file converts `spec/tour.wac` and every wac source in the repository — 220 files — and
+// compares syntax trees.
 // This one only pins the property statement itself, so the tag resolves to something.
 
 Deno.test("[§wac-wapy-roundtrip-5vd2qnw] the printer's canonicalisations are invisible to the parser", () => {
