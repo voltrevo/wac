@@ -90,7 +90,7 @@ standard input and working directory and keep what it writes, and an applet cann
 was run.
 
 That is still the fallback, and being indistinguishable is the reason
-[0030](../../issues/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md)
+[0030](../../issues/system/closed/0030-a-page-cannot-spawn-so-the-browser-shell-runs-applets-in-process.md)
 needed a test that could tell them apart: a *called* applet's output is captured and capped at 8 MiB,
 so `seq 1 1500000 | wc -c` truncates, while a *spawned* one's queue drains as the next stage reads it
 and answers what GNU answers. `platform/test/browser_live.test.ts` checks that in a real Chromium.

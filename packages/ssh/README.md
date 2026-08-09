@@ -239,7 +239,7 @@ standard error through `writeErr`. It used to buffer standard error to the end o
 as one `warn`, because the world had no byte-level error stream: a per-packet `warn` inserted a
 newline at every packet boundary, the whole-run form lost the ordering, and output that was not valid
 UTF-8 was mangled by going through a string.
-[Issue 0014](../../issues/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md).
+[Issue 0014](../../issues/system/closed/0014-platform-has-no-way-to-write-bytes-to-standard-error.md).
 
 Argument joining matches OpenSSH: everything after the host becomes one command string joined with
 spaces, so `ssh host sh -c 'echo hi'` loses its quotes here exactly as it does there. Verified
@@ -334,7 +334,7 @@ whole lines, and no prompt is written, because without a pty a real shell is not
 none.
 
 **It still cannot start a process, and now it never will** —
-[issue 0015](../../issues/closed/0015-platform-cannot-start-a-process-so-a-server-cannot-run-a-command.md)
+[issue 0015](../../issues/system/closed/0015-platform-cannot-start-a-process-so-a-server-cannot-run-a-command.md)
 is closed `wontfix`, because running host programs is a non-goal. The shell's external commands are
 its own, written in wac; `help` lists them. What changed is that there is a shell between the client
 and them, not that there is a system underneath. That remains the *only* reason this is not an
@@ -450,7 +450,7 @@ The 13 "not covered" are mostly length preconditions on internal helpers — `if
 keyLength()) { trap; }` and the like. Note that "not covered" here means **not covered by the
 attributable tests**: the profiler only sees in-process `wacBind` tests, so anything exercised
 solely by the two integration suites reads as uncovered when it is not. See
-[issue 0024](../../issues/closed/0024-mutation-selection-is-inert-for-subprocess-tests-and-the-fallback-runs-them-worst-first.md).
+[issue 0024](../../issues/system/closed/0024-mutation-selection-is-inert-for-subprocess-tests-and-the-fallback-runs-them-worst-first.md).
 
 There is a design rule underneath those guards worth stating, because it is easy to break by
 accident: **a `trap` guards our own invariants; anything a peer supplies is handled with a

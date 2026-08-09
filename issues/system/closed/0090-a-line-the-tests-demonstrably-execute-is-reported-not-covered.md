@@ -66,7 +66,7 @@ answer is in `wacTestRun`'s relationship to the profiler's `Deno.test` wrapper.
 
 ## Notes
 
-Found while working [0005](0005-mutation-testing-found-54-untested-behaviours.md)'s remaining packages.
+Found while working [0005](../open/0005-mutation-testing-found-54-untested-behaviours.md)'s remaining packages.
 Filed rather than fixed because it is in shared tooling and the fix depends on which of the two causes it
 is — and because a sweep that under-selects is exactly the kind of thing that should be understood before
 it is patched.

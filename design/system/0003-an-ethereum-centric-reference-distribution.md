@@ -129,10 +129,10 @@ required.
 
 Issues reference this document rather than restating it. Unblocked today, in dependency order:
 
-- [0083](../issues/closed/0083-keccak256-for-ethereum-not-just-sha3.md) — keccak256 — **closed**
-- [0084](../issues/closed/0084-rlp-encoding-and-decoding.md) — RLP — **closed**
-- [0085](../issues/closed/0085-abi-encoding-and-decoding.md) — ABI — **closed**
-- [0086](../issues/closed/0086-merkle-patricia-proofs-so-a-contract-read-is-verified.md) — state proofs
+- [0083](../../issues/system/closed/0083-keccak256-for-ethereum-not-just-sha3.md) — keccak256 — **closed**
+- [0084](../../issues/system/closed/0084-rlp-encoding-and-decoding.md) — RLP — **closed**
+- [0085](../../issues/system/closed/0085-abi-encoding-and-decoding.md) — ABI — **closed**
+- [0086](../../issues/system/closed/0086-merkle-patricia-proofs-so-a-contract-read-is-verified.md) — state proofs
   — **closed**
 
 Not yet issues, and why: **ENS** needs the three above; **signing** needs its gate designed first;

@@ -5,7 +5,7 @@ Bug reports and feature requests for the wac compiler.
 **Filing is not a substitute for fixing.** wac used to have one owner, and everyone else
 was sent here instead of into `atoms/wac/`. That rule is gone: if you are working on
 something *else* — a program written in wac, a library, a port — and you hit a compiler bug
-or need a language feature, fix it. Read [CONTRIBUTING.md](../CONTRIBUTING.md) first, and
+or need a language feature, fix it. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) first, and
 expect the invariants to take some learning.
 
 What still belongs here is anything where the blocker is a **decision** rather than the
@@ -81,7 +81,7 @@ Closing one means, at minimum:
 - the test verified to fail without the fix. Reverting the fix and watching the test
   fail is the only way to know the test tests it.
 
-[CONTRIBUTING.md](../CONTRIBUTING.md)'s rules apply to the fix itself.
+[CONTRIBUTING.md](../../CONTRIBUTING.md)'s rules apply to the fix itself.
 
 ## Breaking changes
 

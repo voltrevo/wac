@@ -7,7 +7,7 @@
 - **Kind:** missing feature
 - **Symptom:** not implemented
 
-Step 2a of [design/0001](../../design/0001-a-self-contained-system.md), where D9, D10 and D11 hold the
+Step 2a of [design/0001](../../../design/system/0001-a-self-contained-system.md), where D9, D10 and D11 hold the
 reasoning. This is the actionable slice.
 
 ## What

@@ -8,7 +8,7 @@ compiler, this one is things built with it.
 
 ## The map
 
-**[MAP.md](MAP.md)** is the bird's-eye view: every package with its size, its tests and what
+**[MAP.md](../MAP.md)** is the bird's-eye view: every package with its size, its tests and what
 it builds on, and every program and page you can build, each with a line on what it does. It
 is generated from the tree by `deno task map` and checked by the suite, so it cannot drift.
 
@@ -62,7 +62,7 @@ Ethereum's own fixtures, `ssz` is its serialization and Merkle proofs, and `ligh
 the Altair sync protocol through all four of Ethereum's `light_client/sync` cases. On top of
 those, the execution side: `rlp`, `abi`, `ens`, and `mpt` — Merkle-Patricia proofs, which is
 what turns "a provider told me" into "the state root I already verified commits to this". See
-[design/0003](design/0003-an-ethereum-centric-reference-distribution.md) for where that is going.
+[design/0003](../design/system/0003-an-ethereum-centric-reference-distribution.md) for where that is going.
 
 **`fs` — a filesystem that belongs to the program**, in memory or mounted on the host's, so a
 session can be sealed off from the machine that started it.
@@ -125,7 +125,7 @@ There is no module-alias mechanism in the language yet, so this is what it looks
 like. Keeping the tree at `packages/<name>/src` bounds the depth. One import is
 *not* a path — `import { Read } from core;` names the module the compiler ships —
 and a prefix that maps to a directory is the next step of wac's
-`design/0001`, which is what [issue 0092](issues/open/0092-the-capability-layer-should-be-its-own-repo.md)
+`design/0001`, which is what [issue 0092](../issues/system/open/0092-the-capability-layer-should-be-its-own-repo.md)
 is waiting on.
 
 ## Commands

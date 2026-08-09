@@ -19,7 +19,7 @@ import { hashString, stringEq } from "../../std/src/hash.wac";
 | `hash.wac` | ready-made hash and equality for `string`, `i32` and `i64` |
 
 This package exists because wac gained generics ([wac issue
-0034](../../../wac/issues/closed/0034-generics.md)). Before that a container could only be
+0034](../../issues/lang/closed/0034-generics.md)). Before that a container could only be
 written once per element type, which is why this repo had three hand-rolled ones.
 
 ## Vec
@@ -98,7 +98,7 @@ match (found) {
 ```
 
 `T?` works for every type, primitives included ([wac issue
-0045](../../../wac/issues/closed/0045-nullable-primitives-are-not-boxed.md)), and for a
+0045](../../issues/lang/closed/0045-nullable-primitives-are-not-boxed.md)), and for a
 *reference* it is cheaper — one word, no allocation. So `Point?` is the right thing to write and
 `Option<Point>` is not.
 
