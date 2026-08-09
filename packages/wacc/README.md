@@ -1644,9 +1644,47 @@ what the expression's type came back as before asking what the rule does.**
 | false alarms on the emitter's corpus | 0 | 0 |
 | generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
 
-The queue's tail is now `undefined variable` (10 of 298) and the remainder of the argument-count and
-method families — all partial, all in the same shape: the rule fires where the type is known and is
-silent where it is not.
+### Widening the mutations, because 93% was a fact about thirteen mistakes
+
+The queue was down to partial categories, which is the point at which the number stops being the
+interesting thing. Recall over a mutation set is recall over *those mutations*, and the first set was
+thirteen, all of them about types: swap one, drop an argument, rename something. So a second dozen
+went in, breaking the other rules the language has — what may be written to, which cast spelling is
+which, where a `break` may stand, whether a condition is a boolean, calling something that is not a
+function, naming a field that is not there.
+
+**The denominator moved with them**, and that is worth stating rather than hiding: 1,274 broken
+programs became 978, because each program gets one mutation and there are twice as many kinds to
+draw from. 93% before and 94% after are not the same measurement, and the honest comparison is that
+the wider set immediately found two categories the narrow one could not contain — both **missed
+entirely**:
+
+- **`type '…' is not callable`** — `7()`.
+- **`type '…' has no field '…'`** — `7.n`.
+
+Both are the same cause as the last three slots: a **literal receiver**, whose type is unknown by
+design. That is now five rules fixed by the same observation, which is why `naturalTypeOf` exists and
+why the note above it is the first thing to read when a diagnostic is missing.
+
+It also produced the sharpest correction of the day. `18446744073709551615.nofield` was a
+contradiction: the reference reports *"integer literal out of range"* at the literal and never looks
+at the member, while this checker called the literal an `i32` and complained about the field. An
+integer literal is polymorphic over four types and **`i32` is a useful default only while it fits** —
+twenty digits is not an `i32` in any reading, and answering as though it were is a confident wrong
+answer about a type the program never had. Nine digits is the boundary that is certain, a based
+literal counts as unknown, and unknown is silence.
+
+| | before | after |
+|---|---|---|
+| mutation kinds | 13 | **26** |
+| mutation recall | 93% of 1,274 | **94% of 978** — a different set, not a better score |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
+What the wider set names next is `undefined variable` (7 of 145) and `'…' outside loop` (6 of 157) —
+both mostly caught, which is what a queue looks like when the categories that were absent have been
+filled in.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

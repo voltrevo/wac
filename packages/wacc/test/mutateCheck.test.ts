@@ -88,6 +88,28 @@ const MUTATIONS: [string, (s: string) => string | null][] = [
   ["an argument too many", (s) => sub(s, /\(([^()]+)\)(?=[;.])/, "($1, 1)")],
   ["a return loses its value", (s) => sub(s, /return [^;]+;/, "return;")],
   ["a parameter declared twice", (s) => sub(s, /\((i32 \w+)\)/, "($1, $1)")],
+  // **A second dozen, because the first was a fact about thirteen mistakes.** Recall over a
+  // mutation set is recall over the mutations, and the first set was all about *types* — swap one,
+  // drop an argument, rename something. These break the other rules the language has: what may be
+  // written to, which cast spelling is which, where a `break` may stand, what a `const` promises.
+  ["a const is written to", (s) => sub(s, /\bconst (\w+) (\w+) = ([^;]+);/, "const $1 $2 = $3;\n  $2 = $3;")],
+  ["a lossless cast becomes lossy", (s) => sub(s, /\bas!\s/, "as ")],
+  ["a checked cast becomes plain", (s) => sub(s, /\bas~\s/, "as ")],
+  ["a plain cast becomes raw", (s) => sub(s, / as (?=[iuf]\d)/, " as@ ")],
+  ["a break with nothing to leave", (s) => sub(s, /return ([^;]+);/, "break;\n  return $1;")],
+  ["a continue with nothing to repeat", (s) => sub(s, /return ([^;]+);/, "continue;\n  return $1;")],
+  ["a condition that is not a bool", (s) => sub(s, /\bif \(([^()]+)\)/, "if (1)")],
+  ["a while that is not a bool", (s) => sub(s, /\bwhile \(([^()]+)\)/, 'while ("s")')],
+  ["an index that is not an integer", (s) => sub(s, /\[(\w+)\](?!\()/, '["s"]')],
+  ["something that is not an array, indexed", (s) => sub(s, /(?<=return )(\w+)\.len\(\)/, "$1[0].len()")],
+  ["a call to something that is not one", (s) => sub(s, /(?<=return )(\w+);/, "$1();")],
+  // The lookbehind keeps this off a decimal point: without it the mutation turns `0.0` into
+  // `0.nofield`, which is a real program the reference refuses — but it is a field on a *number*,
+  // not the field-on-a-struct this is aiming at, and one mutation should mean one thing.
+  ["a field that is not there", (s) => sub(s, /(?<=[A-Za-z_\)\]])\.(\w+)(?= [-+*/]|;)/, ".nofield")],
+  ["a field on a number", (s) => sub(s, /(?<=return )(\d+)\b(?![.\w])/, "$1.nofield")],
+  ["a struct built with a name it has not", (s) => sub(s, /\{ (\w+): /, "{ nofield: ")],
+  ["an override with nothing to override", (s) => sub(s, /\b(i32|f64|string|bool|void) (\w+)\(const this\)/, "override $1 $2(const this)")],
 ];
 
 /** Message text with the names taken out, so two of the same rule group together. */

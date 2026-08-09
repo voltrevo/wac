@@ -1681,9 +1681,41 @@ bool isReferenceName(C c, string t) {
  * `typeOfExpr` answers unknown for one. A comparison is not a slot: `1 == "hello"` has nothing to
  * take a type from, and the whole complaint is that the two sides cannot be the same type.
  */
+/**
+ * How many digits an integer literal is written with, ignoring `_`, a sign and a base prefix.
+ *
+ * Used only to answer "is this certainly an `i32`", so it counts rather than parses: this checker
+ * has no integer parser and does not need one to know that twenty digits is not an `i32`.
+ */
+i32 literalDigits(C c, Expr e) {
+  match (e.kind) {
+    case IntLit(tok): {
+      string t = tokenText(c, tok);
+      i32 n = 0;
+      for (i32 i = 0; i < t.len(); i++) {
+        string ch = t[i];
+        if (ch == "_" || ch == "-" || ch == "+") { continue; }
+        if (ch == "x" || ch == "X" || ch == "b" || ch == "B" || ch == "o" || ch == "O") { return 0; }
+        n = n + 1;
+      }
+      return n;
+    }
+    case Unary(op, operand): { return literalDigits(c, operand); }
+    else: { return 0; }
+  }
+}
+
 string naturalTypeOf(C c, Expr e) {
   i32 lk = litKindOf(e);
-  if (lk == litInteger()) { return "i32"; }
+  if (lk == litInteger()) {
+    // **Only when it certainly fits.** An integer literal is polymorphic over `i32 i64 u32 u64`, and
+    // calling it an `i32` is a useful answer for a rule with nothing else to go on — but
+    // `18446744073709551615` is not an `i32` in any reading, and saying so produced a complaint
+    // about a type the program never had, where the reference reports the literal being out of range
+    // and stops. Ten digits is the boundary and nine is the one that is certain; a based literal
+    // counts as unknown, which is the safe direction.
+    return literalDigits(c, e) > 0 && literalDigits(c, e) < 10 ? "i32" : typeNone();
+  }
   if (lk == litFloat()) { return "f64"; }
   if (lk == litBool()) { return "bool"; }
   if (lk == litString()) { return "string"; }
@@ -2032,7 +2064,16 @@ void checkExpr(C c, Expr e) {
           checkThroughNullable(c, e, obj);
           checkMethodCall(c, e, callee, obj, tokenText(c, nameTok), args);
         }
-        else: { checkExpr(c, callee); }
+        else: {
+          checkExpr(c, callee);
+          // **`7()` is not a call.** A funcref is, a name that is a function is, and everything else
+          // this checker can put a type to is *"type 'i32' is not callable"* — at the callee, which
+          // is where the reference reports it. Silent on a type it cannot name, as everywhere.
+          string ct = naturalTypeOf(c, callee);
+          if (ct != typeNone() && ct != "" && !startsWithFn(ct)) {
+            c.report(errNotCallable(), callee.line, callee.col);
+          }
+        }
       }
     }
     else: { }
@@ -2809,7 +2850,11 @@ void checkThroughNullable(C c, Expr at, Expr obj) {
  * complaining — `c.get` without parentheses is the reference's own separate diagnostic.
  */
 void checkMember(C c, Expr at, Expr obj, string name) {
-  string t = typeOfExpr(c, obj);
+  // **A literal has fields as much as any other value of its type**, which is to say none: `7.n` is
+  // *"type 'i32' has no field 'n'"*. Asking `typeOfExpr` answered unknown, as it does for every
+  // literal by design, and this rule then had nothing to be about — the fifth place that has come
+  // up, and the reason `naturalTypeOf` exists.
+  string t = naturalTypeOf(c, obj);
   if (t == typeNone() || t == "") { return; }
   if (withoutNull(t) != "") { checkThroughNullable(c, at, obj); return; }
   if (isArrayName(t) || t == "string") { return; }
