@@ -1260,10 +1260,27 @@ mistake: `for (…; …; ++i)` is a parse error, so a `for` update takes the pos
 |---|---|---|
 | whole files | 326 | **332 of 338** |
 | invalid | 0 | 0 |
-| sweep | 4,323 programs, 3,919 compared | **4,378 programs, 3,970 compared, 0 mismatched** |
+| sweep | 4,323 programs, 3,919 compared | **4,392 programs, 3,984 compared, 0 mismatched** |
 
-Six files left: three whose imports the corpus does not contain, and three singles — `Option`
-unresolved, a generic *function* call whose type argument is inferred, and a named construction.
+**`P { y: 4.0, x: 3.0 }`** went in with them, which is the same value as `P(3.0, 4.0)` and so the
+same instruction with the arguments put back in order — `struct.new` takes fields in declaration
+order and knows nothing about names. The rules came from asking the reference seven questions at
+once: every field must be named, exactly once, in any order; positional and named do not mix; and
+an enum variant does not take them. A partial construction is an error rather than a defaulted
+struct, which is what lets the emitter walk the *fields* and trust it finds each one. Six
+permutations of three fields are in the sweep, because a wrong order produces a valid module with a
+different answer.
+
+Three files left that a feature would fix, and each names one:
+
+- **`struct Rect : Shape`** — subtyping. `Rect(1.0, 2.0, 10.0, 20.0)` is "a construction of Rect
+  with 4 of 2 fields" because nothing here knows a subtype's fields begin with its parent's. This is
+  wasm's `sub` in the type section, and it is the largest single feature the corpus still wants.
+- **`Option.Some(v)` where the type argument comes from context** — `Option<i32> get(…)` returns
+  `Option.None`, and the instance is named by the *return type* rather than at the construction.
+- **`mapOption(some, double)`** — a generic function whose `T` comes from an argument and whose `U`
+  comes from a callback's return type. Generic *types* are instantiated here; generic *functions*
+  are not.
 
 ### One reader, because two disagreed
 

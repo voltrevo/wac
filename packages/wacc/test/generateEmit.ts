@@ -771,6 +771,45 @@ export function generateEmit(): Cell[] {
         `struct P { i32 v; }\nexport i32 f() { P[] a = P[2](fill: P(4)); i32 v = ${e("a[0].v")}; return v * 100 + a[0].v; }`);
     }
   }
+  // **Named construction is positional construction with the arguments out of order**, so the thing
+  // to generate is orders: every permutation of three fields lands on the same value, and a wrong
+  // one lands on a different value rather than an invalid module — which is why these compare
+  // answers rather than validity.
+  {
+    const S3 = `struct T3 { i32 a; i32 b; i32 c; }\n`;
+    const perms = [["a", "b", "c"], ["a", "c", "b"], ["b", "a", "c"], ["b", "c", "a"],
+                   ["c", "a", "b"], ["c", "b", "a"]];
+    const v: Record<string, string> = { a: "1", b: "20", c: "300" };
+    for (const perm of perms) {
+      const fields = perm.map((f) => `${f}: ${v[f]}`).join(", ");
+      add(`named construction ${perm.join("")}`,
+        `${S3}export i32 f() { T3 t = T3 { ${fields} }; return t.a + t.b + t.c + t.a * 1000; }`);
+    }
+    add("named construction of mixed types",
+      `struct M { string s; i32 n; bool b; }\n` +
+      `export i32 f() { M m = M { b: true, n: 7, s: "ab" }; return m.n * 10 + m.s.len() + (m.b ? 100 : 0); }`);
+    add("named construction nested in another",
+      `struct In { i32 v; }\nstruct Out { i32 n; In i; }\n` +
+      `export i32 f() { Out o = Out { i: In { v: 4 }, n: 5 }; return o.n * 10 + o.i.v; }`);
+    add("named construction of a single field",
+      `struct One { i32 v; }\nexport i32 f() { One o = One { v: 9 }; return o.v; }`);
+    add("named construction as an argument",
+      `struct P2 { i32 x; i32 y; }\ni32 g(P2 p) { return p.x - p.y; }\n` +
+      `export i32 f() { return g(P2 { y: 1, x: 8 }); }`);
+    add("named construction returned",
+      `struct P2 { i32 x; i32 y; }\nP2 mk() { return P2 { y: 2, x: 3 }; }\n` +
+      `export i32 f() { return mk().x * 10 + mk().y; }`);
+    add("named construction of an array element",
+      `struct P2 { i32 x; i32 y; }\n` +
+      `export i32 f() { P2[] a = P2[](P2 { y: 1, x: 2 }, P2 { x: 3, y: 4 }); return a[0].x * 10 + a[1].y; }`);
+    add("named construction as a constant",
+      `struct P2 { i32 x; i32 y; }\nconst P2 K = P2 { y: 6, x: 7 };\n` +
+      `export i32 f() { return K.x * 10 + K.y; }`);
+    add("named construction of a struct holding a string",
+      `struct S1 { string a; string b; }\n` +
+      `export i32 f() { S1 s = S1 { b: "xy", a: "z" }; return s.a.len() * 10 + s.b.len(); }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);
