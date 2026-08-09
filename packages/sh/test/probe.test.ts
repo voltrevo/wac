@@ -26,7 +26,9 @@ Deno.test("the coverage probe compiles against the current platform", async () =
   // A world with no `spawn` falls through to the shell's own implementations rather than reporting
   // the program broken. The fake world answers -2 for `/bin/echo`, which is both a name on
   // `$WACPATH` and a builtin — so "hi" proves the fallthrough and 126 would prove the bug. This is
-  // the browser terminal's case: a page cannot spawn, and sixty applets work there anyway.
+  // an embedded world's case — a `Cli` with no `spawn` wired, which answers -2 and means it. **Not
+  // the browser's**, which this said before anyone checked `host/browser.ts`: a page spawns, and
+  // every applet in the browser terminal is a real child of it.
   const out = new TextDecoder().decode(mod.shOut("WACPATH=/bin; echo hi"));
   if (out !== "hi\n") throw new Error(`a world without spawn did not fall through: ${JSON.stringify(out)}`);
   if (mod.shStatus("WACPATH=/bin; echo hi") !== 0) {

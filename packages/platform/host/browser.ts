@@ -917,8 +917,13 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
       const kid = children.get(h);
       if (kid !== undefined) {
         try { kid.in.end(); kid.kill(); } catch { /* already gone */ }
-        children.delete(h);
       }
+      // **The child itself stays in the table.** Its status is still a question worth asking — a
+      // parent that stops a child and wants to know it is gone asks `exitCode` next, which is what
+      // supervising anything means — and `kill` has already settled that answer at -1. Dropping it
+      // here made `exitCode` on a stopped child throw "not a spawned worker" and take the *parent*
+      // down with it, on a call platform.wac describes as ordinary.
+
       // Ending a filesystem channel is how a child parked on a request learns nobody will answer.
       const channel = fsChannels.get(h);
       if (channel !== undefined) {
