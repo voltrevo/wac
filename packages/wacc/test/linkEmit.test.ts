@@ -165,7 +165,9 @@ Deno.test("rung 4: the two ways linking fails say which one it was", () => {
     ],
     "/main.wac",
   );
-  if (ambiguous !== "a name more than one file declares") {
+  // **And says which name**, because "a name" sent the reader back to the file to find out which one
+  // — and the five corpus files this decline covered took one grep each to diagnose once it said.
+  if (ambiguous !== "the name enc, which more than one file declares") {
     throw new Error(`an ambiguous name was reported as ${JSON.stringify(ambiguous)}`);
   }
 });

@@ -729,5 +729,51 @@ export function generateEmit(): Cell[] {
     N + `export i32 f() { P? p = find(true); if (p is P) { return p!.v; } return 0; }`);
   add("is T on an array", `export bool f() { i32[]? a = i32[](1); return a is i32[]; }`);
   add("is T on a null string", `export bool f() { string? s = null; return s is string; }`);
+
+  // `++` and `--` **as expressions**, which the emitter accepted as statements long before it could
+  // produce a value. The whole of what distinguishes the two forms is which value is the answer, so
+  // every shape below is generated both ways round: a difference of one is exactly the bug to catch.
+  for (const op of ["++", "--"]) {
+    for (const pre of [true, false]) {
+      const e = (t: string) => (pre ? `${op}${t}` : `${t}${op}`);
+      const tag = `${pre ? "prefix" : "postfix"} ${op}`;
+      add(`${tag} on a local`, `export i32 f() { i32 x = 5; i32 v = ${e("x")}; return v * 100 + x; }`);
+      add(`${tag} on an i64 local`,
+        `export i32 f() { i64 x = 5; i64 v = ${e("x")}; return (v * 100 + x) as! i32; }`);
+      add(`${tag} on a u16 local`,
+        `export i32 f() { i32 x = 5; i32 v = ${e("x")}; return v * 100 + x; }`);
+      add(`${tag} on a field`,
+        `struct P { i32 v; }\nexport i32 f() { P p = P(5); i32 v = ${e("p.v")}; return v * 100 + p.v; }`);
+      add(`${tag} through an unwrap`,
+        `struct P { i32 v; }\nP? mk() { return P(5); }\n` +
+        `export i32 f() { P? p = mk(); i32 v = ${e("p!.v")}; return v * 100 + p!.v; }`);
+      add(`${tag} on an element`,
+        `export i32 f() { i32[] a = i32[3](fill: 5); i32 v = ${e("a[1]")}; return v * 100 + a[1] + a[0]; }`);
+      add(`${tag} on a u8 element`,
+        `export i32 f() { u8[] a = u8[3](fill: 5); i32 v = ${e("a[1]")}; return v * 100 + a[1]; }`);
+      add(`${tag} in a condition`,
+        `export i32 f() { i32 i = 0; i32 n = 0; while (${e("i")} < 3) { n = n + 1; } return n * 100 + i; }`);
+      add(`${tag} as an argument`,
+        `i32 g(i32 a) { return a * 2; }\nexport i32 f() { i32 i = 3; return g(${e("i")}) * 100 + i; }`);
+      add(`${tag} as an index`,
+        `export i32 f() { i32[] a = i32[4](fill: 0); i32 i = 1; a[${e("i")}] = 9; return a[1] * 100 + a[2] * 10 + i; }`);
+      add(`${tag} twice in one expression`,
+        `export i32 f() { i32 i = 1; i32 v = ${e("i")} + ${e("i")}; return v * 100 + i; }`);
+      // A `for` update takes the **postfix** form only — `for (…; …; ++i)` is a parse error, which
+      // is the grammar's answer rather than this generator's, so only one of the two goes in.
+      if (!pre) {
+        add(`${tag} in a for update`,
+          `export i32 f() { i32 n = 0; for (i32 i = 0; i < 4; ${e("i")}) { n = n + ${e("i")}; } return n; }`);
+      }
+      add(`${tag} discarded then read`,
+        `export i32 f() { i32 x = 7; ${e("x")}; return x; }`);
+      add(`${tag} of a field of an element`,
+        `struct P { i32 v; }\nexport i32 f() { P[] a = P[2](fill: P(4)); i32 v = ${e("a[0].v")}; return v * 100 + a[0].v; }`);
+    }
+  }
+  add("increment feeds the base of another", `struct P { i32 v; }\n` +
+    `P at(P[] a, i32 i) { return a[i]; }\n` +
+    `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);
+
   return out;
 }
