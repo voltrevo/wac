@@ -5,6 +5,7 @@ import { pool } from "../../../harness/inFlight.ts";
 import { buildApp } from "../../platform/build.ts";
 import "../../../harness/spawnRetry.ts";
 import { CORPUS, usesDeleted } from "./corpus.ts";
+import { sameName } from "../../../tools/corpusStderr.ts";
 // The shell, against bash.
 //
 // Every script here runs through GNU bash and through ours, and the two must agree on standard
@@ -728,7 +729,10 @@ Deno.test({
   name: "`cd` fails in strerror's words, as bash's does",
   ignore: !haveBash,
   fn: () => {
-    const strip = (t: string) => t.replace(/^\S*bash: line \d+: /gm, "").trim();
+    // bash names itself and the line; we name ourselves — **mapped rather than stripped**, so this
+    // still checks that our builtins carry `sh: `. They did not until `tools/corpusStderr.ts` compared
+    // standard error across the whole corpus and found forty scripts differing for that one reason.
+    const strip = (t: string) => sameName(t).trim();
     for (const script of ["cd /nosuchdir", "cd /etc/passwd", "cd /nosuchdir; echo st=$?"]) {
       const run = (cmd: string) =>
         new Deno.Command(cmd, {
@@ -742,7 +746,7 @@ Deno.test({
       const theirs = run("bash");
       const ours = run(wacshBinary);
       const dec = new TextDecoder();
-      assertEquals(dec.decode(ours.stderr).trim(), strip(dec.decode(theirs.stderr)), `${script}: stderr`);
+      assertEquals(strip(dec.decode(ours.stderr)), strip(dec.decode(theirs.stderr)), `${script}: stderr`);
       assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);
     }
   },
@@ -852,7 +856,10 @@ Deno.test({
       const ours = run(wacshBinary);
       // bash prefixes a *builtin's* failure with `bash: line N: ` and ours has no line number to give
       // — the same deliberate difference the `cd` test above strips, and for the same reason.
-      const strip = (t: string) => t.replace(/^\S*bash: line \d+: /gm, "").trim();
+      // bash names itself and the line; we name ourselves — **mapped rather than stripped**, so this
+    // still checks that our builtins carry `sh: `. They did not until `tools/corpusStderr.ts` compared
+    // standard error across the whole corpus and found forty scripts differing for that one reason.
+    const strip = (t: string) => sameName(t).trim();
       assertEquals(dec.decode(ours.stdout), dec.decode(theirs.stdout), `${script}: output`);
       assertEquals(strip(dec.decode(ours.stderr)), strip(dec.decode(theirs.stderr)), `${script}: stderr`);
       assertEquals(ours.code, theirs.code, `${script}: status`);

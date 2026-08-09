@@ -38,7 +38,7 @@ import { serveOn } from "../../fs/src/serve.wac";
 // From `fmt`, where the one implementation lives — this package used to have its own copy.
 import { atoi, itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "../../fs/src/path.wac";
-import { Arith, evaluate } from "./arith.wac";
+import { Arith, errorToken, evaluate } from "./arith.wac";
 import { Fs } from "../../fs/src/fs.wac";
 
 /**
@@ -2212,7 +2212,7 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
   if (sh.exiting) { return u8[0](); }
 
   if (!result.found) {
-    sh.err((argv.get(0) + ": command not found\n").toBytes());
+    sh.err(("sh: " + argv.get(0) + ": command not found\n").toBytes());
     sh.status = 127;
     return u8[0]();
   }
@@ -2640,7 +2640,7 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
   i32 n = 1;
   if (argv.len() > 1) {
     if (!isNumber(argv.get(1))) {
-      sh.err((name + ": " + argv.get(1) + ": numeric argument required\n").toBytes());
+      sh.err(("sh: " + name + ": " + argv.get(1) + ": numeric argument required\n").toBytes());
       sh.exiting = true;
       sh.exitCode = 128;
       return Output.ok(u8[0]());
@@ -2655,7 +2655,7 @@ Output breakOrContinue(Shell sh, Vec<string> argv) {
   }
   if (sh.loops == 0) {
     // bash's wording, and its status: the complaint goes to standard error and 0 stays in `$?`.
-    sh.err((name + ": only meaningful in a `for', `while', or `until' loop\n").toBytes());
+    sh.err(("sh: " + name + ": only meaningful in a `for', `while', or `until' loop\n").toBytes());
     return Output.ok(u8[0]());
   }
   if (name == "break") { sh.breaking = n; } else { sh.continuing = n; }
@@ -2961,7 +2961,96 @@ Output ls(Shell sh, Vec<string> argv) {
  * asks for bytes with `sh.restOfStdin()` instead, which reads the input at that moment if it has not
  * been read; the two are exclusive, and which one happens depends on what the name turns out to be.
  */
+/**
+ * A builtin's diagnostics, with the shell's name on them.
+ *
+ * **bash prefixes every diagnostic *it* emits, including its builtins'**, and this did not: bash says
+ * `bash: line 1: [: too many arguments` where this said `[: too many arguments`. Measured across the
+ * whole corpus rather than noticed by reading — `tools/corpusStderr.ts` compares our standard error
+ * against bash's for all 821 scripts, and forty of the fifty differences were this one fact.
+ *
+ * The line is the builtin/program one the shell already knows. A *program* prints its own name and
+ * nothing else — `cat: f: No such file or directory` is coreutils' sentence and ours matches it —
+ * because the shell is not the one speaking. A builtin *is* the shell speaking, so it says so.
+ *
+ * Each line, because bash prefixes each: `f() { break; }` called twice complains twice, and both
+ * carry it. Lines that already name the shell are left alone rather than becoming `sh: sh:`.
+ */
 Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
+  Output out = dispatched(sh, argv, mayInherit);
+  if (out.err.len() == 0) { return out; }
+  string name = argv.get(0);
+  if (sh.funcs.has(name) || !speaksAsTheShell(name)) { return out; }
+  return Output(out.out, named(out.err, name), out.status, out.found);
+}
+
+/**
+ * Whether a diagnostic from this name is **the shell speaking**, and so carries the shell's name.
+ *
+ * Not `isBuiltin`, and the difference is measured rather than reasoned about. This shell implements
+ * `ls`, `mkdir`, `rm`, `chmod` and `chown` as builtins — for reasons of its own, so that a session
+ * with no programs still has them — but they are *coreutils programs*, and their sentences are
+ * coreutils' sentences:
+ *
+ *     $ ls nosuch          ls: cannot access 'nosuch': No such file or directory
+ *     $ cd /nosuch         bash: line 1: cd: /nosuch: No such file or directory
+ *
+ * bash prefixes the second and not the first, because `cd` is the shell and `ls` is a program that
+ * happens to have been asked for. Where we implement it makes no difference to who is speaking. The
+ * first version of this used `isBuiltin` and put `sh: ` on `ls: cannot access …`, which three other
+ * tests caught immediately — they pin coreutils' wording, which is the right thing to pin.
+ *
+ * So: the builtins bash has. A name here that bash runs as a program is a program.
+ */
+bool speaksAsTheShell(string name) {
+  return name == ":" || name == "true" || name == "false" || name == "echo" || name == "exit"
+      || name == "export" || name == "unset" || name == "cd" || name == "pwd"
+      || name == "read" || name == "shift" || name == "set"
+      || name == "break" || name == "continue" || name == "return" || name == "local"
+      || name == "test" || name == "[" || name == "help" || name == "printf"
+      || name == "kill" || name == "jobs" || name == "wait";
+}
+
+/** Every line of `err` with `sh: ` in front, unless it is already there. */
+u8[] named(u8[] err, string name) {
+  string text = string.fromBytes(err);
+  string out = "";
+  string line = "";
+  u8[] bytes = err;
+  for (i32 i = 0; i < bytes.len(); i++) {
+    if (bytes[i] == 10) {
+      out = out + prefixed(line, name) + "\n";
+      line = "";
+    } else {
+      line = line + string.fromBytes(u8[1](fill: bytes[i]));
+    }
+  }
+  if (line != "") { out = out + prefixed(line, name); }
+  return out.toBytes();
+}
+
+/**
+ * One line, named — and an empty line stays empty rather than becoming a bare prefix.
+ *
+ * **A `usage:` line is not prefixed**, and that is bash's own distinction rather than a convenience:
+ *
+ *     $ printf                 printf: usage: printf [-v var] format [arguments]
+ *     $ kill                   kill: usage: kill [-s sigspec | …] pid | jobspec …
+ *     $ break                  bash: line 1: break: only meaningful in a `for', …
+ *
+ * A usage line is the builtin telling you how to call it; an error is the shell telling you what
+ * went wrong. Measured on bash rather than reasoned about — the first version of this rule prefixed
+ * both and made `printf` differ from bash where it had agreed.
+ */
+string prefixed(string line, string name) {
+  if (line == "") { return ""; }
+  if (line.len() >= 4 && line.slice(0, 4) == "sh: ") { return line; }
+  string usage = name + ": usage: ";
+  if (line.len() >= usage.len() && line.slice(0, usage.len()) == usage) { return line; }
+  return "sh: " + line;
+}
+
+Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   string name = argv.get(0);
 
   // Functions shadow builtins, as they do in bash for everything but the special builtins.
@@ -4262,7 +4351,7 @@ string expandText(Shell sh, string text) {
  * lookup bound to this call.
  */
 string expandArith(Shell sh, string text) {
-  Arith state = Arith(u8[0](), 0, false, "");
+  Arith state = Arith(u8[0](), 0, false, "", 0, 0);
   // Names are substituted here rather than by the ordinary expander, because the ordinary
   // expander *tokenizes* — and inside these parentheses the shell's operators are arithmetic.
   // Running `3>2` through it produced a redirection of fd 3 and the string `2`; `1&&0` split on
@@ -4276,9 +4365,17 @@ string expandArith(Shell sh, string text) {
   // "expression recursion level exceeded" and so, in its own words, does this.
   string expanded = text;
   bool settled = false;
-  for (i32 round = 0; round < 16 && !settled; round++) {
+  // **The cycle is detected rather than counted out**, and the difference is which name gets blamed.
+  // `a=b; b=a` walks `a`, `b`, `a`, … for ever; a bound of sixteen rounds stops on whichever parity
+  // sixteen happens to be, and this reported `a` where bash reports `b`. Stopping when a value comes
+  // round again blames the **last new one**, which is `b` — and for `x=x`, which repeats on its first
+  // step, it is `x`, which is what bash says there too.
+  Vec<string> seen = Vec.create();
+  for (i32 round = 0; round < 64 && !settled; round++) {
     string next = substituteNames(sh, expanded);
     if (next == expanded) { settled = true; }
+    else if (sawBefore(seen, next)) { break; }
+    seen.push(expanded);
     expanded = next;
   }
   // A self-reference reaches a fixed point rather than growing — `x=x` substitutes to `x` and
@@ -4286,7 +4383,9 @@ string expandArith(Shell sh, string text) {
   // becomes a value or `0`, and one still standing means it resolves to itself.
   if (settled && hasBareName(expanded)) { settled = false; }
   if (!settled) {
-    sh.err(("sh: " + text + ": expression recursion level exceeded\n").toBytes());
+    // The surviving name is both the subject and the token, as it is in bash.
+    sh.err(("sh: " + expanded + ": expression recursion level exceeded (error token is \"" +
+            expanded + "\")\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
@@ -4296,12 +4395,23 @@ string expandArith(Shell sh, string text) {
     // Fatal to the script, which is what bash does: `echo $((1/0)); echo after` prints neither
     // and exits 1. An expansion that cannot produce a value leaves the command with no sensible
     // argument, so carrying on would mean running it with something invented.
-    sh.err(("sh: " + text + ": " + state.error + "\n").toBytes());
+    // **bash names the token it stopped at**, and this did not — see `Arith.tokenAt`. The expression
+    // in the prefix is what was *written*; the token comes from the substituted text the evaluator
+    // actually read, which is the same thing wherever no variable was involved.
+    string token = errorToken(state);
+    sh.err(("sh: " + text + ": " + state.error +
+            (token == "" ? "" : " (error token is \"" + token + "\")") + "\n").toBytes());
     sh.exiting = true;
     sh.exitCode = 1;
     return "";
   }
   return itoa(v);
+}
+
+/** Whether this text has already been through the substitution loop — see `expandArith`. */
+bool sawBefore(Vec<string> seen, string text) {
+  for (i32 i = 0; i < seen.len(); i++) { if (seen.get(i) == text) { return true; } }
+  return false;
 }
 
 /**
