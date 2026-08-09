@@ -7,6 +7,7 @@ has been fixed and why.
 |---|---|---|---|
 | [0081](open/0081-bindgen-does-not-resolve-an-imported-type-alias-in-an-exported-signature.md) | bindgen does not resolve an imported type alias in an exported signature — [gh#10](https://github.com/voltrevo/wac/issues/10) | bug | compile error |
 | [0080](open/0080-bind-helper-exports-collide-for-same-named-structs-in-different-modules.md) | bind helper exports collide for same-named structs in different modules — [gh#9](https://github.com/voltrevo/wac/issues/9) | bug | invalid wasm |
+| [0082](open/0082-increment-of-an-i64-field-or-element-emits-an-i32-one.md) | `++` on an `i64` field or element emits an `i32` one, so the module is invalid | bug | invalid wasm |
 | [0079](open/0079-a-sized-array-of-funcrefs-does-not-parse.md) | a sized array construction whose element type is a funcref does not parse | bug | compile error |
 | [0078](open/0078-as-raw-computes-where-it-claims-to-reinterpret.md) | `as@` computes where it claims to reinterpret — **wants an operator decision** | missing feature | not implemented |
 | [0077](open/0077-a-wac-local-named-self-has-no-wapy-rendering.md) | a wac local named `self` has no wapy rendering | bug | compile error |
