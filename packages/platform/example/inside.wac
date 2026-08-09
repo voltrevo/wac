@@ -39,6 +39,10 @@ export i32 main(Core core, Cli cli) {
   core.log("status " + itoa(status));
   core.log("out   " + oneLine(got.out));
   core.log("err   " + oneLine(got.err));
+  // The third thing a frame answers: whether `out` is all of it. False here and in any program whose
+  // child writes less than the buffer holds — it is the *other* answer that matters, because a child
+  // that filled the buffer stops cleanly and its short output looks complete. See `Captured`.
+  core.log("whole " + (got.truncated ? "no" : "yes"));
   return 0;
 }
 

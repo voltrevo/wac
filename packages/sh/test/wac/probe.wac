@@ -301,7 +301,7 @@ string resolveRoot(i32 id) { return "/"; }
 Pending<bool> fakePushChild(string[] argv, u8[] stdin, string cwd, bool inheritIn) {
   return Pending.of(1, resolveFromId, alwaysSettled, ignoreDrop);
 }
-Captured resolveNothing(i32 id) { return Captured.of(u8[0](), u8[0]()); }
+Captured resolveNothing(i32 id) { return Captured.of(u8[0](), u8[0](), false); }
 Pending<Captured> fakePopChild() {
   return Pending.of(0, resolveNothing, alwaysSettled, ignoreDrop);
 }

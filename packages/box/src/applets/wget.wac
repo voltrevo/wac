@@ -36,6 +36,15 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   if (streaming) { cli.openOutput("").wait(); }
   else {
     Captured got = cli.popChild().wait();
+    // **A truncated download is not a download.** The collected route holds the body in memory and
+    // the buffer is capped, and `fetch` cannot tell a full buffer from a peer that hung up — so
+    // without this a response past the cap was written out as a short file and reported as "saved",
+    // which is the one outcome worse than failing: a corrupt file that nothing says is corrupt. See
+    // `Captured.truncated`.
+    if (got.truncated) {
+      core.warn(a.name + ": " + out + ": the response is larger than this program can hold in memory");
+      return 1;
+    }
     if (code == 0) {
       Change wrote = fs.writeFile(out, got.out);
       if (!wrote.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(wrote)); return 1; }

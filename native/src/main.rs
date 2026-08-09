@@ -1051,7 +1051,14 @@ fn dispatch(
                 Some(f) => (f.out, f.err),
                 None => (Vec::new(), Vec::new()),
             };
-            return settle_now(caller, Kind::Captured, Outcome::Captured(out, err), results);
+            // **Never truncated here, and that is a difference rather than a simplification.** The
+            // JavaScript hosts hold a frame's output in a capped buffer — 8 MiB — because the
+            // program deciding how much to produce is not the one holding it, and at the cap `write`
+            // answers false, which a producer like `box yes` stops on. This runtime's frame is a
+            // `Vec` that simply grows, so the same applet run in process here answers in full and
+            // uses whatever memory that takes. `Captured.truncated` is the field that lets a caller
+            // tell the two apart; on this host it is always false because nothing is ever cut short.
+            return settle_now(caller, Kind::Captured, Outcome::Captured(out, err, false), results);
         }
         // ── The network and `spawn`: not implemented, and *said in the type* ─────
         //
@@ -1591,7 +1598,9 @@ fn dispatch(
                 (Kind::BytesOpt, Outcome::BytesOpt(None)) => Val::AnyRef(None),
                 (Kind::BytesOpt, Outcome::BytesOpt(Some(v))) => make_u8_array(caller, &v)?,
                 (Kind::Bool, Outcome::Bool(b)) => Val::I32(if b { 1 } else { 0 }),
-                (Kind::Captured, Outcome::Captured(out, err)) => make_captured(caller, &out, &err)?,
+                (Kind::Captured, Outcome::Captured(out, err, cut)) => {
+                    make_captured(caller, &out, &err, cut)?
+                }
                 (Kind::Change, Outcome::Change(fault, msg)) => make_change(caller, fault, &msg)?,
                 (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
                     make_file_result(caller, ok, &bytes, &err, fault)?
@@ -2147,13 +2156,18 @@ fn read_string_array(caller: &mut Caller<'_, Host>, a: &Val) -> Result<Vec<Vec<u
     Ok(items)
 }
 
-fn make_captured(caller: &mut Caller<'_, Host>, out: &[u8], err: &[u8]) -> Result<Val, wasmtime::Error> {
+fn make_captured(
+    caller: &mut Caller<'_, Host>,
+    out: &[u8],
+    err: &[u8],
+    truncated: bool,
+) -> Result<Val, wasmtime::Error> {
     // Both arrays before the constructor: each one uses the staging buffer, so building one while
     // holding the other would overwrite it.
     let o = make_u8_array(caller, out)?;
     let e = make_u8_array(caller, err)?;
     let f = export_func(caller, "$bind$sm_Captured_of")?;
-    let built = call_dyn(caller, &f, &[o, e])?;
+    let built = call_dyn(caller, &f, &[o, e, Val::I32(if truncated { 1 } else { 0 })])?;
     built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Captured.of answered nothing"))
 }
 

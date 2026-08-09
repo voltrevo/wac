@@ -479,8 +479,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       return EMPTY;
     },
     [OP.POP_CHILD]: () => {
-      const { out, err } = kids.pop();
-      return packCaptured(out, err);
+      const { out, err, truncated } = kids.pop();
+      return packCaptured(out, err, truncated);
     },
 
     // A child has its own command line: an applet reading `cli.arg(1)` must see what the shell

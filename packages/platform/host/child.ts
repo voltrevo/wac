@@ -61,6 +61,14 @@ type Frame = {
   err: Uint8Array[];
   /** How much `out` holds, so the cap costs no walk of the list. */
   written: number;
+  /**
+   * Whether a write was refused because this buffer was full.
+   *
+   * Recorded rather than inferred: `write` answering false is the child's signal to stop, and the
+   * child stops *cleanly*, so by the time anyone looks at `out` there is nothing in the bytes that
+   * says they are short. See `Captured.truncated` in platform.wac.
+   */
+  overflowed: boolean;
 };
 
 /**
@@ -94,7 +102,17 @@ export class ChildStack {
   }
 
   push(argv: string[], stdin: Uint8Array, cwd: string, inheritInput = false): void {
-    this.frames.push({ argv, stdin, at: 0, cwd, inheritInput, out: [], err: [], written: 0 });
+    this.frames.push({
+      argv,
+      stdin,
+      at: 0,
+      cwd,
+      inheritInput,
+      out: [],
+      err: [],
+      written: 0,
+      overflowed: false,
+    });
   }
 
   /** The child's arguments, or null when none is running. */
@@ -109,10 +127,12 @@ export class ChildStack {
    * nothing to undo, and a program that pops once too often has a bug that a thrown error here
    * would report as the host's.
    */
-  pop(): { out: Uint8Array; err: Uint8Array } {
+  pop(): { out: Uint8Array; err: Uint8Array; truncated: boolean } {
     const frame = this.frames.pop();
-    if (frame === undefined) return { out: new Uint8Array(0), err: new Uint8Array(0) };
-    return { out: concat(frame.out), err: concat(frame.err) };
+    if (frame === undefined) {
+      return { out: new Uint8Array(0), err: new Uint8Array(0), truncated: false };
+    }
+    return { out: concat(frame.out), err: concat(frame.err), truncated: frame.overflowed };
   }
 
   /**
@@ -158,7 +178,10 @@ export class ChildStack {
   write(bytes: Uint8Array): boolean {
     const frame = this.top;
     if (frame === undefined) return false;
-    if (frame.written + bytes.length > CAP) return false;
+    if (frame.written + bytes.length > CAP) {
+      frame.overflowed = true;
+      return false;
+    }
     frame.out.push(bytes.slice());
     frame.written += bytes.length;
     return true;
@@ -196,11 +219,12 @@ function concat(parts: Uint8Array[]): Uint8Array {
 }
 
 /** The payload `popChild` answers with: standard output length-prefixed, then standard error. */
-export function packCaptured(out: Uint8Array, err: Uint8Array): Uint8Array {
-  const payload = new Uint8Array(4 + out.length + err.length);
+export function packCaptured(out: Uint8Array, err: Uint8Array, truncated: boolean): Uint8Array {
+  const payload = new Uint8Array(5 + out.length + err.length);
   new DataView(payload.buffer).setInt32(0, out.length, true);
-  payload.set(out, 4);
-  payload.set(err, 4 + out.length);
+  payload[4] = truncated ? 1 : 0;
+  payload.set(out, 5);
+  payload.set(err, 5 + out.length);
   return payload;
 }
 

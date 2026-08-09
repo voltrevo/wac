@@ -259,9 +259,10 @@ export function cliOf(
       // The two streams in one answer, standard output length-prefixed. One call rather than two
       // because they are one fact: what the child wrote before it stopped.
       const n = readI32le(out);
-      return cls.Captured.of(out.subarray(4, 4 + n), out.subarray(4 + n));
+      // A length, then the truncation flag, then the two streams — see `Captured.truncated`.
+      return cls.Captured.of(out.subarray(5, 5 + n), out.subarray(5 + n), out[4] === 1);
     } catch {
-      return cls.Captured.of(EMPTY, EMPTY);
+      return cls.Captured.of(EMPTY, EMPTY, false);
     }
   };
   /**
