@@ -26,6 +26,19 @@ import { ASSETS, c, font, space } from "./tokens";
  * fails if the output ever stops matching. So this is a claim with a test behind it rather than a
  * plausible-looking screenshot.
  */
+/**
+ * The bootstrap, as the suite reports it — `packages/wacc/test/selfHostEmit.test.ts`.
+ *
+ * Stage A is wacc built by the TypeScript compiler, B is wacc built by A, and C is what B produces
+ * when asked to compile wacc. B and C being the same bytes is the whole claim, and the byte count
+ * is that test's own output rather than a number typed here.
+ */
+const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
+stage B   wacc, built by stage A
+stage C   wacc, as stage B compiles it
+
+B == C    9 sources, 148,402 bytes, identical`;
+
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
   ["echo 'a whole new stack' | gzip -c | wc -c", "41"],
@@ -218,8 +231,41 @@ export default function Home() {
         </P>
       </Section>
 
+      {/* ── wacc ──────────────────────────────────────────────────────────── */}
+      <Section id="wacc" kicker="one of them, in full" title="The compiler, written in wac">
+        <P>
+          The compiler above is TypeScript. <Lead>It is being replaced by itself.</Lead>{" "}
+          {m({ children: "packages/wacc" })} is that compiler written in wac — the lexer, the
+          parser, the type checker and the emitter — and the point is not the compiler. A compiler
+          is the program shape this language is worst at: syntax trees want sum types, symbol tables
+          want generics, everything wants strings. Writing one is how the language finds out what it
+          is missing, with a real consumer rather than by argument.
+        </P>
+        <P>It reaches a fixpoint, which is what a bootstrap means:</P>
+        <Code label="wacc compiling itself" lang="text" code={BOOTSTRAP} />
+        <P>
+          Every rung was checked against the TypeScript compiler before the next was started — token
+          streams, syntax trees, then diagnostics at exact positions. The type checker was finished
+          against three independent corpora rather than one, the last being a generated sweep of{" "}
+          <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>.
+        </P>
+        <Caveat title="not finished">
+          The emitter compiles 248 of the repository&rsquo;s 337 wac files whole; the rest are
+          blocked on named things — an import from a capability, a generic function — rather than on
+          unknown ones. What matters more than the 248 is that <em>none</em> of the 337 produces an
+          invalid module: a walk that approved what the emitter cannot emit would reach a fixpoint
+          on garbage. Everything here is still built with the TypeScript compiler today. It is the
+          seed, and the self-hosted one is not yet the compiler of record.
+        </Caveat>
+        <P>
+          <span style={{ fontSize: 14.5, color: c.dim }}>
+            <A href="#/stack/wacc">The ladder, and why the emitter is not checked on its bytes →</A>
+          </span>
+        </P>
+      </Section>
+
       {/* ── Tor ───────────────────────────────────────────────────────────── */}
-      <Section id="tor" kicker="one of them, in full" title="Tor">
+      <Section id="tor" kicker="and another" title="Tor">
         <P>
           A client that verifies a consensus and builds circuits; a SOCKS5 proxy; a relay; a
           directory authority; onion services. On this repository&rsquo;s own TLS 1.3, on its own
@@ -257,7 +303,7 @@ export default function Home() {
       </Section>
 
       {/* ── Ethereum ──────────────────────────────────────────────────────── */}
-      <Section id="ethereum" kicker="and another" title="Ethereum">
+      <Section id="ethereum" kicker="and a third" title="Ethereum">
         <P>
           Ask a node who owns a name, or what a balance is, and you believe what it tells you. There
           is no way to check it — you are trusting whoever runs the endpoint, and a wrong answer
