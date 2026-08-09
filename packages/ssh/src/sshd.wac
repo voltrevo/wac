@@ -629,7 +629,7 @@ Result interactiveSession(Conn conn, Cli cli, Core core, i32 channel, Options o,
       for (i32 i = 0; i < m.data.len(); i++) {
         Typed t = tty.feed(m.data[i]);
         if (t.echo.len() > 0) { conn.sendPacket(channelData(channel, t.echo)); }
-        if (t.interrupt) { conn.sendPacket(channelData(channel, crlf())); continue; }
+        if (t.interrupted()) { conn.sendPacket(channelData(channel, crlf())); continue; }
         if (t.eof) { return Result(u8[0](), u8[0](), sh.exiting ? sh.exitCode : sh.status); }
         if (!t.hasLine) { continue; }
         // The newline the discipline put on the end is for a program reading a stream; a command is a

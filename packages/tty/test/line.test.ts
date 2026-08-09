@@ -98,6 +98,18 @@ const TYPED: Record<string, string> = {
   "erase half of a four-byte one": "a\xf0\x9f\x92\xa9\x7fz\n",
   "kill a line with a multi-byte character in it": "a\xc3\xa9b\x15z\n",
   "word erase over one": "x a\xc3\xa9b\x17z\n",
+  // **`^R` reprints the line**, and it was being delivered as a `\x12` in the middle of one. It is what
+  // you reach for when a program's output has scribbled over what you were editing, and no case here
+  // had asked about it — which is how a rule the kernel has and this module did not went unseen.
+  "reprint": "abc\x12\n",
+  "reprint an edited line": "ab\x7fc\x12\n",
+  "reprint an empty line": "\x12\n",
+  // **DEL renders as `^?`.** `columns` has always answered 2 for it and `render` answered a bare DEL
+  // byte, so the two halves of one module disagreed about one character: the echo drew one column and
+  // the erase arithmetic rubbed out two. The second case is the one that shows it — erasing a literal
+  // DEL has to take both columns back.
+  "a literal DEL is a caret pair": "ab\x16\x7f\n",
+  "erasing a literal DEL takes two columns": "ab\x16\x7f\x7fz\n",
 };
 
 const enc = (s: string) => Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
@@ -202,6 +214,14 @@ Deno.test("interrupt and end-of-input, which the pty comparison cannot ask", asy
   // `ttycat` stops at either, so what comes back is everything up to and including the event.
   const interrupted = await through(ttycat, [], enc("abc\x03def\n"));
   assertEquals(show(interrupted), show(enc("abc^C")), "^C echoes ^C, keeps no line, and ends the run");
+
+  // **`^\` is the other one, and it was an ordinary control character.** The kernel throws the line
+  // away and signals, exactly as for `^C`; this delivered `ab\x1cz` — measured through the pty, which
+  // is the oracle this module claims and which nothing had asked about `^\`. It is here beside `^C`
+  // rather than in the comparison above for the same reason `^C` is: the oracle's `cat` is killed
+  // mid-buffer, so which bytes get echoed first is a race.
+  const quit = await through(ttycat, [], enc("ab\x1cz\n"));
+  assertEquals(show(quit), show(enc("ab^\\")), "^\\ echoes ^\\, keeps no line, and ends the run");
 
   const eofEmpty = await through(ttycat, [], enc("\x04"));
   assertEquals(show(eofEmpty), show(enc("")), "^D on an empty line says nothing and ends the input");
