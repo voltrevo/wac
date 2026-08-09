@@ -36,7 +36,7 @@ import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, F
   PARENT_FS, Pending, Stat }
   from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Chan, parentAnswers, remoteChmod, remoteChown, remoteCloseOut, remoteIsHostPath, remoteMkdir,
+import { Chan, parentUser, remoteChmod, remoteChown, remoteCloseOut, remoteIsHostPath, remoteMkdir,
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
   remoteLinkStat, remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
 import { resolvePath } from "./path.wac";
@@ -223,7 +223,9 @@ export struct Fs {
    * answer and it is not a useful filesystem — a program that might be either should ask its caller,
    * which is what `packages/box`'s `boxApplet` does.
    */
-  Fs overParent(Cli cli, i64 now) { return Fs.overChan(Chan.of(cli, PARENT_FS), cli, now); }
+  Fs overParent(Cli cli, i64 now, string user) {
+    return Fs.overChan(Chan.of(cli, PARENT_FS), cli, now, user);
+  }
 
   /**
    * The same, on a channel already proved — see `fromParentOrHost`, which is what callers want.
@@ -232,11 +234,15 @@ export struct Fs {
    * Asking rather than being told keeps this the same shape as `onHost`, and there is only one place
    * a child's directory can come from.
    */
-  Fs overChan(Chan chan, Cli cli, i64 now) {
+  Fs overChan(Chan chan, Cli cli, i64 now, string user) {
     Vec<Mount> mounts = Vec.create();
     Vec<Inode> nodes = Vec.create();
     mounts.push(Mount("", Backing.Remote(chan), -1));
-    return Fs(mounts, nodes, "root", now, Procs.create(), Vec.create(),
+    // **The parent's user, not the default.** Every check on this filesystem happens over there and
+    // against that name, so holding a different one here is a field that lies to whoever reads it —
+    // `whoami` in a session logged in as `ada` answered `root`, which is also the one name the checks
+    // exempt. See `parentUser`.
+    return Fs(mounts, nodes, user, now, Procs.create(), Vec.create(),
               cli.cwd().wait(), "", -1);
   }
 
@@ -252,8 +258,9 @@ export struct Fs {
    */
   Fs fromParentOrHost(Cli cli, i64 now) {
     Chan chan = Chan.of(cli, PARENT_FS);
-    if (!parentAnswers(chan)) { return Fs.onHost(cli, now); }
-    return Fs.overChan(chan, cli, now);
+    string? who = parentUser(chan);
+    if (who is null) { return Fs.onHost(cli, now); }
+    return Fs.overChan(chan, cli, now, who!);
   }
 
   /**

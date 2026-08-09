@@ -1095,6 +1095,25 @@ Deno.test({
           );
         }
 
+        // **The system can be asked who you are**, which it could not until now: a session with
+        // `/etc/passwd`, per-user keys and enforced ownership had no `whoami` and no `id`. Found by
+        // logging in with a real client and typing the first thing anybody types.
+        //
+        // Each key gets its own answer, from the identity `packages/fs` enforces with rather than
+        // from `$USER`, which a script can overwrite — so this is the same fact the permission checks
+        // above use, asked out loud.
+        for (const [name, uid] of [["ada", "1000"], ["grace", "1001"]] as const) {
+          const said = await realSsh(live, "whoami; id -un; id -u; id -g", `${dir}/${name}`);
+          if (said.stdout !== `${name}\n${name}\n${uid}\n${uid}\n`) {
+            throw new Error(`${name} asked who they were: ${JSON.stringify(said.stdout + said.stderr)}`);
+          }
+        }
+        // …and `$USER` really is a different thing, which is why it is not what those read.
+        const overwritten = await realSsh(live, "USER=somebodyelse; echo $USER; whoami", `${dir}/ada`);
+        if (overwritten.stdout !== "somebodyelse\nada\n") {
+          throw new Error(`whoami followed the variable: ${JSON.stringify(overwritten.stdout)}`);
+        }
+
         // Nor by widening it first, which is the obvious way round a check.
         const widen = await realSsh(live, "chmod 644 /home/grace/secret; cat /home/grace/secret; echo status=$?", `${dir}/ada`);
         if (!widen.stdout.includes("status=1")) throw new Error(JSON.stringify(widen.stdout));
