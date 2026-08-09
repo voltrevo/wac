@@ -1,7 +1,7 @@
-# gunzipStream promises a broken-source report it cannot deliver
+# 0102 — gunzipStream promises a broken-source report it cannot deliver
 
-**Status**: closed
-**Filed**: 2026-08-07
+- **Status:** closed
+- **Date:** 2026-08-07
 
 ## What
 

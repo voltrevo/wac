@@ -1,6 +1,6 @@
 # 0010 — the suite is red in wacc and tls, neither caused by their own changes
 
-- **Status:** open
+- **Status:** closed
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-02

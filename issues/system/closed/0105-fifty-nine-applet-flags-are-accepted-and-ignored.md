@@ -1,8 +1,8 @@
-# Fifty-nine applet flags are accepted and ignored
+# 0105 — Fifty-nine applet flags are accepted and ignored
 
-**Status**: closed
-**Filed**: 2026-08-07
-**Closed**: 2026-08-07
+- **Status:** closed
+- **Date:** 2026-08-07
+- **Closed:** 2026-08-07
 
 ## What
 

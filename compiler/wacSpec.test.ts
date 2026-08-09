@@ -8794,52 +8794,89 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   // "the next free number". Two files answering to one number makes every commit message
   // and cross-reference that cites it ambiguous, so this is worth a test rather than
   // vigilance.
-  // `issues/lang/` since the merge — the language issues. `issues/system/` is the packages' tree
-  // and has its own INDEX with the same invariants; both numbered from 0001 and 79 numbers collide,
-  // which is why they are two directories rather than one renumbered sequence.
-  const dir = new URL("../issues/lang/", import.meta.url);
+  // **Both trees, and it used to be one.** The comment here said `issues/system/` "has its own INDEX
+  // with the same invariants" — a claim about a directory nothing checked. It is the bigger tree of
+  // the two, 135 issues against 82, and its counts were right by luck rather than by anything. Both
+  // numbered from 0001 and 79 numbers collide, which is why they are two directories rather than one
+  // renumbered sequence — and why the uniqueness check is per tree rather than across them.
+  for (const tree of ["lang", "system"]) {
+    await checkIssueTree(new URL(`../issues/${tree}/`, import.meta.url), tree);
+  }
+});
+
+/** The invariants one issue tree holds: unique numbers, agreeing status, and an index that matches. */
+async function checkIssueTree(dir: URL, tree: string): Promise<void> {
   const seen = new Map<string, string[]>();
   for (const state of ["open", "closed"]) {
     for await (const f of Deno.readDir(new URL(`${state}/`, dir))) {
       if (!f.isFile || !f.name.endsWith(".md")) continue;
       const num = f.name.match(/^(\d{4})-/);
-      if (!num) throw new Error(`issues/${state}/${f.name}: name must start with a 4-digit number`);
+      if (!num) throw new Error(`issues/${tree}/${state}/${f.name}: name must start with a 4-digit number`);
       const where = `${state}/${f.name}`;
+      const said = `issues/${tree}/${where}`;
       seen.set(num[1], [...(seen.get(num[1]) ?? []), where]);
 
       // The heading, the directory and the Status line must agree, since each is what
       // some reader trusts.
       const body = await Deno.readTextFile(new URL(where, dir));
       const heading = body.match(/^# (\d{4}) —/);
-      if (!heading) throw new Error(`${where}: first line must be "# NNNN — summary"`);
+      if (!heading) throw new Error(`${said}: first line must be "# NNNN — summary"`);
       if (heading[1] !== num[1]) {
-        throw new Error(`${where}: heading says ${heading[1]}, filename says ${num[1]}`);
+        throw new Error(`${said}: heading says ${heading[1]}, filename says ${num[1]}`);
       }
-      const status = body.match(/^- \*\*Status:\*\* (open|closed)$/m);
+      // `closed`, or `closed 2026-08-02 by agent-c`. **The two trees word this differently and both
+      // are coherent**: `issues/lang/` writes a bare status and records the commit on a separate
+      // `Fixed in:` line; `issues/system/` puts the date and the agent on the status line itself and
+      // has no `Fixed in:`. The comment above used to claim they held "the same invariants", which is
+      // what made this check cover one of them — asserting lang's spelling against system's tree
+      // reported a hundred and nine failures that were nothing but a different convention.
+      const status = body.match(/^- \*\*Status:\*\* (open|closed)\b/m);
       if (!status) {
         // Twice now I have written `Status: open (with a caveat)`, which this rejects. The rule is
         // worth keeping strict — the line is what the directory check compares against — so the
         // message says where the caveat goes instead.
         throw new Error(
-          `${where}: needs a line that is exactly "- **Status:** open" or "- **Status:** closed". ` +
+          `${said}: needs a line that is exactly "- **Status:** open" or "- **Status:** closed". ` +
           `Put any qualification on its own line, such as "- **Scope:**".`);
       }
       if (status[1] !== (state === "open" ? "open" : "closed")) {
-        throw new Error(`${where}: Status says ${status[1]} but it is in ${state}/`);
+        throw new Error(`${said}: Status says ${status[1]} but it is in ${state}/`);
       }
       // A closed issue must say which commit closed it. That is the link back to the
       // reasoning, and it is the first thing anyone reading the file wants; 0020 was
       // closed with only a `Fixed by: <agent>` line, which names who but not what.
-      if (state === "closed" && !/^- \*\*Fixed in:\*\* \S/m.test(body)) {
+      // `lang` only, for the reason above: `system` records who closed it and when on the status
+      // line, which is the same fact by a different route.
+      if (tree === "lang" && state === "closed" && !/^- \*\*Fixed in:\*\* \S/m.test(body)) {
         throw new Error(
-          `${where}: a closed issue needs a "- **Fixed in:** <commit>" line — ` +
+          `${said}: a closed issue needs a "- **Fixed in:** <commit>" line — ` +
           `naming the agent is not enough to find the change`);
       }
     }
   }
-  const dupes = [...seen].filter(([, where]) => where.length > 1);
+  // **Thirteen numbers in `issues/system/` are already used twice**, from the years that tree had no
+  // check. They are not renumbered: every one is cited by number in commit messages, which cannot be
+  // rewritten, and in code comments across the packages — the same argument that keeps the two trees
+  // separate rather than merged into one sequence. So they are named here, and the check is that no
+  // *fourteenth* appears. A collision that is written down is an inconvenience; one that is not is
+  // what made three agents pick 0021 in the same minute.
+  const GRANDFATHERED: Record<string, string[]> = {
+    system: ["0027", "0031", "0032", "0033", "0034", "0035", "0036",
+             "0038", "0039", "0040", "0041", "0042", "0066"],
+    lang: [],
+  };
+  const allowed = new Set(GRANDFATHERED[tree] ?? []);
+  const dupes = [...seen].filter(([n, where]) => where.length > 1 && !allowed.has(n));
+  // And the list itself must stay honest: a number on it that is no longer doubled is a line nobody
+  // will remove unless something says so.
+  const stale = [...allowed].filter((n) => (seen.get(n) ?? []).length < 2);
+  if (stale.length > 0) {
+    throw new Error(
+      `issues/${tree}: these numbers are grandfathered as duplicates and are not duplicated any ` +
+      `more: ${stale.join(" ")}. Remove them from GRANDFATHERED.`);
+  }
   if (dupes.length > 0) {
-    throw new Error(`duplicate issue numbers:\n${
+    throw new Error(`issues/${tree}: duplicate issue numbers:\n${
       dupes.map(([n, w]) => `  ${n}: ${w.join(", ")}`).join("\n")}`);
   }
 
@@ -8850,12 +8887,17 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   const open = [...seen].filter(([, w]) => w[0].startsWith("open/")).map(([n]) => n);
   const closed = [...seen].filter(([, w]) => w[0].startsWith("closed/")).map(([n]) => n);
 
+  // **Files, not distinct numbers.** `seen` is keyed by number, so `seen.size` counts *numbers* — the
+  // same thing in a tree with no duplicates, and wrong by thirteen in the one that has them. An issue
+  // is a file; two issues sharing a number are still two issues.
+  const files = [...seen.values()].flat();
+  const closedFiles = files.filter((w) => w.startsWith("closed/"));
   const counts = index.match(/^(\d+) issues, (\d+) closed\./m);
-  if (!counts) throw new Error("INDEX.md needs a line of the form 'N issues, M closed.'");
-  if (Number(counts[1]) !== seen.size || Number(counts[2]) !== closed.length) {
+  if (!counts) throw new Error(`issues/${tree}/INDEX.md needs a line of the form "N issues, M closed."`);
+  if (Number(counts[1]) !== files.length || Number(counts[2]) !== closedFiles.length) {
     throw new Error(
-      `INDEX.md says ${counts[1]} issues and ${counts[2]} closed; ` +
-      `the directory has ${seen.size} and ${closed.length}`);
+      `issues/${tree}/INDEX.md says ${counts[1]} issues and ${counts[2]} closed; ` +
+      `the directory has ${files.length} and ${closedFiles.length}`);
   }
 
   // Every open issue needs a row, and no closed one may keep its row — a stale row is a
@@ -8865,11 +8907,11 @@ Deno.test("issues: every issue has a unique number and a consistent status", asy
   const staleRow = closed.filter((n) => listed.has(n)).sort();
   if (missingRow.length > 0 || staleRow.length > 0) {
     throw new Error(
-      `INDEX.md's rows disagree with the directory\n` +
+      `issues/${tree}/INDEX.md's rows disagree with the directory\n` +
       (missingRow.length ? `  open with no row: ${missingRow.join(" ")}\n` : "") +
       (staleRow.length ? `  closed but still listed: ${staleRow.join(" ")}\n` : ""));
   }
-});
+}
 
 // §wac-grammar-keywords-h4mq7wn — the grammar's keyword block matches the lexer
 Deno.test(`[§wac-grammar-keywords-h4mq7wn] grammar.md's keyword list matches KEYWORDS`, async () => {

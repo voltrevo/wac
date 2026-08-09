@@ -1,7 +1,7 @@
-# What stands between here and deleting `packages/sh`'s twelve programs
+# 0103 — What stands between here and deleting `packages/sh`'s twelve programs
 
-**Status**: closed
-**Filed**: 2026-08-07
+- **Status:** closed
+- **Date:** 2026-08-07
 
 ## What
 
