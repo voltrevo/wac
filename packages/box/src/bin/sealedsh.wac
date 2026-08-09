@@ -58,7 +58,12 @@ export i32 main(Core core, Cli cli) {
   sh.cwd = "/";
   sh.external = boxRun;
   sh.externalNames = boxNames;
-  // Not spawnable: with no grants there is nothing to spawn, and claiming otherwise would make the
-  // shell try a route that cannot work before the one that can.
+  // **Spawnable, and the seal holds** — wac-mono 0116. `spawnSelf` needs no grant of its own, since
+  // the source is this program's own bundle, so a session with none has always been *able* to spawn;
+  // what stopped it was that the stage it spawned would build `Fs.onHost` and see the machine. It
+  // asks its parent now, and its parent is this shell, so a stage sees exactly this session's
+  // memory filesystem and nothing else. `test/sealing.test.ts` is where that is checked rather than
+  // asserted, including the canary that a stage cannot read a file that exists on the host.
+  sh.externalSpawnable = true;
   return shellMain(core, cli, sh, 0);
 }

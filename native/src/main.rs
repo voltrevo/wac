@@ -165,6 +165,11 @@ struct ChildProc {
     stdin: Arc<Stream>,
     stdout: Arc<Stream>,
     stderr: Arc<Stream>,
+    /// The child's filesystem **requests**, which its parent reads — see `Child.fsHandle` in
+    /// platform.wac, and wac-mono 0116 for what a child could not see without it.
+    fsreq: Arc<Stream>,
+    /// The parent's **answers**, which the child reads. The other direction of the same channel.
+    fsrep: Arc<Stream>,
     exit: Arc<Exit>,
 }
 
@@ -183,11 +188,15 @@ enum Sock {
 ///
 /// A child has two — one for each of its output streams — because a program has two streams and
 /// merging them is a bug `platform.wac` names by example.
+#[derive(Clone)]
 enum Handle {
     /// The child's ordinary handle: `send` feeds it, `recv` reads its standard output.
     Main(ChildProc),
     /// The `errHandle`: `recv` reads its error stream, and nothing is sent to it.
     Err(ChildProc),
+    /// The `fsHandle`: `recv` reads what the child is asking of the filesystem, and `send` answers
+    /// it. The one handle a parent both reads and writes for a reason other than standard input.
+    Fs(ChildProc),
     /// A socket. `send` writes it, `recv` reads it, `accept` takes from a listening one.
     Net(Sock),
 }
@@ -201,9 +210,29 @@ enum Handle {
 /// A closed slot becomes `None` and is **never reused**: a handle held past a close names nothing
 /// rather than naming somebody else's connection, which `deno.ts` says of its own table in the same
 /// words and for the same reason.
-#[derive(Default)]
 struct Handles {
     slots: Vec<Option<Handle>>,
+}
+
+/// Standard input's handle, and a child's end of its filesystem channel — `STDIN` and `PARENT_FS`
+/// in platform.wac, and `FIRST_FREE_HANDLE` in `host/children.ts`.
+const STDIN_HANDLE: i32 = 0;
+const PARENT_FS_HANDLE: i32 = 1;
+const FIRST_FREE_HANDLE: usize = 2;
+
+impl Default for Handles {
+    /// **The reserved handles are slots nothing can be allocated into.**
+    ///
+    /// They used to be neither reserved nor allocated here: the table started empty, so the first
+    /// child a native program spawned was handle 0 — the number that means standard input on every
+    /// other host. Nothing had noticed because `Cap::Recv` consults the table before it considers
+    /// standard input, so a program that spawned before it read got its child and one that read
+    /// first got nothing; both are wrong and neither says so. Reserving is what makes
+    /// `recv(STDIN_HANDLE)` and `recv(PARENT_FS_HANDLE)` mean the same thing here as in the
+    /// JavaScript hosts, where the counter has always started past them.
+    fn default() -> Self {
+        Handles { slots: vec![None; FIRST_FREE_HANDLE] }
+    }
 }
 
 impl Handles {
@@ -233,6 +262,10 @@ struct AsChild {
     stdin: Arc<Stream>,
     stdout: Arc<Stream>,
     stderr: Arc<Stream>,
+    /// This program's filesystem **requests**, which its parent reads. `send(PARENT_FS, …)`.
+    fsreq: Arc<Stream>,
+    /// Its parent's **answers**, which this program reads. `recv(PARENT_FS)`.
+    fsrep: Arc<Stream>,
     /// Whether this child was told to read the *process's* input rather than what its parent sends.
     ///
     /// **Without this the queue below shadowed the real thing.** A child spawned with `inheritInput`
@@ -571,6 +604,7 @@ fn run_child(world: Arc<World>, argv: Vec<Vec<u8>>, grants: manifest::Grants, cw
     host.world = Some(world.clone());
     let stdout = streams.stdout.clone();
     let stderr = streams.stderr.clone();
+    let fsreq = streams.fsreq.clone();
     host.as_child = Some(streams);
     // A child's relative paths resolve from where its parent said, which is the same rule `pushChild`
     // keeps for an in-process one — and the thing `spawn` got wrong in the JavaScript hosts, where a
@@ -590,6 +624,10 @@ fn run_child(world: Arc<World>, argv: Vec<Vec<u8>>, grants: manifest::Grants, cw
     };
     stdout.finish();
     stderr.finish();
+    // And it will ask nothing more. A parent parked in `recv(fsHandle)` is waiting for a request
+    // from a program that has exited; without this it waits for ever, which is the shape a shell
+    // serving its children would meet on every command that ends.
+    fsreq.finish();
     code
 }
 
@@ -1036,7 +1074,10 @@ fn dispatch(
             };
             let cwd = read_string(caller, &params[3])?;
             let inherit = matches!(arg(4), Val::I32(n) if n != 0);
-            return spawn_instance(caller, argv, want, cwd, inherit, results);
+            // Whether this program promises to answer the child's filesystem questions — see
+            // `spawnSelf` in platform.wac. Not a grant: it widens nothing.
+            let serve_fs = matches!(arg(5), Val::I32(n) if n != 0);
+            return spawn_instance(caller, argv, want, cwd, inherit, serve_fs, results);
         }
         Cap::Spawn => {
             // `spawn(source, …)` hands over a *program's source*, which in the JavaScript hosts is a
@@ -1046,7 +1087,7 @@ fn dispatch(
             return settle_now(
                 caller,
                 Kind::Child,
-                Outcome::Child(-1, -1, "spawning a program from its source is not implemented in the native runtime; spawnSelf works".into()),
+                Outcome::Child(-1, -1, -1, "spawning a program from its source is not implemented in the native runtime; spawnSelf works".into()),
                 results,
             );
         }
@@ -1161,6 +1202,45 @@ fn dispatch(
                 std::thread::spawn(move || table.complete(id, Outcome::Bytes(stream.read())));
                 return pending_for(caller, Kind::Read, id, results);
             }
+            // **The child's own end of its filesystem channel**: what its parent answered. Reserved,
+            // so the lookup above cannot have claimed it, and available only to a program something
+            // spawned — `Fs.overParent` in a program nobody spawned falls through to the refusal at
+            // the bottom, which is how it can tell.
+            if h == PARENT_FS_HANDLE {
+                if let Some(streams) = caller.data().as_child.as_ref() {
+                    let answers = streams.fsrep.clone();
+                    std::thread::spawn(move || table.complete(id, Outcome::Bytes(answers.read())));
+                    return pending_for(caller, Kind::Read, id, results);
+                }
+            }
+            // **Standard input has a handle so `waitAny` can watch it beside a socket**, which is
+            // what `platform.wac` promises and what this runtime did not do: `recv(0)` fell all the
+            // way through to "nothing at the other end", so a relay written against that promise
+            // read nothing here and everything under Deno. It reads what `readChunk` reads, by the
+            // same ranking — a parent's queue if this is a child that does not inherit, else the
+            // process's own input.
+            if h == STDIN_HANDLE {
+                if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
+                    let fed = streams.stdin.clone();
+                    std::thread::spawn(move || table.complete(id, Outcome::Bytes(fed.read())));
+                    return pending_for(caller, Kind::Read, id, results);
+                }
+                let mut buf = [0u8; 65536];
+                let n = {
+                    use std::io::Read;
+                    match caller.data_mut().input.as_mut() {
+                        Some(f) => f.read(&mut buf),
+                        None => std::io::stdin().read(&mut buf),
+                    }
+                };
+                caller.data().tickets.discard(id);
+                results[0] = match n {
+                    Ok(0) => make_read_end(caller)?,
+                    Ok(n) => make_read_data(caller, &buf[..n])?,
+                    Err(e) => make_read_failed(caller, &e.to_string())?,
+                };
+                return Ok(());
+            }
             if let Some(Sock::Open(s)) = socket_at(caller, h) {
                 std::thread::spawn(move || {
                     use std::io::Read;
@@ -1189,6 +1269,23 @@ fn dispatch(
                 _ => -1,
             };
             let bytes = read_u8_array(caller, &params[2])?;
+            // **The child's own end of its filesystem channel**: a request for its parent. Before
+            // the table lookup only because the handle is reserved and the table cannot hold it.
+            if h == PARENT_FS_HANDLE {
+                if let Some(streams) = caller.data().as_child.as_ref() {
+                    let landed = streams.fsreq.write(&bytes);
+                    return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+                }
+            }
+            // The parent's end: the answer to one.
+            let answering = match caller.data().handles.lock().unwrap().get(h) {
+                Some(Handle::Fs(c)) => Some(c.fsrep.clone()),
+                _ => None,
+            };
+            if let Some(replies) = answering {
+                let landed = replies.write(&bytes);
+                return settle_now(caller, Kind::Bool, Outcome::Bool(landed), results);
+            }
             // Only a child's *main* handle takes bytes: there is nothing to write to its error
             // stream, and answering false for that is truer than pretending.
             let to_child = matches!(caller.data().handles.lock().unwrap().get(h), Some(Handle::Main(_)));
@@ -1507,7 +1604,7 @@ fn dispatch(
                 (Kind::Socket, Outcome::Socket(h, e, peer, port)) => {
                     make_socket(caller, h, &e, &peer, port)?
                 }
-                (Kind::Child, Outcome::Child(h, eh, e)) => make_child(caller, h, eh, &e)?,
+                (Kind::Child, Outcome::Child(h, eh, fh, e)) => make_child(caller, h, eh, fh, &e)?,
                 // A `Read` has three cases and the outcome says which: bytes are `Data`, no bytes are
                 // `End`, and a string is `Failed`. Empty-is-the-end is the queue's own rule — see
                 // `streams.rs` — and collapsing it into `Data([])` would tell a reader there was
@@ -1858,7 +1955,7 @@ fn open_for_read(caller: &mut Caller<'_, Host>, path: &[u8]) -> Result<std::fs::
 fn child_of(caller: &Caller<'_, Host>, handle: i32) -> Option<ChildProc> {
     let table = caller.data().handles.lock().unwrap();
     match table.get(handle)? {
-        Handle::Main(c) | Handle::Err(c) => Some(c.clone()),
+        Handle::Main(c) | Handle::Err(c) | Handle::Fs(c) => Some(c.clone()),
         Handle::Net(_) => None,
     }
 }
@@ -1869,6 +1966,7 @@ fn child_stream(caller: &Caller<'_, Host>, handle: i32) -> Option<Arc<Stream>> {
     match table.get(handle)? {
         Handle::Main(c) => Some(c.stdout.clone()),
         Handle::Err(c) => Some(c.stderr.clone()),
+        Handle::Fs(c) => Some(c.fsreq.clone()),
         Handle::Net(_) => None,
     }
 }
@@ -1894,13 +1992,14 @@ fn spawn_instance(
     want: i32,
     cwd: Vec<u8>,
     inherit_input: bool,
+    serve_fs: bool,
     results: &mut [Val],
 ) -> Result<(), wasmtime::Error> {
     let Some(world) = caller.data().world.clone() else {
         return settle_now(
             caller,
             Kind::Child,
-            Outcome::Child(-2, -2, String::new()),
+            Outcome::Child(-2, -2, -2, String::new()),
             results,
         );
     };
@@ -1919,6 +2018,18 @@ fn spawn_instance(
     let stdin = Arc::new(Stream::default());
     let stdout = Arc::new(Stream::default());
     let stderr = Arc::new(Stream::default());
+    // The filesystem channel: the child asks on `fsreq` and its parent answers on `fsrep`. Both
+    // ends exist whether or not either side uses them — a channel nobody speaks on costs two
+    // queues, and deciding at spawn time which children may ask would be a grant, which this is
+    // deliberately not. See `Child.fsHandle`.
+    let fsreq = Arc::new(Stream::default());
+    let fsrep = Arc::new(Stream::default());
+    if !serve_fs {
+        // **A parent that will not serve says so before the child runs.** Finishing the reply queue
+        // is what makes `Fs.overParent` answer immediately instead of waiting: the child asks one
+        // question, reads end-of-channel, and falls back to the host.
+        fsrep.finish();
+    }
     let exit = Arc::new(Exit::default());
     if inherit_input {
         // The child reads the *process's* input rather than what its parent sends, so nothing will
@@ -1931,18 +2042,26 @@ fn spawn_instance(
         stdin: stdin.clone(),
         stdout: stdout.clone(),
         stderr: stderr.clone(),
+        fsreq: fsreq.clone(),
+        fsrep: fsrep.clone(),
         exit: exit.clone(),
     };
     let handle = keep(caller, Handle::Main(child.clone()));
-    let err_handle = keep(caller, Handle::Err(child));
+    let err_handle = keep(caller, Handle::Err(child.clone()));
+    let fs_handle = keep(caller, Handle::Fs(child));
 
-    let streams = AsChild { stdin, stdout, stderr, inherits: inherit_input };
+    let streams = AsChild { stdin, stdout, stderr, fsreq, fsrep, inherits: inherit_input };
     std::thread::spawn(move || {
         let code = run_child(world, argv, grants, cwd, streams);
         exit.set(code);
     });
 
-    settle_now(caller, Kind::Child, Outcome::Child(handle, err_handle, String::new()), results)
+    settle_now(
+        caller,
+        Kind::Child,
+        Outcome::Child(handle, err_handle, fs_handle, String::new()),
+        results,
+    )
 }
 
 /// `GRANT_*`, matching `platform.wac`.
@@ -1987,11 +2106,16 @@ fn make_child(
     caller: &mut Caller<'_, Host>,
     handle: i32,
     err_handle: i32,
+    fs_handle: i32,
     error: &str,
 ) -> Result<Val, wasmtime::Error> {
     let e = make_string(caller, error.as_bytes())?;
     let f = export_func(caller, "$bind$sm_Child_of")?;
-    let built = call_dyn(caller, &f, &[Val::I32(handle), Val::I32(err_handle), e])?;
+    let built = call_dyn(
+        caller,
+        &f,
+        &[Val::I32(handle), Val::I32(err_handle), Val::I32(fs_handle), e],
+    )?;
     built.into_iter().next().ok_or_else(|| wasmtime::Error::msg("Child.of answered nothing"))
 }
 

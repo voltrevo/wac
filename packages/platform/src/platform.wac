@@ -849,6 +849,26 @@ export const i32 GRANT_ENV = 8;
  */
 export const i32 CALL_SLOTS = 128;
 
+/**
+ * Standard input's handle, so that `waitAny` can watch it beside a socket and a child.
+ *
+ * Reserved rather than allocated: a host's handle counter starts past the reserved ones, so this
+ * can never name anything else. `test/handles.test.ts` is what holds the hosts to that.
+ */
+export const i32 STDIN = 0;
+
+/**
+ * The handle a **child** reads and writes to reach its parent's filesystem — the other end of
+ * `Child.fsHandle`, seen from inside the child.
+ *
+ * Reserved in the same way and for the same reason as `STDIN`, and it has to be a fixed number
+ * because there is nothing to tell a child what its own number would be: a program that starts and
+ * wants its parent's filesystem asks on this handle or does not ask at all. `Fs.overParent` is the
+ * only caller, and `recv(PARENT_FS)` on a program that was not spawned answers nothing — which is
+ * how a program can tell the difference without a capability to ask with.
+ */
+export const i32 PARENT_FS = 1;
+
 export struct Child {
   /**
    * The child's handle, or a negative number and an `error`.
@@ -879,10 +899,37 @@ export struct Child {
    * Negative when `handle` is: there is nothing to read from a child that never started.
    */
   i32 errHandle;
+  /**
+   * The child's **filesystem channel**, as a handle of its own — the third stream, and the one that
+   * makes a child able to see anything but what its parent sends it.
+   *
+   * A spawned child is a separate instance with its own memory, which is the confinement `spawnSelf`
+   * exists to provide. It is also why a child could not see its parent's *filesystem*: a session
+   * booted on an image holds that image in wac memory, and there is no route from one instance's
+   * memory to another's. So a spawned stage got `Fs.onHost` — the machine — and a sealed session
+   * could not spawn at all without unsealing itself. That is wac-mono 0116.
+   *
+   * The route is a channel rather than a copy. The child asks and the parent answers, on this handle:
+   * `recv(fsHandle)` in the parent reads a request, `send(fsHandle, …)` answers it, and
+   * `packages/fs`'s `Backing.Remote` is the other end. Which means the parent's filesystem stays the
+   * only one there is — the child's writes are the parent's writes, its permissions are checked
+   * against the parent's `user`, and the mounts it sees are whatever the parent has mounted, because
+   * nothing has been duplicated.
+   *
+   * **It is a handle so that `waitAny` can watch it beside the child's output**, which is what a
+   * parent serving a child while relaying its bytes actually needs. A parent that does not serve it
+   * leaves the child parked on a request; a parent that does not *want* to serve it should not pass
+   * `PARENT_FS` to the child in the first place.
+   *
+   * Negative when `handle` is, and on a host with no spawn at all.
+   */
+  i32 fsHandle;
   string error;
 
   /** As `Socket.of`: the host builds these, so the constructor is declared rather than generated. */
-  Child of(i32 handle, i32 errHandle, string error) { return Child(handle, errHandle, error); }
+  Child of(i32 handle, i32 errHandle, i32 fsHandle, string error) {
+    return Child(handle, errHandle, fsHandle, error);
+  }
 
   /** Whether this world can spawn at all. False says nothing about the program. */
   bool unavailable(const this) { return this.handle == -2; }
@@ -1151,8 +1198,8 @@ export struct Cli {
    * the child simply finds the capability denied. `GRANT_NONE` is the honest default and what
    * every example passes.
    *
-   *     cli.spawn(source, args, GRANT_NONE, "", false)                 // fed; nothing else
-   *     cli.spawn(source, args, GRANT_READ | GRANT_NET, dir, true)     // ...if the parent has both
+   *     cli.spawn(source, args, GRANT_NONE, "", false, false)          // fed; nothing else
+   *     cli.spawn(source, args, GRANT_READ | GRANT_NET, dir, true, false)  // ...if the parent has both
    *
    * This is the reason to prefer spawning a worker to spawning a process. What the child may
    * do is the *parent's* choice; `--allow-run=/bin/sh` cannot express it at any granularity,
@@ -1189,7 +1236,7 @@ export struct Cli {
    * False is the ordinary case: a child fed from a pipeline, a redirection or a here-document gets
    * exactly the bytes its parent chose, and `send` is how they arrive.
    */
-  fn[Pending<Child>(string, u8[][], i32, string, bool)] spawn;
+  fn[Pending<Child>(string, u8[][], i32, string, bool, bool)] spawn;
 
   /**
    * **This same program again, as a child**, with these arguments and at most these grants.
@@ -1214,8 +1261,17 @@ export struct Cli {
    * the child's relative paths resolve from, empty for the host's own directory, and `inheritIn`
    * hands over this program's own standard input rather than a queue — see `spawn` above for what
    * that buys.
+   *
+   * **`serveFs` is a promise to answer the child's filesystem questions**, on `Child.fsHandle`. It
+   * is not a grant — it widens nothing, since what the child can reach is whatever this program's
+   * own `Fs` will answer — it is a statement about what this program is *going to do*, and the child
+   * needs it because the alternative is waiting for an answer that is never coming. False ends the
+   * child's end of the channel before it starts, so a program built on `Fs.overParent` finds out
+   * immediately and falls back to the host, and every spawner that predates this goes on behaving
+   * exactly as it did. A parent that passes true and then does not serve parks its child, which is
+   * the one failure this cannot make safe and the reason it is stated rather than assumed.
    */
-  fn[Pending<Child>(u8[][], i32, string, bool)] spawnSelf;
+  fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf;
 
   /**
    * End a spawned worker's standard input without stopping it.
@@ -1316,8 +1372,8 @@ export struct Cli {
     fn[Pending<Read>(i32)] recv,
     fn[Pending<bool>(i32, u8[])] send,
     fn[void(i32)] closeSocket,
-    fn[Pending<Child>(string, u8[][], i32, string, bool)] spawn,
-    fn[Pending<Child>(u8[][], i32, string, bool)] spawnSelf,
+    fn[Pending<Child>(string, u8[][], i32, string, bool, bool)] spawn,
+    fn[Pending<Child>(u8[][], i32, string, bool, bool)] spawnSelf,
     fn[void(i32)] closeFeed,
     fn[Pending<i32>(i32)] exitCode,
     fn[Pending<string>()] cwd,

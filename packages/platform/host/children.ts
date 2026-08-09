@@ -122,6 +122,28 @@ export function graceOf(ms: number | undefined): number {
   return ms === undefined || !Number.isFinite(ms) || ms <= 0 ? LOAD_GRACE_MS : ms;
 }
 
+/**
+ * `recv(1)` in a **child** reads its parent's answer to a filesystem request, and `send(1, …)` asks
+ * one. `PARENT_FS` in platform.wac is the same number seen from the wac side.
+ *
+ * A fixed number rather than an allocated one because there is nothing to tell a child what its own
+ * number would be — see `PARENT_FS`. In a program that was *not* spawned it names nothing, which is
+ * how `Fs.overParent` can tell.
+ */
+export const PARENT_FS_HANDLE = 1;
+
+/**
+ * The first handle a host may hand out, which is past every reserved one.
+ *
+ * Allocated handles used to count from 1 and the only reserved number was 0, so adding a second
+ * reservation is where a host could quietly hand a child's filesystem channel to a socket. Held to
+ * across the four hosts by `test/handles.test.ts` rather than left to each of them to remember.
+ *
+ * Here rather than in a host because every host has to agree, and a constant that lives in one of
+ * them is a constant the others copy.
+ */
+export const FIRST_FREE_HANDLE = 2;
+
 /** One spawned worker, from the parent's side. */
 export type Child = {
   /** What the child wrote to standard output, in order. */
@@ -136,6 +158,22 @@ export type Child = {
   err: ByteQueue;
   /** What the parent sent, which the child reads as its standard input. */
   in: ByteQueue;
+  /**
+   * The child's filesystem requests, waiting for its parent to answer them.
+   *
+   * The third stream, and the one that makes a child able to see a filesystem that is not the
+   * machine's. `platform.wac`'s `Child.fsHandle` is the whole argument; in this file it is one more
+   * pair of queues wired the same way as the other two, which is the point — a channel between a
+   * parent and a child is a thing this file already knows how to build.
+   *
+   * Uncapped in both directions, unlike `out` and `err`. Those are capped because the program
+   * deciding how much to produce is not the one holding it, and `box yes` writes for ever; a request
+   * is produced only by a child that is *waiting* for the answer, so there is never more than one
+   * outstanding per child and a cap could only ever deadlock it.
+   */
+  fsReq: ByteQueue;
+  /** The parent's answers, which the child reads. See `fsReq`. */
+  fsRep: ByteQueue;
   /** Resolves with the exit code, or a negative number if it failed to run. */
   exit: Promise<number>;
   /**
@@ -225,6 +263,7 @@ export function spawnChild(
     out: ByteQueue,
     input: ByteQueue,
     err: ByteQueue,
+    parentFs: { req: ByteQueue; rep: ByteQueue },
   ) => { stop(): void },
   makeBridge: () => { sab: SharedArrayBuffer },
   makeWorker: (source: string) => WorkerLike = blobWorker,
@@ -234,6 +273,9 @@ export function spawnChild(
   const out = new ByteQueue(QUEUE_CAP);
   const err = new ByteQueue(QUEUE_CAP);
   const input = new ByteQueue();
+  // See `Child.fsReq` for why these two are the uncapped ones.
+  const fsReq = new ByteQueue();
+  const fsRep = new ByteQueue();
 
   // **Before anything starts.** A file that parses and is not one of these used to be indistinguishable
   // from a program still loading, and the caller waited for ever (0033). The marker is a fact about the
@@ -249,6 +291,8 @@ export function spawnChild(
       out,
       err,
       in: input,
+      fsReq,
+      fsRep,
       exit: Promise.resolve(-1),
       loaded: Promise.resolve(
         looksBuilt
@@ -260,7 +304,7 @@ export function spawnChild(
   }
 
   const bridge = makeBridge();
-  const responder = startWorld(bridge.sab, args, out, input, err);
+  const responder = startWorld(bridge.sab, args, out, input, err, { req: fsReq, rep: fsRep });
 
   const worker = makeWorker(source);
   let stopped = false;
@@ -272,6 +316,11 @@ export function spawnChild(
     // Whatever the child had written is already queued; this only says no more is coming.
     out.end();
     err.end();
+    // And nothing more will be asked, nor answered. A parent serving this child is sitting in
+    // `recv` on the request queue; ending it is what tells it the child is gone, rather than
+    // leaving it waiting for a request from a worker that has been terminated.
+    fsReq.end();
+    fsRep.end();
   };
 
   // Resolved by whichever comes first: the load notice, a load error, or the child finishing without
@@ -368,24 +417,30 @@ export function spawnChild(
   };
 
   worker.post({ sab: bridge.sab, child: true });
-  return { out, err, in: input, exit, loaded, kill };
+  return { out, err, in: input, fsReq, fsRep, exit, loaded, kill };
 }
 
 /**
  * The payload for a child that never started: -1, then the reason.
  *
- * The same shape a successful `spawn` answers with — a handle — so the worker side reads one i32
- * and whatever follows is the message. A negative handle is how `Child.error` comes to hold
+ * The same shape a successful `spawn` answers with — three handles — so the worker side reads a
+ * fixed prefix and whatever follows is the message. A negative handle is how `Child.error` comes to hold
  * something, and `packages/sh` already turns it into 126: "it exists and would not start",
  * distinct from the 127 of not existing.
  */
-export function twoHandles(handle: number, errHandle: number, why: string): Uint8Array {
+export function childHandles(
+  handle: number,
+  errHandle: number,
+  fsHandle: number,
+  why: string,
+): Uint8Array {
   const text = new TextEncoder().encode(why.split("\n")[0]);
-  const out = new Uint8Array(8 + text.length);
+  const out = new Uint8Array(12 + text.length);
   const dv = new DataView(out.buffer);
   dv.setInt32(0, handle, true);
   dv.setInt32(4, errHandle, true);
-  out.set(text, 8);
+  dv.setInt32(8, fsHandle, true);
+  out.set(text, 12);
   return out;
 }
 
@@ -395,7 +450,7 @@ export function failedChild(why: string): Uint8Array {
   // after `sh: name: ` and expects one line, as every other diagnostic here is. The frame is not
   // lost: the worker's own isolate has already printed the whole of it to stderr, which is also why
   // a `preventDefault` in the parent cannot make that output go away.
-  return twoHandles(-1, -1, why);
+  return childHandles(-1, -1, -1, why);
 }
 
 /**
@@ -407,7 +462,7 @@ export function failedChild(why: string): Uint8Array {
  * page cannot spawn. Reporting 126 instead hid them behind a capability the world never had.
  */
 export function noSpawnHere(why: string): Uint8Array {
-  return twoHandles(-2, -2, why);
+  return childHandles(-2, -2, -2, why);
 }
 
 /** The grants a `spawn` or `spawnSelf` payload asks for: always the first four bytes. */
@@ -423,7 +478,7 @@ export function want(p: Uint8Array): number {
  */
 export function unpackSpawn(
   p: Uint8Array,
-): { source: string; args: Uint8Array[]; cwd: string; inheritIn: boolean } {
+): { source: string; args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const dec = new TextDecoder();
   const sourceLen = dv.getInt32(4, true);
@@ -436,13 +491,14 @@ export function unpackSpawn(
     args: after.args,
     cwd: dec.decode(p.subarray(after.at + 4, after.at + 4 + cwdLen)),
     inheritIn: p[after.at + 4 + cwdLen] === 1,
+    serveFs: p[after.at + 5 + cwdLen] === 1,
   };
 }
 
 /** The same, for `spawnSelf`, which needs no source: grants, arguments, directory. */
 export function unpackSpawnSelf(
   p: Uint8Array,
-): { args: Uint8Array[]; cwd: string; inheritIn: boolean } {
+): { args: Uint8Array[]; cwd: string; inheritIn: boolean; serveFs: boolean } {
   const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
   const dec = new TextDecoder();
   const after = unpackArgs(p, 4);
@@ -451,6 +507,9 @@ export function unpackSpawnSelf(
     args: after.args,
     cwd: dec.decode(p.subarray(after.at + 4, after.at + 4 + cwdLen)),
     inheritIn: p[after.at + 4 + cwdLen] === 1,
+    // **Two trailing flags now**, and the second is a promise rather than a grant: whether the
+    // parent will answer this child's filesystem questions. See `spawnSelf` in platform.wac.
+    serveFs: p[after.at + 5 + cwdLen] === 1,
   };
 }
 

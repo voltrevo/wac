@@ -11,19 +11,29 @@
 // spawnable for exactly that reason, to meet design/0001 step 3's criterion that `ps` shows the
 // pipeline you are running.
 //
-// It works, and it silently unseals the session:
+// It worked, and it silently unsealed the session:
 //
 //     echo inimage > /f; cat /f        ->  cat: /f: No such file or directory
 //     cat /etc/hostname                ->  13f160bf57e5
 //
-// A spawned stage is a **fresh instance**, and `shrun.wac`'s `boxApplet` gives a fresh instance
+// A spawned stage is a **fresh instance**, and `shrun.wac`'s `boxApplet` gave a fresh instance
 // `Fs.onHost` — the host's filesystem, which is right for `box` run as a program and wrong for a stage
-// of a sealed session. The pipeline works, the answers come from the wrong disk, and nothing says so.
+// of a sealed session. The pipeline worked, the answers came from the wrong disk, and nothing said so.
 //
-// So the rule is: a session whose filesystem is the system's own does not spawn its stages.
-// `packages/box/src/bin/sh.wac` is the exception that proves it — its world *is* the host's.
+// So for a year the rule was: a session whose filesystem is the system's own does not spawn its
+// stages, and pays design/0001 step 3's criterion for it.
 //
-// A comment saying so is what was there before, and a comment is what somebody edits. This is the test.
+// ## What replaced it
+//
+// wac-mono 0116. A spawned stage no longer *has* a filesystem — it has a **channel to its parent's**,
+// and every operation is a question this session answers out of the one filesystem there is
+// (`packages/fs/src/remote.wac`). So the two lines above now answer `inimage` and "No such file or
+// directory", and they answer that way for a reason stronger than a rule about who may spawn: there
+// is nothing else for a stage to read.
+//
+// A comment saying so is what was there before, and a comment is what somebody edits. This is the
+// test — and the *canary* for it is `ps`, because a session that quietly stopped spawning would pass
+// every seal test in this file by running its stages in process.
 //
 // ## The rest of the file is D4, checked one capability at a time
 //
@@ -35,7 +45,8 @@
 //   - **`env` was the server's.** A session sealed in an image reported `HOME=/home/claude` and a
 //     `$PATH` from the machine, because an unset variable fell back to `cli.env`. Fixed by
 //     `Shell.hostEnv`, which `Shell.onFs` turns off.
-//   - **`spawn` is 0116**, and the reason a sealed session does not spawn at all.
+//   - **`spawn` was 0116**, and was the reason a sealed session did not spawn at all. It does now,
+//     and the tests below are what the fix has to keep true.
 //
 // The others held, and two of them held because somebody had already thought about it: `ownsStdin` is
 // false unless an entry point *is* a shell, and its doc names this server by name.
@@ -206,4 +217,77 @@ Deno.test("the shell over the real filesystem is the exception, and really is on
   // sealed session must not.
   const piped = run(host, [], `cat ${hostFile.path} | head -1`);
   assertEquals(piped.out.includes(first), true, `wacsh could not read ${hostFile.path}: ${piped.err}`);
+});
+
+// ── 0116: the session spawns, and the seal is the parent's filesystem rather than a rule ──────────
+
+Deno.test("a spawned stage sees the session's filesystem and not the machine's", () => {
+  // The two lines out of the issue, in order. The first is the one that says a stage can see what the
+  // session wrote; the second is the one that says it cannot see anything else.
+  const own = run(sealed, [], "echo inimage > /f; cat /f | cat");
+  assertEquals(own.out, "inimage\n", own.err);
+
+  if (hostFile !== null) {
+    const machine = run(sealed, [], `cat ${hostFile.path} | head -1`);
+    assertEquals(machine.out, "", `a stage read ${hostFile.path}`);
+    assertEquals(
+      machine.err.includes("No such file"),
+      true,
+      `expected the session to have no such file, got: ${machine.err}`,
+    );
+  }
+});
+
+Deno.test("`ps` shows the pipeline it is running — design/0001 step 3's criterion", () => {
+  // **This is the canary for every other test in this file.** They all ask what a stage can see, and
+  // a session that stopped spawning would answer all of them correctly by running its stages in
+  // process. Only this one can tell the difference: three rows means three instances alive at once,
+  // which is what a sequential shell cannot produce — by the time `ps` runs, the earlier stages have
+  // exited and been reaped.
+  const seen = run(sealed, [], "seq 1 200000 | ps");
+  const rows = seen.out.trimEnd().split("\n");
+  assertEquals(rows.length, 4, `expected a header and three processes, got:\n${seen.out}${seen.err}`);
+  assertEquals(rows[1].includes("sealedsh"), true, rows[1]);
+  assertEquals(rows[2].includes("seq 1 200000"), true, rows[2]);
+  assertEquals(rows[3].includes("ps"), true, rows[3]);
+});
+
+Deno.test("what a stage writes is what the session wrote", () => {
+  // A child's writes are its parent's writes, because there is only one filesystem. The `>` is the
+  // shell's, but `mkdir`, `rm` and `chmod` are the stage's own calls travelling back over the channel
+  // — so a session that had two filesystems would lose all three when the stage exited.
+  const wrote = run(sealed, [], "seq 1 5 | sort -nr > /out; cat /out");
+  assertEquals(wrote.out, "5\n4\n3\n2\n1\n", wrote.err);
+
+  const changed = run(sealed, [], "mkdir -p /a/b; echo x | cat > /a/b/f; cat /a/b/f; rm -r /a; ls /a");
+  assertEquals(changed.out, "x\n", changed.err);
+  assertEquals(changed.err.includes("No such file"), true, `rm from a stage did not take: ${changed.err}`);
+});
+
+Deno.test("a background job in a sealed session reads the session's files", () => {
+  // Not only when it is waited for. A job blocked on a question nobody has answered is a job that is
+  // not running, so the shell answers at its own check points — `jobs` here is a check point, and the
+  // job has to have got somewhere by the time `wait` returns.
+  const bg = run(sealed, [], "seq 1 200 > big; wc -l big & jobs; wait");
+  assertEquals(bg.out.includes("200 big"), true, `${bg.out}${bg.err}`);
+  assertEquals(bg.out.includes("Running"), true, `${bg.out}${bg.err}`);
+});
+
+Deno.test("a program nobody spawned still gets the host, and says nothing about a parent", async () => {
+  // The other half of the choice `boxApplet` makes. `box sort` typed on a command line is the same
+  // `main` a sealed shell spawns, and the only difference is whether anything answers on `PARENT_FS`.
+  // If the probe were wrong in this direction, every applet run as a program would hang or read an
+  // empty filesystem — which is why this is checked rather than reasoned about.
+  const box = `${tmp}/box`;
+  await buildApp("packages/box/src/box.wac", box, { read: true, write: true });
+  await Deno.writeTextFile(`${tmp}/plain.txt`, "on the host\n");
+  const r = new Deno.Command("timeout", {
+    args: ["20", box, "cat", "plain.txt"],
+    cwd: tmp,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  }).outputSync();
+  const d = new TextDecoder();
+  assertEquals(d.decode(r.stdout), "on the host\n", d.decode(r.stderr));
 });

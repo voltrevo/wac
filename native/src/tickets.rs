@@ -72,8 +72,8 @@ pub enum Outcome {
     Names(Option<Vec<Vec<u8>>>),
     /// `Socket{handle, error, peer, port}`.
     Socket(i32, String, String, i32),
-    /// `Child{handle, errHandle, error}`.
-    Child(i32, i32, String),
+    /// `Child{handle, errHandle, fsHandle, error}`.
+    Child(i32, i32, i32, String),
 }
 
 struct Inner {

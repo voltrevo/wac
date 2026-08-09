@@ -1,0 +1,98 @@
+// Answering a child's questions about a filesystem it cannot reach.
+//
+// The other half of `remote.wac`, in its own file for one reason: this needs `Fs` and `fs.wac` needs
+// `Chan`, so putting them together would be a cycle. The split is along the right line anyway — a
+// program that only *asks* (every applet) links the client, and only a program that *serves* (a
+// shell, a session) links this.
+//
+// See `remote.wac` for what the channel is and why a child gets one at all. wac-mono 0116.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Change, Cli, FAULT_OTHER } from "../../platform/src/platform.wac";
+import { Fs } from "./fs.wac";
+import { Reader } from "./wire.wac";
+import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_MKDIR,
+  ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
+  ASK_WRITE_FILE, ASK_WRITE_OUT, answer, encodeChange, encodeFileResult, encodeNames, encodeStat }
+  from "./remote.wac";
+
+/**
+ * Serve one request, if there is one.
+ *
+ * Answers false when the channel has ended, which is a child that has exited and is the normal way
+ * this stops — a caller loops until then. The `Fs` handed in is the *parent's own*, so everything
+ * about the answer — which mounts exist, who `user` is, what `/proc` says — is decided by the same
+ * code that decides it for the parent itself. That is the whole point: there is no second
+ * implementation of a filesystem here, only a second way of reaching the first one.
+ *
+ * A request this does not recognise is answered rather than dropped. A child parked waiting for a
+ * reply that never comes is the worst failure this channel can have, so an opcode from a newer child
+ * than this parent gets a `Change` saying so — which every decoder can read, since they all check
+ * for a short frame first.
+ */
+export bool serveFsRequest(Cli cli, Fs fs, i32 handle) {
+  Chan c = Chan.of(cli, handle);
+  return serveOn(c, fs);
+}
+
+/**
+ * The same, on a channel that is kept between requests.
+ *
+ * Which is the one a real server wants: `serveFsRequest` builds a fresh `Chan` each time and so
+ * cannot hold a partial frame, and a child that wrote two questions into one chunk would have its
+ * second one dropped.
+ */
+export bool serveOn(Chan c, Fs fs) {
+  Reader r = answer(c);
+  if (r.bad) { return false; }
+  i32 op = r.byte();
+  Buf out = Buf.create();
+
+  if (op == ASK_READ_FILE()) {
+    encodeFileResult(out, fs.readFile(r.string()));
+  } else if (op == ASK_READ_SOME()) {
+    string path = r.string();
+    encodeFileResult(out, fs.readSome(path, r.u32()));
+  } else if (op == ASK_STAT()) {
+    encodeStat(out, fs.stat(r.string()));
+  } else if (op == ASK_READ_DIR()) {
+    encodeNames(out, fs.readDir(r.string()));
+  } else if (op == ASK_WRITE_FILE()) {
+    string path = r.string();
+    encodeChange(out, fs.writeFile(path, r.bytes(r.u32())));
+  } else if (op == ASK_MKDIR()) {
+    string path = r.string();
+    encodeChange(out, fs.mkdir(path, r.byte() == 1));
+  } else if (op == ASK_REMOVE()) {
+    string path = r.string();
+    encodeChange(out, fs.remove(path, r.byte() == 1));
+  } else if (op == ASK_CHMOD()) {
+    string path = r.string();
+    encodeChange(out, fs.chmod(path, r.u32()));
+  } else if (op == ASK_CHOWN()) {
+    string path = r.string();
+    encodeChange(out, fs.chown(path, r.string()));
+  } else if (op == ASK_RENAME()) {
+    string from = r.string();
+    encodeChange(out, fs.rename(from, r.string()));
+  } else if (op == ASK_OPEN_OUT()) {
+    encodeChange(out, fs.openOut(r.string()));
+  } else if (op == ASK_WRITE_OUT()) {
+    out.push(fs.writeOut(r.bytes(r.u32())) ? 1 : 0);
+  } else if (op == ASK_CLOSE_OUT()) {
+    encodeChange(out, fs.closeOut());
+  } else if (op == ASK_IS_HOST_PATH()) {
+    out.push(fs.isHostPath(r.string()) ? 1 : 0);
+  } else {
+    encodeChange(out, Change.of(FAULT_OTHER(), "the filesystem server does not know this request"));
+  }
+
+  // A request whose *arguments* ran out is still answered, with whatever the decode produced. The
+  // alternative is silence, and silence parks the child.
+  Buf framed = Buf.create();
+  u8[] body = out.bytes();
+  framed.pushU32(body.len() as@ u32);
+  framed.pushAll(body);
+  return c.cli.send(c.handle, framed.bytes()).wait();
+}
+

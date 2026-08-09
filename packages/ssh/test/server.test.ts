@@ -653,6 +653,52 @@ Deno.test({
   },
 });
 
+/**
+ * design/0001 step 3's criterion, over ssh: **`ps` shows the pipeline you are running.**
+ *
+ * It could not be met for as long as a session on an image did not spawn its stages, and it did not
+ * spawn them because a spawned stage would have read the machine rather than the image (wac-mono
+ * 0116). Both halves are here in one question: three rows means three instances running at once,
+ * and `cat /etc/passwd` failing in the same session means those instances are still sealed.
+ *
+ * `seq 1 200000` rather than something short because the pipeline has to still be running when `ps`
+ * looks. A sequential shell answers this with one row however long the first stage takes.
+ */
+Deno.test({
+  name: "a session on an image shows its own pipeline in `ps` — step 3's criterion",
+  ignore: !haveSshd,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-sshd-ps-" });
+    const image = `${dir}/ps.wacimg`;
+    let s: Wacsshd | null = null;
+    try {
+      s = await startWacsshd(["-i", image], wacsshdWritableBinary);
+      const seen = await realSsh(s, "seq 1 200000 | ps");
+      const rows = seen.stdout.trimEnd().split("\n");
+      if (rows.length !== 4) throw new Error(`expected a header and three rows:\n${seen.stdout}`);
+      if (!rows[2].includes("seq 1 200000")) throw new Error(rows.join(" | "));
+      if (!rows[3].includes("ps")) throw new Error(rows.join(" | "));
+
+      // The seal, in the same session and through the spawning route, so that a `ps` which showed
+      // more by reading the wrong disk would fail here rather than pass quietly.
+      //
+      // The *output*, not the status: `$?` after a pipeline is its last stage's, so `head` succeeding
+      // on nothing reports 0 whatever `cat` did — which is bash's rule and was this test's first bug.
+      const machine = await realSsh(s, "cat /etc/passwd | head -1");
+      if (machine.stdout !== "") throw new Error(`a stage read the machine: ${machine.stdout}`);
+
+      // And a stage's writes are the session's: the next connection finds what it left.
+      const wrote = await realSsh(s, "seq 1 5 | sort -nr > /out");
+      if (wrote.stdout !== "") throw new Error(JSON.stringify(wrote.stdout));
+      const back = await realSsh(s, "cat /out");
+      if (back.stdout !== "5\n4\n3\n2\n1\n") throw new Error(JSON.stringify(back.stdout));
+    } finally {
+      if (s !== null) await stopWacsshd(s);
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 Deno.test({
   name: "an image the server cannot read stops it before it binds, and is not written over",
   ignore: !haveSshd,

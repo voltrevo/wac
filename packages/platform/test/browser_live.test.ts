@@ -364,21 +364,43 @@ Deno.test({
       // Redirection into OPFS and back out again: a shell with a real filesystem under it.
       assertEquals((await command("echo kept > note.txt; cat note.txt")).endsWith("kept"), true);
 
-      // **What a tab does not have, pinned so the gap is visible rather than assumed.**
+      // **The same system in a tab** — design/0001's own words, and what these used to assert the
+      // absence of.
       //
-      // design/0001 wants the browser terminal to be "the *same system* in a tab", which means the
-      // `/dev`, `/proc` and `/bin` every other session has. It does not have them, and mounting them
-      // was tried this tick and had to come out: the shell got them and its *programs* did not,
-      // because a spawned stage is a fresh instance with `Fs.onHost`. `ls /bin` listed sixty-three
-      // programs — `ls` is a builtin, on the session's own filesystem — and `cat /dev/null` failed.
+      // A tab had no `/dev`, `/proc` or `/bin`, and this file pinned that gap: mounting them gave the
+      // shell a world its *programs* could not see, because a spawned stage was a fresh instance with
+      // `Fs.onHost`. `ls /bin` listed sixty-three programs — `ls` is a builtin, on the session's own
+      // filesystem — and `cat /dev/null` failed, because `cat` was spawned. wac-mono 0116 is what
+      // decided it, and it decided it by removing the disagreement rather than by picking a side: a
+      // spawned stage has no filesystem, it asks this page's shell for everything.
       //
-      // So this asserts the gap. When wac-mono 0116 is decided these become the positive assertions,
-      // and until then a tab that quietly grew half a world fails here.
-      const devnull = await command("cat /dev/null; echo [$?]");
+      // So each of these is asked **through a pipe**, which is the spawning route. Answered by a
+      // builtin they would say nothing about the thing that was broken.
+      const devnull = await command("cat /dev/null | wc -c");
       assertEquals(
-        devnull.endsWith("[0]"),
-        false,
-        `a tab has no /dev yet (0116); it said ${JSON.stringify(devnull)}`,
+        devnull.endsWith("0"),
+        true,
+        `a spawned \`cat\` could not read /dev/null: ${JSON.stringify(devnull)}`,
+      );
+      // Derived from the dispatcher's own list, the way `packages/box/test/bin.test.ts` does it: a
+      // number typed here would be a number to update every time an applet is added.
+      const boxSrc = await Deno.readTextFile("packages/box/src/box.wac");
+      const listed = boxSrc.match(/string\[\] appletNames\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+      const APPLETS = (listed.match(/"[a-z0-9-]+"/g) ?? []).length;
+      assertEquals(APPLETS > 50, true, "the applet list did not parse");
+      const bin = await command("ls /bin | wc -l");
+      assertEquals(
+        bin.endsWith(String(APPLETS)),
+        true,
+        `a spawned \`ls\` saw ${JSON.stringify(bin)} programs in /bin, not ${APPLETS}`,
+      );
+      // `/proc/self` is the process asking, which in a pipeline is the spawned stage rather than the
+      // page's shell — the same rule `packages/box/test/synth.test.ts` checks against bash.
+      const self = await command("cat /proc/self/cmdline | tr '\\0' ' '");
+      assertEquals(
+        self.includes("cat /proc/self/cmdline"),
+        true,
+        `/proc/self in a tab named the wrong process: ${JSON.stringify(self)}`,
       );
 
       // **The cursor is a block, and stays one.** `caret-shape: block` only paints a full cell if
