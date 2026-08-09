@@ -14,7 +14,18 @@ import { browserWorld, type DirHandle, type FileHandle } from "../host/browser.t
 import { WORKER_MARKER } from "../host/children.ts";
 import { i32le, readI32le, str, unstr } from "../host/call.ts";
 import { OP } from "../host/ops.ts";
-import { FAULT_NOT_FOUND, FAULT_NOT_GRANTED, STAT_BYTES, STAT_FAULT } from "../host/faults.ts";
+// The categories by name rather than by number. Five assertions below wrote the number and named
+// the constant in the message beside it — so the two could disagree, and the message would be the
+// one lying. `faults_agree.test.ts` would catch a renumbering, but not in a way that points here.
+import {
+  FAULT_EXISTS,
+  FAULT_NOT_EMPTY,
+  FAULT_NOT_FOUND,
+  FAULT_NOT_GRANTED,
+  FAULT_OTHER,
+  STAT_BYTES,
+  STAT_FAULT,
+} from "../host/faults.ts";
 
 /**
  * The bytes out of a `Read` payload: tag 0 is data, 1 is the end, 2 is a failure.
@@ -227,10 +238,10 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   // rather than throwing, and the second is `FAULT_EXISTS` by category — which matters here more
   // than anywhere, because OPFS has no exclusive create and the *host* decided that fault.
   const missingParent = change(await call(OP.MKDIR, new Uint8Array([0, ...str("x/y")])));
-  assertEquals(missingParent.fault, 1, "a missing parent is FAULT_NOT_FOUND");
+  assertEquals(missingParent.fault, FAULT_NOT_FOUND, "a missing parent is not there");
   assertEquals(missingParent.message, "No such file or directory", missingParent.message);
   const already = change(await call(OP.MKDIR, new Uint8Array([0, ...str("a")])));
-  assertEquals(already.fault, 3, "already exists is FAULT_EXISTS");
+  assertEquals(already.fault, FAULT_EXISTS, "a directory that is already there");
   // GNU's phrase for `EEXIST`, which is what `faultWords` has said all along; this said the browser's
   // own "already exists", so one host worded a category differently from the other two.
   assertEquals(already.message, "File exists", already.message);
@@ -241,17 +252,17 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   // `rm: cannot remove 'f': `. Checked against a real browser, not only this double — the demo page
   // is where it shows.
   const absent = change(await call(OP.REMOVE, new Uint8Array([0, ...str("nothing-here")])));
-  assertEquals(absent.fault, 1, "FAULT_NOT_FOUND");
+  assertEquals(absent.fault, FAULT_NOT_FOUND, "removing what is not there");
   assertEquals(absent.message, "No such file or directory", absent.message);
   // A directory with something in it, without `recursive`: `InvalidModificationError` in a browser,
   // which has no errno to say "not empty" with.
   const notEmpty = change(await call(OP.REMOVE, new Uint8Array([0, ...str("a")])));
-  assertEquals(notEmpty.fault, 4, "FAULT_NOT_EMPTY");
+  assertEquals(notEmpty.fault, FAULT_NOT_EMPTY, "a directory with something in it");
   assertEquals(notEmpty.message, "Directory not empty", notEmpty.message);
   // ...and a fault with no category keeps the message, because there it is the only information
   // there is. "" names no component at all, which is this host's own complaint rather than OPFS's.
   const empty = change(await call(OP.MKDIR, new Uint8Array([0])));
-  assertEquals(empty.fault, 5, "FAULT_OTHER");
+  assertEquals(empty.fault, FAULT_OTHER, "a browser exception no category covers");
   assertEquals(empty.message, "empty path", empty.message);
 
   // Streaming input, in CHUNK-sized pieces out of a Blob.
