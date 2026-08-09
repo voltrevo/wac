@@ -18,29 +18,14 @@ const dumpErrors = mod.dumpErrors as (src: Uint8Array) => Int32Array;
 const enc = new TextEncoder();
 
 /**
- * Programs the spec runs and this checker still refuses, by tag.
+ * Empty, and it is meant to stay that way.
  *
- * — `wac-ternary-lca`: a ternary whose branches are a subtype and its parent. The branches "agree"
- *   through the hierarchy, and this checker compares them for equality.
- * — `wac-nullable-primitive`: `i32?` fields and the shapes around them.
- * — `wac-shadow-param` (twice): a local shadowing a parameter, which this checker poisons to unknown
- *   and then complains about.
- * — `wac-generic-expected-position`: a bare `Box` in a position that supplies its argument.
- * — `wac-generic-fn`: `T max<T>(T a, T b) { return a > b ? a : b; }` — comparison on two values of a
- *   type parameter.
- * — `wac-inherited-method-type`: a method reached through a parent, typed as missing.
+ * It held eight tags: a ternary over a subtype and its parent (twice, once nullable), a constant
+ * built from an enum variant (twice), a bare generic in a ternary branch, a generic function's
+ * return type, and an enum method reached through a narrowed variant. Every one was a rule this
+ * checker had that the language does not.
  */
-const KNOWN_VIOLATIONS = new Set([
-  "wac-ternary-lca-q7fk3wn",
-  "wac-nullable-primitive-4mzq7vp",
-  "wac-shadow-param-7apc0wt",
-  "wac-generic-expected-position-3qmz8vk",
-  "wac-generic-fn-5hvq3mt",
-  "wac-inherited-method-type-9dkq3wv",
-  // A ternary whose branches are a nullable and its base — the same shape as `wac-ternary-lca`, one
-  // nullable along.
-  "wac-ternary-nullable-9pqk3vm",
-]);
+const KNOWN_VIOLATIONS = new Set<string>([]);
 
 Deno.test("rung 3: every program the spec runs, accepted in silence", () => {
   const cases = specAcceptances();

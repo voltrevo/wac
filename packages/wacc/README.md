@@ -2161,12 +2161,50 @@ the spec runs.
 | spec rejections, refused | 101 of 101 |
 | the reference-shaped instruments | unchanged |
 
-The eight that remain are named per tag in `specAccept.test.ts`, and each is a rule this checker has
-that the language does not: a ternary over a subtype and its parent (twice, once nullable), a local
-shadowing a parameter (twice), a bare generic in a position that supplies its argument, a comparison
-on two values of a type parameter, and a method reached through a parent. That is a queue of *this
-checker's* mistakes rather than of missing diagnostics — a different and more useful list than the
-one the reference-shaped oracles produce.
+The eight that remained were a queue of *this checker's* mistakes rather than of missing
+diagnostics — a different and more useful list than the reference-shaped oracles produce, and the
+next entry is what was at the bottom of it.
+
+### 262 of 262 — eight rules this checker had and the language does not
+
+**Four were one rule.** `spec/spec/control.md`: a ternary over references has the type of their
+*closest common ancestor*, and only branches with **no** common ancestor are an error. Asking
+assignability in both directions — which is what this checker did — answers "no" for every pair of
+siblings, so `flag ? c : r` on a `Circle` and a `Rect` was refused although their `Shape` is exactly
+what the spec says the expression is. A `null` branch takes the other's type, which is the same
+clause and was the fourth case.
+
+**`const E X = E.A(7);` is a constant**, and `variables.md` lists it: a struct, an enum variant, or
+anything built out of them. It parses as a call, and the compile-time rule refused every call. What
+makes it constant is that `struct.new` is a constant instruction — the shape from outside says
+nothing.
+
+**A bare generic takes its arguments from its slot, and both ternary branches sit in that slot.**
+`Box<i32> b = c ? Box(1) : Box(2);` needed the context passed to each branch, and the bug is worth
+naming: the arm captured `c.expected`, which the top of `checkExpr` had already cleared into `want`.
+The mechanism was right and the read was one line too late.
+
+**An enum's methods were never declared at all.** `enum E { … i32 val(const this) }` put `val`
+nowhere, and `e.val()` was silent only because an enum is not a struct and the method rule returns on
+anything else — silence by accident, which stops being silence the moment a narrowing retypes `e` to
+one of its variants. Declaring them made eighteen valid programs fail at once, because a *generic*
+enum's method answers a `T` and there is no substitution for an enum here — so a generic enum's
+method types are recorded as unknown, and its arity, which is what the declaration was for, is kept.
+
+**And `Box<T>` came back as written.** A generic function's return type was substituted only when the
+whole type was a parameter, so `T id<T>(T v)` worked and `Box<T> wrap<T>(T v)` did not — the identity
+function being exactly the case everybody tests.
+
+| | before | after |
+|---|---|---|
+| spec acceptances, silent | 254 of 262 | **262 of 262** |
+| spec rejections, refused | 101 of 101 | 101 of 101 |
+| false alarms, everywhere | 0 | 0 |
+| the reference-shaped instruments | 95% / 99% | unchanged |
+
+Both halves of the contract are met. What the reference-shaped oracles still print — 95% and 99%
+recall against a compiler that is a guide rather than an authority — is now the only open number on
+this rung, and the queue it names is missing diagnostics rather than wrong ones.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
