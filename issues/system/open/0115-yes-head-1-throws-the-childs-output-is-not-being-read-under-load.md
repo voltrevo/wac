@@ -56,3 +56,30 @@ answers false to a closed queue (which is what the wac side is written for, and 
 in the test describes), or the throw stays and the shell catches it as an ordinary end-of-pipe.
 
 Found while running the gate for design/0001 step 3; nothing in that change touches this path.
+
+## Second sighting — 2026-08-09, agent-a
+
+The test's own comment asks whoever sees it fail to paste the assertion text here, so:
+
+```
+an endless producer stops at the cap rather than filling memory => ./packages/box/test/shell.test.ts:139:6
+error: Error: assertEquals failed — error: Uncaught (in promise) Error: the child's output is not being read
+          if (!await out.push(b)) throw new Error("the child's output is not being read");
+    at write (file:///tmp/box-shell-66523b778d35b77c/wacsh:1538:41)
+
+  got:  "y\n"
+  want: "y\nstatus=0\n"
+```
+
+Same shape as the first: the line arrives, the process dies before `echo status=$?`. In a gate run,
+under a suite of 2960, with another agent's gate running beside it — so "under load" holds. The
+commit it failed on changed one markdown file, which is as close to a control as this gets.
+
+**And the two candidate answers are not equal**, which is worth writing down while it is fresh. The
+throw is not an accident: `deno.ts` says "Throwing is how the host says false — the same shape
+`pushChild`'s cap uses", and the wac side is written for a false (`box yes` is `while (cli.write(b))
+{}`). So the mechanism is right and the *delivery* is what fails: this rejection reaches Deno as
+`Uncaught (in promise)`, which means some path invokes the child's `write` callback without awaiting
+what it returns. That is a third possibility the original notes did not have — neither "answer false"
+nor "catch it in the shell", but **find the caller that drops the promise**, which would leave the
+design as written and make the failure impossible rather than handled.
