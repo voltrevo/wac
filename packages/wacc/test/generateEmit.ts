@@ -506,5 +506,27 @@ export function generateEmit(): Cell[] {
       `struct C { ${t} n; void bump(this) { this.n++; } }\n` +
       `export ${t} f() { C c = C(0); for (i32 i = 0; i < 5; i++) { c.bump(); } return c.n; }`);
   }
+
+  // Where the `else` arm is *written*. It is the default wherever it stands, and this emitter used
+  // to emit each arm's body where the arm stood — so an `else` written first ran unconditionally and
+  // no `case` was ever reached. Every generated match had put `else` last, which is why 3,700
+  // programs missed it and a compiler compiling itself did not.
+  const ARMS = ["case A(x): { n = x; }", "case B(y): { n = y * 10; }", "else: { n = 99; }"];
+  const K = `enum K { A(i32 x), B(i32 y), C }\n`;
+  for (let pos = 0; pos < 3; pos++) {
+    const arms = [...ARMS];
+    arms.splice(pos, 0, ...arms.splice(2, 1));
+    for (const v of ["K.A(5)", "K.B(5)", "K.C"]) {
+      add(`match else at ${pos} on ${v}`,
+        K + `export i32 f() { K k = ${v}; i32 n = 0; match (k) { ${arms.join(" ")} } return n; }`);
+    }
+    const vals = ["case A(x): x", "case B(y): y * 10", "else: 99"];
+    const varms = [...vals];
+    varms.splice(pos, 0, ...varms.splice(2, 1));
+    for (const v of ["K.A(5)", "K.B(5)", "K.C"]) {
+      add(`match expression else at ${pos} on ${v}`,
+        K + `export i32 f() { K k = ${v}; return match (k) { ${varms.join(", ")} }; }`);
+    }
+  }
   return out;
 }

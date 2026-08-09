@@ -10,7 +10,7 @@
 // reports one number; compiled by `wacc` it reports the same number, and the second module is
 // `wacc`'s own lexer, parser, printer and checker as emitted by `wacc`.
 
-import { dump, dumpErrors, dumpTypeErrors } from "../../src/api.wac";
+import { dump, dumpErrors, dumpTypeErrors, emit, blocked } from "../../src/api.wac";
 import { lex, Lexed } from "../../src/lex.wac";
 import { P, parseProgram } from "../../src/parse.wac";
 
@@ -78,4 +78,36 @@ export i32 subjectBytes() {
 /** One literal, unconcatenated, to tell a `+` problem from a `toBytes` problem. */
 export i32 literalBytes() {
   return "struct P { i32 x; }".toBytes().len();
+}
+
+// ── The fixed point ───────────────────────────────────────────────────────────
+//
+// Reading is half a compiler. These ask the other half: the module `wacc` *emits* for the subject,
+// as a length and as a checksum over every byte. Compiled by the reference this is stage A emitting
+// it; compiled by `wacc` it is stage B — `wacc` as emitted by `wacc` — emitting the same thing. Two
+// equal checksums are the two stages agreeing byte for byte, which is what a bootstrap claims and
+// what running the lexer alone cannot show.
+
+/** A checksum over bytes, the same shape as the one over text. */
+i32 sumBytes(u8[] b) {
+  i32 h = 7;
+  for (i32 i = 0; i < b.len(); i++) {
+    h = (h * 31 + b[i]) & 2147483647;
+  }
+  return h;
+}
+
+/** How many bytes the module for the subject is. */
+export i32 emitLen() {
+  return emit(subject().toBytes()).len();
+}
+
+/** And every one of them, as one number. */
+export i32 emitSum() {
+  return sumBytes(emit(subject().toBytes()));
+}
+
+/** Whether the emitter declines any of the subject — `0` when it emits the whole of it. */
+export i32 emitBlockedLen() {
+  return blocked(subject().toBytes()).len();
 }
