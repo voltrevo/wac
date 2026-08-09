@@ -135,6 +135,21 @@ export struct Event {
   /** "click", "input", "change", "keydown", "submit", "pointermove", "pointerdown", "drop". */
   string kind;
   string id;
+  /**
+   * What happened, in the kind's own terms — and for `keydown` that is **the bytes a terminal sends**.
+   *
+   * `Ctrl-C` is 0x03, Backspace is 0x7f (DEL, which is what the key sends; 0x08 is `Ctrl-H` and the
+   * kernel does not treat it as erase), Enter is CR, an arrow is `ESC [ A`, and a key that puts
+   * nothing on the wire — `Shift`, `Control`, `F1` — is the empty string.
+   *
+   * It used to be the browser's `ev.key`: the strings "a", "Enter", "ArrowUp", "Control". That is a
+   * vocabulary nothing else in this system speaks. `packages/tty`'s line discipline consumes bytes,
+   * because a terminal is a byte stream, so a page built on key names could not reach it — and
+   * design/0001 step 5 wants one discipline for the ssh channel and the browser's keydown loop both.
+   * Translating at the edge, in `host/entryBrowser.ts`, is what lets everything above it be bytes.
+   *
+   * For every other kind this is the element's `value`, unchanged.
+   */
   string value;
   /**
    * Where in the element it happened, in its own pixels. Zero for anything not pointer-shaped.
