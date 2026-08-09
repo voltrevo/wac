@@ -2055,8 +2055,17 @@ void checkExpr(C c, Expr e) {
     // right answer — meant never looking inside it.
     case Cast(op, operand, target): { checkExpr(c, operand); checkCast(c, e, op, operand, target); }
     case Ternary(cond, then, els): {
+      // **Both branches sit in the ternary's own slot.** `Box<i32> b = c ? Box(1) : Box(2);` needs
+      // it: a bare `Box(…)` takes its type arguments from where it is going, and `c.expected` is
+      // cleared by the first expression that reads it — so the second branch got nothing and the
+      // whole thing was reported as a template used as a value.
+      // `want`, not `c.expected`: the slot was read and cleared at the top of this function, which is
+      // the whole mechanism — an expression gets the context it was given and cannot leak it sideways.
+      string slot = want;
       checkExpr(c, cond);
+      c.expected = slot;
       checkExpr(c, then);
+      c.expected = slot;
       checkExpr(c, els);
       // The condition is the `if` rule in expression position, and lands on the condition itself.
       if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
@@ -2066,13 +2075,22 @@ void checkExpr(C c, Expr e) {
       if (litKindOf(then) == litNone() && litKindOf(els) == litNone()) {
         string tt = typeOfExpr(c, then);
         string et = typeOfExpr(c, els);
+        // **Reference branches take their closest common ancestor**, which `spec/spec/control.md`
+        // states and this rule did not know: `flag ? c : r` on a `Circle` and a `Rect` is a `Shape`,
+        // and neither branch is assignable to the other. Asking assignability in both directions
+        // answers "no" for every pair of siblings, and refused four programs the spec runs.
         if (tt != typeNone() && et != typeNone() && !assignable(c, tt, et) &&
-            !assignable(c, et, tt)) {
+            !assignable(c, et, tt) && !shareAncestor(c, tt, et)) {
           c.report(errTernaryBranches(), e.line, e.col);
         }
       } else if (litKindOf(then) != litNone() && litKindOf(els) != litNone()) {
         // Two literals of different families — `c ? 1 : true` — have nothing to take a type from.
-        if (litKindOf(then) != litKindOf(els)) { c.report(errTernaryBranches(), e.line, e.col); }
+        // **Except a `null`**, which takes the other branch's type: `c ? 1 : null` in an `i32?` slot
+        // is the shape the spec writes for a nullable primitive.
+        if (litKindOf(then) != litKindOf(els) &&
+            litKindOf(then) != litNull() && litKindOf(els) != litNull()) {
+          c.report(errTernaryBranches(), e.line, e.col);
+        }
       }
     }
     case Index(arr, index): {
@@ -2610,7 +2628,31 @@ bool callsAFunction(C c, Expr e) {
       }
       return false;
     }
-    case Call(callee, args): { return true; }
+    case Call(callee, args): {
+      // **A variant construction is a value, not a call.** `const E X = E.A(7);` is a constant the
+      // spec writes down — `variables.md` lists a struct, an enum variant, and anything built out of
+      // them — and it parses as `Call(Member(E, A), …)` like everything else with parentheses. What
+      // makes it a constant is that `struct.new` is a constant instruction; what made this rule
+      // refuse it is that the shape looks like a call from the outside.
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          match (obj.kind) {
+            case Ident(tok): {
+              string en = tokenText(c, tok);
+              if (c.isEnum(en) && c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
+                for (i32 i = 0; i < args.len(); i++) {
+                  if (callsAFunction(c, args[i])) { return true; }
+                }
+                return false;
+              }
+            }
+            else: { }
+          }
+        }
+        else: { }
+      }
+      return true;
+    }
     case Binary(op, left, right): { return callsAFunction(c, left) || callsAFunction(c, right); }
     case Unary(op, operand): { return callsAFunction(c, operand); }
     case ArrNew(elem, size, fill, elements): {
@@ -2793,6 +2835,26 @@ bool isCastRef(C c, string t) {
          c.isEnum(at) || c.isStruct(at);
 }
 
+/**
+ * Whether two types meet anywhere in the hierarchy — the ternary's rule.
+ *
+ * `spec/spec/control.md`: the type of a ternary over references is their *closest common ancestor*,
+ * "found by walking each branch's chain of parent structs and taking the nearest struct that appears
+ * in both chains". Only branches with **no** common ancestor are an error. Nullability is not part of
+ * the question: `S?` and `Sub` meet at `S` whether or not either can be absent.
+ */
+bool shareAncestor(C c, string a, string b) {
+  string ac = withoutNull(a) == "" ? a : withoutNull(a);
+  string bc = withoutNull(b) == "" ? b : withoutNull(b);
+  string walk = ac;
+  for (i32 guard = 0; guard < 16; guard++) {
+    if (walk == "") { return false; }
+    if (bc == walk || descendsFrom(c, bc, walk)) { return true; }
+    walk = c.parentOf(walk);
+  }
+  return false;
+}
+
 /** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
 bool descendsFrom(C c, string sub, string sup) {
   string at = c.parentOf(sub);
@@ -2948,6 +3010,22 @@ string applyBindings(string written, string[] names, string[] bound) {
     if (names[i] != core) { continue; }
     if (bound[i] == "") { return typeNone(); }
     return bound[i] + suffix;
+  }
+  // **And inside an instantiation.** `Box<T> wrap<T>(T v)` returns a `Box<T>`, whose core is not a
+  // parameter but a type *holding* one — so answering with the written text made `Box<i32> b =
+  // wrap(x);` a mismatch against a type nobody wrote. `T` alone already worked, which is exactly why
+  // it went unnoticed: the identity function is the case everybody tests.
+  string base = genericBase(core);
+  if (base != "") {
+    string[] args = genericArgs(core);
+    string out = base + "<";
+    for (i32 i = 0; i < args.len(); i++) {
+      string one = applyBindings(args[i], names, bound);
+      if (one == typeNone()) { return typeNone(); }
+      if (i > 0) { out = out + ", "; }
+      out = out + one;
+    }
+    return out + ">" + suffix;
   }
   return written;
 }
@@ -3239,6 +3317,15 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // type, and that is `typeOfExpr`'s question, asked elsewhere and still asked of the instance.
   string recvBase = genericBase(recv);
   if (recvBase != "" && !c.isStruct(recv) && c.isStruct(recvBase)) { recv = recvBase; }
+  // **A narrowed variant keeps its enum's methods.** `if (e is A) { e.val() }` retypes `e` to the
+  // variant, and `val` belongs to the enum — the variant is a struct holding the payload and nothing
+  // else. Looking the method up on the owner is what makes narrowing free rather than costly.
+  if (c.isStruct(recv) && c.methodAt(recv, name) < 0) {
+    for (i32 i = 0; i < c.variantCount; i++) {
+      if (c.variantNames[i] != recv) { continue; }
+      if (c.methodAt(c.variantOwners[i], name) >= 0) { recv = c.variantOwners[i]; }
+    }
+  }
   if (recv == typeNone() || recv == "" || !c.isStruct(recv)) { return; }
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
   // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an
@@ -4155,6 +4242,27 @@ export void declareModule(C c, Program prog, string[] only) {
             c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
                                 typeOfTy(c, variants[vi].fields[fi].type), false);
           }
+        }
+        // **An enum's methods, which were never declared at all.** `enum E { … i32 val(const this) }`
+        // put `val` nowhere, so `e.val()` was unreported only because an enum is not a struct and the
+        // method check returns on anything else — silence by accident rather than by rule. Declared
+        // under the enum's own name, which is where a receiver typed `E` looks, and where a variant
+        // narrowed out of it looks too.
+        string ename = tokenText(c, nameTok);
+        for (i32 mi = 0; mi < methods.len(); mi++) {
+          string[] emps = string[methods[mi].params.len()]();
+          for (i32 pi = 0; pi < methods[mi].params.len(); pi++) {
+            emps[pi] = typeOfTy(c, methods[mi].params[pi].type);
+          }
+          // **A generic enum's method types are unknown until an instance supplies them.**
+          // `Opt<T>.orElse` answers a `T`, and there is no substitution for an enum here — the
+          // parameter table belongs to structs. Recording the letter made `o.orElse(0)` return a
+          // type nobody declared, in eighteen programs. The arity is still worth having, which is
+          // why the method is declared at all.
+          bool gen = typeParams.len() > 0;
+          c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
+                          !methods[mi].hasThis, methods[mi].thisConst,
+                          gen ? typeNone() : typeOfTy(c, methods[mi].returnType), emps);
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
