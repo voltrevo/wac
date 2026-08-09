@@ -877,6 +877,40 @@ export function generateEmit(): Cell[] {
       `${H}export i32 f() { Rect r = Rect { h: 4, x: 1, w: 3, y: 2 }; return r.x * 1000 + r.y * 100 + r.w * 10 + r.h; }`);
   }
 
+  // **`i31ref` is an integer inside a reference** and `anyref` the top of the hierarchy, which is how
+  // an unboxed number and a heap object share one container. The interesting part is the boundary:
+  // thirty-one bits fit and the thirty-second does not, and `as!` is checked rather than truncating.
+  {
+    const P = `struct P { i32 v; }\n`;
+    for (const n of ["0", "1", "42", "-1", "-42", "1073741823", "-1073741824", "65535", "-65536"]) {
+      add(`i31 round trip ${n}`, `export i32 f() { i31ref r = ${n} as! i31ref; return r as i32; }`);
+    }
+    // The out-of-range pair is **not** here: `as!` is specified to trap and the reference truncates,
+    // so the two compilers disagree on purpose. A differential sweep has no way to say "we are right
+    // and it is wrong", and a program whose mismatch is expected would hide the next real one — so
+    // they live in `i31Trap.test.ts`, against the spec, with the issue number.
+    add("i31 in an anyref array",
+      `export i32 f() { anyref[] a = anyref[3](); a[0] = 7 as! i31ref; return (a[0] as! i31ref) as i32; }`);
+    add("a struct in an anyref array",
+      `${P}export bool f() { anyref[] a = anyref[2](); a[1] = P(3); return a[0] is i31ref; }`);
+    add("a type test on the top type",
+      `export bool f() { anyref[] a = anyref[2](); a[0] = 7 as! i31ref; return a[0] is i31ref; }`);
+    add("a type test on the top type fails",
+      `${P}export bool f() { anyref[] a = anyref[2](); a[0] = P(1); return a[0] is i31ref; }`);
+    add("a null anyref is not an i31",
+      `export bool f() { anyref[] a = anyref[1](); return a[0] is i31ref; }`);
+    add("an anyref array defaults to nulls",
+      `export bool f() { anyref[] a = anyref[4](); return (a[0] is null) && (a[3] is null); }`);
+    add("i31 and a struct in one container",
+      `${P}export i32 f() { anyref[] a = anyref[2](); a[0] = 9 as! i31ref; a[1] = P(4);\n` +
+      `  i32 t = 0; if (a[0] is i31ref) { t = t + (a[0] as! i31ref) as i32; } return t; }`);
+    add("an i31 local passed and returned",
+      `i31ref twice(i31ref r) { return ((r as i32) * 2) as! i31ref; }\n` +
+      `export i32 f() { return twice(21 as! i31ref) as i32; }`);
+    add("an i31 field",
+      `struct Q { i31ref r; }\nexport i32 f() { Q q = Q(5 as! i31ref); return q.r as i32; }`);
+  }
+
   add("increment feeds the base of another", `struct P { i32 v; }\n` +
     `P at(P[] a, i32 i) { return a[i]; }\n` +
     `export i32 f() { P[] a = P[2](fill: P(1)); a[1] = P(10); i32 i = 0; return at(a, i++).v * 100 + i; }`);

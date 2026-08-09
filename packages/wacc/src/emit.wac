@@ -146,6 +146,12 @@ export struct B {
  * wasm type has already thrown away.
  */
 i32 valType(string t) {
+  // **`anyref` is the top of the reference hierarchy and `i31ref` a 31-bit integer inside a
+  // reference** — no allocation, which is how an unboxed number and a heap object share a container.
+  // Both are one byte, like the numeric types and unlike every other reference here, because neither
+  // names a type in the type section.
+  if (t == "anyref") { return 110; }
+  if (t == "i31ref") { return 108; }
   if (t == "i64" || t == "u64") { return 126; }
   if (t == "f32") { return 125; }
   if (t == "f64") { return 124; }
@@ -926,6 +932,11 @@ export struct Env {
    */
   bool isSubtypeOf(const this, string derived, string base) {
     if (derived == base) { return true; }
+    // **`anyref` is above everything**, which is the one relation that needs no chain: a struct, an
+    // array, a string and an `i31ref` are all one, and a `funcref` is *not* — function references
+    // are their own hierarchy in the format and cannot be stored in an `anyref`.
+    if (base == "anyref") { return isArrayType(derived) || derived == "string" ||
+                                   this.isStructName(derived) || derived == "i31ref"; }
     string p = this.parentOf(derived);
     return p == "" ? false : this.isSubtypeOf(p, base);
   }
@@ -2152,6 +2163,11 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
     }
     case Named(tok, typeArgs): {
       string raw = tokenTextOf(src, lexed, tok);
+      // **`anyref` and `i31ref` are spelled as identifiers and declared by nobody.** The lexer has
+      // no keyword for them, so they arrive here looking like a type name to resolve — and
+      // resolution would go hunting for a declaration in the file, find none, and answer `""`,
+      // which is how `i31ref x = …` came out as a bare `i32`.
+      if (raw == "anyref" || raw == "i31ref") { return raw; }
       // A **type parameter** stands for its argument wherever it appears — a field's type, a
       // method's parameter, an array's element, a local inside a body.
       string bound = env.substituted(raw);
@@ -2309,6 +2325,10 @@ i32 enumSlot(Env env, string ty, string field) {
  * a slot nobody wrote into means `emitDefault`.
  */
 void emitNull(B fb, Env env, string t) {
+  // The two the format names rather than the module declares: `ref.null` takes a heap type, and
+  // theirs is a single byte where a struct's is an index.
+  if (t == "anyref") { fb.byte(208); fb.byte(110); return; }
+  if (t == "i31ref") { fb.byte(208); fb.byte(108); return; }
   if (t == "string") { fb.byte(208); fb.i32leb(env.arrayType("i8[]")); return; }
   if (isArrayType(t)) { fb.byte(208); fb.i32leb(env.arrayType(t)); return; }
   if (isFuncrefType(t)) { fb.byte(208); fb.i32leb(env.sigType(t)); return; }
@@ -2328,6 +2348,10 @@ void emitNull(B fb, Env env, string t) {
  * below is not an approximation.
  */
 void emitDefault(B fb, Env env, string t) {
+  // **A default `anyref` is null**, unlike a string or a struct: there is no value of the top type
+  // to build, and an `anyref[3]()` is three empty slots by the same argument that makes a nullable
+  // field's default a null.
+  if (t == "anyref" || t == "i31ref") { emitNull(fb, env, t); return; }
   if (t == "string") {
     fb.byte(65);
     fb.i32leb(0);
@@ -3122,8 +3146,14 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
     case Cast(op, operand, target): {
       string from = typeOfE(src, lexed, env, operand);
       string to = typeOfTyName(env, src, lexed, target);
-      emitExprAt(fb, src, lexed, env, operand, from == "" ? to : from);
-      emitConversion(fb, env, from == "" ? to : from, to, tokenKindOf(lexed, op));
+      // **A literal has no type of its own, so it takes the slot's** — and the slot here is the
+      // cast's own target, which made `42 as! i31ref` a conversion from `i31ref` to `i31ref`: no
+      // instructions at all, and an `i32` left where a reference belonged. A cast *into* a reference
+      // is the one place the operand's want cannot be the target.
+      string want2 = from == "" ? to : from;
+      if (to == "i31ref" && from == "") { want2 = "i32"; }
+      emitExprAt(fb, src, lexed, env, operand, want2);
+      emitConversion(fb, env, want2, to, tokenKindOf(lexed, op));
     }
     case Ident(tok): {
       string nm = tokenTextOf(src, lexed, tok);
@@ -3678,6 +3708,17 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           if (negated) { fb.byte(69); }
           return;
         }
+        // The same instruction with an **abstract** heap type: `items[0] is i31ref` asks what is in
+        // the container, and `i31` is a heap type the format names rather than one this module
+        // declares — one byte where a struct takes an index.
+        if (tt3 == "i31ref" && env.isSubtypeOf("i31ref", typeOfE(src, lexed, env, left))) {
+          emitExpr(fb, src, lexed, env, left);
+          fb.byte(251);
+          fb.u32leb(20);
+          fb.byte(108);
+          if (negated) { fb.byte(69); }
+          return;
+        }
         return;
       }
       string en = env.variantOwners[vi];
@@ -4033,6 +4074,38 @@ i64 parseInt(string s) {
  */
 void emitConversion(B fb, Env env, string from, string to, i32 op) {
   if (from == to) { return; }
+  // **Into and out of an `i31ref`.** `42 as! i31ref` is `ref.i31`, and it is checked because the
+  // instruction is not: it keeps the low 31 bits and says nothing about the rest, so a value that
+  // does not fit would be silently truncated where the language says it traps. Shifting left and
+  // back is the test — it returns the same number exactly when the sign bit was the 31st.
+  if (to == "i31ref") {
+    if (from == "anyref") {
+      fb.byte(251);
+      fb.u32leb(23);   // ref.cast (ref i31) — a downcast out of the top type, which traps
+      fb.byte(108);
+      return;
+    }
+    i32 t31 = env.scratchNamed("i31chk", "i32");
+    fb.byte(34); fb.u32leb(t31);              // local.tee
+    fb.byte(65); fb.i32leb(1); fb.byte(116);  // i32.shl 1
+    fb.byte(65); fb.i32leb(1); fb.byte(117);  // i32.shr_s 1
+    fb.byte(32); fb.u32leb(t31);
+    fb.byte(70);                              // i32.eq
+    // A **value-typed** `if`, not a `return`: this is an expression in the middle of one, and
+    // leaving the function here would hand its result to whatever the function returns.
+    fb.byte(4); fb.byte(108);                 // if (result i31ref)
+    fb.byte(32); fb.u32leb(t31);
+    fb.byte(251); fb.u32leb(28);              // ref.i31
+    fb.byte(5);                               // else
+    fb.byte(0);                               // unreachable — outside 31 bits, as `as!` promises
+    fb.byte(11);
+    return;
+  }
+  if (from == "i31ref" && valType(to) == 127) {
+    fb.byte(251);
+    fb.u32leb(29);   // i31.get_s — lossless, thirty-one bits fit an i32
+    return;
+  }
   // **A cast to `bool` is a test, not a reinterpretation.** `5 as~ bool` is `true`, which is the
   // number 1 — and `bool` is an `i32` here, so the same-width rule below called it a no-op and left
   // the 5 on the stack. `b == true` was then `5 == 1`.
@@ -4547,7 +4620,8 @@ string unsupportedLvalue(u8[] src, Lexed lexed, Env env, Lvalue lv) {
  */
 /** Whether a wac type is a reference, which is the only kind of slot a `null` can fill. */
 bool isRefType(Env env, string t) {
-  return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t);
+  return isArrayType(t) || t == "string" || env.isStructName(t) || isFuncrefType(t) ||
+         t == "anyref" || t == "i31ref";
 }
 
 /**
@@ -4730,7 +4804,8 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case Cast(op, operand, target): {
       string t = typeOfTyName(env, src, lexed, target);
       bool known = isArrayType(t) || env.isStructName(t) || t == "i32" || t == "u32" ||
-                   t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool";
+                   t == "i64" || t == "u64" || t == "f32" || t == "f64" || t == "bool" ||
+                   t == "anyref" || t == "i31ref";
       if (!known) { return "cast to an unsupported type"; }
       return unsupportedExpr(src, lexed, env, operand);
     }
@@ -4999,6 +5074,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
         // only downwards. `aRect is Shape` is a question with a constant answer, and `x is Y` where
         // the two are unrelated is one the format would refuse to type.
         if (env.isStructName(ty3) && env.isSubtypeOf(env.canonType(ty3), lty)) { return ""; }
+        if (ty3 == "i31ref" && env.isSubtypeOf("i31ref", lty)) { return ""; }
         return "a test for " + ty3 + " on a " + (lty == "" ? "value of no known type" : lty);
       }
       string il = unsupportedValue(src, lexed, env, left);

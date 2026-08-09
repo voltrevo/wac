@@ -1330,8 +1330,47 @@ agreement. Filed as `issues/lang/0083` and `0084`:
 | sweep | 4,392 programs, 3,984 compared | **4,416 programs, 4,007 compared, 0 mismatched** |
 
 The corpus count does not move, because the language tour needs `i31ref` and `anyref` as well — it
-declines two sections later, at "cast to an unsupported type". Subtyping is done and measured; the
-tour is one feature away.
+declines two sections later, at "cast to an unsupported type".
+
+### The two types nobody declares
+
+`anyref` is the top of the reference hierarchy and `i31ref` an integer *inside* a reference — no
+allocation, which is how an unboxed number and a heap object share one container. Both are spelled
+as identifiers and declared by nobody, and that is the whole of why the first attempt emitted a bare
+`i32`: the resolver went looking for a declaration in the file, found none, and answered `""`.
+
+Three more places had to learn that a type can be one byte rather than an index: `ref.null` takes a
+heap type, `ref.test` takes one too, and a default `anyref` is a null — unlike a string or a struct,
+because there is no value of the top type to build.
+
+The subtler one was `42 as! i31ref`. **A literal has no type of its own, so it takes the type of the
+slot it fills** — and the slot the emitter offered it was the cast's own target, which made the
+conversion `i31ref` to `i31ref`: no instructions at all, and an `i32` left where a reference
+belonged. A cast *into* a reference is the one place the operand's wanted type cannot be the target.
+
+And then the sweep reported two mismatches, which is the answer this rung exists to get:
+
+> `1073741824 as! i31ref as i32` — ours traps, the reference returns -1073741824.
+
+`spec/spec/casts.md` gives the rule for the whole family — *"`as!` — checked: exact or trap"* — and
+again for this cast in particular. `ref.i31` is a truncating instruction, so the check has to be
+emitted around it, and the reference emits none. wacc is right and the compiler it is measured
+against is wrong, which is `issues/lang/0085`.
+
+The two programs are **not** in the sweep. A differential test can only report a mismatch, and a
+mismatch that has to be excused every run is the thing that hides the next real one — so they moved
+to `test/i31Trap.test.ts`, asserted against the specification instead, and that test is what should
+start failing when 0085 is fixed.
+
+| | before | after |
+|---|---|---|
+| whole files | 332 | 332 of 338 |
+| spec answers | 251/251 | **284/284** — thirty-three more programs reach the comparison |
+| sweep | 4,416 programs, 4,007 compared | **4,434 programs, 4,025 compared, 0 mismatched** |
+
+The tour is one feature further on: `Counter.inc` as a *value* — a method reference, where `this`
+becomes the first parameter. That is what "unresolved name Counter" now means, and it is the next
+thing between this corpus and 333.
 
 ### One reader, because two disagreed
 

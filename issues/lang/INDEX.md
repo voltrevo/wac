@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0085](open/0085-as-i31ref-truncates-where-the-spec-says-it-traps.md) | `as! i31ref` truncates where the spec says it is checked | bug | wrong answer |
 | [0084](open/0084-increment-as-a-value-on-a-packed-array-element.md) | `++` as a *value* on a packed array element emits `array.get`, so the module is invalid | bug | invalid wasm |
 | [0083](open/0083-a-parent-declared-after-its-child-emits-an-invalid-supertype.md) | a struct whose parent is declared after it emits an invalid supertype | bug | invalid wasm |
 | [0081](open/0081-bindgen-does-not-resolve-an-imported-type-alias-in-an-exported-signature.md) | bindgen does not resolve an imported type alias in an exported signature — [gh#10](https://github.com/voltrevo/wac/issues/10) | bug | compile error |
@@ -30,7 +31,7 @@ has been fixed and why.
 
 ## Closed
 
-84 issues, 62 closed.
+85 issues, 62 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
