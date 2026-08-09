@@ -1556,6 +1556,44 @@ threshold, since this package has traded recall for the no-false-alarm invariant
 now. What it names next is `type '…' has no method '…'` (22), `unary '…' requires numeric type` (19)
 and the argument-count family (11).
 
+### Working the queue — 88% to 91%
+
+Three items, and two of them were the same mistake this checker keeps making: **asking `typeOfExpr`
+about something that has no type of its own.**
+
+**`type '…' has no method '…'` (22 of 22 missed).** The rule had been declined on purpose: an
+earlier comment says an array's surface "is larger than `len` — `push`, `fill`, `copy` and more —
+and this has measured neither". The measurement is one grep of `compiler/wacTypeCheck.ts`, and both
+surfaces are closed: an array has `len`, `copyFrom` and `fill`, a string has `len`, `slice`,
+`toBytes` and `indexOf`. The comment had outlived the reason for it.
+
+Its **position** came from the same file. The reference reports at `callee.line, callee.col` — the
+member expression — and rung 2 says this parser's node positions are the reference's, so the right
+answer was already in the tree. Reporting at the *receiver* agreed for `n.len()` and missed by three
+columns for `xs[0].len()`, which last slot's harness counted as a contradiction and which I had
+silenced rather than solved. The same node fixes it; guessing at the dot would not have.
+
+**`unary '…' requires numeric type` (19 of 22).** `-"s"` — the operand is a *string literal*, so
+`typeOfExpr` answered unknown and the rule stayed silent, exactly as it had for `1 == "hello"` a
+slot earlier. A unary operator is not a slot for a literal to take a type from, so the literal's own
+family is the answer.
+
+**The argument-count family stopped at a real limit.** Struct construction was already caught; what
+is missing is a *variant* construction — `E.C(1, 0)` where `C` takes one. Adding it gained eight
+mutants and cost a false alarm, on a program with two enums that both declare `Ok`: this checker
+registers a variant under its **bare name**, so `Ok` from one enum and `Ok` from the other are one
+entry with both payloads, and the count it computes belongs to neither. That is
+`issues/lang/0061` — enum variants should be qualified rather than file-scope names — and the rule
+wants that first. Reverted, and the oracle is the only reason it was noticed: eight mutants of gain
+is exactly the size of thing that gets committed on the strength of the number moving.
+
+| | before | after |
+|---|---|---|
+| mutation recall | 88% of 1,274 | **91%** |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this

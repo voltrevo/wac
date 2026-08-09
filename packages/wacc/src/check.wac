@@ -1792,7 +1792,10 @@ void checkExpr(C c, Expr e) {
       // `!` wants a boolean; `-` wants a number; `~` wants an integer. Three different demands on the
       // one node, all reported at the operator, and all of them silent on an unknown operand.
       i32 uk = tokenKind(c, op);
-      string ut = typeOfExpr(c, operand);
+      // **A literal's own family, not the slot's.** `-"s"` is the whole of the mistake and there is
+      // nothing else for the literal to take a type from — the same argument that made a comparison
+      // fill it in. Asking `typeOfExpr` answered unknown and stayed silent on every one of them.
+      string ut = naturalTypeOf(c, operand);
       if (ut != typeNone()) {
         if (uk == kBang() && ut != "bool") {
           c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
@@ -1970,7 +1973,7 @@ void checkExpr(C c, Expr e) {
           // *"cannot call method on nullable"* is its own diagnostic.
           checkReceiver(c, obj);
           checkThroughNullable(c, e, obj);
-          checkMethodCall(c, e, obj, tokenText(c, nameTok), args);
+          checkMethodCall(c, e, callee, obj, tokenText(c, nameTok), args);
         }
         else: { checkExpr(c, callee); }
       }
@@ -2812,7 +2815,23 @@ bool isPlainName(Expr e) {
   }
 }
 
-void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
+/**
+ * Whether a name is one of the builtins the language gives every array, or every string.
+ *
+ * **Read off `compiler/wacTypeCheck.ts` rather than guessed at**, which is the whole reason this rule
+ * can exist: an earlier version of this checker declined to report a missing method on either,
+ * saying the surface was larger than `len` and had not been measured. It is four names and three
+ * names, and both lists are closed — so the measurement was one grep, and the comment outlived it.
+ */
+bool isArrayBuiltin(string name) {
+  return name == "len" || name == "copyFrom" || name == "fill";
+}
+
+bool isStringBuiltin(string name) {
+  return name == "len" || name == "slice" || name == "toBytes" || name == "indexOf";
+}
+
+void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] args) {
   string recv = "";
   bool isStatic = false;
   match (obj.kind) {
@@ -2837,6 +2856,20 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
       if (recv == typeNone() && litKindOf(obj) == litString()) { recv = "string"; }
     }
   }
+  // **The two closed surfaces.** An array has three methods and a string four, and a name that is
+  // not one of them is a missing method however the receiver was written — which is what makes this
+  // reportable at last: the rule needed the list, and the list is in the compiler this is measured
+  // against. A *nullable* receiver is somebody else's diagnostic ("unwrap with '!'") and is not
+  // named here, which is why the test is against the array's own spelling rather than against
+  // "contains a bracket".
+  if (isArrayName(recv) && !isArrayBuiltin(name)) {
+    c.report(errNoMethod(), callee.line, callee.col);
+    return;
+  }
+  if (recv == "string" && !isStringBuiltin(name)) {
+    c.report(errNoMethod(), callee.line, callee.col);
+    return;
+  }
   // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
   if (recv == "string" && name == "toBytes") {
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
@@ -2858,12 +2891,11 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   // rather than a list. `string` is in `isPrimitiveName` and has to be excluded by name, which is the
   // whole trap — the predicate is about how a type is *passed*, not about what it can do.
   if (isValueType(recv)) {
-    // At the receiver, which is where the reference puts it — for a *name*. For anything else it
-    // puts it at the dot instead, and this checker has no node there to name: `xs[0].len()` came out
-    // at the `[`, three columns early, which is a position the reference never mentions. Reported
-    // only where it can be placed exactly, as the missing-method rule below is.
-    if (!isPlainName(obj)) { return; }
-    c.report(errNoMethod(), obj.line, obj.col);
+    // **At the callee**, which is the node the reference reports at — `errAt(ctx, …, callee.line,
+    // callee.col)` — and rung 2 says this parser's node positions are the reference's. Reporting at
+    // the *receiver* agreed with it for `n.len()` and missed by three columns for `xs[0].len()`,
+    // which is what "the same node" fixes and what guessing at the dot would not have.
+    c.report(errNoMethod(), callee.line, callee.col);
     return;
   }
   bool recvConst = !isStatic && constExpr(c, obj);

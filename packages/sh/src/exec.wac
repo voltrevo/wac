@@ -1560,9 +1560,33 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
  */
 bool serveFsFor(Shell sh) { return !sh.fs.isPlainHost(); }
 
+/**
+ * What a stage of this shell may ask the *host* for.
+ *
+ * Everything, when this session has a host mount — a child reading a host path streams through its
+ * own capability rather than through its parent, because it can and because a large file should not
+ * be relayed byte by byte; `packages/box`'s `openStream` is where that choice is made, and it is
+ * made by asking which mount the path is on.
+ *
+ * **No filesystem at all when the session has none.** A session on an image can answer every
+ * legitimate question its children have, so a child that reaches the host is a child reaching *past*
+ * its filesystem — which is not a thing to be caught caller by caller. `tar` was doing it: it asked
+ * `cli.linkStat` while `Fs.linkStat` could not tell a link from a file, and in an image session that
+ * asked the machine about a path in the image. That one is fixed where it belonged, in `Fs`. This is
+ * the reason the next one will be a refusal rather than a wrong answer.
+ *
+ * The network and the environment are untouched, because a session's `wget` is meant to work and
+ * `Shell.hostEnv` is what withholds the machine's variables.
+ */
+i32 stageGrants(Shell sh) {
+  return sh.fs.hasHostMount()
+    ? GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV
+    : GRANT_NET | GRANT_ENV;
+}
+
 Child spawnStage(Shell sh, Vec<string> argv, bool inheritIn) {
   bool serveFs = serveFsFor(sh);
-  i32 grants = GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV;
+  i32 grants = stageGrants(sh);
   string name = argv.get(0);
   string where = containsSlash(name) ? name : searchWacPath(sh, name);
   if (where != "") {
@@ -2978,7 +3002,7 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
   // the *host's* directory, which meant the shell's `cd` was invisible to everything it ran.
   Child child = sh.cli.spawn(
     string.fromBytes(prog.bytes), args,
-    GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit, serveFsFor(sh)).wait();
+    stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
   // No `spawn` in this world at all: nothing was attempted, so this is not a failure of the program
   // and must not be reported as one. Falling through is what keeps `packages/box`'s sixty applets
   // working in the browser terminal, where a page cannot spawn — before this, setting `$WACPATH` to
@@ -3116,8 +3140,7 @@ Output trySelf(Shell sh, Vec<string> argv, bool mayInherit) {
   // process had the shell's whole authority implicitly; asking for it explicitly is the same
   // authority said out loud, and a shell granted nothing hands its children nothing.
   Child child = sh.cli
-    .spawnSelf(args, GRANT_READ | GRANT_WRITE | GRANT_NET | GRANT_ENV, sh.cwd, mayInherit,
-               serveFsFor(sh)).wait();
+    .spawnSelf(args, stageGrants(sh), sh.cwd, mayInherit, serveFsFor(sh)).wait();
   if (child.unavailable()) { return Output.missing(); }
   if (child.handle < 0) {
     return Output.fail(("sh: " + name + ": " + child.error + "\n").toBytes(), 126);

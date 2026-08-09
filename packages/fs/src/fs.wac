@@ -38,7 +38,7 @@ import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, F
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Chan, parentAnswers, remoteChmod, remoteChown, remoteCloseOut, remoteIsHostPath, remoteMkdir,
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
-  remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
+  remoteLinkStat, remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
 import { resolvePath } from "./path.wac";
 import { PROC_RUN, Proc, Procs } from "./proc.wac";
 
@@ -321,6 +321,31 @@ export struct Fs {
     }
   }
 
+  /**
+   * Whether **any** mount here is the host's.
+   *
+   * False for a session whose filesystem is entirely its own — an image, memory, and the synthesised
+   * trees over them. Such a session's children need no filesystem grants at all: everything they can
+   * legitimately reach is an answer their parent gives them over a channel, and a grant would only
+   * ever be used by something reaching *past* the filesystem. `packages/sh` withholds it, which
+   * turns that class of mistake from a leak into a refusal.
+   *
+   * Not the same question as `isPlainHost`, which asks whether this filesystem is *nothing but* the
+   * host and therefore has nothing worth serving.
+   */
+  bool hasHostMount(const this) {
+    for (i32 i = 0; i < this.mounts.len(); i++) {
+      match (this.mounts.get(i).backing) {
+        case Host(cli): { return true; }
+        // A remote mount's far end may well have one, and the child holding this one still cannot
+        // reach it except by asking — which is the whole point. Answering true here would hand a
+        // grandchild the grants its grandparent has.
+        else: {}
+      }
+    }
+    return false;
+  }
+
   bool isHostPath(const this, string path) {
     path = this.at(path);
     i32 mi = this.mountOf(path);
@@ -413,6 +438,11 @@ export struct Fs {
       // The parent holds the cursor, because the parent holds the file. A child streaming a
       // redirection is the case `packages/sh` reaches on every `>` inside a spawned stage.
       case Remote(chan): { return remoteOpenOut(chan, full); }
+      // **`> /dev/null` is a real destination and had no arm here.** The truncating `writeFile`
+      // above is what decides whether this path may be written at all — `/dev/null` accepts and
+      // keeps nothing, everything else synthesised is read-only and says so — so by the time this
+      // runs the only synthesised file that can be open is `/dev/null`, and there is nothing to do.
+      case Synth(rand): { return Change.of(FAULT_NONE(), ""); }
       else: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
@@ -424,6 +454,9 @@ export struct Fs {
     match (this.mounts.get(this.outMount).backing) {
       case Host(cli): { return cli.write(bytes); }
       case Remote(chan): { return remoteWriteOut(chan, bytes); }
+      // Accepted and kept, which is the whole of what `/dev/null` is for — see `openOut` for why
+      // that is the only synthesised file this can be.
+      case Synth(rand): { return true; }
       else: {
         i32 node = this.find(this.mounts.get(this.outMount), this.outPath);
         if (node < 0) { return false; }
@@ -444,6 +477,7 @@ export struct Fs {
       // `openOutput("")` is how a program says it has finished writing — see `platform.wac`.
       case Host(cli): { return cli.openOutput("").wait(); }
       case Remote(chan): { return remoteCloseOut(chan); }
+      case Synth(rand): { return Change.of(FAULT_NONE(), ""); }
       else: { return Change.of(FAULT_NONE(), ""); }
     }
     return Change.of(FAULT_NONE(), "");
@@ -567,8 +601,34 @@ export struct Fs {
     return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, FAULT_NONE());
   }
 
-  /** Nothing here is a symbolic link yet, so this is `stat` — said rather than implied. */
-  Stat linkStat(this, string path) { return this.stat(path); }
+  /**
+   * `stat` without following a link: what the *name* is, rather than what it leads to.
+   *
+   * **This was `return this.stat(path)` on every backing**, on the grounds that nothing in the VFS
+   * is a symbolic link — which is true of the memory, image and synthesised backings and is not true
+   * of a **host** mount, where the host's own disk is full of them. So the one caller that actually
+   * needed the distinction, `packages/box`'s `tar`, went around this and asked `cli.linkStat`
+   * directly. That is a capability call bypassing the filesystem, and in a session on an image it
+   * asked the *machine* about a path in the image: the same file was archived or refused depending
+   * on whether this computer happened to have a symlink at that path, which is exactly what
+   * design/0001 exists to prevent.
+   *
+   * So the answer is dispatched like every other operation. A host mount asks the host, and
+   * everything else answers `stat` — not as a shortcut but as a fact about those backings: there is
+   * no way to create a symbolic link in one, so a name is never a link and `isSymlink` is false.
+   * When one of them grows links, this is where it changes, and its callers do not.
+   */
+  Stat linkStat(this, string path) {
+    string full = this.at(path);
+    i32 mi = this.mountOf(full);
+    if (mi < 0) { return this.stat(path); }
+    match (this.mounts.get(mi).backing) {
+      case Host(cli): { return cli.linkStat(full).wait(); }
+      case Remote(chan): { return remoteLinkStat(chan, full); }
+      else: { return this.stat(path); }
+    }
+    return this.stat(path);
+  }
 
   /**
    * The names in a directory, sorted, without `.` or `..` — and null for a path that is not one.
@@ -940,6 +1000,13 @@ export struct Fs {
    * disagreement design/0001's arrival test exists to catch, in the place hardest to see it.
    */
   i32 find(const this, Mount m, string path) {
+    // **A mount whose bytes are not in the node pool has no node for any path.** `root` is -1 for
+    // every backing but `Memory` — the host's, the synthesised ones, and a parent's — and this used
+    // to walk from it, so `this.nodes.get(-1)` trapped. It was unreachable only because every caller
+    // matched those backings out first, which made it a rule held by twenty match statements rather
+    // than by the lookup itself; the day one of them was missing an arm, a shell died with
+    // "unreachable" where the answer was "there is nothing there".
+    if (m.root < 0) { return NODE_NONE(); }
     if (path.len() < m.at.len()) { return NODE_NONE(); }
     string rest = path.slice(m.at.len(), path.len());
     i32 at = m.root;

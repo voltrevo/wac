@@ -11,7 +11,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_OTHER } from "../../platform/src/platform.wac";
 import { Fs } from "./fs.wac";
 import { Reader } from "./wire.wac";
-import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_MKDIR,
+import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
   ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_RENAME, ASK_STAT,
   ASK_WRITE_FILE, ASK_WRITE_OUT, answer, encodeChange, encodeFileResult, encodeNames, encodeStat }
   from "./remote.wac";
@@ -55,6 +55,8 @@ export bool serveOn(Chan c, Fs fs) {
     encodeFileResult(out, fs.readSome(path, r.u32()));
   } else if (op == ASK_STAT()) {
     encodeStat(out, fs.stat(r.string()));
+  } else if (op == ASK_LINK_STAT()) {
+    encodeStat(out, fs.linkStat(r.string()));
   } else if (op == ASK_READ_DIR()) {
     encodeNames(out, fs.readDir(r.string()));
   } else if (op == ASK_WRITE_FILE()) {

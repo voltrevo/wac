@@ -53,10 +53,9 @@ import { Reader, putI64, putString } from "./wire.wac";
 
 // ── What a child can ask ──────────────────────────────────────────────────────
 //
-// One per operation `Fs` dispatches on its backing. **`linkStat` is not one of them**, and that is
-// not an omission: `Fs.linkStat` is `this.stat(path)` on every backing there is, so a remote mount
-// that asked a question of its own would be answering something its own filesystem does not
-// distinguish. When `Fs` grows a real `linkStat`, this grows an opcode with it.
+// One per operation `Fs` dispatches on its backing. `linkStat` was left out while `Fs.linkStat` was
+// `this.stat(path)` everywhere — an opcode nothing could send is dead code — and is here now that it
+// dispatches, because a parent with a host mount answers it differently from `stat`.
 // They are numbered rather than derived, and
 // `test/remote.test.ts` is what holds this list to `Fs`'s: it drives every method of an `Fs` over a
 // channel against the same method of the `Fs` serving it, so an operation with no opcode here shows
@@ -76,6 +75,7 @@ export i32 ASK_OPEN_OUT() { return 11; }
 export i32 ASK_WRITE_OUT() { return 12; }
 export i32 ASK_CLOSE_OUT() { return 13; }
 export i32 ASK_IS_HOST_PATH() { return 14; }
+export i32 ASK_LINK_STAT() { return 15; }
 
 /**
  * The channel to a filesystem in another process.
@@ -254,6 +254,13 @@ export FileResult remoteReadSome(Chan c, string path, i32 n) {
   putString(b, path);
   b.pushU32(n as@ u32);
   return decodeFileResult(ask(c, b));
+}
+
+/** What the name is, rather than what it leads to — see `Fs.linkStat`. */
+export Stat remoteLinkStat(Chan c, string path) {
+  Buf b = request(ASK_LINK_STAT());
+  putString(b, path);
+  return decodeStat(ask(c, b));
 }
 
 export Stat remoteStat(Chan c, string path) {
