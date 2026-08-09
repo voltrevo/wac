@@ -28,7 +28,8 @@ import { wacBind } from "../../../harness/wacBind.ts";
 import { loadCorpus } from "./corpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
-const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
+const dumpTypeErrorsFiles = mod.dumpTypeErrorsFiles as
+  (paths: string[], sources: string[], entry: string) => Int32Array;
 const enc = new TextEncoder();
 
 function sub(s: string, re: RegExp, to: string): string | null {
@@ -108,7 +109,10 @@ Deno.test("rung 3: the repository's own code, broken one way each", async () => 
     if (diags.every((d) => d.phase === "resolve")) continue;
     broken++;
 
-    const out = dumpTypeErrors(enc.encode(mutated));
+    const clos = closureOf(`/${name}`);
+    const mpaths = [...clos.keys()];
+    const msources = mpaths.map((p) => (p === `/${name}` ? mutated : clos.get(p)!));
+    const out = dumpTypeErrorsFiles(mpaths, msources, `/${name}`);
     const mine: string[] = [];
     for (let k = 0; k < out.length; k += 3) mine.push(`${out[k + 1]}:${out[k + 2]}`);
     const key = diags[0].message.replace(/'[^']*'/g, "'…'").replace(/\b\d+\b/g, "N");

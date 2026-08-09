@@ -9,8 +9,9 @@ import { lex, Lexed } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { checkProgram } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked } from "./emit.wac";
+import { C, checkModule, checkProgram, declareModule, errorsOf } from "./check.wac";
+import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
+         sourceOf, tokenTextOf, resolveImport } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -88,4 +89,77 @@ export string blockedFiles(string[] paths, string[] sources, string entry) {
 /** The emitted functions of a linked program, in order, so a wasm "function #N" has a name. */
 export string namesFiles(string[] paths, string[] sources, string entry) {
   return namesLinked(paths, sources, entry);
+}
+
+/**
+ * The type checker's diagnostics for one file **with the names it imports in scope**.
+ *
+ * Every diagnostic missed on this repository's own code — thirty-eight of thirty-eight — was in a
+ * file that imports something, and none was in a file that does not. A checker given one file cannot
+ * know what `Buf.create` takes or whether a `Node` has the field being read, and says nothing about
+ * either. That is a ceiling rather than a rule, and this is the way through it.
+ *
+ * **Exactly the names the file asked for.** Letting an import contribute everything it declares put
+ * another file's `Rng` in front of this file's — every table here is keyed by a bare name and the
+ * first declaration wins — and reported forty working files. `import { X } from "…"` says which
+ * names cross, so that list is the filter, and a name the file did not ask for cannot shadow one it
+ * declares itself.
+ */
+export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry) {
+  u8[] esrc = sourceOf(paths, sources, entry).toBytes();
+  Lexed elexed = lex(esrc);
+  P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
+  Program eprog = parseProgram(ep);
+  C c = C.create(esrc, elexed.tokens, elexed.tokenCount);
+
+  // **Which names, and from which file.** Filtering by name alone is not enough: `rlp.wac` exports a
+  // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —
+  // the entry asked `rlp.wac` for it. So each import is resolved to the path it names, and a file
+  // contributes only what that file was asked for.
+  string[] wantFrom = string[512]();
+  string[] wantName = string[512]();
+  i32 n = 0;
+  for (i32 d = 0; d < eprog.decls.len(); d++) {
+    match (eprog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        string quoted = tokenTextOf(esrc, elexed, pathTok);
+        string target = resolveImport(entry, quoted.slice(1, quoted.len() - 1));
+        for (i32 i = 0; i < items.len(); i++) {
+          if (n >= wantName.len()) { continue; }
+          wantFrom[n] = target;
+          wantName[n] = tokenTextOf(esrc, elexed, items[i].nameTok);
+          n = n + 1;
+        }
+      }
+      else: { }
+    }
+  }
+
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == entry) { continue; }
+    i32 want = 0;
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] == paths[i]) { want = want + 1; }
+    }
+    if (want == 0) { continue; }
+    string[] only = string[want]();
+    i32 at = 0;
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      only[at] = wantName[k];
+      at = at + 1;
+    }
+    u8[] isrc = sources[i].toBytes();
+    Lexed ilexed = lex(isrc);
+    P ip = P.create(isrc, ilexed.tokens, ilexed.tokenCount);
+    Program iprog = parseProgram(ip);
+    c.src = isrc;
+    c.toks = ilexed.tokens;
+    declareModule(c, iprog, only);
+  }
+
+  c.src = esrc;
+  c.toks = elexed.tokens;
+  checkModule(c, eprog);
+  return errorsOf(c);
 }

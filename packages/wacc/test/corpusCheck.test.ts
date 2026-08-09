@@ -7,12 +7,12 @@
 // different distribution — longer functions, deeper types, every feature at once — and it is the
 // input that took rung 4 from 31 whole files to 335.
 //
-// **The two sides are not given the same thing, and that is the point.** The reference gets the whole
-// corpus as its file map, so its imports resolve and its verdict is about the program as written.
-// This checker gets the one file, with no imports resolved at all — it sees strictly *less*. Seeing
-// less can make it miss a diagnostic; it cannot make it invent one. So "the reference compiles this
-// cleanly and we said nothing" is a fair question to ask of an asymmetric pair, and it is the only
-// invariant this package treats as absolute.
+// **Both sides now see the imports.** They did not at first: this checker was given the one file
+// with nothing resolved, which is safe — seeing less can make it miss a diagnostic and cannot make
+// it invent one — and which capped recall on real code at 85%, because every diagnostic it missed
+// was in a file that imports something. It is given the file's import closure now, and the names the
+// file asked for are in scope. The invariant is unchanged and is the only one this package treats as
+// absolute: the reference compiles this cleanly, so we say nothing about it.
 
 import { wacCompile } from "wac/wacCompile.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
@@ -20,7 +20,34 @@ import { loadCorpus } from "./corpus.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const dumpTypeErrors = mod.dumpTypeErrors as (src: Uint8Array) => Int32Array;
+const dumpTypeErrorsFiles = mod.dumpTypeErrorsFiles as
+  (paths: string[], sources: string[], entry: string) => Int32Array;
 const enc = new TextEncoder();
+
+/** A file and what it imports, transitively — the map a check of it needs. */
+function closureOf(entry: string, all: Map<string, string>): Map<string, string> {
+  const out = new Map<string, string>();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const at = queue.pop()!;
+    if (out.has(at)) continue;
+    const src = all.get(at);
+    if (src === undefined) continue;
+    out.set(at, src);
+    const dir = at.slice(0, at.lastIndexOf("/"));
+    for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
+      const parts = (dir + "/" + m[1]).split("/");
+      const norm: string[] = [];
+      for (const part of parts) {
+        if (part === "." || part === "") continue;
+        if (part === "..") norm.pop();
+        else norm.push(part);
+      }
+      queue.push("/" + norm.join("/"));
+    }
+  }
+  return out;
+}
 
 Deno.test("rung 3: the repository's own code, checked — no false alarm", async () => {
   const entries = await loadCorpus("packages/wacc/test/corpusEmit.test.ts");
@@ -40,7 +67,8 @@ Deno.test("rung 3: the repository's own code, checked — no false alarm", async
   const alarms: string[] = [];
   let reported = 0;
   for (const [name, src] of entries) {
-    const out = dumpTypeErrors(enc.encode(src));
+    const clos = closureOf(`/${name}`, map);
+    const out = dumpTypeErrorsFiles([...clos.keys()], [...clos.values()], `/${name}`);
     if (out.length === 0) continue;
     reported++;
     if (!wacCompile(map, `/${name}`).ok) continue;   // the reference refuses it too — not an alarm

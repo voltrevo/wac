@@ -1514,7 +1514,7 @@ i32 lastSlash(string path) {
  * Only the two spellings a wac import uses — `./x.wac` and `../y/z.wac` — because a path with no
  * prefix is not a file import at all but a capability, and those are declined by name.
  */
-string resolveImport(string from, string rel) {
+export string resolveImport(string from, string rel) {
   string dir = from.slice(0, lastSlash(from) + 1);
   string r = rel;
   for (i32 guard = 0; guard < 64; guard++) {
@@ -2331,7 +2331,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 }
 
 /** A token's text, which the emitter needs for an export's name and for every lookup. */
-string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
+export string tokenTextOf(u8[] src, Lexed lexed, i32 t) {
   if (t < 0) { return ""; }
   i32 start = lexed.tokens[t * tokenStride() + 1];
   i32 len = lexed.tokens[t * tokenStride() + 2];

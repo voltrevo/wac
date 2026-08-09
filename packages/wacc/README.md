@@ -173,8 +173,8 @@ before it had run out of things to say:
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
 | `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
-| `corpusCheck.test.ts` | the repository's own 341 files | no false alarm |
-| `corpusMutate.test.ts` | those files, broken seven ways | no contradiction where the reference says one thing; 85% recall printed |
+| `corpusCheck.test.ts` | the repository's own 341 files, imports in scope | no false alarm |
+| `corpusMutate.test.ts` | those files, broken seven ways | no contradiction where the reference says one thing; 96% recall printed |
 
 Recall is printed and never asserted. A number that must never fall makes every refactor a
 negotiation, and this checker has traded recall for the no-false-alarm invariant on purpose three
@@ -1796,6 +1796,46 @@ Left behind for it: `checkModule` and `errorsOf` are split out of `checkProgram`
 **A measurement rather than a feature, which is the honest thing to record.** The mode is not
 committed: an oracle that is absolute about false alarms cannot ship forty of them, and the number to
 beat next time is on this page.
+
+### The mode, landed — 85% to 96% on real code, and no false alarm
+
+The number to beat was forty. The shape that beats it is the one the last entry named: an import
+contributes **exactly the names the importing file asked for**, which needed the declaration passes
+separated from the checking ones with a filter — `declareModule(c, prog, only)`, where an empty
+`only` is the single-file behaviour unchanged.
+
+Four things had to be right, and each was wrong first:
+
+- **Filter by name and it is still wrong.** `rlp.wac` exports a `decode` and so does
+  `codec/src/hex.wac`; a closure holding both let the wrong one answer. An import resolves to a
+  *path*, so the filter is a (file, name) pair and a file contributes only what that file was asked
+  for.
+- **The entry's own import loop poisons what the imports resolved.** Declaring an imported name as
+  unknown is what makes a single-file check silent about it; doing it again after the name has a
+  struct behind it puts it back to unknown. It declares only what is not already known.
+- **`Map<K, V>.get` returns `Option<V>`, and substitution stopped at the outside.** `Option<V>` is
+  not a type parameter, it is a type *holding* one, so the answer for a `Map<string, i32>` came back
+  as written and `Option<i32> got = m.get(k);` was a mismatch against a type nobody wrote.
+  Substituting the arguments and rebuilding fixes it, and it recurses, because `Map<K, Vec<V>>`
+  exists.
+- **A bare template substitutes nothing.** Inside `Map<K, V>`'s own body the receiver is `Map` with
+  no arguments to put anywhere, and the recursion above rebuilt `MapEntry<K, V>` out of nothing.
+  That one was mine, introduced four minutes earlier and caught by the same corpus.
+
+**Two of the four were latent.** `Option<i32> got = m.get(k)` and `return Expr[]();` were already
+wrong in single-file mode and invisible there, because a checker that cannot see `Map` or `Expr` says
+nothing about either. Better information does not only find more errors in the program; it finds more
+errors in the checker.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 212 of 250 (85%) | **241 of 250 (96%)** |
+| false alarms on the repository | 0 of 341 | **0 of 341** |
+| generated-program sweeps | unchanged | unchanged |
+
+The nine that remain are the honest tail: a file that imports a *prefix* (`import * as x`), which
+this filter does not model, and diagnostics that need a body from another file rather than a
+declaration.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

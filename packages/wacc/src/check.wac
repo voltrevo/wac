@@ -371,10 +371,29 @@ string substituteType(C c, string owner, string written) {
   }
 
   string[] args = genericArgs(owner);
+  // **A bare template substitutes nothing.** Inside `Map<K, V>`'s own body the receiver is `Map`,
+  // with no arguments to put anywhere — `K` means `K` there and the written type is already the
+  // answer. Without this the recursion below rebuilt `MapEntry<K, V>` out of nothing and reported a
+  // field against a type that does not exist.
+  if (args.len() == 0) { return written; }
   for (i32 i = 0; i < c.structParamCount[si]; i++) {
     if (c.structParamNames[c.structParamAt[si] + i] != core) { continue; }
     if (i >= args.len()) { return typeNone(); }
     return args[i] + suffix;
+  }
+  // **And inside an instantiation.** `Map<K, V>.get` returns `Option<V>`, whose core is not a
+  // parameter — it is a type *holding* one. Answering `Option<V>` for a `Map<string, i32>` made
+  // `Option<i32> got = m.get(k);` a mismatch against a type nobody wrote. Substituting the arguments
+  // and rebuilding is the same rule one level down, and it recurses because `Map<K, Vec<V>>` exists.
+  string inner = genericBase(core);
+  if (inner != "") {
+    string[] iargs = genericArgs(core);
+    string out = inner + "<";
+    for (i32 i = 0; i < iargs.len(); i++) {
+      if (i > 0) { out = out + ", "; }
+      out = out + substituteType(c, owner, iargs[i]);
+    }
+    return out + ">" + suffix;
   }
   return written;
 }
@@ -1958,7 +1977,12 @@ void checkExpr(C c, Expr e) {
       string want = elemWant;
       if (want == typeNone()) { return; }
       // `E[2]()` with nothing to fill it asks every element for a default, and an enum has none.
-      if (elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
+      //
+      // **`E[]()` asks for nothing**, which is a different program: the listed form with no elements
+      // is an empty array, and an array with no elements never builds one. `return Expr[]();` is a
+      // line in this compiler's own parser, and it was reported the moment the checker could see
+      // what `Expr` is — the rule needed a size before it needed a default.
+      if (!(size is null) && elements.len() == 0 && (fill is null) && !hasDefault(c, want, 0)) {
         c.report(errNoDefault(), e.line, e.col);
       }
       // A packed element is an `i32` at this position, the way `bytes[i] = 5` is: the width is the
@@ -3773,22 +3797,19 @@ export i32[] errorsOf(C c) {
  * is then checked with every name it can see. A single file is that with an empty `c` and nothing
  * quiet, which is what `checkProgram` is.
  */
-export void checkModule(C c, Program prog) {
-  checkDuplicates(c, prog);
-  // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
-  // imported is in scope for the whole file, so these sit with the module-level constants.
-  for (i32 d = 0; d < prog.decls.len(); d++) {
-    match (prog.decls[d].kind) {
-      case Import(pathTok, prefixTok, items): {
-        for (i32 i = 0; i < items.len(); i++) {
-          c.declare(tokenText(c, items[i].aliasTok), typeNone());
-        }
-        if (prefixTok >= 0) { c.declare(tokenText(c, prefixTok), typeNone()); }
-      }
-      else: { }
-    }
-  }
-
+/**
+ * Everything a module *declares*, into `c` — and, when `only` is non-empty, **only the names in it**.
+ *
+ * Split from the checking passes so a file's imports can contribute their declarations without being
+ * checked. The filter is what makes that safe: every table in this checker is keyed by a bare name
+ * and the first declaration of one wins, so letting an import contribute every name it happens to
+ * hold put another file's `Rng` in front of this file's — forty working files reported as errors.
+ * `import { X } from "…"` says exactly which names cross, and this honours it.
+ *
+ * A type that crosses brings its members with it: the filter is asked about the struct, and its
+ * fields and methods follow, because a name reaches them through the type rather than on its own.
+ */
+export void declareModule(C c, Program prog, string[] only) {
   // Module-level `const` declarations, which are in scope in every body and outlive `clearScope`.
   // A write to one is *"cannot assign to constant 'S'"*, which is the const-variable rule reaching a
   // scope it did not have — and reaching it through fields too: `S.v = 9` on a `const P S` is refused
@@ -3796,6 +3817,7 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
+        if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), true);
       }
       else: { }
@@ -3808,6 +3830,7 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         c.declareEnum(tokenText(c, nameTok));
         // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
         // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
@@ -3825,6 +3848,7 @@ export void checkModule(C c, Program prog) {
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string name = tokenText(c, nameTok);
+        if (!wantedName(only, name)) { continue; }
         string[] tps = string[typeParams.len()]();
         for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
         c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
@@ -3868,6 +3892,7 @@ export void checkModule(C c, Program prog) {
         // Recorded **as written**, generics included: `Box<T>` and `T` are what a call site binds
         // against. An earlier version blanked them, which was right when nothing could bind them and
         // is now the thing standing between a generic call and its return type.
+        if (!wantedName(only, tokenText(c, nameTok))) { continue; }
         string[] prims = string[params.len()]();
         for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
         string[] ftps = string[typeParams.len()]();
@@ -3877,6 +3902,43 @@ export void checkModule(C c, Program prog) {
       else: { }
     }
   }
+}
+
+/** Whether an unfiltered pass, or a filtered one that wants this name. */
+bool wantedName(string[] only, string name) {
+  if (only.len() == 0) { return true; }
+  for (i32 i = 0; i < only.len(); i++) {
+    if (only[i] == name) { return true; }
+  }
+  return false;
+}
+
+export void checkModule(C c, Program prog) {
+  checkDuplicates(c, prog);
+  // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
+  // imported is in scope for the whole file, so these sit with the module-level constants.
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          // **Only when nothing better is known.** Declaring an imported name as unknown is what
+          // makes a single-file check silent about it rather than calling it undefined — but when
+          // the file's imports have actually been read, the name already has a struct, an enum or a
+          // signature behind it, and a second declaration *poisons* it back to unknown. `Decoded d =
+          // decode(raw);` came out a mismatch that way, with both names imported and both known.
+          string alias = tokenText(c, items[i].aliasTok);
+          if (c.isDeclaredName(alias) || c.isStruct(alias) || c.isEnum(alias)) { continue; }
+          c.declare(alias, typeNone());
+        }
+        if (prefixTok >= 0 && !c.isDeclaredName(tokenText(c, prefixTok))) {
+          c.declare(tokenText(c, prefixTok), typeNone());
+        }
+      }
+      else: { }
+    }
+  }
+
+  declareModule(c, prog, string[0]());
   // Methods, which until now were not walked at all: every rule here stopped at the edge of a
   // struct, so a method's returns, initialisers and operands went entirely unchecked. `this` is an
   // ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the struct's own
