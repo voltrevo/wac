@@ -21,6 +21,18 @@ const SPEC_TEST = new URL(
 export type SpecCase = { tag: string; name: string; src: string };
 
 /**
+ * The program a template literal *holds*, not the text it is written with.
+ *
+ * `'\\n'` in the file is `'\n'` in the program — one escape, spelled twice because a template
+ * literal eats the first. Handing the written form to a lexer produces a character literal
+ * containing a backslash and an `n`, which is not a program the spec ever ran: two of its accepted
+ * programs came back as parse errors that way, and the reading — not the compiler — was wrong.
+ */
+function unescapeTemplate(raw: string): string {
+  return raw.replace(/\\([\s\S])/g, (_, ch) => (ch === "`" || ch === "$" || ch === "\\" ? ch : "\\" + ch));
+}
+
+/**
  * Every `err(...)` program in the spec tests, with the tag of the test it belongs to.
  *
  * The shape being matched is stable and simple — a `Deno.test` whose name opens with the tag, whose
@@ -32,7 +44,25 @@ export type SpecCase = { tag: string; name: string; src: string };
  *
  * A test with several `err(...)` calls contributes each of them, all under the same tag.
  */
+/**
+ * Every `run(...)` program in the spec tests — the half of the contract that says what is **legal**.
+ *
+ * `specRejections` is what the language forbids; this is what it permits, and a checker has to be
+ * held to both. Silence on these is the invariant this package treats as absolute, stated against
+ * the specification rather than against the other implementation: a program the spec runs is a
+ * program that compiles, whatever anything else thinks of it.
+ *
+ * Same scan as the rejections, one helper name along.
+ */
+export function specAcceptances(): SpecCase[] {
+  return specPrograms(/\brun\(`([\s\S]*?)`\)/g);
+}
+
 export function specRejections(): SpecCase[] {
+  return specPrograms(/\berr\(`([\s\S]*?)`\)/g);
+}
+
+function specPrograms(call: RegExp): SpecCase[] {
   const text = Deno.readTextFileSync(SPEC_TEST);
   const out: SpecCase[] = [];
 
@@ -45,7 +75,7 @@ export function specRejections(): SpecCase[] {
   for (const m of text.matchAll(/Deno\.test\(\s*"(\[§(wac-[a-z0-9-]+)\][^"]*)"/g)) {
     marks.push({ at: m.index!, tag: m[2], name: m[1] });
   }
-  for (const e of text.matchAll(/\berr\(`([\s\S]*?)`\)/g)) {
+  for (const e of text.matchAll(call)) {
     // A template literal with an interpolation is a generated program rather than a fixed one; skip
     // it rather than hand `${...}` to a lexer as source.
     if (e[1].includes("${")) continue;
@@ -55,7 +85,7 @@ export function specRejections(): SpecCase[] {
       else break;
     }
     if (owner === undefined) continue;
-    out.push({ tag: owner.tag, name: owner.name, src: e[1] });
+    out.push({ tag: owner.tag, name: owner.name, src: unescapeTemplate(e[1]) });
   }
   return out;
 }

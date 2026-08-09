@@ -183,6 +183,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 | oracle | input | what it asserts |
 |---|---|---|
 | `specCheck.test.ts` | the spec's own 101 illegal programs | **the contract** — each is refused |
+| `specAccept.test.ts` | the spec's own 262 legal programs | **the contract** — silence on each |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
 | `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
@@ -2134,6 +2135,38 @@ shown and asks which matches the spec, because the reference has been the one di
 | spec rejections refused | 98 of 101 | **101 of 101** |
 | known misses | 3 | **0** |
 | the reference-shaped instruments | 0 false alarms, 95%/99% | unchanged |
+
+### The other half of the contract: what the spec *runs*
+
+Refusing what the language forbids is half of it. The other half is keeping quiet about what the
+language permits, and this package had been asking a different question in its place — *does the
+reference compile it?* The spec runs **262** programs. This checker was wrong about thirteen of them.
+
+Two of the thirteen were the harness, not the checker, and they are the more instructive kind.
+`'\n'` in `wacSpec.test.ts` is written `'\\n'`, because a template literal eats the first backslash —
+so the extractor was handing wacc a character literal containing a backslash and an `n`, which is not
+a program the spec ever ran. Reading the program a literal *holds* rather than the text it is written
+with fixed both. The rejection corpus is read the same way, and its 101 of 101 survived the
+correction, which is the check worth doing before believing a number that flatters you.
+
+Three more were a rule this checker had and the language does not. **`spec/spec/operators.md`: a
+compound operator has "same type rules as the underlying operator"**, and spells out the consequence
+— `i64 <<= i32` is allowed wherever `i64 << i32` is. A shift's right-hand side is a *count*, not the
+other half of a matched pair, and the same-type rule that is right for `+=` refused three programs
+the spec runs.
+
+| | |
+|---|---|
+| spec acceptances, silent | **254 of 262** |
+| spec rejections, refused | 101 of 101 |
+| the reference-shaped instruments | unchanged |
+
+The eight that remain are named per tag in `specAccept.test.ts`, and each is a rule this checker has
+that the language does not: a ternary over a subtype and its parent (twice, once nullable), a local
+shadowing a parameter (twice), a bare generic in a position that supplies its argument, a comparison
+on two values of a type parameter, and a method reached through a parent. That is a queue of *this
+checker's* mistakes rather than of missing diagnostics — a different and more useful list than the
+one the reference-shaped oracles produce.
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

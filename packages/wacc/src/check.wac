@@ -37,7 +37,7 @@ import { floatLit } from "./lit.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret,
   kLt, kLe, kGt, kGe, kEq, kNe, kAndAnd, kOrOr, kAssign, kBang,
-  kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde,
+  kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde, kShlEq, kShrEq, kShrUEq,
 } from "./kinds.wac";
 import {
   Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
@@ -3651,6 +3651,19 @@ void checkStmt(C c, Stmt s, Ty want) {
         // there is no other side for the literal to take its type from — the target settles it.
         string ct = typeOfLvalue(c, target);
         if (ct == typeNone() || ct == "" || isPackedName(ct)) { return; }
+        // **A shift's right-hand side is a count, not the other half of a pair.**
+        // `spec/spec/operators.md`: a compound operator has *"same type rules as the underlying
+        // operator"*, and spells the consequence out — `i64 <<= i32` is allowed wherever `i64 <<
+        // i32` is. The same-type rule below is right for `+=` and wrong here, and it refused three
+        // programs the spec runs.
+        i32 shiftKind = tokenKind(c, op);
+        if (shiftKind == kShlEq() || shiftKind == kShrEq() || shiftKind == kShrUEq()) {
+          string samt = typeOfExpr(c, rhs);
+          if (!isIntegerName(ct) || (samt != typeNone() && !isIntegerName(samt))) {
+            c.report(errOperandKind(), lvalueStartLine(target), lvalueStartCol(target));
+          }
+          return;
+        }
         // `+=` and its siblings are arithmetic, so the target has to be something arithmetic can be
         // done to: a number, or a `string`, which concatenates. An array, a struct, an enum and a
         // funcref all *agree with themselves*, so the type comparison below has nothing to say about
