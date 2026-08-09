@@ -3083,7 +3083,18 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // A generic's methods are not recorded, so an empty answer here means "not modelled" rather than
   // "not there". Three files and a spec case said so: `this.hash(k)` inside `Map<K, V>` is an
   // ordinary call that this would otherwise call missing.
-  if (c.isGeneric(recv)) { return; }
+  //
+  // **The count is recorded, though, and does not depend on the type arguments.** `Pending<T>.wait`
+  // takes none whatever `T` is, so `.wait(1)` is wrong for every instantiation at once — which is
+  // seven of the nine diagnostics this checker still missed on the repository's own code, all of
+  // them a `Pending<…>` from the platform. Types stay unmodelled; arity does not need them.
+  if (c.isGeneric(recv)) {
+    i32 gm = c.methodAt(genericBase(recv) == "" ? recv : genericBase(recv), name);
+    if (gm >= 0 && args.len() != c.methodParamCount[gm]) {
+      c.report(errCallArity(), call.line, call.col);
+    }
+    return;
+  }
 
   // A field can hold a funcref, and `sh.externalNames()` calls the field rather than a method of
   // that name. `packages/sh` has four of them. A name that is a field is not a missing method.
