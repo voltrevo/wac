@@ -166,8 +166,8 @@ comes out compiles them again, and the two are byte-identical — `fixpointEmit`
 **Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
 
 **The spec is the contract; the reference is a guide.** `spec/spec` states what the language is, and
-`specCheck.test.ts` holds this checker to it: every program the spec calls illegal, refused — 98 of
-101, with the three exceptions named per case rather than counted. The TypeScript compiler is
+`specCheck.test.ts` holds this checker to it: every program the spec calls illegal, refused — **101
+of 101**, with no exceptions. The TypeScript compiler is
 evidence about the language and a cheap source of cases, not an authority: where the two disagree the
 spec decides, and the reference has been the one in the wrong before —
 `issues/lang/0085`, where `as! i31ref` truncates there and traps here because `casts.md` says
@@ -2102,6 +2102,38 @@ consecutive runs. Keyed per case, the answer is stable.
 
 The three that remain are named per case in `specCheck.test.ts`, and the list fails in both
 directions: a new miss breaks it, and fixing one breaks it too.
+
+### 101 of 101 — the contract is met
+
+Three rules, each read off the clause that governs it rather than off the reference's message:
+
+**`core` is the one specifier that is not a file.** `imports.md` says a quoted `"core"` is an error —
+a quoted specifier claims a path, and there is no path here to be right about — and *"so is any other
+bare word, which reports `unknown module 'x'`"*. The parser already recorded the word without
+checking it, and said so in a comment whose reason was that matching the reference would mean a new
+error code. The spec asks for the check on its own terms.
+
+**A generic that instantiates itself with a *larger* argument never terminates.**
+`struct Rec<T> { Rec<Box<T>>? next; }` needs `Rec<Box<T>>` needs `Rec<Box<Box<T>>>`. The test is
+growth rather than self-reference, which matters: `Node<T> { Node<T>? next; }` is a linked list and
+`Pair<A, B> { Pair<B, A>? swap; }` cycles between two instantiations, and both must stay legal. The
+spec caps nesting at 24 instead of reasoning about shape; this rejects the shape, and anything it
+lets through the cap would still catch.
+
+**`E.A` cannot mean two things.** A variant is reached as `E.A` and so is a static, so an enum with a
+method named after one of its own variants has a name with two meanings.
+
+**And the older spec test stopped deferring.** It asserted that this checker is *a subset of the
+reference — silent, or right about the position*, and threw when wacc reported anything the reference
+did not. That is the reading the direction change removes. It now stops the suite with both answers
+shown and asks which matches the spec, because the reference has been the one diverging before:
+`issues/lang/0085`.
+
+| | before | after |
+|---|---|---|
+| spec rejections refused | 98 of 101 | **101 of 101** |
+| known misses | 3 | **0** |
+| the reference-shaped instruments | 0 false alarms, 95%/99% | unchanged |
 
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no

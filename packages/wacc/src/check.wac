@@ -128,6 +128,12 @@ export i32 errNamedField() { return 45; }
 export i32 errFloatRange() { return 50; }
 /** `E.nope` where `E` is an enum and `nope` is none of its variants. */
 export i32 errNoVariant() { return 51; }
+/** An import specifier that is a bare word other than `core` — `spec/spec/imports.md`. */
+export i32 errUnknownModule() { return 52; }
+/** A generic that instantiates itself with a larger argument, so it never terminates. */
+export i32 errInfiniteGeneric() { return 53; }
+/** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
+export i32 errVariantMethodClash() { return 54; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
@@ -3886,6 +3892,108 @@ void restoreNarrowing(C c, Expr subject, string was) {
  * subset of the reference and never a superset, so a position that is merely reasonable is a
  * contradiction; these were read off the reference one case at a time.
  */
+/**
+ * The two declaration rules the spec states and this checker did not.
+ *
+ * **`E.A` cannot mean two things.** A variant is reached as `E.A` and so is a static, so an enum
+ * whose method is named after one of its own variants has a name with two meanings —
+ * `spec/spec/enums.md` makes a variant a name in its own right, and this is that rule inside the
+ * enum rather than across the file.
+ *
+ * **A generic that instantiates itself with a *larger* argument never terminates.**
+ * `struct Rec<T> { Rec<Box<T>>? next; }` is the spec's own example: `Rec<i32>` needs `Rec<Box<i32>>`
+ * needs `Rec<Box<Box<i32>>>`. The test is *growth*, not self-reference: `Node<T> { Node<T>? next; }`
+ * is an ordinary linked list, and `Pair<A, B> { Pair<B, A>? swap; }` cycles between two
+ * instantiations and terminates. What cannot terminate is an argument that *contains* a parameter
+ * without being it. The spec caps nesting at 24 rather than reasoning about shape; this rejects the
+ * shape, which is narrower, and a program it accepts is one the cap would have caught anyway.
+ */
+void checkDeclarationRules(C c, Program prog) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        for (i32 m = 0; m < methods.len(); m++) {
+          string mn = tokenText(c, methods[m].nameTok);
+          for (i32 v = 0; v < variants.len(); v++) {
+            if (tokenText(c, variants[v].nameTok) != mn) { continue; }
+            c.report(errVariantMethodClash(), tokenLine(c, methods[m].nameTok),
+                     tokenCol(c, methods[m].nameTok));
+          }
+        }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() == 0) { continue; }
+        // Not named `self`: a wac local by that name has no wapy rendering — `issues/lang/0077` —
+        // and this file round-trips through wapy on every suite run, which is where that showed up.
+        string owner = tokenText(c, nameTok);
+        for (i32 f = 0; f < fields.len(); f++) {
+          if (!growsItself(c, fields[f].type, owner, typeParams)) { continue; }
+          c.report(errInfiniteGeneric(), fields[f].type.line, fields[f].type.col);
+        }
+      }
+      else: { }
+    }
+  }
+}
+
+/** Whether this written type is the struct itself with an argument that *contains* a parameter. */
+bool growsItself(C c, Ty t, string owner, i32[] typeParams) {
+  match (t.kind) {
+    case Arr(elem): { return growsItself(c, elem, owner, typeParams); }
+    case Nullable(inner): { return growsItself(c, inner, owner, typeParams); }
+    case Named(tok, typeArgs): {
+      if (tokenText(c, tok) == owner) {
+        for (i32 i = 0; i < typeArgs.len(); i++) {
+          if (argumentGrows(c, typeArgs[i], typeParams)) { return true; }
+        }
+      }
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        if (growsItself(c, typeArgs[i], owner, typeParams)) { return true; }
+      }
+      return false;
+    }
+    else: { return false; }
+  }
+}
+
+/** Whether an argument mentions a type parameter without being one: `Box<T>` does, `T` does not. */
+bool argumentGrows(C c, Ty t, i32[] typeParams) {
+  match (t.kind) {
+    case Named(tok, typeArgs): {
+      string nm = tokenText(c, tok);
+      for (i32 i = 0; i < typeParams.len(); i++) {
+        if (tokenText(c, typeParams[i]) == nm) { return false; }
+      }
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        if (mentionsParam(c, typeArgs[i], typeParams)) { return true; }
+      }
+      return false;
+    }
+    case Arr(elem): { return mentionsParam(c, elem, typeParams); }
+    case Nullable(inner): { return argumentGrows(c, inner, typeParams); }
+    else: { return false; }
+  }
+}
+
+/** Whether a written type mentions one of these parameters anywhere inside it. */
+bool mentionsParam(C c, Ty t, i32[] typeParams) {
+  match (t.kind) {
+    case Named(tok, typeArgs): {
+      string nm = tokenText(c, tok);
+      for (i32 i = 0; i < typeParams.len(); i++) {
+        if (tokenText(c, typeParams[i]) == nm) { return true; }
+      }
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        if (mentionsParam(c, typeArgs[i], typeParams)) { return true; }
+      }
+      return false;
+    }
+    case Arr(elem): { return mentionsParam(c, elem, typeParams); }
+    case Nullable(inner): { return mentionsParam(c, inner, typeParams); }
+    else: { return false; }
+  }
+}
+
 void checkDuplicates(C c, Program prog) {
   string[] names = string[512]();
   i32 n = 0;
@@ -4139,11 +4247,30 @@ bool wantedName(string[] only, string name) {
 
 export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
+  checkDeclarationRules(c, prog);
   // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
   // imported is in scope for the whole file, so these sit with the module-level constants.
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Import(pathTok, prefixTok, items): {
+        // **`core` is the one specifier that is not a file**, so it is the one bare word allowed.
+        // `spec/spec/imports.md`: a quoted `"core"` is an error, because a quoted specifier says *a
+        // file lives at this path* and there is no path here to be right about — and *"so is any
+        // other bare word, which reports `unknown module 'x'`"*.
+        //
+        // The parser records the word without checking it, and says so in a comment that gives the
+        // reason as "matching the reference means a new error code". The spec asks for the check on
+        // its own terms, so here it is.
+        if (prefixTok >= 0 && tokenText(c, prefixTok) != "core") {
+          c.report(errUnknownModule(), tokenLine(c, prefixTok), tokenCol(c, prefixTok));
+        }
+        // Compared without its quotes rather than against a spelling with escaped ones: an escaped
+        // quote inside a literal is a shape `wapy`'s rendering of this file cannot read back, and
+        // this source round-trips through it on every suite run.
+        string quoted = pathTok < 0 ? "" : tokenText(c, pathTok);
+        if (quoted.len() >= 2 && quoted.slice(1, quoted.len() - 1) == "core") {
+          c.report(errUnknownModule(), tokenLine(c, pathTok), tokenCol(c, pathTok));
+        }
         for (i32 i = 0; i < items.len(); i++) {
           // **Only when nothing better is known.** Declaring an imported name as unknown is what
           // makes a single-file check silent about it rather than calling it undefined — but when

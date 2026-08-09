@@ -324,11 +324,12 @@ Deno.test("rung 3: a returned local, and a name used before its declaration", ()
  *     divergence between wac's implementation and wac's specification, and it is worth failing this
  *     package's suite to say so — it is also the check that proves the extraction produced real
  *     programs rather than fragments that fail for being malformed.
- *   - **wacc is a subset of it**: silent, or right about the position. Coverage is reported rather
- *     than asserted, because this slice knows about one diagnostic out of roughly 210 and a threshold
- *     would be a number somebody made up.
+ *   - **every difference is accounted for**: a position this checker reports and the reference does
+ *     not stops the suite with both answers shown, so somebody decides which matches the spec. It is
+ *     no longer read as this checker being wrong — the spec is the contract, and `issues/lang/0085`
+ *     is a case where the reference is the one that diverges from it.
  */
-Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and we never contradict it", () => {
+Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and we account for every difference", () => {
   const cases = specRejections();
   if (cases.length < 80) {
     throw new Error(`only ${cases.length} spec rejection programs extracted; the shape of ` +
@@ -350,14 +351,20 @@ Deno.test("rung 3: the spec's rejection corpus — the reference honours it, and
     const mine = ours(c.src);
     if (mine.length === 0) continue;
     for (const at of mine) {
-      if (!theirs.some((e) => e.at === at)) {
-        contradicted++;
-        throw new Error(
-          `[§${c.tag}] we report a diagnostic at ${at} the reference does not.\n` +
-            `  source: ${JSON.stringify(c.src)}\n` +
-            `  reference: ${theirs.map((e) => `${e.at} ${e.message}`).join("; ")}`,
-        );
-      }
+      if (theirs.some((e) => e.at === at)) continue;
+      // **A difference is a question, not a verdict.** This used to throw, on the reading that this
+      // checker may report a subset of the reference and nothing else. The spec is the contract now:
+      // where the two disagree, the one that matches `spec/spec` is right, and the reference has
+      // been wrong before — `issues/lang/0085`. So a position it does not share is reported with
+      // both sides shown, and the answer is written down here rather than assumed.
+      contradicted++;
+      throw new Error(
+        `[§${c.tag}] we report a diagnostic at ${at} and the reference does not.\n` +
+          `  Decide which is right — the spec governs, not the reference — and if this checker is,\n` +
+          `  record the tag here as an intended difference.\n` +
+          `  source: ${JSON.stringify(c.src)}\n` +
+          `  reference: ${theirs.map((e) => `${e.at} ${e.message}`).join("; ")}`,
+      );
     }
     covered++;
   }
