@@ -55,7 +55,10 @@ Deno.test("a child's output comes back to its caller and goes nowhere else", asy
   // that took only `write` would lose the thirty `box` applets that report that way.
   assertEquals(
     out,
-    ["status 0", "out   FROM STDIN\\nFROM THE FILE\\nread 14 bytes\\n", "err   shout: nothing wrong, just talking\\n"]
+    // `whole yes` is the third thing a frame answers: whether `out` is all of it. A child that filled
+    // the capture buffer stops *cleanly* and its short output looks complete, so the caller is the
+    // only one that can know — see `Captured.truncated`. This one writes fourteen bytes.
+    ["status 0", "out   FROM STDIN\\nFROM THE FILE\\nread 14 bytes\\n", "err   shout: nothing wrong, just talking\\n", "whole yes"]
       .join("\n") + "\n",
   );
 

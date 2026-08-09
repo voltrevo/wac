@@ -59,8 +59,8 @@ pub enum Outcome {
     /// this type rather than `string` is that the two used to be indistinguishable (wac-mono 0065).
     BytesOpt(Option<Vec<u8>>),
     Bool(bool),
-    /// What a child frame wrote: `Captured{out, err}`.
-    Captured(Vec<u8>, Vec<u8>),
+    /// What a child frame wrote: `Captured{out, err, truncated}`.
+    Captured(Vec<u8>, Vec<u8>, bool),
     /// `Change{fault, message}` — what happened to something that changes state.
     Change(i32, String),
     /// `FileResult{ok, bytes, error, fault}`.

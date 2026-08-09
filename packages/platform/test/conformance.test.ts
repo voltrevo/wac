@@ -175,7 +175,11 @@ const COVERAGE: Record<string, Cover> = {
       "turned spawning on for every session binary, so an applet is a child rather than a frame " +
       "and this route is now only `packages/box/example/boxsh.wac` and any world that cannot " +
       "spawn. `packages/box/test/routes.test.ts` compares the two routes against each other — 821 " +
-      "of 821 corpus scripts agree — but on **one host**, so this is still a two-host gap",
+      "of 821 corpus scripts agree — but on **one host**, so this is still a two-host gap. And the " +
+      "two hosts are known to differ here: the JavaScript hosts cap a frame's output at 8 MiB and " +
+      "answer `Captured.truncated`, while the native runtime's frame is a `Vec` that grows, so it " +
+      "never truncates and always answers false. Nothing compares them, which is exactly what makes " +
+      "it worth writing down",
   },
   POP_CHILD: { gap: "as PUSH_CHILD" },
   ASK_INTERRUPT: {

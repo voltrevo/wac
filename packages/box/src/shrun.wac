@@ -74,6 +74,24 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   Captured got = cli.popChild().wait();
 
   if (code == UNKNOWN) { return Output.missing(); }
+  // **A capture that filled up is a command that did not run, not a short answer.**
+  //
+  // The applet exited cleanly and believes it did its job: at the cap `cli.write` answers false, and
+  // false is what a closed pipe answers, which is what `box yes` is written to stop on. Nothing in
+  // the bytes says they are short. So `boxsh -c 'seq 1 1500000 | wc -c'` printed 8323568 where bash
+  // prints 10888896 — the wrong number, silently, from a program that reported success.
+  //
+  // Reported here because this is the layer that knows: the applet cannot tell a full buffer from a
+  // gone reader, and the shell cannot see it in the output. `Captured.truncated` is the fact, and the
+  // honest answer to it is a failure with a sentence — we could not run this — rather than a number
+  // that is not the answer. Status 1, which is what a shell reports for a command that failed.
+  if (got.truncated) {
+    return Output.fail(
+      (name + ": output exceeded what this shell can hold for a command it runs in process; " +
+       "run it as a spawned program, where the output streams\n").toBytes(),
+      1,
+    );
+  }
   return Output(got.out, got.err, code, true);
 }
 

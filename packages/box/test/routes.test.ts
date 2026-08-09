@@ -91,30 +91,30 @@ Deno.test("the two routes are one program: the same applets answer the same eith
 });
 
 Deno.test("...and they are genuinely two routes, which is what makes the agreement mean anything", () => {
-  // **The one case they are known to answer differently.** A called applet's output is captured in
-  // memory and capped at 8 MiB, so `seq 1 1500000 | wc -c` is short; a spawned one's queue drains as
-  // the next stage reads it, and matches bash.
+  // **The one case they are known to answer differently**, and the shape of the difference is the
+  // point. A called applet's output is captured in this program's memory and capped, so past the cap
+  // there is nothing it can do; a spawned one's queue drains as the next stage reads it.
+  //
+  // What changed is *how* the called route says so. It used to answer 8323568 where bash answers
+  // 10888896 — a wrong number, silently, from a command that reported success — because `write`
+  // answering false at the cap is indistinguishable, from inside the applet, from the reader going
+  // away. `Captured.truncated` carries the difference now and `boxRun` refuses with a sentence.
   //
   // Asserted rather than avoided, because the way the test above goes vacuous is `boxsh` quietly
-  // starting to spawn — at which point the two binaries are the same program and agreeing on
-  // everything proves nothing. This is the line that would fail.
-  const { called: a, spawned: b } = both("seq 1 1500000 | wc -c", -1);
-  const theirs = new Deno.Command("bash", {
-    args: ["-c", "seq 1 1500000 | wc -c"],
-    stdout: "piped",
-  }).outputSync();
+  // starting to spawn, at which point the two binaries are the same program.
+  const { called: a, spawned: b } = both("seq 1 1500000", -1);
+  const theirs = new Deno.Command("bash", { args: ["-c", "seq 1 1500000"], stdout: "piped" })
+    .outputSync();
   const gnu = new TextDecoder().decode(theirs.stdout);
 
-  assertEquals(b.out, gnu, "the spawned route should match bash");
+  assertEquals(b.out.length, gnu.length, "the spawned route should match bash byte for byte");
   assertEquals(
-    a.out !== b.out,
+    a.err.includes("output exceeded"),
     true,
-    `the called route no longer caps, so this comparison is measuring one program twice: ${a.out}`,
+    `the called route did not say it could not hold the output: ${JSON.stringify(a.err.slice(0, 200))}`,
   );
-  // And it is *short* rather than merely different, which is the shape of the cap.
-  assertEquals(
-    Number(a.out.trim()) < Number(b.out.trim()),
-    true,
-    `called ${a.out.trim()} is not shorter than spawned ${b.out.trim()}`,
-  );
+  assertEquals(a.code !== 0, true, "a refusal that reports success is the thing this replaced");
+  // **And nothing on standard output**, which is the whole of the fix: a short answer that looks
+  // complete is worse than no answer at all.
+  assertEquals(a.out, "", `the called route still produced output it could not vouch for: ${a.out.length}`);
 });

@@ -186,8 +186,27 @@ export struct Event {
 export struct Captured {
   u8[] out;
   u8[] err;
+  /**
+   * Whether `out` is **all** of what the child wrote, or as much as would fit.
+   *
+   * A frame's output is held in this program's memory rather than draining anywhere, so it is capped
+   * — and at the cap `write` starts answering false. From inside the child that is indistinguishable
+   * from the reader going away, which is exactly what `box yes` is written to stop on: `while
+   * (cli.write(block)) {}`. So an applet that fills the buffer exits **cleanly**, believing its pipe
+   * closed, and hands back a short answer that looks complete.
+   *
+   * That is the wrong-answer shape this repository keeps removing, and it was measurable: `boxsh -c
+   * 'seq 1 1500000 | wc -c'` printed 8323568 where bash prints 10888896, with nothing said.
+   *
+   * A full buffer is a fact about **this program's memory**; a closed pipe is a fact about the
+   * **reader**. The child cannot tell them apart and does not need to — the *caller* can, because it
+   * is the one holding the buffer, and this is where it finds out. `packages/box`'s `boxRun` turns it
+   * into a failed command with a message, which is the honest answer: we could not run this, rather
+   * than here is a number that is not the answer.
+   */
+  bool truncated;
 
-  Captured of(u8[] out, u8[] err) { return Captured(out, err); }
+  Captured of(u8[] out, u8[] err, bool truncated) { return Captured(out, err, truncated); }
 }
 
 export struct Picked {

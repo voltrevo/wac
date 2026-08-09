@@ -28,13 +28,16 @@
 //
 // ## What is *expected* to differ, and is therefore not in the corpus
 //
-// One thing, and it is why `--canary` exists: a called applet's output is **captured in memory and
-// capped at 8 MiB**, so `seq 1 1500000 | wc -c` answers 8323568 where bash and the spawned route
-// answer 10888896. `write` returning false at the cap is indistinguishable, from inside the applet,
-// from the reader going away — which is what `box yes` is written to stop on. The canary asserts that
-// divergence rather than hiding it, because a run where the two routes agreed on *everything* would
-// most likely mean `boxsh` had quietly started spawning too, and this whole comparison would be
-// measuring nothing.
+// One thing: a called applet's output is **captured in memory and capped at 8 MiB**, so past the cap
+// there is nothing it can do, while a spawned one's queue drains as the next stage reads it. It used
+// to answer 8323568 where bash answers 10888896 — a wrong number, silently — because `write`
+// returning false at the cap is indistinguishable, from inside the applet, from the reader going
+// away, which is what `box yes` is written to stop on. `Captured.truncated` carries the difference
+// now and the called route refuses with a sentence instead.
+//
+// The canary below asserts that divergence rather than hiding it, because a run where the two routes
+// agreed on *everything* would most likely mean `boxsh` had quietly started spawning too, and this
+// whole comparison would be measuring nothing.
 
 import { buildApp } from "../packages/platform/build.ts";
 import { CORPUS } from "../packages/sh/test/corpus.ts";
@@ -94,11 +97,17 @@ const show = (r: Run) => `${JSON.stringify(r.out + r.err)} (${r.code})`;
 // to spawn, at which point the two are the same program. So: the one case the routes are *known* to
 // answer differently, asserted to differ.
 {
-  const capped = both("seq 1 1500000 | wc -c", -1);
+  const capped = both("seq 1 1500000", -1);
+  if (!capped.called.err.includes("output exceeded") || capped.called.code === 0) {
+    console.error(
+      "the called route did not refuse output past its cap, so this comparison is measuring one\n" +
+        `program twice: called ${show(capped.called)}`,
+    );
+    Deno.exit(2);
+  }
   if (same(capped.called, capped.spawned)) {
     console.error(
-      "the two routes agree on the 8 MiB capture cap, which they cannot: `boxsh` is spawning, or the\n" +
-        `cap is gone. called ${show(capped.called)} spawned ${show(capped.spawned)}`,
+      `the two routes agree past the cap, which they cannot. spawned ${show(capped.spawned)}`,
     );
     Deno.exit(2);
   }
