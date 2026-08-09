@@ -1751,9 +1751,22 @@ string naturalTypeOf(C c, Expr e) {
   // business, and this must not decide it.
   match (e.kind) {
     case Binary(op, left, right): {
-      if (litKindOf(left) == litNone() || litKindOf(right) == litNone()) { return typeOfExpr(c, e); }
+      // **A chain, not only a pair.** `"a" + "b" + "c"` has a *binary* on its left, so asking whether
+      // each side is a literal stopped at the second `+` — and the string this repository actually
+      // writes, a 78-digit constant split across two lines and then `.toBytes()`, is exactly that
+      // shape. Recursing answers `string` for the whole chain; two sides that disagree still answer
+      // nothing, and a side that is not a literal at all still leaves the question to the slot.
+      // **A comparison answers `bool`, whatever it compared.** Recursing without this said `i32`
+      // for `status == 204`, and the `!` in front of it — four files write one — became a unary
+      // operator on a number. `typeOfExpr` has always known this; the recursion had to be told.
+      i32 bk2 = tokenKind(c, op);
+      if (bk2 == kEq() || bk2 == kNe() || bk2 == kLt() || bk2 == kLe() || bk2 == kGt() ||
+          bk2 == kGe() || bk2 == kAndAnd() || bk2 == kOrOr()) {
+        return "bool";
+      }
       string ln = naturalTypeOf(c, left);
       string rn = naturalTypeOf(c, right);
+      if (ln == typeNone() || rn == typeNone()) { return typeOfExpr(c, e); }
       return ln == rn ? ln : typeNone();
     }
     else: { }
@@ -1965,7 +1978,7 @@ void checkExpr(C c, Expr e) {
       // function is over-permissive in the silent direction, which is the one to err in.
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
         }
         if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
       }
@@ -2126,6 +2139,14 @@ void checkExpr(C c, Expr e) {
           // **`7()` is not a call.** A funcref is, a name that is a function is, and everything else
           // this checker can put a type to is *"type 'i32' is not callable"* — at the callee, which
           // is where the reference reports it. Silent on a type it cannot name, as everywhere.
+          //
+          // `null()` is the one that has no type to put: a null is not a value of anything, and
+          // `naturalTypeOf` says so by answering nothing. It is still not callable, and
+          // `packages/bls/src/fp12.wac` is where a mutation wrote one.
+          if (litKindOf(callee) == litNull()) {
+            c.report(errNotCallable(), callee.line, callee.col);
+            return;
+          }
           string ct = naturalTypeOf(c, callee);
           if (ct != typeNone() && ct != "" && !startsWithFn(ct)) {
             c.report(errNotCallable(), callee.line, callee.col);
@@ -2660,6 +2681,65 @@ bool reachesStruct(C c, string from, string target, i32 depth) {
 }
 
 /** How many fields a positional construction of this struct takes, parents included. */
+/**
+ * What `case List(xs)` binds `xs` to: the variant's `b`th payload field.
+ *
+ * Declared as unknown until now, which is safe and silent — and silence is what `xs.len(1)` got,
+ * along with every other question about a payload. A variant is a struct here and its payload is
+ * that struct's fields in order, so the answer is already in the table; nothing was asking for it.
+ *
+ * Unknown when the variant is not one this checker holds, which is the usual direction: a generic
+ * enum's payload is written in its parameters, and a name that means nothing here means nothing.
+ */
+string armBindingType(C c, Arm arm, i32 b) {
+  if (arm.variantTok < 0) { return typeNone(); }
+  string variant = tokenText(c, arm.variantTok);
+  if (!c.isStruct(variant)) { return typeNone(); }
+  // **The enum is what may be generic, not the variant.** `Opt<T> { Some(T v) }` registers `Some` as
+  // an ordinary struct whose field is written `T`, so binding `v` to it says a working `case Some(v):
+  // v` returns a `T` where an `i32` was declared. Six programs said so at once.
+  //
+  // And **only when one enum declares this variant**: the table is keyed by bare name, so `Ok` from
+  // two enums is one struct holding both payloads, and a binding typed from it belongs to neither.
+  i32 owners = 0;
+  string owner = "";
+  for (i32 i = 0; i < c.variantCount; i++) {
+    if (c.variantNames[i] != variant) { continue; }
+    owners = owners + 1;
+    owner = c.variantOwners[i];
+  }
+  if (owners != 1) { return typeNone(); }
+  i32 n = 0;
+  for (i32 i = 0; i < c.fieldCount; i++) {
+    if (c.fieldOwners[i] != variant) { continue; }
+    if (n == b) { return nameable(c, c.fieldTypes[i]) ? c.fieldTypes[i] : typeNone(); }
+    n = n + 1;
+  }
+  return typeNone();
+}
+
+/**
+ * Whether this checker can name the type at all — as opposed to holding a string that looks like one.
+ *
+ * `Opt<T> { Some(T v) }` records a field whose type is written `T`, and `T` is a *parameter*: an
+ * enum's generic-ness cannot be asked of `isGeneric`, which reads the struct table and has no row for
+ * an enum. Asking what the type is instead of who declared it answers both — a parameter is a name
+ * nothing declares, and binding to it made a working `case Some(v): v` return the wrong type in six
+ * programs.
+ */
+bool nameable(C c, string t) {
+  string core = t;
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (endsWith(core, "[]")) { core = dropLast(core, 2); }
+    else if (endsWith(core, "?")) { core = dropLast(core, 1); }
+    else { break; }
+  }
+  string base = genericBase(core);
+  string at = base == "" ? core : base;
+  return isPrimitiveName(at) || at == "string" || at == "bool" || startsWithFn(at) ||
+         c.isStruct(at) || c.isEnum(at);
+}
+
 i32 fieldArity(C c, string t) {
   i32 n = 0;
   string at = t;
@@ -3416,7 +3496,7 @@ void declareStmt(C c, Stmt s) {
         // `inner`; without this, the local's type leaked across and `typeOfTy(c, inner)` was reported
         // as an argument mismatch against its own parameter.
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          c.declare(tokenText(c, arms[i].bindingToks[b]), typeNone());
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
         }
         declareAll(c, arms[i].body);
       }

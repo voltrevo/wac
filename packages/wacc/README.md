@@ -1924,6 +1924,42 @@ Six left, in four shapes, and each is now written down rather than guessed at: `
 (a member that is no variant of an imported enum), `xs.len(1)` where `xs` came from a call,
 `("…" + "…").toBytes(1)`, and two more `.wait(1)`s whose receiver is a call *inside* a call.
 
+### What a `case` binds — 98% of real code, and three more generated
+
+Two of the six were mine to fix and one was a gap worth its own name.
+
+**`null()` is not callable**, which the rule for `7()` missed because it asks what type the callee is
+and a null has none. It is still not a function.
+
+**A chain of literals is a literal's family.** `"a" + "b" + "c"` has a *binary* on its left, so a rule
+that asks whether each side is a literal stops at the second `+` — and the string this repository
+writes is a 78-digit constant split across two lines. Recursing fixed it and immediately reported
+four working files, because a **comparison answers `bool` whatever it compared** and the recursion
+had to be told: `!(status == 204)` had become a unary operator on a number.
+
+And the one that matters: **`case List(xs)` binds `xs` to the variant's payload, and this checker
+bound it to nothing.** A variant is a struct here and its payload is that struct's fields in order,
+so the answer was already in the table and nothing was asking for it. Every question about a payload
+— `xs.len(1)`, a field that is not there, a return of the wrong type — was silent.
+
+Two guards, both found by the oracles within a minute of each other. The enum is what may be generic,
+not the variant: `Opt<T> { Some(T v) }` registers `Some` as an ordinary struct whose field is written
+`T`, and binding to that made a working `case Some(v): v` return the wrong type in six programs.
+Asking `isGeneric` does not help — it reads the struct table and an enum has no row there — so the
+test is on the *type*: bind only to something this checker can name, and a parameter is a name
+nothing declares. The second guard is the one this package keeps relearning: only when a single enum
+declares the variant, because the table is keyed by a bare name.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 244 of 250 (98%) | **246 of 250 (98%)** |
+| generated mutation sweep | 921 | **924** of 980 |
+| false alarms | 0 | 0 |
+
+Four left: `JsonValue.nofield`, `("…" + "…").toBytes(1)` — whose receiver types correctly on its own
+and is still silent, so the next trace starts at `receiverType` — and two `.wait(1)`s on a call inside
+a call.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
