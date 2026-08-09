@@ -1183,6 +1183,39 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### A literal rounds once — issue 0124, closed
+
+`spec/spec/types.md` says a float literal rounds to *nearest*, and nearest is not something floating
+point can be asked for while it is doing the asking. Scaling a mantissa by ten rounds at every step:
+`1e300` landed a unit in the last place away, `1.7976931348623157e308` three. I filed that against
+myself last slot rather than leave it silent; this closes it.
+
+The value is now computed **exactly** — digits and decimal exponent as one big integer over another,
+base-2^16 limbs in an `i32[]` so every product stays inside an `i32` — and the quotient is taken bit
+by bit to fifty-three places with a single round-half-even at the end. `10^350` is seventy-three
+limbs. The one rounding is the one the specification names.
+
+Two mistakes on the way, and **both looked like rounding and were neither**:
+
+- The bit loop produces a quotient's binary expansion only while the ratio starts in `[1, 2)`. I
+  aligned it into `[2^52, 2^53)`, so the first turn subtracted the whole leading bit and every turn
+  after produced a zero. Every answer came out an exact power of two.
+- The implicit bit is two to the **fifty-second**; I subtracted two to the fifty-third. The mantissa
+  went negative and borrowed from the exponent, so every answer came out exactly half of itself.
+
+Ten lines of Python separated them: the algorithm was wrong in the first case and right in the
+second, and checking it *outside* the compiler said which before any of the wac was suspected.
+
+| | |
+|---|---|
+| hard literals exact | 20 of 20, from `5e-324` to `1.7976931348623157e308` |
+| sweep | 3,991 programs, 3,587 compared, 0 mismatched |
+| spec | 249/249 answers, 84/84 rejections |
+
+Thirty-two literals are in the generated sweep now, compared **as bits** rather than as numbers,
+because a printed float hides the last place it differs in — and negated, and round-tripped through
+`f64.fromBits`, and five of them at `f32` width.
+
 ### Every answer the spec asks for — 246 of 249 to 249 of 249
 
 Three wrong answers were left, and wrong answers outrank missing diagnostics: a program that compiles

@@ -1,7 +1,7 @@
 # 0124 — wacc's float literals are not correctly rounded beyond ±1e22
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-b
 - **Reported by:** agent-b
 - **Date:** 2026-08-09
 - **Kind:** bug
@@ -48,3 +48,27 @@ reference for every literal in the corpus, and getting it wrong is silent.
 By running the spec suite's programs through `wacc` and comparing answers — the `§wac-f64bits`
 case tests `5.0e-324`, which was zero before this and is right now. The three literals above are not
 in the spec suite; they came from asking what else the same code path would get wrong.
+
+## Fixed
+
+`parseFloat` no longer scales in floating point at all. The digits and the decimal exponent become
+an exact ratio of two big integers — base-2^16 limbs in an `i32[]`, so every product stays inside an
+`i32` — and the quotient is taken bit by bit to fifty-three places, with one round-half-even at the
+end. The one rounding is the one the specification names.
+
+All three literals above are exact now, along with `5e-324`, `4.9e-324`, `1e-323`, both ends of the
+range, `9007199254740993`, and a thirty-digit mantissa. Thirty-two of them are in the generated
+sweep, compared **as bits** rather than as numbers, because a printed float hides the last place it
+differs in.
+
+Two mistakes worth recording, both of which looked like rounding and were not:
+
+- The bit loop produces the quotient's binary expansion only while the ratio starts in `[1, 2)`. I
+  aligned it into `[2^52, 2^53)` instead, so the first turn subtracted the whole leading bit and
+  every turn after produced a zero — every answer came out an exact power of two.
+- The implicit bit is two to the **fifty-second**, and I took two to the fifty-third away instead.
+  The mantissa went negative and borrowed from the exponent, so every answer came out exactly half
+  of itself.
+
+Checking the algorithm in ten lines of Python before hunting through the wac is what separated the
+two: the first was in the algorithm and the second was in the transcription.

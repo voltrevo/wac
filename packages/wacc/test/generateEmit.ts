@@ -682,5 +682,26 @@ export function generateEmit(): Cell[] {
     `export i32 f() { R[] a = R[2](); a[0].q.w = 7; return a[1].q.w; }`);
   add("a sized array of strings still shares",
     `export i32 f() { string[] a = string[2](); return a[0].len() + a[1].len(); }`);
+
+  // Float literals, compared as **bits** rather than as numbers, because a printed float hides the
+  // last place it differs in. These are the values that break a conversion which scales by tens: the
+  // two ends of the range, both sides of the subnormal boundary, a mantissa longer than an `f64`
+  // holds, and the exponents where a power of ten stops being exact.
+  const FLOATS = [
+    "0.0", "1.0", "1.5", "0.1", "3.14", "2e-3", "6.283185307179586", "1_000.5", "0.000_1",
+    "1e1", "1e2", "1e22", "1e23", "1e-7", "1e300", "1e-300", "1e308", "1e-308",
+    "1.7976931348623157e308", "2.2250738585072014e-308", "5e-324", "4.9e-324", "1e-323",
+    "0.30000000000000004", "9007199254740993.0", "123456789012345678901234567890.5",
+    "1.000000000000000000000000000001", "0.5", "0.25", "1e-45", "3.4028235e38", "2.5E2",
+  ];
+  for (const lit of FLOATS) {
+    add(`float bits ${lit}`, `export u64 f() { return f64.toBits(${lit}); }`);
+    add(`float round trip ${lit}`,
+      `export bool f() { f64 x = ${lit}; return f64.fromBits(f64.toBits(x)) == x; }`);
+    add(`float negated ${lit}`, `export u64 f() { return f64.toBits(0.0 - ${lit}); }`);
+  }
+  for (const lit of ["1.5", "0.1", "3.4028235e38", "1e-45", "0.0"]) {
+    add(`float32 bits ${lit}`, `export u32 f() { return f32.toBits(${lit}); }`);
+  }
   return out;
 }
