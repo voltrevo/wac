@@ -2038,6 +2038,17 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
 string armVariant(Env env, u8[] src, Lexed lexed, i32 tok, string en) {
   string raw = tokenTextOf(src, lexed, tok);
   if (isInstance(en)) { return en + "." + raw; }
+  // **Within this enum**, not within the file. Two enums in one module may each have an `Ok` — one
+  // module here has an `Opened.Ok` and a `Found.Ok` — and resolving the arm by file scope finds
+  // whichever was declared first, which is a different enum's variant with the same spelling.
+  for (i32 i = 0; i < env.variantCount; i++) {
+    if (env.variantOwners[i] != en) { continue; }
+    string vk = env.variantNames[i];
+    if (vk == raw) { return vk; }
+    // A name two files declare is keyed with the file that declared it, so the arm's text is a
+    // prefix of the key rather than the key.
+    if (vk.len() > raw.len() && vk.slice(0, raw.len() + 1) == raw + "@") { return vk; }
+  }
   return env.keyAt(raw, tokenLine(lexed, tok));
 }
 
@@ -3876,7 +3887,12 @@ string unsupportedMatch(u8[] src, Lexed lexed, Env env, Expr subject, Arm[] arms
   for (i32 a = 0; a < arms.len(); a++) {
     if (arms[a].variantTok < 0) { continue; }
     string vn = armVariant(env, src, lexed, arms[a].variantTok, en);
-    if (env.enumOf(vn) != en) { return "an arm naming a variant of another enum"; }
+    if (env.enumOf(vn) != en) {
+      // Named, both of them: which arm, and which enum it belongs to instead of this one.
+      string owner = env.enumOf(vn);
+      return "the arm " + tokenTextOf(src, lexed, arms[a].variantTok) + " belongs to " +
+             (owner == "" ? "no enum" : owner) + ", not to " + en;
+    }
   }
   return "";
 }
@@ -4268,17 +4284,22 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
       return env.isStructName(ot3) ? "" : "member of an unknown type";
     }
     case ArrNew(elem, size, fill, elements): {
-      if (typeOfTyName(env, src, lexed, elem) == "") { return "array of an unspelled type"; }
+      string et2 = typeOfTyName(env, src, lexed, elem);
+      if (et2 == "") { return "array of an unspelled type"; }
       if (!(size is null)) {
-        string sz = unsupportedValue(src, lexed, env, size!);
+        string sz = unsupportedValueAt(src, lexed, env, size!, "i32");
         if (sz != "") { return sz; }
       }
+      // **The element type is the slot.** `Vec<i32>[n](fill: Vec.create())` is a static on a
+      // template, which takes its instantiation from where the answer goes — and this arm was
+      // asking about the fill and every element with no slot at all, so a `null` or a template
+      // static among them was refused for want of a type that is written right there.
       if (!(fill is null)) {
-        string fl = unsupportedValue(src, lexed, env, fill!);
+        string fl = unsupportedValueAt(src, lexed, env, fill!, et2);
         if (fl != "") { return fl; }
       }
       for (i32 i = 0; i < elements.len(); i++) {
-        string el = unsupportedValue(src, lexed, env, elements[i]);
+        string el = unsupportedValueAt(src, lexed, env, elements[i], et2);
         if (el != "") { return el; }
       }
       return "";

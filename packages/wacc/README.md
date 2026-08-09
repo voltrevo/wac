@@ -1183,6 +1183,32 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Two `Ok`s in one module, and a slot the walk was not looking at — 279 to 283
+
+With generics done the corpus stopped being a category and became a list, and the list is where
+messages that *name things* pay for themselves twice: once to find the bug, once to prove it gone.
+
+**`unresolved name Vec`, in a file that never writes `Vec`.** It was
+`Vec<i32>[relays.len()](fill: Vec.create())` in a file it imports: an array's `fill` is a slot with a
+type written right beside it, and the walk was asking about it — and about every literal element —
+with no slot at all. A template's static takes its instantiation from the slot, so it had nothing to
+go on. The element type is now the want for both.
+
+**`an arm naming a variant of another enum`** said nothing about which arm or which enum, so it was
+made to: *"the arm `Ok` belongs to `Opened`, not to `Found`"*. One module declares an `Opened.Ok` and
+a `Found.Ok`, and this emitter resolved an arm's name by **file scope** — finding whichever was
+declared first, a different enum's variant with the same spelling. An arm is now resolved *within the
+enum being matched*, which is the only scope in which its name is unambiguous.
+
+| | before | after |
+|---|---|---|
+| whole files | 279 | **283** |
+| invalid | 0 | 0 |
+| distinct reasons for the rest | 13 | 10 |
+
+Both bugs are in the sweep now, and neither was reachable by anything it generated before: a
+generator writes one enum at a time, and puts its variant names in one namespace without meaning to.
+
 ### A template declaration is not a function, and the pre-pass never read an expression — 248 to 279
 
 Three changes, and the first two lines of the first one were worth twelve files.
