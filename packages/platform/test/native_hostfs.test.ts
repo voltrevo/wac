@@ -230,6 +230,45 @@ Deno.test("the two hosts agree where the real tool prints more than this system 
  * granted to this application" against "this program was not granted reading") *and* named the
  * resolved absolute path of a machine the program is not supposed to be able to see.
  */
+Deno.test("the four grants are independent: write without read, on both hosts", async () => {
+  // `platform.wac` says a child's grants are "a ceiling of the parent's own, intersected by the host
+  // rather than trusted", which reads as four separate switches — and on three hosts out of four it
+  // is. This is the check that it is not four switches *in name only*: a build given write and not
+  // read must be able to write and unable to read, rather than getting both or neither.
+  //
+  // **The fourth host cannot do it, and that is the platform rather than a bug.** In a page, reaching
+  // a file to write it means walking directory handles from the root, and holding the root handle is
+  // the read capability — there is no path-based open to separate them. `browser.ts` says so at the
+  // line that delivers a child's filesystem, and `platform.wac` says so beside the sentence that
+  // would otherwise imply otherwise.
+  const native = await nativeBinary();
+  if (native === null) return;
+
+  await buildApp(ENTRY, `${tmp}/wonly-deno`, { write: true });
+  await buildNative(ENTRY, `${tmp}/wonly`, { write: true });
+  const where = `${tmp}/tree`;
+
+  for (const [name, cmd, args] of [
+    ["deno", `${tmp}/wonly-deno`, [] as string[]],
+    ["native", native, [`${tmp}/wonly.json`]],
+  ] as const) {
+    fixture();
+    // Writing works…
+    const wrote = runIt(cmd, [...args, "-c", "echo written > made; echo st=$?"], where);
+    assertEquals(wrote.out.includes("st=0"), true, `${name}: could not write: ${wrote.err}`);
+    // …and the bytes really landed, which `st=0` alone would not prove — a write that silently did
+    // nothing would report the same.
+    assertEquals(Deno.readTextFileSync(`${where}/made`), "written\n", `${name}: nothing was written`);
+    // …and reading does not.
+    const read = runIt(cmd, [...args, "-c", "cat f"], where);
+    assertEquals(
+      read.err.includes("Not granted to this application"),
+      true,
+      `${name}: a write-only build read a file: ${read.out} / ${read.err}`,
+    );
+  }
+});
+
 Deno.test("`kill %1` ends a background job on both hosts", async () => {
   // design/0001 step 3's criterion, and the one place a signal in this system does what a kernel's
   // does: a background job is a separate instance, so nothing cooperative can reach it, and `kill`

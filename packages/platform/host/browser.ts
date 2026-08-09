@@ -318,6 +318,16 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
           readStdin: () => input.rest(),
           readStdinChunk: () => input.next(),
         }),
+        // **Write is delivered under read, and that is the Origin Private File System rather than a
+        // bundle.** Reaching a file to write it means walking directory handles from the root, and
+        // holding the root handle *is* the read capability here — there is no path-based open to
+        // separate them, as there is under Deno and Node where `fs: { read: false, write: true }` is
+        // a real thing. So a child asking for `GRANT_WRITE` alone gets no filesystem in a page, and
+        // finds out the ordinary way: `writeFile` answers `FAULT_NOT_GRANTED`, which is true of it.
+        //
+        // Said here because the contract in `platform.wac` reads as four independent grants, and on
+        // three of the four hosts it is. This is the one that cannot be, and a reader of that
+        // sentence should not have to discover it.
         ...(give.read ? { root: opts.root, writable: give.write } : {}),
         // So that a child can run itself too: the bundle is the same one.
         selfSource: opts.selfSource,
