@@ -1138,7 +1138,15 @@ export struct Cli {
    * on the streams ending, not on the instant. wac-mono 0123.
    *
    * **`grants` is what the child may do beyond those streams**, as `GRANT_*` flags — and it
-   * is a *ceiling of the parent's own*, intersected by the host rather than trusted. A parent
+   * is a *ceiling of the parent's own*, intersected by the host rather than trusted.
+   *
+   * **The four are independent on three hosts out of four.** In a page, `GRANT_WRITE` without
+   * `GRANT_READ` yields nothing: reaching a file to write it means walking directory handles from the
+   * root, and holding the root handle *is* the read capability on the Origin Private File System.
+   * Deno and Node have a path-based open and can give a child `write` without `read`; a page cannot,
+   * and the child finds out as a `FAULT_NOT_GRANTED` from its first write rather than being told at
+   * spawn. Named here because "intersected by the host" reads as four separate switches, and on one
+   * host two of them are one. A parent
    * built without `--allow-net` cannot hand `GRANT_NET` to anyone; asking is not an error, and
    * the child simply finds the capability denied. `GRANT_NONE` is the honest default and what
    * every example passes.
