@@ -268,7 +268,14 @@ void redraw(Page page, Vec<Win> wins) {
   paint(page, wins);
   for (i32 i = 0; i < wins.len(); i++) {
     Win w = wins.get(i);
-    if (w.kind == SHELL()) { page.setValue("cmd" + itoa(w.id), typed.get(i)).wait(); }
+    // **Only what was actually read back.** Restoring an empty string to a field is at best a
+    // no-op and at worst destructive: a window that has just been *created* had no field to read
+    // from, so the saved value is empty, and writing it lands after the element exists — erasing
+    // anything typed into the new terminal in between. Measured, not imagined: driving the desktop,
+    // the first command typed into a freshly opened terminal disappeared, every time.
+    if (w.kind == SHELL() && typed.get(i) != "") {
+      page.setValue("cmd" + itoa(w.id), typed.get(i)).wait();
+    }
   }
 }
 

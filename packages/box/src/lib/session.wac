@@ -68,6 +68,26 @@ export struct Session {
    * up per session. Only the filesystem is shared, which is exactly the line design/0001 draws: a
    * system is a filesystem, a process table and a set of programs, and two sessions on one machine
    * differ in none of them.
+   *
+   * ## What "shared" turns out to mean, measured
+   *
+   * Deliberately shared and correct: the **nodes** (a file written in one session is readable in the
+   * other), the **process table** (`ps` in either shows both shells), **`/bin`**, and the **user**.
+   *
+   * Shared by accident, because `Fs` holds one of each and was written when a filesystem had one
+   * shell: **`cwd`** and the **output cursor** (`outPath`/`outMount`). Neither bites today, and the
+   * reason is worth stating because it is not a property of `Fs`:
+   *
+   *   - `packages/sh` resolves paths against `Shell.cwd` and hands `Fs` absolute ones, so `Fs.cwd` is
+   *     read only by `boxRun`'s in-process route. Checked rather than assumed — `cd /home/wac` in one
+   *     terminal leaves the other at `/`, and a relative `cat five` in it still fails.
+   *   - the cursor is opened and closed inside a single `feedLine`, and **these shells do not run
+   *     concurrently**: a page services one event at a time, so a second shell's redirection cannot
+   *     begin while the first's is open. Two terminals each redirecting, including through the
+   *     streaming pipeline route that holds the cursor longest, write the files they meant to.
+   *
+   * That second reason is a fact about the event loop rather than about the filesystem, so anything
+   * that made two sessions genuinely concurrent would need `Fs` to grow a cursor per caller first.
    */
   Session startOn(Core core, Cli cli, Fs fs, string name) {
     Shell sh = Shell.onFs(core, cli, fs);

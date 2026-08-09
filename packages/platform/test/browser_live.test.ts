@@ -705,6 +705,13 @@ Deno.test({
       await page2.waitForSelector("#cmd2", { timeout: 30_000 });
       assertEquals((await page2.locator(".win").count()), 3, "the launcher did not open a window");
 
+      // **The first thing typed into a brand-new terminal**, straight after its field appears, with
+      // no round trip in between. That gap is where the bug was: a redraw restored the saved value of
+      // every field, and a window that had just been created had nothing saved — so it wrote an empty
+      // string over whatever had been typed in the meantime, and the first command vanished. Driving
+      // the desktop by hand hit it every time; this test did not, because it typed here several round
+      // trips later, by which point the empty restore had long since landed.
+      await desk(2, "pwd", "\n/\n");
       await desk(0, "echo from-the-first > /shared", "$ echo from-the-first > /shared");
       await desk(2, "cat /shared", "from-the-first");
       assertEquals(
