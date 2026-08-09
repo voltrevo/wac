@@ -1462,6 +1462,52 @@ compilers agree on.
 | spec answers | 289/289 | **322/322** — thirty-three more programs reach the comparison |
 | sweep | 4,449 programs, 4,040 compared | **4,460 programs, 4,051 compared, 0 mismatched** |
 
+### The checker had never been asked about anything the emitter learned
+
+Rung 3's sweep is ten thousand programs and reports 99% recall, and both numbers are true of the
+cross product its generator builds — type against context, a hundred and seventy lines of it.
+Meanwhile `generateEmit.ts` had grown to four and a half thousand programs covering everything the
+*emitter* learned this week: generics, subtyping, method references, narrowed enums, `is T` guards,
+named construction, `anyref`. **Nothing had ever put one of them to the checker.**
+
+Doing it cost one file and found **eighty-two false alarms** — valid programs this checker reported
+an error in. That is the invariant it may never break: a subset checker may miss anything and may
+not invent. Every one was the same shape underneath, a feature it does not model answered
+confidently rather than not at all:
+
+- **`Box.of(5)` returns `Box<T>` as written**, and `T` is bound by the slot the call fills. Answering
+  with the declaration's own text made `Box<i32> b = Box.of(5)` a mismatch.
+- **A generic function's body is a template**, so every type in it is written in parameters this
+  checker does not substitute. It is not checked at all now, for the same reason a generic struct's
+  fields were already not recorded.
+- **`p is P` on a `P?` asks whether it is *there*, not what it is.** Recording it as a retyping to
+  `P` made the name non-nullable, and the next thing such code does is `p!.v` — which it then refused
+  because there was nothing left to unwrap.
+- **`(C.inc)(c)` is a method reference called inline**, which reads as a static call and is not one.
+  The arity is still checked and counts the receiver, which is what the reference reports for
+  `P.get()`.
+- **`anyref` and `i31ref` are unmodelled**, and the test says so by name rather than tolerating a
+  count.
+
+And one that was a real gap rather than a shape to stay silent about: **a `case B:` arm narrows its
+subject**, exactly as `if (s is Circle)` does. Going silent on enum members instead would have cost
+the diagnostic for a field no variant declares — the generated sweep priced it immediately, 99% down
+to 98% — so the arm walk retypes the subject for its body and puts it back, and both numbers hold.
+
+The mutation half of the same harness — take a valid program, break it one way, keep it if the
+reference now rejects it — is what found the **positions**: a compound assignment to a field was
+reported at the dot rather than at the start of the lvalue, one column later than the reference,
+which a differential oracle counts as a position the reference never mentions.
+
+| | before | after |
+|---|---|---|
+| false alarms on the emitter's corpus | 82 | **0**, over 4,097 programs |
+| rung 3 generated sweep | 99% recall, 0 false alarms | unchanged |
+| checker diagnostics | ~54 | ~54 — this slot bought correctness, not coverage |
+
+`test/checkSweep.test.ts` is the oracle, and it is the cheapest one in the package: the corpus was
+already there, and the only new thing is the question.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this

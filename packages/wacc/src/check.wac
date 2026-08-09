@@ -40,8 +40,8 @@ import {
   kAs, kAsBang, kAsTilde, kAsAt, kShrU, kShl, kShr, kTilde,
 } from "./kinds.wac";
 import {
-  Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt, StmtKind,
-  Ty, TyKind,
+  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
+  StmtKind, Ty, TyKind,
 } from "./ast.wac";
 
 /** A returned value whose type cannot be the declared one. */
@@ -1094,6 +1094,12 @@ export string typeOfTy(C c, Ty t) {
       // an earlier version returned unknown for all of them, which made every generic invisible.
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
       string base = tokenText(c, tok);
+      // **`anyref` and `i31ref` are spelled as identifiers and declared by nobody**, so they arrive
+      // here looking like a type to resolve. This checker models neither the top of the reference
+      // hierarchy nor an integer inside a reference — what may be assigned to what, or which casts
+      // between them are checked — so naming them is the only thing it could do wrongly. Unknown
+      // is the answer that asks no further questions.
+      if (base == "anyref" || base == "i31ref") { return typeNone(); }
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {
@@ -1301,6 +1307,33 @@ export bool acceptsLiteral(string want, i32 lit) {
  * name, a field of one, an element of one, or an unwrapped nullable. `LUnwrap` is `x!`, which is the
  * `T` inside a `T?` — the one place a type gets *narrower* going down the tree.
  */
+/**
+ * Where an lvalue *starts* — `p.x` begins at `p`, not at the dot.
+ *
+ * The node's own position is the dot, which is right: rung 2 compares this parser's tree against the
+ * reference's node for node, positions included, and they agree. What differs is where a *diagnostic*
+ * about the whole assignment goes, and the reference puts it at the beginning of the thing assigned
+ * to. Walking down to the leftmost node is the difference between agreeing with it and reporting one
+ * column later — which a differential oracle counts as a position the reference never mentions.
+ */
+i32 lvalueStartLine(Lvalue lv) {
+  match (lv.kind) {
+    case LField(base, nameTok): { return lvalueStartLine(base); }
+    case LIndex(base, index): { return lvalueStartLine(base); }
+    case LUnwrap(base): { return lvalueStartLine(base); }
+    else: { return lv.line; }
+  }
+}
+
+i32 lvalueStartCol(Lvalue lv) {
+  match (lv.kind) {
+    case LField(base, nameTok): { return lvalueStartCol(base); }
+    case LIndex(base, index): { return lvalueStartCol(base); }
+    case LUnwrap(base): { return lvalueStartCol(base); }
+    else: { return lv.col; }
+  }
+}
+
 export string typeOfLvalue(C c, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { return c.typeOfName(tokenText(c, tok)); }
@@ -1352,6 +1385,12 @@ export string typeOfExpr(C c, Expr e) {
         case Member(obj, nameTok): {
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
+          // **A static on a template does not say which instance it builds.** `Box.of(5)` returns
+          // `Box<T>` as written, and `T` is bound by the *slot* the call fills rather than by
+          // anything here — so answering with the declaration's own text claims `Box<i32> b =
+          // Box.of(5)` is a mismatch. The instantiation is what this checker does not model, and the
+          // honest answer to a question it cannot answer is no answer.
+          if (c.isGeneric(recvT)) { return typeNone(); }
           i32 mi = c.methodAt(recvT, tokenText(c, nameTok));
           if (mi < 0) { return typeNone(); }
           return substituteType(c, recvT, c.methodReturns[mi]);
@@ -1990,6 +2029,8 @@ void checkCallee(C c, string name, Expr[] args, NamedArg[] named, Expr call) {
     if (named.len() > 0) { c.report(errNotCallable(), call.line, call.col); return; }
     i32 arity = funcrefArity(t);
     if (arity < 0) { c.report(errNotCallable(), call.line, call.col); return; }
+    // A **type parameter's** funcref says how many arguments it takes and nothing about what they
+    // are, and inside a generic function even that is a substitution this checker does not perform.
     if (arity != args.len()) { c.report(errCallArity(), call.line, call.col); }
     return;
   }
@@ -2650,6 +2691,14 @@ void checkMember(C c, Expr at, Expr obj, string name) {
   }
   // An enum's value is one of its variants and the checker does not know which, so a payload field is
   // not reachable through the enum type — only through a variant, which `is` narrowing produces.
+  // **Only when no variant has it.** A `case B:` arm makes `B`'s payload reachable through the
+  // subject's own name — `case B: return e.x;` is accepted by the reference — and this checker does
+  // not model that narrowing. Reporting every field on an enum therefore refused correct programs,
+  // which is the one direction a subset checker may not be wrong in. A name no variant declares is
+  // still wrong whichever arm you are in, and that is what is left.
+  // A payload is reachable through the enum's own name **inside an arm that narrowed it**, which is
+  // where `case B: return e.x;` gets its meaning — and the arm walk below retypes the subject for
+  // exactly that reason. Outside one the enum has no such field, which the reference says too.
   if (c.isEnum(t)) { c.report(errNoSuchField(), at.line, at.col); return; }
   // A primitive has no fields at all. Its *statics* are reached through a type name rather than a
   // value, so this cannot be one of those — `f64.toBits` has an `Ident` for an object, not a value.
@@ -2753,6 +2802,21 @@ void checkMethodCall(C c, Expr call, Expr obj, string name, Expr[] args) {
   // A static call must name a static method, and an instance call must not. The reference words the
   // first as "has no static method", which is why a mismatch here is the same diagnostic as a
   // missing one rather than a fourth.
+  // **`(C.inc)(c)` is the inline form of a method reference**, which `spec/tour.wac` documents two
+  // lines above the code that needed it: an instance method named through its type is a value whose
+  // first parameter is the receiver, and calling it there and then is the same call. It reads as a
+  // static call and is not one, so the mismatch below has to let this shape through rather than
+  // report the method missing.
+  // The arity is still checked, and **counts the receiver**: `P.get()` passes none where the
+  // unbound method takes one, which the reference reports as "expected 1 argument(s), got 0" rather
+  // than as a missing static. That is the same arithmetic the emitter does when it puts the object
+  // in front of the arguments.
+  if (isStatic && !c.methodStatics[at]) {
+    if (args.len() != c.methodParamCount[at] + 1) {
+      c.report(errCallArity(), call.line, call.col);
+    }
+    return;
+  }
   if (isStatic != c.methodStatics[at]) {
     c.report(isStatic ? errNoStaticMethod() : errNoMethod(), call.line, call.col);
     return;
@@ -3011,6 +3075,13 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
         case Ident(tok): {
           string t = typeOfTy(c, target!);
           if (t == typeNone()) { return n; }
+          // **`p is P` on a `P?` asks whether it is *there*, not what it is.** Recording it as a
+          // retyping to `P` makes the checker believe the name is no longer nullable, and the very
+          // next thing such code does is `p!.v` — which it then refuses, because there is nothing
+          // left to unwrap. The knowledge changes; the type does not. A target that is a genuinely
+          // different type still narrows, which is the case this exists for.
+          string cur = c.typeOfName(tokenText(c, tok));
+          if (withoutNull(cur) == t) { return n; }
           outNames[n] = tokenText(c, tok);
           outTypes[n] = t;
           return n + 1;
@@ -3078,18 +3149,20 @@ void checkStmt(C c, Stmt s, Ty want) {
         // done to: a number, or a `string`, which concatenates. An array, a struct, an enum and a
         // funcref all *agree with themselves*, so the type comparison below has nothing to say about
         // `a += b` on two of them — the same shape as `a & b` on two floats, one operator family on.
+        i32 tline = lvalueStartLine(target);
+        i32 tcol = lvalueStartCol(target);
         if (!isValueType(ct) && ct != "string") {
-          c.report(errOperandMismatch(), target.line, target.col);
+          c.report(errOperandMismatch(), tline, tcol);
           return;
         }
         i32 clit = litKindOf(rhs);
         if (clit != litNone()) {
-          reportLiteral(c, ct, rhs, errOperandMismatch(), target.line, target.col);
+          reportLiteral(c, ct, rhs, errOperandMismatch(), tline, tcol);
           return;
         }
         string cgot = typeOfExpr(c, rhs);
         if (cgot != typeNone() && cgot != ct) {
-          c.report(errOperandMismatch(), target.line, target.col);
+          c.report(errOperandMismatch(), tline, tcol);
         }
         return;
       }
@@ -3256,9 +3329,48 @@ void checkStmt(C c, Stmt s, Ty want) {
     }
     case Match(subject, arms): {
       c.loopDepth = c.loopDepth + 1;
-      for (i32 i = 0; i < arms.len(); i++) { checkAll(c, arms[i].body, want); }
+      for (i32 i = 0; i < arms.len(); i++) {
+        // **An arm narrows the subject**, exactly as `if (s is Circle)` does — `case Circle:` is the
+        // same question asked by the other syntax, and `s.radius` inside it means the payload. The
+        // subject has to be a plain name for this: narrowing `f().x` would mean claiming the second
+        // call returns what the first did.
+        string saved = armNarrowing(c, subject, arms[i]);
+        checkAll(c, arms[i].body, want);
+        restoreNarrowing(c, subject, saved);
+      }
       c.loopDepth = c.loopDepth - 1;
     }
+    else: { }
+  }
+}
+
+/**
+ * Retype a match subject to the arm's variant for the arm's body, answering what to put back.
+ *
+ * The saved type is returned through the checker's own table rather than by value, because a name
+ * that was not narrowed must be left exactly as it was — and "not narrowed" happens for every arm
+ * whose subject is an expression rather than a name, and for `else`.
+ */
+string armNarrowing(C c, Expr subject, Arm arm) {
+  if (arm.variantTok < 0) { return ""; }
+  match (subject.kind) {
+    case Ident(tok): {
+      string nm = tokenText(c, tok);
+      string was = c.typeOfName(nm);
+      if (was == typeNone()) { return ""; }
+      string variant = tokenText(c, arm.variantTok);
+      if (!c.isStruct(variant)) { return ""; }
+      c.setType(nm, variant);
+      return was;
+    }
+    else: { return ""; }
+  }
+}
+
+void restoreNarrowing(C c, Expr subject, string was) {
+  if (was == "") { return; }
+  match (subject.kind) {
+    case Ident(tok): { c.setType(tokenText(c, tok), was); }
     else: { }
   }
 }
@@ -3537,6 +3649,13 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
+        // **A generic function's body is not checked**, for the same reason a generic struct's
+        // fields are not recorded: every type in it is written in terms of parameters this checker
+        // does not substitute, so every question it asks about one has an answer it cannot compute.
+        // What it did instead was answer anyway — `Opt.Some(f(v))` inside `mapOpt<T, U>` came out as
+        // a call with the wrong argument count — and a confident wrong answer is the one thing this
+        // checker may never give. The instances are ordinary functions and are checked as such.
+        if (typeParams.len() > 0) { continue; }
         // Declarations first, in a pass of their own over the whole body, so a `return` that reads a
         // name declared later still resolves it. A checker that declared as it walked would treat a
         // forward reference as unknown for no reason — the reference has the whole function in hand
