@@ -455,7 +455,7 @@ as well as of the shell.
   claim is that it was measured — and adding them on reasoning alone would make the package's own
   argument untrue. Deciding what plays the oracle's part is the blocker, not the code.
 
-- **The native core has no oracle.** D7 makes differential testing the oracle, and the oracles are bash
+- **The native core has no oracle** — and there is a ledger of how much of it is checked now. `packages/platform/test/conformance.test.ts` derives the two-host surface (38 opcodes; 10 are page-only) and, for each, names the test that compares the two hosts or states what makes a comparison hard. It prints the number on every run: **19 of 38 compared, 19 named gaps**. Three of the first entries were written from memory and were wrong — `OUTPUT_ERROR` and `READ_STDIN` had no comparison at all, and every two-host runner passes `stdin: "null"`, so a program reading its input is the one thing none of them exercises. That does not answer the question below; it makes the answer's cost visible, and a new capability now has to say how it is compared or say that it is not. The question itself: D7 makes differential testing the oracle, and the oracles are bash
   and GNU coreutils — which judge the *personality* only. Under D8 the native core is the first large
   subsystem here with nothing independent to check it against, in a repo whose rigour is mostly
   differential. What plays that role — a reference implementation of the same semantics, property tests
