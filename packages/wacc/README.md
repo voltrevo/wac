@@ -1183,6 +1183,27 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### `fill`, and the slot on the left of an assignment — 310 to 316
+
+Two more of the tail, and both are the same shape as the last three: a slot the walk had, and was not
+using.
+
+`own = null;` where `own` is a `string[]?` is a `null` with its type written on the line above, and
+the assignment arm was asking about the right-hand side with nothing in hand. Seven files. The
+declaration arm had been given the slot slots ago; the assignment arm never was, which is what
+happens when a rule is applied where it was noticed rather than everywhere it holds.
+
+`fill(value, start, count)` is `array.fill` — one instruction, whose operands the language writes in
+a different order from wasm, as `copyFrom` already did. Three files, and its sweep cells fill the
+*middle* of an array rather than the whole of it, because a fill that ignored its bounds would pass
+every cell that filled everything.
+
+| | before | after |
+|---|---|---|
+| whole files | 310 | **316 of 337** |
+| invalid | 0 | 0 |
+| the rest | 21 files, nine reasons | five type tests, four concatenations, four shared names, three unsupplied imports, and five singles |
+
 ### `core` is a file that is not a file — 283 to 310
 
 The largest category left was `an import from a capability`, 35 files, and this README said it

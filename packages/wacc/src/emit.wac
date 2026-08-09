@@ -3142,6 +3142,18 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // `dst.copyFrom(src, srcStart, dstStart, count)` is `array.copy`, whose operands go in a
           // different order than the language writes them: wasm wants destination, destination
           // offset, source, source offset, length. The arguments are therefore emitted 2, 0, 1, 3.
+          // `array.fill` takes the array, the offset, the value and the count — the order the
+          // language writes them in with the first two swapped.
+          if (isArrayType(ot) && mname == "fill" && args.len() == 3) {
+            emitExpr(fb, src, lexed, env, obj);
+            emitExprAt(fb, src, lexed, env, args[1], "i32");
+            emitExprAt(fb, src, lexed, env, args[0], elemOf(ot));
+            emitExprAt(fb, src, lexed, env, args[2], "i32");
+            fb.byte(251);
+            fb.u32leb(16);   // array.fill
+            fb.u32leb(env.arrayType(ot));
+            return;
+          }
           if (isArrayType(ot) && mname == "copyFrom" && args.len() == 4) {
             string srcT = typeOfE(src, lexed, env, args[0]);
             if (!isArrayType(srcT)) { return; }
@@ -3362,6 +3374,7 @@ string typeOfE(u8[] src, Lexed lexed, Env env, Expr e) {
           if (ot == "string" && mn == "slice") { return "string"; }
           if (ot == "string" && mn == "indexOf") { return "i32"; }
           if (isArrayType(ot) && mn == "copyFrom") { return "void"; }
+          if (isArrayType(ot) && mn == "fill") { return "void"; }
           if ((isArrayType(ot) || ot == "string") && mn == "len") { return "i32"; }
           string fft = env.isStructName(ot) ? env.fieldType(ot, mn) : "";
           if (isFuncrefType(fft)) { return sigReturn(fft); }
@@ -3995,7 +4008,10 @@ string unsupportedStmt(u8[] src, Lexed lexed, Env env, Stmt s) {
           (isArrayType(tt2) || env.isStructName(tt2))) {
         return "a compound assignment to a reference";
       }
-      return unsupportedValue(src, lexed, env, rhs);
+      // **The target is the slot.** `own = null;` where `own` is a `string[]?` is a null with its
+      // type written on the line above, and this arm asked about the right-hand side with nothing
+      // in hand — the same omission the array `fill` and the variant payload had.
+      return unsupportedValueAt(src, lexed, env, rhs, tt2);
     }
     case IncrStmt(target, op): { return unsupportedLvalue(src, lexed, env, target); }
     case Return(value): {
@@ -4432,6 +4448,13 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           if (ot == "string" && mn == "indexOf" && args.len() == 1) {
             return unsupportedValueAt(src, lexed, env, args[0], "string");
+          }
+          if (isArrayType(ot) && mn == "fill" && args.len() == 3) {
+            string fv = unsupportedValueAt(src, lexed, env, args[0], elemOf(ot));
+            if (fv != "") { return fv; }
+            string fs2 = unsupportedValueAt(src, lexed, env, args[1], "i32");
+            if (fs2 != "") { return fs2; }
+            return unsupportedValueAt(src, lexed, env, args[2], "i32");
           }
           if (isArrayType(ot) && mn == "copyFrom" && args.len() == 4) {
             // The source has to be an array this emitter can name, and the two element types have to

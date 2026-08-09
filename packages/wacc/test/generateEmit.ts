@@ -627,5 +627,36 @@ export function generateEmit(): Cell[] {
   add("template static in a nested array",
     BOX2 + `export i32 f() { Box<string>[] bs = Box<string>[2](fill: Box.of("ab")); ` +
     `return bs[1].get().len(); }`);
+
+  // `fill(value, start, count)`, which is one instruction whose operands the language writes in a
+  // different order — and the ranges are the point, since a fill that ignores its bounds passes any
+  // cell that fills the whole array.
+  for (const t of NUMS) {
+    const v = VALUES[t][1];
+    const w = VALUES[t][3] ?? VALUES[t][1];
+    add(`fill ${t} whole`,
+      `export ${t} f() { ${t}[] a = ${t}[3](fill: ${w}); a.fill(${v}, 0, 3); ` +
+      `return a[0] + a[1] + a[2]; }`);
+    add(`fill ${t} middle`,
+      `export ${t} f() { ${t}[] a = ${t}[4](fill: ${w}); a.fill(${v}, 1, 2); ` +
+      `return a[0] + a[1] + a[2] + a[3]; }`);
+    add(`fill ${t} none`,
+      `export ${t} f() { ${t}[] a = ${t}[3](fill: ${w}); a.fill(${v}, 1, 0); ` +
+      `return a[0] + a[1] + a[2]; }`);
+    add(`fill ${t} computed`,
+      `export ${t} f() { ${t}[] a = ${t}[4](fill: ${w}); i32 n = 2; a.fill(${v}, 2, n); ` +
+      `return a[2] + a[3] + a[0]; }`);
+  }
+  // Assigning `null` — where the slot is the assignment's target rather than a declaration.
+  add("null assigned to a local",
+    `struct P { i32 x; }\nexport bool f() { P? p = P(1); p = null; return p is null; }`);
+  add("null assigned to an array local",
+    `export bool f() { i32[]? a = i32[](1, 2); a = null; return a is null; }`);
+  add("null assigned to a field",
+    `struct N { i32 v; N? next; }\n` +
+    `export bool f() { N n = N(1, N(2, null)); n.next = null; return n.next is null; }`);
+  add("null assigned to an element",
+    `struct P { i32 x; }\nexport bool f() { P?[] ps = P?[2](); ps[0] = P(1); ps[0] = null; ` +
+    `return ps[0] is null; }`);
   return out;
 }
