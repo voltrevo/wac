@@ -618,73 +618,137 @@ Deno.test({
         { read: true, write: true },
         "browser",
       );
-      await page.goto(`http://127.0.0.1:${port}/desk.html`, { waitUntil: "load" });
-      await page.waitForSelector("#cmd", { timeout: 30_000 });
+      // **Its own context, which is its own origin storage and its own workers.** Everything above
+      // has run in one page, and a desktop is the first thing here that opens *more* of the system
+      // rather than replacing it — a second shell, a second set of children. Sharing a context with a
+      // dozen finished pages made a redirection in the first terminal hang after the second opened,
+      // reproducible in the suite and never once when the page was driven on its own or after a
+      // single prior page.
+      //
+      // Rather than chase that, this is what a tab actually is. A page that must work in a fresh tab
+      // is tested in a fresh tab, and what remains is the desktop rather than the residue.
+      const deskCtx = await browser.newContext();
+      const page2 = await deskCtx.newPage();
+      page2.on("pageerror", (e: Error) => failures.push(`desktop: ${e.message}`));
+      await page2.goto(`http://127.0.0.1:${port}/desk.html`, { waitUntil: "load" });
+      await page2.waitForSelector("#cmd0", { timeout: 30_000 });
       // The desktop opens on a session that has already made something, so the files window has
       // something to show — wait for it rather than for a timer.
-      await page.waitForFunction(
-        `document.getElementById('files').textContent.includes('home')`,
+      await page2.waitForFunction(
+        `document.getElementById('files1').textContent.includes('home')`,
         null,
         { timeout: 60_000 },
       );
 
-      const desk = async (line: string): Promise<void> => {
-        const before = (await page.textContent("#scr")) ?? "";
-        await page.fill("#cmd", line);
-        await page.press("#cmd", "Enter");
-        await page.waitForFunction(
-          `document.getElementById('scr').textContent !== ${JSON.stringify(before)}`,
-          null,
-          { timeout: 30_000 },
-        );
+      // Windows carry their own ids now, so a command names the terminal it is typed into — and the
+      // wait is for **what the command should produce**, not for the scrollback to differ from what
+      // it was. "Something changed" is a proxy: it passes when the wrong thing changes and it fails
+      // when the right thing was already there, which is what made the first version of this flake
+      // against a page whose OPFS the earlier terminal case had already written to.
+      const desk = async (win: number, line: string, expect: string): Promise<void> => {
+        await page2.fill(`#cmd${win}`, line);
+        await page2.press(`#cmd${win}`, "Enter");
+        try {
+          await page2.waitForFunction(
+            `document.getElementById('scr${win}').textContent.includes(${JSON.stringify(expect)})`,
+            null,
+            { timeout: 30_000 },
+          );
+        } catch (e) {
+          const scr = (await page2.textContent(`#scr${win}`)) ?? "(no #scr)";
+          const field = await page2.inputValue(`#cmd${win}`).catch(() => "(no field)");
+          throw new Error(
+            `${line} in window ${win} never produced ${JSON.stringify(expect)}\n` +
+              `  scrollback tail: ${JSON.stringify(scr.slice(-200))}\n` +
+              `  field: ${JSON.stringify(field)}\n  errors: ${failures.join(" | ")}\n  ${e}`,
+          );
+        }
       };
 
       // Two windows exist, and the shell is one of them.
-      assertEquals((await page.locator(".win").count()), 2, "the desktop did not open two windows");
-      assertEquals((await page.textContent("#ps1")) ?? "", "/ $", "the prompt is the shell's own");
+      assertEquals((await page2.locator(".win").count()), 2, "the desktop did not open two windows");
+      assertEquals((await page2.textContent("#ps0")) ?? "", "/ $", "the prompt is the shell's own");
 
       // **One system, two windows.** `cd` in the terminal moves the files window, because there is
       // one filesystem and the files pane reads it directly.
-      await desk("cd /home/wac");
-      await page.waitForFunction(
-        `document.getElementById('files').textContent.includes('five')`,
+      await desk(0, "cd /home/wac", "$ cd /home/wac");
+      await page2.waitForFunction(
+        `document.getElementById('files1').textContent.includes('five')`,
         null,
         { timeout: 30_000 },
       );
-      const shown = (await page.textContent("#files")) ?? "";
+      const shown = (await page2.textContent("#files1")) ?? "";
       assertEquals(shown.includes("/home/wac"), true, `the files window did not follow cd: ${shown}`);
 
       // …and a file made in the terminal appears in the other window without anything being told.
-      await desk("echo hi > note");
-      await page.waitForFunction(
-        `document.getElementById('files').textContent.includes('note')`,
+      await desk(0, "echo hi > note", "$ echo hi > note");
+      await page2.waitForFunction(
+        `document.getElementById('files1').textContent.includes('note')`,
         null,
         { timeout: 30_000 },
       );
 
       // The terminal in a window is the whole terminal: a pipeline of *spawned* applets over the
       // session's own filesystem, which is what makes this the same system rather than a text box.
-      await desk("seq 1 20 | grep 7 | wc -l");
-      assertEquals(((await page.textContent("#scr")) ?? "").includes("\n2\n"), true, "the pipeline did not run");
+      await desk(0, "seq 1 20 | grep 7 | wc -l", "\n2\n");
+      assertEquals(
+        ((await page2.textContent("#scr0")) ?? "").includes("\n2\n"),
+        true,
+        "the pipeline did not run",
+      );
+
+      // **The launcher opens a second terminal, and it is on the same system.** Two shells each
+      // building their own filesystem would be two machines that look alike — so a file written in
+      // one has to be readable in the other, and that is the assertion. `startOn` is what makes it
+      // true; without it this reads `cat: shared: No such file or directory`.
+      await page2.click("#newterm");
+      await page2.waitForSelector("#cmd2", { timeout: 30_000 });
+      assertEquals((await page2.locator(".win").count()), 3, "the launcher did not open a window");
+
+      await desk(0, "echo from-the-first > /shared", "$ echo from-the-first > /shared");
+      await desk(2, "cat /shared", "from-the-first");
+      assertEquals(
+        ((await page2.textContent("#scr2")) ?? "").includes("from-the-first"),
+        true,
+        `the second terminal is on a different filesystem: ${await page2.textContent("#scr2")}`,
+      );
+      // …and it is a *different shell*: `ps` in it shows both, and its own scrollback has none of
+      // the first's history.
+      assertEquals(
+        ((await page2.textContent("#scr2")) ?? "").includes("seq 1 20"),
+        false,
+        "the second terminal shares the first's scrollback",
+      );
 
       // **Raising, and the line survives it.** `render` replaces the markup, so a manager that did
       // not carry the half-typed command across would eat it — which is the one thing a window
       // manager must not do to a terminal.
-      await page.fill("#cmd", "half typed");
-      await page.click("#bar1");
-      await page.waitForFunction(
-        `document.querySelectorAll('.win')[1].querySelector('.bar').id === 'bar1'`,
+      await page2.fill("#cmd0", "half typed");
+      await page2.click("#bar1");
+      // **Wait for the property being asserted, not for the re-render.** A redraw rebuilds the
+      // markup and *then* restores the fields, so a wait on the stacking order is satisfied in the
+      // gap between the two — and reading the field there gives the empty string that the restore is
+      // about to fill in. That is a race in the test rather than in the desktop, and waiting for the
+      // value both removes it and states the claim.
+      await page2.waitForFunction(
+        `document.querySelectorAll('.win')[2].querySelector('.bar').id === 'bar1' &&` +
+          ` document.getElementById('cmd0').value === 'half typed'`,
         null,
         { timeout: 30_000 },
       );
-      assertEquals(await page.inputValue("#cmd"), "half typed", "raising a window ate the typed line");
 
-      // Closing takes a window away and leaves the other working.
-      await page.click("#cls1");
-      await page.waitForFunction(`document.querySelectorAll('.win').length === 1`, null, { timeout: 30_000 });
-      await page.fill("#cmd", "");
-      await desk("echo still here");
-      assertEquals(((await page.textContent("#scr")) ?? "").includes("still here"), true, "the shell stopped working");
+      // Closing takes a window away and leaves the others working.
+      await page2.click("#cls1");
+      await page2.waitForFunction(`document.querySelectorAll('.win').length === 2`, null, { timeout: 30_000 });
+      await page2.fill("#cmd0", "");
+      await desk(0, "echo still here", "still here");
+      assertEquals(
+        ((await page2.textContent("#scr0")) ?? "").includes("still here"),
+        true,
+        "the shell stopped working",
+      );
+
+      await deskCtx.close();
 
       assertEquals(failures.join("\n"), "", "the page raised errors");
     } finally {

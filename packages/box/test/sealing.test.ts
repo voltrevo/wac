@@ -264,6 +264,41 @@ Deno.test("what a stage writes is what the session wrote", () => {
   assertEquals(changed.err.includes("No such file"), true, `rm from a stage did not take: ${changed.err}`);
 });
 
+Deno.test("a spawned stage *writes* through the channel, which nothing checked", () => {
+  // **Found by mutation, by hand.** Breaking `decodeChange` in `packages/fs/src/remote.wac` — so that
+  // every `Change` a child decodes becomes a failure — left every test in this file passing. Breaking
+  // `remoteReadFile` the same way failed them immediately.
+  //
+  // The reason is that the writes above are the *shell's*: `>` is a redirection through `sh.fs`, and
+  // `mkdir`, `rm`, `chmod` and `chown` are builtins. So the stages read and the shell writes, and the
+  // whole `Change` half of the protocol — `writeFile`, `mkdir`, `remove`, `chmod`, `chown`, `openOut`,
+  // `closeOut` — was exercised in the gate by nothing at all. `deno task corpus:backings` covers it
+  // and is not the gate.
+  //
+  // `cp`, `tee` and `touch` are applets rather than builtins, so each is a real child asking this
+  // session to change something.
+  // **The statuses, not just the listing**, and that distinction is the second thing the mutation
+  // taught. With `decodeChange` broken the files are still *written* — the parent does the work and
+  // only the decoded answer is wrong — so `ls` and `cat` are unchanged and a test that checked them
+  // passed a mutant that made every write report failure. What moves is the status.
+  const wrote = run(sealed, [], "echo one > /a; cp /a /b; echo cp=$?; cat /b; touch /c; echo t=$?; ls /");
+  assertEquals(wrote.out, "cp=0\none\nt=0\na\nb\nbin\nc\ndev\nproc\ntmp\n", wrote.out + wrote.err);
+
+  // …and a refusal carries its **own reason** across the channel rather than a generic one. Through
+  // a write that genuinely fails: `/bin` is synthesised and read-only, and a mutant answering
+  // `FAULT_OTHER` for every `Change` says something else here.
+  //
+  // Not `cp /nosuch /d`, which was the first attempt and proves nothing: `cp` reads before it writes,
+  // so it fails in `decodeFileResult` and never reaches the half under test.
+  const refused = run(sealed, [], "touch /bin/x; echo st=$?");
+  assertEquals(refused.out, "st=1\n", refused.out + refused.err);
+  assertEquals(
+    refused.err.includes("Read-only file system"),
+    true,
+    `the reason did not survive the channel: ${JSON.stringify(refused.err)}`,
+  );
+});
+
 Deno.test("a background job in a sealed session reads the session's files", () => {
   // Not only when it is waited for. A job blocked on a question nobody has answered is a job that is
   // not running, so the shell answers at its own check points — `jobs` here is a check point, and the

@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    10 sources, 169,692 bytes, identical`;
+B == C    10 sources, 173,946 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -251,13 +251,18 @@ export default function Home() {
         <P>
           Every rung was checked against the TypeScript compiler before the next was started — token
           streams, syntax trees, then diagnostics at exact positions. The type checker was finished
-          against three independent corpora rather than one, the last being a generated sweep of{" "}
-          <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>.
+          against four independent corpora rather than one: a generated sweep of{" "}
+          <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
+          the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
+          341 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          alarm among them. Broken on purpose, it catches <Lead>246 of 250</Lead>.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>338 of the repository&rsquo;s 341 wac files</Lead> whole, and
-          the three left are a limit of the harness rather than of the language — a file whose
-          import was not supplied to it. None of the 341 produces an invalid module, which is the
+          The emitter compiles <Lead>334 of the repository&rsquo;s 341 wac files</Lead> whole. That
+          number went down this week, which is what a corpus that is the live repository does: the
+          new code arrived using a member this emitter cannot type yet, so four files that nothing
+          had written before now block on it, and three more on an import the harness does not
+          supply. None of the 341 produces an invalid module, which is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler

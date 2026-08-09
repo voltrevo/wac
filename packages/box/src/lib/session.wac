@@ -20,7 +20,7 @@ import { Cli, Core } from "../../../platform/src/platform.wac";
 import { Shell, runScript } from "../../../sh/src/exec.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { Vec } from "../../../std/src/vec.wac";
-import { mountSystem } from "../../../fs/src/fs.wac";
+import { Fs, mountSystem } from "../../../fs/src/fs.wac";
 import { boxNames, boxRun } from "../shrun.wac";
 
 /** How many commands the ring remembers. */
@@ -51,11 +51,31 @@ export struct Session {
    */
   Session start(Core core, Cli cli, string name) {
     Shell sh = Shell.create(core, cli);
-    // Captured, because "written" in a page means the host's log rather than anything a reader sees.
-    sh.capture = true;
     Vec<string> argv = Vec.create();
     argv.push(name);
     mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
+    return Session.startOn(core, cli, sh.fs, name);
+  }
+
+  /**
+   * A second session over a filesystem that already exists — **one system, two shells.**
+   *
+   * What `example/desk.wac`'s launcher opens. Two terminals each building their own `Fs` would be two
+   * machines that happen to look alike: `echo hi > /x` in one and `cat /x` in the other would fail,
+   * and a desktop where the windows do not share a disk is a set of pictures rather than a system.
+   *
+   * Everything else a session is — the applets, spawning, capture — belongs to the *shell* and is set
+   * up per session. Only the filesystem is shared, which is exactly the line design/0001 draws: a
+   * system is a filesystem, a process table and a set of programs, and two sessions on one machine
+   * differ in none of them.
+   */
+  Session startOn(Core core, Cli cli, Fs fs, string name) {
+    Shell sh = Shell.onFs(core, cli, fs);
+    // Captured, because "written" in a page means the host's log rather than anything a reader sees.
+    sh.capture = true;
+    sh.cwd = "/";
+    // Its own row in the shared process table, so `ps` in either window shows both shells.
+    sh.enterSelf(name);
     sh.external = boxRun;
     sh.externalNames = boxNames;
     // Spawned rather than called, which is what makes an applet a real program here — see
