@@ -26,7 +26,13 @@ export i32 find(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
   string root = a.rest.len() < 1 ? "." : a.rest[0];
   Stat st = fs.stat(root);
-  if (!st.exists) { core.warn(a.name + ": " + root + ": not found"); return 1; }
+  // GNU quotes the path and gives no frame: `find: 'nosuch': No such file or directory`. Same story
+  // as `du` next door — an invented phrase for every absence, so a path with no read grant and a path
+  // that is genuinely missing were one answer.
+  if (!st.exists) {
+    core.warn(a.name + ": '" + root + "': " + st.words("No such file or directory"));
+    return 1;
+  }
   core.log(root);
   return walk(core, cli, fs, a.name, root, 0) ? 0 : 1;
 }
