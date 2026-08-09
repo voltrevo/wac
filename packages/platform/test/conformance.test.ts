@@ -96,7 +96,10 @@ const COVERAGE: Record<string, Cover> = {
   RENAME: { where: "native_hostfs: `mv f moved`" },
   OPEN_INPUT: { where: "native_hostfs: `cat < f`, refused with no grant" },
   OPEN_OUTPUT: { where: "native_hostfs: `echo new > made`" },
-  READ_CHUNK: { where: "native_hostfs: `cat sub/deep > out` streams" },
+  READ_CHUNK: {
+    where: "native_hostfs: `cat sub/deep > out` streams, and 300 KB through stdin — past one chunk, " +
+      "which is the only case that makes `readChunk` loop",
+  },
   OUTPUT_ERROR: {
     gap: "nothing compares it. It carries the reason a `write` that answered false failed, so a host " +
       "that dropped the reason would show as an empty message rather than a wrong one",
@@ -113,8 +116,8 @@ const COVERAGE: Record<string, Cover> = {
   ARG_COUNT: { where: "native_shell: `sealedsh -c` passes its script as an argument" },
   ARG: { where: "native_shell: same" },
   READ_STDIN: {
-    gap: "every two-host runner passes `stdin: \"null\"`, so the one thing none of them exercises is " +
-      "a program reading its input. `sealing.test.ts` pipes into a session, on one host only",
+    where: "native_hostfs: ten scripts with real piped input — this gap is what found the bug that " +
+      "every filter under a spawning shell read nothing on the native host",
   },
 
   // ── Named gaps. Each says what makes it hard, because that is the next person's starting point ──
@@ -209,7 +212,7 @@ Deno.test("the ledger says how much of the surface is actually compared", async 
   // that takes it *down* — a comparison deleted, an opcode added with a gap entry and forgotten —
   // has to be deliberate.
   assertEquals(
-    covered.length >= 19,
+    covered.length >= 20,
     true,
     `only ${covered.length} opcodes are compared across hosts; this was 19 when the ledger was written`,
   );

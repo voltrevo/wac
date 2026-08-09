@@ -269,6 +269,70 @@ Deno.test("the four grants are independent: write without read, on both hosts", 
   }
 });
 
+Deno.test("a program reading its standard input answers the same on both hosts", async () => {
+  // **Nothing compared this, and it was broken.** `conformance.test.ts` named it: every two-host
+  // runner in this repository passes `stdin: "null"`, so the one thing none of them exercised was a
+  // program reading its input. Under the native runtime every filter run by a shell that *spawns* —
+  // `cat`, `wc`, `head`, `sort`, `grep` — produced nothing at all, while working in a sealed shell
+  // that calls its applets in process, and while working when run directly.
+  //
+  // The cause was a queue shadowing the real thing: a child spawned with `inheritInput` has its
+  // parent-fed queue finished at once, and `readChunk` read *that*, saw empty, and answered end of
+  // input before reaching the process's own stdin. The comment beside the `finish` said the child
+  // reads the process's input; the read path never let it.
+  const native = await nativeBinary();
+  if (native === null) return;
+
+  const enc = new TextEncoder();
+  async function withInput(cmd: string, args: string[], script: string, input: Uint8Array) {
+    const p = new Deno.Command("timeout", {
+      args: ["25", cmd, ...args, "-c", script],
+      cwd: tmp,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+      env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+      clearEnv: true,
+    }).spawn();
+    const w = p.stdin.getWriter();
+    await w.write(input);
+    await w.close();
+    const r = await p.output();
+    const d = new TextDecoder();
+    return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
+  }
+
+  const cases: [string, Uint8Array][] = [
+    ["cat", enc.encode("hello\nworld\n")],
+    ["wc -c", enc.encode("12345")],
+    ["cat; echo [done]", enc.encode("")],
+    ["cat | wc -l", enc.encode("a\nb\nc\n")],
+    ["read x; echo [$x]", enc.encode("typed\nmore\n")],
+    // No trailing newline, which is where a reader that waits for one hangs or truncates.
+    ["cat; echo [end]", enc.encode("partial")],
+    // Bytes rather than text: a name and a line are bytes, and so is standard input.
+    ["wc -c", Uint8Array.from([0xff, 0xfe, 0x00, 0x01])],
+    // Past one chunk, which is the only case that exercises `readChunk` looping at all.
+    ["wc -c", enc.encode("x".repeat(300_000))],
+    // A reader that stops early, so the writer's end is closed under it.
+    ["head -1", enc.encode("one\ntwo\nthree\n")],
+    ["sort", enc.encode("c\na\nb\n")],
+  ];
+
+  for (const [script, input] of cases) {
+    const js = await withInput(deno, [], script, input);
+    const rs = await withInput(native, [manifest], script, input);
+    assertEquals(rs.out, js.out, `\`${script}\`: the hosts read different input`);
+    assertEquals(rs.err, js.err, `\`${script}\`: stderr`);
+    assertEquals(rs.code, js.code, `\`${script}\`: status`);
+  }
+
+  // The canary: the JavaScript host really did read the input, so the comparison above is not two
+  // programs agreeing that they saw nothing — which is exactly the state this test was written in.
+  const sanity = await withInput(deno, [], "wc -c", enc.encode("12345"));
+  assertEquals(sanity.out.trim(), "5", "the reference host read nothing either");
+});
+
 Deno.test("`kill %1` ends a background job on both hosts", async () => {
   // design/0001 step 3's criterion, and the one place a signal in this system does what a kernel's
   // does: a background job is a separate instance, so nothing cooperative can reach it, and `kill`

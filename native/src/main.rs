@@ -233,6 +233,15 @@ struct AsChild {
     stdin: Arc<Stream>,
     stdout: Arc<Stream>,
     stderr: Arc<Stream>,
+    /// Whether this child was told to read the *process's* input rather than what its parent sends.
+    ///
+    /// **Without this the queue below shadowed the real thing.** A child spawned with `inheritInput`
+    /// gets its `stdin` queue `finish`ed at once — nothing will arrive on it and a reader must not
+    /// wait — and `readChunk` then read that finished queue, saw empty, and answered *end of input*
+    /// before it could reach the process's own stdin. So every filter run by a shell that spawns —
+    /// `cat`, `wc`, `head`, `sort`, `grep` — produced nothing under this runtime while working
+    /// everywhere else, and the comment beside the `finish` said the opposite was happening.
+    inherits: bool,
 }
 
 struct Host {
@@ -863,8 +872,10 @@ fn dispatch(
                 let _ = caller.data_mut().input.as_mut().unwrap().read_to_end(&mut all);
                 return settle_now(caller, Kind::Bytes, Outcome::Bytes(all), results);
             }
-            // A spawned child: everything its parent sends, until the feed ends.
-            if let Some(streams) = caller.data().as_child.as_ref() {
+            // A spawned child: everything its parent sends, until the feed ends — unless it was told
+            // to inherit, in which case the queue is empty by construction and the process's own
+            // input is the answer. See `AsChild::inherits`.
+            if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                 let stdin = streams.stdin.clone();
                 let id = caller.data().tickets.submit();
                 let table = caller.data().tickets.clone();
@@ -935,8 +946,9 @@ fn dispatch(
                 };
                 return Ok(());
             }
-            // A spawned child reads what its parent sends.
-            if let Some(streams) = caller.data().as_child.as_ref() {
+            // A spawned child reads what its parent sends — unless it inherits, when the queue is
+            // finished at spawn and the process's own input is what it meant. See `AsChild::inherits`.
+            if let Some(streams) = caller.data().as_child.as_ref().filter(|c| !c.inherits) {
                 let stdin = streams.stdin.clone();
                 let bytes = stdin.read();
                 results[0] = if bytes.is_empty() {
@@ -1924,7 +1936,7 @@ fn spawn_instance(
     let handle = keep(caller, Handle::Main(child.clone()));
     let err_handle = keep(caller, Handle::Err(child));
 
-    let streams = AsChild { stdin, stdout, stderr };
+    let streams = AsChild { stdin, stdout, stderr, inherits: inherit_input };
     std::thread::spawn(move || {
         let code = run_child(world, argv, grants, cwd, streams);
         exit.set(code);
