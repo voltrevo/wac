@@ -1183,6 +1183,45 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### The tail, mostly — 317 of 338 to 326
+
+Three things, and the first two were smaller than their messages made them sound.
+
+**`a < b` on strings** is lexicographic by bytes, which the message called "concatenation needs a
+helper" without saying which operator or which type. Naming the operand — *"an operator on string"* —
+turned it into a five-minute question: four files want ordering, and ordering is one helper returning
+-1, 0 or 1, with the four operators comparing its answer against zero. One definition rather than
+four, and byte order is codepoint order in UTF-8 for free.
+
+**`x is Proc`** is not a subtype test here. `find(pid)` returns a `Proc?`, and asking whether it *is*
+a `Proc` is asking whether it is there — the same question `is null` asks, from the other side. No
+struct in the tree has a parent, so a target that is the value's own type is the only shape that can
+mean anything else; a test against a *different* type is now declined by name rather than
+categorised.
+
+**`string?` was unspelled.** The nullable rule said a nullable primitive has no representation, which
+is right for an `i32` and wrong for a `string`: it is a primitive by spelling and a reference by
+nature.
+
+Two mistakes in the helper, both about **order**:
+
+- It was registered sixth and emitted ninth. A helper's index is its position in the list, so every
+  call after it reached the wrong function. It is registered last now, next to where it is emitted,
+  with a comment saying why.
+- Its inner `if` promised an `i32` and its else-branch dropped one, so the stack was empty at the
+  end of the function. A branch that leaves through `return` has nothing to hand back; the `if` is
+  `void`.
+
+| | before | after |
+|---|---|---|
+| whole files | 317 | **326 of 338** |
+| invalid | 0 | 0 |
+| spec answers | 249/249 | **251/251** — two more programs reach the comparison |
+| sweep | 3,991 | **4,323 programs, 3,919 compared, 0 mismatched** |
+
+What is left is twelve files: five where a name means two things in one module, three whose imports
+are not in the corpus at all, and four singles.
+
 ### One reader, because two disagreed
 
 Asked how the reference handles the same conversion, the answer is: it doesn't. `wacFloatLit.ts` is

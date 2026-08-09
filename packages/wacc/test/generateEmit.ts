@@ -703,5 +703,31 @@ export function generateEmit(): Cell[] {
   for (const lit of ["1.5", "0.1", "3.4028235e38", "1e-45", "0.0"]) {
     add(`float32 bits ${lit}`, `export u32 f() { return f32.toBits(${lit}); }`);
   }
+
+  // String ordering, which is lexicographic **by bytes** — so a prefix is less than what extends it,
+  // and UTF-8 sorts by codepoint without anything having to know that.
+  const WORDS = ['""', '"a"', '"b"', '"ab"', '"abc"', '"abd"', '"Z"', '"\u00e9"', '"aa"'];
+  for (const a of WORDS) {
+    for (const b of WORDS) {
+      for (const op of ["<", "<=", ">", ">="]) {
+        add(`string ${op}`, `export bool f() { return ${a} ${op} ${b}; }`);
+      }
+    }
+  }
+  add("string ordering through locals",
+    `export bool f() { string a = "ab"; string b = "abc"; return a < b && b > a && a <= a && a >= a; }`);
+  add("string ordering of a computed string",
+    `export bool f() { string a = "a" + "b"; return a < "ac" && a > "aa"; }`);
+
+  // `x is T` where `T` is the value's own type asks whether it is there at all — the same question
+  // `is null` asks, from the other side.
+  const N = `struct P { i32 v; }\nP? find(bool y) { if (y) { return P(3); } return null; }\n`;
+  add("is T on a present value", N + `export bool f() { return find(true) is P; }`);
+  add("is T on an absent value", N + `export bool f() { return find(false) is P; }`);
+  add("is not T", N + `export bool f() { return find(false) is not P; }`);
+  add("is T guards the unwrap",
+    N + `export i32 f() { P? p = find(true); if (p is P) { return p!.v; } return 0; }`);
+  add("is T on an array", `export bool f() { i32[]? a = i32[](1); return a is i32[]; }`);
+  add("is T on a null string", `export bool f() { string? s = null; return s is string; }`);
   return out;
 }
