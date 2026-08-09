@@ -653,6 +653,20 @@ export struct C {
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
+  /**
+   * Which enum each variant belongs to, and how many payload fields it has.
+   *
+   * A variant is *also* declared as a struct under its bare name, because that is how `is Circle`
+   * and `case Circle:` write it and how a narrowed value finds its payload. That spelling cannot
+   * tell two enums apart: `enum Opened { Ok(i32 fd) }` beside `enum Found { Ok(i32 at) }` is one
+   * `Ok` in the struct table holding both payloads, so asking it how many arguments `Ok` takes
+   * answers two and belongs to neither. Recorded here per declaration instead — no de-duplication,
+   * because the duplication is the fact being recorded.
+   */
+  string[] variantOwners;
+  string[] variantNames;
+  i32[] variantArities;
+  i32 variantCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
     return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
@@ -666,7 +680,8 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), 0);
+             i32[capacity * 3](), 0,
+             string[capacity](), string[capacity](), i32[capacity](), 0);
   }
 
   /**
@@ -1019,6 +1034,30 @@ export struct C {
     if (this.enumCount >= this.enumNames.len()) { return; }
     this.enumNames[this.enumCount] = name;
     this.enumCount = this.enumCount + 1;
+  }
+
+  /** Record `Enum.Variant` with its payload count, ambiguity and all. */
+  void declareVariant(this, string owner, string name, i32 arity) {
+    if (this.variantCount >= this.variantNames.len()) { return; }
+    this.variantOwners[this.variantCount] = owner;
+    this.variantNames[this.variantCount] = name;
+    this.variantArities[this.variantCount] = arity;
+    this.variantCount = this.variantCount + 1;
+  }
+
+  /**
+   * How many payload fields `Enum.Variant` has, or -1 when this enum has no such variant.
+   *
+   * Asked with **both** names, which is the whole point: the answer for `Found.Ok` is one whatever
+   * `Opened.Ok` happens to hold.
+   */
+  i32 variantArityIn(const this, string owner, string name) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantOwners[i] == owner && this.variantNames[i] == name) {
+        return this.variantArities[i];
+      }
+    }
+    return -1;
   }
 
   /** An enum has no default value, which is the only thing this pass records about one. */
@@ -1683,6 +1722,18 @@ void checkExpr(C c, Expr e) {
       // about the type being a reference.
       if (arith && k != kPlus() && (alt == "string" || art == "string")) {
         c.report(errOperandKind(), tokenLine(c, op), tokenCol(c, op));
+      }
+      // **Two literals of different families**, which is the one case where neither side can take
+      // its type from the other: `1 + "é"` has nothing to infer from and is a mismatch whatever the
+      // slot wants. Measured across the ten pairs — an integer with a float, a string with a bool
+      // and the rest — and the answer is the same every time, reported at the operator. Same family
+      // is silent, including `true + false`, which is the numeric rule's business and not this one's.
+      bool bothLit = litKindOf(left) != litNone() && litKindOf(right) != litNone();
+      if (bothLit && litKindOf(left) != litKindOf(right) &&
+          litKindOf(left) != litNull() && litKindOf(right) != litNull() &&
+          (arith || k == kEq() || k == kNe() || k == kLt() || k == kLe() || k == kGt() ||
+           k == kGe())) {
+        c.report(errOperandMismatch(), tokenLine(c, op), tokenCol(c, op));
       }
       // **A comparison between a reference and something else** is the same complaint, and it is by
       // far the commonest one in the corpus: `1 == "hello"` is *"'==' not allowed on reference type
@@ -2843,6 +2894,9 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
       } else if (c.isStruct(n)) {
         recv = n;
         isStatic = true;
+      } else if (c.isEnum(n)) {
+        recv = n;
+        isStatic = true;
       } else if (checkBuiltinCall(c, call, n, name, args)) {
         // A primitive type name as the receiver — a builtin static. A local of that name would have
         // been found above, which is what keeps a variable called `string` a variable.
@@ -2868,6 +2922,17 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   }
   if (recv == "string" && !isStringBuiltin(name)) {
     c.report(errNoMethod(), callee.line, callee.col);
+    return;
+  }
+  // **A variant construction is a call with an arity.** `E.C(1, 0)` reaches here spelled like a
+  // static — the enum names the variant — and the count is the variant's own, asked for with both
+  // names so that two enums sharing a variant name answer separately. Asking the struct table
+  // instead said "two" for an `Ok` that two enums declare, and reported a correct program.
+  if (isStatic && c.isEnum(recv) && !c.isGeneric(recv)) {
+    i32 wantArgs = c.variantArityIn(recv, name);
+    if (wantArgs >= 0 && args.len() != wantArgs) {
+      c.report(errCallArity(), call.line, call.col);
+    }
     return;
   }
   // `"hi".toBytes()` is a method on a string value, not a static, and takes no arguments.
@@ -3631,6 +3696,7 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
         for (i32 vi = 0; vi < variants.len(); vi++) {
           string vname = tokenText(c, variants[vi].nameTok);
           c.declareStruct(vname, "", string[0]());
+          c.declareVariant(tokenText(c, nameTok), vname, variants[vi].fields.len());
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
             c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
                                 typeOfTy(c, variants[vi].fields[fi].type), false);
