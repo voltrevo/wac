@@ -2173,6 +2173,56 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.byte(33);
           fb.u32leb(at);
         }
+        // **And the same for a field**, which this arm did not have — so `this.pos++` emitted
+        // nothing at all, and `lex.wac`'s cursor never advanced. That is a lexer that validates and
+        // loops for ever, and it is what the bootstrap found in its first minute: 336 corpus files
+        // and three and a half thousand generated programs had never incremented a field.
+        case LField(base, nameTok): {
+          string ot4 = typeOfLv(src, lexed, env, base);
+          if (!env.isStructName(ot4)) { return; }
+          string fn4 = tokenTextOf(src, lexed, nameTok);
+          i32 slot4 = env.enumOf(ot4) != "" || env.isEnumName(ot4)
+            ? enumSlot(env, ot4, fn4) : env.fieldIndex(ot4, fn4);
+          string ft4 = env.enumOf(ot4) != "" || env.isEnumName(ot4)
+            ? env.fieldTypeAt(env.canonType(ot4), slot4) : env.fieldType(ot4, fn4);
+          i32 b4 = env.scratchNamed("incbase", ot4);
+          emitLvalue(fb, src, lexed, env, base);
+          fb.byte(34);
+          fb.u32leb(b4);
+          fb.byte(32);
+          fb.u32leb(b4);
+          fb.byte(251);
+          fb.u32leb(2);
+          fb.u32leb(env.structType(ot4));
+          fb.u32leb(slot4);
+          if (valType(ft4) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), ft4);
+          fb.byte(251);
+          fb.u32leb(5);
+          fb.u32leb(env.structType(ot4));
+          fb.u32leb(slot4);
+        }
+        case LIndex(base, index): {
+          string bt4 = typeOfLv(src, lexed, env, base);
+          if (!isArrayType(bt4)) { return; }
+          string et4 = elemOf(bt4);
+          i32 a4 = env.scratchNamed("incarr", bt4);
+          i32 i4 = env.scratchNamed("incidx", "i32");
+          emitLvalue(fb, src, lexed, env, base);
+          fb.byte(33); fb.u32leb(a4);
+          emitAt(fb, src, lexed, env, index, "i32");
+          fb.byte(33); fb.u32leb(i4);
+          fb.byte(32); fb.u32leb(a4);
+          fb.byte(32); fb.u32leb(i4);
+          fb.byte(32); fb.u32leb(a4);
+          fb.byte(32); fb.u32leb(i4);
+          emitArrayGet(fb, env, bt4);
+          if (valType(et4) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
+          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), et4);
+          fb.byte(251);
+          fb.u32leb(14);
+          fb.u32leb(env.arrayType(bt4));
+        }
         else: { }
       }
     }
@@ -3010,9 +3060,48 @@ void emitBinary(B fb, i32 k, string t) {
  * which it is: `4294967296` in an `i64` slot is a real value and parsing into an `i32` made it zero.
  * The narrowing happens at the point the constant is written, where the target is known.
  */
+/**
+ * The scalar a character literal denotes: an escape, or the UTF-8 sequence spelled between quotes.
+ *
+ * The escapes are the ones the language writes — and `\'`, which no string literal needs and every
+ * character literal of a quote does.
+ */
+i64 charValue(u8[] a) {
+  if (a[1] == 92) {
+    i32 e = a[2];
+    if (e == 110) { return 10; }    // \n
+    if (e == 116) { return 9; }     // \t
+    if (e == 114) { return 13; }    // \r
+    if (e == 48) { return 0; }      // \0
+    if (e == 92) { return 92; }
+    if (e == 39) { return 39; }
+    if (e == 34) { return 34; }
+    return e as i64;
+  }
+  // Otherwise a UTF-8 sequence, decoded from its lead byte exactly as `str_idx` decodes one.
+  i32 b0 = a[1];
+  if (b0 < 128) { return b0 as i64; }
+  if (b0 < 224 && a.len() >= 4) {
+    return (((b0 & 31) * 64) + (a[2] & 63)) as i64;
+  }
+  if (b0 < 240 && a.len() >= 5) {
+    return (((b0 & 15) * 4096) + ((a[2] & 63) * 64) + (a[3] & 63)) as i64;
+  }
+  if (a.len() >= 6) {
+    return (((b0 & 7) * 262144) + ((a[2] & 63) * 4096) + ((a[3] & 63) * 64) + (a[4] & 63)) as i64;
+  }
+  return 0;
+}
+
 i64 parseInt(string s) {
   u8[] a = s.toBytes();
   i64 v = 0;
+  // **A character literal is an integer literal**, and it arrives here as its own text — `'a'`,
+  // quotes and all. Reading digits out of that gives 0, which is not a decline but a *wrong answer*:
+  // `isSpace(c)` became `c == 0`, and the lexer this compiler is part of skipped nothing and
+  // tokenised nothing. Every literal in the sweep was a number, again, which is the third time that
+  // sentence has been written here.
+  if (a.len() >= 3 && a[0] == 39) { return charValue(a); }
   // **Hex and separators.** Reading decimal digits and stopping at anything else made `0xff` into 0
   // and `1_000` into 1 — a *wrong answer* rather than a decline, which is the failure mode this rung
   // exists to catch and which no differential case had, because every literal in them was plain.
@@ -3701,9 +3790,14 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
     case Ternary(cond, then, els): {
       string c = unsupportedValue(src, lexed, env, cond);
       if (c != "") { return c; }
-      string t = unsupportedValue(src, lexed, env, then);
+      // **A branch's slot is the other branch.** `cond is null ? null : cond` asks nothing of the
+      // context — the ternary's type is what the non-null side has — and asking each branch on its
+      // own is how the emitter's own `emitLoop` call was declined by the emitter.
+      string tw = typeOfE(src, lexed, env, then);
+      if (tw == "") { tw = typeOfE(src, lexed, env, els); }
+      string t = unsupportedValueAt(src, lexed, env, then, tw);
       if (t != "") { return t; }
-      return unsupportedValue(src, lexed, env, els);
+      return unsupportedValueAt(src, lexed, env, els, tw);
     }
     case Index(arr, index): {
       string a = unsupportedValue(src, lexed, env, arr);

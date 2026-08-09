@@ -1183,6 +1183,49 @@ texts exist across 3,190 reference lines and this implements a fraction of them,
 recall is 99% rather than 100%. It means the oracles that exist have nothing further to say, and the
 next move is a sharper oracle or rung 4.
 
+### Rung 5: wacc, compiled by wacc, answering what wacc answers
+
+The last rung. `wacc` emits a whole module for all eight of its own sources, and that module — its
+lexer, its parser, its printer, its type checker, as emitted by itself — gives the **same answers**
+as the one the reference builds.
+
+Getting there took one more slot-aware `null`: `cond is null ? null : cond` asks nothing of its
+context, because a ternary's type is what the non-null branch has, and the walk had been asking each
+branch on its own. That is the emitter's own `emitLoop` call, so the emitter was declining itself.
+
+**Then the interesting part.** The oracle for this rung cannot be "does it compile" — it is *run what
+both compilers emit and compare*, as every rung below. The surface makes that awkward, since
+`dump(u8[]) -> string` traffics in references and a reference cannot cross the JavaScript boundary
+without bindgen's glue. So the crossing moved inside: `test/wac/selfdrive.wac` calls `wacc` on a
+program written into it and returns an `i32`. Eight answers, smallest first — the bytes of a literal,
+the length of a concatenation, the token count, the declaration count, a checksum of the printed AST,
+the diagnostics of a good program and of a bad one.
+
+It found two things in its first minutes, and **neither was findable any other way**:
+
+- **`this.pos++` emitted nothing.** The increment statement had an arm for a local and none for a
+  field, so `lex.wac`'s cursor never advanced. The module validated. It ran for ever — and the arm's
+  own comment describes that exact failure, for locals, from four slots ago.
+- **Every character literal compiled to 0.** `' '` reaches the emitter as its own text, quotes and
+  all, and the integer reader took digits out of it. So `isSpace(c)` asked whether the byte was NUL.
+  This is the third time a literal spelling nobody generated has been silently wrong here — after
+  `0xff` and `1_000` — and the sweep now has all twelve spellings.
+
+The corpus and the sweep had 337 files and 3,600 programs between them and neither had incremented a
+field or written a character literal. **A compiler compiling itself is a test nobody has to think
+of.**
+
+| | |
+|---|---|
+| wacc's own sources whole | **8 of 8** |
+| rung 5 answers agreeing | **8 of 8** |
+| our module | 141,355 bytes against the reference's 161,047 |
+| corpus | **248 of 337 whole, 0 invalid** |
+
+One of the two bugs is in `wac` rather than here, filed as its issue **0082**: `++` on an `i64` field
+or element emits an `i32` `1`, and the module does not validate. Two compilers, one blind spot, and
+neither had a test with an `i64` field in it.
+
 ### `slice`, `indexOf`, and a branch that counted outward
 
 Two more string methods, and they are the two the **linker** uses — so this compiler could not
