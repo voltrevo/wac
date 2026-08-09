@@ -21,6 +21,7 @@
     "corpus:hosts": "deno run -A tools/corpusHosts.ts",
     "corpus:backings": "deno run -A tools/corpusBackings.ts",
     "corpus:routes": "deno run -A tools/corpusRoutes.ts",
+    "corpus:stderr": "deno run -A tools/corpusStderr.ts",
     "flags:ignored": "deno run -A tools/ignoredFlags.ts",
     "coverage": "deno run -A tools/coverage.ts",
     "coverage:all": "deno run -A tools/coverageAll.ts",

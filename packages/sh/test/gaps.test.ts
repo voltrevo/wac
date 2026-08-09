@@ -82,7 +82,9 @@ Deno.test("a long option is one word, not a bundle of short ones", async () => {
     assertEquals(err("echo --nonsense"), "");
     // And a name this shell does not have at all is 127 rather than an option complaint, which is the
     // difference the deletion made: `wc --lines` used to reach a scanner here.
-    assertEquals(err("wc --lines"), "wc: command not found");
+    // `sh: ` because bash prefixes what the *shell* says, and "command not found" is the shell
+    // speaking rather than `wc` — see `speaksAsTheShell` in `exec.wac`.
+    assertEquals(err("wc --lines"), "sh: wc: command not found");
   } finally {
     await Deno.remove(built);
   }
