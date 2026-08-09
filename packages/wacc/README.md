@@ -1508,6 +1508,54 @@ which a differential oracle counts as a position the reference never mentions.
 `test/checkSweep.test.ts` is the oracle, and it is the cheapest one in the package: the corpus was
 already there, and the only new thing is the question.
 
+### The other half of the question, and a harness that was reading one phase
+
+`checkSweep` asks whether this checker invents diagnostics. **`mutateCheck` asks whether it notices
+anything**: take a valid program, break it one way — the wrong type in a declaration, an argument too
+few, a name that is not there — and if the reference now rejects it, ask whether we do too. It is the
+same four thousand programs, so what comes back is a list of the language's rules weighted by how
+often real code depends on them, which no hand-written list is.
+
+The first thing it found was in **itself**. Its notion of "what the reference says" was
+`wacTypeCheck`'s diagnostics, which is what the generated sweep next door uses — and
+`struct S { i32 x; i32 x; }` is refused by the reference in the **resolve** phase. So two of this
+checker's own correct diagnostics were being counted as positions the reference never mentions: the
+harness disagreeing with itself. Asking `wacCompile` for every phase but `parse` fixed it, and a
+program the reference refuses *before* type checking is skipped for the same reason a program its
+parser rejects is — it never formed an opinion about the body to compare.
+
+Then the contradictions, thirteen of them, and every one taught the same lesson twice:
+
+- **A diagnostic this checker cannot place exactly, it does not report.** The reference puts
+  "no method" at the receiver for `n.len()` and at the *dot* for `xs[0].len()`, and nothing here can
+  tell which without guessing — so the receiver that is not a plain name is silent now.
+- **An operator that has been reported produces nothing.** `t.a + t.b + t.c` was three complaints
+  where the reference makes one: answering the second `+` with the first's operand type meant the
+  chain kept looking wrong. Unknown-from-a-literal and unknown-from-an-error are the same value and
+  not the same thing, and telling them apart is what stops the enclosing `return` complaining again.
+
+The recall queue it prints is what the diagnostics went to. Two rules, both read off the reference
+rather than assumed — `==`, `<` and `+` are all fine on two strings, so the rule is about the
+operator and not about the type being a reference:
+
+- **`'*' requires numeric type, got string`** — a string is a number for exactly one operator.
+- **`'==' not allowed on reference type string — use 'is' for identity`** — a comparison whose two
+  sides disagree while one of them is a reference. `1 == "hello"` was the corpus's commonest missing
+  diagnostic by a distance, and catching it needs the literal's own family filled in, because a
+  comparison is not a slot for it to take a type from.
+
+| | before | after |
+|---|---|---|
+| mutation recall | 86% of 1,274 | **88%** |
+| contradictions | 13 | **0** |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+| false alarms on the emitter's corpus | 0 | 0 |
+
+Recall is printed and not asserted, per category, most-missed first — a queue rather than a
+threshold, since this package has traded recall for the no-false-alarm invariant on purpose twice
+now. What it names next is `type '…' has no method '…'` (22), `unary '…' requires numeric type` (19)
+and the argument-count family (11).
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
