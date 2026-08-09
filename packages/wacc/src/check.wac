@@ -126,6 +126,8 @@ export i32 errSwitchSubject() { return 44; }
 export i32 errNamedField() { return 45; }
 /** A float literal too large for the type it is going into. */
 export i32 errFloatRange() { return 50; }
+/** `E.nope` where `E` is an enum and `nope` is none of its variants. */
+export i32 errNoVariant() { return 51; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
@@ -3009,6 +3011,20 @@ void checkThroughNullable(C c, Expr at, Expr obj) {
  * complaining — `c.get` without parentheses is the reference's own separate diagnostic.
  */
 void checkMember(C c, Expr at, Expr obj, string name) {
+  // **`E.nope` is a variant that is not there.** The object is a *type name* rather than a value, so
+  // every rule below — which asks what the object's type is — had nothing to work with and stayed
+  // silent. The variant table answers it directly, and answers it per enum: `Ok` belonging to some
+  // other enum says nothing about this one, which is why the question is asked with both names.
+  match (obj.kind) {
+    case Ident(tok): {
+      string en = tokenText(c, tok);
+      if (c.isEnum(en) && c.typeOfName(en) == typeNone() && c.variantArityIn(en, name) < 0) {
+        c.report(errNoVariant(), at.line, at.col);
+        return;
+      }
+    }
+    else: { }
+  }
   // **A literal has fields as much as any other value of its type**, which is to say none: `7.n` is
   // *"type 'i32' has no field 'n'"*. Asking `typeOfExpr` answered unknown, as it does for every
   // literal by design, and this rule then had nothing to be about — the fifth place that has come

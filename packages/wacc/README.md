@@ -1991,6 +1991,40 @@ attempting a fourth time without it.
 Three left: that `.wait(1)` pair, and `JsonValue.nofield` — a member that is no variant of an
 imported enum.
 
+### `E.nope` is a variant that is not there — and reaching, closed
+
+`JsonValue.nofield` was silent because the object is a **type name rather than a value**: every rule
+in `checkMember` asks what the object's type is, and an enum's name has none. The variant table
+answers it directly, and answers it per enum — `Ok` belonging to some other enum says nothing about
+this one — so the question is asked with both names, which is the third rule in this checker to need
+that and the reason the table exists.
+
+**And the reaching thread is closed rather than left open.** Four attempts across three slots, each
+measured:
+
+| attempt | recall | false alarms |
+|---|---|---|
+| reach by name, whole closure | 98% | 41 |
+| plus a census — only names one file declares | 98% | 41 |
+| same file only, entry's own names excluded | 99% | 14 |
+| plus row-level provenance and the import list excluded | 99% | 1 |
+
+The trend is real and the endpoint is not zero. What every version gets wrong is the same thing:
+`declareStruct` keeps the *first* declaration of a name, so a type reached from the file walked first
+stands in for the one another file was asked for — and reaching, unlike the import filter, has no
+statement to read the owner from. Making it exact needs the checker's tables keyed by (file, name)
+rather than by name, which is a change to every lookup in the file and not a filter at all. Written
+down here so the fifth attempt is a decision rather than a rediscovery.
+
+| | before | after |
+|---|---|---|
+| recall on broken real code | 247 of 250 (99%) | **248 of 250 (99%)** |
+| generated mutation sweep | 926 | **928** of 980 |
+| false alarms | 0 | 0 |
+
+The two that remain are both `.wait(1)` on a `Pending<…>` a file never names — the reaching case, and
+now the only one.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
