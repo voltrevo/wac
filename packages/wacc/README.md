@@ -1594,6 +1594,38 @@ is exactly the size of thing that gets committed on the strength of the number m
 | false alarms on the emitter's corpus | 0 | 0 |
 | generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
 
+### The table that could not tell two `Ok`s apart — 91% to 92%
+
+The variant-arity rule was reverted last slot for a false alarm, and the false alarm was the real
+finding: a variant is declared as a **struct under its bare name**, because that is how `is Circle`
+and `case Circle:` write it and how a narrowed value finds its payload. That spelling cannot tell
+two enums apart. `enum Opened { Ok(i32 fd) }` beside `enum Found { Ok(i32 at) }` is *one* `Ok` in
+the struct table holding both payloads — so asking it how many arguments `Ok` takes answers two, and
+the answer belongs to neither.
+
+The fix is a second table that records what the first one de-duplicates: owner, variant, arity, one
+row per declaration and no merging, because the duplication is the fact being recorded. `Found.Ok`
+is asked for with both names and answers one whatever `Opened.Ok` holds. The rule that wanted it
+lands with **no false alarm** where the same rule cost one before, and the program that exposed it is
+in the corpus this is measured against.
+
+**Two literals of different families** went in beside it — `1 + "é"`, the one case where neither
+side can take its type from the other, so there is nothing to infer and the mismatch is certain
+whatever the slot wants. The grid was measured rather than assumed: ten pairs, and an integer with a
+float, a string with a bool and the rest all answer the same way. Same family stays silent, including
+`true + false`, which is the numeric rule's business and not this one's.
+
+| | before | after |
+|---|---|---|
+| mutation recall | 91% of 1,274 | **92%** |
+| contradictions | 0 | 0 |
+| false alarms on the emitter's corpus | 0 | 0 |
+| generated sweep | 99%, 0 false alarms | 99%, 0 false alarms |
+
+What the queue names next is the tail of `return: expected X, found Y` (21 of 70) and
+`undefined variable` (10 of 298) — both partial rather than absent, which is a different kind of
+work: the rule is there and something about *where* it is asked stops it firing.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this
