@@ -159,3 +159,128 @@ Deno.test("the applets answer the same on both hosts, including the ones with an
     hash.err,
   );
 });
+
+/**
+ * The **seal**, on both hosts — design/0001's "no implicit access to *either* host".
+ *
+ * `packages/box/test/sealing.test.ts` asks all of this and asks it on one host. That was the honest
+ * state of it and `test/conformance.test.ts` said so in as many words: `ENV`'s entry read "checks a
+ * session cannot read the machine's environment, on one host only", and `RANDOM_BYTES`'s read "the
+ * comparable claims are length and that a sealed session gets one without a grant, neither of which
+ * is checked across hosts".
+ *
+ * A seal verified on one host is half a claim. The whole of design/0001's arrival test is that the
+ * *same system* appears on two substantially different hosts, and a leak is exactly the kind of thing
+ * that would differ between them: the two runtimes reach the environment, the clock and the CSPRNG by
+ * completely different routes — `Deno.env` against `std::env`, `crypto.getRandomValues` against
+ * whatever the Rust host uses — and nothing had ever asked the second one.
+ *
+ * ## Built *with* the grants, which is what makes it a test
+ *
+ * Both binaries here are built with read, write and env. A sealed session must still see none of it,
+ * because `Shell.onFs` turns `hostEnv` off and its filesystem is its own — and if the grants were
+ * withheld at build time instead, every assertion below would pass for the wrong reason, which is the
+ * mistake `sealing.test.ts` records making once already.
+ */
+Deno.test("the seal holds on both hosts, not just the one it was written on", async () => {
+  const denoSealed = `${tmp}/sealed-granted`;
+  await buildApp(ENTRY, denoSealed, { read: true, write: true, env: true });
+
+  const native = await nativeBinary();
+  if (native === null) return;
+  await buildNative(ENTRY, `${tmp}/sealed-granted-native`, { read: true, write: true, env: true });
+  const nativeManifest = `${tmp}/sealed-granted-native.json`;
+
+  // The machine has these, so an empty answer means they were withheld rather than absent.
+  if ((Deno.env.get("HOME") ?? "").length === 0) throw new Error("this machine has no HOME to leak");
+
+  // **And the grant is live on *both* hosts**, which is the canary this test cannot do without: a
+  // seal assertion passes just as well against a runtime that never reads the environment for
+  // anybody. `packages/box/src/bin/sh.wac` is the same binary shape with a shell whose world *is* the
+  // host's, so it must print what the machine says — and it does on both, checked rather than
+  // assumed, because `Cap::Env` in the native host is a separate implementation from Deno's.
+  const openDeno = `${tmp}/open-granted`;
+  await buildApp("packages/box/src/bin/sh.wac", openDeno, { read: true, write: true, env: true });
+  await buildNative("packages/box/src/bin/sh.wac", `${tmp}/open-granted-native`, {
+    read: true,
+    write: true,
+    env: true,
+  });
+  for (const [name, cmd, args] of [
+    ["deno", openDeno, []],
+    ["native", native, [`${tmp}/open-granted-native.json`]],
+  ] as const) {
+    const sees = shell(cmd, [...args], "echo HOME=[$HOME]");
+    if (!sees.out.includes(Deno.env.get("HOME") ?? "\u0000")) {
+      throw new Error(
+        `the ${name} host does not read the environment at all, so the seal below proves nothing: ` +
+          JSON.stringify(sees.out + sees.err),
+      );
+    }
+  }
+
+  /** A file that exists on this machine and cannot exist in a fresh session. */
+  const hostFile = ["/etc/hostname", "/etc/hosts", "/etc/passwd"]
+    .find((p) => {
+      try {
+        Deno.statSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  const asked: { script: string; want?: string }[] = [
+    // D4: the environment is the session's, not the server's.
+    { script: "echo [$HOME] [$PATH] [$USER]", want: "[] [] []\n" },
+    // D4: so are the arguments — `-c` and the script are the *binary's* argv, not the shell's.
+    { script: "echo count=[$#] zero=[$0] one=[$1]", want: "count=[0] zero=[] one=[]\n" },
+    // Step 6: a sealed session has a real CSPRNG without a grant for one, because `Backing.Synth`
+    // carries `randomBytes` and nothing else. Length is the comparable claim; the bytes are not.
+    { script: "head -c 16 /dev/urandom | wc -c", want: "16\n" },
+    { script: "head -c 1 /dev/urandom | wc -c", want: "1\n" },
+    // `/dev/null` and `/dev/zero`, which are the other two the design names.
+    { script: "cat /dev/null | wc -c", want: "0\n" },
+    { script: "head -c 4 /dev/zero | wc -c", want: "4\n" },
+    // The machine's own filesystem, by the two routes a session has: a simple command, and a
+    // *spawned* stage, which is the one that reads a different disk when it goes wrong (0116).
+    { script: `cat ${hostFile ?? "/etc/hostname"}; echo st=$?` },
+    { script: `cat ${hostFile ?? "/etc/hostname"} | head -1; echo st=$?` },
+    { script: "ls /", want: "bin\ndev\nproc\ntmp\n" },
+  ];
+
+  const differ: string[] = [];
+  for (const { script, want } of asked) {
+    const a = shell(denoSealed, [], script);
+    const b = shell(native, [nativeManifest], script);
+    // **Each host against the claim first, then against the other.** Two hosts that leaked the same
+    // way would agree with each other and be wrong, which is the failure a pure comparison cannot
+    // see — and the reason every case that has a knowable answer states it.
+    if (want !== undefined) {
+      if (a.out !== want) differ.push(`deno ${JSON.stringify(script)}: ${JSON.stringify(a.out + a.err)}`);
+      if (b.out !== want) differ.push(`native ${JSON.stringify(script)}: ${JSON.stringify(b.out + b.err)}`);
+    }
+    if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
+      differ.push(
+        `${JSON.stringify(script)}\n  deno   ${JSON.stringify(a.out + a.err)} (${a.code})` +
+          `\n  native ${JSON.stringify(b.out + b.err)} (${b.code})`,
+      );
+    }
+  }
+
+  // The host's own file, wherever it was found, must not appear in either answer — checked on the
+  // text rather than on the status, because `cat x | head -1` reports `head`'s status and not `cat`'s.
+  if (hostFile !== null && hostFile !== undefined) {
+    const first = Deno.readTextFileSync(hostFile).split("\n")[0];
+    if (first.length > 0) {
+      for (const [name, cmd, args] of [["deno", denoSealed, []], ["native", native, [nativeManifest]]] as const) {
+        const seen = shell(cmd, [...args], `cat ${hostFile} | head -1`);
+        if (seen.out.includes(first)) {
+          differ.push(`${name} read ${hostFile}: ${JSON.stringify(seen.out)}`);
+        }
+      }
+    }
+  }
+
+  assertEquals(differ.length, 0, `\n${differ.slice(0, 6).join("\n")}`);
+});

@@ -11,7 +11,7 @@
 // because it predates that capability.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core, Pending } from "../../platform/src/platform.wac";
 import { Framed, Status, frame, maxPacket, minBlock, paddingFor, unframe } from "./packet.wac";
 import { Opened, Plain, aeadPaddingFor, open, seal } from "./cipher.wac";
 import { Read } from core;
@@ -41,8 +41,87 @@ export struct Conn {
   /** Empty while nothing has gone wrong. */
   string error;
 
+  /**
+   * The read that is always outstanding on this socket, so that this connection can be *asked*
+   * rather than only waited on.
+   *
+   * **One, and owned here.** `waitAny` needs a ticket to look at, and if a caller issued that ticket
+   * itself there would be a second `recv` in flight whenever `fill` also wanted one — two reads on
+   * one socket, which is a bug that only shows up under load. So the ticket lives with the
+   * connection and `ready` lends its id; `armed` says whether the one in `pending` is still
+   * uncollected.
+   *
+   * This is what design/0001 step 5 was missing. A session runs a command by *blocking* in
+   * `runScript`, so the `^C` a client sends sits in the socket until the command it was meant to end
+   * has finished — not for want of anything to deliver, but because nothing was reading. A shell that
+   * can ask "has anything arrived" between two pieces of work is the whole of the fix, and this is
+   * the half of it that belongs to the transport.
+   */
+  Pending<Read> pending;
+  bool armed;
+
   Conn create(Core core, Cli cli, i32 sock) {
-    return Conn(core, cli, sock, Buf.create(), u8[0](), u8[0](), 0, 0, false, "");
+    return Conn(core, cli, sock, Buf.create(), u8[0](), u8[0](), 0, 0, false, "",
+                cli.recv(sock), true);
+  }
+
+  /** Put a read back in flight if the last one has been collected. */
+  void rearm(this) {
+    if (!this.armed && !this.failed()) {
+      this.pending = this.cli.recv(this.sock);
+      this.armed = true;
+    }
+  }
+
+  /**
+   * Whether a whole packet can be had **without waiting**.
+   *
+   * Three answers folded into a bool, and the folding is deliberate: a caller polling mid-command
+   * wants to know whether to look, and every other outcome — nothing yet, the peer gone, a broken
+   * connection — means "not now" and is recorded in `error` for whoever asks next.
+   *
+   * `waitAny(ids, 0)` is the deadline that has already expired, which `platform.wac` documents as
+   * "which of these is ready right now". It costs no opcode and no slot.
+   */
+  bool ready(this) {
+    if (this.failed()) { return false; }
+    // Already here: a `fill` may have brought two packets, and the second needs no socket at all.
+    if (this.hasPacket()) { return true; }
+    while (true) {
+      this.rearm();
+      if (this.core.waitAny(i32[](this.pending.id), 0) < 0) { return false; }
+      this.armed = false;
+      match (this.pending.wait()) {
+        case Data(bytes): { this.buf.pushAll(bytes); }
+        case End: { this.fail("the connection closed while waiting for a packet"); return false; }
+        case Failed(why): { this.fail(why); return false; }
+      }
+      if (this.hasPacket()) { return true; }
+      // A short read that did not complete a packet: go round, and stop as soon as the socket has
+      // nothing more — which is what makes this a poll rather than a read loop.
+    }
+    return false;
+  }
+
+  /**
+   * Whether `buf` already holds a whole packet, without consuming it.
+   *
+   * A *look*, not a read: `tryOnePacket` consumes and decrypts, and a poll that consumed one would
+   * have to hand it somewhere. This asks the same question of the same bytes and keeps them.
+   */
+  bool hasPacket(const this) {
+    if (this.encrypted) {
+      Plain p = open(this.keyIn, this.seqIn, this.buf.data, 0, this.buf.len, maxPacket());
+      match (p.status) {
+        case Ok: { return true; }
+        else: { return false; }
+      }
+    }
+    Framed f = unframe(this.buf.data, 0, this.buf.len);
+    match (f.status) {
+      case Ok: { return true; }
+      else: { return false; }
+    }
   }
 
   bool failed(const this) { return this.error != ""; }
@@ -60,7 +139,10 @@ export struct Conn {
    */
   bool fill(this) {
     bool more = false;
-    match (this.cli.recv(this.sock).wait()) {
+    // The connection's own ticket, so a blocking read and a poll can never both be in flight.
+    this.rearm();
+    this.armed = false;
+    match (this.pending.wait()) {
       case Data(bytes): { this.buf.pushAll(bytes); more = true; }
       case End: { }
       case Failed(why): { this.fail(why); }

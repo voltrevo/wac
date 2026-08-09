@@ -31,7 +31,7 @@ import { AndOr, AndOrOp, Assign, CaseArm, Clause, CmdKind, Command, Item, Pipeli
 import { Output, optionRefusal } from "./refusal.wac";
 import { Sink } from "../../platform/src/stream.wac";
 import { isNumber, printf } from "./printf.wac";
-import { SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, signalStops }
+import { SIGINT, SIGNALS, SIGTERM, signalIgnored, signalName, signalNumber, signalStops }
   from "../../fs/src/proc.wac";
 import { Chan } from "../../fs/src/remote.wac";
 import { serveOn } from "../../fs/src/serve.wac";
@@ -235,6 +235,36 @@ export struct Shell {
   bool externalSpawnable;
 
   /**
+   * Whether a keystroke has arrived from wherever this session's terminal is — and what to ask.
+   *
+   * **This is design/0001 step 5's open design decision, made.** `^C` could not end a running
+   * command over ssh, and the reason was never that there was nothing to deliver: step 3 delivers,
+   * and `kill -INT $$` ends a script with 130. It was that `runScript` is a blocking call, so while
+   * a line runs nothing reads the channel and the `^C` sits in the socket until the command it was
+   * meant to end has finished. What was needed was a way for a shell that is *already busy* to ask.
+   *
+   * A funcref and a context, because wac has no closures and the thing to ask is not the shell's:
+   * over ssh the keystrokes arrive on an encrypted socket that only `packages/ssh`'s `Conn` can
+   * read, and this package must not know that. The note in `sshd.wac` proposed "a funcref plus a
+   * token", which would have needed a registry somewhere to turn the token back into a connection;
+   * `anyref` is the better answer and the language has had it since the compiler grew abstract
+   * reference types. The session hands over its own state and downcasts it on the way in.
+   *
+   * Null is the ordinary case and costs nothing: a shell with no terminal has nobody to ask.
+   */
+  fn[bool(anyref)] askInterrupt;
+  /** What to hand `askInterrupt`. Null means there is no source, and no poll happens. */
+  anyref? interruptCtx;
+  /**
+   * Whether an interrupt is unwinding the current script.
+   *
+   * Ends the line rather than the shell, which is what a terminal's `^C` does: `sleep 10; echo hi`
+   * interrupted prints no `hi`, and the next prompt still appears. `unwinding` reads it for the
+   * first half and `runScript` clears it for the second.
+   */
+  bool interrupted;
+
+  /**
    * Every name ever set, so the table can be copied.
    *
    * `Map` offers no iteration, and a subshell has to start from a *copy* of its parent's
@@ -387,11 +417,45 @@ export struct Shell {
     // "I am between two things", and a job with a question outstanding is not running until it is
     // answered. See `serveJobs`.
     serveJobs(this);
+    this.pollInterrupt();
     i32 sig = this.fs.procs.takeSignal(this.pid);
     if (sig == 0) { return false; }
     this.exiting = true;
     this.exitCode = 128 + sig;
     return true;
+  }
+
+  /**
+   * Ask whoever owns this session's keystrokes whether one has arrived, and turn a `^C` into SIGINT.
+   *
+   * **A signal rather than a flag**, which is the point: step 3 already delivers, so an interrupt
+   * that becomes `procs.signal(pid, SIGINT)` ends a script with 130 through the code that `kill -INT
+   * $$` already goes through, compared against bash. Adding a second route would be a second thing
+   * that decides what an interrupt does.
+   *
+   * Costs nothing where no source is installed, which is every shell but a session with a terminal.
+   */
+  void pollInterrupt(this) {
+    if (this.interruptCtx is null) { return; }
+    if (!this.askInterrupt(this.interruptCtx!)) { return; }
+    this.interrupted = true;
+    this.status = 128 + SIGINT();
+  }
+
+  /**
+   * Whether an interrupt arrived, clearing it.
+   *
+   * Separate from `takeSignal` because **`^C` is not a signal to this shell**, and modelling it as
+   * one was the first thing tried here: `procs.signal(this.pid, SIGINT)` makes `takeSignal` set
+   * `exiting`, which ends the *session* — and bash does not exit when you press `^C` at a prompt. A
+   * terminal sends the interrupt to the foreground process group, not to the shell, so what it ends
+   * is the command and the rest of the line. The prompt comes back, with `$?` at 130.
+   */
+  bool takeInterrupt(this) {
+    this.pollInterrupt();
+    bool was = this.interrupted;
+    this.interrupted = false;
+    return was;
   }
 
   Shell onFs(Core core, Cli cli, Fs fs) {
@@ -402,13 +466,17 @@ export struct Shell {
     return sh;
   }
 
+  /** The default source: there is no terminal, so nothing ever arrives. */
+  bool neverInterrupted(anyref ctx) { return false; }
+
   Shell create(Core core, Cli cli) {
     // Asked once, at the start: the host knows where relative paths land and the shell cannot
     // guess. A browser answers "/" — the root of its Origin Private File System — which is the
     // true answer there rather than a stand-in.
     return Shell(core, cli, Fs.onHost(cli, 0), Map.create(hashString, stringEq), 0, false, 0,
                  0, 0, false, 0, 0, Vec.create(), Vec.create(), Vec.create(), Buf.create(),
-                 false, Buf.create(), noExternal, noExternalNames, false, Vec.create(),
+                 false, Buf.create(), noExternal, noExternalNames, false,
+                 Shell.neverInterrupted, null, false, Vec.create(),
                  Map.create(hashString, stringEq),
                  Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
                  cli.cwd().wait(), true, 0, Vec.create(), 0);
@@ -520,6 +588,10 @@ export struct Shell {
     // the drift wac-mono 0103 is about, hiding a bug rather than merely duplicating one.
     out.external = this.external;
     out.externalNames = this.externalNames;
+    // A subshell is the same session and the same terminal: `(sleep 10)` must be interruptible for
+    // the same reason its parent is.
+    out.askInterrupt = this.askInterrupt;
+    out.interruptCtx = this.interruptCtx;
     out.externalSpawnable = this.externalSpawnable;
     out.capture = true;
     return out;
@@ -617,6 +689,17 @@ export i32 runScript(Shell sh, string src) {
   // it exited 0 where bash exits 130. One more ask, after the list, is where a shell finds out that
   // the thing it just did ended it.
   sh.takeSignal();
+  // **The interrupt ends here, not at the session.** Cleared so the next line starts fresh, and the
+  // status is the one every shell reports for a command a `^C` ended.
+  if (sh.interrupted) {
+    sh.interrupted = false;
+    // **Set here rather than where the interrupt was noticed.** `pollInterrupt` sets it too, and it
+    // does not survive: whatever was unwinding — a loop finishing, a list ending — writes its own
+    // status on the way out, so a `^C` during `while true; do :; done` left `$?` at 0. This is the
+    // last word, which is what `$?` is.
+    sh.status = 128 + SIGINT();
+    return sh.status;
+  }
   return sh.exiting ? sh.exitCode : sh.status;
 }
 
@@ -670,7 +753,8 @@ bool caughtBreak(Shell sh) {
  */
 bool unwinding(Shell sh) {
   sh.takeSignal();
-  return sh.exiting || sh.returning || sh.breaking > 0 || sh.continuing > 0;
+  sh.pollInterrupt();
+  return sh.exiting || sh.interrupted || sh.returning || sh.breaking > 0 || sh.continuing > 0;
 }
 
 /**
@@ -1410,6 +1494,8 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
     if (serving && fsH[i] >= 0) { fsC.push(Chan.of(sh.cli, fsH[i])); fsPid.push(pids[i]); }
   }
   bool[] fsOpen = bool[fsC.len()](fill: true);
+  /** Whether this pipeline was ended by a signal or a `^C` rather than by its stages finishing. */
+  bool ended = false;
 
   while (true) {
     // The ids of every stream still open, and what each position in that list means. Rebuilt each
@@ -1439,8 +1525,21 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
       if (fsOpen[k]) { ids[at] = fsC.get(k).waitId(); stage[at] = k; isFs[at] = true; at++; }
     }
 
-    i32 which = sh.core.waitAny(ids, -1);
-    if (which < 0) { break; }
+    // **Asked every turn, not only when the wait times out.** A stage that is producing output
+    // answers `waitAny` immediately every time, so a deadline would never fire and a `^C` sent while
+    // `yes` is running would never be looked at. The poll is cheap where a source is installed —
+    // `waitAny(ids, 0)` is answered in this worker's own memory — and free where one is not.
+    if (sh.takeSignal() || sh.takeInterrupt()) { ended = true; break; }
+
+    // The deadline is what makes a *quiet* command interruptible: a stage that has produced nothing
+    // yet would otherwise park this loop for ever with a keystroke sitting in the socket.
+    i32 which = sh.core.waitAny(ids, sh.interruptCtx is null ? -1 : INTERRUPT_POLL_MS());
+    if (which < 0) {
+      // Nothing was ready. With no deadline that means there is nothing left to wait for; with one
+      // it usually means the time ran out, and the next turn asks again.
+      if (sh.interruptCtx is null) { break; }
+      continue;
+    }
     i32 i = stage[which];
 
     if (isFs[which]) {
@@ -1508,6 +1607,21 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
     }
   }
 
+  // **A pipeline the user interrupted is stopped**, not waited for. Its stages are real children
+  // with handles, so this is the same `closeSocket` that `kill %1` delivers with — and it has to
+  // happen before the status collection below, which would otherwise block on `exitCode` for a
+  // `yes` that nobody has told to stop.
+  if (ended) {
+    i32 why = sh.exiting ? sh.exitCode : 128 + SIGINT();
+    stopAll(sh, outH, errH, n);
+    if (redirected) { sh.fs.closeOut(); }
+    for (i32 i = 0; i < n; i++) {
+      if (pids[i] >= 0) { sh.fs.procs.exited(pids[i], why); sh.fs.procs.reap(pids[i]); }
+    }
+    sh.status = why;
+    return true;
+  }
+
   // Closed before anything else, so the file is complete by the time the next command runs: a script
   // that writes `f` and then reads it must not see a half-written one. Opening `""` is how a program
   // says it has finished writing — see `openOutput` in `platform.wac`.
@@ -1558,6 +1672,15 @@ bool streamPipeline(Shell sh, Pipeline pipeline) {
  * `Fs.onHost` with the same grants against the same disk, so the answers are identical and the only
  * difference serving could make is a round trip through the parent for every byte read.
  */
+/**
+ * How long a shell with a terminal waits before looking at it again.
+ *
+ * Only ever paid by a pipeline whose stages are all quiet, and only in a session that has somewhere
+ * to ask — a shell with no interrupt source waits as long as it takes, exactly as it did. Small
+ * enough that `^C` feels immediate and large enough that a silent `sleep 30` is not a spin.
+ */
+i32 INTERRUPT_POLL_MS() { return 40; }
+
 bool serveFsFor(Shell sh) { return !sh.fs.isPlainHost(); }
 
 /**
@@ -1891,12 +2014,18 @@ bool sameAsStart(Where w, i32 fd) {
 /**
  * `while` and `until`, which differ only in the sense of the test.
  *
- * Bounded, because a shell with no way to interrupt it should not be able to hang the server it
- * is running inside. bash would loop forever; this stops and says why, which is a difference
- * worth having until there is a way to send it a signal.
+ * **Bounded only where there is no way to interrupt it.** The note here used to say the bound was
+ * "worth having until there is a way to send it a signal" — and that is now, for a session with a
+ * terminal: `Shell.askInterrupt` lets a busy shell ask whether a `^C` has arrived, so
+ * `while true; do :; done` over `ssh -tt` loops as bash does and ends when the user says so.
+ *
+ * A session *without* a terminal still cannot be interrupted — `ssh -T` sends whole lines and has no
+ * keystroke to notice, and `wacsh -c` has nobody to ask — so there the bound stays, for the reason it
+ * was put in: a shell that cannot be stopped must not be able to hang the server it runs inside.
+ * Which of the two a shell is, is exactly whether it has an interrupt source.
  */
 void runLoop(Shell sh, Clause c, bool untilForm) {
-  i32 limit = 100000;
+  i32 limit = sh.interruptCtx is null ? 100000 : -1;
   sh.loops = sh.loops + 1;
   sh.status = 0;
   // **A loop's status is the last command in its *body***, not the condition that ended it and not 0.
@@ -1905,13 +2034,17 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
   // the way out looked like the fix for that and threw the body's answer away instead. A body that
   // never ran leaves 0, which is what this starts at.
   i32 body = 0;
-  for (i32 i = 0; i < limit; i++) {
+  for (i32 i = 0; limit < 0 || i < limit; i++) {
     // Explicit, because the two conditions below are read directly rather than through `unwinding`:
     // this loop deliberately does *not* stop for a `break` or `continue` it has not caught yet.
     sh.takeSignal();
-    if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
+    // **An interrupt stops the loop itself**, and not only the command inside it. Without this the
+    // body unwound, the condition unwound, and the `for` here spun to its bound in no time at all —
+    // so `^C` on `while true; do :; done` reported "loop ran 100000 times and was stopped" with
+    // status 2 rather than 130. The bound was catching the interrupt's own wreckage.
+    if (sh.exiting || sh.returning || sh.interrupted) { sh.loops = sh.loops - 1; return; }
     runList(sh, c.cond);
-    if (sh.exiting || sh.returning) { sh.loops = sh.loops - 1; return; }
+    if (sh.exiting || sh.returning || sh.interrupted) { sh.loops = sh.loops - 1; return; }
     bool go = untilForm ? sh.status != 0 : sh.status == 0;
     if (!go) { sh.status = body; sh.loops = sh.loops - 1; return; }
     runList(sh, c.body);
@@ -1924,6 +2057,8 @@ void runLoop(Shell sh, Clause c, bool untilForm) {
   sh.err("sh: loop ran 100000 times and was stopped\n".toBytes());
   sh.status = 2;
 }
+
+/** `for`, which is bounded by its word list and needs no guard of its own. */
 
 /**
  * One simple command. Returns what it wrote, unless it was the last stage — then it goes out.
@@ -3045,6 +3180,8 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   Buf out = Buf.create();
   Buf err = Buf.create();
   string broke = "";
+  /** Whether a signal ended this rather than the child finishing. */
+  bool stopped = false;
 
   // **Both streams and the filesystem channel, together.** The two output streams used to be read
   // one after the other — the child's output to its end, then its error stream — which was fine
@@ -3072,8 +3209,18 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
     if (complaining) { ids[at] = errT.id; what[at] = 1; at++; }
     if (asking) { ids[at] = fsC!.waitId(); what[at] = 2; at++; }
 
-    i32 which = sh.core.waitAny(ids, -1);
-    if (which < 0) { break; }
+    // The same two things the pipeline relay does, and for the same reasons: ask every turn because
+    // a talkative child never lets the wait expire, and put a deadline on the wait because a quiet
+    // one would otherwise park this loop with a keystroke sitting in the socket. This is the loop a
+    // single command runs in, which is where design/0001 step 5's own example — a running `yes` —
+    // actually lives.
+    if (sh.takeSignal() || sh.takeInterrupt()) { stopped = true; break; }
+
+    i32 which = sh.core.waitAny(ids, sh.interruptCtx is null ? -1 : INTERRUPT_POLL_MS());
+    if (which < 0) {
+      if (sh.interruptCtx is null) { break; }
+      continue;
+    }
     i32 kind = what[which];
 
     if (kind == 2) {
@@ -3096,6 +3243,15 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
     // Both streams closed means the child is finished, so it will ask nothing more. Waiting for the
     // channel to end as well would wait for the host to notice the worker had gone.
     if (!reading && !complaining) { asking = false; }
+  }
+
+  // **A child the user interrupted is stopped rather than waited for.** `exitCode` blocks until the
+  // child finishes, and the whole point of the interrupt is that it was not going to: `yes` writes
+  // for ever. `closeSocket` is the same delivery `kill %1` uses.
+  if (stopped) {
+    sh.cli.closeSocket(child.handle);
+    if (child.errHandle >= 0) { sh.cli.closeSocket(child.errHandle); }
+    return Output(out.bytes(), err.bytes(), sh.exiting ? sh.exitCode : 128 + SIGINT(), true);
   }
 
   i32 code = sh.cli.exitCode(child.handle).wait();

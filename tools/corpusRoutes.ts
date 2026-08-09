@@ -1,0 +1,133 @@
+// The whole shell corpus, through **both ways a shell can run an applet**.
+//
+//   deno task corpus:routes [--from N] [--count N]
+//
+// `packages/sh`'s shell runs an external program one of two ways: **called** in process through
+// `sh.external` — `boxRun`, which pushes a frame with `pushChild` and takes the output back with
+// `popChild` — or **spawned** as a real child of its own instance. Both are live code and they are
+// supposed to be indistinguishable.
+//
+// ## Why this exists now
+//
+// It did not need to until 2026-08-09, because the called route was what nearly everything did. Then
+// wac-mono 0116 made a spawned stage able to see its parent's filesystem, and `sealedsh`, `imaged`,
+// `sshd -i` and the browser terminal all turned spawning on. Every session binary now spawns, so the
+// three differentials that existed — `corpus:backings`, `corpus:hosts` and `native_shell` — stopped
+// covering the called route entirely.
+//
+// It is still reachable and still shipped: `packages/box/example/boxsh.wac` is exactly `wacsh` with
+// the spawn turned off, `tools/site.test.ts` runs the front page's commands through it, and it is what
+// any world that *cannot* spawn falls back to. A route with no coverage and no way to notice is the
+// thing this repository keeps finding in other people's code.
+//
+// ## The two programs, and why they are comparable
+//
+// `boxsh` and `wacsh` are the same wiring over the same host filesystem, differing in one line:
+// `sh.externalSpawnable`. So a difference between them is a difference between the routes and nothing
+// else — not a filesystem, not a set of applets, not a shell.
+//
+// ## What is *expected* to differ, and is therefore not in the corpus
+//
+// One thing, and it is why `--canary` exists: a called applet's output is **captured in memory and
+// capped at 8 MiB**, so `seq 1 1500000 | wc -c` answers 8323568 where bash and the spawned route
+// answer 10888896. `write` returning false at the cap is indistinguishable, from inside the applet,
+// from the reader going away — which is what `box yes` is written to stop on. The canary asserts that
+// divergence rather than hiding it, because a run where the two routes agreed on *everything* would
+// most likely mean `boxsh` had quietly started spawning too, and this whole comparison would be
+// measuring nothing.
+
+import { buildApp } from "../packages/platform/build.ts";
+import { CORPUS } from "../packages/sh/test/corpus.ts";
+import "../harness/spawnRetry.ts";
+
+const args = Deno.args;
+const flag = (name: string, fallback: number): number => {
+  const at = args.indexOf(`--${name}`);
+  return at >= 0 && at + 1 < args.length ? Number(args[at + 1]) : fallback;
+};
+const from = flag("from", 0);
+const count = flag("count", CORPUS.length);
+
+const dir = await Deno.makeTempDir({ prefix: "corpus-routes-" });
+const called = `${dir}/boxsh`;
+const spawned = `${dir}/wacsh`;
+await buildApp("packages/box/example/boxsh.wac", called, { read: true, write: true, env: true });
+await buildApp("packages/box/src/bin/sh.wac", spawned, { read: true, write: true, env: true });
+
+type Run = { code: number; out: string; err: string; hung: boolean };
+
+function run(cmd: string, script: string, cwd: string): Run {
+  const r = new Deno.Command("timeout", {
+    args: ["10", cmd, "-c", script],
+    cwd,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+    env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
+    clearEnv: true,
+  }).outputSync();
+  const d = new TextDecoder();
+  return {
+    code: r.code,
+    out: d.decode(r.stdout),
+    err: d.decode(r.stderr),
+    hung: r.code === 124,
+  };
+}
+
+/** One script's two answers, each in a directory of its own so neither sees the other's files. */
+function both(script: string, n: number): { called: Run; spawned: Run } {
+  const a = `${dir}/a${n}`, b = `${dir}/b${n}`;
+  Deno.mkdirSync(a, { recursive: true });
+  Deno.mkdirSync(b, { recursive: true });
+  const answers = { called: run(called, script, a), spawned: run(spawned, script, b) };
+  Deno.removeSync(a, { recursive: true });
+  Deno.removeSync(b, { recursive: true });
+  return answers;
+}
+
+const same = (a: Run, b: Run) => a.out === b.out && a.err === b.err && a.code === b.code;
+const show = (r: Run) => `${JSON.stringify(r.out + r.err)} (${r.code})`;
+
+// **The canary, first.** Everything below is "these agree", which two shells that both did nothing
+// would also report — and the specific way this comparison could become vacuous is `boxsh` starting
+// to spawn, at which point the two are the same program. So: the one case the routes are *known* to
+// answer differently, asserted to differ.
+{
+  const capped = both("seq 1 1500000 | wc -c", -1);
+  if (same(capped.called, capped.spawned)) {
+    console.error(
+      "the two routes agree on the 8 MiB capture cap, which they cannot: `boxsh` is spawning, or the\n" +
+        `cap is gone. called ${show(capped.called)} spawned ${show(capped.spawned)}`,
+    );
+    Deno.exit(2);
+  }
+}
+
+const cases = CORPUS.slice(from, from + count);
+let agree = 0;
+const hung: string[] = [];
+const differ: string[] = [];
+
+for (let i = 0; i < cases.length; i++) {
+  const script = cases[i];
+  const answers = both(script, from + i);
+  if (answers.called.hung || answers.spawned.hung) {
+    hung.push(script);
+    continue;
+  }
+  if (same(answers.called, answers.spawned)) {
+    agree++;
+    continue;
+  }
+  differ.push(
+    `${JSON.stringify(script)}\n  called  ${show(answers.called)}\n  spawned ${show(answers.spawned)}`,
+  );
+}
+
+await Deno.remove(dir, { recursive: true }).catch(() => {});
+
+console.log(`${agree} of ${cases.length} scripts agree between the called and spawned applet routes`);
+for (const script of hung) console.log(`  timed out: ${JSON.stringify(script)}`);
+for (const d of differ) console.log(d);
+if (differ.length > 0 || hung.length > 0) Deno.exit(1);
