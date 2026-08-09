@@ -1928,7 +1928,7 @@ Six left, in four shapes, and each is now written down rather than guessed at: `
 
 Two of the six were mine to fix and one was a gap worth its own name.
 
-**`null()` is not callable**, which the rule for `7()` missed because it asks what type the callee is
+**A `null` with parentheses after it is not callable**, which the rule for `7()` missed because it asks what type the callee is
 and a null has none. It is still not a function.
 
 **A chain of literals is a literal's family.** `"a" + "b" + "c"` has a *binary* on its left, so a rule
