@@ -106,7 +106,13 @@ Deno.test("everything but /dev/null is read-only, and says which", async () => {
   for (const path of ["/dev/zero", "/dev/urandom", "/proc/self/cmdline"]) {
     const r = await sh(`echo x > ${path}`);
     assertEquals(r.code !== 0, true, `${path} accepted a write`);
-    assertEquals(r.err.includes("read-only"), true, `${path}: ${r.err}`);
+    // `strerror(EROFS)`, capitalised as GNU and bash print it. This asserted the lower-case
+    // `read-only` that `packages/fs` used to put in the *message*, because there was no category for
+    // `EROFS` and the message was the only place the fact could live. That worked until `reasonOf`
+    // started preferring the category's phrase — which is the whole point of having categories — and a
+    // write to `/dev/zero` began answering `Permission denied`, sending a reader to `chmod` for
+    // something no mode can change. `FAULT_READ_ONLY` is the category; this is its words.
+    assertEquals(r.err.includes("Read-only file system"), true, `${path}: ${r.err}`);
   }
   for (const script of ["mkdir /dev/d", "rm /dev/null", "rmdir /proc/self"]) {
     const r = await sh(script);

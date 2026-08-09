@@ -188,13 +188,21 @@ Both questions are real — `find` wants the first, `tar` wants the second — a
 every caller decide something most of them do not care about.
 
 `Stat` carries a **fault**, and the split is narrow on purpose: *absence is an answer*, so a path with
-nothing at it gives `exists = false` with `FAULT_NONE`, and so does a path through a file — bash calls
-`test -e f/g` false rather than an error, and every "does it exist" check in the tree depends on that
-staying ordinary. A fault means the question could not be *reached*: `FAULT_DENIED` where the world has
-no read capability, and `FAULT_NOT_REPRESENTABLE` for a name the host cannot express. Before it, both
-arrived as `exists = false` — a program with no read grant was told a file was not there, which it had no
-way to tell from a file it was not allowed to look at. Callers read `st.answered()` before trusting
-`exists`, and `faultWords(fault)` turns the category into the words the real tools use. wac-mono 0065.
+nothing at it gives `exists = false` with `FAULT_NONE`. A fault means the question could not be
+*reached*: `FAULT_DENIED` where the world has no read capability, and `FAULT_NOT_REPRESENTABLE` for a
+name the host cannot express. Before it, both arrived as `exists = false` — a program with no read grant
+was told a file was not there, which it had no way to tell from a file it was not allowed to look at.
+Callers read `st.answered()` before trusting `exists`, and `faultWords(fault)` turns the category into
+the words the real tools use. wac-mono 0065.
+
+The one fault that arrives with the facts *intact* is `FAULT_NOT_A_DIR` — `f/g` where `f` is a file.
+`exists = false` is exactly right there, so `st.answered()` stays true and `test -e f/g` is plain false
+as bash has it; the category rides along only so that the three tools which report an absence to a
+person can say which kind it was. `ls f/g`, `cd f/g` and `stat f/g` said "No such file or directory"
+where GNU says "Not a directory" for as long as it was thrown away, and every other operation printed
+the host's errno — `Not a directory (os error 20)`, with the resolved *host* path after it for the ones
+that mutate. `st.words(otherwise)` is the lookup; `packages/box/test/notdir.test.ts` compares the whole
+family against GNU on a host mount, in an image, and under both hosts.
 
 `pushChild` and `popChild` need no grant because they add no authority: they change what `arg`,
 `readChunk`, `write`, `log`, `warn` and every path mean *for the program itself*, between two

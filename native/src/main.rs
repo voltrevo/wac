@@ -1299,7 +1299,7 @@ fn dispatch(
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     Outcome::Stat(false, false, false, 0, 0, false, FAULT_NONE)
                 }
-                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, fault_of(&e)),
+                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, stat_fault(&e)),
             };
             return settle_now(caller, Kind::Stat, outcome, results);
         }
@@ -1734,6 +1734,12 @@ const FAULT_NOT_EMPTY: i32 = 4;
 const FAULT_OTHER: i32 = 5;
 /// Not an operating-system failure at all: the program was built without the capability.
 const FAULT_NOT_GRANTED: i32 = 7;
+/// A directory where a file was wanted.
+const FAULT_IS_DIR: i32 = 8;
+/// A file where a directory was wanted — `a/b/c` with `b` a file.
+const FAULT_NOT_A_DIR: i32 = 10;
+/// The filesystem will not take a write at all — `EROFS`.
+const FAULT_READ_ONLY: i32 = 11;
 
 /// A path as the operating system takes it. Bytes, because a name is bytes (wac-mono 0065).
 fn os_path(bytes: &[u8]) -> std::path::PathBuf {
@@ -1769,11 +1775,45 @@ fn resolve(caller: &mut Caller<'_, Host>, path: &[u8]) -> std::path::PathBuf {
     }
 }
 
+/// Which `FAULT_*` an operating-system error is — `host/faults.ts`'s `faultOf`, in Rust.
+///
+/// **Three kinds, out of the seven the vocabulary has**, until this was written: everything but
+/// `NotFound` and `PermissionDenied` arrived as `FAULT_OTHER`, so the program printed whatever
+/// `std::io::Error` says instead of the category's words. That is the arrival test failing quietly —
+/// design/0001 wants one image to answer the same in two substantially different hosts, and this host
+/// said `File exists (os error 17)` where the JavaScript one said `File exists`, for `mkdir` on a
+/// directory that is already there. The wac program is identical; only the classification differed.
+///
+/// The kinds below are all stable in this toolchain. Anything genuinely unrecognised still gets
+/// `FAULT_OTHER`, which is what that category is for: the message is then the only information.
 fn fault_of(e: &std::io::Error) -> i32 {
     match e.kind() {
         std::io::ErrorKind::NotFound => FAULT_NOT_FOUND,
         std::io::ErrorKind::PermissionDenied => FAULT_DENIED,
+        std::io::ErrorKind::AlreadyExists => FAULT_EXISTS,
+        std::io::ErrorKind::DirectoryNotEmpty => FAULT_NOT_EMPTY,
+        std::io::ErrorKind::IsADirectory => FAULT_IS_DIR,
+        std::io::ErrorKind::NotADirectory => FAULT_NOT_A_DIR,
+        std::io::ErrorKind::ReadOnlyFilesystem => FAULT_READ_ONLY,
         _ => FAULT_OTHER,
+    }
+}
+
+/// The fault a failed `stat` should carry — `host/faults.ts`'s `statFault`, in Rust.
+///
+/// A `stat` that found nothing was *answered*, so absence is `FAULT_NONE` and only the cases where the
+/// answer is genuinely unknowable are faults. This host passed `fault_of` straight through, so every
+/// failure that was not `NotFound` made `Stat::answered` false — and `test -e f/g` where `f` is a file
+/// exited 2 with a diagnostic here while the JavaScript host said plain false, as bash does.
+///
+/// `FAULT_NOT_A_DIR` rides along without making the `Stat` unanswerable; `platform.wac`'s `Stat.answered`
+/// is the half that makes that safe, and `packages/platform/test/faults_agree.test.ts` holds the two
+/// hosts' rules side by side.
+fn stat_fault(e: &std::io::Error) -> i32 {
+    match fault_of(e) {
+        FAULT_DENIED => FAULT_DENIED,
+        FAULT_NOT_A_DIR => FAULT_NOT_A_DIR,
+        _ => FAULT_NONE,
     }
 }
 

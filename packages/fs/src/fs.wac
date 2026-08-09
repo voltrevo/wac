@@ -32,7 +32,8 @@ import { Vec } from "../../std/src/vec.wac";
 import { hashString, stringEq } from "../../std/src/hash.wac";
 import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, FAULT_NOT_FOUND,
-  FAULT_IS_DIR, FAULT_OTHER, FAULT_UNSUPPORTED, FileResult, Pending, Stat }
+  FAULT_IS_DIR, FAULT_NOT_A_DIR, FAULT_OTHER, FAULT_READ_ONLY, FAULT_UNSUPPORTED, FileResult,
+  Pending, Stat }
   from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { resolvePath } from "./path.wac";
@@ -406,7 +407,7 @@ export struct Fs {
       else: {}
     }
     i32 node = this.find(m, path);
-    if (node < 0) { return FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND()); }
+    if (node < 0) { return absentRead(node); }
     if (!this.may(node, 4)) {
       return FileResult.of(false, u8[0](), "permission denied", FAULT_DENIED());
     }
@@ -458,8 +459,14 @@ export struct Fs {
       else: {}
     }
     i32 node = this.find(m, path);
-    // Absence, not a fault: a memory tree can always answer, and "nothing here" is the answer.
-      if (node < 0) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+    // Absence, not a fault: a memory tree can always answer, and "nothing here" is the answer — with
+    // one exception, which is the same one `statFault` makes on a host mount. `a/b/c` where `b` is a
+    // file is still "nothing here", and the category rides along so that `ls`, `cd` and `stat` can say
+    // which kind of nothing. `Stat.answered` stays true for it, so `test -e` is unaffected.
+    if (node < 0) {
+      return Stat.of(false, false, false, 0, 0, false,
+                     node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE());
+    }
     Inode n = this.nodes.get(node);
     return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, FAULT_NONE());
   }
@@ -525,13 +532,16 @@ export struct Fs {
         // Every other synthesised file is read-only, and says so rather than appearing to have taken
         // the bytes — a write that vanishes silently is the failure `> /dev/zero` would otherwise be.
         if (synthKind(this, m, path) == SYNTH_NULL()) { return Change.of(FAULT_NONE(), ""); }
-        return Change.of(FAULT_DENIED(), "read-only file system");
+        return Change.of(FAULT_READ_ONLY(), "Read-only file system");
       }
       else: {}
     }
     i32 parent = this.find(m, parentOf(path));
-    if (parent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
-    if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_OTHER(), "not a directory"); }
+    if (parent < 0) { return absentChange(parent); }
+    // `FAULT_OTHER` with the words "not a directory" until now, which is the same shape `FAULT_IS_DIR`
+    // was found in: the backing knew exactly what had happened and had no category to say it with, so
+    // the sentence was all a caller got — and it was lower case where every host says GNU's.
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
     // Both of this path's "is a directory" refusals are gone: the check at the top of this function
     // answers that question for *every* directory, including the mount points those two could not see.
     // Two guards for one fact is how the two come to disagree.
@@ -584,13 +594,16 @@ export struct Fs {
     }
     match (m.backing) {
       case Host(cli): { return cli.mkdir(path, parents).wait(); }
-      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
     if (parents) { return this.mkdirAll(m, path); }
     i32 parent = this.find(m, parentOf(path));
-    if (parent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
-    if (!this.nodes.get(parent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
+    if (parent < 0) { return absentChange(parent); }
+    // **`FAULT_DENIED` until now**, so `mkdir f/g` in an image reported `Permission denied` about a
+    // path nothing had refused — the same mistake `FAULT_UNSUPPORTED` was added for, where the nearest
+    // available category blamed the file for something the file did not do.
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
     string name = baseOf(path);
     if (this.child(parent, name) >= 0) { return Change.of(FAULT_EXISTS(), "file exists"); }
     // Making a directory is a change to the directory it goes in, exactly as writing a file is.
@@ -635,11 +648,16 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.remove(path, recursive).wait(); }
-      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
     i32 parent = this.find(m, parentOf(path));
-    if (parent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    if (parent < 0) { return absentChange(parent); }
+    // A *file* named as a parent. `find` cannot answer this one — `f` in `f/g` is genuinely there, and
+    // it is the lookup below that is impossible — so the check belongs here, as it does in `writeFile`
+    // and `mkdir`. Without it `child` asked a file for its entries, got none, and `rm f/g` reported
+    // "No such file or directory" in an image where a host mount says "Not a directory".
+    if (!this.nodes.get(parent).isDir) { return notADirectory(); }
     string name = baseOf(path);
     i32 node = this.child(parent, name);
     if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
@@ -678,11 +696,11 @@ export struct Fs {
       // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
       // message below is what a caller prints. wac-mono 0117.
       case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
-      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
     i32 node = this.find(m, path);
-    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    if (node < 0) { return absentChange(node); }
     // The owner's to give away, and root's to take: `chmod` on somebody else's file is refused, which is
     // what stops a user opening a private file by widening it first.
     if (this.user != "" && this.user != "root" && this.nodes.get(node).owner != this.user) {
@@ -700,11 +718,11 @@ export struct Fs {
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chown on a host mount is not implemented"); }
-      case Synth(rand): { return Change.of(FAULT_DENIED(), "read-only file system"); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
       else: {}
     }
     i32 node = this.find(m, path);
-    if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    if (node < 0) { return absentChange(node); }
     // **Root's alone.** On a real system giving a file away is privileged precisely because it is how a
     // user would otherwise escape their own quota or hide a file behind somebody else's name.
     if (this.user != "" && this.user != "root") {
@@ -742,12 +760,15 @@ export struct Fs {
       return Change.of(FAULT_UNSUPPORTED(), "rename across mounts is not implemented");
     }
     i32 fromParent = this.find(fromMount, parentOf(from));
-    if (fromParent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    if (fromParent < 0) { return absentChange(fromParent); }
+    // The source's parent, for the same reason `remove` checks it: a file cannot hold a name.
+    if (!this.nodes.get(fromParent).isDir) { return notADirectory(); }
     i32 node = this.child(fromParent, baseOf(from));
     if (node < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
     i32 toParent = this.find(toMount, parentOf(to));
-    if (toParent < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
-    if (!this.nodes.get(toParent).isDir) { return Change.of(FAULT_DENIED(), "not a directory"); }
+    if (toParent < 0) { return absentChange(toParent); }
+    // Also `FAULT_DENIED` until now — see `mkdir`, which had the same line and the same wrong category.
+    if (!this.nodes.get(toParent).isDir) { return notADirectory(); }
 
     // **Renaming onto something that is already there.** `rename(2)` has four rules here and this had
     // none of them: it replaced the entry whatever it was, so `mv f d` where `d` is a directory
@@ -755,14 +776,16 @@ export struct Fs {
     // it is data loss. The categories are the host's, taken from `test/host.test.ts`'s transcript rather
     // than chosen: a file onto any directory is `FAULT_IS_DIR` — which the host started saying the moment
     // `faults.ts` learned the word for `EISDIR`, and this transcript is what noticed that memory had not
-    // — a directory onto a file is `FAULT_OTHER`, a directory onto a *non-empty* directory is
-    // `FAULT_NOT_EMPTY`, and a directory onto an empty one is the single pair that is allowed.
+    // — a directory onto a file is `FAULT_NOT_A_DIR`, which is what `rename(2)` names it and what the
+    // host said as `FAULT_OTHER` until `faults.ts` learned `ENOTDIR`; the same transcript noticed this
+    // one too, one category later — a directory onto a *non-empty* directory is `FAULT_NOT_EMPTY`, and a
+    // directory onto an empty one is the single pair that is allowed.
     i32 existing = this.child(toParent, baseOf(to));
     if (existing >= 0 && existing != node) {
       bool fromDir = this.nodes.get(node).isDir;
       bool toDir = this.nodes.get(existing).isDir;
       if (!fromDir && toDir) { return Change.of(FAULT_IS_DIR(), "Is a directory"); }
-      if (fromDir && !toDir) { return Change.of(FAULT_OTHER(), "not a directory"); }
+      if (fromDir && !toDir) { return notADirectory(); }
       if (fromDir && toDir && this.nodes.get(existing).entries.len() > 0) {
         return Change.of(FAULT_NOT_EMPTY(), "directory not empty");
       }
@@ -782,16 +805,24 @@ export struct Fs {
 
   // ── Walking ─────────────────────────────────────────────────────────────────
 
-  /** The node a path names inside a mount, or -1. */
+  /**
+   * The node a path names inside a mount, or one of the two negative answers below.
+   *
+   * `NODE_NOT_A_DIR` and `NODE_NONE` were both -1, so a memory filesystem could not tell `a/b/c` where
+   * `b` is a file from `a/b/c` where `b` is missing — and every caller here answered "no such file or
+   * directory" for both. A host mount says `Not a directory` for the first, which is what the operating
+   * system says, so **the same image gave different answers on different backings**: exactly the
+   * disagreement design/0001's arrival test exists to catch, in the place hardest to see it.
+   */
   i32 find(const this, Mount m, string path) {
-    if (path.len() < m.at.len()) { return -1; }
+    if (path.len() < m.at.len()) { return NODE_NONE(); }
     string rest = path.slice(m.at.len(), path.len());
     i32 at = m.root;
     Vec<string> parts = splitPath(rest);
     for (i32 i = 0; i < parts.len(); i++) {
-      if (!this.nodes.get(at).isDir) { return -1; }
+      if (!this.nodes.get(at).isDir) { return NODE_NOT_A_DIR(); }
       i32 next = this.child(at, parts.get(i));
-      if (next < 0) { return -1; }
+      if (next < 0) { return NODE_NONE(); }
       at = next;
     }
     return at;
@@ -803,6 +834,52 @@ export struct Fs {
     return this.nodes.get(dir).entries.get(name).orElse(-1);
   }
 }
+
+/** `find` answered nothing because there is nothing at that path. */
+export i32 NODE_NONE() { return -1; }
+/**
+ * `find` answered nothing because a component of the path is not a directory.
+ *
+ * A second negative answer rather than a second function beside `find`: every caller already branches
+ * on `< 0`, and the thing they were missing was *which* nothing it was. -2 rather than -1 because a
+ * node index is never negative, so the space was there.
+ */
+export i32 NODE_NOT_A_DIR() { return -2; }
+
+/** Which absence a negative `find` answer is, as a fault. */
+export i32 absentFault(i32 node) {
+  return node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NOT_FOUND();
+}
+
+/**
+ * The `Change` a negative `find` answer becomes.
+ *
+ * One function rather than the sentence written out at each of the eight call sites, which is how the
+ * three copies this replaces came to disagree: `writeFile` answered `FAULT_OTHER`, `mkdir` answered
+ * `FAULT_DENIED`, and `rename` answered `FAULT_DENIED` — three categories for one fact, none of them
+ * the one the operating system uses.
+ */
+export Change absentChange(i32 node) {
+  return node == NODE_NOT_A_DIR()
+    ? notADirectory()
+    : Change.of(FAULT_NOT_FOUND(), "no such file or directory");
+}
+
+/** The same, for a read. */
+export FileResult absentRead(i32 node) {
+  return node == NODE_NOT_A_DIR()
+    ? FileResult.of(false, u8[0](), "Not a directory", FAULT_NOT_A_DIR())
+    : FileResult.of(false, u8[0](), "no such file or directory", FAULT_NOT_FOUND());
+}
+
+/**
+ * A file where a directory was wanted.
+ *
+ * GNU's own words, because a memory backing has no host to borrow a sentence from and every caller that
+ * renders this compares against GNU. The category is what a caller branches on; the words are what a
+ * person reads when nothing translates them.
+ */
+export Change notADirectory() { return Change.of(FAULT_NOT_A_DIR(), "Not a directory"); }
 
 /**
  * A directory's own names, plus any mount point sitting directly in it.

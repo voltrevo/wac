@@ -4,7 +4,7 @@
 // works where `box sort f > f` cannot: the shell truncates `f` before `sort` has read it,
 // and this does not touch the target until every byte has arrived.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Input, openStream } from "../lib/input.wac";
@@ -20,6 +20,6 @@ export i32 sponge(Core core, Cli cli, Fs fs, Args a) {
   Feed fed = in.fed;
   Change wrote = streamAtomic(core, cli, fs, fed, a.rest[0]);
   if (wrote.ok()) { return 0; }
-  core.warn(a.name + ": " + a.rest[0] + ": " + wrote.message);
+  core.warn(a.name + ": " + a.rest[0] + ": " + reasonOf(wrote));
   return 1;
 }

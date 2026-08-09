@@ -5,7 +5,7 @@
 // to move its mtime would be worse than not moving it, so an existing path is left
 // exactly alone and the applet says so here rather than pretending.
 
-import { Change, Cli, Core, Stat } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { missingOperand } from "../lib/operands.wac";
@@ -20,7 +20,9 @@ export i32 touch(Core core, Cli cli, Fs fs, Args a) {
     if (st.exists) { continue; }
     Change c = fs.writeFile(a.rest[i], u8[0]());
     if (c.ok()) { continue; }
-    core.warn(a.name + ": " + a.rest[i] + ": " + c.message);
+    // GNU's frame: `touch: cannot touch 'f/g': Not a directory`. This said `touch: f/g: …`, which is
+    // the shape most of these applets had before anything compared them against the real tool.
+    core.warn(a.name + ": cannot touch '" + a.rest[i] + "': " + reasonOf(c));
     code = 1;
   }
   return code;

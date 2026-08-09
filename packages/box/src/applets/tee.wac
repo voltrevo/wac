@@ -5,7 +5,7 @@
 // wants two at once and cannot express that. Streaming it would need either a second sink
 // or an append, and neither exists. `cp`, which has one destination, streams.
 
-import { Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { Fs } from "../../../fs/src/fs.wac";
@@ -17,7 +17,7 @@ export i32 tee(Core core, Cli cli, Fs fs, Args a) {
   for (i32 i = 0; i < a.rest.len(); i++) {
     Change c = fs.writeFile(a.rest[i], data);
     if (!c.ok()) {
-      core.warn(a.name + ": " + a.rest[i] + ": " + c.message);
+      core.warn(a.name + ": " + a.rest[i] + ": " + reasonOf(c));
       return 1;
     }
   }

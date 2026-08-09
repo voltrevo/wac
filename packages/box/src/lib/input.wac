@@ -3,7 +3,7 @@
 // That an applet works in a pipe at all is this file: without `readStdin` every one of
 // them would be a file-to-file tool.
 
-import { Change, Cli, Core, faultWords, FileResult } from "../../../platform/src/platform.wac";
+import { Change, Cli, Core, FileResult, readReason, reasonOf } from "../../../platform/src/platform.wac";
 import { Args } from "./args.wac";
 import { Feed, Line, Lines, Sink, nextLine } from "../../../platform/src/stream.wac";
 import { Fs } from "../../../fs/src/fs.wac";
@@ -20,17 +20,11 @@ import { Fs } from "../../../fs/src/fs.wac";
  */
 export struct Input { bool ok; u8[] bytes; string label; Feed fed; }
 
-/**
- * Why a file could not be read, in the words the real tools use.
- *
- * The list lives in `platform.wac` as `faultWords`, because this was one of four copies of it and the
- * copies had already drifted: this one had no phrase for a name the host cannot express, so it printed the
- * host's English for the one category that exists to avoid exactly that.
- */
-export string whyUnread(FileResult f) {
-  string words = faultWords(f.fault);
-  return words == "" ? f.error : words;
-}
+// `whyUnread` was here and is now `platform.wac`'s `readReason`, which is the same three lines beside the
+// phrase table they consult. It moved for the reason it existed: this was one of four copies of the list
+// and the copies had drifted — this one had no phrase for a name the host cannot express, so it printed
+// the host's English for the one category that exists to avoid exactly that. A wrapper is a fifth copy of
+// the *decision*, if not of the table, and `packages/box`'s applets can reach `platform.wac` directly.
 
 /**
  * How many files this invocation names, from operand `n` on.
@@ -139,8 +133,7 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
   if (path == "") {
     Change opened = cli.openInput(path).wait();
     if (opened.ok()) { return Input(true, u8[0](), label, Feed.fromStdin(cli)); }
-    string why = faultWords(opened.fault);
-    core.warn(cannotOpen(a.name, path, why == "" ? opened.message : why));
+    core.warn(cannotOpen(a.name, path, reasonOf(opened)));
     return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
   }
   // A file on the host streams, because it can and because a large one should not be held whole. A file
@@ -150,13 +143,12 @@ export Input openStream(Core core, Cli cli, Fs fs, Args a, i32 n, i32 cap) {
     if (opened.ok()) { return Input(true, u8[0](), label, Feed.fromStdin(cli)); }
     // The same translation the whole-file path does, which is the point of the `Change`: `cat missing`
     // now says what `cat` says instead of the host's sentence about `open '/tmp/x'`.
-    string words = faultWords(opened.fault);
-    core.warn(cannotOpen(a.name, path, words == "" ? opened.message : words));
+    core.warn(cannotOpen(a.name, path, reasonOf(opened)));
     return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
   }
   FileResult f = cap < 0 ? fs.readFile(path) : fs.readSome(path, cap);
   if (!f.ok) {
-    core.warn(cannotOpen(a.name, path, whyUnread(f)));
+    core.warn(cannotOpen(a.name, path, readReason(f)));
     return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
   }
   return Input(true, u8[0](), label, Feed.of(cli, f.bytes));
@@ -204,7 +196,7 @@ export Input readInput(Core core, Cli cli, Fs fs, Args a, i32 n) {
     // GNU's words where the category has them, and the host's sentence where it does not: "No such file
     // or directory (os error 2): readfile '/tmp/x'" is one runtime's spelling of four words, and it
     // differed by runtime. `FileResult.fault` is what makes the translation possible — wac-mono 0062.
-    core.warn(cannotOpen(a.name, path, whyUnread(f)));
+    core.warn(cannotOpen(a.name, path, readReason(f)));
     return Input(false, u8[0](), label, Feed.of(cli, u8[0]()));
   }
   return Input(true, f.bytes, label, Feed.of(cli, f.bytes));

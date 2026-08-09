@@ -9,7 +9,7 @@
 // what every applet in this package does with a letter it does not know, and for `ls` that is the
 // difference between "hidden files are not shown" and "you asked for them and were not told no".
 
-import { Cli, Core, faultWords, Stat } from "../../../platform/src/platform.wac";
+import { Cli, Core, Stat } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { cmpBytes, mergeSortWith } from "../lib/lines.wac";
@@ -38,15 +38,16 @@ export i32 ls(Core core, Cli cli, Fs fs, Args a) {
     // reason comes from `stat`, which can. That is the same route this branch already took for a path
     // that is not there at all.
     if (st.exists && st.isDir) {
-      string why = faultWords(st.fault);
-      core.warn(a.name + ": cannot open directory '" + path + "': "
-        + (why == "" ? "Permission denied" : why));
+      core.warn(a.name + ": cannot open directory '" + path + "': " + st.words("Permission denied"));
       return 2;
     }
     if (st.exists) { core.log(path); return 0; }
-    string words = faultWords(st.fault);
-    core.warn(a.name + ": " + path + ": " + (words == "" ? "cannot list" : words));
-    return 1;
+    // GNU's frame and GNU's words: `ls: cannot access 'f/g': Not a directory`, which the shell's
+    // *builtin* `ls` next door has printed since 0067 and this applet did not. It said `ls: f/g: cannot
+    // list` — an invented phrase, for a fault the category can name — and `ls` is both a builtin and an
+    // applet, so which of the two a person saw depended on how the shell was built.
+    core.warn(a.name + ": cannot access '" + path + "': " + st.words("No such file or directory"));
+    return 2;
   }
   string[] found = names!;
   // Byte order, which is `ls` under `LC_ALL=C` — the environment every comparison in this repo uses. A

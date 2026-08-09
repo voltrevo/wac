@@ -228,10 +228,12 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   // than anywhere, because OPFS has no exclusive create and the *host* decided that fault.
   const missingParent = change(await call(OP.MKDIR, new Uint8Array([0, ...str("x/y")])));
   assertEquals(missingParent.fault, 1, "a missing parent is FAULT_NOT_FOUND");
-  assertEquals(missingParent.message, "no such file or directory", missingParent.message);
+  assertEquals(missingParent.message, "No such file or directory", missingParent.message);
   const already = change(await call(OP.MKDIR, new Uint8Array([0, ...str("a")])));
   assertEquals(already.fault, 3, "already exists is FAULT_EXISTS");
-  assertEquals(already.message, "already exists", already.message);
+  // GNU's phrase for `EEXIST`, which is what `faultWords` has said all along; this said the browser's
+  // own "already exists", so one host worded a category differently from the other two.
+  assertEquals(already.message, "File exists", already.message);
 
   // This host says a known category in its own short words rather than passing on the
   // `DOMException` message, which is written for a console: "A requested file or directory could
@@ -240,12 +242,12 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   // is where it shows.
   const absent = change(await call(OP.REMOVE, new Uint8Array([0, ...str("nothing-here")])));
   assertEquals(absent.fault, 1, "FAULT_NOT_FOUND");
-  assertEquals(absent.message, "no such file or directory", absent.message);
+  assertEquals(absent.message, "No such file or directory", absent.message);
   // A directory with something in it, without `recursive`: `InvalidModificationError` in a browser,
   // which has no errno to say "not empty" with.
   const notEmpty = change(await call(OP.REMOVE, new Uint8Array([0, ...str("a")])));
   assertEquals(notEmpty.fault, 4, "FAULT_NOT_EMPTY");
-  assertEquals(notEmpty.message, "directory not empty", notEmpty.message);
+  assertEquals(notEmpty.message, "Directory not empty", notEmpty.message);
   // ...and a fault with no category keeps the message, because there it is the only information
   // there is. "" names no component at all, which is this host's own complaint rather than OPFS's.
   const empty = change(await call(OP.MKDIR, new Uint8Array([0])));
@@ -513,13 +515,17 @@ Deno.test("a failed read says what a failed change says", async () => {
   } catch (e) {
     said = e instanceof Error ? e.message : String(e);
   }
-  assertEquals(said, "no such file or directory", said);
+  // `strerror`'s capitalisation, because these land where `strerror`'s do — straight after `cat: f: `.
+  // Four of `phraseOf`'s rows were lower case, from before `faultWords` in `platform.wac` existed, and
+  // the split that file makes is the one now kept on both sides: GNU's own sentences as GNU writes
+  // them, our two inventions as prose.
+  assertEquals(said, "No such file or directory", said);
 
   // `openInput` answers a `Change` now rather than throwing, so the agreement is between the phrase in
   // that answer and the phrase in the throw above — the same words either way, which is the whole claim.
   const change = await w[OP.OPEN_INPUT](str("nothing-here")) as Uint8Array;
   assertEquals(change[0], FAULT_NOT_FOUND, `fault ${change[0]}`);
-  assertEquals(new TextDecoder().decode(change.subarray(1)), "no such file or directory");
+  assertEquals(new TextDecoder().decode(change.subarray(1)), "No such file or directory");
 });
 
 Deno.test("a page spawns a worker of its own — 0030", async () => {

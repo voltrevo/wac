@@ -4,7 +4,7 @@
 // where `cli.write` goes, so the fetch itself is unchanged and does not know. Switching
 // back to standard output at the end is what closes the file.
 
-import { Captured, Change, Cli, Core } from "../../../platform/src/platform.wac";
+import { Captured, Change, Cli, Core, reasonOf } from "../../../platform/src/platform.wac";
 import { Args } from "../lib/args.wac";
 import { refuseFlags } from "../lib/flags.wac";
 import { fetch } from "../lib/fetch.wac";
@@ -24,7 +24,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
   bool streaming = fs.isHostPath(out);
   if (streaming) {
     Change opened = cli.openOutput(out).wait();
-    if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + opened.message); return 1; }
+    if (!opened.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(opened)); return 1; }
   } else {
     // Collected through the same push/pop the shell uses to run an applet in process: `fetch` writes
     // with `cli.write` and neither knows nor needs to know where that goes.
@@ -38,7 +38,7 @@ export i32 wget(Core core, Cli cli, Fs fs, Args a) {
     Captured got = cli.popChild().wait();
     if (code == 0) {
       Change wrote = fs.writeFile(out, got.out);
-      if (!wrote.ok()) { core.warn(a.name + ": " + out + ": " + wrote.message); return 1; }
+      if (!wrote.ok()) { core.warn(a.name + ": " + out + ": " + reasonOf(wrote)); return 1; }
     }
   }
   if (code == 0) { core.warn(a.name + ": saved " + out); }
