@@ -73,6 +73,7 @@ import { Shell, runScript } from "../../sh/src/exec.wac";
 // bug (GitHub wac-mono#6) was fixed in each of them separately, which is the drift a copy guarantees.
 import { itoa } from "../../fmt/src/itoa.wac";
 import { boxApplet, boxNames, boxRun } from "../src/shrun.wac";
+import { Session } from "../src/lib/session.wac";
 import { mountSystem } from "../../fs/src/fs.wac";
 import { Vec } from "../../std/src/vec.wac";
 
@@ -205,47 +206,20 @@ export i32 page(Core core, Cli cli, Page page) {
     "</label>"
   ).wait();
 
-  string screen = BANNER;
-  page.setText("scr", screen).wait();
   page.on("#cmd", "keydown").wait();
 
   // One shell for the whole session, so variables and functions persist between commands exactly
-  // as they would in a terminal. `capture` is what `packages/ssh`'s server uses for the same
-  // reason: the output has to be collected rather than written, since "written" here would mean
-  // the page's log rather than the screen being drawn.
-  Shell sh = Shell.create(core, cli);
-  sh.capture = true;
-  // **`mountSystem`, which this could not have until wac-mono 0116.** design/0001 wants the browser
-  // terminal to be "the *same system* in a tab", which means the `/dev`, `/proc` and `/bin` every
-  // other session has. Mounting them was tried once before and had to come out: the shell got them
-  // and its *programs* did not, because a spawned stage was a fresh instance and `shrun.wac` gave a
-  // fresh instance `Fs.onHost`. `ls /bin` listed sixty-three programs — `ls` is a builtin, on the
-  // session's own filesystem — and `cat /dev/null` failed, because `cat` was spawned. A consistent
-  // poorer world beat an inconsistent richer one, so a tab had none of it.
+  // as they would in a terminal.
   //
-  // A spawned stage has no filesystem of its own now: it asks this page's shell, which holds the one
-  // there is. So the two routes cannot disagree — there is nothing for them to disagree about — and
-  // `browser_live.test.ts` asks a real Chromium rather than taking that on trust.
-  Vec<string> argv = Vec.create();
-  argv.push("term");
-  mountSystem(sh.fs, core.randomBytes, argv, Vec.fromArray(boxNames()));
-
-  // Every `box` applet, as a command you can type — `sort`, `sha256sum`, `gzip`, `cut`, `shuf` and
-  // fifty more, the same code `box` runs on a command line. This is the *fallback* now: the shell
-  // spawns them (below), and calls them only in a world that cannot.
-  sh.external = boxRun;
-  sh.externalNames = boxNames;   // so `help` lists them
-  // ...and they are applets of *this very program*, so the shell can run them as real children
-  // rather than calling them: `spawnSelf(["sort", "-n"])` re-enters `main` above, which dispatches
-  // on the first argument. Its own instance, its own grants — and in a page this is the only route
-  // to a real program at all.
+  // **One `Session`**, which is the shell, the scrollback and the history with no page in it —
+  // `src/lib/session.wac`. It was all inline here until `example/desk.wac` needed the same thing in a
+  // window (design/0001 step 8), and two copies of "what Enter does" is two things to be wrong.
   //
-  // **Turning this off was tried this tick and is worse.** A called applet's output is captured in
-  // memory and capped at 8 MiB, so `seq 1 1500000 | wc -c` truncates; a spawned one's queue drains
-  // as the next stage reads it. The assertion in `platform/test/browser_live.test.ts` exists to tell
-  // the two routes apart and caught it immediately. A missing `/dev/null` is a visible failure; a
-  // silently short byte count is the other kind.
-  sh.externalSpawnable = true;
+  // What stayed here is what a *presentation* owns: the markup, the ids, the caret, and the choice to
+  // fill the frame. What left is what both presentations agree about.
+  Session s = Session.start(core, cli, "term");
+  s.say(BANNER);
+  page.setText("scr", s.screen).wait();
 
   // Open on a session rather than on a prompt with nothing above it. These are run through the
   // same `runScript` the keyboard reaches, so what the frame shows on load is this build's real
@@ -257,18 +231,12 @@ export i32 page(Core core, Cli cli, Page page) {
     "echo 'a whole new stack' | gzip -c | wc -c",
     "echo hello | sha256sum"
   );
-  page.setText("ps1", prompt(sh)).wait();
+  page.setText("ps1", s.prompt()).wait();
   for (i32 i = 0; i < opening.len(); i++) {
-    screen = screen + prompt(sh) + " " + opening[i] + "\n";
-    runScript(sh, opening[i]);
-    screen = screen + string.fromBytes(sh.outBuf.take()) + string.fromBytes(sh.errOut.take());
-    page.setText("scr", screen).wait();
+    s.feedLine(opening[i]);
+    page.setText("scr", s.screen).wait();
   }
-  screen = screen + "\n";
-
-  string[] history = string[HISTORY](fill: "");
-  i32 count = 0;      // how many commands have been run, ever
-  i32 cursor = 0;     // how far back Up has walked; 0 means "at the prompt"
+  s.say("\n");
 
   while (true) {
     Event e = page.nextEvent().wait();
@@ -283,12 +251,7 @@ export i32 page(Core core, Cli cli, Page page) {
     // terminal is a byte stream. The host translates at the edge now (`terminalBytes` in
     // `host/entryBrowser.ts`), so above that line everything is bytes, here as over ssh.
     if (e.value == upArrow() || e.value == downArrow()) {
-      i32 depth = e.value == upArrow() ? cursor + 1 : cursor - 1;
-      i32 have = count < HISTORY ? count : HISTORY;
-      if (depth > have) { depth = have; }
-      if (depth < 0) { depth = 0; }
-      cursor = depth;
-      page.setValue("cmd", depth == 0 ? "" : history[(count - depth) % HISTORY]).wait();
+      page.setValue("cmd", s.recall(e.value == upArrow())).wait();
       continue;
     }
 
@@ -301,10 +264,9 @@ export i32 page(Core core, Cli cli, Page page) {
     // What `^C` still does *not* do here is end a running command, which is step 5's own criterion
     // and is the same blocker in both places: nothing reads a keystroke while a command runs.
     if (e.value == intr()) {
-      screen = screen + prompt(sh) + " " + page.getValue("cmd").wait() + "^C\n";
+      s.interrupt(page.getValue("cmd").wait());
       page.setValue("cmd", "").wait();
-      page.setText("scr", screen).wait();
-      cursor = 0;
+      page.setText("scr", s.screen).wait();
       continue;
     }
 
@@ -315,35 +277,15 @@ export i32 page(Core core, Cli cli, Page page) {
 
     string line = page.getValue("cmd").wait();
     page.setValue("cmd", "").wait();
-    cursor = 0;
-    if (line == "") { continue; }
-
-    history[count % HISTORY] = line;
-    count = count + 1;
-
-    // `clear` is the terminal's, not the shell's: `sh` has no notion of a screen to clear, and
-    // implementing it here costs one branch and is what everybody reaches for first.
-    if (line == "clear") {
-      screen = "";
-      page.setText("scr", screen).wait();
-      continue;
-    }
-
-    screen = screen + prompt(sh) + " " + line + "\n";
-    i32 status = runScript(sh, line);
+    s.feedLine(line);
     // `cd` is a built-in, so the directory it moved to is the shell's own field and the prompt has
     // to be told. After the command rather than before it: the line just echoed belongs to where
     // it was run, and the next prompt to where that left us.
-    page.setText("ps1", prompt(sh)).wait();
-    screen = screen + string.fromBytes(sh.outBuf.take()) + string.fromBytes(sh.errOut.take());
-    // A non-zero status is worth showing: without a prompt that displays `$?`, a command that
-    // failed silently and one that printed nothing look identical.
-    if (status != 0) { screen = screen + "[exit " + itoa(status) + "]\n"; }
-
-    page.setText("scr", screen).wait();
-    if (sh.exiting) {
-      page.setText("scr", screen + "\n[the shell exited " + itoa(sh.exitCode) + "]\n").wait();
-      return sh.exitCode;
+    page.setText("ps1", s.prompt()).wait();
+    page.setText("scr", s.screen).wait();
+    if (s.over()) {
+      page.setText("scr", s.screen + "\n[the shell exited " + itoa(s.code()) + "]\n").wait();
+      return s.code();
     }
   }
 }

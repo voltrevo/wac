@@ -1,0 +1,273 @@
+// A desktop, in a tab — design/0001 step 8, and the last of its eight steps to be started.
+//
+//   deno task app packages/box/example/desk.wac
+//
+// The design's own sentence: "`Page` has render, events and pixels; a window manager in wac over the
+// same system, with the terminal as one window. Deliberately last: windows want something to show."
+//
+// There is something to show now. A tab holds a real system — `/bin` with sixty-odd programs, `/proc`
+// with the process table, `/dev`, users, a shell that spawns its applets as actual children — so a
+// window manager over it is showing the machine rather than decorating an empty one.
+//
+// ## What a window is here
+//
+// Markup, not pixels. `Page` has `drawPixels` and a terminal drawn that way would mean reimplementing
+// text layout, selection, the caret and IME to get something worse than the browser already does. So a
+// window is a `<div>` the manager positions, and the terminal's body is the `<pre>` and `<input>` that
+// `example/term.wac` already uses.
+//
+// The manager owns `render` and re-renders the **frame** — which windows exist, where they sit, which
+// is on top — while *content* goes through `setText` on a per-window id. That split is the whole of
+// why typing does not flicker: a keystroke touches one text node, and only opening, closing or raising
+// a window rebuilds the document.
+//
+// ## The one thing re-rendering costs, and what is done about it
+//
+// `render` replaces the markup, so the half-typed command in `#cmd` and the caret go with it. Raising a
+// window while somebody is typing would eat their line. So the manager reads `#cmd` before it
+// re-renders and puts it back after — which is what makes raise-on-click safe to do at all.
+//
+// ## What is *not* implemented, said rather than approximated
+//
+// **Dragging.** A window is where the manager put it. Moving one needs `pointermove` while a button is
+// held, which is an event per pixel across the bridge, and the honest version of that is a design
+// question about coalescing rather than something to bolt on. The positions are a cascade.
+//
+// **Resizing**, for the same reason, and **minimise**: there is no taskbar to minimise *to* yet.
+//
+// What is here is: several windows, each showing something live from the same system; raise and focus
+// by clicking; close; and a terminal that is the whole terminal — the same `Session` the full-frame
+// one uses, so `ls`, `ps`, a pipeline of spawned applets and `^C` all behave as they do everywhere
+// else in this repository.
+
+import { Cli, Core, Event, Page } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { boxApplet } from "../src/shrun.wac";
+import { UNKNOWN } from "../src/box.wac";
+import { Session } from "../src/lib/session.wac";
+
+/** This program is also its own applets, so the shell in a window can spawn them. */
+export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
+
+/** How many windows there are, which is fixed: opening more wants a launcher, which is not here. */
+i32 WINDOWS() { return 2; }
+i32 SHELL() { return 0; }
+i32 FILES() { return 1; }
+
+string cr() { return string.fromCodepoint(13); }
+string intr() { return string.fromCodepoint(3); }
+string upArrow() { return string.fromCodepoint(27) + "[A"; }
+string downArrow() { return string.fromCodepoint(27) + "[B"; }
+
+/** The window's title, which is also what its bar says. */
+string titleOf(i32 w) { return w == SHELL() ? "shell" : "files"; }
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac desktop").wait();
+
+  Session s = Session.start(core, cli, "desk");
+  // Something in the filesystem to look at, so the files window is not an empty box on load. Run
+  // through the session's own shell, which means the terminal shows them as history — the desktop
+  // opening on a session that has already done something, as the terminal does.
+  s.feedLine("mkdir -p /home/wac");
+  s.feedLine("seq 1 5 > /home/wac/five");
+
+  // Stacking order, front last. A `Vec` rather than a z-index per window because "which is on top" is
+  // an order, and keeping it as one means raising is a move rather than a search for the maximum.
+  Vec<i32> stack = Vec.create();
+  for (i32 i = 0; i < WINDOWS(); i++) { stack.push(i); }
+  bool[] open = bool[WINDOWS()](fill: true);
+
+  draw(page, stack, open);
+  paint(page, s);
+  page.on("#cmd", "keydown").wait();
+  page.on(".bar", "mousedown").wait();
+  page.on(".cls", "click").wait();
+
+  while (true) {
+    Event e = page.nextEvent().wait();
+
+    if (e.kind == "mousedown" && startsWith(e.id, "bar")) {
+      i32 w = tailNumber(e.id, 3);
+      if (w >= 0) { raise(stack, w); redraw(page, stack, open, s); }
+      continue;
+    }
+    if (e.kind == "click" && startsWith(e.id, "cls")) {
+      i32 w = tailNumber(e.id, 3);
+      if (w >= 0) { open[w] = false; redraw(page, stack, open, s); }
+      continue;
+    }
+    if (e.kind != "keydown" || e.id != "cmd") { continue; }
+
+    if (e.value == upArrow() || e.value == downArrow()) {
+      page.setValue("cmd", s.recall(e.value == upArrow())).wait();
+      continue;
+    }
+    if (e.value == intr()) {
+      s.interrupt(page.getValue("cmd").wait());
+      page.setValue("cmd", "").wait();
+      paint(page, s);
+      continue;
+    }
+    if (e.value != cr()) { continue; }
+
+    string line = page.getValue("cmd").wait();
+    page.setValue("cmd", "").wait();
+    s.feedLine(line);
+    paint(page, s);
+    if (s.over()) {
+      page.setText("scr", s.screen + "\n[the shell exited " + itoa(s.code()) + "]\n").wait();
+      return s.code();
+    }
+  }
+  return 0;
+}
+
+/**
+ * Rebuild the document: which windows exist, where they sit, which is on top.
+ *
+ * Every window's markup is emitted in stacking order, so the document order *is* the z-order and no
+ * `z-index` is needed — which also means raising is "move it to the end of the list" and nothing else.
+ */
+void draw(Page page, Vec<i32> stack, bool[] open) {
+  string body = "<style>" + css() + "</style><div id=\"desk\">";
+  for (i32 i = 0; i < stack.len(); i++) {
+    i32 w = stack.get(i);
+    if (!open[w]) { continue; }
+    bool front = i == lastOpen(stack, open);
+    body = body + window(w, front);
+  }
+  body = body + "</div>";
+  page.render(body).wait();
+}
+
+/** Where the front-most open window sits in the stack, or -1 when everything is closed. */
+i32 lastOpen(Vec<i32> stack, bool[] open) {
+  for (i32 i = stack.len() - 1; i >= 0; i--) {
+    if (open[stack.get(i)]) { return i; }
+  }
+  return -1;
+}
+
+/** One window's markup. `front` gets the accent border, which is the whole of "focused". */
+string window(i32 w, bool front) {
+  i32 n = itoaLen(w);
+  string id = itoa(w);
+  string pos = w == SHELL()
+    ? "left: 24px; top: 28px; width: min(62vw, 720px); height: min(66vh, 460px);"
+    : "left: min(62vw, 720px); top: 120px; width: min(30vw, 320px); height: min(46vh, 320px);";
+  string inner = w == SHELL()
+    ? "<div class=\"bod\" id=\"term\">" +
+      "  <pre id=\"scr\"></pre>" +
+      "  <div id=\"bar1\"><span id=\"ps1\">$</span>" +
+      "    <input id=\"cmd\" autofocus autocomplete=\"off\" spellcheck=\"false\"" +
+      "           autocapitalize=\"off\" autocorrect=\"off\"></div>" +
+      "</div>"
+    : "<pre class=\"bod\" id=\"files\"></pre>";
+  return "<div class=\"win" + (front ? " front" : "") + "\" style=\"" + pos + "\">" +
+         "  <div class=\"bar\" id=\"bar" + id + "\">" +
+         "    <span class=\"ttl\">" + titleOf(w) + "</span>" +
+         "    <button class=\"cls\" id=\"cls" + id + "\">&#215;</button>" +
+         "  </div>" + inner + "</div>";
+}
+
+/** Digits in a small number, which is all this needs to place an id. */
+i32 itoaLen(i32 n) { return n < 10 ? 1 : 2; }
+
+/**
+ * Re-render and put back everything a re-render throws away.
+ *
+ * `render` replaces the markup, so the half-typed command goes with it. Read before, restored after —
+ * without which clicking a title bar while typing would silently eat the line.
+ */
+void redraw(Page page, Vec<i32> stack, bool[] open, Session s) {
+  string typed = page.getValue("cmd").wait();
+  draw(page, stack, open);
+  paint(page, s);
+  page.setValue("cmd", typed).wait();
+}
+
+/** Put this window on top: move it to the end, which is the front. */
+void raise(Vec<i32> stack, i32 w) {
+  Vec<i32> rest = Vec.create();
+  for (i32 i = 0; i < stack.len(); i++) {
+    if (stack.get(i) != w) { rest.push(stack.get(i)); }
+  }
+  rest.push(w);
+  for (i32 i = 0; i < stack.len(); i++) { stack.set(i, rest.get(i)); }
+}
+
+/**
+ * Everything the windows *show*, from the one system underneath them.
+ *
+ * The files pane reads the filesystem directly rather than running `ls` through the shell: the point
+ * of two windows on one system is that they see the same thing, and routing this through the terminal
+ * would put its own output in the terminal's scrollback and prove nothing about sharing.
+ */
+void paint(Page page, Session s) {
+  page.setText("scr", s.screen).wait();
+  page.setText("ps1", s.prompt()).wait();
+  page.setText("files", listing(s)).wait();
+}
+
+/** The shell's working directory, as the files window shows it. */
+string listing(Session s) {
+  string[]? names = s.sh.fs.readDir(s.sh.cwd);
+  if (names is null) { return s.sh.cwd + "\n  (not a directory)\n"; }
+  string[] have = names!;
+  string out = s.sh.cwd + "\n";
+  for (i32 i = 0; i < have.len(); i++) { out = out + "  " + have[i] + "\n"; }
+  if (have.len() == 0) { out = out + "  (empty)\n"; }
+  return out;
+}
+
+bool startsWith(string s, string prefix) {
+  u8[] a = s.toBytes();
+  u8[] b = prefix.toBytes();
+  if (a.len() < b.len()) { return false; }
+  for (i32 i = 0; i < b.len(); i++) { if (a[i] != b[i]) { return false; } }
+  return true;
+}
+
+/** The number after a fixed-length prefix — `bar1` is 1. Negative when there is not one. */
+i32 tailNumber(string s, i32 from) {
+  u8[] b = s.toBytes();
+  if (b.len() <= from) { return -1; }
+  i32 n = 0;
+  for (i32 i = from; i < b.len(); i++) {
+    if (b[i] < 48 || b[i] > 57) { return -1; }
+    n = n * 10 + (b[i] - 48);
+  }
+  return n;
+}
+
+string css() {
+  return
+    "#desk, #desk * { box-sizing: border-box; }" +
+    "#desk { position: fixed; inset: 0; overflow: hidden; margin: 0;" +
+    "        background: #0b0d12; color: #d7dde6;" +
+    "        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }" +
+    ".win { position: absolute; display: flex; flex-direction: column; overflow: hidden;" +
+    "       background: #06070a; border: 1px solid #232a36; border-radius: 8px;" +
+    "       box-shadow: 0 10px 30px rgba(0,0,0,.45); }" +
+    ".win.front { border-color: #2f6f66; }" +
+    ".bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;" +
+    "       background: #10141c; border-bottom: 1px solid #232a36; cursor: default;" +
+    "       user-select: none; }" +
+    ".win.front .bar { background: #14201f; }" +
+    ".ttl { flex: 1; color: #9fb0c0; font-size: 12px; }" +
+    ".cls { background: transparent; border: 0; color: #6b7482; cursor: pointer;" +
+    "       font: inherit; font-size: 15px; line-height: 1; padding: 0 4px; }" +
+    ".cls:hover { color: #ff8f8f; }" +
+    ".bod { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; white-space: pre-wrap;" +
+    "       word-break: break-word; scrollbar-width: thin;" +
+    "       scrollbar-color: #2b3240 transparent; }" +
+    "#term { display: flex; flex-direction: column-reverse; cursor: text; }" +
+    "#scr { margin: 0; white-space: pre-wrap; word-break: break-word; }" +
+    "#bar1 { display: flex; align-items: baseline; column-gap: 1ch; }" +
+    "#ps1 { color: #5eead4; user-select: none; white-space: pre; }" +
+    "#cmd { flex: 1; min-width: 4ch; background: transparent; border: 0; outline: 0;" +
+    "       color: inherit; font: inherit; padding: 0;" +
+    "       caret-color: #5eead4; caret-shape: block; }";
+}
