@@ -41,6 +41,24 @@ import { wacParse } from "wac/wacParse.ts";
 import type { Program, WacType } from "wac/wacParse.ts";
 
 /** Names that belong to something other than this repo, so a README may say them freely. */
+/**
+ * Whether this name is JavaScript's, asked of the runtime rather than of a list.
+ *
+ * `Number`, `String`, `Date.UTC` and `parseFloat` are all the same case — a README explaining how the
+ * compiler works naming the host function it calls — and every one of them had to be *added by hand*
+ * after breaking the shared suite for whoever pushed next. Twice in two days, which is what turned a
+ * list into a question: `globalThis` already knows its own members, and a `X.y` is foreign when `X` is.
+ *
+ * It only ever *widens* what is allowed, so the risk is a wac export that shares a name with a
+ * JavaScript builtin going unchecked. There is none today, and `FOREIGN` below stays for the names no
+ * runtime can answer for — a spec's, another implementation's, or one that deliberately does not exist.
+ */
+function isJavaScripts(name: string): boolean {
+  const root = name.split(".")[0];
+  const g = globalThis as unknown as Record<string, unknown>;
+  return Object.prototype.hasOwnProperty.call(g, root) || root in g;
+}
+
 const FOREIGN = new Set([
   // JavaScript and the host
   "Number", "String", "Buffer.from", "Date.UTC", "wacCompile", "DecompressionStream",
@@ -171,7 +189,7 @@ Deno.test("docs: an `export` signature in a README is the signature in the sourc
         const written = norm(m[1]);
         const name = written.match(/^export\s+\S+\s+([A-Za-z_]\w*)\s*\(/)?.[1];
         if (name === undefined) continue;             // not a function signature
-        if (FOREIGN.has(name)) continue;
+        if (FOREIGN.has(name) || isJavaScripts(name)) continue;
         const real = decls.signatures.get(name);
         const line = text.slice(0, text.indexOf(m[1])).split("\n").length;
         if (real === undefined) {
@@ -193,6 +211,9 @@ Deno.test("docs: a README's `name(…)` names something that exists", async () =
       const written = m[1];
       const name = written.split(".").pop()!;
       if (decls.names.has(name) || FOREIGN.has(name) || FOREIGN.has(written)) continue;
+      // JavaScript's own, asked of the runtime — see `isJavaScripts`. This is the check that
+      // `parseFloat` and `Date.UTC` reached, and the one that was being kept current by hand.
+      if (isJavaScripts(name) || isJavaScripts(written)) continue;
       const line = text.slice(0, m.index!).split("\n").length;
       missing.push(`${path}:${line}: \`${written}(…)\` — no declaration, and not in FOREIGN`);
     }

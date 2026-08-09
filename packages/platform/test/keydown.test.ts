@@ -95,19 +95,33 @@ Deno.test("what `packages/tty` needs is exactly what arrives", () => {
   // the line discipline branches on is producible from a keystroke. `line.wac` names INTR 3, EOF 4,
   // ERASE 0x7f, KILL 0x15, WERASE 0x17 and LNEXT 0x16 — if any of these could not be typed in a page,
   // the module would be shared in name only.
-  const needed: [string, string][] = [
-    ["\x03", "INTR"],
-    ["\x04", "EOF"],
-    ["\x7f", "ERASE"],
-    ["\x15", "KILL"],
-    ["\x17", "WERASE"],
-    ["\x16", "LNEXT"],
-    ["\r", "CR"],
-  ];
+  // **Both lists are derived, and the typed version had already fallen two behind.** It named six
+  // characters; `line.wac` gained `QUIT` (`^\`) and `REPRINT` (`^R`) one tick later and this did not
+  // notice — a test whose entire purpose is to catch that drift, drifting. Worse, `^\` would have
+  // failed if it *had* been listed, because the keys tried below were `a-z?` and a backslash is
+  // neither: the enumeration of what a person can type was as hand-made as the list it checked.
+  //
+  // So: the discipline's own declarations on one side, and every key a keyboard has on the other.
+  const source = Deno.readTextFileSync("packages/tty/src/line.wac");
+  const needed = [...source.matchAll(/^i32 ([A-Z]+)\(\) \{ return (\d+); \}/gm)]
+    // `SIGINT` and `SIGQUIT` are signal *numbers* that `feed` answers with, not bytes it reads. They
+    // are the one thing in that block a keyboard is not expected to produce, and the prefix is how
+    // `line.wac` itself distinguishes them.
+    .filter(([, name]) => !name.startsWith("SIG"))
+    .map(([, name, code]) => [String.fromCharCode(Number(code)), name] as [string, string]);
+  assertEquals(needed.length >= 8, true, `only ${needed.length} control characters found in line.wac`);
+
   const producible = new Set<string>();
-  for (const k of "abcdefghijklmnopqrstuvwxyz?".split("")) producible.add(key(k, true));
-  for (const k of ["Enter", "Backspace", "Tab", "Escape"]) producible.add(key(k));
-  for (const [byte, name] of needed) {
-    assertEquals(producible.has(byte), true, `${name} cannot be typed in a page`);
+  // Every printable ASCII, with and without the control key — which is what a keyboard offers, rather
+  // than the letters somebody thought of. `\` is 92, so `Ctrl-\` is 28, which is `QUIT`.
+  for (let c = 0x20; c < 0x7f; c++) {
+    const ch = String.fromCharCode(c);
+    producible.add(key(ch));
+    producible.add(key(ch, true));
   }
+  for (const k of ["Enter", "Backspace", "Tab", "Escape", "Delete"]) producible.add(key(k));
+  producible.delete("");
+
+  const missing = needed.filter(([byte]) => !producible.has(byte)).map(([, name]) => name);
+  assertEquals(missing.join(", "), "", "control characters the discipline reads and a page cannot type");
 });
