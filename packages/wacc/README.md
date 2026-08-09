@@ -1762,6 +1762,41 @@ unnecessary, which is the better way to make a test cheap.
 | mutation recall on generated programs | 94%, unchanged |
 | false alarms, everywhere | 0 |
 
+### The ceiling is one file, and the naive way through it costs the invariant
+
+The 85% above has a shape. Of the thirty-eight diagnostics missed on the repository's own code,
+**thirty-eight are in files that import something and none is in a file that does not.** A checker
+given one file cannot know what `Buf.create` takes or whether a `Node` has the field being read, so
+it says nothing about either — which is correct, and is a ceiling rather than a rule. The remaining
+recall is not a queue of missing rules; it is a missing *mode*.
+
+So: walk a file's imports first for their declarations, discard their diagnostics — they belong to
+their own compilation and their line numbers are not this file's — and then check the file with
+everything it can see. It works, and it is not enough: **recall 85% → 90%, and forty false alarms.**
+
+The forty say something worth knowing about this checker's shape. Every table in it is keyed by a
+**bare name**, and the first declaration of one wins — the same fact that made `Ok` from two enums a
+single entry two slots ago, now across files. An imported `Rng` stood in for the file's own, and a
+method that is `const this` over there made an ordinary write over here *"cannot assign through a
+const reference"*.
+
+Seeding the file's own declarations first, so it wins its own names, makes it **worse** — a hundred
+and thirty-seven — because then the file is walked twice and the second pass redeclares what the
+first declared, which this checker poisons on purpose.
+
+The shape that would work is narrower than either: an import contributes exactly the names the
+importing file **asked for**, which is what `import { X } from` means and what keeps two `Rng`s from
+ever meeting. That needs the declaration passes separated from the checking passes with a name
+filter, which is a bigger piece of work than the mode looked like from outside — and worth doing,
+because it is the only thing standing between this rung and the diagnostics real code actually wants.
+
+Left behind for it: `checkModule` and `errorsOf` are split out of `checkProgram`, and `C` has a
+`quiet` flag that suppresses reporting. Nothing sets it yet.
+
+**A measurement rather than a feature, which is the honest thing to record.** The mode is not
+committed: an oracle that is absolute about false alarms cannot ship forty of them, and the number to
+beat next time is on this page.
+
 **Every corpus file a feature can fix is now whole.** The three that are left import files the corpus
 does not contain — `box/src/box.wac` and two others reach for sources no caller supplied — and no
 compiler change makes those exist. The next measurement has to come from somewhere other than this

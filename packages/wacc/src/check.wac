@@ -660,6 +660,8 @@ export struct C {
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
   i32 errorCount;
+  /** Whether diagnostics are being discarded — see `report`. */
+  bool quiet;
   /**
    * Which enum each variant belongs to, and how many payload fields it has.
    *
@@ -687,7 +689,7 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), 0,
+             i32[capacity * 3](), 0, false,
              string[capacity](), string[capacity](), i32[capacity](), 0);
   }
 
@@ -1076,6 +1078,10 @@ export struct C {
   }
 
   void report(this, i32 code, i32 line, i32 col) {
+    // **Quiet is for a file being read only for its declarations.** An import is walked to learn
+    // what it declares, not to be judged: its diagnostics belong to its own compilation, and
+    // reporting them here would put another file's line numbers in this file's answer.
+    if (this.quiet) { return; }
     if (this.errorCount * 3 + 3 > this.errors.len()) { return; }
     // **The same complaint twice is one complaint.** A literal is now checked on two paths — the
     // one that types it and the one that only asks whether it fits — and an assignment takes both.
@@ -3748,6 +3754,26 @@ void checkDuplicates(C c, Program prog) {
 
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
   C c = C.create(src, toks, tokenCount);
+  checkModule(c, prog);
+  return errorsOf(c);
+}
+
+/** The `(code, line, col)` triples a finished check answers with. */
+export i32[] errorsOf(C c) {
+  i32[] out = i32[c.errorCount * 3]();
+  for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
+  return out;
+}
+
+/**
+ * Everything this checker does to one module, against whatever is already declared in `c`.
+ *
+ * Split out so a file's **imports** can be run through it first with `c.quiet` set: their
+ * declarations land in the same tables, their diagnostics are thrown away, and the file that matters
+ * is then checked with every name it can see. A single file is that with an empty `c` and nothing
+ * quiet, which is what `checkProgram` is.
+ */
+export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
   // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
   // imported is in scope for the whole file, so these sit with the module-level constants.
@@ -3959,7 +3985,4 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
       else: { }
     }
   }
-  i32[] out = i32[c.errorCount * 3]();
-  for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
-  return out;
 }

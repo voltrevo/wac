@@ -1555,7 +1555,7 @@ string coreSource() {
 }
 
 /** A file's text from the table the caller supplied, or `""` when it was not supplied. */
-string sourceOf(string[] paths, string[] sources, string path) {
+export string sourceOf(string[] paths, string[] sources, string path) {
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == path) { return sources[i]; }
   }
