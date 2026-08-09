@@ -177,6 +177,19 @@ process itself, so `kill -9` on something that never reaches a check point does 
 cannot reach a *stage of a running pipeline*, because the stage is a function call inside this shell
 and nothing else in the system is running to send one.
 
+`jobs`, `wait` and `&` came next, and `&` is the one that changes what this shell *is*: a background
+job is a **real child** through `spawnSelf`, so for the first time something runs while the shell does
+not. There is no in-process concurrency to fake it with, which is why `&` was refused outright before
+rather than run in the foreground and called background. `jobs` prints bash's columns, `wait` answers
+bash's statuses — bare `wait` is always 0, `wait $!` and `wait %1` are the job's own — and `kill %1`
+takes a job spec. What `&` refuses by name: a list, a pipeline and a redirection, each of which needs a
+subshell to run in, and a subshell here is a `Shell.fork` running in this instance.
+
+Two differences from bash, stated because a reader will assume otherwise: a job's **output arrives when
+it is waited for**, not as it is produced — the shell owns the child's pipes and is not running while
+the child is — and outstanding jobs are **waited for at the end of a script**, where bash exits and
+leaves them writing to a descriptor they still hold. Ours would discard the output instead.
+
 `$$` came with it, and had been quietly empty: the lexer read it as a parameter named `$` all along
 and nothing gave it a value, so `echo $$` printed a blank line. A shell also enters *itself* in the
 process table now — it was the one process the system did not know about, so `ps` listed every command
