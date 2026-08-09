@@ -1076,6 +1076,25 @@ Deno.test({
           throw new Error(`expected a permission error, got ${JSON.stringify(other.stderr)}`);
         }
 
+        // **A third key, which the image knows nothing about, is root** — deliberately, and pinned
+        // here because nothing pinned it. `authenticate` maps a key allowed by the server's own `-a`
+        // file to `root` when no user's `authorized_keys` names it, so it has the run of the image:
+        // it reads both secrets, and its `$USER` is empty rather than `root`, which makes a session
+        // with every privilege look like a login that went half wrong.
+        //
+        // The argument for it is that the `-a` file is the *server operator's*, and whoever can write
+        // it already controls the process. The argument against is that with `-i` the design says
+        // users are data in the image and this key is not in it. That is issues/system/0126 and the
+        // decision is not this test's to make — what this test does is make the behaviour something
+        // somebody has to change on purpose.
+        const harnessKey = await realSsh(live, "echo USER=[$USER]; cat /home/ada/secret; cat /home/grace/secret");
+        if (harnessKey.stdout !== "USER=[]\nthe difference engine\nthe first compiler\n") {
+          throw new Error(
+            `the server-wide key's privileges changed; if that was deliberate, 0126 is the place: ` +
+              JSON.stringify(harnessKey.stdout + harnessKey.stderr),
+          );
+        }
+
         // Nor by widening it first, which is the obvious way round a check.
         const widen = await realSsh(live, "chmod 644 /home/grace/secret; cat /home/grace/secret; echo status=$?", `${dir}/ada`);
         if (!widen.stdout.includes("status=1")) throw new Error(JSON.stringify(widen.stdout));

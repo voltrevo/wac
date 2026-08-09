@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |
 | [0125](open/0125-yes-wc-l-answers-4194304-where-bash-never-finishes.md) | `yes \| wc -l` answers 4194304 — the 8 MiB queue cap — where bash never finishes | bug | wrong answer |
 | [0123](open/0123-closesocket-stops-a-child-outright-on-one-host-and-cooperatively-on-the-other.md) | `closeSocket` stops a child outright on one host and cooperatively on the other | bug | wrong answer |
 | [0122](open/0122-randombytes-above-64-kib-fails-on-deno-and-the-browser.md) | `randomBytes` above 64 KiB fails on Deno and the browser — [gh#53](https://github.com/voltrevo/wac-mono/issues/53) | bug | trap |
@@ -35,7 +36,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-137 issues, 114 closed.
+138 issues, 114 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

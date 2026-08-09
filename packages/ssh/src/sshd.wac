@@ -404,6 +404,11 @@ string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
     // The image's users first, each against their own file, then the server-wide one. `who` stays empty
     // for the second: a key allowed by `-a` alone belongs to nobody in particular, which is exactly what
     // the filesystem's unset user means.
+    //
+    // **And then the return below turns that empty name into `root`**, deliberately, so what the
+    // sentence describes is not what a session gets. That is `issues/system/0126`: a key in the
+    // server's own `-a` file has the run of every image it serves, which is defensible — it is the
+    // operator's file — and is a decision nothing had written down or pinned.
     string who = "";
     bool named = false;
     for (i32 u = 0; u < users.len() && !named; u++) {

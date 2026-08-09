@@ -283,7 +283,7 @@ export struct Fs {
    * filesystem whose user was never set, which is what keeps every existing caller working unchanged.
    */
   bool may(const this, i32 node, i32 want) {
-    if (this.user == "" || this.user == "root") { return true; }
+    if (this.user == ROOT()) { return true; }
     Inode n = this.nodes.get(node);
     i32 bits = n.owner == this.user ? (n.mode >> 6) & 7 : n.mode & 7;
     return (bits & want) == want;
@@ -871,7 +871,7 @@ export struct Fs {
     if (node < 0) { return absentChange(node); }
     // The owner's to give away, and root's to take: `chmod` on somebody else's file is refused, which is
     // what stops a user opening a private file by widening it first.
-    if (this.user != "" && this.user != "root" && this.nodes.get(node).owner != this.user) {
+    if (this.user != ROOT() && this.nodes.get(node).owner != this.user) {
       return Change.of(FAULT_DENIED(), "operation not permitted");
     }
     this.nodes.get(node).setMode(mode);
@@ -894,7 +894,7 @@ export struct Fs {
     if (node < 0) { return absentChange(node); }
     // **Root's alone.** On a real system giving a file away is privileged precisely because it is how a
     // user would otherwise escape their own quota or hide a file behind somebody else's name.
-    if (this.user != "" && this.user != "root") {
+    if (this.user != ROOT()) {
       return Change.of(FAULT_DENIED(), "operation not permitted");
     }
     this.nodes.get(node).setOwner(owner);
@@ -1026,6 +1026,25 @@ export struct Fs {
     return this.nodes.get(dir).entries.get(name).orElse(-1);
   }
 }
+
+/**
+ * The one user the checks are not applied to.
+ *
+ * **Written down because "exempt" used to be two values.** `may`, `chmod` and `chown` each read
+ * `user != "" && user != "root"`, so the *empty* user was exempt from every mode and owner check
+ * alongside `root` — three copies of one condition, which is how a second meaning survives being
+ * read.
+ *
+ * Nothing reaches it today: every `Fs` starts as `root` and `packages/ssh` maps a key it cannot name
+ * to `root` deliberately (see `authenticate`). So this is hardening a **trap rather than a hole** —
+ * the trap being that `setUser("")`, which anybody would write meaning *nobody*, granted everything.
+ * An unset user is now nobody: it owns nothing, so it gets the `other` bits everywhere.
+ *
+ * Said plainly because the first version of this comment claimed the change had closed an ssh
+ * escalation it had measured. It had not: the escalation is `authenticate`'s, it is deliberate, and
+ * it is `issues/system/0126`. Two conditions that look alike are not the same condition.
+ */
+export string ROOT() { return "root"; }
 
 /** `find` answered nothing because there is nothing at that path. */
 export i32 NODE_NONE() { return -1; }
