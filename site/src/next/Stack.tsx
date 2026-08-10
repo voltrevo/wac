@@ -477,11 +477,20 @@ export default function Stack() {
           reference&rsquo;s diagnostics at its exact positions and never invents one.
         </P>
         <P>
+          <Lead>Against the specification it is not a subset.</Lead> Measured for the first time as a
+          contract rather than as a comparison, it refuses <Lead>101 of 101</Lead> of the rejections
+          the spec documents and stays silent on <Lead>262 of 262</Lead> programs the spec says are
+          legal, with the multi-file half of it — 15 rejections and 41 acceptances across files —
+          measured too. That is the number worth reading: the reference is a fast adjudicator where
+          the two agree, and the spec is what decides who is right when they do not.
+        </P>
+        <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
-            Subset, not equal — roughly 210 distinct diagnostics exist in the reference and this
-            implements a fraction. What &ldquo;done&rdquo; claims is that the oracles which exist
-            have nothing further to say, which is a narrower thing and the only one that was
-            measured.
+            Still a subset of the <em>reference</em>, and deliberately — roughly 210 distinct
+            diagnostics exist there and this implements a fraction, reporting fewer rather than
+            different ones. Reporting a diagnostic the reference does not is what would break the
+            comparison, so the checker stays quiet where it cannot type something rather than
+            guessing.
           </span>
         </P>
         <P>

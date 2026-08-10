@@ -46,12 +46,13 @@ const KNOWN_MISSES = new Set<string>([
 ]);
 
 /**
- * The one legal program refused. Two modules each declare a `Point`, and the declaration table is
- * keyed by bare name, so the second is lost to the first — the last thing here that has no notion of
- * which file a name came from.
+ * **Empty.** It held one: two modules each declaring a `Dup`, one imported as `Dup as DupB`. Names
+ * were declared under the name the *declaring* file gave them, so the alias was never a type and the
+ * second module's fields were looked up on the first module's struct. An imported name now enters
+ * under the name the importing file gave it, throughout — declarations and the declaring file's own
+ * signatures alike.
  */
 const KNOWN_FALSE_ALARMS = new Set<string>([
-  "[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct#2",
 ]);
 
 /**

@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    10 sources, 173,946 bytes, identical`;
+B == C    10 sources, 180,254 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -255,7 +255,15 @@ export default function Home() {
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
           341 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
-          alarm among them. Broken on purpose, it catches <Lead>246 of 250</Lead>.
+          alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
+          <Lead>179 of 189</Lead>.
+        </P>
+        <P>
+          The newest measurement is against the specification rather than against the other
+          compiler, which is the one that settles what &ldquo;finished&rdquo; means here: it refuses{" "}
+          <Lead>101 of 101</Lead> of the rejections the spec documents, and stays silent on{" "}
+          <Lead>262 of 262</Lead> programs the spec says are legal. Neither number is a subset of
+          somebody else&rsquo;s behaviour.
         </P>
         <Caveat title="not finished">
           The emitter compiles <Lead>334 of the repository&rsquo;s 341 wac files</Lead> whole. That
