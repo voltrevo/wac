@@ -43,10 +43,6 @@ const enc = new TextEncoder();
  * modules each declare a `Point` and only the first is kept.
  */
 const KNOWN_MISSES = new Set<string>([
-  "[§wac-struct-export-m3kq8wp] only an exported struct can be imported#1",
-  "(audit-16) importing a non-exported struct is a compile error#0",
-  "[§wac-no-reexport-f7kn4wq] (audit-17) importing a symbol doesn't implicitly re-export it#0",
-  "[§wac-modconst-import-p7fm2wj] constants obey export#1",
   "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#0",
   "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#1",
   "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#2",
