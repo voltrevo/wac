@@ -572,6 +572,16 @@ export struct C {
   string[] types;
   /** Whether each name was declared `const`. */
   bool[] nameConsts;
+  /**
+   * Whether that constness came only from **aliasing** something const, rather than from the
+   * declaration saying so.
+   *
+   * The two are one flag everywhere else and they answer different questions. `N? cur = this.head;`
+   * in a `const this` method may not be written *through* — that is the laundering the alias rule
+   * exists to stop — but rebinding the local mutates nothing, and refusing that made every list walk
+   * in the spec illegal.
+   */
+  bool[] nameAliasOnly;
   i32 nameCount;
   /** Enum names. An enum has no default value, which is the only thing recorded about one here. */
   string[] enumNames;
@@ -748,7 +758,8 @@ export struct C {
   i32 renameCount;
 
   C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
+    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](),
+             bool[capacity](), 0,
              string[capacity](), 0, 0,
              string[capacity](), string[capacity](),
              string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
@@ -801,7 +812,23 @@ export struct C {
     this.names[this.nameCount] = name;
     this.types[this.nameCount] = ty;
     this.nameConsts[this.nameCount] = isConst;
+    this.nameAliasOnly[this.nameCount] = false;
     this.nameCount = this.nameCount + 1;
+  }
+
+  /** Say that the name just declared is const only because it aliases something const. */
+  void markAliasOnly(this, string name) {
+    for (i32 i = this.nameCount - 1; i >= 0; i--) {
+      if (this.names[i] == name) { this.nameAliasOnly[i] = true; return; }
+    }
+  }
+
+  /** Whether a name's constness is the aliasing kind, which does not stop it being rebound. */
+  bool isAliasOnlyName(this, string name) {
+    for (i32 i = this.nameCount - 1; i >= 0; i--) {
+      if (this.names[i] == name) { return this.nameAliasOnly[i]; }
+    }
+    return false;
   }
 
   /** Whether a name was declared `const`. Unknown names are not, which is silence. */
@@ -2576,7 +2603,9 @@ void checkWrite(C c, Lvalue lv) {
         c.report(errUndefinedName(), lv.line, lv.col);
         return;
       }
-      if (c.isConstName(tokenText(c, tok))) {
+      // Only when the declaration said `const`. A local that merely aliases something const may be
+      // rebound — assigning to the name mutates nothing, and the alias rule is about writing through.
+      if (c.isConstName(tokenText(c, tok)) && !c.isAliasOnlyName(tokenText(c, tok))) {
         c.report(errConstVariable(), lv.line, lv.col);
       }
     }
@@ -3706,6 +3735,10 @@ void declareStmt(C c, Stmt s) {
       bool writable = isArrayName(vbase) || c.isStruct(vbase);
       bool aliasesConst = writable && constExpr(c, init);
       c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst);
+      // Recorded as the aliasing kind, so a write *through* it is still refused while rebinding the
+      // name is not. `while (cur is not null) { cur = cur!.next; }` walks a list in a `const this`
+      // method, which is what ten of the spec's own linked-list programs do.
+      if (!isConst && aliasesConst) { c.markAliasOnly(tokenText(c, nameTok)); }
     }
     case Block(body): { declareAll(c, body); }
     case If(cond, then, els): { declareAll(c, then); declareAll(c, els); }

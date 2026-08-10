@@ -166,12 +166,24 @@ comes out compiles them again, and the two are byte-identical — `fixpointEmit`
 **Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
 
 **The spec is the contract; the reference is a guide.** `spec/spec` states what the language is, and
-`specCheck.test.ts` holds this checker to it: every program the spec calls illegal, refused — **101
-of 101**, with no exceptions. The TypeScript compiler is
-evidence about the language and a cheap source of cases, not an authority: where the two disagree the
-spec decides, and the reference has been the one in the wrong before —
-`issues/lang/0085`, where `as! i31ref` truncates there and traps here because `casts.md` says
-*checked*.
+the `spec*` tests hold this checker to it. The TypeScript compiler is evidence about the language and
+a cheap source of cases, not an authority: where the two disagree the spec decides, and the reference
+has been the one in the wrong before — `issues/lang/0085`, where `as! i31ref` truncates there and
+traps here because `casts.md` says *checked*.
+
+**The corpus is recorded, not read.** It was read until 2026-08-10: `specCorpus.ts` scans
+`wacSpec.test.ts` for the programs written in a shape a regular expression can find, and reported 101
+illegal ones. The suite **runs 304**. Nothing was wrong with the extractor except its ceiling — the
+file is 9,000 lines of TypeScript carrying wac source inside template literals, and the spec does not
+confine itself to one calling shape. `tools/specCases.ts` records what the compiler was actually
+handed, so the corpus is the suite's own behaviour and grows when the spec does.
+
+Tripling the corpus was worth more than three times the coverage, because of what it found on the
+first run: **14 legal programs this checker refused**, none of which any oracle here had ever looked
+at. Eleven were one bug — a local that aliases something const could not be *rebound*, which made
+every linked-list walk in the spec illegal, because one flag was answering both "may I write through
+this?" and "may I rebind this name?". The other three are named in `specSingle.test.ts`, as are the
+47 illegal programs still accepted.
 
 That is a change of aim, not of method. A disagreement with the reference is now a question —
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
@@ -182,9 +194,10 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specCheck.test.ts` | the spec's own 101 illegal programs | **the contract** — each is refused |
-| `specAccept.test.ts` | the spec's own 262 legal programs | **the contract** — silence on each |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 257 of 304 illegal refused, 364 of 367 legal silent, the rest named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
+| `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
+| `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
 | `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
