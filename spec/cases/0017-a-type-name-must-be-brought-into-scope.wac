@@ -1,0 +1,8 @@
+// expect: refused
+// why: writing a type's name requires importing it, even when a function hands the value over
+// ---- k.wac ----
+export enum K { A, B }
+export K mk() { return K.A; }
+// ---- main.wac ----
+import { mk } from "./k.wac";
+export i32 f() { K k = mk(); return match (k) { case A: 1, case B: 2 }; }

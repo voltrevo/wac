@@ -1,0 +1,8 @@
+// expect: refused
+// why: the file already has that name, and an import would give it a second meaning
+// ---- a.wac ----
+export i32 foo() { return 1; }
+// ---- main.wac ----
+import { foo } from "./a.wac";
+i32 foo() { return 2; }
+export i32 f() { return foo(); }

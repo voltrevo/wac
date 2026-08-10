@@ -1,0 +1,9 @@
+// expect: refused
+// why: a match with no else must name every variant of the subject's enum
+enum Shape { Point, Circle(f64 radius), Rect(f64 width, f64 height) }
+export f64 f(Shape s) {
+  match (s) {
+    case Point:     return 0.0;
+    case Circle(r): return r;
+  }
+}

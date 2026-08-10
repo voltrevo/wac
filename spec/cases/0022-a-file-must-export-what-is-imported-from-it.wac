@@ -1,0 +1,7 @@
+// expect: refused
+// why: a name declared without `export` is not the file's to give away
+// ---- lib.wac ----
+struct Shut { i32 v; }
+// ---- main.wac ----
+import { Shut } from "./lib.wac";
+export i32 f() { return Shut(1).v; }

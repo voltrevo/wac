@@ -1,0 +1,7 @@
+// expect: answers f = 3
+// why: a generic struct whose method only reads — not what 0092 was about
+// from: issues/lang/0092
+struct Box<T> { T v;
+  T get(const this) { return this.v; }
+}
+export i32 f() { Box<i32> b = Box<i32>(3); return b.get(); }

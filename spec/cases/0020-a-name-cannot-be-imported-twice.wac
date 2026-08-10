@@ -1,0 +1,10 @@
+// expect: refused
+// why: two imports of one name leave the file with two meanings for it
+// ---- a.wac ----
+export i32 foo() { return 1; }
+// ---- b.wac ----
+export i32 foo() { return 2; }
+// ---- main.wac ----
+import { foo } from "./a.wac";
+import { foo } from "./b.wac";
+export i32 f() { return foo(); }

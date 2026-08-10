@@ -1,0 +1,5 @@
+// expect: answers f = 3
+// why: the same construction naming its instance — the control for 0001
+// from: issues/lang/0092
+struct Box<T> { T v; }
+export i32 f() { Box<i32> b = Box<i32>(3); return b.v; }

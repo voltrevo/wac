@@ -1,0 +1,7 @@
+// expect: refused
+// why: an expression match produces one value, so its arms cannot disagree about what it is
+enum Shape { Point, Circle(f64 radius) }
+export f64 f() {
+  Shape s = Shape.Point;
+  return match (s) { case Point: 0.0, else: "x" };
+}

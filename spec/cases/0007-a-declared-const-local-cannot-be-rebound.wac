@@ -1,0 +1,4 @@
+// expect: refused
+// why: `const` on the declaration does stop the name being reassigned
+// from: the same rule as 0005 and 0006, third side
+export i32 f() { const i32 x = 1; x = 2; return x; }

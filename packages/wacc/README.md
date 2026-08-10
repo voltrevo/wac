@@ -238,6 +238,37 @@ and `linkEmit` for what linking can get wrong.
 **Rung 5 (bootstrap) reaches a fixed point.** wacc compiles its own nine sources, the module that
 comes out compiles them again, and the two are byte-identical — `fixpointEmit` and `selfHostEmit`.
 
+## The cases
+
+`spec/cases` is a corpus of whole programs, each four to ten lines, each carrying its own
+expectation — `emits`, `refused`, or `answers f = 42`. No reference compiler to agree with, no
+package graph, no corpus to load, no timing. `compiler/wacCases.test.ts` holds the reference to them
+and `test/cases.test.ts` holds wacc to the same files.
+
+It exists because every defect found here so far came from an expensive oracle — the 342-file
+corpus, a package's own suite, a differential against the reference — and every one of them, once
+found, reduced to a handful of lines. `issues/lang/0092` cost two slots to locate and is this:
+
+```wac
+struct Box<T> { T v; }
+export i32 f() { Box<i32> b = Box(3); return b.v; }   // declined; Box<i32>(3) emitted
+```
+
+The **negative** cases are half the value: four programs that emit are what showed 0092 was about
+inference from the slot rather than about generics, and they were living in an issue's prose where
+nothing could run them.
+
+**The rule, and it is a hard one: a failing case comes before the fix.** When wacc fails anything —
+one of these, the corpus, a package's suite, a differential — diagnose it far enough to say what the
+rule is, write the smallest program that shows it, watch it fail, and only then go and fix it. Not
+both at once, and not the fix first: a fix written first is aimed at whatever you happened to be
+looking at, and the thing that told you it worked disappears when the slot ends. `spec/cases/README.md`
+has the long version.
+
+It reads **27 cases, 27 met by the reference, 25 by wacc** — and the two it misses are the first
+thing the corpus did on being written, both of them among `specSingle`'s 39 named misses, where they
+are a tally rather than something you can run.
+
 ## The toolchain
 
 There is a second toolchain now: `deno task waccx`, with the same commands as `wacx` — `check`,

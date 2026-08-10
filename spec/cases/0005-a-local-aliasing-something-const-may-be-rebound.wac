@@ -1,0 +1,19 @@
+// expect: answers sum = 60
+// why: constness is about writing through a reference, not about rebinding a local
+// from: the spec's linked-list programs, which every walk of a const method needs
+struct Node { i32 val; Node? next; }
+struct List { Node? head;
+  i32 sum(const this) {
+    i32 total = 0;
+    Node? cur = this.head;
+    while (cur is not null) { total += cur!.val; cur = cur!.next; }
+    return total;
+  }
+}
+export i32 sum() {
+  Node c = Node(30, null);
+  Node b = Node(20, c);
+  Node a = Node(10, b);
+  List l = List(a);
+  return l.sum();
+}

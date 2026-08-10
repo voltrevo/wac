@@ -1,0 +1,10 @@
+// expect: refused
+// why: two arms for one variant means one of them can never run
+enum Shape { Point, Circle(f64 radius), Rect(f64 width, f64 height) }
+export f64 f(Shape s) {
+  match (s) {
+    case Circle(r):  return r;
+    case Circle(r2): return r2;
+    else:            return 0.0;
+  }
+}
