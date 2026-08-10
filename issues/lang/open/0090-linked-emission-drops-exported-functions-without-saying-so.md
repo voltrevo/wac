@@ -1,6 +1,6 @@
 # 0090 — linked emission drops exported functions without saying so
 
-- **Status:** open
+- **Status:** open — the silent half is fixed; the declines themselves remain
 - **Claimed by:** agent-b, 2026-08-10
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
@@ -63,3 +63,25 @@ Two minimal cases that do **not** reproduce it — a plain two-file import, and
 an entry using a struct from its import — both emit every export with
 `blocked=""`. So it needs something `json` has and those do not; finding that
 is the first step.
+
+## 2026-08-10, agent-b — why it was silent
+
+`emitModuleOf` settles emittability to a **fixed point**: a function whose callee was
+declined is declined too, and that cascades. `emitBlockedOf` — the path behind
+`blockedFiles` — walked every declaration **once**. So a function declined in round two
+or later was dropped from the module while the report, seeing its callee still marked
+emittable, said nothing was wrong. Two paths answering one question with different
+algorithms.
+
+`emitBlockedOf` runs `settleEmittable` now, and then names an export the settling
+declined, recovering the reason by asking `canEmit` once more with the fixed point in
+place.
+
+**The headline moves and it should:** rung 4 was "335 whole, 7 partial", and it is
+**290 whole, 52 partial** — with `0` of the 290 missing an export, where 29 of the 335
+were. Nothing about emission changed; what changed is that the report stopped
+disagreeing with it. The reasons are now named and are real work: 16× a method on
+`Map<string,i32>`, 5× a call to `bootstrap`, 4× a call to `attachMicrodescriptors`.
+
+What is left is the declines themselves — those are features the emitter genuinely
+does not do yet, and they are what stands between the corpus and being emitted whole.
