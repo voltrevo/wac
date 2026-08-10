@@ -59,7 +59,15 @@ Deno.test("every file the test runner will import declares a test", async () => 
     // to execute. Two spellings count, and the second is not a loophole: `wacTestRun` registers a
     // `Deno.test` per exported `test_*` function in a wac file, so a file that calls it declares tests
     // by delegation — thirty-odd of this repo's test files are one line of exactly that.
-    if (source.includes("Deno.test(") || source.includes("wacTestRun(")) continue;
+    //
+    // `testBounded` is the third, and the same argument: it is `Deno.test` with a deadline on the
+    // whole case (issue 0106), so a file whose every case is bounded contains no literal `Deno.test(`
+    // at all. Three did the moment the exclusive lane was converted, and this guard is what said so —
+    // which is the check working, not a loophole being opened. Anything that *registers* a test
+    // belongs on this list; anything that merely mentions one does not.
+    if (
+      source.includes("Deno.test(") || source.includes("wacTestRun(") || source.includes("testBounded(")
+    ) continue;
     offenders.push(path);
   }
   assertEquals(
