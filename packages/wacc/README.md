@@ -195,7 +195,8 @@ struct-method, callback and string families. Two packages fail on something othe
 helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
 its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which
 matters beyond one package, because `corpusEmit` counts a file *whole* exactly when `blockedFiles` is
-empty, so "335 of 342 whole" overstates what is emitted by an amount nobody has measured. `http` is
+empty, so "335 of 342 whole" overstated what is emitted. **It is 29 files** — measured now, and
+printed by `corpusEmit` on every run. `http` is
 **`issues/lang/0091`**: the module binds, the server runs, and its responses are truncated — the first
 behavioural defect this half of rung 4 has found, and one no well-formedness check could have found,
 because the module is well-formed and computes the wrong thing.
@@ -204,8 +205,14 @@ The sweep called both "wrong answer" at first. That was the tool overstating its
 case for an export that is merely absent, so anything it could not name fell into the strongest bucket
 it had. It says `missing export: <name>` now, and its honest fallback is "a wrong answer or a trap".
 
-**Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
-for any of them.** The three that are left import files the corpus does not contain, and no compiler
+**Rung 4 (emitter) compiles 335 of the repository's 342 files whole, and produces no invalid module
+for any of them — but 29 of that 335 are missing an export the source declares.** "Whole" used to
+mean *the emitter did not report itself blocked*, which is not the same claim: `packages/json/src/json.wac`
+reports nothing blocked and is missing three of its four exported functions. `corpusEmit` asks the
+source now — every `export` a file declares has to be a function in the module — and prints both
+numbers, so the gap cannot go back to being invisible. Read by parsing the declaration rather than by
+compiling with the reference: the first version did the latter and put four minutes on that test and
+ten on the suite, for a question the declaration already answers. `issues/lang/0090` is the defect itself. The three that are left import files the corpus does not contain, and no compiler
 change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep
 of 4,460 programs whose answers must agree with the reference's, the spec suite's own 322 answers,
 and `linkEmit` for what linking can get wrong.
