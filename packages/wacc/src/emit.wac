@@ -1529,7 +1529,24 @@ export string resolveImport(string from, string rel) {
       dir = dir.slice(0, lastSlash(dir) + 1);
       continue;
     }
-    return dir + r;
+    return joinDir(dir, r);
+  }
+  return joinDir(dir, r);
+}
+
+/**
+ * `dir` (which ends in `/`, or is empty) followed by `r`, with one separator between them.
+ *
+ * Concatenating them plainly doubles the slash when the path is already rooted: `/main.wac`
+ * importing `"/c.wac"` resolved to `//c.wac`, which is a key no file in the program map has. Nothing
+ * reported that, because a name whose file never resolved is a name this checker does not know, and
+ * unknown is silence — so an entire imported file went missing quietly, and the spec's own
+ * `§wac-modconst-import-p7fm2wj` was accepted for want of the file that would have refused it.
+ */
+string joinDir(string dir, string r) {
+  if (dir.len() > 0 && r.len() > 0 && dir.slice(dir.len() - 1, dir.len()) == "/"
+      && r.slice(0, 1) == "/") {
+    return dir + r.slice(1, r.len());
   }
   return dir + r;
 }

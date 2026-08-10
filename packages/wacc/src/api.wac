@@ -5,11 +5,11 @@
 // boundary. So the surface is bytes in, text out: the caller passes source and gets
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
-import { lex, Lexed } from "./lex.wac";
+import { lex, Lexed, tokenStride } from "./lex.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf } from "./check.wac";
+import { C, checkModule, checkProgram, declareModule, errorsOf, errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport } from "./emit.wac";
 
@@ -105,6 +105,41 @@ export string namesFiles(string[] paths, string[] sources, string entry) {
  * names cross, so that list is the filter, and a name the file did not ask for cannot shadow one it
  * declares itself.
  */
+/**
+ * Does this file declare and export `name` under its own roof?
+ *
+ * An `Import` decl never answers yes, which is the whole of `§wac-no-reexport-f7kn4wq`: a file that
+ * merely imports a symbol does not pass it on, and the fix is to import it from the file that
+ * declares it. An exported enum answers for its variants as well as its own name, because a variant
+ * imports like any other name (`§wac-type-name-scope-8vqk3mn`) — a check that missed that would
+ * refuse most of the repository rather than find anything wrong with it.
+ */
+bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (exported) {
+          if (tokenTextOf(src, lexed, nameTok) == name) { return true; }
+          for (i32 v = 0; v < variants.len(); v++) {
+            if (tokenTextOf(src, lexed, variants[v].nameTok) == name) { return true; }
+          }
+        }
+      }
+      case ConstDecl(nameTok, type, init, exported): {
+        if (exported && tokenTextOf(src, lexed, nameTok) == name) { return true; }
+      }
+      else: { }
+    }
+  }
+  return false;
+}
+
 export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry) {
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   Lexed elexed = lex(esrc);
@@ -118,6 +153,10 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
   // contributes only what that file was asked for.
   string[] wantFrom = string[512]();
   string[] wantName = string[512]();
+  // Where the *import* is written, taken here because the loop below retargets `c` at each imported
+  // file in turn: a diagnostic about `main.wac`'s import must not carry `b.wac`'s line numbers.
+  i32[] wantLine = i32[512]();
+  i32[] wantCol = i32[512]();
   i32 n = 0;
   for (i32 d = 0; d < eprog.decls.len(); d++) {
     match (eprog.decls[d].kind) {
@@ -128,6 +167,8 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
           if (n >= wantName.len()) { continue; }
           wantFrom[n] = target;
           wantName[n] = tokenTextOf(esrc, elexed, items[i].nameTok);
+          wantLine[n] = elexed.tokens[items[i].nameTok * tokenStride() + 3];
+          wantCol[n] = elexed.tokens[items[i].nameTok * tokenStride() + 4];
           n = n + 1;
         }
       }
@@ -153,6 +194,16 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
     Lexed ilexed = lex(isrc);
     P ip = P.create(isrc, ilexed.tokens, ilexed.tokenCount);
     Program iprog = parseProgram(ip);
+    // **A file's exports are its own to state.** Asked for a name it does not export, the import is
+    // the error — whether the name is declared without `export` or merely imported from somewhere
+    // else, which does not pass it on (`§wac-no-reexport-f7kn4wq`).
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      if (!exportsName(isrc, ilexed, iprog, wantName[k])) {
+        c.report(errNoSuchExport(), wantLine[k], wantCol[k]);
+      }
+    }
+
     c.src = isrc;
     c.toks = ilexed.tokens;
     declareModule(c, iprog, only);

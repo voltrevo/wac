@@ -136,6 +136,12 @@ export i32 errInfiniteGeneric() { return 53; }
 export i32 errVariantMethodClash() { return 54; }
 /** Two imports of the same name, or an import colliding with a name this file declares. */
 export i32 errDuplicateImport() { return 55; }
+/**
+ * An import of a name the named file does not export — either because it is declared without
+ * `export`, or because that file only imports it itself. Importing does not re-export
+ * (`§wac-no-reexport-f7kn4wq`), which is the rule that keeps a file's exports its own to state.
+ */
+export i32 errNoSuchExport() { return 56; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
