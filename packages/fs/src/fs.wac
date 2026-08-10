@@ -1064,13 +1064,15 @@ export i32 NODE_NONE() { return -1; }
  */
 export i32 NODE_NOT_A_DIR() { return -2; }
 
-/** Which absence a negative `find` answer is, as a fault. */
-export i32 absentFault(i32 node) {
-  return node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NOT_FOUND();
-}
-
 /**
  * The `Change` a negative `find` answer becomes.
+ *
+ * There was an `absentFault` beside this that answered the *category* alone, and nothing ever called
+ * it — deleted, because it was also a trap. `stat` has the one site that looks like it should have:
+ * `node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE()`. The else is `FAULT_NONE`, not
+ * `FAULT_NOT_FOUND`, and deliberately so — "nothing here" is an *answer* from a memory tree, and
+ * making it a fault would break `test -e`. Anyone tidying the resemblance away would have changed
+ * behaviour while removing a duplicate.
  *
  * One function rather than the sentence written out at each of the eight call sites, which is how the
  * three copies this replaces came to disagree: `writeFile` answered `FAULT_OTHER`, `mkdir` answered

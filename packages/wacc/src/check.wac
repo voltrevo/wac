@@ -551,9 +551,11 @@ bool isPackedName(string n) {
   return n == "u8" || n == "u16" || n == "i8" || n == "i16";
 }
 
-export bool comparableByValue(string n) {
-  return n == "" || n == "string" || isPrimitiveName(n);
-}
+// A `comparableByValue(n)` — `n == "" || n == "string" || isPrimitiveName(n)` — was here, exported and
+// called by nothing. This file already carries the argument against it: `isValueType` above exists
+// because "three rules have now been written with `isPrimitiveName` where they meant this, and each
+// reported working code until it was corrected". A fourth predicate in the same family, with no
+// caller to say which rule it is for, is the next one of those waiting to happen.
 
 /** The families a literal is polymorphic over. */
 export i32 litNone() { return 0; }

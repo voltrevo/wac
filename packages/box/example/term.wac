@@ -115,14 +115,12 @@ const string BANNER =
  */
 export i32 main(Core core, Cli cli) { return boxApplet(core, cli); }
 
-/**
- * The prompt: where you are, and a `$`.
- *
- * A prompt that never changes is decoration. `cd` is a built-in here and the filesystem is real,
- * so the working directory is a thing the reader can move around in and get lost in, and a shell
- * that will not say where it is is the one thing every real one does say.
- */
-string prompt(Shell sh) { return sh.cwd + " $"; }
+// The prompt — where you are, and a `$` — is `Session.prompt`, and this file calls it as
+// `s.prompt()`. A copy of it lived here as a free function taking a `Shell`, left behind when
+// `Session` was extracted and called by nothing since. Two spellings of "where you are" is exactly
+// the pair that drifts, and the reason the prompt says a directory at all is written down where the
+// live one is: a prompt that never changes is decoration, and `cd` here moves through a real
+// filesystem somebody can get lost in.
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac sh").wait();
