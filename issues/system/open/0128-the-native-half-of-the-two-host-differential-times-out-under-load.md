@@ -82,3 +82,32 @@ Left open deliberately: **whether anything actually hangs.** The evidence says t
 busy machine, and a 60s bound will say so much less often — but if it fires again, the message will
 now name it as a hang rather than as a difference, which is the thing that made this take three
 runs to understand. Every test that bounds a run now says so in the same way.
+
+## 2026-08-11: the cause was ours, and it was 1.7 seconds of compiling
+
+The load was real and it was not the whole story. Measured, on an idle machine:
+
+    wacsh -c true, Deno host        116 ms
+    wacsh -c true, wasmtime host   1721 ms
+    bash -c true                    0.7 ms
+
+And it tracks the module rather than the work — 582 KB of wasm takes 1721 ms, 94 KB takes 213 ms,
+which is the same 3 ms per KB. `Module::from_file` compiles with cranelift on **every run**, and
+`native_shell` runs twenty-odd scripts through it, each paying the compile again.
+
+So a script that this test bounds at ten seconds spent 1.7 of them before running a byte, on an idle
+machine. At three times the core count that is most of the bound, and the test then reports the two
+hosts disagreeing — which is what this issue was filed about.
+
+**Fixed by not compiling twenty times.** `compiled()` in `native/src/main.rs` caches the serialized
+module beside the `.wasm`, keyed by a hash of the wasm and the wasmtime it was built against, written
+to a temporary name and renamed because the suite runs two of these at once. First run 1751 ms, every
+run after it **15 ms**.
+
+    native_shell.test.ts    1m38s  ->  17s
+    the four native files    ~3m   ->  34s
+
+Left open deliberately, because the bound is still a bound: nothing here proves a loaded machine
+cannot push a 15 ms start past ten seconds, and the `hangReport` from `harness/bounded.ts` is what
+will say so if it does. What has changed is that the headroom is now three orders of magnitude rather
+than six times.

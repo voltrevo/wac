@@ -15,3 +15,7 @@ site/public/demos.json
 # cargo's build directory for the native host — 567 MB of it, and every byte reproducible from
 # `Cargo.toml` and `Cargo.lock`.
 native/target/
+
+# Compiled-module artifacts the wasmtime host caches beside a `.wasm` — see `compiled()` in
+# `native/src/main.rs`. Named by a hash of the wasm, so they are per-build and never worth keeping.
+*.cwasm-*
