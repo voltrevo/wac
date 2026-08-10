@@ -352,3 +352,40 @@ the owner of that function.
 `packages/sh/src/exec.wac`'s private `writeTo` was also in the list, and it was **one tick old**: I
 replaced its callers with a descriptor table an hour earlier and left the function behind. The check
 found my own dead code faster than I did.
+
+## 2026-08-10: six deleted, two left with reasons
+
+Down to **one exported and four private**. A mutation sweep on `packages/fs` found one of these
+independently — gutting `absentFault` changed nothing, because nothing called it — which is worth
+noting as a second detector for the same class.
+
+Deleted, each with the reason kept where it mattered:
+
+- **`fs/absentFault`** — and it was a *trap*, not merely dead. The one site that resembles it,
+  `stat`'s `node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE()`, deliberately answers
+  `FAULT_NONE` where this answered `FAULT_NOT_FOUND`: "nothing here" is an answer from a memory tree,
+  and making it a fault would break `test -e`. Deduplicating the resemblance would have changed
+  behaviour. The note now lives on `absentChange`.
+- **`fs/proc/SIGKILL`** — `kill -9` and `kill -KILL` both reach 9 through the complete `SIGNALS`
+  table; a constant only the table consults documents nothing.
+- **`fs/proc/signalTerminates`** — could not get a caller. `packages/sh`'s `kill` must branch on
+  ignored and stopping *separately*, because one is honoured in silence and the other refused with a
+  sentence; a predicate merging them can only be used by discarding which it was.
+- **`fs/serve/serveFsRequest`** — its own comment said `serveOn` is what a real server wants, because
+  a fresh `Chan` per call cannot hold a partial frame and drops a child's second question. A function
+  documented as the wrong choice, where somebody could reach for it, is worse than none.
+- **`wacc/check/comparableByValue`** — the file already argues against it: `isValueType` exists
+  because "three rules have now been written with `isPrimitiveName` where they meant this, and each
+  reported working code until it was corrected". A fourth predicate with no caller to say which rule
+  it serves is the next of those waiting to happen.
+- **`box/example/term/prompt`** (private) — a copy left behind when `Session` was extracted;
+  `term.wac` calls `Session.prompt`. Two spellings of "where you are" is the pair that drifts.
+
+**Left, and why** — both in `packages/wacc`, which is being actively ported by somebody else:
+
+- **`api/namesFiles`** is the *linked* variant of a live diagnostic (`emitNames` is called, and the
+  point is that "wasm reports a failure as compiling function #7" and this turns the index into a
+  name). What is missing is a caller, not the function. Deleting a debugging aid out from under the
+  person porting the compiler is the wrong way round.
+- **`emit/{repType,storageType,emittable,duplicateLocal}`** are private helpers in a file under
+  active change, where "about to be wired up" is a live possibility rather than a guess.

@@ -30,17 +30,14 @@ import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_S
  * than this parent gets a `Change` saying so — which every decoder can read, since they all check
  * for a short frame first.
  */
-export bool serveFsRequest(Cli cli, Fs fs, i32 handle) {
-  Chan c = Chan.of(cli, handle);
-  return serveOn(c, fs);
-}
-
 /**
- * The same, on a channel that is kept between requests.
+ * **On a channel that is kept between requests**, which is the only shape that works.
  *
- * Which is the one a real server wants: `serveFsRequest` builds a fresh `Chan` each time and so
- * cannot hold a partial frame, and a child that wrote two questions into one chunk would have its
- * second one dropped.
+ * There was a `serveFsRequest(cli, fs, handle)` above this that built a fresh `Chan` per call, and
+ * its own comment said what was wrong with it: a fresh channel cannot hold a partial frame, so a
+ * child that wrote two questions into one chunk had its second one dropped. Nothing called it. A
+ * function documented as the wrong choice, sitting where somebody could reach for it, is worse than
+ * no function — deleted rather than left as a footgun with a warning label.
  */
 export bool serveOn(Chan c, Fs fs) {
   Reader r = answer(c);

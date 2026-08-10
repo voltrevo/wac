@@ -68,7 +68,9 @@ export i32 PROC_RUN() { return 0; }
 export i32 PROC_DONE() { return 1; }
 
 export i32 SIGINT() { return 2; }
-export i32 SIGKILL() { return 9; }
+// `SIGKILL` was here and nothing named it: `kill -9` and `kill -KILL` both reach the number through
+// `SIGNALS` below, which is the complete table, and the two constants that remain are the ones code
+// refers to by name. A third that only the table consults documents nothing.
 export i32 SIGTERM() { return 15; }
 
 /**
@@ -119,10 +121,10 @@ export string signalName(i32 sig) {
  * `SIGNAL_STOPS`. There is no job control here to resume from, so stopping is not implemented and
  * says so rather than terminating, which would be a different thing wearing its name.
  */
-export bool signalTerminates(i32 sig) {
-  if (sig < 1 || sig > SIGNALS().len()) { return false; }
-  return !signalIgnored(sig) && !signalStops(sig);
-}
+// `signalTerminates(sig)` — `!signalIgnored && !signalStops` — was here and had no caller, and could
+// not get one: `packages/sh`'s `kill` has to branch on the two cases *separately*, because an ignored
+// signal is honoured in silence and a stopping one is refused with a sentence. A predicate that
+// merges them can only be used by throwing away which of the two it was.
 
 /** Ignored by default: `CHLD`, `CONT`, `URG`, `WINCH`. Arriving changes nothing, which is correct. */
 export bool signalIgnored(i32 sig) {
