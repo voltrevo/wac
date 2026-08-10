@@ -33,7 +33,12 @@ for (const pkg of packages) {
   if (only.size > 0 && !only.has(pkg)) continue;
   const run = await new Deno.Command(Deno.execPath(), {
     args: ["test", "-A", "--no-check", `packages/${pkg}/test`],
-    env: { WAC_WASM_FROM: "wacc" },
+    // **Extending the environment, not replacing it.** `Deno.Command`'s `env` is the whole
+    // environment, so passing one variable ran every package with nothing else set — and tests that
+    // gate on an environment variable then chose differently. `http` reported 29 passing here and
+    // 24 passing with one failure when run by hand, which is the tally disagreeing with itself
+    // rather than either answer being wrong about wacc.
+    env: { ...Deno.env.toObject(), WAC_WASM_FROM: "wacc" },
     stdout: "piped",
     stderr: "piped",
   }).output();

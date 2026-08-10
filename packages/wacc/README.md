@@ -160,6 +160,8 @@ reference's bindgen metadata — wacc has no bindgen — so what is under test i
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
     16 of 33 packages pass their own suite on wacc-emitted code (743 tests)
+    — taken before 2026-08-10's reporting fix, and due a re-measurement: a package
+      whose export was silently dropped now refuses with a reason instead
     why the rest do not:
         5  $bind$arr_i32_len
         2  $bind$arr_i32_from_mem
@@ -205,14 +207,20 @@ The sweep called both "wrong answer" at first. That was the tool overstating its
 case for an export that is merely absent, so anything it could not name fell into the strongest bucket
 it had. It says `missing export: <name>` now, and its honest fallback is "a wrong answer or a trap".
 
-**Rung 4 (emitter) compiles 335 of the repository's 342 files whole, and produces no invalid module
-for any of them — but 29 of that 335 are missing an export the source declares.** "Whole" used to
-mean *the emitter did not report itself blocked*, which is not the same claim: `packages/json/src/json.wac`
-reports nothing blocked and is missing three of its four exported functions. `corpusEmit` asks the
-source now — every `export` a file declares has to be a function in the module — and prints both
-numbers, so the gap cannot go back to being invisible. Read by parsing the declaration rather than by
-compiling with the reference: the first version did the latter and put four minutes on that test and
-ten on the suite, for a question the declaration already answers. `issues/lang/0090` is the defect itself. The three that are left import files the corpus does not contain, and no compiler
+**Rung 4 (emitter) compiles 290 of the repository's 342 files whole, and produces no invalid module
+for any of them.** That number was **335** until
+2026-08-10, and the difference is not a regression — it is the report catching up with the emitter.
+
+"Whole" meant *the emitter did not report itself blocked*, and the two paths that answer that
+question disagreed: `emitModuleOf` settles emittability to a fixed point, so a function whose callee
+is declined is declined too, while the reporting path walked each declaration once and saw nothing
+wrong. A function declined in the second round was therefore dropped from the module in silence —
+29 of the 335 files were missing an export the source declares, `packages/json/src/json.wac` three of
+its four. Both paths run the same fixed point now, `corpusEmit` checks the module against the
+`export`s the source declares, and that count is **0 of 290**.
+
+The 52 partials name real work rather than a mystery: 16× a method on `Map<string,i32>`, 5× a call to
+`bootstrap`, 4× a call to `attachMicrodescriptors`. `issues/lang/0090` has the detail. The three that are left import files the corpus does not contain, and no compiler
 change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep
 of 4,460 programs whose answers must agree with the reference's, the spec suite's own 322 answers,
 and `linkEmit` for what linking can get wrong.

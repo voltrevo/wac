@@ -5491,6 +5491,17 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   if (env.full) { return "more declarations than this emitter has room for"; }
+
+  // **The same fixed point the emitter runs, because the answer has to be the same.** This walked
+  // every declaration once and the emitter settles to a fixed point, so a function declined only
+  // because something it *calls* was declined — round two and after — was dropped from the module
+  // while this reported nothing wrong. That is `issues/lang/0090`: 29 of the 335 files rung 4 called
+  // whole were missing an export, and the report could not have said so, because the two paths were
+  // answering with different algorithms.
+  settleEmittable(env, src, lexed, prog);
+  string declined = declinedExport(env, src, lexed, prog);
+  if (declined != "") { return declined; }
+
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case Func(nameTok, returnType, params, body, exported, typeParams): {
@@ -5990,6 +6001,41 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
  * functions that call each other are both fine, and the optimistic direction says so while the
  * pessimistic one would never admit it.
  */
+/**
+ * An exported function the settling declined, named — or `""` when every export survived.
+ *
+ * The reason itself comes back from asking `canEmit` once more now that the fixed point has run:
+ * it records what stopped it, and by this point that is the real answer rather than a round-zero
+ * shortage. Only exports are asked about, because a private function that is declined and never
+ * called costs the module nothing.
+ */
+string declinedExport(Env env, u8[] src, Lexed lexed, Program prog) {
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        if (exported && !env.funcOk[at]) {
+          string was = env.blocked;
+          env.blocked = "";
+          canEmit(src, lexed, env, params, body, "", typeOfTyName(env, src, lexed, returnType));
+          string why = env.blocked;
+          env.blocked = was;
+          return why == "" ? "an export it declined: " + tokenTextOf(src, lexed, nameTok)
+                           : why;
+        }
+        at = at + 1;
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      else: { }
+    }
+  }
+  return "";
+}
+
 void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 round = 0; round < 16; round++) {
     bool changed = false;
