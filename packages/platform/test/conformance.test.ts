@@ -195,6 +195,65 @@ const COVERAGE: Record<string, Cover> = {
   },
 };
 
+/**
+ * The capability *fields* `platform.wac` declares, by struct.
+ *
+ * `opcodes()` reads the JavaScript side's numbering; this reads the language's own declaration, which
+ * is what a wac program can actually ask for. The two are different questions and only this one can
+ * answer "is there a capability the wasm host has never heard of" — an opcode nobody assigned a
+ * number to would be missing from `ops.ts` *and* from `main.rs`, and would look consistent.
+ *
+ * **The `.*` is greedy on purpose.** A signature contains array types — `fn[Pending<bool>(string,
+ * i32, i32, u8[])] drawPixels;` — so a bracket class stops at the `]` of `u8[]` and drops the field
+ * silently. Written that way first, this reported 20 `Cli` fields where there are 31 and would have
+ * certified a surface it had not looked at a third of.
+ */
+async function declaredFields(struct: string): Promise<string[]> {
+  const src = await Deno.readTextFile("packages/platform/src/platform.wac");
+  const body = new RegExp(`export struct ${struct} \\{([\\s\\S]*?)\\n\\}`).exec(src);
+  if (body === null) throw new Error(`no struct ${struct} in platform.wac`);
+  return [...body[1].matchAll(/^\s*fn\[.*\]\s+(\w+);\s*$/gm)].map((m) => m[1]);
+}
+
+Deno.test("every capability the language declares, the host with no JavaScript supplies", async () => {
+  // design/0001's aim is that the same programs run on a bootable kernel-and-wasmtime stack *and*
+  // without it. That makes "is anything in the JavaScript hosts load-bearing that the wasm side
+  // cannot supply?" a question with a definite answer, and this is it: for `Cli` and `Core`, nothing.
+  //
+  // The two known exceptions are behavioural rather than structural and are covered elsewhere:
+  // `spawn` of a *foreign* program answers -1 with a reason on the native host (see `SPAWN` above),
+  // and `Page` does not exist there at all — which is the next assertion rather than a hole.
+  const caps = await nativeCapabilities();
+  for (const struct of ["Cli", "Core"]) {
+    const declared = await declaredFields(struct);
+    // The count first: an extraction that quietly matched nothing would make the loop below vacuous,
+    // which is how this test would come to certify a surface it never read.
+    assertEquals(
+      declared.length >= 8,
+      true,
+      `only ${declared.length} ${struct} fields found — has the extraction broken?`,
+    );
+    const missing = declared.filter((f) => !caps.has(f));
+    assertEquals(
+      missing.join(" "),
+      "",
+      `${struct}: the native runtime wires no arm for these, so a program that calls one traps ` +
+        `with "not implemented in the native runtime yet" rather than getting an answer`,
+    );
+  }
+
+  // And `Page` is the whole of what it cannot supply — stated as an equality rather than "some are
+  // missing", so a capability *moved* onto `Page` to dodge the check above would fail here instead.
+  const page = await declaredFields("Page");
+  assertEquals(
+    page.filter((f) => caps.has(f)).join(" "),
+    "",
+    "a `Page` field has a native arm, which means either the host grew a page or the struct grew a " +
+      "field that is not about one",
+  );
+  assertEquals(page.length, 11, `Page declares ${page.length} fields; the ledger's page-only list has 11`);
+});
+
 Deno.test("every opcode on the two-host surface is accounted for", async () => {
   const ops = await opcodes();
   const caps = await nativeCapabilities();
