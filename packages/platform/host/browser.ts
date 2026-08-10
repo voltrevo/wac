@@ -219,6 +219,8 @@ export type Dom = {
   render(html: string): void;
   setText(id: string, text: string): void;
   setValue(id: string, value: string): void;
+  /** Replace an element's inline style, by id — whole-value, no merging. */
+  setStyle(id: string, css: string): void;
   value(id: string): string;
   /** Subscribe, delegated from the document so it survives a `render`. */
   on(selector: string, kind: string): void;
@@ -556,6 +558,8 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     [OP.RENDER]: (p) => { dom().render(unstr(p)); return EMPTY; },
     [OP.SET_TEXT]: (p) => { const [a, b] = twoStrings(p); dom().setText(a, b); return EMPTY; },
     [OP.SET_VALUE]: (p) => { const [a, b] = twoStrings(p); dom().setValue(a, b); return EMPTY; },
+    // A position, without rebuilding the document — see `setStyle` in platform.wac.
+    [OP.SET_STYLE]: (p) => { const [a, b] = twoStrings(p); dom().setStyle(a, b); return EMPTY; },
     [OP.GET_VALUE]: (p) => str(dom().value(unstr(p))),
     [OP.ON]: (p) => { const [a, b] = twoStrings(p); dom().on(a, b); return EMPTY; },
     [OP.TITLE]: (p) => { dom().title(unstr(p)); return EMPTY; },

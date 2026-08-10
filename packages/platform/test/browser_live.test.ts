@@ -751,6 +751,38 @@ Deno.test({
         { timeout: 30_000 },
       );
 
+      // **Dragging, which is step 8's other half and needed three things.** A `pointermove` is a
+      // position rather than an occurrence, so the host keeps only the newest — otherwise the worker
+      // reads one per bridge round trip and finishes the drag long after the pointer stopped. The
+      // coordinates are the *bar's*, not the `<span>` the pointer is actually over. And the window
+      // moves through `setStyle`, so the document is not rebuilt: the half-typed line below is the
+      // assertion that it was not.
+      await page2.fill("#cmd0", "still typing");
+      const bar0 = await page2.locator("#bar0").boundingBox();
+      if (bar0 === null) throw new Error("no #bar0 to drag");
+      await page2.mouse.move(bar0.x + 40, bar0.y + 8);
+      await page2.mouse.down();
+      // Several moves, which is what a drag is — and what the coalescing has to survive.
+      for (const dx of [30, 60, 90, 120]) {
+        await page2.mouse.move(bar0.x + 40 + dx, bar0.y + 8 + dx / 2);
+      }
+      await page2.mouse.up();
+      await page2.waitForFunction(
+        `(() => {
+           const w = document.getElementById('win0');
+           if (w === null) return false;
+           const left = parseInt(w.style.left, 10);
+           return left >= 130 && left <= 160;
+         })()`,
+        null,
+        { timeout: 30_000 },
+      );
+      assertEquals(
+        await page2.inputValue("#cmd0"),
+        "still typing",
+        "dragging rebuilt the document and ate what was being typed",
+      );
+
       // Closing takes a window away and leaves the others working.
       await page2.click("#cls1");
       await page2.waitForFunction(`document.querySelectorAll('.win').length === 2`, null, { timeout: 30_000 });

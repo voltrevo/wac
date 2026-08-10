@@ -66,6 +66,15 @@ struct Win {
   i32 id;
   /** The session this window is a terminal for. Meaningless for a files window. */
   Session sh;
+  /**
+   * Where it is, in desktop pixels — **the window's own, not its place in the stack**.
+   *
+   * It was `24 + at * 34` computed at render time, so a window moved whenever anything in front of
+   * it closed, and there was nowhere for a drag to put a result. The cascade is still what a new
+   * window *starts* at; after that the window owns it.
+   */
+  i32 left;
+  i32 top;
 }
 
 string cr() { return string.fromCodepoint(13); }
@@ -90,8 +99,8 @@ export i32 page(Core core, Cli cli, Page page) {
   // Stacking order, front last. A `Vec` rather than a z-index per window because "which is on top" is
   // an order, and keeping it as one means raising is a move rather than a search for the maximum.
   Vec<Win> wins = Vec.create();
-  wins.push(Win(SHELL(), 0, first));
-  wins.push(Win(FILES(), 1, first));
+  wins.push(Win(SHELL(), 0, first, cascadeLeft(0), cascadeTop(0)));
+  wins.push(Win(FILES(), 1, first, cascadeLeft(1), cascadeTop(1)));
   i32 nextId = 2;
 
   draw(page, wins);
@@ -101,21 +110,68 @@ export i32 page(Core core, Cli cli, Page page) {
   // `Event.id`, which carries the element's own — see `idOf`.
   page.on(".cmd", "keydown").wait();
   page.on(".bar", "mousedown").wait();
+  // **Dragging.** `pointerdown` rather than `mousedown` because a pointer event is a mouse, a pen
+  // and a finger at once; the `mousedown` above stays, because raising a window is what it does and
+  // the browser sends both. The move and the release are asked of `#desk` rather than of the bar:
+  // a pointer that leaves the bar mid-drag — which it does the moment the window catches up with it
+  // — still lands on the desktop, and a window that stopped following would be worse than none.
+  page.on(".bar", "pointerdown").wait();
+  page.on("#desk", "pointermove").wait();
+  page.on("#desk", "pointerup").wait();
   page.on(".cls", "click").wait();
   page.on(".lnch", "click").wait();
+
+  // Which window is being dragged, and where inside it the pointer took hold. -1 is "none", and the
+  // grab is what makes a drag feel like carrying rather than like the window snapping its corner to
+  // the pointer.
+  i32 dragging = -1;
+  i32 grabX = 0;
+  i32 grabY = 0;
 
   while (true) {
     Event e = page.nextEvent().wait();
 
+    // ── Dragging a window by its bar ──────────────────────────────────────────
+    if (e.kind == "pointerdown" && startsWith(e.id, "bar")) {
+      i32 who = idOf(e.id, 3);
+      i32 seat = indexOf(wins, who);
+      if (seat >= 0) {
+        dragging = who;
+        // `Event.x`/`y` are inside the bar, and the bar's top-left *is* the window's, so this is
+        // where in the window the pointer took hold.
+        grabX = e.x;
+        grabY = e.y;
+      }
+      continue;
+    }
+    if (e.kind == "pointermove") {
+      if (dragging < 0) { continue; }
+      i32 seat = indexOf(wins, dragging);
+      if (seat < 0) { dragging = -1; continue; }
+      Win moving = wins.get(seat);
+      // The pointer is in `#desk`, whose top-left is the desktop's, so subtracting the grab gives
+      // the window's new corner. Clamped at the top so a window cannot be dragged under the
+      // launcher strip and become unreachable — the one place a manager has to say no.
+      moving.left = e.x - grabX;
+      moving.top = e.y - grabY < LAUNCH_H() ? LAUNCH_H() : e.y - grabY;
+      // **`setStyle`, not `redraw`.** One element's position changes; nothing else about the
+      // document does. A `render` here would rebuild every terminal on the desktop for every pixel
+      // of the drag.
+      page.setStyle("win" + itoa(moving.id), placement(moving)).wait();
+      continue;
+    }
+    if (e.kind == "pointerup") { dragging = -1; continue; }
+
     if (e.kind == "click" && e.id == "newterm") {
       // A second shell on the same filesystem, and its own row in the shared process table.
-      wins.push(Win(SHELL(), nextId, Session.startOn(core, cli, first.sh.fs, "sh")));
+      wins.push(Win(SHELL(), nextId, Session.startOn(core, cli, first.sh.fs, "sh"),
+                    cascadeLeft(wins.len()), cascadeTop(wins.len())));
       nextId = nextId + 1;
       redraw(page, wins);
       continue;
     }
     if (e.kind == "click" && e.id == "newfiles") {
-      wins.push(Win(FILES(), nextId, first));
+      wins.push(Win(FILES(), nextId, first, cascadeLeft(wins.len()), cascadeTop(wins.len())));
       nextId = nextId + 1;
       redraw(page, wins);
       continue;
@@ -226,16 +282,30 @@ void draw(Page page, Vec<Win> wins) {
   page.render(body).wait();
 }
 
-/** One window's markup. `front` gets the accent border, which is the whole of "focused". */
-string window(Win w, i32 at, bool front) {
-  string id = itoa(w.id);
-  // A cascade: no dragging, so the manager decides, and each window sits a little below the last.
-  i32 left = 24 + at * 34;
-  i32 top = 60 + at * 30;
-  string pos = "left: " + itoa(left) + "px; top: " + itoa(top) + "px; " +
+/**
+ * How tall the launcher strip is, in pixels — the one number the CSS and the manager share.
+ *
+ * A window may not be dragged above this, or its bar goes under the strip and there is no way to get
+ * hold of it again. The cascade starts below it for the same reason.
+ */
+i32 LAUNCH_H() { return 37; }
+
+/** Where the nth window opens, before anybody drags it. */
+i32 cascadeLeft(i32 n) { return 24 + n * 34; }
+i32 cascadeTop(i32 n) { return 60 + n * 30; }
+
+/** The style that places one window — the same string `render` writes and a drag replaces. */
+string placement(Win w) {
+  return "left: " + itoa(w.left) + "px; top: " + itoa(w.top) + "px; " +
     (w.kind == SHELL()
       ? "width: min(58vw, 660px); height: min(58vh, 420px);"
       : "width: min(28vw, 300px); height: min(40vh, 280px);");
+}
+
+/** One window's markup. `front` gets the accent border, which is the whole of "focused". */
+string window(Win w, i32 at, bool front) {
+  string id = itoa(w.id);
+  string pos = placement(w);
   string inner = w.kind == SHELL()
     ? "<div class=\"bod term\">" +
       "  <pre id=\"scr" + id + "\"></pre>" +
@@ -244,7 +314,10 @@ string window(Win w, i32 at, bool front) {
       "           autocapitalize=\"off\" autocorrect=\"off\"></div>" +
       "</div>"
     : "<pre class=\"bod\" id=\"files" + id + "\"></pre>";
-  return "<div class=\"win" + (front ? " front" : "") + "\" style=\"" + pos + "\">" +
+  // **An id on the frame**, which is what lets a drag move it with `setStyle` instead of `render`.
+  // Rebuilding the document to move one window would throw away every terminal's half-typed line
+  // several times a second — the cost `setText` exists to avoid for typing, and the same one here.
+  return "<div class=\"win" + (front ? " front" : "") + "\" id=\"win" + id + "\" style=\"" + pos + "\">" +
          "  <div class=\"bar\" id=\"bar" + id + "\">" +
          "    <span class=\"ttl\">" + titleOf(w) + "</span>" +
          "    <button class=\"cls\" id=\"cls" + id + "\">&#215;</button>" +
