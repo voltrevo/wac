@@ -312,6 +312,15 @@ export struct Shell {
   /** Whether the read below has already happened. `readStdin` answers once and is empty after. */
   bool triedStdin;
   /**
+   * A stage of the pipeline now running failed because *this shell* could not run it.
+   *
+   * Set where a command's status is taken and cleared by `runStages`, which is the only reader. A
+   * field rather than a return value because the two are several frames apart — `runCommand` hands
+   * back the stage's bytes, and the fact travels beside them. See `Output.refusedByShell` for why the
+   * distinction has to exist at all.
+   */
+  bool refusedStage;
+  /**
    * Whether `stdinBytes` is the shell's *own* — a here-document, a redirection, a pipeline stage's
    * output — rather than the process's standard input.
    *
@@ -478,7 +487,7 @@ export struct Shell {
                  false, Buf.create(), noExternal, noExternalNames, false,
                  Shell.neverInterrupted, null, false, Vec.create(),
                  Map.create(hashString, stringEq),
-                 Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false,
+                 Vec.create(), Vec.create(), false, u8[0](), 0, false, false, false, false,
                  cli.cwd().wait(), true, 0, Vec.create(), 0);
   }
 
@@ -877,7 +886,7 @@ Output killBuiltin(Shell sh, Vec<string> argv) {
       status = 1;
     }
   }
-  return Output(u8[0](), err.take(), status, true);
+  return Output(u8[0](), err.take(), status, true, false);
 }
 
 /** `kill -l`: the whole table, or the other spelling of the ones named. */
@@ -918,7 +927,7 @@ Output killList(Shell sh, Vec<string> argv, i32 from) {
     }
     out.pushAll((itoa(n) + "\n").toBytes());
   }
-  return Output(out.take(), err.take(), status, true);
+  return Output(out.take(), err.take(), status, true, false);
 }
 
 /** Every byte a digit, and at least one — `atoiOr` alone cannot tell `0` from a word. */
@@ -1228,7 +1237,7 @@ Output waitBuiltin(Shell sh, Vec<string> argv) {
     // exactly as it is in bash.
     dropFinished(sh);
   }
-  return status == 0 ? Output.ok(u8[0]()) : Output(u8[0](), u8[0](), status, true);
+  return status == 0 ? Output.ok(u8[0]()) : Output(u8[0](), u8[0](), status, true, false);
 }
 
 /** A sequence of `&&`/`||` lists — a script, or the body of a compound command. */
@@ -1288,6 +1297,14 @@ void runStages(Shell sh, Pipeline pipeline) {
     bool last = i == pipeline.stages.len() - 1;
     carried = runCommand(sh, pipeline.stages.get(i), carried, last, i > 0);
     if (sh.exiting) { return; }
+    // **A stage the shell refused ends the pipeline with its status**, rather than letting the
+    // last stage answer for it. bash's rule is the last stage's status and this follows it
+    // everywhere else — but bash never has this failure, because it forks every stage and the
+    // kernel holds the pipe. Here a stage that overflowed what this shell will hold produces no
+    // bytes, so the stage after it counts an empty input and reports success: `seq 1 1500000 |
+    // wc -c` printed `0` with status 0, and `n=$(…)` captured a plausible number with the reason
+    // on a stream no script reads. Carrying on would be computing an answer from nothing.
+    if (sh.refusedStage) { sh.refusedStage = false; return; }
   }
 }
 
@@ -2244,6 +2261,9 @@ u8[] runSimple(Shell sh, Simple cmd, u8[] stdin, bool last, bool piped) {
     return u8[0]();
   }
   sh.status = result.status;
+  // Recorded for `runStages`, which ends the pipeline here rather than letting a later stage answer
+  // for a stage the shell itself refused — see `Output.refusedByShell`.
+  if (result.refusedByShell) { sh.refusedStage = true; }
 
   // **Both streams, placed by the plan.** The command's error output used to go straight to the shell's
   // error stream whatever the redirections said, and `2>` was refused for want of anywhere to put it —
@@ -2506,7 +2526,7 @@ Output readLine(Shell sh, Vec<string> argv) {
 
   if (!sawAny) {
     for (i32 i = 0; i < names.len(); i++) { sh.setVar(names.get(i), ""); }
-    return Output(u8[0](), u8[0](), 1, true);
+    return Output(u8[0](), u8[0](), 1, true, false);
   }
 
   // Splitting is on blanks, and only the *last* name keeps the ones in the middle.
@@ -2526,7 +2546,7 @@ Output readLine(Shell sh, Vec<string> argv) {
       sh.setVar(names.get(i), string.fromBytes(sliceBytes(b, start, p)));
     }
   }
-  return Output(u8[0](), u8[0](), sawNewline ? 0 : 1, true);
+  return Output(u8[0](), u8[0](), sawNewline ? 0 : 1, true, false);
 }
 
 /** Whether byte `i` of a read line is a blank that may split — an escaped one may not. */
@@ -2705,7 +2725,7 @@ Output returnFrom(Shell sh, Vec<string> argv) {
   }
   sh.returning = true;
   i32 code = argv.len() > 1 ? atoiOr(argv.get(1), 0) : sh.status;
-  return Output(u8[0](), u8[0](), code, true);
+  return Output(u8[0](), u8[0](), code, true, false);
 }
 
 Output cd(Shell sh, Vec<string> argv) {
@@ -2977,7 +2997,7 @@ Output ls(Shell sh, Vec<string> argv) {
     }
     if (paths.len() > 1 && i + 1 < paths.len()) { out.pushAll("\n".toBytes()); }
   }
-  return Output(out.take(), errs.take(), status, true);
+  return Output(out.take(), errs.take(), status, true, false);
 }
 
 /**
@@ -3008,7 +3028,7 @@ Output dispatch(Shell sh, Vec<string> argv, bool mayInherit) {
   if (out.err.len() == 0) { return out; }
   string name = argv.get(0);
   if (sh.funcs.has(name) || !speaksAsTheShell(name)) { return out; }
-  return Output(out.out, named(out.err, name), out.status, out.found);
+  return Output(out.out, named(out.err, name), out.status, out.found, out.refusedByShell);
 }
 
 /**
@@ -3084,7 +3104,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   if (sh.funcs.has(name)) { return callFunction(sh, argv); }
 
   if (name == ":" || name == "true") { return Output.ok(u8[0]()); }
-  if (name == "false") { return Output(u8[0](), u8[0](), 1, true); }
+  if (name == "false") { return Output(u8[0](), u8[0](), 1, true, false); }
   if (name == "echo") { return echo(argv); }
   if (name == "local") { return localVar(sh, argv); }
   if (name == "break" || name == "continue") { return breakOrContinue(sh, argv); }
@@ -3118,7 +3138,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
   if (name == "shift") {
     // bash: shifting more than there is fails and changes nothing, rather than clearing them.
     i32 n = argv.len() > 1 ? atoiOr(argv.get(1), 0) : 1;
-    if (n < 0 || n > sh.params.len()) { return Output(u8[0](), u8[0](), 1, true); }
+    if (n < 0 || n > sh.params.len()) { return Output(u8[0](), u8[0](), 1, true, false); }
     Vec<string> rest = Vec.create();
     for (i32 i = n; i < sh.params.len(); i++) { rest.push(sh.params.get(i)); }
     sh.params = rest;
@@ -3136,7 +3156,7 @@ Output dispatched(Shell sh, Vec<string> argv, bool mayInherit) {
     Sink out = Sink.toBuffer(sh.cli);
     Sink errs = Sink.toBuffer(sh.cli);
     i32 code = printf(argv, out, errs);
-    return Output(out.taken(), errs.taken(), code, true);
+    return Output(out.taken(), errs.taken(), code, true, false);
   }
 
   // **A program named by its path in `/bin`.** design/0001 asks for "a `/bin` full of programs", and a
@@ -3438,7 +3458,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   if (stopped) {
     sh.cli.closeSocket(child.handle);
     if (child.errHandle >= 0) { sh.cli.closeSocket(child.errHandle); }
-    return Output(out.bytes(), err.bytes(), sh.exiting ? sh.exitCode : 128 + SIGINT(), true);
+    return Output(out.bytes(), err.bytes(), sh.exiting ? sh.exitCode : 128 + SIGINT(), true, false);
   }
 
   i32 code = sh.cli.exitCode(child.handle).wait();
@@ -3450,7 +3470,7 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // silence. `boxsh -c 'seq 1 1500000 | wc -c'` printing 8323568 where bash prints 10888896 is what
   // that looks like when nobody reports it.
   if (overflowed) {
-    return Output.fail(
+    return Output.refused(
       (name + ": output exceeded what this shell can hold for a stage it cannot stream; "
        + "the pipeline it is in has a stage that must run in process — see issue 0127\n").toBytes(),
       1,
@@ -3460,9 +3480,9 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // program's status, so it is reported as "could not execute" rather than as success.
   if (broke != "") {
     err.pushAll(("sh: " + name + ": " + broke + "\n").toBytes());
-    return Output(out.bytes(), err.bytes(), 126, true);
+    return Output(out.bytes(), err.bytes(), 126, true, false);
   }
-  return Output(out.bytes(), err.bytes(), code < 0 ? 126 : code, true);
+  return Output(out.bytes(), err.bytes(), code < 0 ? 126 : code, true, false);
 }
 
 /**
@@ -3603,7 +3623,7 @@ Output callFunction(Shell sh, Vec<string> argv) {
   sh.outBuf = savedBuf;
   sh.params = saved;
   // `exit` inside a function ends the shell, not just the call, which is what bash does.
-  return Output(produced, u8[0](), sh.status, true);
+  return Output(produced, u8[0](), sh.status, true, false);
 }
 
 Output echo(Vec<string> argv) {
@@ -3789,7 +3809,7 @@ i64 mtimeOf(Shell sh, string path) {
 }
 
 /** A `test` answer: nothing on either stream, and true is 0 because that is what a shell means by it. */
-Output testResult(bool v) { return Output(u8[0](), u8[0](), v ? 0 : 1, true); }
+Output testResult(bool v) { return Output(u8[0](), u8[0](), v ? 0 : 1, true, false); }
 
 /**
  * The one-operand forms, including the ones that ask the filesystem.

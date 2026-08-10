@@ -22,10 +22,32 @@ export struct Output {
   i32 status;
   /** False when no program of that name exists, which the shell reports as 127. */
   bool found;
+  /**
+   * The **shell** could not run this, as opposed to the command failing.
+   *
+   * One bit, and it exists because bash's rule for a pipeline's status — the last stage's — quietly
+   * turns this particular failure into a wrong answer. `seq 1 1500000 | wc -c` in a shell that runs
+   * its stages in process: `seq` overflows what the shell will hold and says so on standard error,
+   * `wc` then counts an empty input, and the pipeline reports **0 with status 0**. A script doing
+   * `n=$(…)` gets a plausible number and no way to know. The same shape on the spawned route gives
+   * an empty string.
+   *
+   * bash never has this failure — it forks every stage and the kernel holds the pipe — so following
+   * its status rule here is following it off the end of where it was defined. A stage that failed
+   * for *our* reasons ends the pipeline with that status instead, which is the difference between
+   * "the answer is 0" and "there is no answer".
+   *
+   * Deliberately not a status code: 1 is what the failing stage reports, and a caller reading a
+   * number cannot tell it from a program that failed on its own merits. This is a fact about who
+   * failed, so it is a field.
+   */
+  bool refusedByShell;
 
-  Output ok(u8[] out) { return Output(out, u8[0](), 0, true); }
-  Output fail(u8[] err, i32 status) { return Output(u8[0](), err, status, true); }
-  Output missing() { return Output(u8[0](), u8[0](), 127, false); }
+  Output ok(u8[] out) { return Output(out, u8[0](), 0, true, false); }
+  Output fail(u8[] err, i32 status) { return Output(u8[0](), err, status, true, false); }
+  Output missing() { return Output(u8[0](), u8[0](), 127, false, false); }
+  /** A failure that is the shell's own limit rather than the command's — see `refusedByShell`. */
+  Output refused(u8[] err, i32 status) { return Output(u8[0](), err, status, true, true); }
 }
 
 /**
