@@ -12,7 +12,9 @@
 // on every run, which is how a gap that nothing failed on stays visible.
 
 import { wacx, type WacxCap } from "wac/wacx.ts";
-import { waccx } from "../tools/waccx.ts";
+import { waccx, parseDiagnostics } from "../tools/waccx.ts";
+import { wacBind } from "../../../harness/wacBind.ts";
+import { singleFileCases } from "./specCases.ts";
 
 /** A capability set over a map, so neither CLI touches a real filesystem. */
 function memory(files: Record<string, string>) {
@@ -133,4 +135,30 @@ Deno.test("the two toolchains, on the same programs — where wacc's diagnostics
   if (both === 0) throw new Error("neither toolchain refused anything — the harness is not working");
   // The one property that must hold today: where wacc speaks, it speaks about the right place.
   if (sameLine !== both) throw new Error(`${both - sameLine} diagnostics at a different position`);
+});
+
+Deno.test("how many of wacc's diagnostics carry their operands", async () => {
+  // The count across the spec's whole refused corpus rather than a handful of hand-written cases,
+  // because the hand-written ones are the sites somebody has already been through. `report` takes a
+  // code and a position at 135 call sites and the operands at ten of them; this says what that is
+  // worth where it is actually used, which is the number to move.
+  const mod = await wacBind("packages/wacc/src/api.wac");
+  const diagnose = mod.diagnoseFiles as (p: string[], s: string[], e: string) => string;
+
+  let diagnostics = 0;
+  let annotated = 0;
+  for (const c of singleFileCases()) {
+    if (c.ok) continue;
+    const [path, src] = c.files[0];
+    for (const d of parseDiagnostics(diagnose([path], [src], path))) {
+      diagnostics++;
+      if (d.annotation !== undefined && d.annotation !== "") annotated++;
+    }
+  }
+
+  const pct = diagnostics === 0 ? 0 : Math.round((annotated / diagnostics) * 100);
+  console.log(
+    `    operands on ${annotated} of ${diagnostics} diagnostics over the spec's refused programs (${pct}%)`,
+  );
+  if (diagnostics === 0) throw new Error("no diagnostics at all — the harness is not working");
 });
