@@ -380,9 +380,14 @@ a `set -e` that did not stop on an error is worse than one that does not exist. 
 shell's own variables sorted, which is the same idea as bash's over a much smaller set and so
 cannot be compared with it.
 
-**There is no job control**, and `&` is refused rather than run in the foreground. That refusal is the
-whole of it: no `wait`, no `jobs`, no `%1`. Backgrounding needs something that can run two things at
-once and something that knows what is running, which is design/0001 step 3.
+**Job control is partial, and this paragraph used to deny all of it.** `&`, `jobs`, `wait`, `wait %1`
+and `kill %1` all work — a background job is a real child through `spawnSelf`, described two hundred
+lines above this line, which is where a reader would have found the contradiction. What `&` still
+refuses by name is a list, a pipeline or a redirection, each of which needs a subshell to run in.
+
+What is genuinely absent is **suspension**: no `^Z`, no `fg`, no `bg`, and no stopped state in the
+table. That needs a signal a running child can be made to stop on, and the only delivery this system
+has is `closeSocket`, which terminates.
 
 **A descriptor above 2 cannot be made.** `2>`, `2>>`, `2>&1`, `1>&2`, `>&2` and `2>&-` all work — a
 two-entry table, applied in the order the redirections were written, which is why `cmd > f 2>&1` and

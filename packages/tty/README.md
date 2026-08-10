@@ -40,12 +40,22 @@ has not been scheduled. Those are asserted directly, and the test says why.
 
 ## What is not here
 
-**No terminal modes.** Canonical with echo, always. There is no `stty`, no `ICANON` off, no raw mode — so
-a program that wants a keystroke at a time, like an editor or a pager, cannot have one. That switch is
-the next thing this module wants; it is **not implemented**, rather than approximated.
+**No way to *choose* a mode.** The module has three and each was measured against a pty in that
+setting — `Line.create()` is canonical with echo, `Line.noEcho()` is `ICANON` without `ECHO` for a
+password prompt, `Line.cbreak()` is a byte at a time for a pager or an editor (`test/modes.test.ts`).
+What is missing is anything that *selects* one: `sshd` constructs `Line.create()` and never changes
+it, the browser terminal likewise, and there is no `stty` for a program to ask with. So an editor
+still cannot have a keystroke at a time — not because the discipline cannot do it, but because
+nothing can say so.
 
-**No job control.** `^Z` is delivered as an ordinary control character. There is nothing to suspend until
-design/0001 step 3 puts a process table in.
+This paragraph said "no terminal modes… not implemented" for as long as it took somebody to open
+`line.wac`, which is the failure mode a *What is not here* section has: it is written when the gap is
+real and nothing makes it false when the gap closes. The gap that is left is one step further in.
+
+**No job control.** `^Z` is delivered as an ordinary control character. design/0001 step 3 has put a
+process table in since this was written, so the missing half is no longer the table — it is that
+suspending needs a signal a running child can be made to *stop* on, and `closeSocket` is termination
+rather than suspension.
 
 **No cursor movement.** Arrows, `^A`, `^E` are control characters and escape sequences here, as they are
 to the kernel: moving about inside a line is readline's job, in the program. Erase is backwards-only,

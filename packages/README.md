@@ -277,3 +277,28 @@ that re-exports them one value at a time just so TypeScript can reach them
 (`gzip`'s Huffman tests used to work that way). And values never cross the wasm
 boundary, so there is no `i8[]`↔`Uint8Array` marshalling, no `i64`↔`bigint`, and
 no worrying about how `-0.0` or NaN survive the trip.
+
+## A README's *what is not here* is a claim, and it rots
+
+Most of these packages end with a section naming what they do not do — and the whole value of it is
+that a reader can trust it. It is also the only part of a README that becomes false **by somebody
+else's success**: every other sentence describes what the code does and drifts only if the code
+changes under it, but "there is no job control" is falsified by the commit that adds job control, and
+that commit's author is looking at `exec.wac` rather than here.
+
+Two were found false on 2026-08-10, and both had been for a while:
+
+- `packages/tty` said "**No terminal modes.** Canonical with echo, always… **not implemented**" while
+  `line.wac` had three, each measured against a pty. What was *actually* missing was a step further
+  in — nothing selects a mode, so an editor still cannot have a keystroke at a time.
+- `packages/sh` said "**There is no job control**… no `wait`, no `jobs`, no `%1`" two hundred lines
+  below a section describing `&`, `jobs`, `wait` and `kill %1` working. The same file contradicted
+  itself, and the shell answered `[1]+ Running` when asked.
+
+So: **closing a gap includes deleting the sentence that denied it.** If the gap only got smaller, say
+what is left rather than leaving the old sentence to be right in spirit and wrong in fact — a reader
+cannot tell those apart, and the second kind is worse than no section at all.
+
+There is no check for this and there is not going to be a good one: the claims are prose about
+absence, and a tool that guessed at them would cry wolf. What there is instead is the habit, and the
+two examples above are here so it has teeth.
