@@ -179,9 +179,9 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   const written: Uint8Array[] = [];
   const w = browserWorld({
     args: ["one", "two"],
-    log: (l) => logged.push(l),
-    warn: (l) => logged.push(`!${l}`),
-    write: (b) => written.push(b),
+    log: (l) => { logged.push(l); },
+    warn: (l) => { logged.push(`!${l}`); },
+    write: (b) => { written.push(b); },
     root,
     writable: true,
   });
@@ -356,6 +356,7 @@ Deno.test("the page capabilities, against a document that only records", async (
       render: (html) => did.push(`render:${html}`),
       setText: (id, t) => did.push(`setText:${id}=${t}`),
       setValue: (id, v) => did.push(`setValue:${id}=${v}`),
+      setStyle: (id, css) => did.push(`setStyle:${id}=${css}`),
       value: (id) => (id === "box" ? "in the box" : ""),
       on: (sel, kind) => did.push(`on:${sel}/${kind}`),
       title: (t) => did.push(`title:${t}`),
@@ -381,11 +382,14 @@ Deno.test("the page capabilities, against a document that only records", async (
   await call(OP.RENDER, str("<b>hi</b>"));
   await call(OP.SET_TEXT, two("out", "answer"));
   await call(OP.SET_VALUE, two("box", "seeded"));
+  // The third of the family: a position, without a `render` — see `setStyle` in platform.wac.
+  await call(OP.SET_STYLE, two("win1", "left: 40px; top: 12px;"));
   await call(OP.ON, two("button", "click"));
   await call(OP.TITLE, str("demo"));
   assertEquals(
     did.join(" "),
-    "render:<b>hi</b> setText:out=answer setValue:box=seeded on:button/click title:demo",
+    "render:<b>hi</b> setText:out=answer setValue:box=seeded " +
+      "setStyle:win1=left: 40px; top: 12px; on:button/click title:demo",
   );
   assertEquals(unstr(await call(OP.GET_VALUE, str("box"))), "in the box");
 

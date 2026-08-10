@@ -19,6 +19,7 @@
 // `FAULT_NONE`, and only a question that could not be reached is a fault.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 import "../../../harness/spawnRetry.ts";
 
 /** Local, because this repo has no third-party dependencies. */
@@ -220,15 +221,8 @@ globalThis.addEventListener("unload", () => {
 await buildApp("packages/box/src/bin/sealedsh.wac", sealedShell, {});
 await buildApp("packages/box/src/bin/imaged.wac", imagedShell, { read: true, write: true });
 
-function byteSh(cmd: string, extra: string[], script: string): { code: number; out: string; err: string } {
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, ...extra, "-c", script],
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function byteSh(cmd: string, extra: string[], script: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, [...extra, "-c", script]);
 }
 
 /** `n\xff` — the same shape of name, in the shell's own byte syntax. */

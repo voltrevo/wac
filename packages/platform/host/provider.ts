@@ -614,6 +614,8 @@ export function pageOf(b: Bridge, cls: PageClasses): unknown {
     (id: string, t: string) => asOk(submit(b, OP.SET_TEXT, two(id, t))),
     /*= setValue */
     (id: string, v: string) => asOk(submit(b, OP.SET_VALUE, two(id, v))),
+    /*= setStyle */
+    (id: string, css: string) => asOk(submit(b, OP.SET_STYLE, two(id, css))),
     /*= getValue */
     (id: string) => asText(submit(b, OP.GET_VALUE, str(id))),
     /*= on */

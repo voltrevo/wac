@@ -262,6 +262,21 @@ export struct Page {
   fn[Pending<bool>(string, string)] setText;
   /** Set an input's value, by id. */
   fn[Pending<bool>(string, string)] setValue;
+  /**
+   * Replace an element's inline style, by id.
+   *
+   * **The third member of `render`/`setText`'s family, and it exists for the same reason.** `render`
+   * rebuilds the document, which is what a window manager does when its *frame* changes; `setText`
+   * writes content into an element that stays. A window being **dragged** changes neither — it
+   * changes a position — and doing that through `render` rebuilds every terminal on the desktop
+   * several times a second, which loses whatever was half-typed in one and costs a document per
+   * pointer move.
+   *
+   * Whole-value, not a property: the caller writes the style it wants, exactly as it would in the
+   * markup it rendered, and the host does not merge. Merging would need a parser here and would make
+   * what the element ends up with depend on what it had before.
+   */
+  fn[Pending<bool>(string, string)] setStyle;
   /** Read an input's value, by id. Empty if there is no such element. */
   fn[Pending<string>(string)] getValue;
   /**
@@ -309,6 +324,7 @@ export struct Page {
     fn[Pending<bool>(string)] render,
     fn[Pending<bool>(string, string)] setText,
     fn[Pending<bool>(string, string)] setValue,
+    fn[Pending<bool>(string, string)] setStyle,
     fn[Pending<string>(string)] getValue,
     fn[Pending<bool>(string, string)] on,
     fn[Pending<Event>()] nextEvent,
@@ -318,7 +334,7 @@ export struct Page {
     fn[Pending<bool>(string, u8[])] offerDownload
   ) {
     return Page(
-      render, setText, setValue, getValue, on, nextEvent, title,
+      render, setText, setValue, setStyle, getValue, on, nextEvent, title,
       drawPixels, nextFile, offerDownload
     );
   }

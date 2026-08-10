@@ -1,6 +1,6 @@
 # 0115 — `yes | head -1` throws "the child's output is not being read" under load
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-08
 - **Kind:** bug
@@ -83,3 +83,37 @@ throw is not an accident: `deno.ts` says "Throwing is how the host says false �
 what it returns. That is a third possibility the original notes did not have — neither "answer false"
 nor "catch it in the shell", but **find the caller that drops the promise**, which would leave the
 design as written and make the failure impossible rather than handled.
+
+## Closed — 2026-08-09
+
+**A dropped promise, in three hosts, on four callbacks.** `log`, `warn`, `write` and `writeErr` are
+declared `void` in the world options and implemented `async` by every spawned child — a child's
+output is a push onto a queue, and pushing is asynchronous exactly when the queue is full.
+TypeScript assigns a `Promise<void>` to a `void` without complaint, so every call site dropped it:
+
+    deno.ts     writeOut(p.slice())      log(unstr(p))     warn(unstr(p))    writeErrOut(...)
+    browser.ts  write(p)                 log(unstr(p))     warn(unstr(p))    writeErr(p)
+    node.ts                              log(unstr(p))     warn(unstr(p))
+
+The throw is not the bug. `deno.ts` says so in place — "throwing is how the host says false" — and
+`box yes` is `while (cli.write(block)) {}`. The bug is that nobody was holding it, so instead of
+becoming a false answer to the guest it became Deno's `Uncaught (in promise)` and took the parent
+down. That is why the symptom was a *shell* that died after printing its line.
+
+The four are now `void | Promise<void>` and awaited at every call site, so a rejection is the op's
+failure — which the bridge already turns into `false` for the guest.
+
+**The test is `packages/platform/test/sinks.test.ts`**, and it is deterministic where the reported
+failure was a race: hand a world a sink that rejects, call the op, and require the *op* to reject;
+hand it a sink that has not finished, and require the op to still be pending. Both fail against the
+previous code — the first as an uncaught error, which is this issue's own signature.
+
+**Second bug, same cause, nobody had seen it.** An op that answers before its push completes
+releases the guest early, so its next write can be pushed while the first is still waiting for room
+and two writes can land out of order. The second test is that one.
+
+**One site was found by the test rather than by reading**: `browser.ts`'s `WRITE_STDOUT`, which I had
+missed while fixing the other seven.
+
+Not claimed: that the *race* is gone. A consumer still ends its queue while the producer is writing —
+that is what `head -1` does. What changed is what happens next.

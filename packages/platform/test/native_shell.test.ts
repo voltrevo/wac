@@ -24,6 +24,7 @@
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -50,18 +51,8 @@ globalThis.addEventListener("unload", () => {
   }
 });
 
-type Run = { code: number; out: string; err: string };
-
-function shell(cmd: string, args: string[], script: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["10", cmd, ...args, "-c", script],
-    cwd: tmp,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function shell(cmd: string, args: string[], script: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, [...args, "-c", script], { cwd: tmp });
 }
 
 /** The native binary, built if cargo is here, or null with the reason said out loud. */
@@ -111,6 +102,11 @@ Deno.test("the same sealed system answers the same on a JavaScript host and one 
   for (const script of CORPUS.slice(0, SAMPLE)) {
     const a = shell(deno, [], script);
     const b = shell(native, [manifest], script);
+    // **A bound that fired is not an answer.** `timeout` reports 124, which no program chose, so a
+    // run that never finished used to be printed as a host that disagreed — `native "" (124)` — and
+    // read as a conformance failure. Issue 0128 is what that cost.
+    const hung = hangReport(JSON.stringify(script), [{ name: "deno", run: a }, { name: "native", run: b }]);
+    if (hung !== null) { differ.push(hung); continue; }
     if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
       differ.push(
         `${JSON.stringify(script)}\n  deno   ${JSON.stringify(a.out + a.err)} (${a.code})` +
@@ -145,6 +141,8 @@ Deno.test("the applets answer the same on both hosts, including the ones with an
   for (const script of scripts) {
     const a = shell(deno, [], script);
     const b = shell(native, [manifest], script);
+    const stuck = hangReport(script, [{ name: "deno", run: a }, { name: "native", run: b }]);
+    if (stuck !== null) throw new Error(stuck);
     assertEquals(b.out, a.out, `${script} — stdout`);
     assertEquals(b.err, a.err, `${script} — stderr`);
     assertEquals(b.code, a.code, `${script} — status`);
@@ -253,6 +251,8 @@ Deno.test("the seal holds on both hosts, not just the one it was written on", as
   for (const { script, want } of asked) {
     const a = shell(denoSealed, [], script);
     const b = shell(native, [nativeManifest], script);
+    const stuck = hangReport(JSON.stringify(script), [{ name: "deno", run: a }, { name: "native", run: b }]);
+    if (stuck !== null) { differ.push(stuck); continue; }
     // **Each host against the claim first, then against the other.** Two hosts that leaked the same
     // way would agree with each other and be wrong, which is the failure a pure comparison cannot
     // see — and the reason every case that has a knowable answer states it.
