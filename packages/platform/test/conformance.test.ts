@@ -128,17 +128,23 @@ const COVERAGE: Record<string, Cover> = {
 
   // ── Named gaps. Each says what makes it hard, because that is the next person's starting point ──
   NOW_MILLIS: {
-    gap: "no two-host comparison: a clock answers differently by construction, so the comparable " +
-      "thing is the *shape* — monotonicity, and that an image's mtimes survive a move — which " +
-      "`arrival` checks incidentally rather than as a claim about this opcode",
+    where: "native_examples: `clocks` asks the *shape* rather than the value, which is the only thing " +
+      "two clocks can agree on — this one dates, so the claim is that it is past a moment already " +
+      "gone. The gap here used to say a comparison was impossible by construction; what was missing " +
+      "was a program that compared the promises instead of the readings",
   },
   MONOTONIC_NANOS: {
-    gap: "as NOW_MILLIS. D13's virtual clock is the design answer and would make it comparable",
+    where: "native_examples: `clocks` reads it twice and requires the second not to be earlier — " +
+      "equal is fine, a coarse clock read inside one microsecond says so — and separately requires " +
+      "it not to be a plausible epoch stamp, which is what a host answering the wall clock in " +
+      "disguise would produce while passing everything else",
   },
   SLEEP_MILLIS: {
-    gap: "`native_examples` runs the capability examples on both, which includes two sleeps out of " +
-      "order — but through `waitAny`, so a regression in sleep alone would show as a timing flake " +
-      "rather than a difference",
+    where: "native_examples: `clocks` brackets a 50ms sleep between two monotonic reads and asks " +
+      "three things — it lasted at least as long as asked, it reported a reading that lands inside " +
+      "the bracket rather than an invented number, and the two hosts said the same. **No upper " +
+      "bound**: a sleep that overran is a loaded machine, not a broken host, and bounding it would " +
+      "measure the machine — `harness/bounded.ts` makes the same argument at greater length",
   },
   RANDOM_BYTES: {
     where: "native_shell: `head -c 16 /dev/urandom | wc -c` on both hosts, and `head -c 1` beside " +

@@ -122,6 +122,11 @@ const CASES: Case[] = [
   // it notice. Issue 0123 said this had no reproduction in the repository — it does now, and what
   // makes it one is that the child never writes again after its first line.
   { name: "stop", args: [], stdin: "", grants: {} },
+  // **The three clocks**, which were named gaps because a clock answers differently on every run.
+  // What is comparable is the *shape* `Core` promises — monotonic never goes backwards, a sleep
+  // waits at least as long as it was asked and reports a monotonic reading, the wall clock dates —
+  // so the example prints verdicts rather than measurements and two hosts can agree on all five.
+  { name: "clocks", args: [], stdin: "", grants: {} },
   // **The network, which had no two-host comparison at all** — `CONNECT`, `LISTEN` and `ACCEPT` were
   // three named gaps whose entry said the network is exercised end to end by `arrival_users` over
   // ssh, but only with the native host as the *server*. This is one program doing all three against

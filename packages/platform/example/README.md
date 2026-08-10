@@ -101,6 +101,7 @@ Each is here because it is the smallest program that exercises one thing.
 | `probe.wac` | reports what it is allowed to do — for checking what a spawned child was granted |
 | `crowd.wac` | how many calls may be in flight at once, and what exceeding that looks like |
 | `stop.wac` | stopping a child that only computes, and asking what became of it |
+| `clocks.wac` | what a clock *promises*, asked as verdicts so two hosts can agree on the answer |
 
 The ones that spawn from a **file** (`runner`, `pipe`, `inetd`) need a filesystem to read the bundle
 out of, so they are for the hosts that have one; a page spawns too, but has no directory of programs

@@ -1,0 +1,83 @@
+// What a clock promises, asked of whichever host is running this.
+//
+//   clocks
+//
+// **A clock answers differently on every run**, so a two-host comparison cannot be of numbers — the
+// two-host ledger says so about `NOW_MILLIS`, `MONOTONIC_NANOS` and `SLEEP_MILLIS`, and it is why
+// those three sat as named gaps while every filesystem call was compared byte for byte. What *is*
+// comparable is the **shape**: the things `Core`'s own documentation promises, which are true on
+// every host or the capability is broken.
+//
+// So this prints verdicts rather than measurements. Every line is a yes, and two hosts that both
+// answer yes have agreed about something real — while a host whose monotonic clock went backwards,
+// or whose sleep returned early, or whose wall clock read zero, says so in a line that differs.
+//
+// The three promises, quoted from `platform.wac`:
+//
+//   - `nowMillis` — "Wall clock, milliseconds since the epoch. Moves backwards; do not measure
+//     with it." So the only safe claim is that it *dates*: it is past a moment already in the past.
+//   - `monotonicNanos` — "Monotonic nanoseconds from an arbitrary origin. For measuring, never for
+//     dating." The origin is arbitrary, so the claim is about differences, never about the value.
+//   - `sleepMillis` — "settles once the given milliseconds have passed, resolving to the monotonic
+//     nanoseconds at which it did — so `.wait()` is a sleep that tells you how far it overshot."
+//
+// **Deliberately no upper bounds.** A sleep that takes far longer than it asked for is a loaded
+// machine, not a broken host, and a test that called that a failure would be measuring the machine —
+// which is the mistake `harness/bounded.ts` exists to avoid. Only the floors are promises.
+import { Cli, Core } from "../src/platform.wac";
+
+/** Milliseconds at 2026-01-01T00:00:00Z, a moment this program is certainly running after. */
+i64 WELL_PAST() { return 1767225600000; }
+
+/** How long to sleep. Short enough not to slow a suite, long enough to be past any clock's grain. */
+i32 NAP_MS() { return 50; }
+
+export i32 main(Core core, Cli cli) {
+  // ── `nowMillis` dates, and that is the whole of what it may be trusted for ──
+  i64 wall = core.nowMillis().wait();
+  say(cli, "wall clock is past 2026", wall > WELL_PAST());
+
+  // ── `monotonicNanos` measures: it never goes backwards, over any pair of reads ──
+  //
+  // Equal is allowed and not a fault: a coarse clock read twice in a row inside one microsecond
+  // answers the same number, which is monotonic. *Backwards* is the failure, and it is the one this
+  // catches — a host that derived its monotonic clock from the wall clock would fail here the first
+  // time anything adjusted it.
+  i64 firstTick = core.monotonicNanos().wait();
+  i64 secondTick = core.monotonicNanos().wait();
+  say(cli, "monotonic does not go backwards", secondTick >= firstTick);
+
+  // ── `sleepMillis` waits at least as long as it was asked, and says when it woke ──
+  i64 before = core.monotonicNanos().wait();
+  i64 woke = core.sleepMillis(NAP_MS()).wait();
+  i64 after = core.monotonicNanos().wait();
+
+  // The value it resolves to is a monotonic reading, so it belongs inside the pair around it. This
+  // is the claim that the returned number is *the clock* rather than an invention: a host answering
+  // zero, or the requested duration, or a wall-clock stamp would land outside.
+  say(cli, "the sleep reports a monotonic reading", woke >= before && woke <= after);
+
+  // And the sleep actually waited. Nanoseconds, so the floor is the nap in nanos — no upper bound,
+  // because how much longer it took is a fact about the machine rather than about the host.
+  i64 slept = after - before;
+  say(cli, "the sleep lasted at least as long as asked", slept >= (NAP_MS() as i64) * 1000000);
+
+  // ── And the two clocks are different clocks ──
+  //
+  // A host that answered `monotonicNanos` from the wall clock would pass everything above. The two
+  // origins are unrelated by construction — one is the epoch, one is arbitrary — so a monotonic
+  // reading that happens to be a plausible epoch-nanoseconds stamp is the shape worth refusing.
+  bool distinct = firstTick < (WELL_PAST() * 1000000);
+  say(cli, "monotonic is not the wall clock in disguise", distinct);
+  return 0;
+}
+
+/**
+ * One verdict, in a line that is the same on every host that keeps the promise.
+ *
+ * The claim and a yes, rather than the number: two hosts cannot agree on a clock reading and the
+ * whole point is that they can agree on this.
+ */
+void say(Cli cli, string claim, bool held) {
+  cli.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
+}
