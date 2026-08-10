@@ -154,6 +154,27 @@ hand-written cases a working corpus cannot contain: unterminated everything, eve
 precedence level, `else if` chains, trailing commas, a nested `>>>` close, and the comparisons that
 must *not* be read as type arguments.
 
+**Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
+`harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
+reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
+else. `tools/runOnWacc.ts` runs every package that way and counts:
+
+    6 of 33 packages pass their own suite on wacc-emitted code (392 tests)
+    why the rest do not:
+       21  $bind$mem_ensure
+        1  $bind$str_len
+        1  untyped member
+
+`bytes`, `ethrpc`, `rlp`, `std`, `tty` and **`tor` — 305 tests** — pass outright. Compiling the corpus
+was never the same as running it, and this is the first time anything in the repository has run on
+code this compiler produced other than its own bootstrap.
+
+**22 of the 27 failures are one missing feature**, filed as `issues/lang/0089`: bindgen reaches wasm
+memory through `$bind$mem` and `$bind$mem_ensure`, and wacc emits neither, so every exported signature
+carrying a `u8[]` or a `string` has glue waiting for a function that is not there. It is bounded — a
+linear memory, a growth helper, two exports — and independent of the type checker, where the recent
+work has been.
+
 **Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
 for any of them.** The three that are left import files the corpus does not contain, and no compiler
 change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep

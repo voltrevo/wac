@@ -49,11 +49,60 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
   const compiler = await compilerKeyParts();
   const harness = await harnessKeyParts();
   if (compiler === null || harness === null) return null;
-  return await contentKey(["bind", entry, ...compiler, ...harness, ...filesParts(files)]);
+  // **Which compiler emitted the code is part of the key.** Without this a `WAC_WASM_FROM=wacc` run
+  // is served the reference's build from an earlier run and reports a green suite that never ran a
+  // byte of `wacc`'s output — the exact stale-artifact failure this key exists to prevent, in the
+  // one mode where it would be least visible.
+  const from = Deno.env.get("WAC_WASM_FROM") ?? "reference";
+  return await contentKey(["bind", entry, from, ...compiler, ...harness, ...filesParts(files)]);
+}
+
+/**
+ * Take the *code* from `wacc` and leave everything else alone, when `WAC_WASM_FROM=wacc` is set.
+ *
+ * `wacBindgen` needs a `WacCompiled`, and all of it but `wasm` is a description of the interface —
+ * exports, structs, enums, callbacks — derived from the same source either compiler reads. So
+ * replacing the bytes and keeping the description runs this repository's own tests against code
+ * `wacc` generated, which is the half of rung 4 that had never been done: `corpusEmit` compiles the
+ * corpus and checks the modules are well-formed, and a well-formed module can still compute the
+ * wrong answer.
+ *
+ * **This is the emitter under test and nothing else.** The interface metadata is still the
+ * reference's, because `wacc` has no bindgen; a green run says its code is right, not that it could
+ * have produced the bindings. Opt-in, so a normal suite run is untouched.
+ */
+async function waccWasm(files: Map<string, string>, entry: string): Promise<Uint8Array | null> {
+  if (Deno.env.get("WAC_WASM_FROM") !== "wacc") return null;
+  const api = await waccApi();
+  const paths = [...files.keys()];
+  const sources = paths.map((p) => files.get(p)!);
+  const blocked = api.blockedFiles(paths, sources, entry);
+  if (blocked !== "") throw new Error(`wacc cannot compile ${entry} yet — ${blocked}`);
+  return api.emitFiles(paths, sources, entry);
+}
+
+type WaccApi = {
+  emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
+  blockedFiles: (paths: string[], sources: string[], entry: string) => string;
+};
+let waccCached: WaccApi | null = null;
+
+/** wacc itself, built by the reference — the bootstrap has to start somewhere. */
+async function waccApi(): Promise<WaccApi> {
+  if (waccCached === null) {
+    const saved = Deno.env.get("WAC_WASM_FROM");
+    Deno.env.delete("WAC_WASM_FROM");
+    try {
+      waccCached = (await wacBind("packages/wacc/src/api.wac")) as unknown as WaccApi;
+    } finally {
+      if (saved !== undefined) Deno.env.set("WAC_WASM_FROM", saved);
+    }
+  }
+  return waccCached;
 }
 
 /** Compile and bind, throwing with the diagnostics a person needs. Shared by both paths. */
-function generate(files: Map<string, string>, entry: string): string {
+async function generate(files: Map<string, string>, entry: string): Promise<string> {
   const result = wacCompile(files, entry);
   if (!result.ok) {
     const lines = result.diagnostics.map((d) =>
@@ -63,7 +112,8 @@ function generate(files: Map<string, string>, entry: string): string {
   for (const d of result.diagnostics) {
     console.warn(`warning: ${d.file}:${d.line}:${d.col} ${d.message}`);
   }
-  return wacBindgen(result.compiled);
+  const wasm = await waccWasm(files, entry);
+  return wacBindgen(wasm === null ? result.compiled : { ...result.compiled, wasm });
 }
 
 export async function wacBind(entry: string): Promise<Record<string, unknown>> {
@@ -76,7 +126,7 @@ export async function wacBind(entry: string): Promise<Record<string, unknown>> {
     const key = await bindKey(entry, files);
     if (key !== null) {
       const path = await cached("bind", key, ".gen.ts", async (tmp) => {
-        await Deno.writeTextFile(tmp, generate(files, entry));
+        await Deno.writeTextFile(tmp, await generate(files, entry));
       });
       return await import(`${Deno.cwd()}/${path}`) as Record<string, unknown>;
     }
