@@ -45,10 +45,17 @@ for (const pkg of packages) {
   // The first *message* that says why, not the first line mentioning it: Deno echoes the throwing
   // source line into the stack trace, and a pattern loose enough to match that reports the template
   // literal `${entry}` rather than the file it names.
-  const cause =
-    out.match(/\$exports\.(\$bind\$\w+) is not a function/)?.[1] ??
+  // **A missing export is not a wrong answer.** The first version of this had no case for it, so an
+  // export the module simply does not have fell into the `failed > 0` bucket and was reported as
+  // *wrong answer* — a stronger claim than the evidence, and the wrong one to act on. `json` and
+  // `http` were both this: the module bound, and three of `json`'s four exported functions were not
+  // in it. See `issues/lang/0090`.
+  const helper = out.match(/\$exports\.(\$bind\$\w+) is not a function/)?.[1];
+  const absent = out.match(/\$exports\.(\w+) is not a function/)?.[1];
+  const cause = helper ??
+    (absent ? `missing export: ${absent}` : undefined) ??
     out.match(/Error: wacc cannot compile \S+ yet — (.+)/)?.[1] ??
-    (failed > 0 ? "wrong answer" : "");
+    (failed > 0 ? "a wrong answer or a trap" : "");
 
   rows.push({ pkg, passed, failed, cause });
   const mark = failed === 0 ? "ok  " : "FAIL";

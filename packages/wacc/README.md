@@ -166,7 +166,7 @@ else. `tools/runOnWacc.ts` runs every package that way and counts:
         2  $bind$arr_u8Arr_new
         2  $bind$sm_Fs_inMemory
         2  $bind$fnref_0
-        2  wrong answer
+        2  a missing export or a wrong answer
         1  untyped member
         1  $bind$str_len
 
@@ -191,9 +191,18 @@ so reading an element is `array.get_u` rather than `array.get`, which wasm says 
 
 What is left is the same three helpers for the other element types an export can carry — `i32[]` is
 five of the eight remaining failures and is the same code with a different width and load — plus the
-struct-method, callback and string families. Two packages now fail on **a wrong answer** rather than
-a missing helper, which is the first time this repository has caught wacc computing something
-incorrectly, and is what running the corpus was for.
+struct-method, callback and string families. Two packages fail on something other than a missing
+helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
+its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which
+matters beyond one package, because `corpusEmit` counts a file *whole* exactly when `blockedFiles` is
+empty, so "335 of 342 whole" overstates what is emitted by an amount nobody has measured. `http` is
+**`issues/lang/0091`**: the module binds, the server runs, and its responses are truncated — the first
+behavioural defect this half of rung 4 has found, and one no well-formedness check could have found,
+because the module is well-formed and computes the wrong thing.
+
+The sweep called both "wrong answer" at first. That was the tool overstating its evidence: it had no
+case for an export that is merely absent, so anything it could not name fell into the strongest bucket
+it had. It says `missing export: <name>` now, and its honest fallback is "a wrong answer or a trap".
 
 **Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
 for any of them.** The three that are left import files the corpus does not contain, and no compiler
