@@ -156,9 +156,16 @@ const COVERAGE: Record<string, Cover> = {
       "grant is live on each: an unsealed shell prints the machine's `$HOME` on both, or the seal " +
       "below would be passing against a runtime that never reads the environment for anybody",
   },
-  CONNECT: { gap: "the network is exercised end-to-end by `arrival_users` over ssh, but only on the native host as the *server*; no opcode-level comparison" },
-  LISTEN: { gap: "as CONNECT" },
-  ACCEPT: { gap: "as CONNECT" },
+  CONNECT: {
+    where: "native_examples: `writeread` listens, accepts and connects to itself on loopback, so one " +
+      "program exercises all three on both hosts and the transcripts are compared. The port differs " +
+      "by construction and is masked; it is allocated per run by `harness/port.ts` rather than fixed, " +
+      "because these run in the parallel lane. Before this the network was exercised end to end by " +
+      "`arrival_users` over ssh — but only with the native host as the *server*, so nothing compared " +
+      "the three calls themselves",
+  },
+  LISTEN: { where: "as CONNECT — the same program, the same run" },
+  ACCEPT: { where: "as CONNECT" },
   RECV: {
     where: "native_shell: every filesystem operation of every spawned stage. `sealedsh` spawns its " +
       "stages and serves their filesystem over a handle (wac-mono 0116), so a corpus script that " +
