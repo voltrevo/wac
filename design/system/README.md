@@ -57,3 +57,4 @@ which is worth more to the next reader than deleting it.
 |---|---|---|
 | [0001](0001-a-self-contained-system.md) | a self-contained system: a filesystem, processes and users in wac, with the ssh and browser demos as its terminals | active |
 | [0002](0002-the-whole-tor-stack.md) | the whole Tor stack: relays, authorities and onion services, and a network of our own | active |
+| [0004](0004-rendering-that-backs-a-desktop.md) | rendering that backs a desktop: one surface, from a kernel or from a tab | proposal |
