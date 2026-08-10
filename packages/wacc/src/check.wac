@@ -735,6 +735,18 @@ export struct C {
   i32[] variantArities;
   i32 variantCount;
 
+  /**
+   * What the file being declared calls a type, against what the file that imported it calls it.
+   *
+   * `import { Dup as DupB } from "./b.wac"` means `b.wac`'s `Dup` enters this file as `DupB`, and it
+   * has to enter under that name throughout — not only as a declaration but everywhere `b.wac`'s own
+   * signatures mention it, or `DupB b = fromB()` binds a type whose fields belong to somebody else's
+   * `Dup`. Empty except while an imported file is being declared.
+   */
+  string[] renameFrom;
+  string[] renameTo;
+  i32 renameCount;
+
   C create(u8[] src, i32[] toks, i32 capacity) {
     return C(src, toks, string[capacity](), string[capacity](), bool[capacity](), 0,
              string[capacity](), 0, 0,
@@ -748,7 +760,24 @@ export struct C {
              i32[capacity](), 0, 0, 0,
              0, "",
              i32[capacity * 3](), 0, false, false, string[16](), 0,
-             string[capacity](), string[capacity](), i32[capacity](), 0);
+             string[capacity](), string[capacity](), i32[capacity](), 0,
+             string[capacity](), string[capacity](), 0);
+  }
+
+  /** The name this file's import gave to a type the declaring file calls something else. */
+  string renamed(const this, string n) {
+    for (i32 i = 0; i < this.renameCount; i++) {
+      if (this.renameFrom[i] == n) { return this.renameTo[i]; }
+    }
+    return n;
+  }
+
+  /** Record that the file being declared calls `from` what this file calls `to`. */
+  void addRename(this, string from, string to) {
+    if (this.renameCount >= this.renameFrom.len()) { return; }
+    this.renameFrom[this.renameCount] = from;
+    this.renameTo[this.renameCount] = to;
+    this.renameCount = this.renameCount + 1;
   }
 
   /**
@@ -1229,7 +1258,9 @@ export string typeOfTy(C c, Ty t) {
       // model here is that a type *is* its canonical name, so the name has to carry the arguments —
       // an earlier version returned unknown for all of them, which made every generic invisible.
       // Invariance then costs nothing: two instantiations differ exactly when their names do.
-      string base = tokenText(c, tok);
+      // Under the importing file's name for it, when this is an imported file being declared: a
+      // signature that says `Dup` in `b.wac` says `DupB` to the file that imported it that way.
+      string base = c.renamed(tokenText(c, tok));
       // **A type parameter of the function being checked is an unknown type**, not a name. `T` in
       // `T oops<T>(T a)` stands for whatever a call site binds, so every question about it has an
       // answer this checker cannot compute — and answering with the letter itself made `return a;` a
@@ -4336,7 +4367,7 @@ export void declareModule(C c, Program prog, string[] only) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        c.declareConst(tokenText(c, nameTok), typeOfTy(c, type), true);
+        c.declareConst(c.renamed(tokenText(c, nameTok)), typeOfTy(c, type), true);
       }
       else: { }
     }
@@ -4349,7 +4380,7 @@ export void declareModule(C c, Program prog, string[] only) {
     match (prog.decls[d].kind) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        c.declareEnum(tokenText(c, nameTok));
+        c.declareEnum(c.renamed(tokenText(c, nameTok)));
         // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
         // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
         // be as much a struct as anything else here. Registered under its bare name, which is how
@@ -4386,8 +4417,11 @@ export void declareModule(C c, Program prog, string[] only) {
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        // Filtered on the name the declaring file wrote, declared under the name the importing
+        // file gave it: `only` carries what was asked for, the rename carries what to call it.
         string name = tokenText(c, nameTok);
         if (!wantedName(only, name)) { continue; }
+        name = c.renamed(name);
         string[] tps = string[typeParams.len()]();
         for (i32 i = 0; i < typeParams.len(); i++) { tps[i] = tokenText(c, typeParams[i]); }
         c.declareStruct(name, parentTok < 0 ? "" : tokenText(c, parentTok), tps);
@@ -4436,7 +4470,8 @@ export void declareModule(C c, Program prog, string[] only) {
         for (i32 i = 0; i < params.len(); i++) { prims[i] = typeOfTy(c, params[i].type); }
         string[] ftps = string[typeParams.len()]();
         for (i32 i = 0; i < typeParams.len(); i++) { ftps[i] = tokenText(c, typeParams[i]); }
-        c.declareFunc(tokenText(c, nameTok), typeOfTy(c, returnType), prims, params.len(), ftps);
+        c.declareFunc(c.renamed(tokenText(c, nameTok)), typeOfTy(c, returnType), prims,
+                      params.len(), ftps);
       }
       else: { }
     }

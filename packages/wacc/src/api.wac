@@ -153,6 +153,9 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
   // contributes only what that file was asked for.
   string[] wantFrom = string[512]();
   string[] wantName = string[512]();
+  // What this file calls it, which is the name it must be declared under — `Dup as DupB` brings in a
+  // `DupB`, and two modules' `Dup` are two types rather than one that overwrote the other.
+  string[] wantAlias = string[512]();
   // Where the *import* is written, taken here because the loop below retargets `c` at each imported
   // file in turn: a diagnostic about `main.wac`'s import must not carry `b.wac`'s line numbers.
   i32[] wantLine = i32[512]();
@@ -167,6 +170,7 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
           if (n >= wantName.len()) { continue; }
           wantFrom[n] = target;
           wantName[n] = tokenTextOf(esrc, elexed, items[i].nameTok);
+          wantAlias[n] = tokenTextOf(esrc, elexed, items[i].aliasTok);
           wantLine[n] = elexed.tokens[items[i].nameTok * tokenStride() + 3];
           wantCol[n] = elexed.tokens[items[i].nameTok * tokenStride() + 4];
           n = n + 1;
@@ -206,7 +210,13 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
 
     c.src = isrc;
     c.toks = ilexed.tokens;
+    c.renameCount = 0;
+    for (i32 k = 0; k < n; k++) {
+      if (wantFrom[k] != paths[i]) { continue; }
+      if (wantAlias[k] != wantName[k]) { c.addRename(wantName[k], wantAlias[k]); }
+    }
     declareModule(c, iprog, only);
+    c.renameCount = 0;
   }
 
   c.src = esrc;
