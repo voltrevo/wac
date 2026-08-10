@@ -159,13 +159,18 @@ must *not* be read as type arguments.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    6 of 33 packages pass their own suite on wacc-emitted code (392 tests)
+    16 of 33 packages pass their own suite on wacc-emitted code (743 tests)
     why the rest do not:
-       21  $bind$mem_ensure
-        1  $bind$str_len
+        5  $bind$arr_i32_len
+        2  $bind$arr_i32_from_mem
+        2  $bind$arr_u8Arr_new
+        2  $bind$sm_Fs_inMemory
+        2  $bind$fnref_0
+        2  wrong answer
         1  untyped member
+        1  $bind$str_len
 
-`bytes`, `ethrpc`, `rlp`, `std`, `tty` and **`tor` — 305 tests** — pass outright. Compiling the corpus
+`tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on
 code this compiler produced other than its own bootstrap.
 
@@ -179,10 +184,16 @@ compiles now has somewhere to move bytes through, and every package that stopped
 emitted, so the helper's signature is registered in the pre-pass beside the string helpers'; asking
 for it while emitting makes the emitter decline the module, which it does by returning eight bytes.
 
-What is left is the per-element-type array family — `$bind$arr_u8_len`, `_to_mem`, `_from_mem` and
-their equivalents for every element type an export carries. They are `array.copy` loops between a
-WasmGC array and linear memory, and they are the last thing between wacc-compiled code and the rest
-of this repository.
+**The `u8[]` family is done too** — `$bind$arr_u8_len`, `_to_mem` and `_from_mem` — which is what
+took the measurement from 6 packages to 16. There is no bulk instruction between a WasmGC array and
+linear memory, so both directions are a byte-at-a-time loop; and a packed `u8[]` is `i8` underneath,
+so reading an element is `array.get_u` rather than `array.get`, which wasm says by name.
+
+What is left is the same three helpers for the other element types an export can carry — `i32[]` is
+five of the eight remaining failures and is the same code with a different width and load — plus the
+struct-method, callback and string families. Two packages now fail on **a wrong answer** rather than
+a missing helper, which is the first time this repository has caught wacc computing something
+incorrectly, and is what running the corpus was for.
 
 **Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
 for any of them.** The three that are left import files the corpus does not contain, and no compiler
