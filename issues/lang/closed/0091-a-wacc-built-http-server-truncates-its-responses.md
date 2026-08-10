@@ -1,7 +1,8 @@
 # 0091 — a wacc-built http server truncates its responses
 
-- **Status:** open — very likely a symptom of 0090; re-check once that is fixed
+- **Status:** closed — 2026-08-10, a symptom and not a defect of its own
 - **Claimed by:** (nobody yet — add yourself before working it)
+- **Fixed in:** 9af73a95
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
 - **Kind:** bug
@@ -59,3 +60,16 @@ There was a second reason to distrust the original report. `runOnWacc.ts` passed
 environment rather than extending it, so every package ran with nothing else set —
 `http` reported 29 tests passing there and 24 passing with one failure when run by
 hand. That is the measurement disagreeing with itself, and it is fixed.
+
+## Closed — 2026-08-10, agent-b
+
+Confirmed. With `issues/lang/0092` fixed, `packages/http` binds and **passes its own
+suite on wacc-emitted code, 29 tests**. There was never a truncation bug: the module
+was short a function, and a response writer that is not there produces a short
+response.
+
+Worth keeping as a record of the mistake rather than deleting: a wrong answer and a
+missing export are indistinguishable from outside when the missing thing is what
+produces the answer, and I filed this as its own defect on one run of evidence. The
+tell was available — the module bound but the tool had no case for an absent export —
+and I did not look for it before writing the issue.
