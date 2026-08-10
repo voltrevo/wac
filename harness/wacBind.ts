@@ -24,7 +24,7 @@ import { wacCompile } from "wac/wacCompile.ts";
 import { wacBindgen } from "wac/wacBindgen.ts";
 import { wacFiles } from "./wacFiles.ts";
 import { profileDir, registerProfiled } from "./wacProfile.ts";
-import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts } from "./buildCache.ts";
+import { cached, compilerKeyParts, contentKey, filesParts, harnessKeyParts, hashDir } from "./buildCache.ts";
 
 const CACHE_DIR = ".cache";
 
@@ -54,7 +54,12 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
   // byte of `wacc`'s output — the exact stale-artifact failure this key exists to prevent, in the
   // one mode where it would be least visible.
   const from = Deno.env.get("WAC_WASM_FROM") ?? "reference";
-  return await contentKey(["bind", entry, from, ...compiler, ...harness, ...filesParts(files)]);
+  // **And wacc's own sources, when wacc is the one emitting.** The parts above cover the reference
+  // compiler and the harness; neither changes when `packages/wacc/src` does, so a measurement taken
+  // after editing wacc's emitter was served the previous build and reported the old blocker. Two
+  // packages said so by disagreeing with a third that happened to miss the cache.
+  const wacc = from === "wacc" ? await hashDir("packages/wacc/src", ".wac") : [];
+  return await contentKey(["bind", entry, from, ...wacc, ...compiler, ...harness, ...filesParts(files)]);
 }
 
 /**

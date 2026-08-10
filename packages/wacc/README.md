@@ -169,11 +169,20 @@ else. `tools/runOnWacc.ts` runs every package that way and counts:
 was never the same as running it, and this is the first time anything in the repository has run on
 code this compiler produced other than its own bootstrap.
 
-**22 of the 27 failures are one missing feature**, filed as `issues/lang/0089`: bindgen reaches wasm
-memory through `$bind$mem` and `$bind$mem_ensure`, and wacc emits neither, so every exported signature
-carrying a `u8[]` or a `string` has glue waiting for a function that is not there. It is bounded — a
-linear memory, a growth helper, two exports — and independent of the type checker, where the recent
-work has been.
+**The failures were one missing feature**, filed as `issues/lang/0089`: bindgen reaches wasm memory
+through a family of `$bind$` helpers and wacc emitted none of them, so every exported signature
+carrying a `u8[]` or a `string` had glue waiting for a function that was not there.
+
+**The buffer half is done.** wacc emits a memory section and `$bind$mem_ensure` — the module wacc
+compiles now has somewhere to move bytes through, and every package that stopped at
+`$bind$mem_ensure` stops at the next helper along. The type section is sized before anything is
+emitted, so the helper's signature is registered in the pre-pass beside the string helpers'; asking
+for it while emitting makes the emitter decline the module, which it does by returning eight bytes.
+
+What is left is the per-element-type array family — `$bind$arr_u8_len`, `_to_mem`, `_from_mem` and
+their equivalents for every element type an export carries. They are `array.copy` loops between a
+WasmGC array and linear memory, and they are the last thing between wacc-compiled code and the rest
+of this repository.
 
 **Rung 4 (emitter) compiles 335 of the repository's 338 files whole, and produces no invalid module
 for any of them.** The three that are left import files the corpus does not contain, and no compiler

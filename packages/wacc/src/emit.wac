@@ -2024,9 +2024,11 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
-  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0);
+  // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
+  // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
+  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1;
   funcs.u32leb(count + helpers);
-  exports.u32leb(exportCount);
+  exports.u32leb(exportCount + 2);   // `$bind$mem` and `$bind$mem_ensure`
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2098,6 +2100,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
+  // Before `declTypes` is taken, or the type section is sized without it and the module is declined
+  // — which is what happened first time round, and the emitter said so by returning eight bytes.
+  env.sigType("fn[i32(i32)]");
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
     env.sigType("fn[bool(string,string)]");
@@ -2272,6 +2277,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitStringIndexOf(funcs, code, env);
     emitStringCompare(funcs, code, env);
   }
+  emitMemEnsure(funcs, code, env);
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2310,7 +2316,10 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   if (startNeeded) {
     env.localCount = 0;
     env.paramCount = 0;
-    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 9 : 0), declTypes);
+    // **After `$bind$mem_ensure`, so one past where it used to be.** The start function is emitted
+    // last and numbered by hand, and adding a helper in front of it without moving this produced
+    // *"invalid start func reference"* — the index named a function that is now the buffer helper.
+    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 9 : 0) + 1, declTypes);
   }
 
   // **The type section is written before the code that names types.** If emitting a body registered
@@ -2319,13 +2328,29 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // module is declined, which is the same answer the walk gives for everything it cannot do.
   if (env.arrayCount + env.structCount + env.sigCount != declTypes) { return bareModule(); }
 
+  // **The staging buffer, and the two names a host reaches it by.** One page to start with;
+  // `$bind$mem_ensure` grows it. Emitted for every module rather than only where a signature moves
+  // bytes, because which signatures a host will bind is not something the emitter can know.
+  B mem = B.create();
+  mem.u32leb(1);      // one memory
+  mem.byte(0);        // no maximum
+  mem.u32leb(1);      // one page to begin with
+
+  exports.name("$bind$mem");
+  exports.byte(2);    // a memory
+  exports.u32leb(0);
+  exports.name("$bind$mem_ensure");
+  exports.byte(0);    // a function
+  exports.u32leb(count + (needsStrings ? 9 : 0));
+
   section(out, 1, types);
   section(out, 3, funcs);
+  section(out, 5, mem);
   if (globalCount > 0) { section(out, 6, globals); }
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 9 : 0));
+    st.u32leb(count + (needsStrings ? 9 : 0) + 1);
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -6523,6 +6548,51 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
  * arguments has an answer, a reversed range is empty, and a negative start is zero. Four `select`s
  * say that in eight instructions, and they are why this is not four nested `if`s.
  */
+/**
+ * `$bind$mem_ensure(bytes) -> i32` — grow the staging buffer to hold `bytes`, and answer its size.
+ *
+ * The JavaScript boundary moves arrays and strings through a page of linear memory rather than one
+ * element at a time, and `wacBindgen` generates glue that calls this before every bulk copy. wacc
+ * emitted no memory at all, so 21 of the repository's 33 packages could not be bound to a
+ * wacc-compiled module — `issues/lang/0089`.
+ *
+ * The caller re-reads `memory.buffer` afterwards: growing detaches the old `ArrayBuffer`, and a view
+ * built before the call is dead. Answering the size rather than the growth is what lets the caller
+ * tell "already big enough" from "grown to fit" without asking twice.
+ */
+void emitMemEnsure(B funcs, B code, Env env) {
+  funcs.u32leb(env.sigType("fn[i32(i32)]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(1); b.byte(127);            // one i32 local: the pages needed
+
+  // needPages = (bytes + 65535) >>> 16
+  b.byte(32); b.u32leb(0);
+  b.byte(65); b.i32leb(65535); b.byte(106);
+  b.byte(65); b.i32leb(16); b.byte(118);
+  b.byte(33); b.u32leb(1);
+
+  // if (memory.size < needPages) { memory.grow(needPages - memory.size); }
+  b.byte(63); b.byte(0);               // memory.size
+  b.byte(32); b.u32leb(1);
+  b.byte(73);                          // i32.lt_u
+  b.byte(4); b.byte(64);               // if
+  b.byte(32); b.u32leb(1);
+  b.byte(63); b.byte(0);
+  b.byte(107);                         // i32.sub
+  b.byte(64); b.byte(0);               // memory.grow
+  b.byte(26);                          // drop — the size answered below is what the caller reads
+  b.byte(11);                          // end if
+
+  // return memory.size << 16
+  b.byte(63); b.byte(0);
+  b.byte(65); b.i32leb(16); b.byte(116);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
 void emitStringSlice(B funcs, B code, Env env) {
   i32 at = env.arrayType("i8[]");
   funcs.u32leb(env.sigType("fn[string(string,i32,i32)]"));

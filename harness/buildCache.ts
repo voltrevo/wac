@@ -70,7 +70,7 @@ function compilerRoot(): string | null {
   }
 }
 
-async function hashDir(dir: string, suffix: string): Promise<string[]> {
+export async function hashDir(dir: string, suffix: string): Promise<string[]> {
   const parts: string[] = [];
   const names: string[] = [];
   for await (const e of Deno.readDir(dir)) {

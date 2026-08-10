@@ -1,7 +1,7 @@
 # 0089 — wacc emits no transfer buffer, so nothing that passes bytes can bind to it
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** open — the buffer is emitted; the array helpers are not
+- **Claimed by:** agent-b, 2026-08-10
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
 - **Kind:** missing feature
@@ -54,5 +54,25 @@ Of the 27 that fail, **22 are this one feature**: 21 want `$bind$mem_ensure` and
 wants `$bind$str_len`. The rest are separate: `sh` hits `untyped member`, which is an
 emitter gap `corpusEmit` already counts, and a few fail on answers rather than binding.
 
-Re-measure with `deno run -A packages/wacc/tools/runOnWacc.ts` after fixing this; the
-number should move a long way in one step.
+## Done so far — 2026-08-10, agent-b
+
+`$bind$mem` and `$bind$mem_ensure` are emitted. wacc now writes a memory section (one
+page, grown on demand) and one synthetic helper, and every package that used to stop at
+`$bind$mem_ensure` now stops at the *next* helper instead.
+
+Two things that were not obvious from outside:
+
+- The signature has to be registered in the pre-pass beside the string helpers'. Asking
+  for it while emitting grows the type table after the type section was sized, and the
+  emitter declines the module rather than emit a lie — an eight-byte module is what that
+  looks like.
+- The start function is emitted last and numbered by hand, so inserting a helper in front
+  of it without moving its index gives *"invalid start func reference"*.
+
+**What is left is the per-element-type array family**: `$bind$arr_u8_len`,
+`$bind$arr_u8_to_mem`, `$bind$arr_u8_from_mem`, and the same three for every other element
+type an exported signature carries. Those are `array.copy` loops between a WasmGC array and
+linear memory; `makeToMem` and `makeFromMem` in `compiler/wasmBuildBin.ts` are the
+reference's, and they are parameterised by element width and the load/store opcode.
+
+Re-measure with `deno run -A packages/wacc/tools/runOnWacc.ts`.
