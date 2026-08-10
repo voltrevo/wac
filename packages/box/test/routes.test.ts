@@ -18,6 +18,7 @@
 // corpus:routes` is the whole 821 and takes minutes.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -48,24 +49,15 @@ const spawned = `${tmp}/wacsh`;
 await buildApp("packages/box/example/boxsh.wac", called, { read: true, write: true, env: true });
 await buildApp("packages/box/src/bin/sh.wac", spawned, { read: true, write: true, env: true });
 
-type Run = { code: number; out: string; err: string };
-
-function run(cmd: string, script: string, cwd: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, "-c", script],
+function run(cmd: string, script: string, cwd: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, ["-c", script], {
     cwd,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
-    clearEnv: true,
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+  });
 }
 
 /** One script's two answers, each in a directory of its own so neither sees the other's files. */
-function both(script: string, n: number): { called: Run; spawned: Run } {
+function both(script: string, n: number): { called: Bounded; spawned: Bounded } {
   const a = `${tmp}/a${n}`, b = `${tmp}/b${n}`;
   Deno.mkdirSync(a, { recursive: true });
   Deno.mkdirSync(b, { recursive: true });
@@ -80,6 +72,8 @@ Deno.test("the two routes are one program: the same applets answer the same eith
   for (let i = 0; i < SAMPLE && i < CORPUS.length; i++) {
     const script = CORPUS[i];
     const { called: a, spawned: b } = both(script, i);
+    const stuck = hangReport(script, [{ name: "called", run: a }, { name: "spawned", run: b }]);
+    if (stuck !== null) { differ.push(stuck); continue; }
     if (a.out !== b.out || a.err !== b.err || a.code !== b.code) {
       differ.push(
         `${JSON.stringify(script)}\n  called  ${JSON.stringify(a.out + a.err)} (${a.code})` +

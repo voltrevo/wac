@@ -27,6 +27,7 @@
 // against the host-mount half, which is the only oracle it can have.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -62,35 +63,26 @@ const haveBash = (() => {
   }
 })();
 
-type Run = { code: number; out: string; err: string };
-
 /**
  * One script, in one shell, in a directory holding a file `f` and a directory `d`.
  *
  * A fresh directory per run, because several of these scripts mutate — and because a case that left `f`
  * as something else would silently stop testing `ENOTDIR` while still passing.
  */
-function run(cmd: string, args: string[], script: string): Run {
+function run(cmd: string, args: string[], script: string): Bounded {
   const dir = Deno.makeTempDirSync({ dir: tmp, prefix: "case-" });
   Deno.writeTextFileSync(`${dir}/f`, "hi\n");
   Deno.mkdirSync(`${dir}/d`);
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, ...args, "-c", script],
+  // `LC_ALL=C` so GNU quotes with `'` rather than the locale's typographic quotes, which is what
+  // every other differential test in this repo does and what our own output uses.
+  return bounded(DEFAULT_SECONDS, cmd, [...args, "-c", script], {
     cwd: dir,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-    // `LC_ALL=C` so GNU quotes with `'` rather than the locale's typographic quotes, which is what
-    // every other differential test in this repo does and what our own output uses.
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
-    clearEnv: true,
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+  });
 }
 
 /** The same script through a session sealed in a fresh image, where `packages/fs` answers instead. */
-function inImage(script: string): Run {
+function inImage(script: string): Bounded {
   const image = `${tmp}/img-${crypto.randomUUID()}.wacimg`;
   // `f` and `d` made *inside* the image, so nothing about this case touches the machine.
   return run(imaged, [image], `printf 'hi\\n' > /f; mkdir /d; cd /; ${script}`);

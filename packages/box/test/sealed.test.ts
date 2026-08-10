@@ -1,6 +1,7 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+import { boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // A sealed shell with the applets: sixty commands over a filesystem that is not the host's.
 //
 // This is the test wac-mono 0109 was filed for. An applet used to take a `Cli` and read the *host*
@@ -178,11 +179,10 @@ Deno.test("an applet runs when the shell cannot spawn and its own input stays op
   try {
     await buildApp(SEALED, built, {});
     const open = async (script: string) => {
-      const child = new Deno.Command("timeout", {
-        args: ["10", built, "-c", script], stdin: "piped", stdout: "piped", stderr: "piped",
-      }).spawn();
-      const r = await child.output();
-      return { out: new TextDecoder().decode(r.stdout), code: r.code };   // 124 is the bug's shape
+      // 124 was the bug's shape, and `hung` is that same fact as a field rather than as a status the
+      // program never chose — `harness/bounded.ts`.
+      const r = await boundedInput(DEFAULT_SECONDS, built, ["-c", script], "");
+      return { out: r.out, code: r.code, hung: r.hung };
     };
 
     // A lone applet that reads nothing: the case that hung.

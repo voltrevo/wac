@@ -17,6 +17,7 @@
 // service is still running" would be checking nothing, since nothing here can end one.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -41,18 +42,8 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-type Run = { code: number; out: string; err: string };
-
-function session(image: string, script: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["20", imaged, image, "-c", script],
-    cwd: tmp,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function session(image: string, script: string): Bounded {
+  return bounded(DEFAULT_SECONDS, imaged, [image, "-c", script], { cwd: tmp });
 }
 
 /**

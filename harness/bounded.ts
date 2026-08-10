@@ -100,8 +100,8 @@ export async function boundedInput(
   seconds: number,
   cmd: string,
   args: string[],
-  stdin: string,
-  opts: { cwd?: string } = {},
+  stdin: string | Uint8Array,
+  opts: { cwd?: string; env?: Record<string, string> } = {},
 ): Promise<Bounded> {
   const child = new Deno.Command("timeout", {
     args: [String(seconds), cmd, ...args],
@@ -109,9 +109,10 @@ export async function boundedInput(
     stdin: "piped",
     stdout: "piped",
     stderr: "piped",
+    ...(opts.env === undefined ? {} : { env: opts.env, clearEnv: true }),
   }).spawn();
   const w = child.stdin.getWriter();
-  await w.write(new TextEncoder().encode(stdin));
+  await w.write(typeof stdin === "string" ? new TextEncoder().encode(stdin) : stdin);
   await w.close();
   const r = await child.output();
   const d = new TextDecoder();

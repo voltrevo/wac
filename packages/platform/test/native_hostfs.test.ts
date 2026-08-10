@@ -29,7 +29,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
-import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
+import { type Bounded, bounded, boundedInput, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -340,21 +340,10 @@ Deno.test("a program reading its standard input answers the same on both hosts",
 
   const enc = new TextEncoder();
   async function withInput(cmd: string, args: string[], script: string, input: Uint8Array) {
-    const p = new Deno.Command("timeout", {
-      args: ["25", cmd, ...args, "-c", script],
+    return await boundedInput(DEFAULT_SECONDS, cmd, [...args, "-c", script], input, {
       cwd: tmp,
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
       env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
-      clearEnv: true,
-    }).spawn();
-    const w = p.stdin.getWriter();
-    await w.write(input);
-    await w.close();
-    const r = await p.output();
-    const d = new TextDecoder();
-    return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
+    });
   }
 
   const cases: [string, Uint8Array][] = [
