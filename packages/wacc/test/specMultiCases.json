@@ -1,0 +1,1054 @@
+{
+  "source": "compiler/wacSpec.test.ts",
+  "sha256": "9f79cf221e129cf77a8e00896de97b83014fec196f3b4f2554cb834789635d26",
+  "cases": [
+    {
+      "test": "[§wac-struct-export-m3kq8wp] only an exported struct can be imported",
+      "entry": "main.wac",
+      "files": [
+        [
+          "lib.wac",
+          "export struct Open { i32 v; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Open } from \"./lib.wac\";\n      export i32 test() { return Open(7).v; }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-struct-export-m3kq8wp] only an exported struct can be imported",
+      "entry": "main.wac",
+      "files": [
+        [
+          "lib.wac",
+          "struct Shut { i32 v; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Shut } from \"./lib.wac\";\n      export i32 test() { return Shut(7).v; }\n    "
+        ]
+      ],
+      "ok": false,
+      "message": "'Shut' is not exported from 'lib.wac'"
+    },
+    {
+      "test": "[§wac-struct-export-const-r7nf4jq] export const struct: both modifiers apply",
+      "entry": "main.wac",
+      "files": [
+        [
+          "lib.wac",
+          "\n      export const struct Frozen {\n        i32 w;\n        i32 h;\n        Frozen of(i32 w, i32 h) { return Frozen(w, h); }\n      }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { Frozen } from \"./lib.wac\";\n      export i32 area() { Frozen f = Frozen.of(137, 429); return f.w * f.h; }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-struct-export-const-r7nf4jq] export const struct: both modifiers apply",
+      "entry": "main.wac",
+      "files": [
+        [
+          "lib.wac",
+          "export const struct Frozen { i32 w; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Frozen } from \"./lib.wac\";\n      export void bad() { Frozen f = Frozen(1); f.w = 2; }\n    "
+        ]
+      ],
+      "ok": false,
+      "message": "cannot write to const field 'w'"
+    },
+    {
+      "test": "[§wac-dup-import-vqn4100] two imports with same name is error",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export i32 foo() { return 1; }"
+        ],
+        [
+          "b.wac",
+          "export i32 foo() { return 2; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { foo } from \"./a.wac\";\n      import { foo } from \"./b.wac\";\n      export void test() {}\n    "
+        ]
+      ],
+      "ok": false,
+      "message": "duplicate name 'foo' (from import)"
+    },
+    {
+      "test": "[§wac-rename-pohglv4] renaming import resolves collision",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export i32 foo() { return 1; }"
+        ],
+        [
+          "b.wac",
+          "export i32 foo() { return 2; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { foo } from \"./a.wac\";\n      import { foo as fooB } from \"./b.wac\";\n      export i32 test() { return foo() + fooB(); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-rename-type-h0a08xz] renaming struct imports resolves collision",
+      "entry": "main.wac",
+      "files": [
+        [
+          "flat.wac",
+          "export struct Point { i32 x; i32 y; }"
+        ],
+        [
+          "spatial.wac",
+          "export struct Point { i32 x; i32 y; i32 z; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Point as Point2d } from \"./flat.wac\";\n      import { Point as Point3d } from \"./spatial.wac\";\n      export i32 test() {\n        Point2d p2 = Point2d(1, 2);\n        Point3d p3 = Point3d(1, 2, 3);\n        return p2.x + p3.z;\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-diamond-79emza1] combined() returns 230",
+      "entry": "main.wac",
+      "files": [
+        [
+          "shared.wac",
+          "export i32 base() { return 100; }"
+        ],
+        [
+          "left.wac",
+          "import { base } from \"./shared.wac\"; export i32 left() { return base() + 10; }"
+        ],
+        [
+          "right.wac",
+          "import { base } from \"./shared.wac\"; export i32 right() { return base() + 20; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { left }  from \"./left.wac\";\n      import { right } from \"./right.wac\";\n      export i32 combined() { return left() + right(); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-core-one-type-8fjm2wq] run() returns 3 — two files, one Read",
+      "entry": "main.wac",
+      "files": [
+        [
+          "producer.wac",
+          "\n      import { Read } from core;\n      export Read three() { return Read.Data(u8[](7, 7, 7)); }\n    "
+        ],
+        [
+          "consumer.wac",
+          "\n      import { Read } from core;\n      export i32 total(fn[Read()] source) {\n        match (source()) {\n          case Data(bytes): return bytes.len();\n          case End:         return 0;\n          case Failed(why): return -1;\n        }\n      }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { three } from \"./producer.wac\";\n      import { total } from \"./consumer.wac\";\n      export i32 run() { return total(three); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-core-one-type-8fjm2wq] a hand-written copy of Read is still a different type",
+      "entry": "main.wac",
+      "files": [
+        [
+          "copy.wac",
+          "export enum Read { Data(u8[] bytes), End, Failed(string why) }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Read } from core;\n      import { Read as Copy } from \"./copy.wac\";\n      export i32 run(Copy c) { Read r = c; return 0; }\n    "
+        ]
+      ],
+      "ok": false,
+      "message": "type mismatch: expected Read, got Copy"
+    },
+    {
+      "test": "[§wac-circular-m7jx3p4] ping(5) returns 5",
+      "entry": "main.wac",
+      "files": [
+        [
+          "ping.wac",
+          "\n      import { pong } from \"./pong.wac\";\n      export i32 ping(i32 n) {\n        if (n == 0) { return 0; }\n        return pong(n - 1) + 1;\n      }\n    "
+        ],
+        [
+          "pong.wac",
+          "\n      import { ping } from \"./ping.wac\";\n      export i32 pong(i32 n) {\n        if (n == 0) { return 0; }\n        return ping(n - 1) + 1;\n      }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { ping } from \"./ping.wac\";\n      export i32 test(i32 n) { return ping(n); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-imp-coexist-p8km2v6] test() returns 21 (6 + 15)",
+      "entry": "main.wac",
+      "files": [
+        [
+          "utils_a.wac",
+          "export i32 compute(i32 x) { return x + 1; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { compute } from \"./utils_a.wac\";\n      i32 compute2(i32 x) { return x * 3; }\n      export i32 test() { return compute(5) + compute2(5); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-rename-imp-w4fn9k2] test() returns 16 (6 + 10)",
+      "entry": "main.wac",
+      "files": [
+        [
+          "utils_a.wac",
+          "export i32 compute(i32 x) { return x + 1; }"
+        ],
+        [
+          "utils_b.wac",
+          "export i32 compute(i32 x) { return x * 2; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { compute as computeA } from \"./utils_a.wac\";\n      import { compute as computeB } from \"./utils_b.wac\";\n      export i32 test() { return computeA(5) + computeB(5); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-import-type-ev21tgx] importing struct makes constructors and methods accessible",
+      "entry": "main.wac",
+      "files": [
+        [
+          "geometry.wac",
+          "\n      export struct Point {\n        f64 x;\n        f64 y;\n        f64 getX(const this) { return this.x; }\n      }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { Point } from \"./geometry.wac\";\n      export f64 test() {\n        Point p = Point(3.0, 4.0);\n        return p.getX();\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-dup-import-local-4fadlvg] import colliding with local name is error",
+      "entry": "main.wac",
+      "files": [
+        [
+          "geometry.wac",
+          "export f64 distance(f64 x, f64 y) { return x - y; }"
+        ],
+        [
+          "main.wac",
+          "\n      import { distance } from \"./geometry.wac\";\n      f64 distance(f64 x, f64 y) { return x - y; }\n      export void test() {}\n    "
+        ]
+      ],
+      "ok": false,
+      "message": "duplicate name 'distance' (from import)"
+    },
+    {
+      "test": "[§wac-grammar-k7fn4xq] grammar covers all major constructs",
+      "entry": "main.wac",
+      "files": [
+        [
+          "helper.wac",
+          "export i32 six() { return 6; }"
+        ],
+        [
+          "main.wac",
+          "\n    import { six } from \"./helper.wac\";\n    struct Base { i32 x; i32 getX(const this) { return this.x; } }\n    struct Sub : Base { i32 y; }\n    export i32 grammar() {\n      Sub s = Sub(3, 7);\n      i32 a = s.getX();\n      i32 b = s.x + s.y;\n      bool flag = a < b;\n      i32 r = flag ? b : a;\n      i32 c = 0;\n      for (i32 i = 0; i < 3; i++) {\n        if (i == 1) { continue; }\n        c += i;\n      }\n      i32 d = 0;\n      do { d++; } while (d < 2);\n      switch (d) {\n        case 1: r += 0; break;\n        case 2: r += 10; break;\n      }\n      while (c < 5) { c++; }\n      i32 x = 0xFF;\n      i64 y = 42 as i64;\n      return r + c + d + x + six() + y as~ i32;\n    }\n  "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-export-entry-only-v3kp8wn] only entry file exports appear in wasm exports; test() returns 16",
+      "entry": "main.wac",
+      "files": [
+        [
+          "utils_a.wac",
+          "export i32 compute(i32 x) { return x + 1; }"
+        ],
+        [
+          "utils_b.wac",
+          "export i32 compute(i32 x) { return x * 2; }"
+        ],
+        [
+          "main.wac",
+          "import { compute as a } from \"./utils_a.wac\";\nimport { compute as b } from \"./utils_b.wac\";\nexport i32 test() { return a(5) + b(5); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-export-no-collision-m4fn9rk] two imported files with same export name don't collide",
+      "entry": "main.wac",
+      "files": [
+        [
+          "utils_a.wac",
+          "export i32 compute(i32 x) { return x + 1; }"
+        ],
+        [
+          "utils_b.wac",
+          "export i32 compute(i32 x) { return x * 2; }"
+        ],
+        [
+          "main.wac",
+          "import { compute as a } from \"./utils_a.wac\";\nimport { compute as b } from \"./utils_b.wac\";\nexport i32 test() { return a(5) + b(5); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-struct-k7fn3wq] same-name structs in different files don't collide",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Box { i32 v; i32 get(const this) { return this.v * 2; } }"
+        ],
+        [
+          "b.wac",
+          "export struct Box { i32 v; i32 get(const this) { return this.v * 3; } }"
+        ],
+        [
+          "main.wac",
+          "\n      import { Box as BoxA } from \"./a.wac\";\n      import { Box as BoxB } from \"./b.wac\";\n      export i32 test() {\n        BoxA a = BoxA(10);\n        BoxB b = BoxB(10);\n        return a.get() * 100 + b.get();\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-alias-same-type-j3wq8kf] aliased struct import is the same type as the original",
+      "entry": "main.wac",
+      "files": [
+        [
+          "lib.wac",
+          "\n      export struct Box {\n        i32 v;\n        i32 get(const this) { return this.v; }\n      }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { Box as BoxA } from \"./lib.wac\";\n      export i32 test() {\n        BoxA b = BoxA(7);\n        fn[i32(BoxA)] f = BoxA.get;\n        return f(b);\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "(audit-16) importing a non-exported struct is a compile error",
+      "entry": "main.wac",
+      "files": [
+        [
+          "geo.wac",
+          "struct Point { i32 x; i32 y; }"
+        ],
+        [
+          "main.wac",
+          "import { Point } from \"./geo.wac\"; export void test() {}"
+        ]
+      ],
+      "ok": false,
+      "message": "'Point' is not exported from 'geo.wac'"
+    },
+    {
+      "test": "[§wac-no-reexport-f7kn4wq] (audit-17) importing a symbol doesn't implicitly re-export it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export i32 foo() { return 42; }"
+        ],
+        [
+          "b.wac",
+          "import { foo } from \"./a.wac\";"
+        ],
+        [
+          "main.wac",
+          "import { foo } from \"./b.wac\"; export i32 test() { return foo(); }"
+        ]
+      ],
+      "ok": false,
+      "message": "'foo' is not exported from 'b.wac' — importing a symbol does not re-export it"
+    },
+    {
+      "test": "[§enum-name-identity] two files may declare the same enum name",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "\n      export enum E { X, Y(i32 v) }\n      export E mkY(i32 v) { return E.Y(v); }\n      export i32 readA(E e) { match (e) { case X: return 1; case Y(v): return v; } }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { E, mkY, readA } from \"./a.wac\";\n      enum F { X, Z(i32 v) }\n      i32 readF(F f) { match (f) { case X: return 20; case Z(v): return v; } }\n      export i32 go(i32 v) {\n        F[] mine = F[](F.X, F.Z(v));\n        return readA(mkY(v)) + readF(mine[0]) + readF(mine[1]);\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§enum-cross-file] an enum works across files",
+      "entry": "main.wac",
+      "files": [
+        [
+          "shape.wac",
+          "\n      export enum Shape {\n        Point,\n        Circle(f64 radius),\n      }\n      export Shape mkCircle(f64 r) { return Shape.Circle(r); }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { Shape, mkCircle } from \"./shape.wac\";\n      export f64 area(f64 r) {\n        Shape s = mkCircle(r);\n        match (s) {\n          case Point:     return 0.0;\n          case Circle(x): return x * x;\n        }\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§enum-cross-file] matching does not require the enum's name in scope",
+      "entry": "main.wac",
+      "files": [
+        [
+          "k.wac",
+          "\n      export enum Kind { A, B }\n      export struct Holder { Kind kind; i32 n; }\n      export Holder mk() { return Holder(Kind.B, 1); }\n    "
+        ],
+        [
+          "main.wac",
+          "\n      import { Holder, mk } from \"./k.wac\";\n      export i32 f() {\n        Holder h = mk();\n        match (h.kind) {\n          case A: return 1;\n          case B: return 2;\n        }\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§enum-cross-file] an enum inside a generic container crosses files",
+      "entry": "main.wac",
+      "files": [
+        [
+          "v.wac",
+          "\n      export enum V {\n        Null, Bool(bool value), Num(f64 v)\n        i32 tag(const this) { return match (this) { case Null: 0, case Bool(_): 1, case Num(_): 2 }; }\n      }"
+        ],
+        [
+          "vec.wac",
+          "\n      export struct Vec<T> {\n        T[] data; i32 n;\n        Vec<T> create() { return Vec(T[](), 0); }\n        void push(this, T v) {\n          if (this.n == this.data.len()) {\n            T[] next = T[this.n == 0 ? 4 : this.n * 2](fill: v);\n            for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }\n            this.data = next;\n          }\n          this.data[this.n] = v; this.n++;\n        }\n        T get(const this, i32 i) { return this.data[i]; }\n        i32 len(const this) { return this.n; }\n      }"
+        ],
+        [
+          "main.wac",
+          "\n      // Bool is imported as well as V: a variant is a file-scope name like any other, and naming\n      // one as a type needs it in scope (issue 0048). match does not.\n      import { V, Bool } from \"./v.wac\";\n      import { Vec } from \"./vec.wac\";\n      export i32 matched() {\n        Vec<V> xs = Vec.create();\n        xs.push(V.Bool(true));\n        xs.push(V.Null);\n        return xs.len() * 10 + match (xs.get(0)) { case Bool(b): b ? 1 : 0, case Null: 5, case Num(_): 6 };\n      }\n      export i32 method()   { Vec<V> xs = Vec.create(); xs.push(V.Num(1.0)); return xs.get(0).tag(); }\n      export i32 narrowed() { Vec<V> xs = Vec.create(); xs.push(V.Bool(true)); V got = xs.get(0); return got is Bool ? 1 : 0; }\n      export i32 cast()     { Vec<V> xs = Vec.create(); xs.push(V.Bool(true)); V got = xs.get(0); return (got as! Bool).value ? 1 : 0; }\n      export i32 passedOn() { Vec<V> a = Vec.create(); a.push(V.Null); Vec<V> b = Vec.create(); b.push(a.get(0)); return b.get(0).tag(); }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§enum-cross-file] a subject narrowed to a variant can be matched again",
+      "entry": "main.wac",
+      "files": [
+        [
+          "v.wac",
+          "export enum V { Null, Bool(bool value), Num(f64 v) }"
+        ],
+        [
+          "vec.wac",
+          "export struct Vec<T> { T[] data; i32 n;\n      Vec<T> create() { return Vec(T[](), 0); }\n      void push(this, T v) {\n        T[] next = T[this.n + 1](fill: v);\n        for (i32 i = 0; i < this.n; i++) { next[i] = this.data[i]; }\n        this.data = next; this.data[this.n] = v; this.n++;\n      }\n      T get(const this, i32 i) { return this.data[i]; } }"
+        ],
+        [
+          "main.wac",
+          "\n      import { V } from \"./v.wac\";\n      import { Vec } from \"./vec.wac\";\n      export i32 f() {\n        Vec<V> xs = Vec.create();\n        xs.push(V.Bool(true));\n        V v = xs.get(0);\n        match (v) {\n          case Bool(_): { return match (v) { case Bool(b): b ? 6 : 0, case Null: 1, case Num(_): 2 }; }\n          case Null: return 1;\n          case Num(_): return 2;\n        }\n      }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§enum-cross-file] a diagnostic names the type as the author wrote it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "v.wac",
+          "export enum V { Null, Bool(bool value) }"
+        ],
+        [
+          "vec.wac",
+          "export struct Vec<T> { T[] data; i32 n;\n      Vec<T> create() { return Vec(T[](), 0); }\n      T get(const this, i32 i) { return this.data[i]; } }"
+        ],
+        [
+          "main.wac",
+          "\n      import { V } from \"./v.wac\";\n      import { Vec } from \"./vec.wac\";\n      export i32 f() { Vec<V> xs = Vec.create(); i32 x = xs.get(0); return x; }"
+        ]
+      ],
+      "ok": false,
+      "message": "type mismatch: expected i32, got V"
+    },
+    {
+      "test": "[§wac-modconst-import-p7fm2wj] constants obey export",
+      "entry": "/main.wac",
+      "files": [
+        [
+          "/c.wac",
+          "export const i32 BLOCK = 64;\nconst i32 HIDDEN = 7;\nexport i32 useHidden() { return HIDDEN; }"
+        ],
+        [
+          "/main.wac",
+          "import { BLOCK, useHidden } from \"/c.wac\";\nexport i32 f() { return BLOCK + useHidden(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-modconst-import-p7fm2wj] constants obey export",
+      "entry": "/main.wac",
+      "files": [
+        [
+          "/c.wac",
+          "export const i32 BLOCK = 64;\nconst i32 HIDDEN = 7;"
+        ],
+        [
+          "/main.wac",
+          "import { HIDDEN } from \"/c.wac\";\nexport i32 f() { return HIDDEN; }"
+        ]
+      ],
+      "ok": false,
+      "message": "'HIDDEN' is not exported from '/c.wac'"
+    },
+    {
+      "test": "[§wac-samename-private-k9fw3nm] same-named private functions do not collide",
+      "entry": "/main.wac",
+      "files": [
+        [
+          "/a.wac",
+          "i32 helper(i32 x) { return x * 2; }\nexport i32 fromA(i32 x) { return helper(x); }"
+        ],
+        [
+          "/b.wac",
+          "i64 helper(i64 x) { return x * 3; }\nexport i64 fromB(i64 x) { return helper(x); }"
+        ],
+        [
+          "/c.wac",
+          "i32 helper(i32 x) { return x + 100; }\nexport i32 fromC(i32 x) { return helper(x); }"
+        ],
+        [
+          "/main.wac",
+          "import { fromA } from \"/a.wac\";\nimport { fromB } from \"/b.wac\";\nimport { fromC } from \"/c.wac\";\n      export i32 a(i32 x) { return fromA(x); }\n      export i64 b(i64 x) { return fromB(x); }\n      export i32 c(i32 x) { return fromC(x); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-struct-9tkq4wm] a generic crosses module boundaries",
+      "entry": "main.wac",
+      "files": [
+        [
+          "box.wac",
+          "export struct Box<T> { T v; T get(const this) { return this.v; } void set(this, T x) { this.v = x; } }"
+        ],
+        [
+          "a.wac",
+          "import { Box } from \"./box.wac\";\n                 export i32 fromA() { Box<i32> b = Box(1); return b.get(); }"
+        ],
+        [
+          "main.wac",
+          "import { Box } from \"./box.wac\";\n                  import { fromA } from \"./a.wac\";\n                  export i32 test() { Box<i32> b = Box(2); b.set(5); return b.get() + fromA(); }\n                  // An alias must work too, since this pass runs before imports are resolved.\n                  export i32 viaAlias() { Box<f64> d = Box(2.5); return (d.get() * 2.0) as~ i32; }\n                  // Not exported, and it does not need to be: nothing can name Box$Local.\n                  struct Local { i32 v; }\n                  export i32 localArgument() { Box<Local> b = Box(Local(4)); return b.get().v; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-enum-7dkq2mv] a generic enum composes with the rest of the language",
+      "entry": "main.wac",
+      "files": [
+        [
+          "opt.wac",
+          "export \nenum Option<T> {\n  Some(T v), None\n\n  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }\n  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }\n}"
+        ],
+        [
+          "main.wac",
+          "import { Option } from \"./opt.wac\";\n      struct Holder { Option<i32> o; }\n      struct Box<T> { Option<T> o; T get(const this, T d) { return this.o.orElse(d); } }\n      Option<i32> find(i32 x) { if (x > 0) { return Option.Some(x); } return Option.None; }\n      T unwrapOr<T>(Option<T> o, T d) { return o.orElse(d); }\n      export i32 asField()      { Holder h = Holder(Option.Some(6)); return h.o.orElse(0); }\n      export i32 inGeneric()    { Box<i32> b = Box(Option.Some(8)); return b.get(0); }\n      export i32 returned()     { return find(3).orElse(0) * 10 + find(-1).orElse(7); }\n      export i32 viaGenericFn() { Option<i32> a = Option.Some(5); return unwrapOr(a, 0); }\n      export i32 inArray() {\n        Option<i32>[] xs = Option<i32>[3](fill: Option.None);\n        xs[1] = Option.Some(4);\n        return xs[1].orElse(0) + xs[0].orElse(1);\n      }\n      export i32 reassigned() { Option<i32> o = Option.None; o = Option.Some(4); return o.orElse(0); }\n      // Every arm of a match *expression* produces the value, so each is an expected-type position\n      // of its own — which is how a generic enum's own combinators have to be written.\n      Option<i32> doubled(Option<i32> o) {\n        return match (o) {\n          case Some(v): Option.Some(v * 2),\n          case None: Option.None,\n        };\n      }\n      export i32 throughMatchArms() {\n        Option<i32> a = doubled(Option.Some(3));\n        Option<i32> b = doubled(Option.None);\n        return a.orElse(0) * 10 + b.orElse(7);\n      }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-fn-5hvq3mt] a generic function crosses module boundaries",
+      "entry": "main.wac",
+      "files": [
+        [
+          "p.wac",
+          "export struct P { i32 v; }"
+        ],
+        [
+          "lib.wac",
+          "export T max<T>(T a, T b) { return a > b ? a : b; }\n                 export T first<T>(T a, T b) { return a; }"
+        ],
+        [
+          "a.wac",
+          "import { max } from \"./lib.wac\";\n                 export i32 fromA() { i32 x = 1; i32 y = 4; return max(x, y); }"
+        ],
+        [
+          "main.wac",
+          "import { max } from \"./lib.wac\";\n                  import { first } from \"./lib.wac\";\n                  import { P } from \"./p.wac\";\n                  import { fromA } from \"./a.wac\";\n                  export i32 test() { i32 a = 2; i32 b = 5; return max(a, b) + fromA(); }\n                  export i32 structArg() { P a = P(3); P b = P(8); return first(a, b).v; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-instantiation-identity-6pnq4wj] instantiations are keyed by identity, not by the written name",
+      "entry": "main.wac",
+      "files": [
+        [
+          "p.wac",
+          "export struct Point { i32 x; }\n               export Point mk() { return Point(4); }"
+        ],
+        [
+          "box.wac",
+          "export struct Box<T> { T v; T get(const this) { return this.v; } }"
+        ],
+        [
+          "a.wac",
+          "import { Box } from \"./box.wac\";\n               import { Point as P, mk } from \"./p.wac\";\n               export i32 fa() { Box<P> b = Box(mk()); return b.get().x; }"
+        ],
+        [
+          "main.wac",
+          "import { Box } from \"./box.wac\";\n                  import { Point, mk } from \"./p.wac\";\n                  import { fa } from \"./a.wac\";\n                  export i32 test() { Box<Point> b = Box(mk()); return b.get().x + fa(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-instantiation-identity-6pnq4wj] instantiations are keyed by identity, not by the written name",
+      "entry": "main.wac",
+      "files": [
+        [
+          "box.wac",
+          "export struct Box<T> { T v; T get(const this) { return this.v; } }"
+        ],
+        [
+          "a.wac",
+          "import { Box as B } from \"./box.wac\";\n               export i32 fa() { B<i32> b = B(1); return b.get(); }"
+        ],
+        [
+          "main.wac",
+          "import { Box } from \"./box.wac\";\n                  import { fa } from \"./a.wac\";\n                  export i32 test() { Box<i32> b = Box(2); return b.get() + fa(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-instantiation-identity-6pnq4wj] instantiations are keyed by identity, not by the written name",
+      "entry": "main.wac",
+      "files": [
+        [
+          "box.wac",
+          "export struct Box<T> { T v; T get(const this) { return this.v; } }"
+        ],
+        [
+          "p1.wac",
+          "export struct Point { i32 x; }\n                export Point mk1() { return Point(1); }"
+        ],
+        [
+          "p2.wac",
+          "export struct Point { i32 a; i32 b; }\n                export Point mk2() { return Point(2, 3); }"
+        ],
+        [
+          "a.wac",
+          "import { Box } from \"./box.wac\";\n               import { Point, mk1 } from \"./p1.wac\";\n               export i32 fa() { Box<Point> b = Box(mk1()); return b.get().x; }"
+        ],
+        [
+          "main.wac",
+          "import { Box } from \"./box.wac\";\n                  import { Point, mk2 } from \"./p2.wac\";\n                  import { fa } from \"./a.wac\";\n                  export i32 test() { Box<Point> b = Box(mk2()); return b.get().a * 10 + b.get().b + fa(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-generic-instantiation-identity-6pnq4wj] a nested instantiation keeps its argument",
+      "entry": "main.wac",
+      "files": [
+        [
+          "opt.wac",
+          "export enum Option<T> {\n      Some(T v), None\n      bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }\n      T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }\n    }"
+        ],
+        [
+          "vbox.wac",
+          "import { Option } from \"./opt.wac\";\n      export struct V<T> {\n        T[] data; i32 n;\n        V<T> create() { return V(T[](), 0); }\n        void put(this, T v) { T[] d = T[1](fill: v); this.data = d; this.n = 1; }\n        Option<T> first(const this) { return this.n == 0 ? Option.None : Option.Some(this.data[0]); }\n      }"
+        ],
+        [
+          "main.wac",
+          "\n      import { V } from \"./vbox.wac\";\n      // Neither is exported: a type argument does not have to be, and the import the compiler\n      // injects to make the copy resolve is exempt from the export rule.\n      enum P { A(i32 x) }\n      enum Q { B(i32 y) }\n      struct S { i32 y; }\n      i32 pOf(P p) { return match (p) { case A(x): x }; }\n      export i32 enumAndStruct() {\n        V<P> a = V.create(); a.put(P.A(7));\n        V<S> b = V.create(); b.put(S(3));\n        return pOf(a.first().orElse(P.A(0))) * 10 + b.first().orElse(S(0)).y;\n      }\n      export i32 twoEnums() {\n        V<P> a = V.create(); a.put(P.A(4));\n        V<Q> b = V.create(); b.put(Q.B(5));\n        return pOf(a.first().orElse(P.A(0))) * 10 +\n               match (b.first().orElse(Q.B(0))) { case B(v): v };\n      }\n      export i32 withAPrimitive() {\n        V<P> a = V.create(); a.put(P.A(1));\n        V<i32> c = V.create(); c.put(9);\n        return pOf(a.first().orElse(P.A(0))) * 10 + c.first().orElse(0);\n      }\n      // A third level: the argument of the outer instantiation is itself an instantiation, which\n      // is the other kind of invented name — one the pass materialised rather than aliased.\n      export i32 nested() {\n        V<V<P>> outer = V.create();\n        V<P> inner = V.create(); inner.put(P.A(8));\n        outer.put(inner);\n        return pOf(outer.first().orElse(V.create()).first().orElse(P.A(0)));\n      }\n      export i32 absent() {\n        V<P> a = V.create();\n        V<S> b = V.create(); b.put(S(1));\n        return (a.first().isSome() ? 1 : 0) * 10 + (b.first().isSome() ? 1 : 0);\n      }\n    "
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Dup { i32 x; Dup make() { return Dup(1); } i32 get(const this) { return this.x; } }\n             export Dup fromA() { return Dup.make(); }"
+        ],
+        [
+          "b.wac",
+          "export struct Dup { i32 p; i32 q; Dup make() { return Dup(2, 3); } i32 get(const this) { return this.p * 10 + this.q; } }\n             export Dup fromB() { return Dup.make(); }"
+        ],
+        [
+          "main.wac",
+          "\n    import { Dup, fromA } from \"./a.wac\";\n    import { fromB } from \"./b.wac\";\n    export i32 test() { Dup d = fromA(); return d.x; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Dup { i32 x; Dup make() { return Dup(1); } i32 get(const this) { return this.x; } }\n             export Dup fromA() { return Dup.make(); }"
+        ],
+        [
+          "b.wac",
+          "export struct Dup { i32 p; i32 q; Dup make() { return Dup(2, 3); } i32 get(const this) { return this.p * 10 + this.q; } }\n             export Dup fromB() { return Dup.make(); }"
+        ],
+        [
+          "main.wac",
+          "\n    import { fromA } from \"./a.wac\";\n    import { Dup, fromB } from \"./b.wac\";\n    export i32 test() { Dup d = fromB(); return d.p * 10 + d.q; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Dup { i32 x; Dup make() { return Dup(1); } i32 get(const this) { return this.x; } }\n             export Dup fromA() { return Dup.make(); }"
+        ],
+        [
+          "b.wac",
+          "export struct Dup { i32 p; i32 q; Dup make() { return Dup(2, 3); } i32 get(const this) { return this.p * 10 + this.q; } }\n             export Dup fromB() { return Dup.make(); }"
+        ],
+        [
+          "main.wac",
+          "\n    import { Dup, fromA } from \"./a.wac\";\n    import { Dup as DupB, fromB } from \"./b.wac\";\n    export i32 test()    { Dup a = fromA(); DupB b = fromB(); return a.x + b.p * 10 + b.q; }\n    export i32 methods() { return fromA().get() + fromB().get(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-method-8kv2ptr] a same-named struct's method is not another module's",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Writer { i32 n; Writer create() { return Writer(1); } i32 take(const this) { return this.n; } }\n             export i32 useA() { Writer w = Writer.create(); return w.take(); }"
+        ],
+        [
+          "b.wac",
+          "export struct Writer { i64 m; string tag; Writer create() { return Writer(2 as i64, \"b\"); }\n                                    i64 take(const this) { return this.m; } }\n             export i64 useB() { Writer w = Writer.create(); return w.take(); }"
+        ],
+        [
+          "main.wac",
+          "\n    import { useA } from \"./a.wac\";\n    import { useB } from \"./b.wac\";\n    export i32 statics() { return useA() + (useB() as! i32); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-method-8kv2ptr] a same-named struct's method is not another module's",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export struct Writer { i32 n; Writer create() { return Writer(1); } i32 take(const this) { return this.n; } }\n             export i32 useA() { Writer w = Writer.create(); return w.take(); }"
+        ],
+        [
+          "b.wac",
+          "export struct Writer { i64 m; string tag; Writer create() { return Writer(2 as i64, \"b\"); }\n                                    i64 take(const this) { return this.m; } }\n             export i64 useB() { Writer w = Writer.create(); return w.take(); }"
+        ],
+        [
+          "main.wac",
+          "\n    import { Writer, useA } from \"./a.wac\";\n    import { Writer as WriterB, useB } from \"./b.wac\";\n    export i32 instances() {\n      Writer a = Writer.create();\n      WriterB b = WriterB.create();\n      return a.take() + (b.take() as! i32);\n    }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-stem-3xr7ktn] a method taken as a funcref goes to its own struct",
+      "entry": "main.wac",
+      "files": [
+        [
+          "x/writer.wac",
+          "export struct Writer { i32 n; Writer create() { return Writer(101); }\n                            i32 take(const this) { return this.n; } }\n     export i32 viaMethodRef() { fn[i32(Writer)] m = Writer.take; return m(Writer.create()); }"
+        ],
+        [
+          "y/writer.wac",
+          "export struct Writer { i32 n; Writer create() { return Writer(907); }\n                            i32 take(const this) { return this.n; } }\n     export i32 viaMethodRef() { fn[i32(Writer)] m = Writer.take; return m(Writer.create()); }"
+        ],
+        [
+          "main.wac",
+          "\n      import { viaMethodRef as fromX } from \"./x/writer.wac\";\n      import { viaMethodRef as fromY } from \"./y/writer.wac\";\n      export i32 refs() { return fromX() * 10000 + fromY(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-funcref-scope-9qh2vtm] a funcref to a same-named function is the caller's",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "i32 helper() { return 10; }\n     export i32 viaRef() { fn[i32()] f = helper; return f(); }"
+        ],
+        [
+          "b.wac",
+          "i32 helper() { return 700; }\n     export i32 viaRef() { fn[i32()] f = helper; return f(); }"
+        ],
+        [
+          "main.wac",
+          "\n      import { viaRef as refA } from \"./a.wac\";\n      import { viaRef as refB } from \"./b.wac\";\n      export i32 refs() { return refA() + refB(); }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-samename-struct-4jhq7wn] the name may even be a struct in one module and an enum in another",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export enum Dup { A(i32 v), B }\n               export Dup mkA() { return Dup.A(4); }\n               export i32 readA(Dup d) { match (d) { case A(v): return v; case B: return 0; } }"
+        ],
+        [
+          "b.wac",
+          "export struct Dup { i32 z; Dup make() { return Dup(9); } }\n               export Dup fromB() { return Dup.make(); }"
+        ],
+        [
+          "main.wac",
+          "import { mkA, readA } from \"./a.wac\";\n                  import { fromB } from \"./b.wac\";\n                  export i32 test() { return readA(mkA()) + fromB().z; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "p.wac",
+          "export struct P { i32 x; }\n                 export P mk() { return P(3); }"
+        ],
+        [
+          "main.wac",
+          "import { mk } from \"./p.wac\";\n                    export i32 f() { P p = mk(); return p.x; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined type 'P'"
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "k.wac",
+          "export enum K { A, B }\n                 export K mk() { return K.A; }"
+        ],
+        [
+          "main.wac",
+          "import { mk } from \"./k.wac\";\n                    export i32 f() { K k = mk(); return match (k) { case A: 1, case B: 2 }; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined type 'K'"
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "k.wac",
+          "export enum K { A(i32 v), B }\n                 export K mk() { return K.A(1); }"
+        ],
+        [
+          "main.wac",
+          "import { mk } from \"./k.wac\";\n                    export i32 f() { A a = mk() as! A; return a.v; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined type 'A'"
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "p.wac",
+          "export struct Inner { i32 x; }\n                 export struct Outer { Inner i; }"
+        ],
+        [
+          "main.wac",
+          "import { Outer } from \"./p.wac\";\n                    struct Holder { Inner i; }\n                    export i32 f() { return 1; }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined type 'Inner'"
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] the wrong answer that came of it",
+      "entry": "main.wac",
+      "files": [
+        [
+          "a.wac",
+          "export enum A { Circle(i32 n), Sq }\n               export A mkA() { return A.Circle(5); }"
+        ],
+        [
+          "b.wac",
+          "export enum B { Circle(f64 r), Tri }\n               export B mkB() { return B.Circle(2.5); }"
+        ],
+        [
+          "main.wac",
+          "import { mkA } from \"./a.wac\";\n                  import { mkB } from \"./b.wac\";\n                  export i32 f() { return (mkA() is Circle ? 1 : 0) * 10 + (mkB() is Circle ? 1 : 0); }"
+        ]
+      ],
+      "ok": false,
+      "message": "undefined type 'Circle'"
+    },
+    {
+      "test": "[§wac-type-name-scope-8vqk3mn] importing the name is what makes it work",
+      "entry": "main.wac",
+      "files": [
+        [
+          "k.wac",
+          "export enum K { A(i32 v), B }\n               export struct P { i32 x; }\n               export K mkK() { return K.A(7); }\n               export P mkP() { return P(3); }"
+        ],
+        [
+          "main.wac",
+          "import { K, A, P, mkK, mkP } from \"./k.wac\";\n      export i32 viaVariant() { A a = mkK() as! A; return a.v; }\n      export i32 viaIs()      { K k = mkK(); return k is A ? 1 : 0; }\n      export i32 viaStruct()  { P p = mkP(); return p.x; }\n      // And match needs neither the enum name nor its variants: it never did.\n      export i32 viaMatch()   { return match (mkK()) { case A(v): v, case B: 0 }; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-contextual-from-6qkn3wp] `from` is an ordinary name outside an import",
+      "entry": "m.wac",
+      "files": [
+        [
+          "m.wac",
+          "\n    import { helper } from \"./h.wac\";\n    u8[] slice(u8[] a, i32 from, i32 to) {\n      i32 n = to - from;\n      if (n <= 0) { return u8[0](); }\n      u8[] out = u8[n](fill: 0);\n      out.copyFrom(a, from, 0, n);\n      return out;\n    }\n    export i32 main() {\n      i32 from = 2;                       // a local, too\n      u8[] xs = u8[5](fill: 7);\n      return slice(xs, from, 5).len() + from + helper();\n    }\n  "
+        ],
+        [
+          "h.wac",
+          "export i32 helper() { return 1; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-contextual-from-6qkn3wp] an import still needs its `from`",
+      "entry": "m.wac",
+      "files": [
+        [
+          "m.wac",
+          "import { helper } \"./h.wac\";\nexport i32 main() { return helper(); }"
+        ],
+        [
+          "h.wac",
+          "export i32 helper() { return 1; }"
+        ]
+      ],
+      "ok": false,
+      "message": "expected 'from', found './h.wac'"
+    },
+    {
+      "test": "[§wac-param-shadows-func-5nkq2wp] a funcref parameter shadows a function of the same name",
+      "entry": "m.wac",
+      "files": [
+        [
+          "m.wac",
+          "\n      import { pump } from \"./a.wac\";\n      import { write } from \"./b.wac\";\n      export i32 main(fn[bool(u8[])] sink) { return pump(sink) + (write(u8[0]()) ? 100 : 0); }\n    "
+        ],
+        [
+          "a.wac",
+          "\n      export i32 pump(fn[bool(u8[])] write) { write(u8[1](fill: 65)); return 1; }\n    "
+        ],
+        [
+          "b.wac",
+          "export bool write(u8[] b) { return false; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    },
+    {
+      "test": "[§wac-param-shadows-func-5nkq2wp] and the module it produces is well-formed",
+      "entry": "m.wac",
+      "files": [
+        [
+          "m.wac",
+          "\n      import { pump } from \"./a.wac\";\n      import { write } from \"./b.wac\";\n      export i32 main(fn[bool(u8[])] sink) { return pump(sink) + write(1, 2, 3); }\n    "
+        ],
+        [
+          "a.wac",
+          "export i32 pump(fn[bool(u8[])] write) { write(u8[1](fill: 65)); return 1; }"
+        ],
+        [
+          "b.wac",
+          "export i32 write(i32 a, i32 b, i32 c) { return a + b + c; }"
+        ]
+      ],
+      "ok": true,
+      "message": ""
+    }
+  ]
+}
