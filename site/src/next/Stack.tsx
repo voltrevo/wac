@@ -463,7 +463,7 @@ export default function Stack() {
             [<span style={{ fontFamily: font.mono }}>lexer</span>, "token streams match, position for position", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>parser</span>, "syntax trees match under a canonical form", <span style={{ color: c.accent }}>passes</span>],
             [<span style={{ fontFamily: font.mono }}>type checker</span>, "diagnostics match, including positions", <span style={{ color: c.accent }}>passes</span>],
-            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>334 of 341 files, 0 invalid</span>],
+            [<span style={{ fontFamily: font.mono }}>emitter</span>, "both modules run and answer the same", <span style={{ color: c.warm }}>335 of 342 files, 0 invalid</span>],
             [<span style={{ fontFamily: font.mono }}>bootstrap</span>, "a fixpoint: it compiles itself, byte for byte", <span style={{ color: c.accent }}>reached</span>],
           ]}
         />
@@ -477,12 +477,21 @@ export default function Stack() {
           reference&rsquo;s diagnostics at its exact positions and never invents one.
         </P>
         <P>
-          <Lead>Against the specification it is not a subset.</Lead> Measured for the first time as a
-          contract rather than as a comparison, it refuses <Lead>101 of 101</Lead> of the rejections
-          the spec documents and stays silent on <Lead>262 of 262</Lead> programs the spec says are
-          legal, with the multi-file half of it — 15 rejections and 41 acceptances across files —
-          measured too. That is the number worth reading: the reference is a fast adjudicator where
-          the two agree, and the spec is what decides who is right when they do not.
+          <Lead>Against the specification it is not a subset, and the honest numbers are worse than
+          the ones this page carried.</Lead> The contract was built on an extractor that read the
+          test file as text and found 101 of its 304 illegal programs, so &ldquo;101 of 101 refused,
+          no exceptions&rdquo; was true of a third of the spec. Over the whole of it the checker
+          refuses <Lead>265 of 304</Lead> and misses 39; of the programs the spec calls legal it is
+          silent on <Lead>365 of 367</Lead> and wrongly refuses 2. Across files, where the recording
+          was right from the start, it is 15 of 15 and 41 of 41.
+        </P>
+        <P>
+          The two false alarms are the ones that matter. A checker that reports less than the
+          reference can be compared to it; a checker that invents a diagnostic cannot, and that
+          invariant turns out to have been asserted over a third of its domain. The missing two
+          thirds also held 14 legal programs it refused, eleven of them one bug — a flag that
+          answered both <em>may I write through this</em> and <em>may I rebind this name</em>, which
+          made every linked-list walk in the spec illegal.
         </P>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
@@ -501,13 +510,13 @@ export default function Stack() {
           short of running it can show it.
         </P>
         <P>
-          It is nearly finished — the emitter compiles <Lead>334 of the repository&rsquo;s 341 wac
+          It is nearly finished — the emitter compiles <Lead>335 of the repository&rsquo;s 342 wac
           files</Lead> whole. That is four fewer than last week, and the direction is worth stating
           plainly: the corpus is the live repository, so code written for other reasons walks in
           using things this emitter has not reached yet. Four files now block on a member it cannot
           type, three on an import the harness does not supply. Every answer it gives for the
           specification&rsquo;s own cases agrees — 322 of 322, from the 235 of 275 programs it emits
-          whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 341
+          whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 342
           produces an invalid module</em>, which is the property that had to hold before the
           fixpoint meant anything: a walk that approves a function the emitter cannot actually emit
           would reach a fixpoint on garbage.
