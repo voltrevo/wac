@@ -206,7 +206,7 @@ Deno.test("every opcode on the two-host surface is accounted for", async () => {
   assertEquals(shared.length >= 35, true, `only ${shared.length} shared opcodes — has the mapping broken?`);
   assertEquals(
     pageOnly.sort().join(" "),
-    "DRAW_PIXELS GET_VALUE NEXT_EVENT NEXT_FILE OFFER_DOWNLOAD ON RENDER SET_TEXT SET_VALUE TITLE",
+    "DRAW_PIXELS GET_VALUE NEXT_EVENT NEXT_FILE OFFER_DOWNLOAD ON RENDER SET_STYLE SET_TEXT SET_VALUE TITLE",
     // Pinned rather than derived, on purpose and against this file's own grain: a capability the
     // native host *dropped* would arrive here looking exactly like a page-only one, so this is the
     // assertion that has to be a written-down expectation. It was wrong when first typed — `GET_VALUE`

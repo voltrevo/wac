@@ -59,6 +59,7 @@ export const OP = {
    * every opcode, and that is the point rather than the cost — see the note in `provider.ts`.
    */
   ASK_INTERRUPT: 50,
+  SET_STYLE: 51,
 } as const;
 
 /**

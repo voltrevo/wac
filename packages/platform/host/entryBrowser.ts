@@ -88,7 +88,8 @@ type El = {
   height?: number;
   files?: { length: number; item(i: number): FileLike | null };
   closest(selector: string): El | null;
-  getBoundingClientRect?(): { width: number; height: number };
+  setAttribute?(name: string, value: string): void;
+  getBoundingClientRect?(): { width: number; height: number; left: number; top: number };
   getContext?(kind: string): Ctx | null;
   addEventListener(kind: string, fn: (ev: Ev) => void): void;
 };
@@ -104,6 +105,8 @@ export type Ev = {
   ctrlKey?: boolean;
   offsetX?: number;
   offsetY?: number;
+  clientX?: number;
+  clientY?: number;
   dataTransfer?: { files: { length: number; item(i: number): FileLike | null } };
   preventDefault(): void;
 };
@@ -239,6 +242,17 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
       w(e);
       return;
     }
+    // **A `pointermove` is a position, not an occurrence.** The queue is unbounded and the program
+    // takes one event per bridge round trip, so a drag across a screen — hundreds of moves — would
+    // leave the worker minutes behind the pointer, still moving a window after it had stopped. The
+    // only information a move carries is where the pointer is *now*, and the newest one carries it,
+    // so a move replaces a move for the same element rather than queueing behind it. Nothing that
+    // could be observed is lost. Every other kind queues: a click is a thing that happened.
+    const last = queue[queue.length - 1];
+    if (e.kind === "pointermove" && last !== undefined && last.kind === "pointermove" && last.id === e.id) {
+      queue[queue.length - 1] = e;
+      return;
+    }
     queue.push(e);
   };
 
@@ -252,6 +266,12 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
     setValue: (id, value) => {
       const el = doc.getElementById(id);
       if (el !== null) el.value = value;
+    },
+    setStyle: (id, css) => {
+      const el = doc.getElementById(id);
+      // `setAttribute` rather than assigning into `el.style`: the capability is whole-value, and
+      // this is the one call that replaces every declaration rather than merging with what is there.
+      if (el !== null) el.setAttribute?.("style", css);
     },
     value: (id) => doc.getElementById(id)?.value ?? "",
     title: (text) => { doc.title = text; },
@@ -270,19 +290,33 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
           if (hit === null) continue;
           // A form's `submit` would reload the page, which ends the application mid-answer.
           if (kind === "submit") ev.preventDefault();
-          // `offsetX` is in CSS pixels of the element. For a canvas that is not what the
-          // application drew into: a `<canvas width="480">` shown at `width: 100%` reports 0..504
-          // on a wide screen and 0..320 on a phone, while the buffer is always 480 across. The
-          // capability promises the element's *own* pixels, so a canvas gets scaled to its
-          // backing store — without this, click-to-zoom landed near where you clicked at one
-          // window size and visibly wrong at every other, which is the worst kind of nearly.
-          const rect = target.getBoundingClientRect?.();
-          const sx = target.width !== undefined && rect !== undefined && rect.width > 0
-            ? target.width / rect.width
+          // **Relative to the element the capability names**, which is `hit` — the `closest` match
+          // whose id is reported — and not to `ev.target`, the deepest element under the pointer.
+          // `ev.offsetX` is the second of those, and the two are the same only when nothing is in
+          // between. A window's title bar holds a `<span>` and a `<button>`: grab it over the title
+          // text and `offsetX` arrived relative to the *span*, so a drag computed from it jumped by
+          // the span's offset the moment the pointer crossed into it. platform.wac has said "where
+          // in the element it happened" since the field existed; this is that sentence being true.
+          //
+          // For a canvas the element's own pixels are its *backing store*: a `<canvas width="480">`
+          // shown at `width: 100%` is 0..479 whatever the window is doing, or click-to-zoom lands
+          // near the click at one size and visibly wrong at every other.
+          const rect = hit.getBoundingClientRect?.();
+          const sx = hit.width !== undefined && rect !== undefined && rect.width > 0
+            ? hit.width / rect.width
             : 1;
-          const sy = target.height !== undefined && rect !== undefined && rect.height > 0
-            ? target.height / rect.height
+          const sy = hit.height !== undefined && rect !== undefined && rect.height > 0
+            ? hit.height / rect.height
             : 1;
+          // `clientX` minus the element's own left edge is the offset within `hit`. Where the host
+          // gives neither — a test double with no `getBoundingClientRect` — `offsetX` is the best
+          // available and is what this did before.
+          const withinX = ev.clientX !== undefined && rect !== undefined
+            ? ev.clientX - rect.left
+            : (ev.offsetX ?? 0);
+          const withinY = ev.clientY !== undefined && rect !== undefined
+            ? ev.clientY - rect.top
+            : (ev.offsetY ?? 0);
           // `^C`, noticed on the way past. It is still delivered as an event as well — a terminal
           // wants to echo `^C` and clear its line — so this is a side channel rather than a
           // diversion, and a page that ignores `Core.askInterrupt` behaves exactly as before.
@@ -292,8 +326,8 @@ export function pageDom(root: El, doc: Doc, make: MakeDownload): Dom {
             kind,
             id: hit.id,
             value: kind === "keydown" ? bytes : (target.value ?? ""),
-            x: Math.round((ev.offsetX ?? 0) * sx),
-            y: Math.round((ev.offsetY ?? 0) * sy),
+            x: Math.round(withinX * sx),
+            y: Math.round(withinY * sy),
           });
           return;
         }
