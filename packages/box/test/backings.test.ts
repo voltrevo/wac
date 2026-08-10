@@ -25,6 +25,7 @@
 // is the difference the other tests are trying to see through.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 import { CORPUS } from "../../sh/test/corpus.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
@@ -57,22 +58,12 @@ await buildApp("packages/box/src/bin/sealedsh.wac", sealed, {});
 await buildApp("packages/box/src/bin/imaged.wac", imaged, { read: true, write: true });
 await buildApp("packages/box/src/bin/sh.wac", host, { read: true, write: true, env: true });
 
-type Run = { code: number; out: string; err: string };
-
-function run(cmd: string, extra: string[], script: string, cwd: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["10", cmd, ...extra, "-c", `mkdir -p /tmp; ${script}`],
-    cwd,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function run(cmd: string, extra: string[], script: string, cwd: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, [...extra, "-c", `mkdir -p /tmp; ${script}`], { cwd });
 }
 
-const same = (a: Run, b: Run) => a.out === b.out && a.err === b.err && a.code === b.code;
-const show = (r: Run) => `${JSON.stringify(r.out + r.err)} (${r.code})`;
+const same = (a: Bounded, b: Bounded) => a.out === b.out && a.err === b.err && a.code === b.code;
+const show = (r: Bounded) => `${JSON.stringify(r.out + r.err)} (${r.code})`;
 
 Deno.test("the corpus answers the same on a memory filesystem, an image and a host mount", () => {
   const differ: string[] = [];

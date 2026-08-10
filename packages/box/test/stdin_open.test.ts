@@ -1,6 +1,7 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
+import { boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 import { buildApp } from "../../platform/build.ts";
 // A shell whose standard input is **still open** — the shape a terminal has, and the one no other
 // harness in this repo gives a shell.
@@ -39,14 +40,11 @@ await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, 
  * killing it, which is what every bug this file guards looks like.
  */
 const open = async (script: string) => {
-  const child = new Deno.Command("timeout", {
-    args: ["10", shell, "-c", script],
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const r = await child.output();
-  return { out: new TextDecoder().decode(r.stdout), code: r.code };
+  // **This test's subject is the hang**, so `hung` is the answer it wants rather than an accident of
+  // the exit status — see `harness/bounded.ts`. The bound is generous for the reason given there: it
+  // exists to turn an infinite wait into a readable failure, not to time the machine.
+  const r = await boundedInput(DEFAULT_SECONDS, shell, ["-c", script], "");
+  return { out: r.out, code: r.code, hung: r.hung };
 };
 
 /**

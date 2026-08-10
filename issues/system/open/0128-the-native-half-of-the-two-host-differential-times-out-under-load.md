@@ -72,9 +72,13 @@ Ruled out, in this order, because each was cheaper than the next:
    exists to turn a hang into a readable failure; every second it spends waiting for a loaded machine
    costs nothing when nothing is hanging.
 
+**All fourteen copies are gone**, not only the four that were failing: `routes`, `notdir`,
+`backings`, `init`, `sealing` (three), `unnameable`, `stdin_open`, `sealed` and `native_hostfs`'s
+fed-input helper use the same function now. The last two are the interesting ones — their *subject*
+is a hang (`stdin_open` and `sealed` were written for bugs whose shape was 124), and they now read
+`hung` as a field rather than recognising a status the program never chose.
+
 Left open deliberately: **whether anything actually hangs.** The evidence says the bound fired on a
 busy machine, and a 60s bound will say so much less often — but if it fires again, the message will
 now name it as a hang rather than as a difference, which is the thing that made this take three
-runs to understand. Nine other tests in the repository still have their own copy of the bounded-run
-block; they compare against fixed expectations rather than against another host, so a fired bound
-there reads as an empty answer rather than as a disagreement.
+runs to understand. Every test that bounds a run now says so in the same way.

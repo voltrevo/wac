@@ -52,6 +52,7 @@
 // false unless an entry point *is* a shell, and its doc names this server by name.
 
 import { buildApp } from "../../platform/build.ts";
+import { type Bounded, bounded, boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -91,18 +92,8 @@ function assertEquals<T>(got: T, want: T, msg?: string): void {
   }
 }
 
-type Run = { code: number; out: string; err: string };
-
-function run(cmd: string, extra: string[], script: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, ...extra, "-c", script],
-    cwd: tmp,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function run(cmd: string, extra: string[], script: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, [...extra, "-c", script], { cwd: tmp });
 }
 
 /** A file that exists on this machine and cannot exist in a fresh session. */
@@ -178,7 +169,7 @@ Deno.test("a sealed session's environment is its own, not the machine's", () => 
   assertEquals((Deno.env.get("HOME") ?? "").length > 0, true, "this machine has no HOME to leak");
 });
 
-Deno.test("a sealed session's arguments and input are its own", () => {
+Deno.test("a sealed session's arguments and input are its own", async () => {
   // D4: `arg` is the session's. A session started by a program with a command line of its own must
   // not see it — `sealedsh -c 'script'` has `-c` and the script in *its* argv, and the script's `$0`
   // and `$#` are the shell's own, which are empty.
@@ -188,20 +179,9 @@ Deno.test("a sealed session's arguments and input are its own", () => {
   // And standard input: a shell embedded in something else does not own the process's. `ownsStdin`
   // is false unless an entry point *is* a shell — `shellMain` sets it — and `sealedsh` is one, so
   // this asks the question the other way round: what it reads is what it was given, and nothing else.
-  const child = new Deno.Command("timeout", {
-    args: ["20", sealed, "-c", "cat; echo done"],
-    cwd: tmp,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const w = child.stdin.getWriter();
-  w.write(new TextEncoder().encode("given\n"));
-  w.close();
-  const out = child.output();
-  return out.then((r) => {
-    assertEquals(new TextDecoder().decode(r.stdout), "given\ndone\n");
-  });
+  const fed = await boundedInput(DEFAULT_SECONDS, sealed, ["-c", "cat; echo done"], "given\n", { cwd: tmp });
+  assertEquals(fed.hung, false, "the sealed shell never finished reading its input");
+  assertEquals(fed.out, "given\ndone\n", fed.err);
 });
 
 Deno.test("the shell over the real filesystem is the exception, and really is one", async () => {
@@ -316,15 +296,8 @@ Deno.test("a program nobody spawned still gets the host, and says nothing about 
   const box = `${tmp}/box`;
   await buildApp("packages/box/src/box.wac", box, { read: true, write: true });
   await Deno.writeTextFile(`${tmp}/plain.txt`, "on the host\n");
-  const r = new Deno.Command("timeout", {
-    args: ["20", box, "cat", "plain.txt"],
-    cwd: tmp,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  assertEquals(d.decode(r.stdout), "on the host\n", d.decode(r.stderr));
+  const r = bounded(DEFAULT_SECONDS, box, ["cat", "plain.txt"], { cwd: tmp });
+  assertEquals(r.out, "on the host\n", r.err);
 });
 
 Deno.test("what a session's file *is* does not depend on what the machine has at that path", async () => {
