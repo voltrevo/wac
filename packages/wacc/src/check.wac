@@ -142,6 +142,12 @@ export i32 errDuplicateImport() { return 55; }
  * (`§wac-no-reexport-f7kn4wq`), which is the rule that keeps a file's exports its own to state.
  */
 export i32 errNoSuchExport() { return 56; }
+/**
+ * A type name written in a file that never brought it into scope — `§wac-type-name-scope-8vqk3mn`.
+ * A variant imports like any other name, so `x is Circle` needs `Circle` imported just as `K k`
+ * needs `K`.
+ */
+export i32 errUndefinedType() { return 57; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
@@ -698,6 +704,14 @@ export struct C {
   /** Whether diagnostics are being discarded — see `report`. */
   bool quiet;
   /**
+   * Whether a type name that resolves to nothing is an error yet.
+   *
+   * Off until every declaration is in, because until then "not declared" only means "not declared
+   * *yet*" — a struct whose field names a struct further down the file would be refused on the way
+   * past. `checkModule` turns it on once, after the declaration passes.
+   */
+  bool scopeTypes;
+  /**
    * The type parameters of the generic function being checked, which are **unknown types**.
    *
    * `T oops<T>(T a) { i32 x = "hello"; return a; }` is an error `spec/spec/generics.md` names, and
@@ -733,7 +747,7 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), 0, false, string[16](), 0,
+             i32[capacity * 3](), 0, false, false, string[16](), 0,
              string[capacity](), string[capacity](), i32[capacity](), 0);
   }
 
@@ -1113,6 +1127,20 @@ export struct C {
     return -1;
   }
 
+  /**
+   * Is this the name of a variant of some enum that is in scope?
+   *
+   * Asked by name alone, unlike `variantArityIn`, because the question here is whether the file may
+   * *write* the name at all — `x is Circle` needs `Circle` to have come from somewhere, and which
+   * enum owns it is the next question rather than this one.
+   */
+  bool isVariantName(const this, string name) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantNames[i] == name) { return true; }
+    }
+    return false;
+  }
+
   /** An enum has no default value, which is the only thing this pass records about one. */
   bool isEnum(const this, string name) {
     for (i32 i = 0; i < this.enumCount; i++) {
@@ -1181,6 +1209,18 @@ string tokenText(C c, i32 t) {
  * this could spell, and nothing here compares them yet, so spelling them would be inventing a
  * capability the rules do not have.
  */
+/**
+ * Is this name something the file may write as a type?
+ *
+ * A struct or an enum it declared or imported, and `isDeclaredName` for everything else that carries
+ * a name into scope — an imported alias the single-file slice knows only as unknown, and the two
+ * things the spec says look like type names and are not: `f(x)` where `f` is a funcref, and
+ * `x is Other` where `Other` is a variable, which is an identity test.
+ */
+bool knownTypeName(C c, string base) {
+  return c.isStruct(base) || c.isEnum(base) || c.isDeclaredName(base) || c.isVariantName(base);
+}
+
 export string typeOfTy(C c, Ty t) {
   match (t.kind) {
     case Prim(tok): { return tokenText(c, tok); }
@@ -1201,6 +1241,15 @@ export string typeOfTy(C c, Ty t) {
       // and find none. They *are* types; what needed fixing was the hierarchy they sit in, which
       // `isReferenceType` answers.
       if (base == "anyref" || base == "i31ref") { return base; }
+      // **A name that resolves to nothing is not a type this file may write.** Writing one requires
+      // importing it, variants included (`§wac-type-name-scope-8vqk3mn`) — and the cost of not
+      // saying so was a wrong answer rather than a missing message: an unresolved name had no type
+      // index, so `x is Circle` fell back to a table keyed by bare name and answered about whichever
+      // module's `Circle` was declared first.
+      if (c.scopeTypes && !knownTypeName(c, base)) {
+        c.report(errUndefinedType(), t.line, t.col);
+        return typeNone();
+      }
       if (typeArgs.len() == 0) { return base; }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {
@@ -1956,6 +2005,12 @@ void checkExpr(C c, Expr e) {
     case Is(left, target, other, negated): {
       checkExpr(c, left);
       if (!(other is null)) { checkExpr(c, other!); }
+      // **The target is a type, and this is the only place that reads it as one.** Every other rule
+      // here asks about the left operand, so `mkA() is Circle` never resolved `Circle` at all — and a
+      // variant needs importing like any other name (`§wac-type-name-scope-8vqk3mn`). The identity
+      // form `x is Other`, where `Other` is a variable, arrives as `other` rather than `target` and
+      // is untouched by this.
+      if (!(target is null)) { typeOfTy(c, target!); }
       // Phrased as "is it a **primitive**" rather than "is it not a reference". The two are not the
       // same question: an enum, a funcref and a generic instantiation are all references, and asking
       // the negative form reported 27 files that were doing nothing wrong. The positive form only
@@ -4431,6 +4486,68 @@ bool wantedName(string[] only, string name) {
   return false;
 }
 
+/**
+ * Re-reads the type names written in declarations, now that every declaration is in.
+ *
+ * `declareModule` resolves a struct's field types while it is still declaring structs, so it cannot
+ * be the pass that judges them — `struct Holder { Inner i; }` would be refused whenever `Inner` came
+ * later in the file. Bodies need no such pass: they are walked after all of this, and every type they
+ * mention goes through `typeOfTy` on the way.
+ *
+ * A declaration's own type parameters are in scope while its annotations are read, or `Box<T>`'s
+ * `T value;` becomes a name nobody declared.
+ */
+void checkDeclaredTypeNames(C c, Program prog) {
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        setActiveParams(c, typeParams);
+        for (i32 i = 0; i < fields.len(); i++) { typeOfTy(c, fields[i].type); }
+        for (i32 m = 0; m < methods.len(); m++) {
+          typeOfTy(c, methods[m].returnType);
+          for (i32 i = 0; i < methods[m].params.len(); i++) {
+            typeOfTy(c, methods[m].params[i].type);
+          }
+        }
+        c.activeParamCount = 0;
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        setActiveParams(c, typeParams);
+        for (i32 v = 0; v < variants.len(); v++) {
+          for (i32 i = 0; i < variants[v].fields.len(); i++) {
+            typeOfTy(c, variants[v].fields[i].type);
+          }
+        }
+        for (i32 m = 0; m < methods.len(); m++) {
+          typeOfTy(c, methods[m].returnType);
+          for (i32 i = 0; i < methods[m].params.len(); i++) {
+            typeOfTy(c, methods[m].params[i].type);
+          }
+        }
+        c.activeParamCount = 0;
+      }
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        setActiveParams(c, typeParams);
+        typeOfTy(c, returnType);
+        for (i32 i = 0; i < params.len(); i++) { typeOfTy(c, params[i].type); }
+        c.activeParamCount = 0;
+      }
+      case ConstDecl(nameTok, type, init, exported): { typeOfTy(c, type); }
+      else: { }
+    }
+  }
+}
+
+/** The type parameters of the declaration being read, which are unknown types rather than names. */
+void setActiveParams(C c, i32[] typeParams) {
+  c.activeParamCount = 0;
+  for (i32 i = 0; i < typeParams.len(); i++) {
+    if (c.activeParamCount >= c.activeParams.len()) { continue; }
+    c.activeParams[c.activeParamCount] = tokenText(c, typeParams[i]);
+    c.activeParamCount = c.activeParamCount + 1;
+  }
+}
+
 export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
@@ -4477,6 +4594,14 @@ export void checkModule(C c, Program prog) {
   }
 
   declareModule(c, prog, string[0]());
+
+  // **Every declaration is in, so a name that resolves to nothing now resolves to nothing.** From
+  // here a type name this file never brought into scope is an error rather than something unknown,
+  // and the declarations written above are re-read under that rule: a struct's field type is
+  // resolved during the pass that declares it, when half the file is still unseen.
+  c.scopeTypes = true;
+  checkDeclaredTypeNames(c, prog);
+
   // Methods, which until now were not walked at all: every rule here stopped at the edge of a
   // struct, so a method's returns, initialisers and operands went entirely unchecked. `this` is an
   // ordinary `Ident` whose text is `this`, so typing it is one entry in the scope — the struct's own
@@ -4498,6 +4623,9 @@ export void checkModule(C c, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         string owner = tokenText(c, nameTok);
+        // `Box<T>`'s own parameters are in scope for its fields and for every method it declares —
+        // `T v;` and `T get(const this)` are the template's, not names the file left undeclared.
+        setActiveParams(c, typeParams);
         // A non-null field that reaches its own struct: `struct Node { Node next; }` cannot be built
         // at all, because building one needs one first. Reported at the field's type, which is the
         // only place it *can* be reported — a struct like this is refused on sight, with no
@@ -4550,6 +4678,7 @@ export void checkModule(C c, Program prog) {
             c.report(errMissingReturn(), methods[mi].returnType.line, methods[mi].returnType.col);
           }
         }
+        c.activeParamCount = 0;
       }
       else: { }
     }
@@ -4582,12 +4711,15 @@ export void checkModule(C c, Program prog) {
         }
         declareAll(c, body);
         checkAll(c, body, returnType);
-        c.activeParamCount = 0;
         // Reported at the declaration rather than at the closing brace, which is where the reference
         // puts it: the fault is the function's, not any one statement's.
+        //
+        // The type parameters stay in scope for this last question: it reads the return type again,
+        // and `T max<T>(T a, T b)` clearing them first made `T` a name nobody had declared.
         if (returnsAValue(typeOfTy(c, returnType)) && !alwaysLeaves(body)) {
           c.report(errMissingReturn(), prog.decls[d].line, prog.decls[d].col);
         }
+        c.activeParamCount = 0;
       }
       else: { }
     }

@@ -32,24 +32,24 @@ const dumpTypeErrorsFiles = mod.dumpTypeErrorsFiles as (
 const enc = new TextEncoder();
 
 /**
- * The nine the spec calls illegal that this checker still accepts, and the one legal program it
- * wrongly refuses.
+ * **Empty**, and it started at nine.
  *
- * They are two rules rather than nine bugs. Four are **export visibility**: a name that is declared
- * without `export`, or merely imported, is not the file's to give away. Five are
- * `§wac-type-name-scope-8vqk3mn`: writing a type's name requires importing it, which this checker
- * does not model because a declaration table keyed by bare name has no idea which file a name came
- * from — the same gap that makes `§wac-samename-struct-4jhq7wn` the one false alarm here, where two
- * modules each declare a `Point` and only the first is kept.
+ * They were two rules rather than nine bugs, and each closed the whole group at once. Four were
+ * export visibility: a name declared without `export`, or one the file merely imports, is not that
+ * file's to give away. Five were `§wac-type-name-scope-8vqk3mn`: writing a type's name requires
+ * bringing it into scope, variants included.
+ *
+ * Kept rather than deleted, because the list fails in both directions and an empty one still says
+ * so — a case that starts being missed lands here as a failure rather than as a smaller number.
  */
 const KNOWN_MISSES = new Set<string>([
-  "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#0",
-  "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#1",
-  "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#2",
-  "[§wac-type-name-scope-8vqk3mn] a type name must be in scope in the file that writes it#3",
-  "[§wac-type-name-scope-8vqk3mn] the wrong answer that came of it#0",
 ]);
 
+/**
+ * The one legal program refused. Two modules each declare a `Point`, and the declaration table is
+ * keyed by bare name, so the second is lost to the first — the last thing here that has no notion of
+ * which file a name came from.
+ */
 const KNOWN_FALSE_ALARMS = new Set<string>([
   "[§wac-samename-struct-4jhq7wn] same-named structs in two modules stay distinct#2",
 ]);
