@@ -27,6 +27,7 @@
 // something else. design/0001's D12 is the decision that would make this deterministic.
 
 import { buildApp } from "../build.ts";
+import { holdPort } from "../../../harness/port.ts";
 import { buildNative } from "../native.ts";
 import { type Bounded, boundedInput, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
@@ -90,6 +91,15 @@ type Case = {
    */
   racy?: string[];
   /**
+   * This example needs a port, and the runner allocates a free one per run.
+   *
+   * Not a fixed number in `args`: these tests run in the parallel lane, and `harness/port.ts` exists
+   * because binding a port somebody else has taken is a real failure here rather than a theoretical
+   * one. The port reaches the program as its last argument and comes back in its transcript, which
+   * is why a `mask` goes with it.
+   */
+  port?: true;
+  /**
    * A measurement to mask before comparing.
    *
    * `crowd` prints how long its calls took, which two runs of the *same* host would not agree on
@@ -112,6 +122,19 @@ const CASES: Case[] = [
   // it notice. Issue 0123 said this had no reproduction in the repository — it does now, and what
   // makes it one is that the child never writes again after its first line.
   { name: "stop", args: [], stdin: "", grants: {} },
+  // **The network, which had no two-host comparison at all** — `CONNECT`, `LISTEN` and `ACCEPT` were
+  // three named gaps whose entry said the network is exercised end to end by `arrival_users` over
+  // ssh, but only with the native host as the *server*. This is one program doing all three against
+  // itself on loopback, so both hosts answer the same question.
+  {
+    name: "writeread",
+    args: [],
+    stdin: "",
+    grants: { net: true },
+    port: true,
+    // The port is the one thing that differs between two runs, by construction.
+    mask: /connected on port \d+/g,
+  },
   {
     name: "overlap",
     args: ["in.txt", "in.txt"],
@@ -142,7 +165,16 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
   for (const c of CASES) {
     const jsPath = `${tmp}/${c.name}-deno`;
     await buildApp(`packages/platform/example/${c.name}.wac`, jsPath, c.grants);
-    const js = await run(jsPath, c.args, c.stdin, workspace(c.name, "deno"));
+    // Held until the moment the program binds — `holdPort` picks a free number and keeps it, which is
+    // the difference between avoiding a collision and reducing the odds of one.
+    const jsPort = c.port === undefined ? null : holdPort();
+    jsPort?.release();
+    const js = await run(
+      jsPath,
+      [...c.args, ...(jsPort === null ? [] : [String(jsPort.port)])],
+      c.stdin,
+      workspace(c.name, "deno"),
+    );
     // Each example is asserted to have *said something* on its own, so a skipped native half still
     // tests that the Deno side runs — and so that two silent hosts cannot agree.
     //
@@ -152,7 +184,14 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
 
     if (native === null) continue;
     await buildNative(`packages/platform/example/${c.name}.wac`, `${tmp}/${c.name}`, c.grants);
-    const rs = await run(native, [`${tmp}/${c.name}.json`, ...c.args], c.stdin, workspace(c.name, "native"));
+    const rsPort = c.port === undefined ? null : holdPort();
+    rsPort?.release();
+    const rs = await run(
+      native,
+      [`${tmp}/${c.name}.json`, ...c.args, ...(rsPort === null ? [] : [String(rsPort.port)])],
+      c.stdin,
+      workspace(c.name, "native"),
+    );
 
     const hide = (s: string) => {
       let out = c.mask === undefined ? s : s.replace(c.mask, "<measured>");
