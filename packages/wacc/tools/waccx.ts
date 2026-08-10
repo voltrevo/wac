@@ -58,7 +58,7 @@ export function parseDiagnostics(wire: string): DiagError[] {
   const out: DiagError[] = [];
   for (const line of wire.split("\n")) {
     if (line === "") continue;
-    const [file, ln, col, phase, message, annotation] = line.split("\t");
+    const [file, ln, col, phase, message, annotation, hint, span] = line.split("\t");
     out.push({
       severity: "error",
       message,
@@ -66,8 +66,9 @@ export function parseDiagnostics(wire: string): DiagError[] {
       line: Number(ln),
       col: Number(col),
       phase: phase === "parse" ? "parse" : "typecheck",
-      span: 1,
+      span: Number(span) > 0 ? Number(span) : 1,
       ...(annotation ? { annotation } : {}),
+      ...(hint ? { hint } : {}),
     });
   }
   return out;

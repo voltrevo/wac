@@ -1359,7 +1359,7 @@ export string typeOfTy(C c, Ty t) {
       // index, so `x is Circle` fell back to a table keyed by bare name and answered about whichever
       // module's `Circle` was declared first.
       if (c.scopeTypes && !knownTypeName(c, base)) {
-        c.report(errUndefinedType(), t.line, t.col);
+        c.reportWith(errUndefinedType(), t.line, t.col, "no type " + base + " in scope");
         return typeNone();
       }
       if (typeArgs.len() == 0) { return base; }

@@ -6,7 +6,7 @@
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { checkMessage, parseMessage } from "./diag.wac";
+import { checkMessage, parseMessage, hintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
@@ -158,10 +158,17 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   bool parseFailed = false;
   for (i32 i = 0; i < paths.len(); i++) {
     u8[] src = sources[i].toBytes();
-    i32[] errs = dumpErrors(src);
-    for (i32 e = 0; e + 2 < errs.len(); e = e + 3) {
-      out = out + paths[i] + "\t" + numText(errs[e + 1]) + "\t" + numText(errs[e + 2])
-          + "\tparse\t" + parseMessage(errs[e]) + "\t\n";
+    Lexed lexed = lex(src);
+    P p = P.create(src, lexed.tokens, lexed.tokenCount);
+    parseProgram(p);
+    for (i32 e = 0; e < p.errorCount; e++) {
+      string note = e < p.errorNotes.len() ? p.errorNotes[e] : "";
+      // The span is the token the parser stopped on. A checker diagnostic has no width to give — it
+      // reports at an expression, and nothing records how far that expression ran.
+      i32 width = p.errorWidths[e];
+      out = out + paths[i] + "\t" + numText(p.errors[e * 3 + 1]) + "\t" + numText(p.errors[e * 3 + 2])
+          + "\tparse\t" + parseMessage(p.errors[e * 3]) + "\t" + note + "\t\t"
+          + numText(width) + "\n";
       parseFailed = true;
     }
   }
@@ -173,7 +180,8 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
     string note = e / 3 < notes.len() ? notes[e / 3] : "";
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
-        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\n";
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\t" + hintFor(terrs[e])
+        + "\t1\n";
   }
   return out;
 }

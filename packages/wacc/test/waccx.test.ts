@@ -147,18 +147,28 @@ Deno.test("how many of wacc's diagnostics carry their operands", async () => {
 
   let diagnostics = 0;
   let annotated = 0;
+  let hinted = 0;
+  let spanned = 0;
   for (const c of singleFileCases()) {
     if (c.ok) continue;
     const [path, src] = c.files[0];
     for (const d of parseDiagnostics(diagnose([path], [src], path))) {
       diagnostics++;
       if (d.annotation !== undefined && d.annotation !== "") annotated++;
+      if (d.hint !== undefined && d.hint !== "") hinted++;
+      // Recorded, not wide: a correct span for `;` is 1, and counting `span > 1` measured how
+      // long the tokens happened to be. The parse phase records a width and the check phase has none
+      // to record, so the phase is the honest question until that changes.
+      if (d.phase === "parse") spanned++;
     }
   }
 
-  const pct = diagnostics === 0 ? 0 : Math.round((annotated / diagnostics) * 100);
+  const pct = (n: number) => (diagnostics === 0 ? 0 : Math.round((n / diagnostics) * 100));
   console.log(
-    `    operands on ${annotated} of ${diagnostics} diagnostics over the spec's refused programs (${pct}%)`,
+    `    of ${diagnostics} diagnostics over the spec's refused programs: ` +
+      `operands on ${annotated} (${pct(annotated)}%), ` +
+      `help on ${hinted} (${pct(hinted)}%), ` +
+      `a real span on ${spanned} (${pct(spanned)}%)`,
   );
   if (diagnostics === 0) throw new Error("no diagnostics at all — the harness is not working");
 });

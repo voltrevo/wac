@@ -193,20 +193,36 @@ the two toolchains both speak, the wording is the reference's own:
        |   ^ expected i32, found bool           |   ^^^^ expected i32, found bool
                                                 = help: use `(true) as i32` to convert
 
-`waccx.test.ts` prints both numbers on every run — the sample it can compare against the reference,
-and the coverage across the whole refused corpus:
+**Most diagnostics come from the parser, and that is where the work was.** Counting what the spec's
+refused programs actually provoke said so: 349 of 604 are parse errors, and every one of them read
+*expected a different token here*. `expect` knew both halves of the sentence and had nowhere to put
+them. It says `expected ';', found 'return'` now, every other parse site names the token it stopped
+on, and the token's own width is the underline. That one function was worth more than every checker
+site put together — 10% of diagnostics carried their operands before it, 43% after.
+
+`waccx.test.ts` prints the sample it can compare against the reference, and the coverage over the
+whole refused corpus:
 
     waccx vs wacx on 5 refused programs: 5 at the same position, 2 with the same message,
     annotation-or-hint on 5 of ours against 4 of theirs
-    operands on 58 of 604 diagnostics over the spec's refused programs (10%)
+    of 604 diagnostics over the spec's refused programs: operands on 450 (75%),
+    help on 137 (23%), a real span on 351 (58%)
 
-Ten call sites of 135, and 10% of the diagnostics the spec's programs actually provoke. That second
-number is the one to move, and it exists because something consumes the output.
+Where wacc and the reference both speak, the output is now the same thing said the same way:
 
-Still missing, in order: **`span`**, which is why every underline here is one character wide where the
-reference underlines the whole operand — it needs a length at each site the same way the annotation
-needed operands; and **`hint`**, the `= help:` line, which is per-rule advice rather than per-site data
-and can be written once each in `diag.wac`.
+       wacc                                     reference
+    error: initialiser does not match…       error: type mismatch: expected i32, got f64
+       |   ^ expected i32, found f64            |   ^^^ expected i32, found f64
+       = help: use `as!` for a checked…        = help: use `as!` for a checked…
+
+The split differs and ours is the spec's: the message is the rule, the operands are the `annotation`,
+and the `hint` is advice about the rule rather than about the program. `spec/spec/errors.md` has all
+three fields, and the reference folds the operands into the message instead.
+
+What is left is the **checker's** span — 42% of diagnostics still underline one character, because a
+checker error reports at an expression and nothing records how far that expression ran. That is a
+length at each of 135 call sites, which is the same sweep the annotation was and much less of a win:
+the annotation was the sentence, and this is only the underline.
 
 `bindgen` is absent from `waccx` because wacc has no bindgen at all, which is the other thing standing
 between this and a compiler anyone could use.

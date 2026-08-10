@@ -284,3 +284,99 @@ export i32 kEof() { return 83; }
 
 /** How many kinds there are, for bounds checks and table sizing. */
 export i32 kindCount() { return 84; }
+
+/**
+ * How a token kind is spelled, for a diagnostic that has to name one.
+ *
+ * Generated from the doc comments above rather than written a second time — each kind already
+ * records its spelling next to its number, and a table that repeated them would be a table that
+ * could disagree with them. The classes (`int`, `ident`, `string`) name what was wanted rather than
+ * a literal, which is what the parser means when it asks for one.
+ */
+export string kindName(i32 kind) {
+  if (kind == 0) { return "int"; }
+  if (kind == 1) { return "float"; }
+  if (kind == 2) { return "string"; }
+  if (kind == 3) { return "bool"; }
+  if (kind == 4) { return "ident"; }
+  if (kind == 5) { return "import"; }
+  if (kind == 6) { return "export"; }
+  if (kind == 7) { return "struct"; }
+  if (kind == 8) { return "const"; }
+  if (kind == 9) { return "this"; }
+  if (kind == 10) { return "override"; }
+  if (kind == 11) { return "if"; }
+  if (kind == 12) { return "else"; }
+  if (kind == 13) { return "while"; }
+  if (kind == 14) { return "for"; }
+  if (kind == 15) { return "do"; }
+  if (kind == 16) { return "switch"; }
+  if (kind == 17) { return "case"; }
+  if (kind == 18) { return "default"; }
+  if (kind == 19) { return "break"; }
+  if (kind == 20) { return "continue"; }
+  if (kind == 21) { return "return"; }
+  if (kind == 22) { return "trap"; }
+  if (kind == 23) { return "true"; }
+  if (kind == 24) { return "false"; }
+  if (kind == 25) { return "null"; }
+  if (kind == 26) { return "is"; }
+  if (kind == 27) { return "not"; }
+  if (kind == 28) { return "as"; }
+  if (kind == 29) { return "void"; }
+  if (kind == 30) { return "fn"; }
+  if (kind == 31) { return "enum"; }
+  if (kind == 32) { return "match"; }
+  if (kind == 33) { return "as!"; }
+  if (kind == 34) { return "as~"; }
+  if (kind == 35) { return "as@"; }
+  if (kind == 36) { return "+"; }
+  if (kind == 37) { return "-"; }
+  if (kind == 38) { return "*"; }
+  if (kind == 39) { return "/"; }
+  if (kind == 40) { return "%"; }
+  if (kind == 41) { return "="; }
+  if (kind == 42) { return "=="; }
+  if (kind == 43) { return "!="; }
+  if (kind == 44) { return "<"; }
+  if (kind == 45) { return "<="; }
+  if (kind == 46) { return ">"; }
+  if (kind == 47) { return ">="; }
+  if (kind == 48) { return "&&"; }
+  if (kind == 49) { return "||"; }
+  if (kind == 50) { return "!"; }
+  if (kind == 51) { return "&"; }
+  if (kind == 52) { return "|"; }
+  if (kind == 53) { return "^"; }
+  if (kind == 54) { return "~"; }
+  if (kind == 55) { return "<<"; }
+  if (kind == 56) { return ">>"; }
+  if (kind == 57) { return ">>>"; }
+  if (kind == 58) { return "+="; }
+  if (kind == 59) { return "-="; }
+  if (kind == 60) { return "*="; }
+  if (kind == 61) { return "/="; }
+  if (kind == 62) { return "%="; }
+  if (kind == 63) { return "&="; }
+  if (kind == 64) { return "|="; }
+  if (kind == 65) { return "^="; }
+  if (kind == 66) { return "<<="; }
+  if (kind == 67) { return ">>="; }
+  if (kind == 68) { return ">>>="; }
+  if (kind == 69) { return "++"; }
+  if (kind == 70) { return "--"; }
+  if (kind == 71) { return "("; }
+  if (kind == 72) { return ")"; }
+  if (kind == 73) { return "{"; }
+  if (kind == 74) { return "}"; }
+  if (kind == 75) { return "["; }
+  if (kind == 76) { return "]"; }
+  if (kind == 77) { return ";"; }
+  if (kind == 78) { return ":"; }
+  if (kind == 79) { return ","; }
+  if (kind == 80) { return "."; }
+  if (kind == 81) { return "?"; }
+  if (kind == 82) { return "@"; }
+  if (kind == 83) { return "eof"; }
+  return "something else";
+}

@@ -18,6 +18,7 @@ import { Ty, TyKind, tyPrim, tyNamed, tyArr, tyNullable, tyFuncref,
   Stmt, StmtKind, Case, Arm,
   Decl, DeclKind, Param, Field, Method, Variant, ImportItem, Program } from "./ast.wac";
 import { tokenStride } from "./lex.wac";
+import { kindName } from "./kinds.wac";
 import {
   kInt, kFloat, kString, kIdent, kEof, kTrue, kFalse, kNull, kVoid, kFn, kThis,
   kIs, kNot, kAs, kAsBang, kAsTilde, kAsAt,
@@ -50,10 +51,20 @@ export struct P {
   i32 tokCount;
   i32 at;          // token index
   i32[] errors;    // (code, line, col) triples
+  /**
+   * The operands of each error, one per triple — `expected ';', found 'i32'`.
+   *
+   * The parser is where most diagnostics come from: of the 604 the spec's refused programs provoke,
+   * 349 are its, and every one of them used to read *expected a different token here*. `expect`
+   * knows both halves of that sentence and simply had nowhere to put them.
+   */
+  string[] errorNotes;
+  /** How wide each error's token is, so a diagnostic can underline the whole of it. */
+  i32[] errorWidths;
   i32 errorCount;
 
   P create(u8[] src, i32[] toks, i32 tokCount) {
-    return P(src, toks, tokCount, 0, i32[192](), 0);
+    return P(src, toks, tokCount, 0, i32[192](), string[64](), i32[64](), 0);
   }
 
   // ── Token access ────────────────────────────────────────────────────────────
@@ -103,16 +114,48 @@ export struct P {
 
   i32 expect(this, i32 kind) {
     if (this.at1(kind)) { return this.advance(); }
-    this.fail(perrExpected());
+    this.failWith(perrExpected(),
+                  "expected '" + kindName(kind) + "', found '" + this.textAt(0) + "'");
     return this.at;
   }
 
+  /** How wide the token at the cursor is, which is how much of the line a diagnostic underlines. */
+  i32 widthAt(const this, i32 offset) {
+    i32 len = this.toks[this.idx(offset) * tokenStride() + 2];
+    return len > 0 ? len : 1;
+  }
+
+  /** The source text of a token near the cursor, for a diagnostic that has to quote it. */
+  string textAt(const this, i32 offset) {
+    i32 t = this.idx(offset);
+    i32 start = this.toks[t * tokenStride() + 1];
+    i32 len = this.toks[t * tokenStride() + 2];
+    if (len <= 0) { return kindName(this.toks[t * tokenStride()]); }
+    u8[] out = u8[len]();
+    for (i32 i = 0; i < len; i++) { out[i] = this.src[start + i]; }
+    return string.fromBytes(out);
+  }
+
+  /**
+   * Every parse error is at a token, so every one of them can at least say which token.
+   *
+   * `expect` says both halves; the other thirty-odd sites know only what they were looking at, and
+   * naming it is the difference between *expected an expression* and *expected an expression, found
+   * `;`* — which of the two is on the line the reader is staring at.
+   */
   void fail(this, i32 code) {
+    this.failWith(code, "found '" + this.textAt(0) + "'");
+  }
+
+  /** The same, with the operands the parser was refusing over. */
+  void failWith(this, i32 code, string note) {
     i32 slot = this.errorCount * 3;
     if (slot + 3 > this.errors.len()) { return; }
     this.errors[slot] = code;
     this.errors[slot + 1] = this.lineAt(0);
     this.errors[slot + 2] = this.colAt(0);
+    if (this.errorCount < this.errorNotes.len()) { this.errorNotes[this.errorCount] = note; }
+    if (this.errorCount < this.errorWidths.len()) { this.errorWidths[this.errorCount] = this.widthAt(0); }
     this.errorCount++;
   }
 }

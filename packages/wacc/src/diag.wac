@@ -14,7 +14,7 @@
 
 /** The parse-phase codes, which are a separate space from the checker's — `perr*` in `parse.wac`. */
 export string parseMessage(i32 code) {
-  if (code == 20) { return "expected a different token here"; }
+  if (code == 20) { return "unexpected token"; }
   if (code == 21) { return "expected a type"; }
   if (code == 22) { return "expected an expression"; }
   if (code == 23) { return "this cannot be assigned to"; }
@@ -96,4 +96,38 @@ export string checkMessage(i32 code) {
   if (code == 66) { return "a character literal must hold exactly one character"; }
   if (code == 67) { return "a switch cannot have two defaults"; }
   return "this program was refused";
+}
+
+/**
+ * The `= help:` line, where a rule has advice worth giving.
+ *
+ * Different in kind from the annotation: the annotation is data from the site — the values this
+ * particular program used — and this is advice about the *rule*, which is the same every time it is
+ * broken. So it lives here and needs nothing from the hundred-odd call sites, which is why it costs
+ * a table rather than a sweep.
+ *
+ * Empty for most codes on purpose. A hint that restates the message is noise, and the reader has
+ * already read the message.
+ */
+export string hintFor(i32 code) {
+  if (code == 1) { return "use a cast if the conversion is meant: `as!` is checked, `as~` takes the nearest value"; }
+  if (code == 2) { return "add a return at the end, or make every branch return"; }
+  if (code == 3) { return "use `as!` for a checked conversion or `as~` for the nearest value"; }
+  if (code == 6) { return "use a comparison, such as `x != 0`"; }
+  if (code == 9) { return "unwrap it with `!` once you have checked it is not null"; }
+  if (code == 10) { return "drop the `const`, or bind a separate local for the value that changes"; }
+  if (code == 12) { return "take the parameter without `const` if it is meant to be written through"; }
+  if (code == 16) { return "`as` converts without loss, `as!` checks at runtime, `as~` takes the nearest value"; }
+  if (code == 30) { return "use `as!` — a cast down the hierarchy has to be checked"; }
+  if (code == 33) { return "store the packed value in a wider type, or drop the `?`"; }
+  if (code == 40) { return "unwrap it with `!`, or test it with `is null` first"; }
+  if (code == 46) { return "the cast can be removed"; }
+  if (code == 50) { return "use `f64` if the value does not fit an `f32`"; }
+  if (code == 55) { return "rename one of them with `as`"; }
+  if (code == 56) { return "import it from the file that declares it — importing does not re-export"; }
+  if (code == 57) { return "import the type, or check the spelling"; }
+  if (code == 58) { return "add the missing arms, or an `else`"; }
+  if (code == 60) { return "remove the `else` — every variant is already covered"; }
+  if (code == 62) { return "unwrap the subject with `!`, or test it with `is null` first"; }
+  return "";
 }
