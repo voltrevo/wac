@@ -142,7 +142,14 @@ export function script(r: Rand, maxDepth = 2): string {
 const PREFIX = /^(?:\S*bash|environment|ba-c): line \d+: /gm;
 const normalise = (t: string) => t.replace(PREFIX, "").replace(/^sh: /gm, "");
 
-export type Disagreement = { script: string; bash: string; ours: string; codes: [number, number] };
+export type Disagreement = {
+  script: string;
+  bash: string;
+  ours: string;
+  codes: [number, number];
+  /** Set when a bound fired rather than a shell answering — see `run`. */
+  hung?: string;
+};
 
 async function run(cmd: string, s: string, dir: string, held: boolean) {
   const child = new Deno.Command("timeout", {
@@ -157,7 +164,11 @@ async function run(cmd: string, s: string, dir: string, held: boolean) {
   }).spawn();
   const r = await child.output();
   const d = new TextDecoder();
-  return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code };
+  // `timeout` answers 124 when it had to kill, which is a status no shell here returns for itself.
+  // Kept as its own field rather than compared as an exit code: a bound that fired is not an answer,
+  // and reporting it as one sent somebody hunting a regression that did not exist — a gate said
+  // `bash "" (0) / ours "" (124)` for a script that finishes instantly on an idle machine.
+  return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code, hung: r.code === 124 };
 }
 
 /**
@@ -196,7 +207,18 @@ export async function sweep(shell: string, seed: number, count: number, dir: str
       const got = await run(shell, s, dir, held);
       const a = normalise(want.out + want.err);
       const b = normalise(got.out + got.err);
-      if (a !== b || want.code !== got.code) {
+      // A bound that fired on either side is reported as itself. Comparing on through it turns a
+      // loaded machine into a disagreement, which is the one thing a differential must not invent.
+      if (want.hung || got.hung) {
+        const who = want.hung && got.hung ? "both shells" : want.hung ? "bash" : "ours";
+        out.push({
+          script: s,
+          bash: a,
+          ours: b,
+          codes: [want.code, got.code],
+          hung: `${who} did not finish in 10s — a bound fired, so there is no answer here to compare`,
+        });
+      } else if (a !== b || want.code !== got.code) {
         out.push({ script: s, bash: a, ours: b, codes: [want.code, got.code] });
         break;
       }

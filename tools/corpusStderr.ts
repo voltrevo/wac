@@ -119,13 +119,17 @@ if (import.meta.main) {
       clearEnv: true,
     }).outputSync();
     const d = new TextDecoder();
-    return { err: d.decode(r.stderr), code: r.code };
+    // 124 is `timeout`'s, not a shell's — see `corpusThrough.ts`, which has kept them apart since it
+    // was written. A bound that fired has no stderr to compare, so it is skipped rather than counted
+    // as a difference in wording.
+    return { err: d.decode(r.stderr), code: r.code, hung: r.code === 124 };
   };
 
   const from = flag("from", 0);
   const cases = CORPUS.slice(from, from + flag("count", CORPUS.length));
   const pinned = new Map(KNOWN.map((k) => [k.script, k]));
   let agree = 0;
+  const hung: string[] = [];
   const fresh: string[] = [];
   const stale: string[] = [];
 
@@ -134,10 +138,19 @@ if (import.meta.main) {
     const a = `${dir}/a${i}`, b = `${dir}/b${i}`;
     Deno.mkdirSync(a, { recursive: true });
     Deno.mkdirSync(b, { recursive: true });
-    const theirs = sameName(run("bash", script, a).err).trimEnd();
-    const ours = run(shell, script, b).err.trimEnd();
+    const bashRan = run("bash", script, a);
+    const oursRan = run(shell, script, b);
+    const theirs = sameName(bashRan.err).trimEnd();
+    const ours = oursRan.err.trimEnd();
     Deno.removeSync(a, { recursive: true });
     Deno.removeSync(b, { recursive: true });
+
+    // A bound that fired has no sentence to compare — see `run`. Counted on its own so a loaded
+    // machine reads as a loaded machine rather than as forty new wording differences.
+    if (bashRan.hung || oursRan.hung) {
+      hung.push(script);
+      continue;
+    }
 
     const known = pinned.get(script);
     if (theirs === ours) {
@@ -160,7 +173,11 @@ if (import.meta.main) {
   }
 
   await Deno.remove(dir, { recursive: true }).catch(() => {});
-  console.log(`${agree} of ${cases.length} scripts print the same on standard error as bash`);
+  console.log(`${agree} of ${cases.length - hung.length} scripts print the same on standard error as bash`);
+  if (hung.length > 0) {
+    console.log(`  ${hung.length} did not finish inside the bound and were not compared:`);
+    for (const h of hung) console.log(`      ${JSON.stringify(h)}`);
+  }
   for (const f of fresh) console.log(`new difference:\n${f}`);
   for (const s of stale) console.log(`stale pin:\n${s}`);
   if (fresh.length > 0 || stale.length > 0) Deno.exit(1);

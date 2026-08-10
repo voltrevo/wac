@@ -7,74 +7,17 @@ no TypeScript of its own — and still read files, tell the time and print outpu
 deno task app packages/platform/example/wc.wac --allow-read -- README.md
 ```
 
-`example/wc.wac` is the whole application. There is no `main.ts` beside it.
+`example/wc.wac` is the whole application. There is no `main.ts` beside it, and that command
+**builds and runs** — a shortcut rather than a second runtime.
 
-That command **builds and runs** — it is a shortcut, not a second runtime. There used to
-be a separate `runApp` that compiled and spawned a worker by a route of its own, which
-meant two launchers and two workers: a dev loop that could be green while the shipped
-artifact was broken, and a change to the application contract that had to be made twice.
-Now there is one path, and the dev loop exercises it.
+This document is long because the surface is. If you are here to **write a program**, the next
+section is the whole of what you need: what a capability world is, and the table of what a
+program may ask for. If you are here to **ship one**, skip to *Building an executable*. If
+something is behaving differently on one host than another, *Calls are tickets* and *The
+browser* are where the surprises live.
 
 A package of [wac-mono](../../README.md) — see the root README for layout and how to run
 things. All commands run from the repo root.
-
-## Building an executable
-
-```sh
-deno task app:build packages/platform/example/wc.wac --allow-read -o wc
-./wc README.md
-```
-
-27K, self-contained: the wasm is base64 inside it, and so are the bindgen wrappers and the
-whole host. Nothing is read from this repo at run time, so the file can be copied anywhere
-Deno exists.
-
-**Capabilities are granted at build, not at run.** The built program takes no permission
-flags of its own and every argument goes to the application, so it behaves like any other
-program. Whoever packages it decides what it may do; whoever runs it cannot widen that.
-The same source built without `--allow-read` reports `filesystem read not granted` and
-exits 1, and no argument can put the capability back.
-
-**The shebang is exactly the grants.** A program granted nothing asks for nothing:
-
-```
-#!/usr/bin/env -S deno run                    # no capabilities
-#!/usr/bin/env -S deno run --allow-read       # built with --allow-read
-```
-
-That is worth the trouble it took. The obvious way to spawn the worker is
-`new Worker(import.meta.url)` — the file spawning itself — but that needs `--allow-read`
-on the file, which put a permission in every shebang whatever the program could do, and
-read as a filesystem grant to anyone auditing it. So a built program carries the worker's
-source as a string and spawns it from a blob URL, which needs no permission at all.
-
-The build is two passes for that reason: the worker bundle holds the application and the
-wasm, and the launcher carries it as a string.
-
-## Node
-
-```sh
-deno task app:build packages/platform/example/wc.wac --allow-read --target node -o wc
-./wc README.md
-```
-
-The same wac, the same wasm, the same bridge and opcodes; a dozen closures and the thread
-API differ. Node's `worker_threads` takes source directly with `{ eval: true }`, which
-suits a bundled program better than a blob URL since there is no URL to make, and Node 22
-runs an extensionless file as ESM with top-level await, so a built program is still `./wc`.
-A test builds both targets and checks they print the same bytes.
-
-**Node has no permission system, so the capability world is the whole boundary there.**
-Under Deno a build that withholds the filesystem is enforced twice — by the world and by
-the process — and under Node only once. The shebang is plain `#!/usr/bin/env node`,
-because there is nothing for it to state. An application that is denied a capability still
-gets `not granted` and exits 1; what is missing is the second line of defence if the
-launcher itself were wrong.
-
-The bundle spawns **itself**: a single file cannot reference a sibling worker module, so
-`new Worker(import.meta.url)` re-runs it, and it notices it is on a worker and runs the
-application rather than launching one. A shebang does not stop a file being loaded as a
-worker module — that was checked, not assumed.
 
 ## The idea
 
@@ -105,6 +48,7 @@ split is why it is a second struct rather than more fields.
 |---|---|---|
 | `Core` | `nowMillis`, `monotonicNanos`, `sleepMillis`, `randomBytes`, `log`, `warn` | — |
 | | `waitAny` | — |
+| | `askInterrupt` | — (only a host that owns a keyboard answers yes) |
 | `Cli` | `argCount`, `arg`, `env` | — |
 | | `readStdin`, `write`, `writeErr` | — |
 | | `openInput`, `readChunk`, `outputError` | `--allow-read` for a file |
@@ -112,10 +56,10 @@ split is why it is a second struct rather than more fields.
 | | `writeFile`, `mkdir`, `remove`, `rename` | `--allow-write` |
 | | `openOutput` (to a file) | `--allow-write` |
 | | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket` | `--allow-net` |
-| | `spawn`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
+| | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
 | | `cwd` | — (a read; there is no `chdir`) |
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
-| `Page` | `render`, `setText`, `setValue`, `getValue`, `on`, `nextEvent`, `title` | browser only |
+| `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
 | | `drawPixels`, `nextFile`, `offerDownload` | browser only |
 
 **Anything that can fail says why.** `writeFile`, `mkdir`, `remove` and `rename` answer a **`Change`**:
@@ -319,6 +263,70 @@ writes exact bytes, and `hexdump <dir>` lists a directory through `stat` and `re
 
 `packages/box` is the widest consumer of all this — forty-two applets in one program, and
 the differential suite that keeps them honest.
+
+## Building an executable
+
+There used to be a separate `runApp` that compiled and spawned a worker by a route of its own,
+which meant two launchers and two workers: a dev loop that could be green while the shipped
+artifact was broken, and a change to the application contract that had to be made twice. Now
+there is one path, and the dev loop exercises it — which is why `deno task app` above and
+`app:build` here are the same machinery.
+
+```sh
+deno task app:build packages/platform/example/wc.wac --allow-read -o wc
+./wc README.md
+```
+
+27K, self-contained: the wasm is base64 inside it, and so are the bindgen wrappers and the
+whole host. Nothing is read from this repo at run time, so the file can be copied anywhere
+Deno exists.
+
+**Capabilities are granted at build, not at run.** The built program takes no permission
+flags of its own and every argument goes to the application, so it behaves like any other
+program. Whoever packages it decides what it may do; whoever runs it cannot widen that.
+The same source built without `--allow-read` reports `filesystem read not granted` and
+exits 1, and no argument can put the capability back.
+
+**The shebang is exactly the grants.** A program granted nothing asks for nothing:
+
+```
+#!/usr/bin/env -S deno run                    # no capabilities
+#!/usr/bin/env -S deno run --allow-read       # built with --allow-read
+```
+
+That is worth the trouble it took. The obvious way to spawn the worker is
+`new Worker(import.meta.url)` — the file spawning itself — but that needs `--allow-read`
+on the file, which put a permission in every shebang whatever the program could do, and
+read as a filesystem grant to anyone auditing it. So a built program carries the worker's
+source as a string and spawns it from a blob URL, which needs no permission at all.
+
+The build is two passes for that reason: the worker bundle holds the application and the
+wasm, and the launcher carries it as a string.
+
+## Node
+
+```sh
+deno task app:build packages/platform/example/wc.wac --allow-read --target node -o wc
+./wc README.md
+```
+
+The same wac, the same wasm, the same bridge and opcodes; a dozen closures and the thread
+API differ. Node's `worker_threads` takes source directly with `{ eval: true }`, which
+suits a bundled program better than a blob URL since there is no URL to make, and Node 22
+runs an extensionless file as ESM with top-level await, so a built program is still `./wc`.
+A test builds both targets and checks they print the same bytes.
+
+**Node has no permission system, so the capability world is the whole boundary there.**
+Under Deno a build that withholds the filesystem is enforced twice — by the world and by
+the process — and under Node only once. The shebang is plain `#!/usr/bin/env node`,
+because there is nothing for it to state. An application that is denied a capability still
+gets `not granted` and exits 1; what is missing is the second line of defence if the
+launcher itself were wrong.
+
+The bundle spawns **itself**: a single file cannot reference a sibling worker module, so
+`new Worker(import.meta.url)` re-runs it, and it notices it is on a worker and runs the
+application rather than launching one. A shebang does not stop a file being loaded as a
+worker module — that was checked, not assumed.
 
 ## Calls are tickets
 
