@@ -207,9 +207,9 @@ The sweep called both "wrong answer" at first. That was the tool overstating its
 case for an export that is merely absent, so anything it could not name fell into the strongest bucket
 it had. It says `missing export: <name>` now, and its honest fallback is "a wrong answer or a trap".
 
-**Rung 4 (emitter) compiles 290 of the repository's 342 files whole, and produces no invalid module
-for any of them.** That number was **335** until
-2026-08-10, and the difference is not a regression — it is the report catching up with the emitter.
+**Rung 4 (emitter) compiles 335 of the repository's 342 files whole, and produces no invalid module
+for any of them, and none of them is missing an export the source declares.** It read 335 before 2026-08-10,
+then 290 when the report was corrected, and it is 335 again for a better reason.
 
 "Whole" meant *the emitter did not report itself blocked*, and the two paths that answer that
 question disagreed: `emitModuleOf` settles emittability to a fixed point, so a function whose callee
@@ -219,17 +219,18 @@ wrong. A function declined in the second round was therefore dropped from the mo
 its four. Both paths run the same fixed point now, `corpusEmit` checks the module against the
 `export`s the source declares, and that count is **0 of 290**.
 
-The 52 partials name real work rather than a mystery: 16× a method on `Map<string,i32>`, 5× a call to
-`bootstrap`, 4× a call to `attachMicrodescriptors`. `issues/lang/0090` has the detail.
+Naming the declines made the next step obvious, and it was **one missing rule** —
+`issues/lang/0092`, now closed. `Box<i32> b = Box(3)` was declined where `Box<i32> b = Box<i32>(3)`
+emitted: a bare generic constructor takes its type arguments from the slot it goes into, which the
+language already does for `Vec.create()` and `Option.Some(3)` and writes down in `templateStatic` as
+*"the instantiation is not in the call — it is in the slot the answer goes into"*. `Map.set` declined
+because it contains `MapEntry(k, v)`, and that one rule was 19 of the 52 partials directly and 45 of
+them once the cascade unwound. **52 partials became 7**: three imports of files the corpus does not
+supply, and four `Shell` declines.
 
-**The head of that distribution is one missing rule**, `issues/lang/0092`: `Box<i32> b = Box(3)` is
-declined where `Box<i32> b = Box<i32>(3)` emits. A bare generic constructor takes its type arguments
-from the slot it goes into — which the language already does for `Vec.create()` and `Option.Some(3)`,
-written down in `templateStatic` as *"the instantiation is not in the call — it is in the slot the
-answer goes into"*. `Map.set` declines because it contains `MapEntry(k, v)`, and that is 19 of the 52
-between it and the direct calls. The reason it is not a one-branch fix is structural: the walk that
-decides emittability drops the expected type on the way down, so by the time a bare name is looked
-up, the slot is gone. The three that are left import files the corpus does not contain, and no compiler
+Both halves had to land together — the walk that approves and the emitter that builds — because
+approving a construction the emitter cannot build is a module that validates and calls a function
+that is not there. The shared rules live in `unsupportedConstructOf` so the two cannot drift. The three that are left import files the corpus does not contain, and no compiler
 change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep
 of 4,460 programs whose answers must agree with the reference's, the spec suite's own 322 answers,
 and `linkEmit` for what linking can get wrong.

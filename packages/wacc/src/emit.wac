@@ -15,8 +15,8 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Param, Program, Stmt, StmtKind, Ty,
-  TyKind,
+  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
+  StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
@@ -3568,6 +3568,13 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
           // Through `typeOfTyName`, so a construction inside a template builds the instance being
           // compiled, and one written with arguments builds the instance it names.
           string cname = typeOfTyName(env, src, lexed, ctype);
+          // The instance the slot names, when the construction did not name one — the other half of
+          // `issues/lang/0092`. Approving this without emitting it would leave a module that
+          // validates and calls a function that is not there.
+          if (!env.isStructName(cname) && isInstance(want) && templateOf(want) == cname
+              && env.isStructName(want)) {
+            cname = want;
+          }
           // `P(3, 4)` and `g(3, 4)` are the same syntax, and which one this is depends on whether the
           // name is a struct — the same fork the checker makes, one compiler apart.
           if (env.isStructName(cname)) {
@@ -4903,8 +4910,63 @@ bool isRefType(Env env, string t) {
  * the type was a reference is how nine corpus modules came back with *"not enough arguments on the
  * stack for struct.new"*: the argument had emitted nothing at all.
  */
+/**
+ * Whether a struct construction of `n` can be emitted — the arguments, the named form, the count.
+ *
+ * Extracted so the same rules answer for a construction whose instance came from the **slot**:
+ * `MapEntry(k, v)` into a `MapEntry<K,V>` field is the same construction as one written with its
+ * arguments, and duplicating thirty lines to say so is how the two would drift apart.
+ */
+string unsupportedConstructOf(u8[] src, Lexed lexed, Env env, string n, Expr[] args,
+                              NamedArg[] named) {
+          i32 want = env.fieldCountOf(n);
+          // **Named construction names every field, once, in any order** — a partial one is a
+          // reference error rather than a defaulted struct, and this is the rule that lets the
+          // emitter above walk the fields instead of the arguments.
+          if (named.len() > 0) {
+            if (args.len() > 0) { return "a construction mixing named and positional"; }
+            for (i32 i = 0; i < want; i++) {
+              i32 seen = 0;
+              for (i32 j = 0; j < named.len(); j++) {
+                if (env.fieldIndex(n, tokenTextOf(src, lexed, named[j].nameTok)) == i) {
+                  seen = seen + 1;
+                }
+              }
+              if (seen != 1) { return "a named construction that does not name every field once"; }
+            }
+            for (i32 j = 0; j < named.len(); j++) {
+              i32 fi = env.fieldIndex(n, tokenTextOf(src, lexed, named[j].nameTok));
+              string a5 = unsupportedValueAt(src, lexed, env, named[j].value,
+                                             env.fieldTypeAt(n, fi));
+              if (a5 != "") { return a5; }
+            }
+            return "";
+          }
+          if (args.len() != 0 && args.len() != want) {
+            return "a construction of " + n + " with " + numText(args.len()) + " of " +
+                   numText(want) + " fields";
+          }
+          for (i32 i = 0; i < args.len(); i++) {
+            string a = unsupportedValueAt(src, lexed, env, args[i], env.fieldTypeAt(n, i));
+            if (a != "") { return a; }
+          }
+          return "";
+}
+
 string unsupportedValueAt(u8[] src, Lexed lexed, Env env, Expr e, string want) {
   match (e.kind) {
+    // **A bare generic constructor takes its instance from the slot** — `MapEntry(k, v)` into a
+    // `MapEntry<K,V>` field. The language spells it this way everywhere else too, and
+    // `templateStatic` says so for `Vec.create()`; nothing said it for a plain construction, so the
+    // name reached the call path looking like a function nobody declared. `issues/lang/0092`.
+    case Construct(ctype, args, named): {
+      string cn = typeOfTyName(env, src, lexed, ctype);
+      if (!env.isStructName(cn) && isInstance(want) && templateOf(want) == cn
+          && env.isStructName(want)) {
+        return unsupportedConstructOf(src, lexed, env, want, args, named);
+      }
+      return unsupportedValue(src, lexed, env, e);
+    }
     // A payload-less variant of a template is a **value and not a call** — `Opt.None` — so it needs
     // the slot in the same way and reaches it through a different node.
     case Member(obj, nameTok): {
@@ -5186,38 +5248,7 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           }
           string n = typeOfTyName(env, src, lexed, ctype);
           if (env.isStructName(n)) {
-            i32 want = env.fieldCountOf(n);
-            // **Named construction names every field, once, in any order** — a partial one is a
-            // reference error rather than a defaulted struct, and this is the rule that lets the
-            // emitter above walk the fields instead of the arguments.
-            if (named.len() > 0) {
-              if (args.len() > 0) { return "a construction mixing named and positional"; }
-              for (i32 i = 0; i < want; i++) {
-                i32 seen = 0;
-                for (i32 j = 0; j < named.len(); j++) {
-                  if (env.fieldIndex(n, tokenTextOf(src, lexed, named[j].nameTok)) == i) {
-                    seen = seen + 1;
-                  }
-                }
-                if (seen != 1) { return "a named construction that does not name every field once"; }
-              }
-              for (i32 j = 0; j < named.len(); j++) {
-                i32 fi = env.fieldIndex(n, tokenTextOf(src, lexed, named[j].nameTok));
-                string a5 = unsupportedValueAt(src, lexed, env, named[j].value,
-                                               env.fieldTypeAt(n, fi));
-                if (a5 != "") { return a5; }
-              }
-              return "";
-            }
-            if (args.len() != 0 && args.len() != want) {
-              return "a construction of " + n + " with " + numText(args.len()) + " of " +
-                     numText(want) + " fields";
-            }
-            for (i32 i = 0; i < args.len(); i++) {
-              string a = unsupportedValueAt(src, lexed, env, args[i], env.fieldTypeAt(n, i));
-              if (a != "") { return a; }
-            }
-            return "";
+            return unsupportedConstructOf(src, lexed, env, n, args, named);
           }
           if (named.len() > 0) { return "named arguments in a call"; }
           i32 fa = env.funcAt(n);
