@@ -1,7 +1,8 @@
 # 0092 — a bare generic constructor takes no type arguments from its slot
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — fixed 2026-08-10
+- **Claimed by:** agent-b, 2026-08-10
+- **Fixed in:** 9af73a95
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
 - **Kind:** missing feature
@@ -60,3 +61,19 @@ Ruled out by minimal cases, all of which emit: a generic struct whose method onl
 reads a field; a generic struct built by a helper with explicit arguments; a generic
 *function*; a non-generic struct constructor. It is specifically the inference from
 the slot.
+
+## Fixed — 2026-08-10, agent-b
+
+A construction resolves its instance from the slot when the call did not name one, in
+both halves: `unsupportedValueAt` gained a `Construct` case (it has the slot; the walk
+it delegated to does not), and `emitExprAt` resolves `cname` the same way. The struct
+validation was extracted to `unsupportedConstructOf` so the two paths cannot drift —
+one set of rules answering for a construction however its instance was named.
+
+**Rung 4 went from 290 whole / 52 partial to 335 whole / 7 partial**, with 0 invalid
+modules and 0 files missing an export. The 45 files this recovered were nearly the
+whole backlog: what remains is 3 imports of files the corpus does not supply and 4
+`Shell` declines.
+
+The generated sweep's 4,051 compared answers still all agree, and rung 5 still reaches
+its fixed point.
