@@ -3320,6 +3320,17 @@ Output trySpawn(Shell sh, Vec<string> argv, bool mayInherit) {
  * `waitAny` — what would fix it is a pipeline that starts every stage first and shuttles between
  * them. Issue 0038.
  */
+/**
+ * How much of a stage's output this shell will hold in memory before it gives up.
+ *
+ * **The same 8 MiB the other two routes use**, and that is the point rather than a coincidence: a
+ * frame's output is capped at `CAP` in `platform/host/child.ts`, a spawned child's queue is capped
+ * by the host, and this is the third place the same bytes can pile up — the shell's own `Buf`, for a
+ * stage in a pipeline it could not stream. It had no cap at all, so the one route with no limit was
+ * the one that killed the whole shell rather than reporting anything.
+ */
+i32 HELD_CAP() { return 8 * 1024 * 1024; }
+
 Output collectChild(Shell sh, string name, Child child, bool inherited) {
   // A child given the real descriptor feeds itself; sending it anything would be sending it bytes the
   // shell does not have. Otherwise: the input in one go, then the *end* — `closeFeed`, not
@@ -3337,6 +3348,8 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   string broke = "";
   /** Whether a signal ended this rather than the child finishing. */
   bool stopped = false;
+  /** Whether the child produced more than this shell will hold — see `HELD_CAP`. */
+  bool overflowed = false;
 
   // **Both streams and the filesystem channel, together.** The two output streams used to be read
   // one after the other — the child's output to its end, then its error stream — which was fine
@@ -3382,7 +3395,26 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
       if (!serveOn(fsC!, sh.fs)) { asking = false; }
     } else if (kind == 0) {
       match (outT.wait()) {
-        case Data(bytes): { out.pushAll(bytes); outT = sh.cli.recv(child.handle); }
+        case Data(bytes): {
+          // **The cap, and it is the same one the other two routes have.** A pipeline this shell
+          // could not stream runs its stages one at a time, so a stage's whole output lands here in
+          // memory before the next one starts — and a producer that never ends grew this `Buf` until
+          // the wasm allocator refused it, which killed the shell outright: `yes | nosuchcmd` and
+          // `yes | x=1 cat | head -1` both died with "requested new array is too large" after about
+          // eleven seconds (issue 0127).
+          //
+          // Stopping the child is what makes the cap mean something rather than merely bound the
+          // damage: `closeSocket` terminates it wherever it is on every host now (issue 0123), so
+          // the producer goes away instead of filling a queue nobody will read.
+          if (out.len + bytes.len() > HELD_CAP()) {
+            overflowed = true;
+            sh.cli.closeSocket(child.handle);
+            reading = false;
+          } else {
+            out.pushAll(bytes);
+            outT = sh.cli.recv(child.handle);
+          }
+        }
         case End: { reading = false; }
         // A child whose pipe failed is not a child that finished quietly. Reported as 126 below,
         // beside "could not execute", because both mean the shell cannot vouch for the output.
@@ -3412,6 +3444,18 @@ Output collectChild(Shell sh, string name, Child child, bool inherited) {
   i32 code = sh.cli.exitCode(child.handle).wait();
   sh.cli.closeSocket(child.handle);
   if (child.errHandle >= 0) { sh.cli.closeSocket(child.errHandle); }
+  // **More than this shell can hold is a command that did not run, not a short answer** — the same
+  // judgement `packages/box`'s in-process route makes about `Captured.truncated`, and for the same
+  // reason: the bytes do not say they are short, so a number computed from them would be wrong in
+  // silence. `boxsh -c 'seq 1 1500000 | wc -c'` printing 8323568 where bash prints 10888896 is what
+  // that looks like when nobody reports it.
+  if (overflowed) {
+    return Output.fail(
+      (name + ": output exceeded what this shell can hold for a stage it cannot stream; "
+       + "the pipeline it is in has a stage that must run in process — see issue 0127\n").toBytes(),
+      1,
+    );
+  }
   // Negative means it never ran at all, which by then is a host problem rather than the
   // program's status, so it is reported as "could not execute" rather than as success.
   if (broke != "") {

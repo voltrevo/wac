@@ -59,6 +59,27 @@ async function bothWays(name: string, script: string): Promise<void> {
   try {
     const inMemory = await run(["mem"], script);
     const onHost = await run(["host", dir], script);
+    // **A line per command, before the two are compared at all.**
+    //
+    // This compares two runs of *our own* program against each other, and that cannot see a fault
+    // they share. It could not see the largest one: with `ops`'s `main` gutted to `return 0` — which
+    // is what a mutation sweep does, and did — both runs print nothing, empty equals empty, and all
+    // seven tests in this file passed against a program that does not exist. The differential this
+    // file is named for was vacuous and had been for as long as it had existed.
+    //
+    // The anchor is cheap because the format is one line in and one line out. It does not say the
+    // answers are *right* — `sameAsPinned` below does that once, against a transcript written out by
+    // hand — but it does say a program ran and answered every question it was asked.
+    const asked = script.split("\n").filter((l) => l.trim() !== "").length;
+    for (const [which, text] of [["memory", inMemory], ["host", onHost]] as const) {
+      const lines = text.split("\n").filter((l) => l !== "");
+      assertEquals(
+        lines.length,
+        asked,
+        `${name}: the ${which} run answered ${lines.length} of ${asked} commands — ` +
+          `${JSON.stringify(text)}`,
+      );
+    }
     // The host's transcript names the temp directory nowhere — the answers are categories, sizes and
     // listings — so the two are comparable directly.
     assertEquals(inMemory, onHost, `${name}\n--- script ---\n${script}`);
@@ -66,6 +87,45 @@ async function bothWays(name: string, script: string): Promise<void> {
     await Deno.remove(dir, { recursive: true });
   }
 }
+
+Deno.test("the transcript is what it says it is, once, written out by hand", async () => {
+  // **The one place the answers are anchored to something outside this program.** Everything else
+  // here is `mem` against `host`, which is our code against our code: it catches a backing that
+  // disagrees with the other and nothing that both get wrong. So one script's whole transcript is
+  // written out here, and it is the shape every other test is comparing.
+  //
+  // Chosen to cover what the categories *are* rather than to be long: absent, a write's answer, a
+  // file with its size, the bytes back, a directory, and a listing.
+  const script = [
+    "stat /a",
+    "write /a hello",
+    "stat /a",
+    "read /a",
+    "mkdir /d",
+    "stat /d",
+    "ls /",
+  ].join("\n");
+  // Measured, not guessed: two of these were written from memory first — `stat dir 0` for a
+  // directory, which has no size, and an unbracketed listing — and both were wrong. That is the
+  // argument for pinning a transcript rather than trusting the shape everyone assumes it has.
+  const want = [
+    "stat absent",
+    "write 0",
+    "stat file 5",
+    "read [hello]",
+    "mkdir 0",
+    "stat dir",
+    "ls [a d]",
+    "",
+  ].join("\n");
+  assertEquals(await run(["mem"], script), want, "the in-memory transcript");
+  const dir = await Deno.makeTempDir({ prefix: "wac-fs-host-" });
+  try {
+    assertEquals(await run(["host", dir], script), want, "the same on a real disk");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("a file written reads back, the same way on both", async () => {
   await bothWays("files", [

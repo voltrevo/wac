@@ -1,6 +1,6 @@
 # 0127 — a pipeline that cannot stream traps the whole shell on an unbounded producer
 
-- **Status:** open
+- **Status:** closed
 - **Reported by:** agent-a
 - **Date:** 2026-08-09
 - **Kind:** bug
@@ -53,3 +53,36 @@ backpressure. Two answers that do not need that: bound the buffer and report the
 running any of them, so `yes | nosuchcmd` fails the way bash fails it — at once, and without the
 producer ever starting. The second is narrower and fixes the reproduction above; only the first
 covers `yes | x=1 cat`.
+
+## Closed — 2026-08-10
+
+**The third place the same bytes pile up, and the only one with no cap.** A frame's output is capped
+in `platform/host/child.ts`; a spawned child's queue is capped by the host; and the shell's own `Buf`
+in `collectChild` — where a stage's whole output lands when the pipeline cannot stream — had nothing.
+So the one route with no limit was the one that killed the shell rather than reporting anything.
+
+`HELD_CAP` is 8 MiB, the same number the other two use, and that sameness is the point. Past it the
+child is **stopped** rather than merely ignored: `closeSocket` terminates it wherever it is on every
+host since 0123, so the producer goes away instead of filling a queue nobody will read.
+
+What the caller sees is `shrun.wac`'s judgement, which was already argued for the in-process route:
+*more than this shell can hold is a command that did not run, not a short answer.* The bytes do not
+say they are short, so a number computed from them is wrong in silence — `boxsh -c 'seq 1 1500000 |
+wc -c'` printing 8323568 where bash prints 10888896 is what that looks like unreported.
+
+Measured, on both hosts:
+
+    yes | nosuchcmd; echo status=$?      ours: the cap's sentence, then
+                                               `sh: nosuchcmd: command not found`, status 127
+                                         bash: the same 127
+    seq 1 200000 | x=1 wc -l             200000 on both — under the cap, unaffected
+    yes | head -2                        y y — streams, untouched
+
+**What this does not do**, and it is the honest half: `yes | x=1 cat | head -1` prints `y` in bash
+and prints nothing here. The pipeline still runs its stages one at a time, so the producer's output
+is discarded rather than consumed as it is made. The shell survives and says so; it does not give
+bash's answer. Concurrency for stages `canStream` refuses is what would, and that is 0038's territory
+rather than this one's.
+
+Canaried by removing the cap: `error: requested new array is too large`, and the script's next
+command never runs.

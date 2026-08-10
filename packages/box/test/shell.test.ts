@@ -159,6 +159,42 @@ Deno.test("an endless producer stops at the cap rather than filling memory", asy
   assertEquals(big.out.trim(), "50000", big.err);
 });
 
+Deno.test("...and an endless producer in a pipeline that cannot stream does not kill the shell", async () => {
+  // **The third place the same bytes pile up**, and the one that had no cap. A pipeline `canStream`
+  // refuses runs its stages one at a time, so a stage's whole output lands in the shell's own `Buf`
+  // before the next stage starts — and `yes` never ends, so that `Buf` grew until the wasm allocator
+  // refused it and took the shell with it: `error: requested new array is too large`, about eleven
+  // seconds in, with the rest of the script never running. Issue 0127.
+  //
+  // Two shapes, and the difference matters. `nosuchcmd` is a stage that cannot run at all; `x=1 cat`
+  // is a stage that runs perfectly well and merely cannot be *streamed*, because a prefix assignment
+  // is not a simple spawnable word. Only the second is about streaming; both used to die.
+  for (const script of ["yes | nosuchcmd; echo after=$?", "yes | x=1 cat | head -1; echo after=$?"]) {
+    const r = await sh(script);
+    // The shell is alive at the end of the script, which is the whole claim.
+    assertEquals(
+      r.out.includes("after="),
+      true,
+      `${script}: the shell did not survive its own pipeline: ${JSON.stringify(r.out + r.err)}`,
+    );
+    assertEquals(
+      r.err.includes("exceeded what this shell can hold"),
+      true,
+      `${script}: nothing said the output had been cut: ${JSON.stringify(r.err)}`,
+    );
+  }
+
+  // **And the status is still bash's**, which is the last stage's — the cap reports on the stage it
+  // applies to and does not rewrite the pipeline's answer.
+  const status = await sh("yes | nosuchcmd; echo after=$?");
+  assertEquals(status.out.trim(), "after=127", status.out);
+
+  // What did *not* change: a pipeline that cannot stream but stays under the cap is unaffected, and
+  // it is the case a cap set too low would break silently.
+  const fine = await sh("seq 1 200000 | x=1 wc -l");
+  assertEquals(fine.out.trim(), "200000", fine.err);
+});
+
 Deno.test("a pipeline runs its stages at once, so a consumer can end a producer", async () => {
   // The measurement issue 0038 was filed on: `seq 1 200000 | head -1` took 11.8 seconds, because
   // every stage ran to completion and handed its whole output to the next. Streaming makes it
