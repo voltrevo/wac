@@ -184,10 +184,32 @@ Deno.test("...and an endless producer in a pipeline that cannot stream does not 
     );
   }
 
-  // **And the status is still bash's**, which is the last stage's — the cap reports on the stage it
-  // applies to and does not rewrite the pipeline's answer.
+  // **The status is the refusal's, and this is a deliberate deviation from bash.** It reported 127
+  // here until the shell learned to tell "the command failed" from "we could not run it": bash's
+  // rule is the last stage's status, `nosuchcmd` is 127, and the two happened to agree.
+  //
+  // They agree by luck, and the luck runs out in the case that matters — `n=$(seq 1 1500000 | wc -c)`
+  // captured `0` with status 0, because the overflowing stage produced nothing and `wc` counted an
+  // empty input honestly. A plausible number with the reason on a stream no script reads is the
+  // wrong-answer shape this repository keeps removing. bash never faces it, since it forks every
+  // stage and the kernel holds the pipe, so following its rule here is following it past where it
+  // was defined.
+  //
+  // The cost, stated rather than hidden: a refused stage ends the pipeline, so `nosuchcmd`'s "command
+  // not found" is not printed and the status is 1 rather than 127. What a person sees instead is the
+  // shell saying it could not hold the output — which is the true reason their pipeline did not run.
   const status = await sh("yes | nosuchcmd; echo after=$?");
-  assertEquals(status.out.trim(), "after=127", status.out);
+  assertEquals(status.out.trim(), "after=1", status.out);
+  assertEquals(
+    status.err.includes("exceeded what this shell can hold"),
+    true,
+    `the reason should be the one a person can act on: ${status.err}`,
+  );
+
+  // And a pipeline the shell *can* run keeps bash's rule exactly: the last stage answers, even when
+  // an earlier one failed on its own merits.
+  const normal = await sh("nosuchcmd | wc -l; echo after=$?");
+  assertEquals(normal.out.trim().split("\n").pop(), "after=0", normal.out);
 
   // What did *not* change: a pipeline that cannot stream but stays under the cap is unaffected, and
   // it is the case a cap set too low would break silently.

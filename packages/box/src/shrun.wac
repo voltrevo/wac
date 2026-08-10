@@ -86,13 +86,13 @@ export Output boxRun(Core core, Cli cli, Fs fs, string cwd, Vec<string> argv, u8
   // honest answer to it is a failure with a sentence — we could not run this — rather than a number
   // that is not the answer. Status 1, which is what a shell reports for a command that failed.
   if (got.truncated) {
-    return Output.fail(
+    return Output.refused(
       (name + ": output exceeded what this shell can hold for a command it runs in process; " +
        "run it as a spawned program, where the output streams\n").toBytes(),
       1,
     );
   }
-  return Output(got.out, got.err, code, true);
+  return Output(got.out, got.err, code, true, false);
 }
 
 /**
