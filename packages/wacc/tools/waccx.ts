@@ -48,25 +48,26 @@ async function wacc(): Promise<WaccApi> {
 /**
  * wacc's diagnostics, as the shared formatter wants them.
  *
- * The wire form is `file\tline\tcol\tphase\tmessage`, one per line — the boundary carries strings and
- * not structures. `span` is 1 because wacc does not record how much of the line an error covers, and
- * `annotation` and `hint` are absent for the same reason: `spec/spec/errors.md` asks for all three,
- * and what `report` keeps is a code and a position. Writing a plausible span here would be inventing
- * the part of the diagnostic that is supposed to be true.
+ * The wire form is `file\tline\tcol\tphase\tmessage\tannotation`, one per line — the boundary carries
+ * strings and not structures. The annotation is empty for a site that did not record its operands,
+ * and omitted rather than blank here so the formatter draws a bare underline instead of a trailing
+ * space. `span` is still 1 and `hint` still absent: wacc records neither, and inventing a span would
+ * be making up the part of the diagnostic that is meant to be true.
  */
 export function parseDiagnostics(wire: string): DiagError[] {
   const out: DiagError[] = [];
   for (const line of wire.split("\n")) {
     if (line === "") continue;
-    const [file, ln, col, phase, ...rest] = line.split("\t");
+    const [file, ln, col, phase, message, annotation] = line.split("\t");
     out.push({
       severity: "error",
-      message: rest.join("\t"),
+      message,
       file,
       line: Number(ln),
       col: Number(col),
       phase: phase === "parse" ? "parse" : "typecheck",
       span: 1,
+      ...(annotation ? { annotation } : {}),
     });
   }
   return out;

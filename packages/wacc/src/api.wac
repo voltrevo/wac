@@ -10,7 +10,8 @@ import { checkMessage, parseMessage } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
-import { C, checkModule, checkProgram, declareModule, errorsOf, errNoSuchExport } from "./check.wac";
+import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
+         errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
@@ -160,21 +161,29 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
     i32[] errs = dumpErrors(src);
     for (i32 e = 0; e + 2 < errs.len(); e = e + 3) {
       out = out + paths[i] + "\t" + numText(errs[e + 1]) + "\t" + numText(errs[e + 2])
-          + "\tparse\t" + parseMessage(errs[e]) + "\n";
+          + "\tparse\t" + parseMessage(errs[e]) + "\t\n";
       parseFailed = true;
     }
   }
   if (parseFailed) { return out; }
 
-  i32[] terrs = dumpTypeErrorsFiles(paths, sources, entry);
+  C c = checkFiles(paths, sources, entry);
+  i32[] terrs = errorsOf(c);
+  string[] notes = notesOf(c);
   for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
+    string note = e / 3 < notes.len() ? notes[e / 3] : "";
     out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
-        + "\tcheck\t" + checkMessage(terrs[e]) + "\n";
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\t" + note + "\n";
   }
   return out;
 }
 
 export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry) {
+  return errorsOf(checkFiles(paths, sources, entry));
+}
+
+/** The checker, run over an import graph, with its tables still in hand for whatever wants them. */
+C checkFiles(string[] paths, string[] sources, string entry) {
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   Lexed elexed = lex(esrc);
   P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
@@ -256,5 +265,5 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
   c.src = esrc;
   c.toks = elexed.tokens;
   checkModule(c, eprog);
-  return errorsOf(c);
+  return c;
 }

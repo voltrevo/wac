@@ -179,20 +179,34 @@ the first hour, neither of which needed a new test:
   `errDuplicateName` both; 36, 37 and 38 were doubled the same way. No oracle here reads a code, so
   nothing could have noticed. Writing the first thing that turns a code into a sentence noticed
   immediately.
-- **`report` carries a code and a position and nothing else.** So no diagnostic wacc produces can say
-  *expected i32, found f64* — the operands are not kept. `spec/spec/errors.md` asks for `span`,
-  `annotation` and `hint`; none of the three can be filled from what the checker records, and putting
-  a plausible guess there would be inventing the part that is supposed to be true.
+- **`report` carried a code and a position and nothing else**, so no diagnostic could say *expected
+  i32, found f64* — the operands were not kept anywhere. `spec/spec/errors.md` asks for `span`,
+  `annotation` and `hint`.
 
-The second one is the shape of the next piece of work, and the number is printed by
-`waccx.test.ts` on every run:
+**The operands are carried now.** `reportWith` takes the annotation beside the triple, and the ten
+sites that had the operands in hand pass them — conditions, initialisers, assignments, returns, the
+literal path that decides whether `1.5` belongs in an `i32`, const writes, and undefined names. Where
+the two toolchains both speak, the wording is the reference's own:
+
+       wacc                                     reference
+    error: return type does not match…       error: return: expected i32, found bool
+       |   ^ expected i32, found bool           |   ^^^^ expected i32, found bool
+                                                = help: use `(true) as i32` to convert
+
+`waccx.test.ts` prints both numbers on every run — the sample it can compare against the reference,
+and the coverage across the whole refused corpus:
 
     waccx vs wacx on 5 refused programs: 5 at the same position, 2 with the same message,
-    annotation-or-hint on 0 of ours against 4 of theirs
+    annotation-or-hint on 5 of ours against 4 of theirs
+    operands on 58 of 604 diagnostics over the spec's refused programs (10%)
 
-Same place, sometimes the same words, none of the explanation. That is a far more useful statement of
-where wacc stands than any count of refused programs, and it took a CLI rather than an oracle to say
-it.
+Ten call sites of 135, and 10% of the diagnostics the spec's programs actually provoke. That second
+number is the one to move, and it exists because something consumes the output.
+
+Still missing, in order: **`span`**, which is why every underline here is one character wide where the
+reference underlines the whole operand — it needs a length at each site the same way the annotation
+needed operands; and **`hint`**, the `= help:` line, which is per-rule advice rather than per-site data
+and can be written once each in `diag.wac`.
 
 `bindgen` is absent from `waccx` because wacc has no bindgen at all, which is the other thing standing
 between this and a compiler anyone could use.

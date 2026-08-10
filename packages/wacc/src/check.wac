@@ -722,6 +722,15 @@ export struct C {
   string expected;
   /** `(code, line, col)` triples, the same shape `dumpErrors` returns for the parser. */
   i32[] errors;
+  /**
+   * The operands, one per error: `expected bool, found i32`, or `""` where they were not recorded.
+   *
+   * `spec/spec/errors.md` calls this the `annotation` — the text after the underline — and it is the
+   * difference between a diagnostic that names the rule and one that helps. It sits beside the
+   * triples rather than inside them because the triples are `i32` and this is not; every site that
+   * has the operands in hand passes them, and a site that does not says nothing rather than guessing.
+   */
+  string[] errorNotes;
   i32 errorCount;
   /** Whether diagnostics are being discarded — see `report`. */
   bool quiet;
@@ -782,7 +791,7 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), 0, false, false, string[16](), 0,
+             i32[capacity * 3](), string[capacity](), 0, false, false, string[16](), 0,
              string[capacity](), string[capacity](), i32[capacity](), 0,
              string[capacity](), string[capacity](), 0);
   }
@@ -1253,7 +1262,23 @@ export struct C {
     this.errors[this.errorCount * 3] = code;
     this.errors[this.errorCount * 3 + 1] = line;
     this.errors[this.errorCount * 3 + 2] = col;
+    if (this.errorCount < this.errorNotes.len()) { this.errorNotes[this.errorCount] = ""; }
     this.errorCount = this.errorCount + 1;
+  }
+
+  /**
+   * The same, with the operands the rule was broken by.
+   *
+   * Kept as a second entry point rather than a fourth parameter on `report`, because most of the
+   * hundred-odd call sites have nothing to say and a required argument would have them all inventing
+   * one. The note is added after the fact so the de-duplication in `report` still decides whether
+   * there is an error here at all.
+   */
+  void reportWith(this, i32 code, i32 line, i32 col, string note) {
+    i32 before = this.errorCount;
+    this.report(code, line, col);
+    if (this.errorCount == before) { return; }
+    if (before < this.errorNotes.len()) { this.errorNotes[before] = note; }
   }
 }
 
@@ -1418,14 +1443,16 @@ void reportLiteral(C c, string want, Expr e, i32 mismatch, i32 line, i32 col) {
   checkCharLiteral(c, e);
   if (literalFits(c, want, e)) { return; }
   if (!acceptsLiteral(want, litKindOf(e))) {
-    c.report(mismatch, line, col);
+    // The literal's own family is what it was found to be: `1.5` in an `i32` slot is a float where an
+    // integer was wanted, and saying so is the whole of the complaint.
+    c.reportWith(mismatch, line, col, expectedFound(want, foundType(c, e)));
     return;
   }
   // A range complaint names the **literal**, where a family mismatch names the whole expression:
   // `i32 x = -1.5` is reported at the `-` and `f32 x = -1.0e40` at the `1`. Measured, and the pair is
   // worth stating together, because either one alone reads as an off-by-one against the other.
   Expr inner = innermostLiteral(e);
-  c.report(errFloatRange(), inner.line, inner.col);
+  c.reportWith(errFloatRange(), inner.line, inner.col, "out of range for " + want);
 }
 
 /** The literal under any signs — `1.0e40` in `-1.0e40`, and the expression itself otherwise. */
@@ -2079,7 +2106,10 @@ void checkExpr(C c, Expr e) {
     // functions, structs, enums, imports and the primitive type names are looked up where they live.
     case Ident(tok): {
       string idn = tokenText(c, tok);
-      if (!nameExists(c, idn)) { c.report(errUndefinedName(), e.line, e.col); return; }
+      if (!nameExists(c, idn)) {
+        c.reportWith(errUndefinedName(), e.line, e.col, "no " + idn + " in scope");
+        return;
+      }
       // A struct's name is not a value. It reaches expression position legitimately as the receiver
       // of a static call, and that arrives through the `Call` and `Member` arms rather than here —
       // so an `Ident` that names a struct and nothing else is one used where a value belongs.
@@ -2231,7 +2261,10 @@ void checkExpr(C c, Expr e) {
       c.expected = slot;
       checkExpr(c, els);
       // The condition is the `if` rule in expression position, and lands on the condition itself.
-      if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
+      if (notBool(c, cond)) {
+    c.reportWith(errNotBool(), cond.line, cond.col,
+                 expectedFound("bool", foundType(c, cond)));
+  }
       // The branches have to agree, because the whole expression is one type. A literal branch takes
       // the other's type, as everywhere, so only two known and different types are a complaint — and
       // it names the node rather than either branch, neither being more wrong than the other.
@@ -2453,6 +2486,29 @@ bool nameExists(C c, string n) {
 }
 
 /** Whether an expression is known not to be a boolean. Unknown is `false`: silence, as everywhere. */
+/**
+ * `expected <want>, found <got>` — the annotation `spec/spec/errors.md` asks for, phrased as the
+ * reference phrases it.
+ *
+ * Empty when either side is a type this checker cannot name, because "expected i32, found unknown"
+ * is worse than no annotation at all: it reads as a fact about the program when it is a fact about
+ * the compiler.
+ */
+string expectedFound(string want, string got) {
+  if (want == typeNone() || want == "" || got == typeNone() || got == "") { return ""; }
+  return "expected " + want + ", found " + got;
+}
+
+/** What an expression is, for a diagnostic — a literal answers with the type it naturally has. */
+string foundType(C c, Expr e) {
+  i32 k = litKindOf(e);
+  if (k == litInteger()) { return "i32"; }
+  if (k == litFloat()) { return "f64"; }
+  if (k == litBool()) { return "bool"; }
+  if (k == litString()) { return "string"; }
+  return typeOfExpr(c, e);
+}
+
 bool notBool(C c, Expr e) {
   i32 lit = litKindOf(e);
   if (lit != litNone()) { return lit != litBool(); }
@@ -2682,7 +2738,9 @@ void checkWrite(C c, Lvalue lv) {
       }
       // Otherwise the path itself may be const: a `const P p` refuses every write through it, field
       // by field, whatever those fields say about themselves.
-      if (constPath(c, base)) { c.report(errConstReference(), root.line, root.col); }
+      if (constPath(c, base)) {
+        c.reportWith(errConstReference(), root.line, root.col, constNote(c, root));
+      }
     }
     case LIndex(base, index): {
       string baseT = typeOfLvalue(c, base);
@@ -2713,7 +2771,9 @@ void checkWrite(C c, Lvalue lv) {
         return;
       }
       Lvalue r = rootOf(lv);
-      if (constPath(c, base)) { c.report(errConstReference(), r.line, r.col); }
+      if (constPath(c, base)) {
+        c.reportWith(errConstReference(), r.line, r.col, constNote(c, r));
+      }
     }
     case LUnwrap(base): { checkWrite(c, base); }
   }
@@ -2734,6 +2794,14 @@ bool undefinedRoot(C c, Lvalue root) {
  * names column 56, the `p`, and not 57, the field node. Reporting at the node that *is* const would
  * have been the obvious choice and is off by one against every compound target.
  */
+/** `` `xs` is const `` when the root of the path is a plain name, and nothing when it is not. */
+string constNote(C c, Lvalue root) {
+  match (root.kind) {
+    case LIdent(tok): { return tokenText(c, tok) + " is const"; }
+    else: { return ""; }
+  }
+}
+
 Lvalue rootOf(Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { return lv; }
@@ -3867,7 +3935,10 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
  * The condition is also walked as an ordinary expression, so a mismatch inside it is still found.
  */
 void checkCond(C c, Expr cond) {
-  if (notBool(c, cond)) { c.report(errNotBool(), cond.line, cond.col); }
+  if (notBool(c, cond)) {
+    c.reportWith(errNotBool(), cond.line, cond.col,
+                 expectedFound("bool", foundType(c, cond)));
+  }
   checkExpr(c, cond);
 }
 
@@ -3956,7 +4027,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(wantTo, gotTo)) {
         c.report(errNullableToNonNull(), rhs.line, rhs.col);
       } else if (!assignable(c, wantTo, gotTo)) {
-        c.report(errInitTypeMismatch(), rhs.line, rhs.col);
+        c.reportWith(errInitTypeMismatch(), rhs.line, rhs.col, expectedFound(wantTo, gotTo));
       }
     }
     // The same question one position over: a declared type, and something that has to fit it.
@@ -3973,7 +4044,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(wantVar, gotVar)) {
         c.report(errNullableToNonNull(), init.line, init.col);
       } else if (!assignable(c, wantVar, gotVar)) {
-        c.report(errInitTypeMismatch(), init.line, init.col);
+        c.reportWith(errInitTypeMismatch(), init.line, init.col, expectedFound(wantVar, gotVar));
       }
       c.expected = wantVar;
       checkExpr(c, init);
@@ -4006,7 +4077,7 @@ void checkStmt(C c, Stmt s, Ty want) {
       if (nullableIntoNonNull(expected, got)) {
         c.report(errNullableToNonNull(), e.line, e.col);
       } else if (!assignable(c, expected, got)) {
-        c.report(errReturnTypeMismatch(), e.line, e.col);
+        c.reportWith(errReturnTypeMismatch(), e.line, e.col, expectedFound(expected, got));
       }
       c.expected = expected;
       checkExpr(c, e);
@@ -4502,6 +4573,15 @@ export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
 export i32[] errorsOf(C c) {
   i32[] out = i32[c.errorCount * 3]();
   for (i32 i = 0; i < c.errorCount * 3; i++) { out[i] = c.errors[i]; }
+  return out;
+}
+
+/** The operands of each diagnostic, in the same order — `""` where the site had none to give. */
+export string[] notesOf(C c) {
+  string[] out = string[c.errorCount]();
+  for (i32 i = 0; i < c.errorCount; i++) {
+    out[i] = i < c.errorNotes.len() ? c.errorNotes[i] : "";
+  }
   return out;
 }
 
