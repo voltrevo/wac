@@ -11,6 +11,7 @@
 // test-lane: exclusive — a real OpenSSH client against our server, on a real port.
 
 import { haveSshd } from "./server.ts";
+import { testBounded } from "../../../harness/deadline.ts";
 import { holdPort, isAddrInUse } from "../../../harness/port.ts";  // one allocator — wac-mono 0069
 import { ABANDONED_SSHD } from "./server.ts";
 import { reapOrphans } from "../../../harness/reap.ts";
@@ -251,11 +252,10 @@ async function realSsh(
   return { code: r.code, stdout: text(r.stdout), stderr };
 }
 
-Deno.test({
+testBounded({
   name: "OpenSSH's own client connects to our server, authenticates and runs a command",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Wacsshd | undefined;
     try {
       s = await startWacsshd();
@@ -325,14 +325,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "with a pty the server does the line editing, and the output comes back for a terminal",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     // `ssh -tt` asks for a pty, which this server refused until design/0001 step 5. The refusal was the
     // honest answer while there was nothing to echo with: a client that gets a pty stops echoing
     // locally, so every keystroke it sends must come back or the user types blind.
@@ -374,7 +372,6 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
 /**
@@ -395,11 +392,10 @@ Deno.test({
  *     bash does not exit when you press `^C` at a prompt;
  *   - and `$?` is **130**, which is what every shell reports for a command an interrupt ended.
  */
-Deno.test({
+testBounded({
   name: "`^C` ends a running command over ssh, and the session carries on — step 5's criterion",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Wacsshd | undefined;
     try {
       s = await startWacsshd();
@@ -455,14 +451,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "a line typed while a command is running is still a command",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     // Type-ahead, which the interrupt poll would otherwise eat. The poll takes bytes off the socket
     // to look for a `^C`, and the line discipline hands back whole lines whether anybody asked for
     // them or not — so a version that only looked at the interrupt flag dropped them, while its own
@@ -509,14 +503,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "an interactive session keeps its shell between lines",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Wacsshd | undefined;
     try {
       s = await startWacsshd();
@@ -570,14 +562,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "our own client talks to our own server, both ends in wac",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Wacsshd | undefined;
     try {
       s = await startWacsshd();
@@ -610,14 +600,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "a client that sends environment requests first still gets its command run",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  async fn() {
+}, async () => {
     const s = await startWacsshd();
     try {
       // `SendEnv LANG LC_*` is the default in Debian's and Ubuntu's `ssh_config`, so this is what
@@ -644,14 +632,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "a refused subsystem is answered, because that request did want a reply",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  async fn() {
+}, async () => {
     const s = await startWacsshd();
     try {
       // The other half of the `want_reply` rule, and the half the `SendEnv` test above cannot
@@ -680,14 +666,12 @@ Deno.test({
     } finally {
       await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "the server announces the port it is actually listening on",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  async fn() {
+}, async () => {
     const s = await startWacsshd();
     let said: string;
     try {
@@ -708,7 +692,6 @@ Deno.test({
     if (!said.includes(want)) {
       throw new Error(`expected ${JSON.stringify(want)}, server said ${JSON.stringify(said.trim())}`);
     }
-  },
 });
 
 Deno.test("the abandoned-sshd pattern matches what ps actually prints", () => {
@@ -739,10 +722,10 @@ Deno.test("the abandoned-sshd pattern matches what ps actually prints", () => {
  * driving the whole thing. What makes it worth a test rather than a demo is the *second* connection: a
  * session that finds what the last one left is a system, and one that does not is a toy.
  */
-Deno.test({
+testBounded({
   name: "a server booted on an image serves every session from it, and saves what they do",
   ignore: !haveSshd,
-  fn: async () => {
+}, async () => {
     const dir = await Deno.makeTempDir({ prefix: "wac-sshd-image-" });
     const image = `${dir}/home.wacimg`;
     let s: Wacsshd | null = null;
@@ -785,7 +768,6 @@ Deno.test({
       if (s !== null) await stopWacsshd(s);
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });
 
 /**
@@ -799,10 +781,10 @@ Deno.test({
  * `seq 1 200000` rather than something short because the pipeline has to still be running when `ps`
  * looks. A sequential shell answers this with one row however long the first stage takes.
  */
-Deno.test({
+testBounded({
   name: "a session on an image shows its own pipeline in `ps` — step 3's criterion",
   ignore: !haveSshd,
-  fn: async () => {
+}, async () => {
     const dir = await Deno.makeTempDir({ prefix: "wac-sshd-ps-" });
     const image = `${dir}/ps.wacimg`;
     let s: Wacsshd | null = null;
@@ -831,13 +813,12 @@ Deno.test({
       if (s !== null) await stopWacsshd(s);
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "an image the server cannot read stops it before it binds, and is not written over",
   ignore: !haveSshd,
-  fn: async () => {
+}, async () => {
     // Starting empty would be worse than stopping: the server would then *save over* the image it could
     // not read. And it used to announce "listening on port …" first and refuse after, which is a moment
     // in which it looks like it is working.
@@ -871,13 +852,12 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "a server that cannot write its image says so rather than losing the session",
   ignore: !haveSshd,
-  fn: async () => {
+}, async () => {
     // The first thing the image tests found, and they found it by failing for the wrong reason: the
     // binary every other test here uses is built without `--allow-write`, so it served the session, did
     // the work, and could not save it. Warning and carrying on is right — the client's commands ran and
@@ -897,7 +877,6 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });
 
 /**
@@ -913,11 +892,10 @@ Deno.test({
  * The image is built by the first server through an ordinary session — there is no other way to write
  * one, and that is the point: the system builds its own world with the tools it ships.
  */
-Deno.test({
+testBounded({
   name: "a session knows what terminal the client said it has",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     // design/0001 step 5 asks for "a `TERM` worth setting". The `pty-req` carries the terminal type
     // and its size, and every field of it used to be dropped — so a session ran with no `$TERM` and a
     // program asking what it was talking to got nothing.
@@ -964,14 +942,12 @@ Deno.test({
     } finally {
       if (s !== null) await stopWacsshd(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "a session on an image has its own environment, not the server's",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     // **design/0001's opening promise, and it was untrue.** A session sealed in an image reported
     // `HOME=/home/claude` and a `$PATH` from the machine the server was running on, because an unset
     // variable fell back to `cli.env` — the *server process's* environment. D4 says a session's `Cli`
@@ -998,14 +974,12 @@ Deno.test({
       if (s !== null) await stopWacsshd(s);
       await Deno.remove(dir, { recursive: true });
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "two keys land in two homes, and neither can read the other's private file",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     const dir = await Deno.makeTempDir({ prefix: "wac-sshd-users-" });
     const image = `${dir}/system.wacimg`;
     let s: Wacsshd | null = null;
@@ -1124,5 +1098,4 @@ Deno.test({
       if (s !== null) await stopWacsshd(s);
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });

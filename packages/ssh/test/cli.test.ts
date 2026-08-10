@@ -12,6 +12,7 @@
 // test-lane: exclusive — drives a real `ssh` binary against a real server.
 
 import { haveSshd, type Server, startServer, stopServer } from "./server.ts";
+import { testBounded } from "../../../harness/deadline.ts";
 
 /**
  * Every binary this file builds, removed on the way out.
@@ -101,11 +102,10 @@ async function ssh(
   return { code: r.code, stdout: r.stdout, stderr: text(r.stderr) };
 }
 
-Deno.test({
+testBounded({
   name: "the ssh program runs a command, on a real server, end to end",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -144,14 +144,12 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "the ssh program refuses an unknown host and reports a changed one",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -200,14 +198,12 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "the ssh program reports bad arguments and unreadable keys without connecting",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -238,14 +234,12 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
 });
 
-Deno.test({
+testBounded({
   name: "the ssh program reads an encrypted key with SSH_PASSPHRASE, and says so without it",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -282,5 +276,4 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
 });

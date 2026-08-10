@@ -110,3 +110,45 @@ export async function readUntil(
     }
   }
 }
+
+/**
+ * How long a whole network test may take before it is called wedged.
+ *
+ * Generous, for `bounded.ts`'s reason and this file's own: the job is turning an infinite wait into a
+ * finite one, not policing latency. Five minutes is far longer than any of these takes on an idle
+ * machine — the tor network case runs in about eleven seconds — and shorter than the twenty-six
+ * minutes a wedged one cost the last time nobody was watching.
+ */
+export const CASE_TIMEOUT = 300_000;
+
+/**
+ * `Deno.test`, with a bound on the **whole case**.
+ *
+ * Issue 0106 asked for exactly this and it is the one of its three suggestions that was never done:
+ * "whatever bound replaces the 30 seconds has to cover the whole case rather than one wait inside
+ * it." The bounds inside these tests are on individual waits, so a case that wedges *between* them —
+ * which is what has happened three times, twice inside `tools/push.sh` — produces no output at all.
+ * Deno has no per-test timeout of its own (issue 0036), so there is nothing else to fall back on.
+ *
+ * A test that trips this **fails with a sentence naming itself**, and the run carries on to the next
+ * case. The work it was doing is not cancelled — nothing here can cancel it — so `sanitizeOps` and
+ * `sanitizeResources` are off for these cases: a bound that fired would otherwise be reported as a
+ * leak, which is true and is not the useful half.
+ */
+export function testBounded(
+  what: string | { name: string; ignore?: boolean },
+  body: () => Promise<void>,
+  ms = CASE_TIMEOUT,
+): void {
+  // An object as well as a name, because every case this is for is already skipped when the real
+  // server it needs is absent — `ignore: !haveSshd`, `ignore: !haveTor` — and a wrapper that could
+  // not carry that would make the caller choose between the bound and the skip.
+  const name = typeof what === "string" ? what : what.name;
+  Deno.test({
+    name,
+    ignore: typeof what === "string" ? false : what.ignore === true,
+    sanitizeOps: false,
+    sanitizeResources: false,
+    fn: () => withDeadline(body(), `the whole of ${JSON.stringify(name)}`, ms),
+  });
+}
