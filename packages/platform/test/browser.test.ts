@@ -179,9 +179,9 @@ Deno.test("the browser world honours the capabilities a page can honour", async 
   const written: Uint8Array[] = [];
   const w = browserWorld({
     args: ["one", "two"],
-    log: (l) => logged.push(l),
-    warn: (l) => logged.push(`!${l}`),
-    write: (b) => written.push(b),
+    log: (l) => { logged.push(l); },
+    warn: (l) => { logged.push(`!${l}`); },
+    write: (b) => { written.push(b); },
     root,
     writable: true,
   });

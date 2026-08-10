@@ -133,9 +133,12 @@ Deno.test("...and a redirection of standard error takes it, through a spawned ap
   assertEquals(kept.out.trim(), "1", `the complaint should have gone down the pipe: ${kept.err}`);
 });
 
-// **Tagged flaky against wac-mono 0082**, where it is the one member nobody has reproduced since it was
-// reported — it may already have been fixed by 0078's zero-length-write bug. Whoever sees it fail should
-// paste the assertion text into that issue, which is the one thing that would settle it.
+// **Was tagged flaky against wac-mono 0082, and the cause is fixed**: it failed twice, both times
+// under a full suite, with `Uncaught (in promise) Error: the child's output is not being read`. The
+// throw is deliberate — that is how a host says false to `cli.write`, and `yes` is written to stop on
+// a false — but the op that called the sink did not *await* it, so the rejection escaped and killed
+// the parent instead of ending the producer. Issue 0115, and `platform/test/sinks.test.ts` is the
+// deterministic test the race never gave anyone.
 Deno.test("an endless producer stops at the cap rather than filling memory", async () => {
   // `yes` writes for ever by design, and `head -1` wants one line. A real shell ends this because
   // `head` closing its input stops `yes`; this shell runs its stages one at a time, so what ends it

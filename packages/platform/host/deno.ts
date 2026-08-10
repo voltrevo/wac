@@ -48,8 +48,18 @@ export type DenoWorldOptions = {
    */
   args?: (string | Uint8Array)[];
   /** Where output goes. Defaults to the console. */
-  log?(line: string): void;
-  warn?(line: string): void;
+  /**
+   * **May answer a promise, and every caller awaits it.**
+   *
+   * Declared `void` and implemented `async` — which TypeScript permits, since a `Promise<void>` is
+   * assignable to `void` — this dropped the promise at each call site. Two consequences, one loud
+   * and one silent: a rejection became an *unhandled* one and took the process down (issue 0115,
+   * `yes | head -1` under load), and two writes could land in either order under backpressure,
+   * because the guest was released before the first had finished. A spawned child's output goes
+   * through here, and pushing to a queue is asynchronous exactly when the queue is full.
+   */
+  log?(line: string): void | Promise<void>;
+  warn?(line: string): void | Promise<void>;
   /** Restrict the filesystem, or leave it out for none at all. */
   fs?: { read?: boolean; write?: boolean };
   /** The network, or leave it out for none at all. */
@@ -63,9 +73,9 @@ export type DenoWorldOptions = {
    * child's output reaches its parent through a handle rather than the terminal — the only
    * reason these exist.
    */
-  write?(bytes: Uint8Array): void;
+  write?(bytes: Uint8Array): void | Promise<void>;
   /** Where exact bytes on the *error* stream go. A spawned world sends both to its parent. */
-  writeErr?(bytes: Uint8Array): void;
+  writeErr?(bytes: Uint8Array): void | Promise<void>;
   /**
    * Where this world's relative paths resolve from, and what `cwd` reports.
    *
@@ -451,9 +461,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
     },
     // `log` is standard output, so a child's lines are kept with the rest of its output rather
     // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
-    [OP.LOG]: (p) => {
+    [OP.LOG]: async (p) => {
       if (kids.active) { kids.write(lineOf(p)); return EMPTY; }
-      log(unstr(p));
+      await log(unstr(p));
       return EMPTY;
     },
     // `warn` is standard error, so a child's diagnostics are kept with its output rather than
@@ -467,9 +477,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      * an encrypted socket. A host that cannot be asked truthfully reports that it has not been.
      */
     [OP.ASK_INTERRUPT]: () => i32le(0),
-    [OP.WARN]: (p) => {
+    [OP.WARN]: async (p) => {
       if (kids.warn(lineOf(p))) return EMPTY;
-      warn(unstr(p));
+      await warn(unstr(p));
       return EMPTY;
     },
 
@@ -532,7 +542,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
           while (at < p.length) at += await sink.write(p.subarray(at));
           return EMPTY;
         }
-        if (writeOut !== undefined) { writeOut(p.slice()); return EMPTY; }
+        if (writeOut !== undefined) { await writeOut(p.slice()); return EMPTY; }
         await writeAllStdout(p);
         return EMPTY;
       } catch (e) {
@@ -553,7 +563,7 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
      */
     [OP.WRITE_STDERR]: async (p) => {
       if (kids.active) { kids.warn(p); return EMPTY; }
-      if (writeErrOut !== undefined) { writeErrOut(p.slice()); return EMPTY; }
+      if (writeErrOut !== undefined) { await writeErrOut(p.slice()); return EMPTY; }
       try {
         await writeAllStderr(p);
         return EMPTY;
