@@ -80,6 +80,13 @@ export const FAULT_NOT_A_DIR = 10;
  */
 export const FAULT_READ_ONLY = 11;
 
+/** A name longer than the host will take — `ENAMETOOLONG`. See `FAULT_NAME_TOO_LONG` in platform.wac. */
+export const FAULT_NAME_TOO_LONG = 12;
+/** A symlink that leads to itself — `ELOOP`. See `FAULT_LOOP` in platform.wac. */
+export const FAULT_LOOP = 13;
+/** The filesystem will take no more — `ENOSPC`. See `FAULT_NO_SPACE` in platform.wac. */
+export const FAULT_NO_SPACE = 14;
+
 /**
  * A fault a host had to name itself, because its filesystem does not report one.
  *
@@ -177,6 +184,9 @@ export function faultOf(e: unknown): number {
     if (code === "EISDIR") return FAULT_IS_DIR;
     if (code === "ENOTDIR") return FAULT_NOT_A_DIR;
     if (code === "EROFS") return FAULT_READ_ONLY;
+    if (code === "ENAMETOOLONG") return FAULT_NAME_TOO_LONG;
+    if (code === "ELOOP") return FAULT_LOOP;
+    if (code === "ENOSPC") return FAULT_NO_SPACE;
   }
 
   // The File System Access API throws `DOMException`s with names rather than codes.
@@ -202,6 +212,12 @@ export function faultOf(e: unknown): number {
   // directory" about a directory.
   if (/not a directory|os error 20/i.test(message)) return FAULT_NOT_A_DIR;
   if (/read-only file system|os error 30/i.test(message)) return FAULT_READ_ONLY;
+  // The three below reach Deno as plain `Error`s with no `code`, so the errno in the text is the only
+  // structural marker — the same argument `EISDIR` and `ENOTDIR` won above. Their numbers are Linux's;
+  // the phrases are what every platform's `strerror` gives, which is why both are matched.
+  if (/file name too long|os error 36/i.test(message)) return FAULT_NAME_TOO_LONG;
+  if (/too many levels of symbolic links|os error 40/i.test(message)) return FAULT_LOOP;
+  if (/no space left on device|os error 28/i.test(message)) return FAULT_NO_SPACE;
   // A grant this program was never given. This line said `FAULT_DENIED` for a year after the category
   // below it existed, which made the distinction it was added for unobservable from a message.
   if (/not granted/i.test(message)) return FAULT_NOT_GRANTED;
@@ -266,6 +282,9 @@ export function phraseOf(fault: number): string {
   if (fault === FAULT_IS_DIR) return "Is a directory";
   if (fault === FAULT_NOT_A_DIR) return "Not a directory";
   if (fault === FAULT_READ_ONLY) return "Read-only file system";
+  if (fault === FAULT_NAME_TOO_LONG) return "File name too long";
+  if (fault === FAULT_LOOP) return "Too many levels of symbolic links";
+  if (fault === FAULT_NO_SPACE) return "No space left on device";
   // Ours, not `strerror`'s: a filesystem that can name every file has no phrase for the first, and a
   // program the operating system started was handed everything it has, so it never needed the second.
   if (fault === FAULT_NOT_REPRESENTABLE) return "the name is not representable on this host";

@@ -10,10 +10,11 @@
 // the test's own list, which is what makes an omission here fail rather than pass quietly.
 import { FAULT_NONE, FAULT_NOT_FOUND, FAULT_DENIED, FAULT_EXISTS, FAULT_NOT_EMPTY, FAULT_OTHER,
          FAULT_NOT_REPRESENTABLE, FAULT_NOT_GRANTED, FAULT_IS_DIR, FAULT_UNSUPPORTED,
-         FAULT_NOT_A_DIR, FAULT_READ_ONLY, faultWords } from "../../src/platform.wac";
+         FAULT_NOT_A_DIR, FAULT_READ_ONLY, FAULT_NAME_TOO_LONG, FAULT_LOOP, FAULT_NO_SPACE,
+         faultWords } from "../../src/platform.wac";
 
 export i32[] codes() {
-  i32[] out = i32[12]();
+  i32[] out = i32[15]();
   out[0] = FAULT_NONE();
   out[1] = FAULT_NOT_FOUND();
   out[2] = FAULT_DENIED();
@@ -26,6 +27,9 @@ export i32[] codes() {
   out[9] = FAULT_UNSUPPORTED();
   out[10] = FAULT_NOT_A_DIR();
   out[11] = FAULT_READ_ONLY();
+  out[12] = FAULT_NAME_TOO_LONG();
+  out[13] = FAULT_LOOP();
+  out[14] = FAULT_NO_SPACE();
   return out;
 }
 

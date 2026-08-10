@@ -592,6 +592,39 @@ export i32 FAULT_NOT_A_DIR() { return 10; }
 export i32 FAULT_READ_ONLY() { return 11; }
 
 /**
+ * The name is longer than the host will take — `ENAMETOOLONG`.
+ *
+ * Found by hand, not by a differential: no corpus script has a three-hundred-character filename, so
+ * every two-host comparison agreed, and what they agreed on was `File name too long (os error 36)` —
+ * the operating system's sentence with its errno still attached, where GNU prints the same words and
+ * nothing else. The two hosts matching each other is exactly why this survived; they were both wrong
+ * in the same way, which is the failure a two-host differential cannot see and a real tool can.
+ */
+export i32 FAULT_NAME_TOO_LONG() { return 12; }
+
+/**
+ * A symbolic link that leads back to itself — `ELOOP`.
+ *
+ * The other half of the same find, and the same shape: `cat loop` said "Too many levels of symbolic
+ * links (os error 40)" on both hosts where GNU says it without the errno. A filesystem that can make
+ * links can make this one, and `packages/fs` grew `linkStat` this week, so it is reachable now in a
+ * way it was not when the fault table was written.
+ */
+export i32 FAULT_LOOP() { return 13; }
+
+/**
+ * The filesystem will not take any more — `ENOSPC`.
+ *
+ * The one of the three that is **not** the same on both hosts, and the reason is the runtime rather
+ * than the code: Deno refuses `/dev/full` at `open` for want of `--allow-all`, so a JavaScript host
+ * answers `FAULT_NOT_GRANTED` and never reaches the write; the wasmtime host opens it and the write
+ * fails, which is the only place in this repository where `outputError` carries a real reason. Both
+ * answers are true about their own runtime, and the category is what lets a program tell them apart
+ * from each other and from a full disk.
+ */
+export i32 FAULT_NO_SPACE() { return 14; }
+
+/**
  * A fault in the words the real tools use, or `""` where the category has none to give.
  *
  * One table, because there were four: `sh` had one for a `Change` and another for a `FileResult`, `box`
@@ -630,6 +663,11 @@ export string faultWords(i32 fault) {
   if (fault == FAULT_NOT_A_DIR()) { return "Not a directory"; }
   // `strerror(EROFS)`, which is what bash prints for a redirection onto a read-only mount.
   if (fault == FAULT_READ_ONLY()) { return "Read-only file system"; }
+  // The next three are `strerror` too, and each is what GNU prints with no errno after it: compared
+  // against `cat`, `wc` and a redirection in `native_hostfs`, on both hosts.
+  if (fault == FAULT_NAME_TOO_LONG()) { return "File name too long"; }
+  if (fault == FAULT_LOOP()) { return "Too many levels of symbolic links"; }
+  if (fault == FAULT_NO_SPACE()) { return "No space left on device"; }
   // `FAULT_UNSUPPORTED` falls through to `""` on purpose — see its own comment. The message says what
   // is unimplemented, and no fixed phrase could.
   return "";
