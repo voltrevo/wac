@@ -1976,6 +1976,11 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     }
   }
 
+  // **After every declaration has named its types**, which is the pass above: a `u8[]` that appears
+  // only in a signature — `export u8[] echo(u8[] b)` — is registered there and nowhere earlier, so
+  // asking before it answered no for exactly the modules a host most wants to call.
+  bool needsBytes = hasArrayType(env, "u8[]");
+
   // The instances, in the order `collectInstances` registered them: after every declaration and
   // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
   // bug — every call after the first helper reaches the wrong function — and it is why the last
@@ -2026,9 +2031,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 
   // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
   // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
-  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1;
+  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + (needsBytes ? 3 : 0);
   funcs.u32leb(count + helpers);
-  exports.u32leb(exportCount + 2);   // `$bind$mem` and `$bind$mem_ensure`
+  exports.u32leb(exportCount + 2 + (needsBytes ? 3 : 0));
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2103,6 +2108,12 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // Before `declTypes` is taken, or the type section is sized without it and the module is declined
   // — which is what happened first time round, and the emitter said so by returning eight bytes.
   env.sigType("fn[i32(i32)]");
+  // The byte-array family, when there is a `u8[]` to move. Both `_len` and `_to_mem` answer an `i32`
+  // from an array, so the three helpers need two signatures between them.
+  if (needsBytes) {
+    env.sigType("fn[i32(u8[])]");
+    env.sigType("fn[u8[](i32)]");
+  }
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
     env.sigType("fn[bool(string,string)]");
@@ -2278,6 +2289,11 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitStringCompare(funcs, code, env);
   }
   emitMemEnsure(funcs, code, env);
+  if (needsBytes) {
+    emitArrU8Len(funcs, code, env);
+    emitArrU8ToMem(funcs, code, env);
+    emitArrU8FromMem(funcs, code, env);
+  }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2319,7 +2335,8 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     // **After `$bind$mem_ensure`, so one past where it used to be.** The start function is emitted
     // last and numbered by hand, and adding a helper in front of it without moving this produced
     // *"invalid start func reference"* — the index named a function that is now the buffer helper.
-    emitStartFunction(funcs, code, src, lexed, env, index + (needsStrings ? 9 : 0) + 1, declTypes);
+    emitStartFunction(funcs, code, src, lexed, env,
+                      index + (needsStrings ? 9 : 0) + 1 + (needsBytes ? 3 : 0), declTypes);
   }
 
   // **The type section is written before the code that names types.** If emitting a body registered
@@ -2339,9 +2356,21 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   exports.name("$bind$mem");
   exports.byte(2);    // a memory
   exports.u32leb(0);
+  i32 helperBase = count + (needsStrings ? 9 : 0);
   exports.name("$bind$mem_ensure");
   exports.byte(0);    // a function
-  exports.u32leb(count + (needsStrings ? 9 : 0));
+  exports.u32leb(helperBase);
+  if (needsBytes) {
+    exports.name("$bind$arr_u8_len");
+    exports.byte(0);
+    exports.u32leb(helperBase + 1);
+    exports.name("$bind$arr_u8_to_mem");
+    exports.byte(0);
+    exports.u32leb(helperBase + 2);
+    exports.name("$bind$arr_u8_from_mem");
+    exports.byte(0);
+    exports.u32leb(helperBase + 3);
+  }
 
   section(out, 1, types);
   section(out, 3, funcs);
@@ -2350,7 +2379,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 9 : 0) + 1);
+    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + (needsBytes ? 3 : 0));
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -6560,6 +6589,112 @@ void emitStringConcat(B types, B funcs, B code, Env env, i32 index, i32 declType
  * built before the call is dead. Answering the size rather than the growth is what lets the caller
  * tell "already big enough" from "grown to fit" without asking twice.
  */
+
+/** Whether a module already deals in this array type, asked without registering one that does not. */
+bool hasArrayType(Env env, string t) {
+  for (i32 i = 0; i < env.arrayCount; i++) {
+    if (env.arrayTypes[i] == t) { return true; }
+  }
+  return false;
+}
+
+/**
+ * `$bind$arr_u8_len(a) -> i32` — how many bytes the array holds.
+ *
+ * The first of the three a host needs to move a `u8[]` across the boundary: it asks the length,
+ * allocates, and then copies through the staging buffer. `array.len` is the whole of it.
+ */
+void emitArrU8Len(B funcs, B code, Env env) {
+  i32 at = env.arrayType("u8[]");
+  funcs.u32leb(env.sigType("fn[i32(u8[])]"));
+
+  B b = B.create();
+  b.u32leb(0);                          // no locals
+  b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(15);            // array.len
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * `$bind$arr_u8_to_mem(a) -> i32` — copy the array into the staging buffer, and answer its length.
+ *
+ * Byte at a time rather than `array.copy`, which moves between two WasmGC arrays and not between an
+ * array and linear memory: there is no bulk instruction for this direction. The caller has already
+ * called `$bind$mem_ensure`, so writing past the end traps rather than growing — which is the right
+ * way round, since a silent short copy is a wrong answer and a trap is not.
+ */
+void emitArrU8ToMem(B funcs, B code, Env env) {
+  i32 at = env.arrayType("u8[]");
+  funcs.u32leb(env.sigType("fn[i32(u8[])]"));
+
+  B b = B.create();
+  b.u32leb(1);
+  b.u32leb(2); b.byte(127);             // locals 1, 2: the cursor and the length
+
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(1);
+  b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15); b.byte(33); b.u32leb(2);
+
+  b.byte(2); b.byte(64);                // block
+  b.byte(3); b.byte(64);                // loop
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2); b.byte(78);   // i >= n
+  b.byte(13); b.u32leb(1);              // br_if out of the block
+  b.byte(32); b.u32leb(1);              // address — a byte wide, so the index is the offset
+  b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(1);
+  b.byte(251); b.u32leb(13); b.u32leb(at);                        // array.get_u — packed, so not 11
+  b.byte(58); b.u32leb(0); b.u32leb(0);                           // i32.store8
+  b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(1);
+  b.byte(12); b.u32leb(0);              // br to the loop
+  b.byte(11);
+  b.byte(11);
+  b.byte(32); b.u32leb(2);
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
+/**
+ * `$bind$arr_u8_from_mem(count) -> u8[]` — a new array holding `count` bytes of the staging buffer.
+ *
+ * The local holding it is nullable, because `array.new_default` is what fills it and a local has to
+ * have a type before that runs; the `ref.as_non_null` at the end is what the signature promises.
+ */
+void emitArrU8FromMem(B funcs, B code, Env env) {
+  i32 at = env.arrayType("u8[]");
+  funcs.u32leb(env.sigType("fn[u8[](i32)]"));
+
+  B b = B.create();
+  b.u32leb(2);
+  b.u32leb(1); b.byte(99); b.i32leb(at);   // local 1: the array being built
+  b.u32leb(1); b.byte(127);                // local 2: the cursor
+
+  b.byte(32); b.u32leb(0);
+  b.byte(251); b.u32leb(7); b.u32leb(at);  // array.new_default
+  b.byte(33); b.u32leb(1);
+  b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(2);
+
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(0); b.byte(78);   // i >= count
+  b.byte(13); b.u32leb(1);
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2);               // array, index
+  b.byte(32); b.u32leb(2);                                        // address
+  b.byte(45); b.u32leb(0); b.u32leb(0);                           // i32.load8_u
+  b.byte(251); b.u32leb(14); b.u32leb(at);                        // array.set
+  b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
+  b.byte(33); b.u32leb(2);
+  b.byte(12); b.u32leb(0);
+  b.byte(11);
+  b.byte(11);
+  b.byte(32); b.u32leb(1);
+  b.byte(212);                            // ref.as_non_null
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
+}
+
 void emitMemEnsure(B funcs, B code, Env env) {
   funcs.u32leb(env.sigType("fn[i32(i32)]"));
 
