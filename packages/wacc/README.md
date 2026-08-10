@@ -182,8 +182,17 @@ Tripling the corpus was worth more than three times the coverage, because of wha
 first run: **14 legal programs this checker refused**, none of which any oracle here had ever looked
 at. Eleven were one bug — a local that aliases something const could not be *rebound*, which made
 every linked-list walk in the spec illegal, because one flag was answering both "may I write through
-this?" and "may I rebind this name?". The other three are named in `specSingle.test.ts`, as are the
-47 illegal programs still accepted.
+this?" and "may I rebind this name?". A twelfth was `match` used as an expression, which never
+narrowed its subject, so `case Circle: s.radius` looked for a field on the un-narrowed value.
+
+**`match` was the first group closed out of what the widening exposed**, and it went as one feature
+rather than eight bugs: an arm for every variant or an `else`, no variant named twice, no `else` that
+nothing reaches, no matching a nullable, no rebinding the subject an arm has narrowed, no binding that
+shadows it, and arms whose values agree. The exhaustiveness half had been blocked on knowing which
+enum a variant belongs to — the comment saying so is still in the history — and that stopped being
+true the day imported names started entering under the importer's own name for them.
+
+The two false alarms and the 39 illegal programs still accepted are named in `specSingle.test.ts`.
 
 That is a change of aim, not of method. A disagreement with the reference is now a question —
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
@@ -194,7 +203,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 257 of 304 illegal refused, 364 of 367 legal silent, the rest named |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 265 of 304 illegal refused, 365 of 367 legal silent, the rest named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |

@@ -148,6 +148,18 @@ export i32 errNoSuchExport() { return 56; }
  * needs `K`.
  */
 export i32 errUndefinedType() { return 57; }
+/** A `match` that leaves one of the enum's variants uncovered and has no `else`. */
+export i32 errMatchInexhaustive() { return 58; }
+/** Two arms of one `match` naming the same variant. */
+export i32 errDuplicateCase() { return 59; }
+/** An `else` on a `match` whose arms already cover every variant. */
+export i32 errElseUnreachable() { return 60; }
+/** An arm binding named after the subject it is matching: inside the arm the two would be one name. */
+export i32 errBindingCollision() { return 61; }
+/** A `match` on a nullable value — there is no variant for the null. */
+export i32 errMatchNullable() { return 62; }
+/** Two arms of a `match` used as an expression whose values are of unrelated types. */
+export i32 errArmTypes() { return 63; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
@@ -857,6 +869,23 @@ export struct C {
   void setType(this, string name, string ty) {
     for (i32 i = 0; i < this.nameCount; i++) {
       if (this.names[i] == name) { this.types[i] = ty; return; }
+    }
+  }
+
+  /**
+   * Set both const flags at once, for the length of a `match` arm.
+   *
+   * The subject cannot be assigned while an arm has it narrowed — writing to it would leave the
+   * narrowing describing a value that is no longer there. Both flags move together because the
+   * declared kind is what refuses an assignment, and the arm's constness is the declared kind.
+   */
+  void setConstFlags(this, string name, bool isConst, bool aliasOnly) {
+    for (i32 i = 0; i < this.nameCount; i++) {
+      if (this.names[i] == name) {
+        this.nameConsts[i] = isConst;
+        this.nameAliasOnly[i] = aliasOnly;
+        return;
+      }
     }
   }
 
@@ -2126,8 +2155,21 @@ void checkExpr(C c, Expr e) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
           c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
         }
+        checkBindingCollision(c, subject, arms[i]);
+        // **An arm of an expression match narrows too.** Only the statement form did, so
+        // `match (s) { case Circle: s.radius, ... }` looked for `radius` on the un-narrowed subject
+        // and reported a field that was there all along — the spec's own program for this clause.
+        // The same const rule applies for the same reason: the arm is describing one value.
+        string saved = armNarrowing(c, subject, arms[i]);
+        string subj = subjectName(c, subject);
+        bool wasConst = subj == "" ? false : c.isConstName(subj);
+        bool wasAlias = subj == "" ? false : c.isAliasOnlyName(subj);
+        if (subj != "" && arms[i].variantTok >= 0) { c.setConstFlags(subj, true, false); }
         if (!(arms[i].value is null)) { checkExpr(c, arms[i].value!); }
+        if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
+        restoreNarrowing(c, subject, saved);
       }
+      checkArmValueTypes(c, arms);
     }
     // `i32[](1, 2)`, `i8[](1.5)`, `E[2](fill: 5)` — every element and the fill must fit the element
     // type, which is the same question as an initialiser with the type coming from the `[]`.
@@ -4069,7 +4111,15 @@ void checkStmt(C c, Stmt s, Ty want) {
         // subject has to be a plain name for this: narrowing `f().x` would mean claiming the second
         // call returns what the first did.
         string saved = armNarrowing(c, subject, arms[i]);
+        checkBindingCollision(c, subject, arms[i]);
+        // The subject is const for the length of a narrowed arm: assigning to it would leave the
+        // narrowing describing a value that is no longer there.
+        string subj = subjectName(c, subject);
+        bool wasConst = subj == "" ? false : c.isConstName(subj);
+        bool wasAlias = subj == "" ? false : c.isAliasOnlyName(subj);
+        if (subj != "" && arms[i].variantTok >= 0) { c.setConstFlags(subj, true, false); }
         checkAll(c, arms[i].body, want);
+        if (subj != "") { c.setConstFlags(subj, wasConst, wasAlias); }
         restoreNarrowing(c, subject, saved);
       }
       c.loopDepth = c.loopDepth - 1;
@@ -4085,6 +4135,90 @@ void checkStmt(C c, Stmt s, Ty want) {
  * that was not narrowed must be left exactly as it was — and "not narrowed" happens for every arm
  * whose subject is an expression rather than a name, and for `else`.
  */
+/**
+ * The arms of an expression match all produce the one value, so their types have to agree.
+ *
+ * Compared only between arms this checker can name, and never against a literal: `case A: 0.0,
+ * case B: 1` is an integer literal in a float's slot, which is the literal rule's business and not a
+ * disagreement between arms. Two concrete types that cannot stand in for one another in either
+ * direction are the case worth reporting, and the second one is where the mistake reads.
+ */
+void checkArmValueTypes(C c, Arm[] arms) {
+  string first = "";
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].value is null) { continue; }
+    Expr v = arms[i].value!;
+    string vt = armShape(c, v);
+    if (vt == "") { continue; }
+    if (first == "") { first = vt; continue; }
+    if (vt == first) { continue; }
+    // Any mix of numbers is somebody else's rule — the literal's slot decides whether `0` belongs in
+    // an `f64`, and two arms both producing numbers are not the disagreement this is looking for.
+    if (numericShape(vt) && numericShape(first)) { continue; }
+    if (assignable(c, first, vt) || assignable(c, vt, first)) { continue; }
+    // **Both sides have to be a type this checker can vouch for.** `case Some(v): v * 3` in
+    // `packages/std` has a payload whose type comes from the enum's instantiation, and what came back
+    // was a name rather than a type — against `-1` that read as a disagreement and refused a working
+    // file. Silence on anything else is the same rule the rest of this checker keeps.
+    if (!concreteShape(vt) || !concreteShape(first)) { continue; }
+    c.report(errArmTypes(), v.line, v.col);
+  }
+}
+
+/**
+ * What an arm's value is, as a type name — a literal answers with the type it naturally has.
+ *
+ * Skipping literals outright was the first version, on the grounds that a literal takes its type
+ * from its slot. It does, but only among types that could hold it: `case Point: 0.0, else: "x"` is
+ * the spec's own example of arms that disagree, and both of its arms are literals, so skipping them
+ * skipped the case the rule exists for.
+ */
+string armShape(C c, Expr v) {
+  i32 k = litKindOf(v);
+  if (k == litInteger()) { return "i32"; }
+  if (k == litFloat()) { return "f64"; }
+  if (k == litBool()) { return "bool"; }
+  if (k == litString()) { return "string"; }
+  if (k == litNull()) { return ""; }
+  string t = typeOfExpr(c, v);
+  return t == typeNone() ? "" : t;
+}
+
+/** Integers and floats alike, which is the set this rule declines to police. */
+bool numericShape(string t) {
+  return isIntegerName(t) || t == "f32" || t == "f64";
+}
+
+/** A primitive this checker is sure of. Anything else — a struct, a generic payload — stays silent. */
+bool concreteShape(string t) {
+  return numericShape(t) || t == "bool" || t == "string";
+}
+
+/** The subject's name, when the subject is a plain name — `""` for anything else. */
+string subjectName(C c, Expr subject) {
+  match (subject.kind) {
+    case Ident(tok): { return tokenText(c, tok); }
+    else: { return ""; }
+  }
+}
+
+/**
+ * A binding may not reuse the subject's name.
+ *
+ * `case Circle(s):` where the subject is also `s` would put two meanings on one name for the length
+ * of the arm — the payload and the value it came out of — and the language refuses rather than
+ * choosing one.
+ */
+void checkBindingCollision(C c, Expr subject, Arm arm) {
+  string nm = subjectName(c, subject);
+  if (nm == "") { return; }
+  for (i32 b = 0; b < arm.bindingToks.len(); b++) {
+    if (tokenText(c, arm.bindingToks[b]) != nm) { continue; }
+    c.report(errBindingCollision(), tokenLine(c, arm.bindingToks[b]),
+             tokenCol(c, arm.bindingToks[b]));
+  }
+}
+
 string armNarrowing(C c, Expr subject, Arm arm) {
   if (arm.variantTok < 0) { return ""; }
   match (subject.kind) {
@@ -4524,6 +4658,12 @@ export void declareModule(C c, Program prog, string[] only) {
 void checkArmVariants(C c, Expr subject, Arm[] arms) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
+  // **A nullable subject has no arm for the null.** Asked before the enum question, because
+  // `Shape?` is not an enum name and the check below would bail out on it and say nothing.
+  if (withoutNull(t) != "") {
+    c.report(errMatchNullable(), subject.line, subject.col);
+    return;
+  }
   string base = genericBase(t);
   string owner = base == "" ? t : base;
   if (!c.isEnum(owner)) { return; }
@@ -4542,6 +4682,53 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     if (anywhere) { continue; }
     c.report(errNoVariant(), tokenLine(c, arms[i].variantTok - 1),
              tokenCol(c, arms[i].variantTok - 1));
+  }
+
+  // **The same variant twice.** One arm of the two can never run, and which one is not the point:
+  // the second mention is the mistake, so that is where it is reported.
+  string[] seen = string[arms.len()]();
+  i32 seenCount = 0;
+  for (i32 i = 0; i < arms.len(); i++) {
+    if (arms[i].variantTok <= 0) { continue; }
+    string vn = tokenText(c, arms[i].variantTok);
+    bool dup = false;
+    for (i32 k = 0; k < seenCount; k++) { if (seen[k] == vn) { dup = true; } }
+    if (dup) {
+      c.report(errDuplicateCase(), tokenLine(c, arms[i].variantTok - 1),
+               tokenCol(c, arms[i].variantTok - 1));
+    } else {
+      seen[seenCount] = vn;
+      seenCount = seenCount + 1;
+    }
+  }
+
+  // **Every variant, or an `else`.** Counted against the variants this enum owns rather than against
+  // every variant in the file, which is the question that needed provenance — and the comment above
+  // said that provenance was missing. It is not any more: `variantOwners` records which enum each
+  // variant belongs to, and an imported enum now enters under the importing file's name for it, so
+  // two modules' same-named variants no longer answer for each other.
+  i32 total = 0;
+  i32 covered = 0;
+  for (i32 k = 0; k < c.variantCount; k++) {
+    if (c.variantOwners[k] != owner) { continue; }
+    total = total + 1;
+    for (i32 i = 0; i < seenCount; i++) {
+      if (seen[i] == c.variantNames[k]) { covered = covered + 1; }
+    }
+  }
+  // An enum whose variants this checker cannot see at all says nothing, by the same rule that keeps
+  // it quiet about every other name it cannot resolve.
+  if (total == 0) { return; }
+
+  bool hasElse = false;
+  for (i32 i = 0; i < arms.len(); i++) { if (arms[i].variantTok < 0) { hasElse = true; } }
+
+  if (!hasElse && covered < total) {
+    c.report(errMatchInexhaustive(), subject.line, subject.col);
+  }
+  // And the other way round: once every variant is named, an `else` is a branch nothing reaches.
+  if (hasElse && covered == total) {
+    c.report(errElseUnreachable(), subject.line, subject.col);
   }
 }
 
