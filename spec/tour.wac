@@ -22,6 +22,10 @@
 //   1. No implicit conversions. Ever. Except subtype -> parent and T -> T?.
 //   2. If an operation can trap, its spelling contains `!`.
 //   3. `const` on a reference is deep, and travels with the reference.
+//
+// wac is unstable by choice. Section 17 lists what it does not have, and that
+// list gets shorter — generics, enums and `match` were all on it once. Trust
+// this file over your memory, and the compiler over this file.
 // =============================================================================
 
 // ── 1. FUNCTIONS ────────────────────────────────────────────────────────────
@@ -568,7 +572,125 @@ struct Outer {
 // do is write, call a non-const method, or get stored into a field or element
 // (either would make the object reachable as mutable).
 
-// ── 12. NULLABILITY, anyref, i31ref ─────────────────────────────────────────
+// ── 12. GENERICS ────────────────────────────────────────────────────────────
+
+// A type parameter is a name the compiler substitutes. `Cell<i32>` and
+// `Cell<string>` are two separate types with two separate copies of the code —
+// monomorphised, so there is no boxing, no dispatch and no shared representation.
+struct Cell<T> {
+  T value;
+
+  T get(const this) { return this.value; }
+  void set(this, T v) { this.value = v; }
+}
+
+// More than one parameter, in declaration order.
+struct Pair<A, B> {
+  A first;
+  B second;
+}
+
+export i32 cells() {
+  Cell<i32> n = Cell<i32>();
+  n.set(7);
+  Cell<string> s = Cell<string>();
+  s.set("wac");
+  Pair<i32, string> p = Pair<i32, string>();
+  p.first = 3;
+  p.second = "abc";
+  return n.get() + s.get().len() + p.first + p.second.len();   // -> 16
+}
+
+// There are NO CONSTRAINTS. A type parameter stands for any type, and a method
+// body that would not compile for some `T` is an error at the instantiation that
+// reaches it, not at the declaration. The declaration is not checked on its own.
+
+// Functions are generic too, and their TYPE ARGUMENTS ARE INFERRED — never
+// written. The argument types decide, and there is no spelling that overrides
+// them.
+T pick<T>(T a, T b, bool takeFirst) { return takeFirst ? a : b; }
+
+export i32 inference() {
+  return pick(3, 9, true) + pick(1, 2, false);     // -> 5
+}
+// ERROR: pick<i32>(3, 9, true)   // no such syntax: angle brackets are type
+//                                // syntax only, never call syntax
+
+// Angle brackets appear in TYPE POSITION only. `Cell<i32>` names a type;
+// `a < b` is a comparison, and the parser never has to guess between them.
+
+// Two instantiations are the same type when their arguments are the same types,
+// whatever the spelling that produced them, and across files. Identity is by
+// type, not by name.
+
+// ── 13. ENUMS AND match ─────────────────────────────────────────────────────
+
+// An enum is a fixed set of variants, each optionally carrying named payload
+// fields. It compiles to the struct hierarchy you would otherwise write by hand:
+// a base struct, a subtype per variant, and a tag the compiler maintains.
+enum Step {
+  Stop,
+  Go(i32 n),
+  Turn(f64 degrees),
+}
+
+// A payload-less variant is a VALUE, not a call: `Step.Stop`, never `Step.Stop()`.
+// Construction is qualified by the enum, like a static method.
+
+// As a STATEMENT, arms are `case Pattern:` followed by statements — the same
+// shape as `switch`, same implicit break, no fallthrough. Bindings are
+// positional, take their types from the declaration, and are scoped to the arm.
+export i32 advance(Step s) {
+  match (s) {
+    case Stop: return 0;
+    case Go(n): return n;
+    case Turn(d): return d as~ i32;
+  }
+}
+
+// As an EXPRESSION, arms are separated by commas and each is a value.
+// Omit the parentheses to ignore every payload; name a binding `_` to ignore one.
+export string describe(Step s) {
+  return match (s) {
+    case Stop: "stop",
+    case Go(_): "go",
+    case Turn: "turn"
+  };
+}
+// ERROR: match (s) { case Stop: 0, case Go(n): n }
+//        // match does not cover 'Turn' — exhaustiveness is checked, and there
+//        // is no `default` to paper over a variant added later
+
+// Each variant is also a TYPE, and a subtype of the enum — which is what makes
+// narrowing work and why a variant name is a file-scope name like a struct's.
+// Two enums in one file therefore cannot share a variant name.
+
+// Enums take type parameters, which is what `Option<T>` and `Result<T, E>` are.
+// A generic enum may carry methods, and `match` inside one sees `this`.
+enum Maybe<T> {
+  Just(T v),
+  Absent
+
+  T orElse(const this, T fallback) {
+    return match (this) { case Just(v): v, case Absent: fallback };
+  }
+}
+
+export i32 maybes() {
+  Maybe<i32> a = Maybe.Just(4);       // type arguments come from the expected
+  Maybe<i32> b = Maybe.Absent;        // type; there is no `Maybe<i32>.Just(4)`
+  return a.orElse(0) + b.orElse(100);  // -> 104
+}
+// A generic enum's variants have NO BARE NAME — `Maybe<i32>` and `Maybe<f64>`
+// would both claim `Just` and neither has a better claim. So `Just j = a;` and
+// `a is Just` are errors, while `match` is unaffected: an arm resolves its
+// variant through the subject's enum rather than through the file's scope.
+
+// An enum HAS NO DEFAULT VALUE — there is no default variant — so `Step[2]()`
+// and a struct holding a bare `Step` cannot be default-constructed. Write the
+// array as a literal, or make the field nullable.
+
+// ── 14. NULLABILITY, anyref, i31ref ─────────────────────────────────────────
 
 // References are NON-NULL by default. `T?` is the nullable form. `T` widens to
 // `T?` implicitly; the reverse needs an explicit unwrap.
@@ -616,7 +738,7 @@ export i32 anyrefs() {
   return total;                      // -> 49
 }
 
-// ── 13. FUNCTION REFERENCES ─────────────────────────────────────────────────
+// ── 15. FUNCTION REFERENCES ─────────────────────────────────────────────────
 
 // `fn[Ret(Params)]` — return type first, mirroring declarations. Maps to wasm's
 // typed function refs: `ref.func` to obtain, `call_ref` to invoke.
@@ -670,7 +792,7 @@ export i32 methodRefs() {
   return c.count;                            // -> 3
 }
 
-// ── 14. IMPORTS AND NAMING  (syntax only — needs more than one file) ────────
+// ── 16. IMPORTS AND NAMING  (syntax only — needs more than one file) ────────
 
 //   import { distance, Point } from "./geometry.wac";
 //   import { Point as Point3d } from "./spatial.wac";     // rename with `as`
@@ -713,15 +835,13 @@ export i32 shadowing() {
 }
 // Convention: PascalCase structs, camelCase functions, methods and variables.
 
-// ── 15. WHAT WAC DOES NOT HAVE ──────────────────────────────────────────────
+// ── 17. WHAT WAC DOES NOT HAVE ──────────────────────────────────────────────
 
 // Read this before you write wac you'd expect to work. None of these exist:
 //
-//   generics                no struct List<T>, no T[] map<T,U>(...)
 //   closures                function refs never capture; pass state explicitly
 //   virtual dispatch        `override` is checked, then dispatch is static
 //   interfaces / traits     subtyping is single-parent struct extension only
-//   enums, pattern matching, match expressions
 //   linear memory           no pointers, no mem[addr], no data segments
 //   module-level variables  constants exist; mutable globals do not
 //   host function imports   nothing is imported from JS; wasm imports are empty
@@ -730,19 +850,25 @@ export i32 shadowing() {
 //   operator overloading, exceptions, threads, async, varargs, default
 //   arguments, named arguments at call sites, multiple returns, tuples
 //
+// `switch` takes i32 or u32 only — not strings, not enums. Use `match` for an
+// enum, and an if-chain for a string.
+//
 // Consequences worth internalising:
 //   - No globals and no closures means every piece of state is a parameter, a
 //     local, or a field reachable from one.
-//   - No generics means container code is written per element type, or written
-//     against anyref plus `is`/`as!`.
 //   - `void` functions taking a struct or array mutate through the reference —
 //     that is the idiomatic way to return "several" things.
+//   - No host imports means a module that takes no `fn[...]` parameter has an
+//     empty wasm import section and cannot call out at all. That is the whole
+//     sandbox: there is no ambient authority to opt out of.
 //
-// Also absent from the implementation, though the spec/README mention them:
-// there is no `wacx` CLI binary in the repo, and `switch` takes only i32. The
-// compiler is a library — drive `wacCompile(files, entry)` from TypeScript.
+// **This language is unstable on purpose.** It gains features when something
+// written in it needs them, and the list above shrinks — generics, enums and
+// `match` were all on it. If a section of this file disagrees with the
+// compiler, the compiler is right and this file is a bug: fix it here rather
+// than working around it.
 
-// ── 16. SELF TEST — `selfTest()` returns true iff every claim above holds. ──
+// ── 18. SELF TEST — `selfTest()` returns true iff every claim above holds. ──
 
 export bool selfTest() {
   return double(21) == 42
@@ -798,5 +924,10 @@ export bool selfTest() {
       && funcrefs() == 26
       && funcrefUses() == 30 + 10 + 4 + 1
       && methodRefs() == 3
-      && shadowing() == 1;
+      && shadowing() == 1
+      && cells() == 16 && inference() == 5
+      && advance(Step.Go(6)) == 6 && advance(Step.Stop) == 0
+      && advance(Step.Turn(90.0)) == 90
+      && describe(Step.Turn(1.0)) == "turn" && describe(Step.Go(2)) == "go"
+      && maybes() == 104;
 }
