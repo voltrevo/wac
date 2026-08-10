@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0092](open/0092-a-bare-generic-constructor-takes-no-type-arguments-from-its-slot.md) | a bare generic constructor takes no type arguments from its slot | missing feature | not implemented |
 | [0091](open/0091-a-wacc-built-http-server-truncates-its-responses.md) | a wacc-built http server truncates its responses | bug | wrong answer |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
 | [0089](open/0089-wacc-emits-no-transfer-buffer-so-nothing-can-bind-to-it.md) | wacc emits no transfer buffer, so nothing that passes bytes can bind to it | missing feature | not implemented |
@@ -37,7 +38,7 @@ has been fixed and why.
 
 ## Closed
 
-91 issues, 62 closed.
+92 issues, 62 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

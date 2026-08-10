@@ -220,7 +220,16 @@ its four. Both paths run the same fixed point now, `corpusEmit` checks the modul
 `export`s the source declares, and that count is **0 of 290**.
 
 The 52 partials name real work rather than a mystery: 16× a method on `Map<string,i32>`, 5× a call to
-`bootstrap`, 4× a call to `attachMicrodescriptors`. `issues/lang/0090` has the detail. The three that are left import files the corpus does not contain, and no compiler
+`bootstrap`, 4× a call to `attachMicrodescriptors`. `issues/lang/0090` has the detail.
+
+**The head of that distribution is one missing rule**, `issues/lang/0092`: `Box<i32> b = Box(3)` is
+declined where `Box<i32> b = Box<i32>(3)` emits. A bare generic constructor takes its type arguments
+from the slot it goes into — which the language already does for `Vec.create()` and `Option.Some(3)`,
+written down in `templateStatic` as *"the instantiation is not in the call — it is in the slot the
+answer goes into"*. `Map.set` declines because it contains `MapEntry(k, v)`, and that is 19 of the 52
+between it and the direct calls. The reason it is not a one-branch fix is structural: the walk that
+decides emittability drops the expected type on the way down, so by the time a bare name is looked
+up, the slot is gone. The three that are left import files the corpus does not contain, and no compiler
 change makes those exist. What it emits is checked by *running* it: `corpusEmit`, a generated sweep
 of 4,460 programs whose answers must agree with the reference's, the spec suite's own 322 answers,
 and `linkEmit` for what linking can get wrong.
