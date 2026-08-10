@@ -30,13 +30,18 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 47 programs the spec calls illegal that this checker still accepts.
+ * The 39 programs the spec calls illegal that this checker still accepts. It was 47.
  *
- * Named rather than counted, and they are a handful of rules rather than 47 bugs. The largest groups:
- * a literal that does not fit its context (`§wac-litctx-nofit`), the six `§wac-arr-bulk` diagnostics
- * that say *which* argument is wrong, `match` exhaustiveness and its narrowing rules, generic
- * inference failures, `§wac-packed-nullable` in the positions the packed type is refused in, and
- * module-level `const` initialisers that are not constant.
+ * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
+ * groups: a literal that does not fit its context (`§wac-litctx-nofit`), the six `§wac-arr-bulk`
+ * diagnostics that say *which* argument is wrong, generic inference failures,
+ * `§wac-packed-nullable` in the positions the packed type is refused in, and module-level `const`
+ * initialisers that are not constant.
+ *
+ * The eight that went were `match`, and they went together because they are one feature: covering
+ * every variant, not naming one twice, not writing an `else` that nothing reaches, not matching a
+ * nullable, not rebinding the subject an arm has narrowed, not shadowing it with a binding, and arms
+ * whose values disagree.
  *
  * None of these were visible before the corpus was recorded rather than read: the text extractor
  * found 101 of the 304 illegal programs the suite runs, and every one of these lives in the other
@@ -53,12 +58,6 @@ const KNOWN_MISSES = new Set<string>([
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#2",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#3",
   "[§wac-litctx-nofit-k3mq8wl] a literal that does not fit is rejected#4",
-  "[§enum-match-inexhaustive] a missing variant is a compile error#0",
-  "[§enum-match-else-unreachable] a covering match plus else is an error#0",
-  "[§enum-match-duplicate] a repeated variant is an error#0",
-  "[§enum-narrow-const] the narrowed subject cannot be assigned#0",
-  "[§enum-narrow-collision] a binding cannot reuse the subject's name#0",
-  "[§enum-match-nullable] a nullable subject must be unwrapped#0",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#1",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#2",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#4",
@@ -75,8 +74,6 @@ const KNOWN_MISSES = new Set<string>([
   "[§wac-generic-template-check-2wkq7nm] a mistake independent of T is caught at the definition#1",
   "[§wac-generic-struct-9tkq4wm] the errors a generic can raise#1",
   "[§wac-narrow-if-2mkq8vp] what does not narrow, and the const rule#1",
-  "[§enum-match-expr-4wnq7bk] an expression match must be total and consistent#0",
-  "[§enum-match-expr-4wnq7bk] an expression match must be total and consistent#1",
   "[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected#0",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#5",
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#6",
@@ -93,17 +90,16 @@ const KNOWN_MISSES = new Set<string>([
 ]);
 
 /**
- * The three legal programs this checker refuses — the number that matters most here, and it was
- * fourteen an hour ago.
+ * The two legal programs this checker refuses. It was fourteen when the corpus was first recorded.
  *
  * Eleven were one bug: a local aliasing something const could not be *rebound*, so every linked-list
- * walk in the spec was illegal. The three left are three features, not one: a generic enum's
- * constructor is not callable, a `match` used as an expression does not narrow its subject, and the
- * parser does not accept `trap` with a message.
+ * walk in the spec was illegal. A twelfth was `match` used as an expression not narrowing its
+ * subject, which is fixed here — only the statement form narrowed, so `case Circle: s.radius` looked
+ * for a field on the un-narrowed subject. The two left are two features: a generic enum's
+ * constructor is not callable, and the parser does not accept `trap` with a message.
  */
 const KNOWN_FALSE_ALARMS = new Set<string>([
   "[§wac-generic-enum-7dkq2mv] a generic enum works, with methods and several arguments#0",
-  "[§enum-match-expr-4wnq7bk] match can be an expression#0",
   "[§wac-trap-message-4nqk8wm] a trap can say why#0",
 ]);
 
