@@ -1,0 +1,10 @@
+// expect: refused
+// why: a file that merely imports a name does not pass it on
+// from: issues/lang/0090's neighbourhood — the spec clause had no oracle at all until 2026-08-09
+// ---- a.wac ----
+export i32 foo() { return 42; }
+// ---- b.wac ----
+import { foo } from "./a.wac";
+// ---- main.wac ----
+import { foo } from "./b.wac";
+export i32 test() { return foo(); }

@@ -1,0 +1,7 @@
+// expect: answers f = 5
+// why: the expression form narrows exactly as the statement form does
+enum Shape { Point, Circle(i32 radius) }
+export i32 f() {
+  Shape s = Shape.Circle(5);
+  return match (s) { case Point: 0, case Circle: s.radius };
+}

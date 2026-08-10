@@ -1,0 +1,5 @@
+// expect: refused
+// why: a packed type has no room for the absent case
+// from: specSingle's named misses — wacc accepts this today
+struct Holder { u8? b; }
+export i32 f() { return 0; }

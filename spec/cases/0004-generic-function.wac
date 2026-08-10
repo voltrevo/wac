@@ -1,0 +1,5 @@
+// expect: answers f = 4
+// why: a generic function takes its instantiation from the arguments, not from a written list
+// from: issues/lang/0092 — the control that showed 0092 was about constructors, not generics
+T id<T>(T a) { return a; }
+export i32 f() { return id(4); }

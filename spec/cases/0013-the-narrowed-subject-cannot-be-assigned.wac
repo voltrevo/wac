@@ -1,0 +1,9 @@
+// expect: refused
+// why: writing to the subject would leave the arm's narrowing describing a value that has gone
+enum Shape { Point, Circle(f64 radius) }
+export f64 f(Shape s) {
+  match (s) {
+    case Circle: { s = Shape.Point; return 0.0; }
+    else:        return 0.0;
+  }
+}

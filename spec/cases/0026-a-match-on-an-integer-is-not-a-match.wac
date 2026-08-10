@@ -1,0 +1,9 @@
+// expect: refused
+// why: match is for enums; a switch is what an integer takes
+// from: the enum rules, from the side that has no variants at all
+export i32 f(i32 x) {
+  match (x) {
+    case 1: return 1;
+    else:   return 0;
+  }
+}

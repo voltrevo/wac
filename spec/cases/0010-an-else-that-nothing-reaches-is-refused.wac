@@ -1,0 +1,11 @@
+// expect: refused
+// why: once every variant is named, the else is a branch nothing can take
+enum Shape { Point, Circle(f64 radius), Rect(f64 width, f64 height) }
+export f64 f(Shape s) {
+  match (s) {
+    case Point:      return 0.0;
+    case Circle(r):  return r;
+    case Rect(w, h): return w;
+    else:            return 0.0;
+  }
+}

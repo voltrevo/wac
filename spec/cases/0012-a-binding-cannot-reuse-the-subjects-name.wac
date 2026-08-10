@@ -1,0 +1,9 @@
+// expect: refused
+// why: inside the arm the payload and the value it came from would be one name
+enum Shape { Point, Circle(f64 radius) }
+export f64 f(Shape s) {
+  match (s) {
+    case Circle(s): return 0.0;
+    else:           return 0.0;
+  }
+}

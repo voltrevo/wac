@@ -1,0 +1,13 @@
+// expect: answers test = 13
+// why: an imported name enters under the name the importing file gave it
+// from: the alias half of cross-file identity — one Dup must not answer for the other
+// ---- a.wac ----
+export struct Dup { i32 x; }
+export Dup fromA() { return Dup(1); }
+// ---- b.wac ----
+export struct Dup { i32 p; i32 q; }
+export Dup fromB() { return Dup(1, 2); }
+// ---- main.wac ----
+import { Dup, fromA } from "./a.wac";
+import { Dup as DupB, fromB } from "./b.wac";
+export i32 test() { Dup a = fromA(); DupB b = fromB(); return a.x + b.p * 10 + b.q; }

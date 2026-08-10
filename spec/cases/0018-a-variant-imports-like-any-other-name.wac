@@ -1,0 +1,8 @@
+// expect: refused
+// why: `is Circle` needs Circle in scope — a variant is a name like the enum's own
+// ---- a.wac ----
+export enum A { Circle(i32 n), Sq }
+export A mkA() { return A.Circle(5); }
+// ---- main.wac ----
+import { mkA } from "./a.wac";
+export i32 f() { return mkA() is Circle ? 1 : 0; }

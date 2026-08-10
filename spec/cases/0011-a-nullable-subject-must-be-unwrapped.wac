@@ -1,0 +1,9 @@
+// expect: refused
+// why: there is no arm for the null, so the subject has to be non-null first
+enum Shape { Point, Circle(f64 radius) }
+export f64 f(Shape? s) {
+  match (s) {
+    case Circle: return 0.0;
+    else:        return 0.0;
+  }
+}

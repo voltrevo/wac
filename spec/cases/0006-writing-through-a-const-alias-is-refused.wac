@@ -1,0 +1,7 @@
+// expect: refused
+// why: a local that aliases a const receiver cannot launder the constness away
+// from: the same rule as 0005, from the other side
+struct Counter { i32 n;
+  void bump(const this) { Counter c = this; c.n = 5; }
+}
+export i32 f() { return 0; }

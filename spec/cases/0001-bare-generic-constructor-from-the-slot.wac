@@ -1,0 +1,5 @@
+// expect: answers f = 3
+// why: a bare generic constructor takes its type arguments from the slot it goes into
+// from: issues/lang/0092
+struct Box<T> { T v; }
+export i32 f() { Box<i32> b = Box(3); return b.v; }

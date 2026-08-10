@@ -1,0 +1,4 @@
+// expect: refused
+// why: a literal takes its type from its slot, but only among the types that could hold it
+// from: specSingle's named misses — wacc accepts this today
+export i32 f() { return 4294967296; }
