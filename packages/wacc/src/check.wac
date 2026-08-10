@@ -134,6 +134,8 @@ export i32 errUnknownModule() { return 52; }
 export i32 errInfiniteGeneric() { return 53; }
 /** An enum method whose name is one of the enum's own variants: `E.A` would mean both. */
 export i32 errVariantMethodClash() { return 54; }
+/** Two imports of the same name, or an import colliding with a name this file declares. */
+export i32 errDuplicateImport() { return 55; }
 
 /** A cast between two types that are already the same. */
 export i32 errRedundantCast() { return 46; }
@@ -4008,6 +4010,63 @@ void restoreNarrowing(C c, Expr subject, string was) {
  * without being it. The spec caps nesting at 24 rather than reasoning about shape; this rejects the
  * shape, which is narrower, and a program it accepts is one the cap would have caught anyway.
  */
+/**
+ * The two collision rules `spec/spec/naming.md` states about imports.
+ *
+ * *"Two imports with the same name is a compile error"* (`§wac-dup-import-vqn4100`), and *"an import
+ * colliding with a local name is a compile error"* (`§wac-dup-import-local-4fadlvg`). Both are
+ * decidable from the importing file alone — its import list and its own declarations — which is why
+ * they are here rather than waiting on anything that reads the other files.
+ *
+ * Reported at the second mention, which is the one that could have been written differently: the
+ * spec's own remedy is `import { foo as bar }`, and it is the later import that takes the rename.
+ */
+void checkImportCollisions(C c, Program prog) {
+  string[] seen = string[256]();
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Import(pathTok, prefixTok, items): {
+        for (i32 i = 0; i < items.len(); i++) {
+          string alias = tokenText(c, items[i].aliasTok);
+          bool clash = false;
+          for (i32 k = 0; k < n; k++) {
+            if (seen[k] == alias) { clash = true; }
+          }
+          if (!clash) {
+            for (i32 e = 0; e < prog.decls.len(); e++) {
+              if (declaredNameOf(c, prog.decls[e]) == alias) { clash = true; }
+            }
+          }
+          if (clash) {
+            c.report(errDuplicateImport(), tokenLine(c, items[i].aliasTok),
+                     tokenCol(c, items[i].aliasTok));
+          } else if (n < seen.len()) {
+            seen[n] = alias;
+            n = n + 1;
+          }
+        }
+      }
+      else: { }
+    }
+  }
+}
+
+/** The name a declaration introduces, or `""` — an import introduces one too, and is not one. */
+string declaredNameOf(C c, Decl d) {
+  match (d.kind) {
+    case Func(nameTok, returnType, params, body, exported, typeParams): {
+      return tokenText(c, nameTok);
+    }
+    case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+      return tokenText(c, nameTok);
+    }
+    case EnumDecl(nameTok, variants, exported, methods, typeParams): { return tokenText(c, nameTok); }
+    case ConstDecl(nameTok, type, init, exported): { return tokenText(c, nameTok); }
+    else: { return ""; }
+  }
+}
+
 void checkDeclarationRules(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
@@ -4369,6 +4428,7 @@ bool wantedName(string[] only, string name) {
 export void checkModule(C c, Program prog) {
   checkDuplicates(c, prog);
   checkDeclarationRules(c, prog);
+  checkImportCollisions(c, prog);
   // Imported names, which this single-file slice cannot resolve but must not call undefined. What is
   // imported is in scope for the whole file, so these sit with the module-level constants.
   for (i32 d = 0; d < prog.decls.len(); d++) {
