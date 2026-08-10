@@ -198,13 +198,13 @@ export i32 errPackedNullable() { return 33; }
 /** A module-level `const` whose value cannot be computed at compile time. */
 export i32 errNotCompileTime() { return 34; }
 /** Two declarations of one name at file scope. */
-export i32 errDuplicateName() { return 35; }
+export i32 errDuplicateName() { return 64; }
 /** Two fields, two methods, or a field and a method of one name in one struct. */
-export i32 errDuplicateMember() { return 36; }
+export i32 errDuplicateMember() { return 65; }
 /** A character literal holding none or more than one character. */
-export i32 errCharLiteral() { return 37; }
+export i32 errCharLiteral() { return 66; }
 /** A `switch` with two `default` clauses. */
-export i32 errTwoDefaults() { return 38; }
+export i32 errTwoDefaults() { return 67; }
 
 /**
  * How many bytes the first character of `s` takes, read from its lead byte.
