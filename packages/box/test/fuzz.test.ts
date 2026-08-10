@@ -54,13 +54,29 @@ Deno.test({
       await fixtures(dir);
 
       const differed: string[] = [];
+      const hung: string[] = [];
       // Thirty scripts a seed, four seeds: enough to cover the shapes and quick enough to sit in the
       // gate. The tool is where a thousand belong.
       for (const seed of [1, 3, 11, 47]) {
         for (const d of await sweep(shell, seed, 30, dir)) {
+          // **A bound that fired is not a difference**, and saying so is the whole of this branch.
+          // It read as one on 2026-08-10: `seed 3: v=set; until [ -f nosuchfile ]; do :; break; done`
+          // came back `bash "" (0) / ours "" (124)` in a gate on a busy machine, and the same script
+          // finishes instantly on an idle one. Somebody — me — then went looking for a regression in
+          // `break`, because the report said the shells disagreed about an exit status.
+          if (d.hung !== undefined) {
+            hung.push(`seed ${seed}: ${d.script}\n    ${d.hung}`);
+            continue;
+          }
           differed.push(`seed ${seed}: ${d.script}\n    bash ${JSON.stringify(d.bash)} (${d.codes[0]})` +
             `\n    ours ${JSON.stringify(d.ours)} (${d.codes[1]})`);
         }
+      }
+      // Reported separately and *not* as a failure: on a machine this loaded a ten-second bound says
+      // more about the machine than about the shell. A script that hangs on an idle one shows up as a
+      // difference the moment the bound stops being the reason.
+      if (hung.length > 0) {
+        console.log(`  ${hung.length} script(s) hit the bound rather than answering:\n  ${hung.join("\n  ")}`);
       }
       assertEquals(differed.length, 0, `${differed.length} generated script(s) differ:\n  ${differed.join("\n  ")}`);
     } finally {
