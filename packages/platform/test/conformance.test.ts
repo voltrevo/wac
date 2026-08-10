@@ -228,6 +228,32 @@ async function declaredFields(struct: string): Promise<string[]> {
   return [...body[1].matchAll(/^\s*fn\[.*\]\s+(\w+);\s*$/gm)].map((m) => m[1]);
 }
 
+Deno.test("the README's capability table lists every capability there is", async () => {
+  // The table in `packages/platform/README.md` is the first thing a person reads to find out what a
+  // program may ask for, and it is the kind of list that goes quietly short: three capabilities had
+  // been added to `platform.wac` without it — `Core.askInterrupt`, `Cli.spawnSelf` and `Page.setStyle`
+  // — each by a different piece of work, none of which was looking at a README.
+  //
+  // `tools/docSignatures.test.ts` checks that every name a README *quotes* exists. This is the other
+  // direction, which nothing had: that every name that exists is quoted. A reader cannot tell a
+  // capability that is missing from the table from one that does not exist.
+  const table = await (async () => {
+    const src = await Deno.readTextFile("packages/platform/README.md");
+    const from = src.indexOf("| | capability | grant |");
+    if (from < 0) throw new Error("the capability table is gone from the README");
+    return src.slice(from, src.indexOf("\n\n", from));
+  })();
+  for (const struct of ["Core", "Cli", "Page"]) {
+    const declared = await declaredFields(struct);
+    const missing = declared.filter((f) => !table.includes(`\`${f}\``));
+    assertEquals(
+      missing.join(" "),
+      "",
+      `${struct}: declared in platform.wac and absent from the README's table`,
+    );
+  }
+});
+
 Deno.test("every capability the language declares, the host with no JavaScript supplies", async () => {
   // design/0001's aim is that the same programs run on a bootable kernel-and-wasmtime stack *and*
   // without it. That makes "is anything in the JavaScript hosts load-bearing that the wasm side
