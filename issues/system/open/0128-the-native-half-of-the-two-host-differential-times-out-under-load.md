@@ -41,3 +41,40 @@ question worth answering first is whether the native run *finished* and was kill
 
 Related: **0036** (a hung test, and how the gate reports one), **0106** and **0107** (real races that
 only a busy shared machine schedules).
+
+## Answered — 2026-08-10
+
+**Five cores, load average 9.5.** `/proc/loadavg` read `9.53 12.82 16.59` on a five-core box with
+several agents running suites at once, and the two-host tests run both halves *synchronously* inside
+a `--parallel` suite with a **ten-second** bound on scripts that take under one second idle. Three
+times oversubscribed is enough.
+
+Ruled out, in this order, because each was cheaper than the next:
+
+- **The epoch check** (0123). Measured at about 10% with two binaries alternated run by run. Not
+  twenty seconds.
+- **Concurrency in the native runtime.** 48 native runs at once, 24 at a time, both with the epoch
+  flag and without: 0 wrong out of 48 each way.
+- **The change under test.** The first gate that failed this way was on a commit that changed one
+  markdown file.
+
+## What changed
+
+`harness/bounded.ts`, and the four two-host differentials use it: `native_shell`, `native_hostfs`,
+`native_examples` and `arrival`. Two things:
+
+1. **A bound that fired is reported as a bound.** `timeout` answers 124, which no program chose, so a
+   run that never finished was printed as a host that disagreed — `native "" (124)` — and read as a
+   conformance failure. `hangReport` says which side did not finish and in how long, and the
+   comparison is skipped rather than made against nothing.
+2. **The bounds are generous.** 60s rather than 10s or 20s, following what `harness/deadline.ts`
+   already says: "the job is converting *infinite* into *finite*, not policing latency". A bound
+   exists to turn a hang into a readable failure; every second it spends waiting for a loaded machine
+   costs nothing when nothing is hanging.
+
+Left open deliberately: **whether anything actually hangs.** The evidence says the bound fired on a
+busy machine, and a 60s bound will say so much less often — but if it fires again, the message will
+now name it as a hang rather than as a difference, which is the thing that made this take three
+runs to understand. Nine other tests in the repository still have their own copy of the bounded-run
+block; they compare against fixed expectations rather than against another host, so a fired bound
+there reads as an empty answer rather than as a disagreement.

@@ -37,6 +37,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -61,18 +62,8 @@ globalThis.addEventListener("unload", () => {
   }
 });
 
-type Run = { code: number; out: string; err: string };
-
-function session(cmd: string, extra: string[], image: string, script: string): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, ...extra, image, "-c", script],
-    cwd: tmp,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+function session(cmd: string, extra: string[], image: string, script: string): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, [...extra, image, "-c", script], { cwd: tmp });
 }
 
 /** The native binary, built if cargo is here, or null with the reason said out loud. */
@@ -162,6 +153,8 @@ Deno.test("a session that changes nothing writes the same bytes on either host",
   await Deno.copyFile(`${tmp}/${start}`, `${tmp}/rs.wacimg`);
   const a = session(deno, [], "js.wacimg", "true");
   const b = session(native, [manifest], "rs.wacimg", "true");
+  const stuck = hangReport("the session that changes nothing", [{ name: "one host", run: a }, { name: "the other", run: b }]);
+  if (stuck !== null) throw new Error(stuck);
   assertEquals(a.code, 0, a.err);
   assertEquals(b.code, 0, b.err);
 

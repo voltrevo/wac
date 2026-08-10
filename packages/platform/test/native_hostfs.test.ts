@@ -29,6 +29,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
+import { type Bounded, bounded, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -70,24 +71,15 @@ function fixture(): void {
   Deno.symlinkSync("nosuch", `${tmp}/tree/dangling`);
 }
 
-type Run = { code: number; out: string; err: string };
-
-function runIt(cmd: string, args: string[], cwd: string = tmp): Run {
-  const r = new Deno.Command("timeout", {
-    args: ["20", cmd, ...args],
+function runIt(cmd: string, args: string[], cwd: string = tmp): Bounded {
+  return bounded(DEFAULT_SECONDS, cmd, args, {
     cwd,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: tmp },
-    clearEnv: true,
-  }).outputSync();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+  });
 }
 
 /** The real tools, through bash, in the same directory the shells are told to change to. */
-function gnu(script: string): Run {
+function gnu(script: string): Bounded {
   return runIt("bash", ["-c", `cd tree; ${script}`]);
 }
 
@@ -192,6 +184,9 @@ Deno.test("wacsh over the real filesystem agrees with GNU on both hosts", async 
     const want = gnu(script);
     fixture();
     const js = runIt(deno, ["-c", `cd tree; ${script}`]);
+    // A bound that fired is not an answer — see `harness/bounded.ts` and issue 0128.
+    const stuck = hangReport(script, [{ name: "bash", run: want }, { name: "deno", run: js }]);
+    if (stuck !== null) throw new Error(stuck);
     assertEquals(js.out, want.out, `deno: ${script}`);
     // **And what it said when it failed.** Only stdout was compared against GNU here, with the two
     // hosts' stderr compared against each other below — so `ls nosuch`, `cat nosuch` and `wc -l nosuch`
@@ -204,6 +199,8 @@ Deno.test("wacsh over the real filesystem agrees with GNU on both hosts", async 
     if (native === null) continue;
     fixture();
     const rs = runIt(native, [manifest, "-c", `cd tree; ${script}`]);
+    const stuckNative = hangReport(script, [{ name: "native", run: rs }]);
+    if (stuckNative !== null) throw new Error(stuckNative);
     assertEquals(rs.out, want.out, `native: ${script}`);
     assertEquals(rs.err, js.err, `native stderr: ${script}`);
     assertEquals(rs.code, js.code, `native status: ${script}`);

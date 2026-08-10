@@ -28,6 +28,7 @@
 
 import { buildApp } from "../build.ts";
 import { buildNative } from "../native.ts";
+import { type Bounded, boundedInput, DEFAULT_SECONDS, hangReport } from "../../../harness/bounded.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy". wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 
@@ -51,22 +52,8 @@ globalThis.addEventListener("unload", () => {
   }
 });
 
-type Run = { code: number; out: string; err: string };
-
-async function run(cmd: string, args: string[], stdin: string, where: string): Promise<Run> {
-  const child = new Deno.Command("timeout", {
-    args: ["20", cmd, ...args],
-    cwd: where,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const w = child.stdin.getWriter();
-  await w.write(new TextEncoder().encode(stdin));
-  await w.close();
-  const r = await child.output();
-  const d = new TextDecoder();
-  return { code: r.code, out: d.decode(r.stdout), err: d.decode(r.stderr) };
+async function run(cmd: string, args: string[], stdin: string, where: string): Promise<Bounded> {
+  return await boundedInput(DEFAULT_SECONDS, cmd, args, stdin, { cwd: where });
 }
 
 async function nativeBinary(): Promise<string | null> {
@@ -185,6 +172,8 @@ Deno.test("the capability examples answer the same on both hosts", async () => {
     }
     assertEquals(hide(rs.out), hide(js.out), `${c.name}: stdout`);
     assertEquals(hide(rs.err), hide(js.err), `${c.name}: stderr`);
+    const stuck = hangReport(c.name, [{ name: "deno", run: js }, { name: "native", run: rs }]);
+    if (stuck !== null) throw new Error(stuck);
     assertEquals(rs.code, js.code, `${c.name}: status`);
   }
 });
