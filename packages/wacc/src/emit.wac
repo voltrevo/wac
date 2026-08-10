@@ -269,8 +269,8 @@ string nameKeyOf(Env env, u8[] src, Lexed lexed, i32 tok) {
   return env.keyAt(tokenTextOf(src, lexed, tok), tokenLine(lexed, tok));
 }
 
-/** A non-negative number as text, for building a key no source can spell. */
-string numText(i32 n) {
+/** A non-negative number as text, for building a key no source can spell — and for a diagnostic. */
+export string numText(i32 n) {
   if (n == 0) { return "0"; }
   string out = "";
   i32 v = n;

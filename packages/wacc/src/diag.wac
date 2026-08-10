@@ -1,0 +1,99 @@
+// What each error code says, in English.
+//
+// This is the first thing in the package to *consume* a code rather than count one, and writing it
+// found two things immediately. The codes were not unique — four of them named two different errors
+// each, which no position-comparing oracle could ever have noticed. And `report` carries a code and a
+// position and nothing else, so none of these messages can say `expected i32, found f64`: the
+// operands are not there to say it with. `spec/spec/errors.md` wants `annotation` and `hint` fields
+// too, and those need a diagnostic that carries its operands, which is the next thing to build.
+//
+// So what follows is the rule that was broken, phrased as the reference phrases it where the spec
+// quotes the wording, and plainly where it does not. It is deliberately the *rule* and never a guess
+// at the values involved — a message that invents `expected i32` when it does not know is worse than
+// one that omits it.
+
+/** The parse-phase codes, which are a separate space from the checker's — `perr*` in `parse.wac`. */
+export string parseMessage(i32 code) {
+  if (code == 20) { return "expected a different token here"; }
+  if (code == 21) { return "expected a type"; }
+  if (code == 22) { return "expected an expression"; }
+  if (code == 23) { return "this cannot be assigned to"; }
+  if (code == 24) { return "this cannot appear at the top level of a file"; }
+  if (code == 25) { return "expected a field name"; }
+  if (code == 26) { return "expected a method name"; }
+  if (code == 27) { return "expected a brace after the struct name"; }
+  if (code == 28) { return "a function type cannot be used as an array element type"; }
+  return "the parser refused this";
+}
+
+/** The check-phase codes — `err*` in `check.wac`. */
+export string checkMessage(i32 code) {
+  if (code == 1) { return "return type does not match the function's"; }
+  if (code == 2) { return "not every path returns a value"; }
+  if (code == 3) { return "initialiser does not match the declared type"; }
+  if (code == 4) { return "operands have mismatched types"; }
+  if (code == 5) { return "argument does not match the parameter's type"; }
+  if (code == 6) { return "condition must be bool"; }
+  if (code == 7) { return "these types cannot be compared"; }
+  if (code == 8) { return "field does not match the declared type"; }
+  if (code == 9) { return "a nullable value cannot be assigned to a non-null type"; }
+  if (code == 10) { return "cannot assign to const variable"; }
+  if (code == 11) { return "cannot assign to a field of a const value"; }
+  if (code == 12) { return "cannot write through const reference"; }
+  if (code == 13) { return "no such static method"; }
+  if (code == 14) { return "no such method"; }
+  if (code == 15) { return "a non-const reference cannot be taken from a const one"; }
+  if (code == 16) { return "wrong cast operator for these types"; }
+  if (code == 17) { return "duplicate parameter name"; }
+  if (code == 18) { return "array element does not match the element type"; }
+  if (code == 19) { return "wrong number of arguments to a builtin"; }
+  if (code == 20) { return "argument of the wrong type to a builtin"; }
+  if (code == 21) { return "this method overrides one and does not say `override`"; }
+  if (code == 22) { return "this method says `override` and overrides nothing"; }
+  if (code == 23) { return "increment needs an integer"; }
+  if (code == 24) { return "shift needs integer operands"; }
+  if (code == 25) { return "wrong number of arguments to the constructor"; }
+  if (code == 26) { return "a packed type cannot be used in this position"; }
+  if (code == 27) { return "a string's characters cannot be written to"; }
+  if (code == 28) { return "this type has no default value"; }
+  if (code == 29) { return "a struct cannot hold a non-null field of its own type"; }
+  if (code == 30) { return "this cast goes down the hierarchy and must be checked"; }
+  if (code == 31) { return "there is no loop here to break out of or continue"; }
+  if (code == 32) { return "wrong number of arguments"; }
+  if (code == 33) { return "a packed type cannot be nullable"; }
+  if (code == 34) { return "a module-level const must be computable at compile time"; }
+  if (code == 35) { return "undefined name"; }
+  if (code == 36) { return "void cannot be used as a type here"; }
+  if (code == 37) { return "a return with a value in a void function, or without one where a value is wanted"; }
+  if (code == 38) { return "this operator does not take an operand of that kind"; }
+  if (code == 39) { return "no such field"; }
+  if (code == 40) { return "a nullable value must be unwrapped before it is used"; }
+  if (code == 41) { return "an index must be an integer"; }
+  if (code == 42) { return "the two branches of a ternary have unrelated types"; }
+  if (code == 43) { return "this operator needs a reference"; }
+  if (code == 44) { return "a switch subject must be an integer or a string"; }
+  if (code == 45) { return "no field of that name in this struct"; }
+  if (code == 46) { return "this cast is between one type and itself"; }
+  if (code == 47) { return "this is not something that can be called"; }
+  if (code == 48) { return "a method is not a value; call it or take it as a funcref"; }
+  if (code == 49) { return "a struct name is not a value"; }
+  if (code == 50) { return "float literal out of range for its type"; }
+  if (code == 51) { return "no variant of that name"; }
+  if (code == 52) { return "unknown module"; }
+  if (code == 53) { return "a generic that instantiates itself for ever"; }
+  if (code == 54) { return "an enum method cannot be named after one of its variants"; }
+  if (code == 55) { return "this name is already imported or declared in this file"; }
+  if (code == 56) { return "that file does not export this name"; }
+  if (code == 57) { return "undefined type"; }
+  if (code == 58) { return "match does not cover every variant"; }
+  if (code == 59) { return "duplicate case for the same variant"; }
+  if (code == 60) { return "else arm is unreachable — all variants are covered"; }
+  if (code == 61) { return "binding collides with the matched subject"; }
+  if (code == 62) { return "match requires a non-null value"; }
+  if (code == 63) { return "match arms have incompatible types"; }
+  if (code == 64) { return "duplicate name at file scope"; }
+  if (code == 65) { return "duplicate member in this struct"; }
+  if (code == 66) { return "a character literal must hold exactly one character"; }
+  if (code == 67) { return "a switch cannot have two defaults"; }
+  return "this program was refused";
+}

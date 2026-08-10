@@ -35,7 +35,7 @@ export type WacxCap = {
  * Parse errors are left for `wacCompile` to report; the walk only needs the specifiers, and an
  * unreadable file stops it here in any case.
  */
-async function readGraph(entry: string, cap: WacxCap): Promise<Map<string, string>> {
+export async function readGraph(entry: string, cap: WacxCap): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   const queue = [entry];
   while (queue.length > 0) {

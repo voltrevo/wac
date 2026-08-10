@@ -6,12 +6,13 @@
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
+import { checkMessage, parseMessage } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
-         sourceOf, tokenTextOf, resolveImport } from "./emit.wac";
+         sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
 export string dump(u8[] src) {
@@ -138,6 +139,39 @@ bool exportsName(u8[] src, Lexed lexed, Program prog, string name) {
     }
   }
   return false;
+}
+
+/**
+ * Every diagnostic for an import graph, as text: one per line, `file\tline\tcol\tphase\tmessage`.
+ *
+ * Tab-separated because the boundary carries strings and not structures, and a caller that has to
+ * parse something should parse the dullest thing available. `spec/spec/errors.md` asks for `span`,
+ * `annotation` and `hint` as well; none of them can be filled from what `report` records, which is a
+ * code and a position. That is the next thing to build rather than something to invent here.
+ *
+ * The parse phase answers first and alone: a file the parser could not read has no type errors worth
+ * reporting, only the ones its unreadable shape would invent.
+ */
+export string diagnoseFiles(string[] paths, string[] sources, string entry) {
+  string out = "";
+  bool parseFailed = false;
+  for (i32 i = 0; i < paths.len(); i++) {
+    u8[] src = sources[i].toBytes();
+    i32[] errs = dumpErrors(src);
+    for (i32 e = 0; e + 2 < errs.len(); e = e + 3) {
+      out = out + paths[i] + "\t" + numText(errs[e + 1]) + "\t" + numText(errs[e + 2])
+          + "\tparse\t" + parseMessage(errs[e]) + "\n";
+      parseFailed = true;
+    }
+  }
+  if (parseFailed) { return out; }
+
+  i32[] terrs = dumpTypeErrorsFiles(paths, sources, entry);
+  for (i32 e = 0; e + 2 < terrs.len(); e = e + 3) {
+    out = out + entry + "\t" + numText(terrs[e + 1]) + "\t" + numText(terrs[e + 2])
+        + "\tcheck\t" + checkMessage(terrs[e]) + "\n";
+  }
+  return out;
 }
 
 export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry) {

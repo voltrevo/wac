@@ -1,7 +1,13 @@
 ## wacx — unified CLI
 
-Implemented in `atoms/wac/wacx.ts`, with `atoms/wac/wacxMain.ts` as the entry point. Run it with
-`deno task wacx` or `deno run -A atoms/wac/wacxMain.ts`.
+Implemented in `compiler/wacx.ts`, with `compiler/wacxMain.ts` as the entry point. Run it with
+`deno task wacx` or `deno run -A compiler/wacxMain.ts`.
+
+There is a second toolchain over the same commands: `deno task waccx` runs `wacc` — the compiler
+written in wac — through `packages/wacc/tools/waccx.ts`. It reads the import graph and renders
+diagnostics with this one's own code, so the only difference between them is the compiler in the
+middle. It is for comparison and dogfooding rather than for use; `packages/wacc/README.md` says how
+far it has got.
 
 Every capability is injected — file reads and writes, stdout, stderr — so the CLI is tested over an
 in-memory filesystem with no process involved. `wacxMain` is the only part that touches `Deno`, and

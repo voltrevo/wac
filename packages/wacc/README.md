@@ -163,6 +163,40 @@ and `linkEmit` for what linking can get wrong.
 **Rung 5 (bootstrap) reaches a fixed point.** wacc compiles its own nine sources, the module that
 comes out compiles them again, and the two are byte-identical — `fixpointEmit` and `selfHostEmit`.
 
+## The toolchain
+
+There is a second toolchain now: `deno task waccx`, with the same commands as `wacx` — `check`,
+`compile`, `run` — over `wacc` instead of the reference. It reads the import graph with `wacx`'s own
+`readGraph` and renders diagnostics with `wacx`'s own `wacDiag`, so the only difference between the
+two is the compiler in the middle, and a difference in the output is a difference in the compiler.
+
+**It exists because the ladder cannot dogfood itself.** Every oracle here compares wacc to the
+reference by position and count, and a position is a shape rather than a sentence — it can be right
+while the compiler is unusable. Building something that *consumes* wacc's output found two things in
+the first hour, neither of which needed a new test:
+
+- **Four error codes each meant two different errors.** 35 was `errUndefinedName` and
+  `errDuplicateName` both; 36, 37 and 38 were doubled the same way. No oracle here reads a code, so
+  nothing could have noticed. Writing the first thing that turns a code into a sentence noticed
+  immediately.
+- **`report` carries a code and a position and nothing else.** So no diagnostic wacc produces can say
+  *expected i32, found f64* — the operands are not kept. `spec/spec/errors.md` asks for `span`,
+  `annotation` and `hint`; none of the three can be filled from what the checker records, and putting
+  a plausible guess there would be inventing the part that is supposed to be true.
+
+The second one is the shape of the next piece of work, and the number is printed by
+`waccx.test.ts` on every run:
+
+    waccx vs wacx on 5 refused programs: 5 at the same position, 2 with the same message,
+    annotation-or-hint on 0 of ours against 4 of theirs
+
+Same place, sometimes the same words, none of the explanation. That is a far more useful statement of
+where wacc stands than any count of refused programs, and it took a CLI rather than an oracle to say
+it.
+
+`bindgen` is absent from `waccx` because wacc has no bindgen at all, which is the other thing standing
+between this and a compiler anyone could use.
+
 **Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
 
 **The spec is the contract; the reference is a guide.** `spec/spec` states what the language is, and
