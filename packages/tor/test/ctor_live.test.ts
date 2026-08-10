@@ -27,6 +27,7 @@
 // coverage that was never there. Build it with `tools/tor.sh`.
 
 import { buildApp } from "../../platform/build.ts";
+import { testBounded } from "../../../harness/deadline.ts";
 import "../../../harness/spawnRetry.ts";
 
 const TOR = `${Deno.env.get("HOME")}/tor-build/torproject-tor-c8d2b17/src/app/tor`;
@@ -187,11 +188,9 @@ async function startTor(dir: string, running: Running[], net: { orPort: string; 
   return { log: () => log, refresh: readLog };
 }
 
-Deno.test({
+testBounded({
   name: "a C tor bootstraps from our authority and through our relays",
   ignore: !haveTor,
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-ctor-" });
   const running: Running[] = [];
@@ -243,11 +242,9 @@ Deno.test({
   }
 });
 
-Deno.test({
+testBounded({
   name: "a C tor carries a stream through our relays, both directions",
   ignore: !haveTor,
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   // `INTEROP.md` marks streams **live** in both directions on a run somebody did by hand. This is
   // that run, in the suite — and it exercises more than the stream: a SOCKS request makes tor build

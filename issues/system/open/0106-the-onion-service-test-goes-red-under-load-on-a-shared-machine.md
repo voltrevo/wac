@@ -109,3 +109,25 @@ program, which is the likeliest place an 18-minute stall lived.
 
 See also [0107](0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) — the same
 failure with a C tor as the client.
+
+## 2026-08-10: a fourth sighting, and the third suggestion is done
+
+**The sighting.** `tools/push.sh` entered this case while a mutation sweep on `packages/fs` was
+running, and then wrote nothing for **26 minutes** — the last ten of those with the machine idle at
+load 1.6, because the sweep had been stopped. So the hang starts under load and does **not** recover
+when the load goes: it is a wedge, not a slow run. Killed by pid (not by pattern, which is what the
+note above warns about), and the same two cases passed in 18 seconds immediately afterwards.
+
+**The fix this issue asked for, done.** "Whatever bound replaces the 30 seconds has to cover the
+whole case rather than one wait inside it." `harness/deadline.ts` grew `testBounded`, which is
+`Deno.test` with a deadline on the **whole case** — five minutes, against eleven seconds for the
+slowest of these on an idle machine — and every case in the exclusive lane uses it: 28 of them,
+across `tor/network_tor`, `tor/ctor_live`, `ssh/server`, `ssh/cli` and `ssh/transport`.
+
+A case that trips it now fails with `timed out after 300000ms waiting for the whole of "<name>"` and
+the run carries on. Canaried by setting the bound to 50 ms.
+
+What this does **not** do is fix the wedge. The onion service still stops answering under load and
+the reason is still unknown; what changes is that it costs one line in a log rather than however long
+it takes somebody to notice. That is the trade this issue asked for, so it is worth saying plainly
+which half is done: the diagnosis is not.

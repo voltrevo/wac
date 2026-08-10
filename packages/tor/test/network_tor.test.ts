@@ -27,6 +27,7 @@
 // documents and begun serving them.
 
 import { buildApp } from "../../platform/build.ts";
+import { testBounded } from "../../../harness/deadline.ts";
 import "../../../harness/spawnRetry.ts";
 
 /**
@@ -62,7 +63,7 @@ function assertContains(haystack: string, needle: string, msg?: string): void {
   }
 }
 
-Deno.test("a Tor network with no C in it, stood up and fetched from", async () => {
+testBounded("a Tor network with no C in it, stood up and fetched from", async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-tornet-" });
   try {
     const launcher = `${dir}/network`;
@@ -131,7 +132,7 @@ Deno.test("a Tor network with no C in it, stood up and fetched from", async () =
   }
 });
 
-Deno.test("an onion service published on that network, and a page fetched from it", async () => {
+testBounded("an onion service published on that network, and a page fetched from it", async () => {
   // The rest of design 0002's done condition: *publishes an onion service on it, fetches a page from
   // that service through a three-hop circuit, and tears it down.*
   //

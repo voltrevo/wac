@@ -11,6 +11,7 @@
 // neither needed to be settled once the tests stopped competing with four other workers.
 
 import { wacBind } from "../../../harness/wacBind.ts";
+import { testBounded } from "../../../harness/deadline.ts";
 import { freePort, haveSshd, type Server, startServer, stopServer } from "./server.ts";
 
 const mod = await wacBind("packages/ssh/test/wac/probe.wac") as unknown as {
@@ -248,11 +249,10 @@ async function handshake(s: Server) {
   };
 }
 
-Deno.test({
+testBounded({
   name: "connect to a real OpenSSH server and authenticate with a public key",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -319,8 +319,7 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
-});
+  });
 
 Deno.test("mpint is minimal, and signed", () => {
   // RFC 4251 §5 gives these exact encodings, which is why they are the ones checked.
@@ -746,10 +745,10 @@ Deno.test("the cipher is pinned to a fixed answer", () => {
 // The strong form of this test is that the *same* key is read from both an unencrypted and an
 // encrypted file and must yield identical seeds. `ssh-keygen -p` changes only the passphrase, so
 // the key material is unchanged by construction and any difference is ours.
-Deno.test({
+testBounded({
   name: "an OpenSSH private key reads, encrypted or not, and a wrong passphrase is caught",
   ignore: !haveSshd,
-  fn: async () => {
+}, async () => {
     const dir = await Deno.makeTempDir();
     try {
       const gen = await new Deno.Command("ssh-keygen", {
@@ -801,8 +800,7 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
-  },
-});
+  });
 
 Deno.test("a file that is not an OpenSSH key is refused by shape, not misread", () => {
   const empty = new Uint8Array(0);
@@ -852,11 +850,10 @@ Deno.test("the signed data length-prefixes the session id", () => {
 // real entry is `|1|<salt>|<HMAC-SHA-1(salt, name)>` and there is nothing to compare against
 // except a file OpenSSH produced. It also pins the `[host]:port` spelling, which is what gets
 // hashed for a non-default port — get that wrong and every lookup silently reports "unknown".
-Deno.test({
+testBounded({
   name: "a known_hosts written by the real ssh client is read correctly",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     const dir = await Deno.makeTempDir();
     const port = freePort();
     let sshd: Deno.ChildProcess | undefined;
@@ -955,8 +952,7 @@ Deno.test({
       }
       await Deno.remove(dir, { recursive: true });
     }
-  },
-});
+  });
 
 Deno.test("known_hosts plain entries: patterns, negation, markers and comments", () => {
   const type = bytes("ssh-ed25519");
@@ -1024,14 +1020,13 @@ Deno.test("known_hosts plain entries: patterns, negation, markers and comments",
 // is deliberately many windows long, because flow control is the part that is invisible when it
 // is wrong: a client that never sends WINDOW_ADJUST reads exactly one window and then hangs,
 // having done nothing that any error reports.
-Deno.test({
+testBounded({
   // **Tagged flaky against wac-mono 0082.** Seen once in eight gate runs: `ConnectionReset` 25ms into
   // the handshake, under the parallel suite only, passing alone in a second immediately afterwards. Two
   // candidates are recorded there. The tag comes off when the issue does.
   name: "run a command on a real OpenSSH server and read its output",
   ignore: !haveSshd,
-  sanitizeResources: false,
-  fn: async () => {
+}, async () => {
     let s: Server | undefined;
     try {
       s = await startServer();
@@ -1112,8 +1107,7 @@ Deno.test({
     } finally {
       await stopServer(s);
     }
-  },
-});
+  });
 
 Deno.test("the window returns credit before it runs out, not after", () => {
   const initial = 1000;

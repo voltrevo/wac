@@ -69,7 +69,13 @@ function fixture(): void {
   // has to be made from here: there is no `ln` in this system, so a script cannot create its own.
   Deno.symlinkSync("f", `${tmp}/tree/link`);
   Deno.symlinkSync("nosuch", `${tmp}/tree/dangling`);
+  // A link that leads to itself: `ELOOP`, which no corpus script could reach and which both hosts
+  // reported as the operating system's sentence with `(os error 40)` still attached.
+  Deno.symlinkSync("loop", `${tmp}/tree/loop`);
 }
+
+/** A name longer than any filesystem here will take — `ENAMETOOLONG`, at 300 bytes. */
+const TOO_LONG = "n".repeat(300);
 
 function runIt(cmd: string, args: string[], cwd: string = tmp): Bounded {
   return bounded(DEFAULT_SECONDS, cmd, args, {
@@ -156,6 +162,17 @@ const AGREED = [
   "cat link",
   "cat dangling",
   "wc -c link",
+  // ── Failures the fault table had no category for, so the errno reached the user ──
+  //
+  // Each of these printed GNU's sentence *plus* `(os error N)` on both hosts, which is why no
+  // two-host differential ever saw it: they agreed, and what they agreed on was wrong. Found by
+  // hand, against the real tool.
+  "cat loop",
+  "wc -c loop",
+  "echo x > loop",
+  "cat " + TOO_LONG,
+  "echo x > " + TOO_LONG,
+  "mkdir " + TOO_LONG,
   // ── A *path* that is not a program. A name with a slash is not searched for and does not fall back
   // to a builtin, so what the shell says about it is what the filesystem says — on both hosts, and the
   // same as GNU. All four of these used to be `command not found` and 127.

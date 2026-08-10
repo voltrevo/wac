@@ -1960,6 +1960,19 @@ const FAULT_IS_DIR: i32 = 8;
 const FAULT_NOT_A_DIR: i32 = 10;
 /// The filesystem will not take a write at all — `EROFS`.
 const FAULT_READ_ONLY: i32 = 11;
+/// `ENAMETOOLONG`, `ELOOP` and `ENOSPC` — see their `FAULT_*` in platform.wac.
+///
+/// Matched by **raw errno** rather than by `ErrorKind`: `InvalidFilename`, `FilesystemLoop` and
+/// `StorageFull` are all still behind the unstable `io_error_more` feature, and a host that needs a
+/// nightly compiler to categorise a full disk is not a host anybody can build. The numbers are
+/// Linux's, which is what this runtime is built for; a platform with different ones falls to
+/// `FAULT_OTHER` and keeps the behaviour it has today rather than getting a wrong category.
+const FAULT_NAME_TOO_LONG: i32 = 12;
+const FAULT_LOOP: i32 = 13;
+const FAULT_NO_SPACE: i32 = 14;
+const ENAMETOOLONG: i32 = 36;
+const ELOOP: i32 = 40;
+const ENOSPC: i32 = 28;
 
 /// A path as the operating system takes it. Bytes, because a name is bytes (wac-mono 0065).
 fn os_path(bytes: &[u8]) -> std::path::PathBuf {
@@ -2015,7 +2028,12 @@ fn fault_of(e: &std::io::Error) -> i32 {
         std::io::ErrorKind::IsADirectory => FAULT_IS_DIR,
         std::io::ErrorKind::NotADirectory => FAULT_NOT_A_DIR,
         std::io::ErrorKind::ReadOnlyFilesystem => FAULT_READ_ONLY,
-        _ => FAULT_OTHER,
+        _ => match e.raw_os_error() {
+            Some(ENAMETOOLONG) => FAULT_NAME_TOO_LONG,
+            Some(ELOOP) => FAULT_LOOP,
+            Some(ENOSPC) => FAULT_NO_SPACE,
+            _ => FAULT_OTHER,
+        },
     }
 }
 
