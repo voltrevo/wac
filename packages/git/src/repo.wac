@@ -262,6 +262,22 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
               i32 sub = walk(r, e.hash, path, rel, entries, depth - 1, unset);
               if (sub < 0) { return -1; }
               count = count + sub;
+            } else if (e.mode == "160000") {
+              // **A gitlink, and the commit it names is not here** — it belongs to the submodule's own
+              // repository, which is the whole point of the mode. Before this, `readObject` looked for it,
+              // did not find it, and the checkout failed *entirely* with "a tree could not be read, or
+              // nesting went past 32 deep" — a message about depth for a repository that merely has a
+              // submodule.
+              //
+              // What git does for one it has not initialised is create the empty directory and record the
+              // gitlink in the index, so this does that: `git status` is then clean, because both sides
+              // agree the submodule is present and unpopulated. Nothing is fetched — cloning a submodule
+              // needs its URL from `.gitmodules` and a second clone, and neither is here.
+              Change made = r.fs.mkdir(path, true);
+              if (!made.ok()) { return -1; }
+              // Size zero: a gitlink has no content in this repository, and the stat cache is a cache —
+              // `git status` re-reads on a miss, which the index tests measured.
+              entries.push(IndexEntry(rel, e.hash, modeNumber(e.mode), 0, 0));
             } else {
               match (readObject(r, e.hash)) {
                 case Absent(why): return -1;

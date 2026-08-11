@@ -107,10 +107,12 @@ worse than one that says which:
   ` T`, a typechange against the worktree; the index we write records mode 40960 and agrees with `HEAD`,
   so the disagreement is on disk only. Counted, reported by `gitco`, and pinned by a test whose fixture
   contains a symlink and asserts that it does.
-- **A gitlink is not handled at all.** Mode `160000` is a submodule's commit, which by definition is not
-  an object in this repository, so a tree containing one fails the whole checkout with "a tree could not
-  be read" rather than leaving the empty directory git leaves. No fixture contains one; this is read from
-  the code rather than measured, which is why it is phrased as it is.
+- **A gitlink checks out as the empty directory git leaves, and no submodule is fetched.** Mode `160000`
+  names a commit that lives in the submodule's own repository, so it is not here and never will be.
+  `checkout` makes the directory and records the gitlink in the index, which is what git does for a
+  submodule it has not initialised — `git status` is clean afterwards. What is missing is the rest of
+  submodule support: reading `.gitmodules` for a URL and cloning into that directory. Before this, a tree
+  containing one failed the whole checkout, and said so with a message about nesting depth.
 - **SHA-1 only, and not collision-detecting.** git can be configured for SHA-256 object names; this
   implements the format that is still the default and does not detect the other. It also hashes with
   plain SHA-1 where git uses `sha1dc`, so a crafted collision pair git refuses is one this would accept.
