@@ -23,6 +23,7 @@ means agreeing about what the object *is*.
 | `src/pack.wac` | a packfile: object headers, offset and reference deltas, chains |
 | `src/commit.wac` | commits and annotated tags — the two objects git stores as text |
 | `src/refs.wac` | refs, loose and packed, and `HEAD` as a symbolic one |
+| `src/index.wac` | `.git/index` — read and written, extensions preserved |
 
 The header is the whole reason `"hello\n"` is `ce013625…` rather than SHA-1 of those six bytes, and
 it puts the kind inside the identity: the same bytes as a blob and as a tag are two different
@@ -43,14 +44,14 @@ crossing 88 merges, over 142 loose objects and 303 packed ones**, in a tenth of 
 Named rather than approximated, because a git implementation that quietly did some of these would be
 worse than one that says which:
 
-- **No index.** No `.git/index`, so no staging area and no `git add`.
 - **No unified object store.** Loose and packed objects are read by different calls and the
   *caller* decides the order to try them in. Every caller wanting both writes that themselves, which is
   the first thing the repository layer should take over.
 - **No ref directory walk.** `refs.wac` parses a ref file and `packed-refs`; enumerating `refs/heads/`
   needs a filesystem, and this package still takes bytes rather than an `Fs`.
 - **No network.** No protocol, no fetch, no push.
-- **No working tree.** Nothing checks a tree out or diffs one against a directory.
+- **No working tree.** Nothing checks a tree out or diffs one against a directory, so the index can be
+  read and rewritten but not *built* from a directory.
 - **SHA-1 only.** git can be configured for SHA-256 object names; this implements the format that is
   still the default and does not detect the other.
 
@@ -61,7 +62,7 @@ The order the rest would go in, and what would count as arriving, is
 [design/system/0005](../../design/system/0005-git-in-wac.md) — kept there rather than here so the plan
 and this package's limitations do not become two records that drift. Short version: packfiles first,
 and packfile reading, refs and commits are done. Next is the index and a working tree, which together
-give `status` and `checkout`.
+give `status` and `checkout`. The index half is done; checking a tree out is what remains.
 
 ## Two things about the format worth knowing before reading the code
 
@@ -84,6 +85,7 @@ means there is no room for two implementations to disagree politely.
 deno test -A packages/git/test/interop.test.ts     # objects and trees
 deno test -A packages/git/test/pack.test.ts        # packfiles
 deno test -A packages/git/test/history.test.ts     # refs, commits, and walking them
+deno test -A packages/git/test/index.test.ts       # .git/index, judged by `git status`
 ```
 
 Both skip themselves, loudly, where git is not installed.

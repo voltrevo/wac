@@ -120,10 +120,15 @@ Written down now, while it is cheap to say:
   Delta application is `memcpy` with extra steps, and `WASM-WISHLIST.md` #1 is that nothing copies
   between a GC array and linear memory. If resolution is dominated by that, the honest outcome is a
   wishlist entry with a measurement, not a slow clone.
-- **If the index's stat cache cannot be filled from `packages/fs`.** git stores `ctime`, `dev`, `ino`
-  and `uid`. If our filesystem cannot answer them, `git status` will never be clean and step 4's
-  criterion has to change to something weaker — which should be an explicit decision rather than a
-  quiet lowering of the bar.
+- ~~**If the index's stat cache cannot be filled from `packages/fs`.**~~ **Settled by measurement, and
+  it is not a risk.** `packages/fs`'s `Stat` answers `exists`, `isFile`, `isDir`, `size`,
+  `modifiedMillis` and `isSymlink` — no `ctime`, no `dev`, no `ino`, no `uid`, and milliseconds where
+  git wants seconds and nanoseconds. So the cache cannot be filled, and the question was what git does
+  about it. Tested rather than reasoned: zeroing every stat field of a committed index and repairing its
+  trailing SHA-1 leaves `git status --porcelain` **empty**. git treats the field as what it is called —
+  a cache — so a mismatch makes it re-read the file, compare the hash, find it identical, report clean,
+  and write real stat data back. Step 4 may therefore write zeros there and keep its criterion. What it
+  costs is speed on git's side, not correctness on ours.
 
 ## State of play
 
@@ -132,7 +137,7 @@ Written down now, while it is cheap to say:
 | 1. objects and trees | **done.** [`packages/git`](../../packages/git/README.md) — names agree with `git hash-object` on every case tried, `git cat-file` reads our loose objects, and a tree git wrote parses to what `ls-tree` prints and serialises back byte-identical. Six tests, skipped loudly where git is absent. Not among the packages that pass on wacc-emitted code: it declines a method on an enum |
 | 2. packfiles, read | **done.** `src/idx.wac` and `src/pack.wac` — version-2 index with the large-offset table, object headers, offset and reference deltas, chains bounded at 64. Every one of the **18,209 objects in this repository's own pack** reconstructs to bytes that hash back to its index name, in ten seconds; headers match `git verify-pack -v` field for field, including that its size column is the *delta* for a delta and `cat-file -s` is the object. Not done: a thin pack's reference delta whose base is outside the pack is reported absent rather than resolved, which is a fetch concern and named in step 6 |
 | 3. refs, commits, tags | **done.** `src/refs.wac` and `src/commit.wac` — loose and packed refs, `HEAD` symbolic and detached, commits with zero or more parents, annotated tags, and a `gpgsig` continuation that does not eat the message. Walking this repository's own history gives **445 commits identical to `git rev-list --first-parent`**, 88 merges crossed, root reached, across 142 loose and 303 packed objects. Not done: enumerating `refs/heads/` needs a filesystem, and nothing yet combines loose and packed lookup — the caller picks the order |
-| 4. index and working tree | next, and the two risky halves are the index's stat cache and whether `packages/fs` can answer `ctime`, `dev`, `ino` and `uid` at all — see "what could make this not worth finishing" |
+| 4. index and working tree | **index done, working tree not.** `src/index.wac` reads and writes version 2 and 3, preserves extension blocks verbatim, refuses version 4 rather than misreading its compressed paths, and verifies the trailing SHA-1. The criterion for the half that is done: replace git's index with ours and `git status --porcelain` is still empty, `ls-files` unchanged, `fsck` clean. The stat-cache risk this document opened with is **settled and not a risk** — a committed index with every stat field zeroed and its checksum repaired still gives an empty status, because git re-reads and re-hashes on a cache miss, and that measurement is kept as a test so the plan cannot quietly stop being true. What is left is checkout: writing a tree to files, which needs the loose-and-packed store the README names |
 | 5. writing a repository git accepts | not started. Step 1 can write the objects; nothing writes a ref |
 | 6. fetch | not started |
 | 7. packfiles, write | not started, and deliberately last |
