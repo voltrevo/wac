@@ -7,12 +7,47 @@
 //
 // The output is porcelain's two columns — the index against `HEAD`, then the working tree against the
 // index — so a test can diff ours against git's as text. `statusOf`'s own comment lists what is absent and
-// why: untracked files, which need `.gitignore`, and an unstaged mode change, which needs a mode on `Stat`.
+// why: an unstaged mode change, which needs a mode on `Stat`.
+//
+// ## Why the global ignore file is read here rather than in `statusOf`
+//
+// `core.excludesFile` is the lowest-precedence of git's four ignore sources, and its value is very often
+// `~/.gitignore_global`. Expanding that `~` needs `HOME`, `HOME` needs a `Cli`, and a `Repo` holds only an
+// `Fs` — so pushing this down into the library would mean handing every repository an environment to
+// answer a question about ignore rules. The program that already knows about environments resolves the
+// path and passes the bytes.
 
-import { Cli, Core } from "../../platform/src/platform.wac";
+import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
 import { Vec } from "../../std/src/vec.wac";
+import { configOf } from "../src/config.wac";
+import { configChain, expandTilde } from "../src/configfiles.wac";
 import { RepoAt, openRepo, statusOf } from "../src/repo.wac";
+
+/**
+ * The bytes of `core.excludesFile`, or none.
+ *
+ * A leading `~/` is expanded from `HOME`; anything else is used as written, including a relative path,
+ * which git resolves against the current directory the same way. An unset setting, an unset `HOME` and an
+ * unreadable file all mean the same thing to the caller — no rules from this source — but they are not the
+ * same event, so the unreadable one is worth a word on stderr rather than silence.
+ */
+u8[] excludesFileOf(Core core, Cli cli, Fs fs, string gitDir) {
+  // **The whole chain, not just `.git/config`.** A global ignore file is a preference about how one
+  // person works rather than a fact about one repository, so it is nearly always set in `~/.gitconfig` —
+  // reading only the local file would find it in the one place it is least likely to be.
+  //
+  // Lowercased, because that is how the parser stores every key — `excludesFile` in the file is
+  // `core.excludesfile` here, and asking with the file's spelling would find nothing.
+  string path = expandTilde(cli, configOf(configChain(cli, fs, gitDir), "core.excludesfile"));
+  if (path == "") { return u8[0](); }
+  FileResult f = fs.readFile(path);
+  if (!f.ok) {
+    core.warn("gitst: core.excludesFile names " + path + ", which could not be read");
+    return u8[0]();
+  }
+  return f.bytes;
+}
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();
@@ -28,7 +63,7 @@ export i32 main(Core core, Cli cli) {
       return 1;
     }
     case Opened(repo): {
-      Vec<string> lines = statusOf(repo);
+      Vec<string> lines = statusOf(repo, excludesFileOf(core, cli, fs, root + "/.git"));
       for (i32 i = 0; i < lines.len(); i++) { core.log(lines.get(i)); }
       return 0;
     }

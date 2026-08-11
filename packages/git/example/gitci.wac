@@ -15,7 +15,8 @@
 
 import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
 import { Fs } from "../../fs/src/fs.wac";
-import { Setting, configOf, parseConfig } from "../src/config.wac";
+import { Setting, configOf } from "../src/config.wac";
+import { configChain } from "../src/configfiles.wac";
 import { Who } from "../src/commit.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { commitTree, headRef, openRepo, writeWorkTree } from "../src/repo.wac";
@@ -51,7 +52,7 @@ export i32 main(Core core, Cli cli) {
           return 1;
         }
         case Named(tree): {
-          // **Who, from `.git/config`, and when, from the clock — the way git decides both.**
+          // **Who, from the config files git reads, and when, from the clock — the way git decides both.**
           //
           // This used to be a fixed identity and a fixed timestamp, and the comment here said the program
           // had "neither a clock nor a configured user". Half of that was wrong: `Core.nowMillis` has
@@ -62,14 +63,18 @@ export i32 main(Core core, Cli cli) {
           //
           // An unset identity is a **refusal**, as it is in git, rather than a default nobody chose: a
           // commit is signed, and inventing a name to put on it is the one thing a tool must not do.
-          Vec<Setting> settings = Vec.create();
-          FileResult conf = fs.readFile(root + "/.git/config");
-          if (conf.ok) { settings = parseConfig(conf.bytes); }
+          // **Every file git would read, not just this repository's.** An identity is a property of the
+          // person rather than the repository, so it is normally in `~/.gitconfig`; reading only
+          // `.git/config` made this refuse to commit for very nearly everyone who has one configured.
+          // `configChain` returns them lowest-precedence first and `configOf` takes the last, which is
+          // git's answer per key — the local file over the dotfile over the XDG file over the system one.
+          Vec<Setting> settings = configChain(cli, fs, root + "/.git");
           string who = configOf(settings, "user.name");
           string mail = configOf(settings, "user.email");
           if (who == "" || mail == "") {
-            core.warn("gitci: user.name and user.email are unset in .git/config, and this does not"
-              + " invent an author");
+            core.warn("gitci: user.name and user.email are set in no config file this reads — not"
+              + " .git/config, ~/.gitconfig, the XDG file or /etc/gitconfig — and this does not invent"
+              + " an author");
             return 1;
           }
           // `i64` all the way: `Who.when` is one, and a timestamp narrowed to `i32` stops working
