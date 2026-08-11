@@ -1,6 +1,5 @@
-import { freePort, holdPort } from "../../../harness/port.ts";  // one allocator — wac-mono 0069
+import { holdPort } from "../../../harness/port.ts";  // one allocator — wac-mono 0069
 import { reapOrphans } from "../../../harness/reap.ts";
-export { freePort };  // its importers use it too
 // A local sshd, for the tests that need a real server to talk to.
 //
 // Its own module rather than a helper inside one test file, because both the protocol tests and
