@@ -161,7 +161,7 @@ have never appeared in a status line: they are invisible to every rung.
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
 | type check | 303 of 304 spec rejections, 367 of 367 acceptances — the one left is a multi-file case recorded with one file |
-| emit wasm | 336 of 343 files whole, 0 invalid |
+| emit wasm | **every file it is given** — 353 of 356 whole, 0 invalid; the three left import a file the fixture deliberately does not supply |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
 | diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
@@ -204,6 +204,12 @@ funcref call, a generic instantiating itself with a bigger type, a template writ
 belongs, and a generic enum's payload substitution. One was not a checker rule at all: `dumpErrors`
 computed the lexer's errors and dropped them, so an unterminated comment, an unterminated string and
 an unknown escape were invisible to every caller of this package.
+
+**Nothing in the repository is declined any more.** The last four were one line — `anyref` lexes as a
+primitive and the nullable arm kept only `string`, so `anyref? interruptCtx` was a field of no type
+and `packages/sh` compiled nothing — and the last one was a variant resolved through the file's name
+table instead of through its own enum: `Kind.Tree` found `tree.wac`'s `struct Tree` and stopped being
+a variant construction at all.
 
 **Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
 `harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
