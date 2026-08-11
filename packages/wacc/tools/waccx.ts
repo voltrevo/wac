@@ -75,6 +75,8 @@ export function parseDiagnostics(wire: string): DiagError[] {
       line: Number(ln),
       col: Number(col),
       phase: phase === "parse" || phase === "lex" ? phase : "typecheck",
+      // A recorded width, or one where the checker measured none — see `diagnoseFiles`, which emits
+      // `0` for "not measured" precisely so a *measurement* can tell that from a genuine width of 1.
       span: Number(span) > 0 ? Number(span) : 1,
       ...(annotation ? { annotation } : {}),
       ...(hint ? { hint } : {}),
