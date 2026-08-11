@@ -1,7 +1,7 @@
 # 0079 — a sized array construction whose element type is a funcref does not parse
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-08
 - **Kind:** bug

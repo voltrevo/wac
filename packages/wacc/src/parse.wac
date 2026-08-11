@@ -1031,6 +1031,41 @@ Expr parsePostfix(P p) {
   return e;
 }
 
+/**
+ * The tail of an array construction, from the `[` that opens it.
+ *
+ * `T[](a, b)` is the fixed literal and `T[N]()` / `T[N](fill: v)` the sized form. Shared because a
+ * funcref element type arrives by another road — `parseType` eats the brackets of `fn[R(P)]`
+ * itself — and only the fixed literal was reachable that way [issue 0079].
+ */
+Expr parseArrayCtorTail(P p, Ty elem, i32 line, i32 col) {
+  p.advance();                       // the construction `[`
+  if (!p.at1(kRbrack())) {
+    Expr size = parseExpr(p);        // `T[N]()` or `T[N](fill: v)`
+    p.expect(kRbrack());
+    p.expect(kLparen());
+    Expr? fill = null;
+    if (!p.at1(kRparen())) {
+      if (p.at1(kIdent()) && spanIsFill(p.src, p.startAt(0), p.lenAt(0))
+          && p.kindAt(1) == kColon()) {
+        p.advance();
+        p.advance();
+        fill = parseExpr(p);
+      } else {
+        p.fail(perrExpected());
+      }
+    }
+    p.expect(kRparen());
+    Expr[] empty = Expr[]();
+    return Expr(ExprKind.ArrNew(elem, size, fill, empty), line, col);
+  }
+  p.advance();                       // `]`
+  p.expect(kLparen());
+  Expr[] args = parseArgList(p);
+  p.expect(kRparen());
+  return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
+}
+
 Expr[] parseArgList(P p) {
   ExprList args = ExprList.create();
   if (p.at1(kRparen())) { return args.take(); }
@@ -1080,10 +1115,15 @@ Expr parsePrimary(P p) {
           p.expect(kRparen());
           return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
         }
+        // `fn[R(P)][][2](fill: v)` — the element is the whole array type, not its element.
+        if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
         p.fail(perrFnArray());
         return Expr(ExprKind.NullLit, line, col);
       }
       else: {
+        // `parseType` stops at `[2` and hands back the funcref, so the sized spelling lands here
+        // rather than in the arm above [issue 0079].
+        if (p.at1(kLbrack())) { return parseArrayCtorTail(p, t, line, col); }
         p.fail(perrFnArray());
         return Expr(ExprKind.NullLit, line, col);
       }
@@ -1221,31 +1261,7 @@ Expr parseConstructionOrCall(P p, i32 line, i32 col) {
       p.advance();
       elem = tyArr(elem, aLine, aCol);
     }
-    p.advance();                       // the construction `[`
-    if (!p.at1(kRbrack())) {
-      Expr size = parseExpr(p);        // `T[N]()` or `T[N](fill: v)`
-      p.expect(kRbrack());
-      p.expect(kLparen());
-      Expr? fill = null;
-      if (!p.at1(kRparen())) {
-        if (p.at1(kIdent()) && spanIsFill(p.src, p.startAt(0), p.lenAt(0))
-            && p.kindAt(1) == kColon()) {
-          p.advance();
-          p.advance();
-          fill = parseExpr(p);
-        } else {
-          p.fail(perrExpected());
-        }
-      }
-      p.expect(kRparen());
-      Expr[] empty = Expr[]();
-      return Expr(ExprKind.ArrNew(elem, size, fill, empty), line, col);
-    }
-    p.advance();                       // `]`
-    p.expect(kLparen());
-    Expr[] args = parseArgList(p);
-    p.expect(kRparen());
-    return Expr(ExprKind.ArrNew(elem, null, null, args), line, col);
+    return parseArrayCtorTail(p, elem, line, col);
   }
 
   // `Type { field: value, ... }` — named construction.

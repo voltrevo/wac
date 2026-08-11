@@ -725,6 +725,45 @@ export function makeParser(tokens: Token[], file: string) {
     return args;
   }
 
+  /**
+   * The tail of an array construction, from the `[` that opens it.
+   *
+   * `T[](a, b)` is the fixed literal and `T[n]()` / `T[n](fill: v)` the sized form. Shared
+   * because a funcref element type reaches it by another road — `parseType` consumes the
+   * brackets of `fn[R(P)]` itself — and the two roads used to lead to different places
+   * [issue 0079].
+   */
+  function parseArrayCtorTail(elemType: WacType, p: Pos): Expr {
+    advance(); // [
+    if (!at("]")) {
+      // `T[n]()` — sized, each element the element type's default.
+      // `T[n](fill: v)` — sized, every element `v`.
+      const size = parseExpr();
+      expect("]");
+      expect("(");
+      let fill: Expr | undefined;
+      if (!at(")")) {
+        // The only thing allowed here is `fill:`. A bare expression would be
+        // ambiguous with `arr[i](5)`, so it is refused rather than guessed at.
+        if (at("ident") && tok().text === "fill" && at(":", 1)) {
+          advance();
+          advance();
+          fill = parseExpr();
+        } else {
+          err(`expected ')' or 'fill:' — a sized array takes its element value as 'fill:'`);
+        }
+      }
+      expect(")");
+      return { kind: "arrNew", elem: elemType, size, fixed: [], fill, ...p };
+    }
+    // T[]() — fixed array literal
+    advance(); // ]
+    expect("(");
+    const args = parseArgList();
+    expect(")");
+    return { kind: "arrNew", elem: elemType, size: null, fixed: args, ...p };
+  }
+
   function parsePrimary(): Expr {
     const p = pos();
     if (at("null"))  { advance(); return { kind: "null", ...p }; }
@@ -753,7 +792,13 @@ export function makeParser(tokens: Token[], file: string) {
     // position, not by syntax, so nothing is ambiguous.
     if (at("match")) return parseMatchExpr();
 
-    // fn[R(P)][](args) — array of funcref construction
+    // `fn[R(P)][](args)` and `fn[R(P)][n](fill: v)` — array of funcref construction.
+    //
+    // A funcref is the one element type that ends in `]` itself, so `parseType` has already
+    // eaten brackets by the time we get here: for the unsized spelling it returns the array
+    // type, and for the sized one it stops at `[n` and returns the funcref. Only the first was
+    // handled, and every sized spelling was refused with `expected '(' for fn type array
+    // construction` — a size is not a reason to give up on the element type [issue 0079].
     if (at("fn")) {
       const fnType = parseType();
       if (fnType.kind === "array" && at("(")) {
@@ -762,7 +807,8 @@ export function makeParser(tokens: Token[], file: string) {
         expect(")");
         return { kind: "arrNew", elem: fnType.elem, size: null, fixed: args, ...p };
       }
-      err(`expected '(' for fn type array construction`);
+      if (at("[")) return parseArrayCtorTail(fnType, p);
+      err(`expected '(' or '[' for fn type array construction`);
       return { kind: "null", ...p };
     }
 
@@ -906,35 +952,7 @@ export function makeParser(tokens: Token[], file: string) {
         const arrP = pos(); advance(); advance(); // [ ]
         elemType = { kind: "array", elem: elemType, ...arrP };
       }
-      advance(); // [
-      if (!at("]")) {
-        // `T[n]()` — sized, each element the element type's default.
-        // `T[n](fill: v)` — sized, every element `v`.
-        const size = parseExpr();
-        expect("]");
-        expect("(");
-        let fill: Expr | undefined;
-        if (!at(")")) {
-          // The only thing allowed here is `fill:`. A bare expression would be
-          // ambiguous with `arr[i](5)`, so it is refused rather than guessed at.
-          if (at("ident") && tok().text === "fill" && at(":", 1)) {
-            advance();
-            advance();
-            fill = parseExpr();
-          } else {
-            err(`expected ')' or 'fill:' — a sized array takes its element value as 'fill:'`);
-          }
-        }
-        expect(")");
-        return { kind: "arrNew", elem: elemType, size, fixed: [], fill, ...p };
-      } else {
-        // T[]() — fixed array literal
-        advance(); // ]
-        expect("(");
-        const args = parseArgList();
-        expect(")");
-        return { kind: "arrNew", elem: elemType, size: null, fixed: args, ...p };
-      }
+      return parseArrayCtorTail(elemType, p);
     }
 
     // Struct named construction: TypeName { field: val, ... }
