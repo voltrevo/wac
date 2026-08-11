@@ -1,0 +1,97 @@
+// pkt-line: the framing every git wire protocol message uses.
+//
+//     0009hello\n            nine bytes total — the four-digit length counts itself
+//     0000                   flush-pkt: the end of a section
+//     0001                   delim-pkt, protocol v2 only
+//     0002                   response-end-pkt, protocol v2 only
+//
+// **The length includes its own four bytes**, which is the one thing to get right: a payload of five
+// bytes is written `0009`, not `0005`. Reading it the other way gives a parser that works on a
+// zero-length payload and drifts by four bytes on everything else.
+//
+// The length is four *hexadecimal* digits, lowercase from git and case-insensitively accepted here,
+// which caps a packet at 65524 bytes of payload — `ffff` minus the header. Anything longer is split by
+// the sender.
+//
+// ## Zero is three different things
+//
+// `0000`, `0001` and `0002` are not packets with a length of zero, one and two — they are markers, and
+// a reader that subtracted four from them would compute a negative payload length. They are separate
+// answers here for that reason, rather than a packet whose payload happens to be empty.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** One packet read off the wire. */
+export enum Pkt {
+  /** A packet carrying `payload`, which does not include the length header. */
+  Line(u8[] payload),
+  /** `0000` — the end of a section. */
+  Flush,
+  /** `0001` — a separator within a section. Protocol v2. */
+  Delim,
+  /** `0002` — the end of a response. Protocol v2. */
+  ResponseEnd,
+  /** The stream ended cleanly, with nothing left. */
+  Done,
+  Broken(string why)
+}
+
+/** One hex digit's value, or -1. */
+i32 hexVal(i32 c) {
+  if (c >= '0' && c <= '9') { return c - 48; }
+  if (c >= 'a' && c <= 'f') { return c - 87; }
+  if (c >= 'A' && c <= 'F') { return c - 55; }
+  return -1;
+}
+
+/**
+ * Read the packet at `pos[0]`, advancing `pos[0]` past it.
+ *
+ * `pos` is a one-element array because a reader has to return both a packet and how far it got, and wac
+ * has no out-parameters — the alternative is a struct per packet, allocated and discarded.
+ */
+export Pkt readPkt(u8[] b, i32[] pos) {
+  i32 at = pos[0];
+  if (at >= b.len()) { return Pkt.Done; }
+  if (at + 4 > b.len()) { return Pkt.Broken("a length header is cut short"); }
+
+  i32 n = 0;
+  for (i32 i = 0; i < 4; i++) {
+    i32 v = hexVal(b[at + i]);
+    if (v < 0) { return Pkt.Broken("a length header is not four hex digits"); }
+    n = n * 16 + v;
+  }
+  if (n == 0) { pos[0] = at + 4; return Pkt.Flush; }
+  if (n == 1) { pos[0] = at + 4; return Pkt.Delim; }
+  if (n == 2) { pos[0] = at + 4; return Pkt.ResponseEnd; }
+  if (n == 3) { return Pkt.Broken("a length of 3 is not a packet"); }
+  if (at + n > b.len()) {
+    return Pkt.Broken("a packet claims " + itoa(n) + " bytes and " + itoa(b.len() - at) + " remain");
+  }
+
+  u8[] payload = u8[n - 4]();
+  for (i32 i = 0; i < payload.len(); i++) { payload[i] = b[at + 4 + i]; }
+  pos[0] = at + n;
+  return Pkt.Line(payload);
+}
+
+/** `payload` as a packet, length header and all. */
+export u8[] writePkt(u8[] payload) {
+  Buf out = Buf.create();
+  i32 n = payload.len() + 4;
+  // Four hex digits, most significant first, lowercase — which is what git writes and what a server
+  // comparing bytes will expect even though it must accept either case.
+  for (i32 shift = 12; shift >= 0; shift = shift - 4) {
+    i32 nib = (n >> shift) & 0xf;
+    out.push(nib < 10 ? 48 + nib : 87 + nib);
+  }
+  out.pushAll(payload);
+  return out.take();
+}
+
+/** The four bytes `0000`. */
+export u8[] flushPkt() { return "0000".toBytes(); }
+
+/** A packet holding `text`, which is the common case — every request line is text. */
+export u8[] writeText(string text) { return writePkt(text.toBytes()); }

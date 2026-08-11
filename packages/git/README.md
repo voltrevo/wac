@@ -25,6 +25,8 @@ means agreeing about what the object *is*.
 | `src/refs.wac` | refs, loose and packed, and `HEAD` as a symbolic one |
 | `src/index.wac` | `.git/index` — read and written, extensions preserved |
 | `src/repo.wac` | a repository over `packages/fs`: object lookup, refs, checkout |
+| `src/pktline.wac` | pkt-line, the framing every git wire message uses |
+| `src/fetch.wac` | the fetch conversation: advertisement, wants, finding the pack |
 | `example/gitco.wac` | `git checkout`, as a program |
 | `example/gitci.wac` | `git commit -a`, as a program |
 
@@ -59,7 +61,17 @@ worse than one that says which:
 
 - **No ref directory walk.** `repo.wac` resolves a ref by name; enumerating `refs/heads/` to list
   branches is not written.
-- **No network.** No protocol, no fetch, no push.
+- **The fetch protocol works; a fetch does not.** `src/fetch.wac` parses a real advertisement, builds a
+  request real `git upload-pack` answers, and extracts the packfile from the reply — all checked against
+  git locally. Two things stand between that and a clone, both real rather than tidying:
+  - **A fetched pack has no index.** `openPack` needs one, and building it means walking the pack
+    sequentially, which needs an inflate that reports how many input bytes it consumed.
+    `packages/gzip` does not expose one — `inflateFrom` is private and `BitReader.pos` is not returned —
+    so this is an additive export that package would need.
+  - **This container has no direct egress.** DNS for anything outside fails and everything goes through
+    a Squid proxy, while `Cli.connect` is a raw TCP connect. Reaching a real server therefore needs
+    `CONNECT host:443` spoken to the proxy before TLS starts, which nothing here does yet.
+- **No push.**
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.
@@ -81,7 +93,7 @@ The order the rest would go in, and what would count as arriving, is
 and this package's limitations do not become two records that drift. Short version: packfiles first,
 and packfile reading, refs and commits are done. Next is the index and a working tree, which together
 give `status` and `checkout`, and step 5 writing a repository git accepts — all done. What remains is
-step 6, fetch over our own TLS, and step 7, writing packfiles.
+step 6's transport — see the two items above — and step 7, writing packfiles.
 
 ## Two things about the format worth knowing before reading the code
 
@@ -107,6 +119,7 @@ deno test -A packages/git/test/history.test.ts     # refs, commits, and walking 
 deno test -A packages/git/test/index.test.ts       # .git/index, judged by `git status`
 deno test -A packages/git/test/checkout.test.ts    # a working tree we rebuilt, judged by `git status`
 deno test -A packages/git/test/commit.test.ts      # a commit we made, audited by `git fsck --strict`
+deno test -A packages/git/test/fetch.test.ts       # the protocol, against real `git upload-pack`
 ```
 
 Both skip themselves, loudly, where git is not installed.
