@@ -1,6 +1,7 @@
 # 0082 — `++` on an `i64` field or element emits an `i32` one, so the module is invalid
 
-- **Status:** open
+- **Status:** closed, 2026-08-11 by agent-b
+- **Fixed in:** 59c2e9e1
 - **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-09
@@ -53,3 +54,20 @@ Two compilers, one blind spot, and neither had a test with an `i64` field in it.
 Filed rather than fixed because the fix is in `wac`'s emitter and wants `wac`'s own suite behind it;
 the reporter was mid-bootstrap in `wac-mono`. The reproduction is one line and becomes a test either
 way.
+
+## Resolution
+
+The `1` was the whole of it. `emitFieldIncrAssign` synthesizes the right-hand side of the compound
+assignment it turns `++` into — `{ kind: "int", value: "1" }` — and that node has never been near the
+type checker, so it carried no `resolved` type and the literal emitter fell back to i32. The width
+came from the *literal*, not from what was being incremented.
+
+That is exactly why the issue's own narrowing held: `p.x += 1` works because the checker resolved
+*its* literal to `i64`, and a local works because that path emits `i64.const` from the target's width
+directly. The synthesized node is made with `resolved: t` now, `t` being the lvalue's type, which is
+the answer the checker would have written on it.
+
+`u64` was the same, `--` was the same, and `++` on an `f64` field never arises — the checker refuses
+it: `'++' requires i32 or i64, got f64`.
+
+`spec/cases/0104` (an `i64` field) and `0105` (an `i64` element) hold it.
