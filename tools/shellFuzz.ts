@@ -139,8 +139,33 @@ export function script(r: Rand, maxDepth = 2): string {
   return "v=set; " + parts.join("; ");
 }
 
-const PREFIX = /^(?:\S*bash|environment|ba-c): line \d+: /gm;
-const normalise = (t: string) => t.replace(PREFIX, "").replace(/^sh: /gm, "");
+/**
+ * The `bash: line 1: ` a diagnostic carries, so that a message can be compared with ours.
+ *
+ * **The name was allowed to be preceded by any run of non-space characters.** With `^` under `m`
+ * that matched *standard output* sitting on
+ * the same line, because `out + err` are joined below and a `printf '%s|'` leaves no newline between
+ * them. So `set|set|set|set|bash: line 1: local: …` normalised to `local: …`, bash's four printed
+ * words vanished, and the fuzzer reported a disagreement in which both shells had in fact printed
+ * `set|set|set|set|` and exited 0. It was the only disagreement three seeds could find, and it was
+ * this regex reading bash's own output as part of its name (issue 0130).
+ *
+ * Two changes, either of which would have been enough, and both are worth having: only a *path* may
+ * precede the name, and the two streams are joined with a newline so nothing can share a line with a
+ * prefix that is not its own.
+ *
+ * **And the anchor is gone**, which is the other half. A diagnostic does not always start a line:
+ * `printf '%s|' a >&2` leaves `a|bash: line 1: local: …` with the prefix in the middle, and `^`
+ * cannot see it — so the same script disagreed for the same non-reason in the other direction. The
+ * patterns are matched anywhere now, which costs the ability to tell a *message* from a script that
+ * printed the same characters. That is safe here and only here: every script comes from `script()`
+ * below, whose vocabulary is `a`, `b`, `c`, `x y`, digits and the fixture names, and none of them
+ * can produce `sh: ` or `bash: line 1: `. Widen that vocabulary and this has to be revisited.
+ */
+const PREFIX = /(?:\S*\/)?(?:bash|environment|ba-c): line \d+: /g;
+const normalise = (t: string) => t.replace(PREFIX, "").replace(/sh: /g, "");
+/** Standard output and standard error, joined so that neither can be read as part of the other. */
+const combined = (r: { out: string; err: string }) => r.out + "\n" + r.err;
 
 export type Disagreement = {
   script: string;
@@ -205,8 +230,8 @@ export async function sweep(shell: string, seed: number, count: number, dir: str
         }
       }
       const got = await run(shell, s, dir, held);
-      const a = normalise(want.out + want.err);
-      const b = normalise(got.out + got.err);
+      const a = normalise(combined(want));
+      const b = normalise(combined(got));
       // A bound that fired on either side is reported as itself. Comparing on through it turns a
       // loaded machine into a disagreement, which is the one thing a differential must not invent.
       if (want.hung || got.hung) {
