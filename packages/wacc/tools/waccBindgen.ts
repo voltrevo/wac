@@ -26,18 +26,85 @@ export function parseSigs(wire: string): ExportSig[] {
   return out;
 }
 
+/** A struct or enum a host can hold, as `bindTypesFiles` describes it. */
+export type BindType = {
+  kind: "struct" | "enum";
+  name: string;
+  bind: string;
+  fields: { name: string; type: string }[];
+  variants: { name: string; payload: { name: string; type: string }[] }[];
+  methods: { name: string; hasThis: boolean; ret: string; params: string[] }[];
+};
+
+/** Parse the `S`/`E`/`M` lines `bindTypesFiles` returns. */
+export function parseBindTypes(wire: string): BindType[] {
+  const out: BindType[] = [];
+  const byBind = new Map<string, BindType>();
+  for (const line of wire.split("\n")) {
+    if (line === "") continue;
+    const cells = line.split("\t");
+    if (cells[0] === "S" || cells[0] === "E") {
+      const t: BindType = {
+        kind: cells[0] === "S" ? "struct" : "enum",
+        name: cells[1],
+        bind: cells[2],
+        fields: [],
+        variants: [],
+        methods: [],
+      };
+      if (cells[0] === "S" && cells[3]) {
+        for (const f of cells[3].split(",")) {
+          const [name, type] = f.split(":");
+          t.fields.push({ name, type });
+        }
+      }
+      if (cells[0] === "E" && cells[3]) {
+        for (const v of cells[3].split(";")) {
+          const [name, ...rest] = v.split(":");
+          const payload: { name: string; type: string }[] = [];
+          if (rest.length > 0 && rest.join(":") !== "") {
+            for (const f of rest.join(":").split("|")) {
+              const [fn, ft] = f.split(":");
+              payload.push({ name: fn, type: ft });
+            }
+          }
+          t.variants.push({ name, payload });
+        }
+      }
+      out.push(t);
+      byBind.set(t.bind, t);
+    } else if (cells[0] === "M") {
+      const owner = byBind.get(cells[1]);
+      if (!owner) continue;
+      owner.methods.push({
+        name: cells[2],
+        hasThis: cells[3] === "this",
+        ret: cells[4],
+        params: cells[5] === "" || cells[5] === undefined ? [] : cells[5].split(","),
+      });
+    }
+  }
+  return out;
+}
+
 const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void"]);
 /** The arrays that cross through the staging buffer, which is where `_to_mem`/`_from_mem` exist. */
 const BULK = new Set(["u8[]", "i8[]", "i32[]", "u32[]", "i64[]", "u64[]", "f32[]", "f64[]"]);
 
 /** Whether this signature is one this generator can write glue for. */
-export function supported(sig: ExportSig): boolean {
-  const ok = (t: string) => SCALARS.has(t) || t === "string" || BULK.has(t);
+export function supported(sig: ExportSig, types: BindType[] = []): boolean {
+  const named = new Set(types.map(t => t.name));
+  const ok = (t: string) => SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t);
   return ok(sig.ret) && sig.params.every(ok);
 }
 
+/** The classes in play, so `tsType` and the conversions can name them. */
+let namedTypes: Map<string, BindType> = new Map();
+
 /** The TypeScript type a wac type crosses as. */
 function tsType(t: string): string {
+  const n = namedTypes.get(t);
+  if (n) return n.name;
   if (t === "void") return "void";
   if (t === "bool") return "boolean";
   if (t === "i64" || t === "u64") return "bigint";
@@ -60,6 +127,93 @@ function width(t: string): number {
   return { "u8": 1, "i8": 1, "i32": 4, "u32": 4, "i64": 8, "u64": 8, "f32": 4, "f64": 8 }[el] ?? 1;
 }
 
+/** A value crossing *into* the module. */
+function toWasm(t: string, expr: string): string {
+  if (t === "string") return `$strTo(${expr})`;
+  if (BULK.has(t)) return `$arrTo_${t.slice(0, -2)}(${expr})`;
+  if (namedTypes.has(t)) return `${expr}.$ref`;
+  return expr;
+}
+
+/** A value crossing *out* of it. */
+function fromWasm(t: string, expr: string): string {
+  if (t === "string") return `$strFrom(${expr})`;
+  if (BULK.has(t)) return `$arrFrom_${t.slice(0, -2)}(${expr})`;
+  if (namedTypes.has(t)) return `new ${namedTypes.get(t)!.name}(${expr})`;
+  if (t === "bool") return `${expr} !== 0`;
+  return `${expr} as ${tsType(t)}`;
+}
+
+/**
+ * A struct or an enum as a class holding the reference.
+ *
+ * Nothing is copied: `$ref` is the WasmGC reference itself, and every accessor calls back into the
+ * module. That is the reference's design too, and it is what makes a wrapper cheap enough to hand
+ * around — a `Point` returned from one call can go straight into the next.
+ */
+function classFor(t: BindType): string[] {
+  const lines: string[] = [];
+  const doc = t.kind === "enum"
+    ? `/** \`${t.name}\`, held by reference. \`tag\` says which variant it is. */`
+    : `/** \`${t.name}\`, held by reference. Fields and methods call into the module. */`;
+  lines.push(doc);
+  lines.push(`export class ${t.name} {`);
+  lines.push("  constructor(readonly $ref: unknown) {}");
+  if (t.kind === "struct") {
+    const args = t.fields.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
+    const conv = t.fields.map(f => toWasm(f.type, f.name)).join(", ");
+    lines.push(`  static $of(${args}): ${t.name} {`);
+    lines.push(`    return new ${t.name}(($exports.$bind$s_${t.bind}_new as CallableFunction)(${conv}));`);
+    lines.push("  }");
+    for (const f of t.fields) {
+      lines.push(`  get ${f.name}(): ${tsType(f.type)} {`);
+      lines.push(`    return ${fromWasm(f.type, `($exports.$bind$s_${t.bind}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
+      lines.push("  }");
+      lines.push(`  set ${f.name}(v: ${tsType(f.type)}) {`);
+      lines.push(`    ($exports.$bind$s_${t.bind}_set_${f.name} as CallableFunction)(this.$ref, ${toWasm(f.type, "v")});`);
+      lines.push("  }");
+    }
+  } else {
+    for (const v of t.variants) {
+      const args = v.payload.map(f => `${f.name}: ${tsType(f.type)}`).join(", ");
+      const conv = v.payload.map(f => toWasm(f.type, f.name)).join(", ");
+      lines.push(`  static ${v.name}(${args}): ${t.name} {`);
+      lines.push(`    return new ${t.name}(($exports.$bind$e_${t.bind}_${v.name}_new as CallableFunction)(${conv}));`);
+      lines.push("  }");
+    }
+    // The union is `"A" | "B"` and the lookup table is `["A", "B"]` — the same names, two
+    // separators. Written with one, `["A" | "B"]` is a one-element array holding a *bitwise or* of
+    // two strings, which is `0`, and every tag came back `undefined`.
+    const union = t.variants.map(v => `"${v.name}"`).join(" | ");
+    const list = t.variants.map(v => `"${v.name}"`).join(", ");
+    lines.push(`  get tag(): ${union} {`);
+    lines.push(`    const t = ($exports.$bind$e_${t.bind}_tag as CallableFunction)(this.$ref) as number;`);
+    lines.push(`    return ([${list}] as const)[t];`);
+    lines.push("  }");
+    for (const v of t.variants) {
+      for (const f of v.payload) {
+        lines.push(`  /** The \`${f.name}\` of a \`${v.name}\` — check \`tag\` first. */`);
+        lines.push(`  ${v.name}_${f.name}(): ${tsType(f.type)} {`);
+        lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
+        lines.push("  }");
+      }
+    }
+  }
+  for (const m of t.methods) {
+    const args = m.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+    const conv = m.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
+    const helper = m.hasThis ? `$bind$m_${t.bind}_${m.name}` : `$bind$sm_${t.bind}_${m.name}`;
+    const call = `($exports.${helper} as CallableFunction)(${m.hasThis ? ["this.$ref", conv].filter(Boolean).join(", ") : conv})`;
+    const sig = m.hasThis ? `${m.name}(${args})` : `static ${m.name}(${args})`;
+    lines.push(`  ${sig}: ${tsType(m.ret)} {`);
+    lines.push(m.ret === "void" ? `    ${call};` : `    return ${fromWasm(m.ret, call)};`);
+    lines.push("  }");
+  }
+  lines.push("}");
+  lines.push("");
+  return lines;
+}
+
 /**
  * The generated module: one exported function per wac export, plus the conversions they need.
  *
@@ -67,9 +221,18 @@ function width(t: string): number {
  * choice the reference makes, and for the same reason: a `.gen.ts` that needs a `.wasm` beside it is
  * two things to keep in step.
  */
-export function generate(wasm: Uint8Array, sigs: ExportSig[]): string {
-  const usable = sigs.filter(supported);
-  const needsMem = usable.some(s => [s.ret, ...s.params].some(t => t === "string" || BULK.has(t)));
+export function generate(wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = []): string {
+  namedTypes = new Map(types.map(t => [t.name, t]));
+  const usable = sigs.filter(s => supported(s, types));
+  const crossing = [
+    ...usable.flatMap(s => [s.ret, ...s.params]),
+    ...types.flatMap(t => [
+      ...t.fields.map(f => f.type),
+      ...t.variants.flatMap(v => v.payload.map(f => f.type)),
+      ...t.methods.flatMap(m => [m.ret, ...m.params]),
+    ]),
+  ];
+  const needsMem = crossing.some(t => t === "string" || BULK.has(t));
   const lines: string[] = [];
 
   lines.push("// Generated by packages/wacc/tools/waccBindgen.ts — do not edit.");
@@ -102,7 +265,7 @@ export function generate(wasm: Uint8Array, sigs: ExportSig[]): string {
     lines.push("");
   }
 
-  for (const t of new Set(usable.flatMap(s => [s.ret, ...s.params]).filter(t => BULK.has(t)))) {
+  for (const t of new Set(crossing.filter(t => BULK.has(t)))) {
     const el = t.slice(0, -2);
     const cls = arrayClass(t);
     const w = width(t);
@@ -119,18 +282,15 @@ export function generate(wasm: Uint8Array, sigs: ExportSig[]): string {
     lines.push("");
   }
 
+  for (const t of types) lines.push(...classFor(t));
+
   for (const sig of usable) {
     const args = sig.params.map((t, i) => `a${i}: ${tsType(t)}`).join(", ");
-    const conv = sig.params.map((t, i) =>
-      t === "string" ? `$strTo(a${i})` : BULK.has(t) ? `$arrTo_${t.slice(0, -2)}(a${i})` : `a${i}`
-    ).join(", ");
+    const conv = sig.params.map((t, i) => toWasm(t, `a${i}`)).join(", ");
     lines.push(`export function ${sig.name}(${args}): ${tsType(sig.ret)} {`);
     const call = `($exports.${sig.name} as CallableFunction)(${conv})`;
     if (sig.ret === "void") lines.push(`  ${call};`);
-    else if (sig.ret === "string") lines.push(`  return $strFrom(${call});`);
-    else if (BULK.has(sig.ret)) lines.push(`  return $arrFrom_${sig.ret.slice(0, -2)}(${call});`);
-    else if (sig.ret === "bool") lines.push(`  return ${call} !== 0;`);
-    else lines.push(`  return ${call} as ${tsType(sig.ret)};`);
+    else lines.push(`  return ${fromWasm(sig.ret, call)};`);
     lines.push("}");
     lines.push("");
   }
@@ -139,7 +299,7 @@ export function generate(wasm: Uint8Array, sigs: ExportSig[]): string {
 }
 
 /** What this generator declined, so a caller learns it rather than discovering it at run time. */
-export function unsupported(sigs: ExportSig[]): string[] {
-  return sigs.filter(s => !supported(s))
+export function unsupported(sigs: ExportSig[], types: BindType[] = []): string[] {
+  return sigs.filter(s => !supported(s, types))
     .map(s => `${s.name}(${s.params.join(", ")}) -> ${s.ret}`);
 }

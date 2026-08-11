@@ -13,7 +13,7 @@ i32 lower = toLower(0x0130);                                       // İ has no 
 ## The tables come from the host
 
 The host already carries a Unicode database — that is what `toLowerCase` consults — so
-`tools/gentables.ts` enumerates every code point, asks it, and emits `src/tables.wac`: three
+`packages/unicode/tools/gentables.ts` enumerates every code point, asks it, and emits `src/tables.wac`: three
 sorted arrays of the ~1,450 code points whose mapping differs from themselves, and a binary search
 over them.
 

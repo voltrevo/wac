@@ -13,7 +13,7 @@ Those are directions with an order of work. **This one has no order of work, del
 shape of a system several independent lines of work converge on, written down so that each of them can
 be judged against where it is going — not a sequence anybody should follow top to bottom.
 
-`design/README.md` asks for "the order of work, with what done looks like for each step". A destination
+`design/system/README.md` asks for "the order of work, with what done looks like for each step". A destination
 answers a different question, so the state of play below tracks *contributing pieces* rather than steps,
 and the pieces are ordered by dependency rather than by intent. If this ever acquires a sequence it
 should become an ordinary direction and say so.

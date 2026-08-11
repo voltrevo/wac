@@ -1,6 +1,6 @@
 // Registers the wac-side ENS tests and supplies the corpus `ethers` produced.
 //
-// Committed rather than fetched — a couple of kilobytes — so the suite needs no network. `tools/vendor.ts`
+// Committed rather than fetched — a couple of kilobytes — so the suite needs no network. `packages/ens/tools/vendor.ts`
 // regenerates it, and refuses any name that is not already ENSIP-15 normalised: this package hashes the
 // labels it is given, so a name needing normalisation would be comparing against a hash of something else.
 

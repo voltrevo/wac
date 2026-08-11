@@ -3,7 +3,7 @@
 One numbered document per **direction**: something we are aiming at that is too big to be an issue and
 too load-bearing to live in a commit message.
 
-`issues/README.md` says an issue is "something actionable that is not already written down", and lists
+`issues/system/README.md` says an issue is "something actionable that is not already written down", and lists
 three other homes — a package's README for its own roadmap, `~/notes/living/` for costs measured across
 projects, and `wac/issues/` for compiler bugs. A direction is a fourth kind: it spans packages, it takes
 more than a sitting, and the decisions in it constrain code that has not been written yet.
@@ -34,7 +34,7 @@ acquires a sequence, it becomes an ordinary direction and says so.
 ## What does not belong here
 
 - Anything actionable now — that is an issue, and the issue **references this document rather than
-  restating it**. Two records of one plan drift, which is the argument `issues/README.md` already makes
+  restating it**. Two records of one plan drift, which is the argument `issues/system/README.md` already makes
   about the GitHub mirror.
 - A package's own roadmap. Once a direction has produced a package, its limitations and next steps go in
   its README, and this document links to it.

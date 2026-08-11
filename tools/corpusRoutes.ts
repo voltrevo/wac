@@ -16,7 +16,7 @@
 // covering the called route entirely.
 //
 // It is still reachable and still shipped: `packages/box/example/boxsh.wac` is exactly `wacsh` with
-// the spawn turned off, `tools/site.test.ts` runs the front page's commands through it, and it is what
+// the spawn turned off, `site/tools/site.test.ts` runs the front page's commands through it, and it is what
 // any world that *cannot* spawn falls back to. A route with no coverage and no way to notice is the
 // thing this repository keeps finding in other people's code.
 //

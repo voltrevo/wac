@@ -449,7 +449,7 @@ browser. Nothing was rewritten in the move.
 
 ### Step 2 — image format
 
-`packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so. `packages/sh/src/imaged.wac` is the restart the criterion asks for: two processes, nothing shared but the file
+`packages/fs/src/image.wac` — every memory mount walked from its root, exact metadata, a CRC over the whole thing, and the host mounts it could not write named rather than dropped. `box fsdump` prints one. No GNU tool can be the oracle, so a round trip, a rewrite-is-identical check and an image committed on 2026-08-07 stand in for one. Incremental saves are not implemented and say so. `packages/box/src/bin/imaged.wac` is the restart the criterion asks for: two processes, nothing shared but the file
 
 ### Step 2a — a second host, no JavaScript
 

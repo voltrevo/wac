@@ -6,7 +6,7 @@
 // on whether the two halves of a composed proof fit together the way a provider assembles them.
 //
 // `test/vendor/getproof.json` is `eth_getProof` from anvil, whose tries are `alloy-trie` in Rust and share
-// nothing with this repo. Regenerate with `tools/vendor-getproof.ts`; the file is committed so the suite
+// nothing with this repo. Regenerate with `packages/mpt/tools/vendor-getproof.ts`; the file is committed so the suite
 // needs no client.
 //
 // **It found something immediately.** For an account that has never written a storage slot, anvil answers a

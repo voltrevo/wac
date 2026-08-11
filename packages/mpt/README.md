@@ -93,7 +93,7 @@ was missing, and `test/vendor/getproof.json` is one: `eth_getProof` from anvil v
 `alloy-trie` in Rust and share nothing with this repo or with `test/trie.ts`. Three cases — an account with
 storage where a requested slot was never written, an account that does not exist, and a funded account that
 has never written a slot — so inclusion and absence are both covered against a client nobody here wrote.
-`test/getproof.test.ts` drives it, and `tools/vendor-getproof.ts` regenerates it by building the state it
+`test/getproof.test.ts` drives it, and `packages/mpt/tools/vendor-getproof.ts` regenerates it by building the state it
 asks about rather than describing one somebody happened to have.
 
 **Building or updating a trie.** A verifier needs no writer. `test/trie.ts` builds one, insert-only, and it

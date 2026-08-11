@@ -202,3 +202,113 @@ Deno.test("the corpus is the whole repository, not a sample", async () => {
   assertEquals(all.filter((f) => f.endsWith(".wac")).length > 100, true, "too few wac files");
   assertEquals(all.includes("README.md"), true, "the root README is not in the corpus");
 });
+
+// ---------------------------------------------------------------------------------------------
+// A backticked repository path, which is a link with no `](…)` around it.
+//
+// The test above walks `](…)`, so it sees every markdown link and the handful of source comments
+// written as links. What it has never seen is the way a path is *usually* written in this repo's
+// prose — in backticks, inside a comment: "`packages/box/test/backings.test.ts` drives every one of
+// them against the real filesystem". That is a pointer, a reader follows it, and nothing checked it.
+//
+// Seventeen of them named nothing on 2026-08-11, most of them shaped by the two-repository merge that
+// moved `packages/sh`'s tests into `packages/box` and every `tools/x.ts` into the package that owns
+// it. `d3d713dd` fixed the sixty-nine *markdown* links that same merge broke; these are the same
+// breakage in the same commit's blind spot, and one of them — `packages/fs/cov.ts`'s reason for
+// exempting a host mount — was copied out twenty-five times.
+//
+// Only root-shaped paths are checked (`packages/…`, `tools/…`, `spec/…`), because those are
+// unambiguous: a relative one like `example/wc.wac` is relative to whichever file mentions it, and
+// resolving that guesses. `issues/` is left out for the same reason `readmeFigures.test.ts` leaves it
+// out — a closed issue is what was true on a day, and rewriting its paths would be rewriting the
+// record. A name with `NNNN` in it is a template's placeholder rather than a path. And prose that
+// names something deliberately no longer in the tree — a file this code was moved out of, a repro
+// that was deleted, the two repositories MERGE.md exists to describe — goes in `GONE` with what it
+// was.
+
+/** Prose that names a path deliberately no longer in the tree, and what it was. */
+const GONE: { file: string; path: string; why: string }[] = [
+  {
+    file: "packages/fmt/src/itoa.wac",
+    path: "packages/box/src/lib/num.wac",
+    why: "where this code was moved from, which is the point of the sentence",
+  },
+  {
+    file: "tools/deadexports.ts",
+    path: "packages/zstd/src/castrepro.wac",
+    why: "a repro file this check's false negatives were measured against, since deleted",
+  },
+  {
+    file: "tools/discovery.test.ts",
+    path: "tools/test.ts",
+    why: "the wrapper whose top level the runner collected — wac-mono 0077 is why it is gone",
+  },
+  {
+    file: "tools/deadexports.ts",
+    path: "packages/a/src/x.wac",
+    why: "an illustration of the import-matching rule, not a file",
+  },
+  {
+    file: "tools/deadexports.ts",
+    path: "packages/a/b.wac",
+    why: "the same illustration",
+  },
+  {
+    file: "compiler/wacResolve.ts",
+    path: "packages/a/b.wac",
+    why: "an illustration of how an import path resolves, not a file",
+  },
+  {
+    file: "MERGE.md",
+    path: "tools/wacPin.ts",
+    why: "the pin the two repositories needed and the merge removed — MERGE.md exists to describe that world",
+  },
+  {
+    file: "MERGE.md",
+    path: "harness/wacVersion.ts",
+    why: "the other half of the same pin, gone with it",
+  },
+  {
+    file: "design/lang/0001-import-resolution-core-and-what-packages-inherit.md",
+    path: "packages/bytes/src/read.wac",
+    why: "deleted when `Read` moved into `core`, which is what that row records",
+  },
+  {
+    file: "tools/jobsSweep.sh",
+    path: "tools/test.ts",
+    why: "the wrapper wac-mono 0077 removed — see `tools/discovery.test.ts`",
+  },
+  {
+    file: "tools/links.test.ts",
+    path: "tools/x.ts",
+    why: "this file's own example of a path shape",
+  },
+];
+
+/** A path in backticks that starts at a directory the repository root has. */
+const ROOTED = /`((?:packages|tools|harness|compiler|spec|design|issues|native|site)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|wac|md|rs|json|sh))`/g;
+
+Deno.test("every backticked repository path names a file that exists", async () => {
+  const all = await tracked();
+  const present = new Set(all);
+  const files = all.filter((f) => /\.(md|wac|ts|rs|sh)$/.test(f) && !f.startsWith("issues/"));
+  const broken: string[] = [];
+  let checked = 0;
+
+  for (const f of files) {
+    for (const m of (await Deno.readTextFile(f)).matchAll(ROOTED)) {
+      const path = m[1];
+      if (path.includes("NNNN")) continue;
+      if (GONE.some((g) => g.file === f && g.path === path)) continue;
+      checked++;
+      if (!nameable(present, path)) broken.push(`${f}: \`${path}\``);
+    }
+  }
+
+  // Hundreds, across the tree. Zero would mean the pattern stopped matching and this test had gone
+  // back to checking nothing, which is the state it was written to end.
+  if (checked < 100) {
+    throw new Error(`only ${checked} backticked paths found — has the pattern stopped matching?`);
+  }
+  assertEquals(broken, [], `a backticked path names nothing:\n  ${broken.join("\n  ")}`);
+});
