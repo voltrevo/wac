@@ -419,6 +419,10 @@ export void encodeStat(Buf out, Stat s) {
   putI64(out, s.size);
   putI64(out, s.modifiedMillis);
   out.pushU32(s.fault as@ u32);
+  // **Appended, after the fault.** Both ends of this codec are in this file, so an inserted field would
+  // compile — but a child staged from one commit talks to a parent from another, and a record that
+  // changed shape in the middle would be read as a valid record of different values.
+  out.push(s.isExecutable ? 1 : 0);
 }
 
 Stat decodeStat(Reader r) {
@@ -429,8 +433,9 @@ Stat decodeStat(Reader r) {
   i64 size = r.i64();
   i64 mtime = r.i64();
   i32 fault = r.u32();
-  if (r.bad) { return Stat.of(false, false, false, 0 as i64, 0 as i64, false, FAULT_OTHER()); }
-  return Stat.of(exists, isFile, isDir, size, mtime, isSymlink, fault);
+  bool isExecutable = r.byte() == 1;
+  if (r.bad) { return Stat.of(false, false, false, 0 as i64, 0 as i64, false, false, FAULT_OTHER()); }
+  return Stat.of(exists, isFile, isDir, size, mtime, isSymlink, isExecutable, fault);
 }
 
 export void encodeChange(Buf out, Change c) {

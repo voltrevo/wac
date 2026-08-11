@@ -101,23 +101,34 @@ Deno.test({
       const fsck = await git(["fsck"]);
       assert(fsck.code === 0, `git fsck refused the clone: ${fsck.err || fsck.out}`);
 
-      // **git's verdict on the working tree**, allowed one kind of difference and no other.
-      const status = await git(["status", "--porcelain"]);
-      const lines = status.raw === "" ? [] : status.raw.replace(/\n$/, "").split("\n");
-      const modeWarned = Number(warned.match(/(\d+) file\(s\) wanted the executable bit/)?.[1] ?? "0");
+      // **git's verdict on the working tree: nothing to report at all.**
+      //
+      // This used to allow one kind of difference — a ` M ` line per file whose index mode was `100755`,
+      // counted against the program's own warning, because `Cli` had no way to set the bit. That was
+      // issues/system/0132 and it is now built, so the tolerance is gone and the criterion is the one
+      // design/system/0005 actually asked for.
+      //
+      // **The executable is asserted to be there**, because with the tolerance removed a clone holding
+      // no executable would satisfy an empty status without exercising any of this — the loop that used
+      // to check them would simply not run, which is how a test stops testing and keeps passing.
+      const staged = await git(["ls-files", "-s"]);
+      const executables = staged.raw.split("\n").filter((l) => l.startsWith("100755 "));
       assert(
-        lines.length === modeWarned,
-        `git reports ${lines.length} difference(s) and the program warned about ${modeWarned}:\n${status.out}`,
+        executables.length > 0,
+        "the clone's index holds no executable, so the mode is not being tested by this at all",
       );
-      for (const line of lines) {
-        assert(line.startsWith(" M "), `an unexpected kind of difference: ${JSON.stringify(line)}`);
-        const path = line.slice(3);
-        const staged = await git(["ls-files", "-s", "--", path]);
-        assert(
-          staged.out.startsWith("100755 "),
-          `${path} differs and is not an executable in the index: ${JSON.stringify(staged.out)}`,
-        );
-      }
+      assert(
+        warned.match(/wanted the executable bit/) === null,
+        `the program still warns about modes it can set: ${JSON.stringify(warned)}`,
+      );
+
+      const status = await git(["status", "--porcelain"]);
+      assert(status.out === "", `git reports differences after the clone:\n${status.out}`);
+
+      // And on disk rather than merely in the index, since a wrong index and a wrong file agree.
+      const first = executables[0].split("\t")[1];
+      const mode = (await Deno.stat(`${dir}/${first}`)).mode ?? 0;
+      assert((mode & 0o100) !== 0, `${first} is 100755 in the index but not executable on disk`);
 
       // HEAD is symbolic and resolves — a clone whose HEAD named a branch that did not exist would
       // still pass fsck.

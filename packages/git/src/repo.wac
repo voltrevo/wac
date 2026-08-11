@@ -356,10 +356,11 @@ export Stored writeObject(Repo r, Kind kind, u8[] content) {
  *
  * `.git` is skipped, which is the one name that must not be walked.
  *
- * **Every blob is recorded as `100644`.** `Stat` carries no mode, so an executable cannot be told from
- * a plain file — issues/system/0132, the reading half of the same missing capability that stops a
- * checkout setting the bit. A tree built from a working tree containing an executable therefore records
- * a mode change nobody asked for, and this says so rather than pretending.
+ * **A blob is `100755` when the file is executable and `100644` otherwise**, read from
+ * `Stat.isExecutable` — the one bit that separates git's two regular-file modes. This used to record
+ * `100644` for everything, because `Stat` carried no mode, so committing an executable wrote a mode
+ * change nobody asked for; `git ls-tree` is what adjudicates it and `test/commit.test.ts` holds the case.
+ * The *writing* half of issues/system/0132 — a checkout setting the bit — is separate.
  *
  * An empty directory produces no entry, because git has no way to represent one. That is git's
  * behaviour rather than a shortcut.
@@ -414,6 +415,13 @@ export Vec<string> worktreeStatus(Repo r) {
         bool same = true;
         for (i32 k = 0; k < 20; k++) {
           if (name[k] != e.name[k]) { same = false; break; }
+        }
+        // **The mode counts as a difference even when every byte matches.** git reports a file that
+        // gained or lost its executable bit as ` M` with no content change, and this could not see it
+        // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; anything else recorded
+        // for a regular file is `100644`, so one comparison covers both directions.
+        if (same && (r.fs.stat(r.workTree + "/" + e.path).isExecutable != (e.mode == 33261))) {
+          same = false;
         }
         if (!same) { out.push(" M " + e.path); }
       }
@@ -636,7 +644,19 @@ export Vec<string> statusOf(Repo r, u8[] excludes) {
         if (!got.ok) {
           y = "D";
         } else if (e.mode != 57344) {
-          if (!sameName(sha1(framed(Kind.Blob, got.bytes)), e.name)) { y = "M"; }
+          if (!sameName(sha1(framed(Kind.Blob, got.bytes)), e.name)) {
+            y = "M";
+          } else if (r.fs.stat(r.workTree + "/" + e.path).isExecutable != (e.mode == 33261)) {
+            // **A mode change with no content change**, which git reports as ` M` and this could not see
+            // until `Stat` carried the bit — issues/system/0132. `33261` is `100755`; a regular file
+            // recorded as anything else is `100644`, so one comparison covers gaining and losing it.
+            //
+            // The same test lives in `worktreeStatus` above, which answers this column on its own for a
+            // caller with no `HEAD` to compare against. Two copies rather than one because the loops
+            // differ in what else they carry, and a helper taking six arguments to save four lines was
+            // the worse trade — but they must agree, and `test/status.test.ts` drives both.
+            y = "M";
+          }
         }
 
         if (x != " " || y != " ") { out.push(x + y + " " + e.path); }
@@ -896,11 +916,16 @@ export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> i
     } else {
       FileResult f = r.fs.readFile(path);
       if (!f.ok) { return Stored.NotStored("cannot read " + path); }
+      // **The mode is read, not assumed.** `Stat.isExecutable` is one bit and it is the only bit that
+      // separates git's two regular-file modes, so a tree built from a working tree now records what is
+      // on disk. Before this it recorded `100644` for everything and a commit of an executable carried a
+      // mode change nobody asked for. issues/system/0132.
+      bool exec = r.fs.stat(path).isExecutable;
       match (writeObject(r, Kind.Blob, f.bytes)) {
         case NotStored(why): return Stored.NotStored(why);
         case Named(blob): {
-          entries.push(Entry("100644", n, blob));
-          index.push(IndexEntry(rel, blob, 33188, f.bytes.len(), 0));
+          entries.push(Entry(exec ? "100755" : "100644", n, blob));
+          index.push(IndexEntry(rel, blob, exec ? 33261 : 33188, f.bytes.len(), 0));
         }
       }
     }

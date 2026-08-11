@@ -65,8 +65,13 @@ pub enum Outcome {
     Change(i32, String),
     /// `FileResult{ok, bytes, error, fault}`.
     FileResult(bool, Vec<u8>, String, i32),
-    /// `Stat{exists, isFile, isDir, size, modifiedMillis, isSymlink, fault}`.
-    Stat(bool, bool, bool, i64, i64, bool, i32),
+    /// `Stat{exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault}`.
+    ///
+    /// `isExecutable` sits where the wac struct declares it — beside the other flags rather than after
+    /// the fault — because this crosses as positional arguments to `$bind$sm_Stat_of` and not as the
+    /// appended byte the JavaScript hosts use. Two orders for one record, and each is the right one for
+    /// how it travels.
+    Stat(bool, bool, bool, i64, i64, bool, bool, i32),
     /// `string[]?` — **null is "not a directory", empty is "an empty one"**, and a host that
     /// collapsed them would make `ls` of a file print nothing instead of complaining.
     Names(Option<Vec<Vec<u8>>>),

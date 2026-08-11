@@ -7,7 +7,6 @@ record of what has been fixed and why.
 |---|---|---|---|
 | [0135](open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md) | a background job runs the name as an external program, so no builtin can be backgrounded | bug | wrong answer |
 | [0134](open/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md) | the `fs` coverage ratchet has been red since `Remote` arrived — 92 branch points measured nowhere | task | no error |
-| [0132](open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md) | a file's mode is on neither side of the capability surface: a checkout cannot set the executable bit and a tree build cannot read it | missing feature | wrong answer |
 | [0129](open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) | every built executable carries a floor that has grown seven-fold — a `wc` is 347 KiB | performance | no error |
 | [0128](open/0128-the-native-half-of-the-two-host-differential-times-out-under-load.md) | the native half of the two-host differential times out under load, and passes alone | bug | wrong answer |
 | [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |

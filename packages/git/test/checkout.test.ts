@@ -159,35 +159,41 @@ Deno.test({
 });
 
 Deno.test({
-  name: "an executable checks out without its mode, and says so — issues/system/0132",
+  name: "an executable checks out executable — issues/system/0132, the half that had to be built",
   ignore: !haveGit,
   fn: async () => {
     const { dir, git } = await repo(true);
     try {
+      // **What this used to assert is worth stating, because the test is the record.** It required
+      // `gitco` to *warn* that it could not set the bit, and required `git status` to report exactly
+      // `M script.sh` — a limitation pinned so that implementing the capability would fail loudly here
+      // rather than leaving a stale claim on the page. `Cli.setExecutable` is that capability, and this
+      // is the assertion turned over.
       await wipe(dir);
       const r = await run(await gitco(), dir);
       assert(r.code === 0, `gitco failed: ${r.err}`);
+      assert(r.err === "", `gitco still warns about a mode it can now set: ${JSON.stringify(r.err)}`);
 
-      // **The limitation is reported rather than discovered.** If this stops being true because a
-      // `chmod` capability landed, that is good news and this test is where to start: update
-      // issues/system/0132, `packages/git`'s README, and design/system/0005's step 4 row.
+      // **The fixture's shape, in git's answer, before ours is compared.** `repo(true)` puts an
+      // executable in the tree; if it stopped doing that this test would pass against a checkout that
+      // set no modes at all, which is the exact bug it exists to catch.
+      const tree = await git(["ls-tree", "-r", "HEAD"]);
       assert(
-        r.err.includes("executable bit"),
-        `gitco did not warn that it could not set a mode; it said ${JSON.stringify(r.err)}. If Cli grew ` +
-          `a chmod capability, close issues/system/0132 and update this test, the README and ` +
-          `design/system/0005 step 4.`,
+        /100755 blob \w+\tscript\.sh/.test(tree.out),
+        `the fixture's tree holds no executable, so nothing here is tested:\n${tree.out}`,
       );
 
+      // The whole criterion of step 4: nothing to report, mode included.
       const after = await git(["status", "--porcelain"]);
-      assert(
-        after.out === "M script.sh",
-        `expected exactly the executable to be reported, git said ${JSON.stringify(after.out)}`,
-      );
-      // And it really is only the mode: the contents match, so nothing else is wrong with the checkout.
-      assert(
-        (await git(["diff", "--summary"])).out === "mode change 100755 => 100644 script.sh",
-        "the difference is not only the mode",
-      );
+      assert(after.out === "", `git called the rebuilt tree dirty: ${JSON.stringify(after.out)}`);
+      assert((await git(["diff", "--summary"])).out === "", "git reports a mode change after our checkout");
+
+      // And the bit is really on the file, not merely agreed about — `status` compares against the index
+      // we wrote, so a wrong index and a wrong disk would agree with each other.
+      const mode = (await Deno.stat(`${dir}/script.sh`)).mode ?? 0;
+      assert((mode & 0o100) !== 0, `script.sh is not executable on disk: mode ${mode.toString(8)}`);
+      const plain = (await Deno.stat(`${dir}/a.txt`)).mode ?? 0;
+      assert((plain & 0o111) === 0, `a plain file came out executable: mode ${plain.toString(8)}`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

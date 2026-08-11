@@ -34,8 +34,10 @@ import { serveHostCalls } from "./respond.ts";
 import {
   CHANGED_OK,
   FAULT_NOT_GRANTED,
+  FAULT_UNSUPPORTED,
   Faulted,
   STAT_BYTES,
+  STAT_EXEC,
   STAT_FAULT,
   changeBytes,
   changed,
@@ -64,14 +66,24 @@ export type NodeIo = {
   writeStdout(bytes: Uint8Array): Promise<void>;
   /** The error stream as bytes. Optional: a host without one falls back to `warn`'s line. */
   writeStderr?(bytes: Uint8Array): Promise<void>;
-  stat(path: string): Promise<{ isFile: boolean; isDirectory: boolean; size: number; mtimeMillis: number }>;
+  stat(
+    path: string,
+  ): Promise<{ isFile: boolean; isDirectory: boolean; size: number; mtimeMillis: number; mode?: number }>;
   /**
    * `stat` without following the last component. Optional: a host that cannot tell answers as `stat`
    * does, which is honest for a filesystem with no links and wrong for nothing.
    */
   linkStat?(
     path: string,
-  ): Promise<{ isFile: boolean; isDirectory: boolean; size: number; mtimeMillis: number; isSymlink: boolean }>;
+  ): Promise<{
+    isFile: boolean;
+    isDirectory: boolean;
+    size: number;
+    mtimeMillis: number;
+    isSymlink: boolean;
+    /** Optional: an implementation with no POSIX bits leaves it out, and nothing is executable. */
+    mode?: number;
+  }>;
   readDir(path: string): Promise<string[]>;
 };
 
@@ -200,6 +212,13 @@ type NodeFs = {
   mkdir(path: string, opts: { recursive: boolean }): Promise<unknown>;
   rm(path: string, opts: { recursive: boolean; force: boolean }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  /**
+   * Optional, because a `NodeFs` standing in for something without POSIX bits cannot do it.
+   *
+   * Absent means `setExecutable` answers `FAULT_UNSUPPORTED` — the capability exists and this backing
+   * refuses, which is the same shape the browser host reports and a different thing from not granting it.
+   */
+  chmod?(path: string, mode: number): Promise<void>;
 };
 
 export function nodeWorld(
@@ -485,6 +504,7 @@ export function nodeWorld(
         out[2] = st.isDirectory ? 1 : 0;
         dv.setBigInt64(3, BigInt(st.size), true);
         dv.setBigInt64(11, BigInt(st.mtimeMillis ?? 0), true);
+        out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }
@@ -508,6 +528,7 @@ export function nodeWorld(
         dv.setBigInt64(3, BigInt(st.size), true);
         dv.setBigInt64(11, BigInt(st.mtimeMillis ?? 0), true);
         out[19] = st.isSymlink ? 1 : 0;
+        out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }
@@ -684,6 +705,22 @@ export function nodeWorld(
       return changed(() =>
         fs.rename(P(unstr(p.subarray(4, 4 + n))), P(unstr(p.subarray(4 + n))))
       );
+    },
+    [OP.SET_EXECUTABLE]: (p) => {
+      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
+      const chmod = fs.chmod;
+      if (chmod === undefined) {
+        return changeBytes(FAULT_UNSUPPORTED, "this filesystem has no mode bits to set");
+      }
+      const path = P(unstr(p.subarray(1)));
+      const on = p[0] === 1;
+      // The one bit, read-modify-write, and the execute bits following read — the same rule as the Deno
+      // host, and it is `chmod +x`'s rule rather than a whole mode chosen here.
+      return changed(async () => {
+        const mode = (await io.stat(path)).mode ?? 0o644;
+        const bits = on ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
+        await chmod(path, bits & 0o7777);
+      });
     },
   };
 }

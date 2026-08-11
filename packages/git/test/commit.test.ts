@@ -236,3 +236,69 @@ Deno.test({
     }
   },
 });
+
+// **An executable committed as an executable** — the reading half of issues/system/0132.
+//
+// `Stat` had no mode, so the tree walk recorded every blob as `100644` and a commit of an executable
+// carried a mode change nobody asked for. The oracle is `git ls-tree`, which prints the mode the tree
+// actually stores, and `git status`, which is empty only if the mode matches what is on disk.
+//
+// **The fixture asserts the shape in git's own answer first.** A repository whose files are all plain
+// would pass against a walk that still hard-coded `100644`, so this one holds an executable *and* a plain
+// file, and checks git agrees they differ before ours is compared to anything.
+Deno.test({
+  name: "a tree built from a working tree records 100755 for an executable",
+  ignore: !haveGit,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-git-exec-" });
+    const git = async (args: string[]) => {
+      const r = await new Deno.Command("git", {
+        args: ["-C", dir, ...args],
+        env: {
+          GIT_AUTHOR_NAME: "a", GIT_AUTHOR_EMAIL: "a@b", GIT_AUTHOR_DATE: "1700000000 +0000",
+          GIT_COMMITTER_NAME: "a", GIT_COMMITTER_EMAIL: "a@b", GIT_COMMITTER_DATE: "1700000000 +0000",
+          PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: dir,
+        },
+        clearEnv: true,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      return { text: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim(), ok: r.success };
+    };
+    try {
+      await git(["init", "-q", "-b", "main", "."]);
+      await git(["config", "user.name", "a"]);
+      await git(["config", "user.email", "a@b"]);
+      await Deno.writeTextFile(`${dir}/run.sh`, "#!/bin/sh\necho hi\n");
+      await Deno.chmod(`${dir}/run.sh`, 0o755);
+      await Deno.writeTextFile(`${dir}/plain.txt`, "not executable\n");
+
+      // The fixture's own shape: git must see the two files as different modes on disk.
+      const probe = await git(["hash-object", "-w", "run.sh"]);
+      assert(probe.ok, `git could not hash the fixture: ${probe.err}`);
+      const execBit = (await Deno.stat(`${dir}/run.sh`)).mode ?? 0;
+      assert((execBit & 0o100) !== 0, `the fixture's run.sh is not executable: mode ${execBit.toString(8)}`);
+      const plainBit = (await Deno.stat(`${dir}/plain.txt`)).mode ?? 0;
+      assert((plainBit & 0o100) === 0, `the fixture's plain.txt is executable: mode ${plainBit.toString(8)}`);
+
+      const r = await run(await gitci(), [dir, "an executable\n"]);
+      assert(r.code === 0, `gitci failed: ${r.err}`);
+
+      // **`git ls-tree` is the adjudicator**: it prints the mode the tree stores, not the mode on disk.
+      const tree = await git(["ls-tree", "HEAD"]);
+      assert(
+        tree.text.includes("100755 blob") && /100755 blob \w+\trun\.sh/.test(tree.text),
+        `run.sh was not recorded executable:\n${tree.text}`,
+      );
+      assert(/100644 blob \w+\tplain\.txt/.test(tree.text), `plain.txt was not recorded plain:\n${tree.text}`);
+
+      // And the whole point: the mode matching the disk is what makes status empty.
+      const st = await git(["status", "--porcelain"]);
+      assert(st.text === "", `git reports a difference after our commit:\n${st.text}`);
+      const fsck = await git(["fsck", "--strict"]);
+      assert(fsck.ok, `fsck refused the commit: ${fsck.err}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

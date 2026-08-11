@@ -60,6 +60,14 @@ export const OP = {
    */
   ASK_INTERRUPT: 50,
   SET_STYLE: 51,
+  /**
+   * "Make this file executable, or stop it being" — see `Cli.setExecutable` in `platform.wac`.
+   *
+   * One bit rather than a mode, because git's regular-file modes differ only in that bit and because a
+   * browser's OPFS has no mode bits at all, so a general `chmod` would be unanswerable on one of the four
+   * hosts rather than merely unsupported on it.
+   */
+  SET_EXECUTABLE: 52,
 } as const;
 
 /**

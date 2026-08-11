@@ -252,3 +252,69 @@ Deno.test({
     }
   },
 });
+
+// **An unstaged mode change**, which `Stat.isExecutable` made answerable — issues/system/0132.
+//
+// `worktreeStatus` compared content and nothing else, so a file that gained or lost its executable bit
+// after being staged was invisible in the second column. git reports it as ` M` with no content change
+// at all, which is the case here: the bytes are untouched and only the bit moved.
+//
+// The fixture does it **both ways**, because a check that only looked for a bit being added would pass
+// while a bit being removed went unreported — and git treats those symmetrically.
+Deno.test({
+  name: "a mode change with no content change is reported, both directions",
+  ignore: !haveGit,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-git-mode-" });
+    // **A separate HOME, not the work tree.** Pointing `HOME` at `dir` put the built program's own cache
+    // inside the repository under test, and the first thing this reported was `?? .cache/`. It also has to
+    // be *some* empty directory rather than the real one, because `gitst` reads `~/.gitconfig` for
+    // `core.excludesFile` now, and a developer's global ignore rules would quietly change the answer.
+    const home = await Deno.makeTempDir({ prefix: "wac-git-mhome-" });
+    const env = { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: home };
+    const git = async (args: string[]) => {
+      const r = await new Deno.Command("git", {
+        args: ["-C", dir, ...args],
+        env: { ...env, GIT_AUTHOR_NAME: "a", GIT_AUTHOR_EMAIL: "a@b", GIT_AUTHOR_DATE: "1700000000 +0000",
+               GIT_COMMITTER_NAME: "a", GIT_COMMITTER_EMAIL: "a@b", GIT_COMMITTER_DATE: "1700000000 +0000" },
+        clearEnv: true,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      return { raw: dec.decode(r.stdout), text: dec.decode(r.stdout).trim(), ok: r.success };
+    };
+    const ours = async () => {
+      const r = await new Deno.Command(await gitst(), { args: [dir], env, stdout: "piped", stderr: "piped" })
+        .output();
+      assert(r.code === 0, `gitst failed: ${dec.decode(r.stderr).trim()}`);
+      return dec.decode(r.stdout).replace(/\n$/, "");
+    };
+    try {
+      await git(["init", "-q", "-b", "main", "."]);
+      await git(["config", "user.name", "a"]);
+      await git(["config", "user.email", "a@b"]);
+      await Deno.writeTextFile(`${dir}/plain.txt`, "same bytes throughout\n");
+      await Deno.writeTextFile(`${dir}/exec.sh`, "#!/bin/sh\n");
+      await Deno.chmod(`${dir}/exec.sh`, 0o755);
+      await git(["add", "-A"]);
+      await git(["commit", "-qm", "one"]);
+      assert((await git(["status", "--porcelain"])).text === "", "the fixture did not start clean");
+
+      // Gaining the bit, with the bytes untouched.
+      await Deno.chmod(`${dir}/plain.txt`, 0o755);
+      const gained = (await git(["status", "--porcelain"])).raw.replace(/\n$/, "");
+      assert(gained === " M plain.txt", `git did not report the gained bit: ${JSON.stringify(gained)}`);
+      assert(await ours() === gained, `we say ${JSON.stringify(await ours())}, git says ${JSON.stringify(gained)}`);
+
+      // And losing it — the direction a check written only for the first case would miss.
+      await Deno.chmod(`${dir}/plain.txt`, 0o644);
+      await Deno.chmod(`${dir}/exec.sh`, 0o644);
+      const lost = (await git(["status", "--porcelain"])).raw.replace(/\n$/, "");
+      assert(lost === " M exec.sh", `git did not report the lost bit: ${JSON.stringify(lost)}`);
+      assert(await ours() === lost, `we say ${JSON.stringify(await ours())}, git says ${JSON.stringify(lost)}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(home, { recursive: true });
+    }
+  },
+});

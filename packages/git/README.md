@@ -55,7 +55,7 @@ pass. `git fsck --strict` accepts the result, `git log` shows the commit with it
 **It checks a repository out.** `example/gitco.wac` is a program — no TypeScript in the path — that
 resolves `HEAD`, reads the commit's tree out of loose objects or a pack, writes every file and
 subdirectory, and writes a matching `.git/index`. Delete a repository's working tree, run it, and
-`git status --porcelain` is empty with `git fsck` clean. The one exception is the executable bit, below.
+`git status --porcelain` is empty with `git fsck` clean — modes included, since `Cli.setExecutable` landed.
 
 It walks history. Given this repository's own objects it resolves `HEAD` through a symbolic ref, reads
 the commit, and follows parents to the root — **445 commits, identical to `git rev-list --first-parent`,
@@ -76,10 +76,12 @@ worse than one that says which:
   `CONNECT` tunnel, `packages/tls`'s trust store and the TLS client. What is missing is the assembly:
   writing fetched objects into a repository and checking it out, which is `design/system/0005` step 8.
 - **A clone works at any depth.** `example/gitclone.wac` clones from real GitHub. At `depth 1`: 790
-  objects, 718 files, `git fsck` clean, `git status` reporting one file — the executable bit of
-  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md). Full
-  depth, against this repository's own mirror: **21,065 objects in 10.3MB, 1,946 files, fourteen seconds**,
-  fsck clean, 128 files differing and every one of them that same bit. The history is the whole history and
+  objects, 718 files, `git fsck` clean, and `git status --porcelain` **empty**. It reported one file
+  until the executable bit became settable — [0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md), now
+  closed — and the test requires the clone's index to hold at least one `100755` entry, so removing that
+  tolerance did not merely make the check vacuous. Full depth, against this repository's own mirror:
+  **21,065 objects in 10.3MB, 1,946 files, fourteen seconds**, fsck clean; the 128 files that differed
+  there were all that same bit. The history is the whole history and
   not a prefix — the clone's `HEAD` has 2007 commits and 21,065 reachable objects in the source repository
   too. The full-depth run is a measurement taken deliberately rather than a suite test, because ten
   megabytes per run is a cost every push would pay; `depth 1` is what the tests pin.
@@ -137,9 +139,10 @@ worse than one that says which:
   and then edited again (`MM`), an entirely untracked directory that git collapses to one line, untracked
   files inside a directory that holds a tracked one, and ignore rules with a negation. `src/ignore.wac`
   does the `.gitignore` matching and agrees with `git check-ignore` on **882 decisions**. What it cannot
-  report is an **unstaged mode change**, because `Stat` has no mode —
-  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md); a
-  staged one is visible, since both sides of that comparison are recorded rather than read off the disk.
+  reports includes an **unstaged mode change** — a file that gained or lost its executable bit with every
+  byte unchanged, which git calls ` M` and this could not see until `Stat` carried the bit
+  ([0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)). The fixture moves the bit
+  both ways, since a check written for one direction passes while the other goes unreported.
   Ignore rules are gathered as git gathers them, **all four sources, lowest first**: `core.excludesFile`,
   `.git/info/exclude`, the root `.gitignore`, then each **nested** one as the walk descends, so a deeper
   file's rules win — which is how a `sub/.gitignore` holding `!keep.log` brings back a file the root's
@@ -148,10 +151,12 @@ worse than one that says which:
   a `Repo` holds only an `Fs`. Where it sits was measured with `git check-ignore -v` rather than assumed —
   it loses to `.git/info/exclude` and to a `.gitignore` — and the test's fixture makes all three disagree
   about the same three files, because one where they agree passes against a matcher that never read it.
-- **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
-  capability exists on `Cli`, so an executable checks out without it and git reports that one file as
-  modified. Counted and reported rather than silent —
-  [issues/system/0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md).
+- **A file's mode is one bit wide.** `Cli.setExecutable` carries the executable bit and nothing else, so
+  `packages/fs`'s `chmod` applies that bit on a host mount and **ignores the read and write bits** — a
+  `chmod(path, 0600)` there does not make a file private. That is the decision recorded in
+  [issues/system/0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md),
+  taken because git's regular-file modes differ only in that bit and a page's filesystem has no mode bits
+  at all. A caller needing the rest enforced is not served, and nothing here is that caller.
 - **A symlink checks out as an ordinary file** holding its target path, because `packages/fs` cannot
   create one at all — the same missing-capability shape as the bit above, one step worse. git reports
   ` T`, a typechange against the worktree; the index we write records mode 40960 and agrees with `HEAD`,

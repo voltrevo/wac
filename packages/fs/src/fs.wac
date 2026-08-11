@@ -590,7 +590,7 @@ export struct Fs {
     path = this.at(path);
     i32 mi = this.mountOf(path);
     // Absence rather than a fault, as below: a path under no mount is nothing, and that is an answer.
-    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
+    if (mi < 0) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE()); }
     Mount m = this.mounts.get(mi);
     match (m.backing) {
       case Host(cli): { return cli.stat(path).wait(); }
@@ -604,11 +604,14 @@ export struct Fs {
     // file is still "nothing here", and the category rides along so that `ls`, `cd` and `stat` can say
     // which kind of nothing. `Stat.answered` stays true for it, so `test -e` is unaffected.
     if (node < 0) {
-      return Stat.of(false, false, false, 0, 0, false,
+      return Stat.of(false, false, false, 0, 0, false, false,
                      node == NODE_NOT_A_DIR() ? FAULT_NOT_A_DIR() : FAULT_NONE());
     }
     Inode n = this.nodes.get(node);
-    return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false, FAULT_NONE());
+    // **Answered from the recorded mode**, which an image mount has and a host mount cannot get at:
+    // `chmod` writes it here, so reading it back is the round trip that makes the field testable.
+    return Stat.of(true, !n.isDir, n.isDir, n.data.len as i64, n.mtime, false,
+                   (n.mode & 64) != 0, FAULT_NONE());
   }
 
   /**
@@ -857,8 +860,10 @@ export struct Fs {
    * only true if something can actually *set* them: a field nothing writes is a field nothing tests, and
    * "exact metadata" was the whole argument for a format of our own rather than tar.
    *
-   * **Not implemented for a host mount.** There is no `chmod` capability — see `packages/platform` — so
-   * this refuses rather than pretending, because a mode silently not applied is worse than an error.
+   * **On a host mount only the executable bit is applied**, because that is all `Cli.setExecutable`
+   * carries and the decision behind that is in issues/system/0132. The read and write bits of `mode` are
+   * ignored there — stated here rather than discovered, since a mode silently not applied is the thing
+   * this comment used to warn about. On an image mount the whole mode is recorded, as it always was.
    */
   Change chmod(this, string path, i32 mode) {
     path = this.at(path);
@@ -870,7 +875,17 @@ export struct Fs {
       // `FAULT_DENIED` reached the user as "cannot access 'd': Permission denied", blaming the file
       // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
       // message below is what a caller prints. wac-mono 0117.
-      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
+      // **Only the executable bit, and that is the whole of what the capability carries.** `Cli` has
+      // `setExecutable`, one bool, because git's regular-file modes differ only there and a browser's
+      // OPFS has no mode bits at all — issues/system/0132 records the decision. So the owner-execute
+      // bit of `mode` is applied and **the read and write bits are not**: a `chmod(path, 0600)` on a
+      // host mount does not make a file private.
+      //
+      // That is a partial implementation reported as a success, which is worth being uneasy about. It is
+      // the right trade only because the alternative was `FAULT_UNSUPPORTED` for every mode, which made
+      // a checkout unable to set a bit it could set — but a caller that needs the other bits enforced is
+      // not served here, and nothing in this repository is that caller yet.
+      case Host(cli): { return cli.setExecutable(path, (mode & 64) != 0).wait(); }
       // Asked, and therefore implemented wherever the parent's own mount implements it — a child
       // that `chmod`s a file in an image changes the same inode its parent would have changed.
       case Remote(chan): { return remoteChmod(chan, path, mode); }
@@ -1334,8 +1349,8 @@ u8[] procBytes(Fs fs, Mount m, string path, i32 kind) {
 
 Stat synthStat(Fs fs, Mount m, string path) {
   i32 kind = synthKind(fs, m, path);
-  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, FAULT_NONE()); }
-  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, FAULT_NONE()); }
+  if (kind == SYNTH_NONE()) { return Stat.of(false, false, false, 0, 0, false, false, FAULT_NONE()); }
+  if (kind == SYNTH_DIR()) { return Stat.of(true, false, true, 0, fs.now, false, false, FAULT_NONE()); }
   // Size zero for the endless two, which is what Linux reports for them as well: a character device has
   // no length, and zero is how that is spelled. The `/proc` files have real ones.
   i64 size = 0 as i64;
@@ -1345,7 +1360,7 @@ Stat synthStat(Fs fs, Mount m, string path) {
   if (kind == SYNTH_PROGRAM()) {
     size = programBytes(path.slice(m.at.len() + 1, path.len())).len() as i64;
   }
-  return Stat.of(true, true, false, size, fs.now, false, FAULT_NONE());
+  return Stat.of(true, true, false, size, fs.now, false, false, FAULT_NONE());
 }
 
 string[]? synthDir(Fs fs, Mount m, string path) {

@@ -163,12 +163,22 @@ export async function runLauncherNode(
       write(b: Uint8Array): Promise<unknown>;
       close(): Promise<void>;
     }>;
-    stat(p: string): Promise<{ isFile(): boolean; isDirectory(): boolean; size: number; mtimeMs: number }>;
+    stat(
+      p: string,
+    ): Promise<{ isFile(): boolean; isDirectory(): boolean; size: number; mtimeMs: number; mode: number }>;
     lstat(
       p: string,
     ): Promise<
-      { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number }
+      {
+        isFile(): boolean;
+        isDirectory(): boolean;
+        isSymbolicLink(): boolean;
+        size: number;
+        mtimeMs: number;
+        mode: number;
+      }
     >;
+    chmod(p: string, mode: number): Promise<void>;
     readdir(p: string): Promise<string[]>;
   },
   proc: {
@@ -239,17 +249,18 @@ export async function runLauncherNode(
       const st = await fs.stat(path);
       return {
         isFile: st.isFile(), isDirectory: st.isDirectory(),
-        size: st.size, mtimeMillis: Math.round(st.mtimeMs),
+        size: st.size, mtimeMillis: Math.round(st.mtimeMs), mode: st.mode,
       };
     },
     linkStat: async (path: string) => {
       const st = await fs.lstat(path);
       return {
         isFile: st.isFile(), isDirectory: st.isDirectory(),
-        size: st.size, mtimeMillis: Math.round(st.mtimeMs),
+        size: st.size, mtimeMillis: Math.round(st.mtimeMs), mode: st.mode,
         isSymlink: st.isSymbolicLink(),
       };
     },
+    chmod: (path: string, mode: number) => fs.chmod(path, mode),
     readDir: async (path: string) => (await fs.readdir(path)).sort(),
   };
   const bridge = newBridge();
