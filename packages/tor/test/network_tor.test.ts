@@ -32,7 +32,7 @@ import { buildApp } from "../../platform/build.ts";
 // layer, and the harness already knows it is a test. The one fact that decides whether a red gate
 // means "re-run" or "investigate".
 import { loadNow } from "../../../harness/bounded.ts";
-import { testBounded } from "../../../harness/deadline.ts";
+import { CASE_TIMEOUT, testBounded } from "../../../harness/deadline.ts";
 import "../../../harness/spawnRetry.ts";
 
 
@@ -45,7 +45,84 @@ function assertContains(haystack: string, needle: string, msg?: string): void {
   }
 }
 
-testBounded("a Tor network with no C in it, stood up and fetched from", async () => {
+
+/**
+ * Run the launcher, keeping what it says **as it says it**.
+ *
+ * `outputSync` was here, and it is why a wedge in this case left "nothing but a test name and a
+ * cursor" (wac-mono 0106, twice — eighteen minutes and twenty-six). A synchronous run hands back its
+ * output only when the child exits, so a case killed by `testBounded`'s five-minute bound discards
+ * every line the network had written: the one place the diagnosis could have come from is the one
+ * place that is thrown away.
+ *
+ * Streaming into a buffer costs nothing and means the *timeout* path has evidence too — `hold`
+ * hands the buffers back before anything is awaited, so a `finally` can report them however the case
+ * ends. The child is killed there as well, so a wedged network does not outlive the test that gave
+ * up on it.
+ */
+function runNetwork(launcher: string, dir: string): {
+  child: Deno.ChildProcess;
+  done: Promise<{ code: number; out: string; err: string }>;
+  seen: () => { out: string; err: string };
+} {
+  const child = new Deno.Command(launcher, {
+    args: ["net.txt"],
+    cwd: dir,
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const dec = new TextDecoder();
+  let out = "";
+  let err = "";
+  const drain = async (stream: ReadableStream<Uint8Array>, to: "out" | "err") => {
+    for await (const chunk of stream) {
+      const text = dec.decode(chunk, { stream: true });
+      if (to === "out") out += text;
+      else err += text;
+    }
+  };
+  const done = (async () => {
+    const [, , status] = await Promise.all([
+      drain(child.stdout, "out"),
+      drain(child.stderr, "err"),
+      child.status,
+    ]);
+    return { code: status.code, out, err };
+  })();
+  return { child, done, seen: () => ({ out, err }) };
+}
+
+/**
+ * What the network currently running had said, for the case-level timeout to report.
+ *
+ * A module-level slot because `testBounded`'s `onTimeout` fires from *outside* the body — the body
+ * is still wedged and its own `finally` will not run — so the hook cannot be a closure over a local.
+ * Set when a network starts and cleared when it finishes.
+ */
+let running: { child: Deno.ChildProcess; seen: () => { out: string; err: string } } | undefined;
+
+/** Print what the wedged network had reached, and stop it. Safe to call when nothing is running. */
+async function reportRunning(): Promise<void> {
+  if (running === undefined) return;
+  const { out, err } = running.seen();
+  console.error(
+    `the network was still running (${loadNow()}). What it had said:\n` +
+      `--- stderr ---\n${tail(err)}\n--- stdout ---\n${tail(out)}`,
+  );
+  try { running.child.kill("SIGKILL"); } catch { /* already gone */ }
+  running = undefined;
+}
+
+/** The last `n` lines of what a wedged network had said, for a message that has to fit in a log. */
+function tail(text: string, n = 25): string {
+  const lines = text.trimEnd().split("\n");
+  return lines.length <= n ? lines.join("\n") : lines.slice(-n).join("\n");
+}
+
+testBounded({
+  name: "a Tor network with no C in it, stood up and fetched from",
+  onTimeout: reportRunning,
+}, async () => {
   const dir = await Deno.makeTempDir({ prefix: "wac-tornet-" });
   try {
     const launcher = `${dir}/network`;
@@ -87,15 +164,15 @@ testBounded("a Tor network with no C in it, stood up and fetched from", async ()
       ].join("\n"),
     );
 
-    const r = new Deno.Command(launcher, {
-      args: ["net.txt"],
-      cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).outputSync();
-    const dec = new TextDecoder();
-    const out = dec.decode(r.stdout);
-    const err = dec.decode(r.stderr);
+    const net = runNetwork(launcher, dir);
+    running = net;
+    let finished = false;
+    try {
+    const r = await net.done;
+    finished = true;
+    running = undefined;
+    const out = r.out;
+    const err = r.err;
 
     if (r.code !== 0) throw new Error(`the network did not come up or the fetch failed (${loadNow()}):\n${err}`);
 
@@ -109,12 +186,24 @@ testBounded("a Tor network with no C in it, stood up and fetched from", async ()
     // relay that answered 404 would give a short body, and a short body is not obviously wrong.
     assertContains(out, "network-status-version 3", "stdout is a consensus, fetched over the circuit");
     assertContains(out, "directory-signature ", "signed, and complete to the end of the document");
+    } finally {
+      // The dump is `reportRunning`'s, through `onTimeout` — it runs on any failure and, unlike this
+      // block, also on the one where the body never settles. All that is left here is not leaving a
+      // network behind when the body *did* settle badly.
+      if (!finished) {
+        try { net.child.kill("SIGKILL"); } catch { /* already gone */ }
+        await net.done.catch(() => {});
+      }
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });
 
-testBounded("an onion service published on that network, and a page fetched from it", async () => {
+testBounded({
+  name: "an onion service published on that network, and a page fetched from it",
+  onTimeout: reportRunning,
+}, async () => {
   // The rest of design 0002's done condition: *publishes an onion service on it, fetches a page from
   // that service through a three-hop circuit, and tears it down.*
   //
@@ -170,23 +259,31 @@ testBounded("an onion service published on that network, and a page fetched from
       ].join("\n"),
     );
 
-    const r = new Deno.Command(launcher, {
-      args: ["net.txt"],
-      cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).outputSync();
-    const dec = new TextDecoder();
-    const out = dec.decode(r.stdout);
-    const err = dec.decode(r.stderr);
+    // **This is the case that wedged**, twice, for eighteen and twenty-six minutes — see 0106. It
+    // streams now, so whatever it had reached is printed when it does not finish.
+    const net = runNetwork(launcher, dir);
+    running = net;
+    let finished = false;
+    try {
+      const r = await net.done;
+      finished = true;
+      running = undefined;
+      const out = r.out;
+      const err = r.err;
 
-    if (r.code !== 0) throw new Error(`the onion service run failed (${loadNow()}):\n${err}`);
+      if (r.code !== 0) throw new Error(`the onion service run failed (${loadNow()}):\n${err}`);
 
-    assertContains(err, 'service had already said "introduction point established"',
-                   "the service claimed an introduction point");
-    assertContains(err, 'service had already said "published to"',
-                   "and published its descriptor to the directories");
-    assertContains(out, "hello from behind an onion", "and the page came back through the rendezvous");
+      assertContains(err, 'service had already said "introduction point established"',
+                     "the service claimed an introduction point");
+      assertContains(err, 'service had already said "published to"',
+                     "and published its descriptor to the directories");
+      assertContains(out, "hello from behind an onion", "and the page came back through the rendezvous");
+    } finally {
+      if (!finished) {
+        try { net.child.kill("SIGKILL"); } catch { /* already gone */ }
+        await net.done.catch(() => {});
+      }
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

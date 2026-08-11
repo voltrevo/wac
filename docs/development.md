@@ -3,10 +3,16 @@
 Everything except the website is Deno and Rust; the website is the one npm subtree.
 
 ```sh
-deno task test                    # the suite — seven to ten minutes
+deno task test                    # the suite — four to eleven minutes, see below
 deno task test packages/json      # one subtree, same concurrency cap
 deno task map --check             # MAP.md is generated; staleness is a failure
 ```
+
+**How long it takes depends on what else is running**, which matters here because several agents
+share one container. Sixty-four gate runs on 2026-08-11: **236s fastest, 378s median, 683s slowest**
+— a mean of 345s at load below 5 and 476s at load 8 or more. So a run that takes eleven minutes is
+usually a busy machine rather than a broken suite, and the gate prints the load average beside its
+own time for exactly that reason.
 
 The suite runs in two lanes: a parallel pass capped at four workers, then the files that declare
 `// test-lane: exclusive` run alone, because they want a real port or a real external binary. The cap
@@ -43,6 +49,17 @@ because a silent skip reads as coverage.
   OpenSSH, and a C `tor` for the two-way Tor tests.
 
 ## Before pushing
+
+`bash tools/push.sh` is the gate: it refuses a dirty tree, runs the whole suite, merges whatever
+arrived while it ran, and pushes. Run it **detached** — `setsid nohup bash tools/push.sh &` — because
+a foreground run dies with the shell that started it, and do not edit the tree while it is running:
+it builds from the working directory rather than from a snapshot, so an edit half-way through fails
+the run.
+
+**A push can be rejected after a green suite**, and on a busy day it can happen three times in a row —
+that is what "still being beaten to the push after three tries" means. The suite takes minutes and
+another agent's push takes none, so the race is lost in the gap between the last test and the push.
+Nothing is wrong when this happens: pull, and run it again.
 
 Work on the primary branch and push only complete changes. A rejected push means somebody got there
 first: pull, merge, check the result still holds together, and push again. Never force-push — the
