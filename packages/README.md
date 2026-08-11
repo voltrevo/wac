@@ -324,6 +324,13 @@ Four have been found false, and each had been for a while:
 - `design/system/0001`'s step 5 asserted both that the `^C` criterion **is met** and, four paragraphs
   later, that it **is still not met**. Both were true when written, and the cell was 1,376 words, so
   nobody had the two sentences in view at once. Splitting it into sections is what made it visible.
+  **The split then kept the wrong half.** The state-of-play paragraph the split created said the ssh
+  criterion "needs concurrency rather than a poll" — directly above the paragraph naming the poll that
+  met it — and `packages/tty` and `packages/ssh` carried the same sentence, each written before the
+  fix landed. Three documents, one fact, corrected on 2026-08-11 by running
+  `packages/ssh/test/server.test.ts`'s `^C` case: it passes in 2s, with `$?` at 130 on a session that
+  is still there. A summary written to end a contradiction is worth no more than the day it was
+  written on.
 
 **Length is where these hide.** Three of the four were in files or cells long enough that the two
 halves of the contradiction were never on a screen together, and the fourth was the same sentence
