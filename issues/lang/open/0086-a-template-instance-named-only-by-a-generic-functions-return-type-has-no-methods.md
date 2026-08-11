@@ -1,7 +1,7 @@
 # 0086 — a template instance named only by a generic function's return type has no methods
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-09
 - **Kind:** bug

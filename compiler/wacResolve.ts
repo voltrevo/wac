@@ -1434,13 +1434,26 @@ export function monomorphise(
   injectNeededImports();
 
   // Templates themselves are removed and the materialised copies take their place.
-  for (const [filePath, prog] of programs) {
-    prog.items = prog.items.filter(
-      (it) => !((it.tag === "struct" || it.tag === "enum") && it.typeParams.length > 0));
-    for (const [mangled, decl] of made) {
-      if (madeIn.get(mangled) === filePath) prog.items.push(decl);
+  //
+  // Called again once the generic *functions* have been monomorphised: substituting a function
+  // materialises structs of its own, and an instance that no hand-written type names — one that
+  // exists only as a generic function's return type — is made after this point. It was made and
+  // never placed, so the checker met a struct with no methods on it and said so
+  // (`struct 'Opt__main$string' has no method 'orElse'`), and writing `Opt<string>` anywhere in
+  // the file made the same program compile [issue 0086].
+  const placed = new Set<string>();
+  function placeMadeStructs(): void {
+    for (const [filePath, prog] of programs) {
+      prog.items = prog.items.filter(
+        (it) => !((it.tag === "struct" || it.tag === "enum") && it.typeParams.length > 0));
+      for (const [mangled, decl] of made) {
+        if (placed.has(mangled) || madeIn.get(mangled) !== filePath) continue;
+        prog.items.push(decl);
+        placed.add(mangled);
+      }
     }
   }
+  placeMadeStructs();
 
   // ── Generic functions ───────────────────────────────────────────────────────
   //
@@ -1917,6 +1930,7 @@ export function monomorphise(
       }
     }
     injectNeededImports();
+    placeMadeStructs();   // the instances the substituted function bodies asked for
   }
 
   // Anything still naming a template by itself could not get arguments from anywhere, which is the
