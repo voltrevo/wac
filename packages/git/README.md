@@ -104,16 +104,18 @@ worse than one that says which:
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.
 - **No config, no `.gitignore`.** Every file under the repository is committed.
-- **A status of both porcelain columns, and not of untracked files.** `statusOf` compares the index
-  against `HEAD` and the working tree against the index, and `example/gitst.wac` prints the two columns in
-  git's order — so `diff <(git status --porcelain) <(gitst .)` is empty on a fixture holding a staged
-  change, an unstaged one in a subdirectory, a staged addition, a staged deletion, and a file staged and
-  then edited again (`MM`, which is what proves the columns are computed separately). Two things it does
-  not do: **untracked files**, because deciding which count needs `.gitignore`; and an **unstaged mode
-  change**, because `Stat` has no mode —
-  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)
-  again, so git sees an executable that lost its bit and we do not. A *staged* mode change is visible,
-  since both sides of that comparison are recorded rather than read off the disk.
+- **A status git agrees with, byte for byte, and one thing it cannot see.** `statusOf` answers all three
+  of git's outputs — the index against `HEAD`, the working tree against the index, and untracked files —
+  and `example/gitst.wac` prints them, so `diff <(git status --porcelain) <(gitst .)` is empty on a fixture
+  holding a staged change, an unstaged one in a subdirectory, a staged addition and deletion, a file staged
+  and then edited again (`MM`), an entirely untracked directory that git collapses to one line, untracked
+  files inside a directory that holds a tracked one, and ignore rules with a negation. `src/ignore.wac`
+  does the `.gitignore` matching and agrees with `git check-ignore` on **882 decisions**. What it cannot
+  report is an **unstaged mode change**, because `Stat` has no mode —
+  [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md); a
+  staged one is visible, since both sides of that comparison are recorded rather than read off the disk.
+  Only the work tree's own `.gitignore` is read, not nested ones, `.git/info/exclude` or
+  `core.excludesFile`.
 - **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —

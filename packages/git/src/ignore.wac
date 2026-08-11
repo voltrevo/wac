@@ -1,0 +1,279 @@
+// `.gitignore` matching, because an untracked file nobody asked about is noise.
+//
+// A status that listed every build artefact would be wrong in a more annoying way than one that listed
+// nothing, so untracked files could not be reported until this existed. The oracle is exact and unusually
+// good: `git check-ignore` answers the same question for the same path, so being right is checkable
+// path by path rather than argued from the documentation.
+//
+// ## The rules, in the order they bite
+//
+//     # comment                 a blank line and a `#` line are nothing
+//     build                     matches a file or directory of that name **at any depth**
+//     /build                    only at the root of the directory holding the .gitignore
+//     build/                    directories only
+//     a/b                       a slash anywhere but the end anchors it to that directory
+//     *.o                       `*` matches within one path component and never across `/`
+//     **/logs                   any depth, which is what a bare name already does
+//     logs/**                   everything under it
+//     a/**/b                    any number of directories between
+//     !keep.o                   un-ignores, and **the last matching rule wins**
+//
+// **Last match wins is the rule people get wrong**, and it is why this walks the whole list rather than
+// returning on the first hit: `*.o` followed by `!keep.o` keeps `keep.o`, and the same two the other way
+// round does not.
+//
+// **A directory being ignored ignores everything inside it**, which is why `ignored` tests each prefix of
+// the path rather than only the whole thing. `build` ignores `build/x/y.o` without any rule mentioning it.
+//
+// ## What this does not read
+//
+// One file's rules, applied relative to that file's directory. It does not gather **nested
+// `.gitignore` files**, `.git/info/exclude`, or `core.excludesFile` — each is another source with its own
+// precedence, and a matcher that silently applied one set where git applies four would be wrong in exactly
+// the way `git check-ignore` would catch. The caller supplies the rules it has.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** One line of a `.gitignore`, parsed. */
+export struct Rule {
+  /** The pattern, with `!` and any trailing `/` removed. */
+  string pat;
+  /** `!` — this rule un-ignores what it matches. */
+  bool negated;
+  /** The pattern ended in `/`, so it matches directories only. */
+  bool dirOnly;
+  /**
+   * The pattern had a `/` anywhere but the end, so it is relative to the ignore file's own directory
+   * rather than matching at any depth.
+   */
+  bool anchored;
+}
+
+/**
+ * Parse the lines of a `.gitignore`.
+ *
+ * Trailing spaces go, because git strips them unless they are backslash-escaped — a rule ending in a
+ * space almost always means a stray keystroke rather than a filename. A leading `\` escapes a `#` or a
+ * `!` that is meant literally.
+ */
+export Vec<Rule> parseIgnore(u8[] text) {
+  Vec<Rule> out = Vec.create();
+  i32 at = 0;
+  while (at < text.len()) {
+    i32 end = at;
+    while (end < text.len() && text[end] != 10) { end = end + 1; }
+    // The line, without its terminator or any trailing carriage return.
+    i32 stop = end;
+    if (stop > at && text[stop - 1] == 13) { stop = stop - 1; }
+    while (stop > at && text[stop - 1] == 32) { stop = stop - 1; }
+    i32 from = at;
+    at = end + 1;
+
+    if (stop <= from) { continue; }
+    if (text[from] == '#') { continue; }
+
+    bool negated = false;
+    if (text[from] == '!') {
+      negated = true;
+      from = from + 1;
+      if (stop <= from) { continue; }
+    } else if (text[from] == 92 && from + 1 < stop) {
+      // `\#` or `\!` — the character is literal, and the backslash is not part of the name.
+      from = from + 1;
+    }
+
+    bool dirOnly = false;
+    if (text[stop - 1] == '/') {
+      dirOnly = true;
+      stop = stop - 1;
+      if (stop <= from) { continue; }
+    }
+
+    // A leading slash anchors and is not part of the pattern; a slash anywhere else anchors and is.
+    bool anchored = false;
+    if (text[from] == '/') {
+      anchored = true;
+      from = from + 1;
+      if (stop <= from) { continue; }
+    } else {
+      for (i32 i = from; i < stop - 1; i++) {
+        if (text[i] == '/') { anchored = true; break; }
+      }
+    }
+
+    Buf p = Buf.create();
+    for (i32 i = from; i < stop; i++) { p.push(text[i]); }
+    out.push(Rule(p.toStr(), negated, dirOnly, anchored));
+  }
+  return out;
+}
+
+/** One past the `]` of a class starting at `at`, or -1. */
+i32 classEnd(u8[] pat, i32 at) {
+  i32 i = at + 1;
+  if (i < pat.len() && (pat[i] == '!' || pat[i] == '^')) { i = i + 1; }
+  // A `]` first is a literal, per the shell convention git follows.
+  if (i < pat.len() && pat[i] == ']') { i = i + 1; }
+  while (i < pat.len() && pat[i] != ']') { i = i + 1; }
+  return i < pat.len() ? i + 1 : -1;
+}
+
+/** Whether `c` is in the class `pat[at..close)`, which starts at `[`. */
+bool inClass(u8[] pat, i32 at, i32 close, i32 c) {
+  i32 i = at + 1;
+  bool negate = false;
+  if (i < close && (pat[i] == '!' || pat[i] == '^')) {
+    negate = true;
+    i = i + 1;
+  }
+  bool hit = false;
+  while (i < close - 1) {
+    // A range, unless the `-` is last.
+    if (i + 2 < close - 1 && pat[i + 1] == '-') {
+      if (c >= pat[i] && c <= pat[i + 2]) { hit = true; }
+      i = i + 3;
+    } else {
+      if (pat[i] == c) { hit = true; }
+      i = i + 1;
+    }
+  }
+  return negate ? !hit : hit;
+}
+
+/**
+ * Whether `pat` from `p` matches `name` from `n`.
+ *
+ * `*` and `?` stop at a `/`; `**` crosses one. That single difference is what separates this from an
+ * ordinary glob, and it is why `packages/sh`'s matcher could not be reused: a shell splits the path first
+ * and never asks the question.
+ */
+bool matchFrom(u8[] pat, i32 p, u8[] name, i32 n) {
+  i32 i = p;
+  i32 j = n;
+  while (i < pat.len()) {
+    i32 c = pat[i];
+    if (c == '*') {
+      bool doubled = i + 1 < pat.len() && pat[i + 1] == '*';
+      if (doubled) {
+        // `**` crosses separators. Skip the `/` that follows it so `a/**/b` also matches `a/b`.
+        i32 after = i + 2;
+        if (after < pat.len() && pat[after] == '/') {
+          if (matchFrom(pat, after + 1, name, j)) { return true; }
+        }
+        for (i32 k = j; k <= name.len(); k++) {
+          if (matchFrom(pat, after, name, k)) { return true; }
+        }
+        return false;
+      }
+      for (i32 k = j; k <= name.len(); k++) {
+        if (matchFrom(pat, i + 1, name, k)) { return true; }
+        // One component only.
+        if (k < name.len() && name[k] == '/') { break; }
+      }
+      return false;
+    }
+    if (j >= name.len()) { return false; }
+    if (c == '?') {
+      if (name[j] == '/') { return false; }
+      i = i + 1;
+      j = j + 1;
+      continue;
+    }
+    if (c == '[') {
+      i32 close = classEnd(pat, i);
+      if (close < 0) {
+        // An unclosed `[` is a literal, which is what git does rather than refusing the file.
+        if (name[j] != c) { return false; }
+        i = i + 1;
+        j = j + 1;
+        continue;
+      }
+      if (name[j] == '/' || !inClass(pat, i, close, name[j])) { return false; }
+      i = close;
+      j = j + 1;
+      continue;
+    }
+    if (c == 92 && i + 1 < pat.len()) {
+      // An escaped metacharacter is itself.
+      if (name[j] != pat[i + 1]) { return false; }
+      i = i + 2;
+      j = j + 1;
+      continue;
+    }
+    if (name[j] != c) { return false; }
+    i = i + 1;
+    j = j + 1;
+  }
+  return j == name.len();
+}
+
+/** Whether one rule matches this exact path — no prefix walking, no directory inheritance. */
+bool ruleHits(const Rule r, string path, bool isDir) {
+  if (r.dirOnly && !isDir) { return false; }
+  u8[] pat = r.pat.toBytes();
+  u8[] p = path.toBytes();
+  // **A trailing `/**` matches the directory itself as well as everything under it.** Measured, not
+  // assumed: `git check-ignore` says `vendor/` is ignored by `vendor/**`, while `a/` is *not* ignored by
+  // `a/**/z` — so this is specific to the pattern ending there rather than to `**` anywhere. It matters
+  // for more than tidiness: a walk that knows the directory is ignored can stop descending, which is what
+  // git does and the reason it never reads a `node_modules`.
+  if (isDir && pat.len() > 3 && pat[pat.len() - 1] == '*' && pat[pat.len() - 2] == '*'
+      && pat[pat.len() - 3] == '/') {
+    u8[] head = u8[pat.len() - 3]();
+    for (i32 i = 0; i < head.len(); i++) { head[i] = pat[i]; }
+    if (r.anchored) {
+      if (matchFrom(head, 0, p, 0)) { return true; }
+    } else {
+      if (matchFrom(head, 0, p, 0)) { return true; }
+      for (i32 i = 0; i < p.len(); i++) {
+        if (p[i] == '/' && matchFrom(head, 0, p, i + 1)) { return true; }
+      }
+    }
+  }
+  if (r.anchored) { return matchFrom(pat, 0, p, 0); }
+  // Unanchored: the pattern matches the whole path or any suffix that starts a component.
+  if (matchFrom(pat, 0, p, 0)) { return true; }
+  for (i32 i = 0; i < p.len(); i++) {
+    if (p[i] == '/' && matchFrom(pat, 0, p, i + 1)) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Whether `path` is ignored — `/`-separated, relative to the ignore file's directory, no leading slash.
+ *
+ * **Each prefix is tested, not only the whole path**, because a directory being ignored ignores everything
+ * under it: `build` ignores `build/x/y.o` with no rule naming that file. Prefixes are directories by
+ * definition, which is what makes `build/` work on the way down.
+ *
+ * **The whole rule list is walked** even after a hit, because the last matching rule wins — that is how
+ * `!keep.o` after `*.o` keeps one file, and reversing the two does not.
+ */
+export bool ignored(const Vec<Rule> rules, string path, bool isDir) {
+  u8[] p = path.toBytes();
+  i32 from = 0;
+  while (from <= p.len()) {
+    i32 cut = from;
+    while (cut < p.len() && p[cut] != '/') { cut = cut + 1; }
+    Buf prefix = Buf.create();
+    for (i32 i = 0; i < cut; i++) { prefix.push(p[i]); }
+    string sub = prefix.toStr();
+    bool subIsDir = cut < p.len() ? true : isDir;
+
+    bool decided = false;
+    bool ignore = false;
+    for (i32 k = 0; k < rules.len(); k++) {
+      if (ruleHits(rules.get(k), sub, subIsDir)) {
+        decided = true;
+        ignore = !rules.get(k).negated;
+      }
+    }
+    // An ignored ancestor settles it: git does not look inside one, so a negation deeper down cannot
+    // bring a file back. `!build/keep` after `build/` does not un-ignore it, which surprises people.
+    if (decided && ignore) { return true; }
+    if (cut >= p.len()) { return decided ? ignore : false; }
+    from = cut + 1;
+  }
+  return false;
+}

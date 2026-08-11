@@ -9,15 +9,15 @@
 //
 // ## Where the two deliberately differ, and why the fixture forces it
 //
-// `statusOf` reports **both** columns — the index against `HEAD`, then the working tree against the index —
-// in git's order, so the two outputs are compared with a diff rather than sorted into sets, which would hide
-// an ordering mistake instead of catching one. It does not report untracked files, because deciding which of
-// them count needs `.gitignore`; and it cannot report an *unstaged* mode change, because `Stat` has no mode
-// (`issues/system/0132`) — a staged one is visible, since both sides of that comparison are recorded.
+// `statusOf` reports all three of git's answers: the index against `HEAD`, the working tree against the
+// index, and untracked files. The comparison is a **diff of the whole output**, order included — git groups
+// tracked changes before untracked ones rather than sorting the lot, which one global sort got wrong and
+// this catches.
 //
-// So the fixture **contains an untracked file on purpose**, and the test asserts git reports it while we do
-// not. A fixture with none would make the comparison pass while saying nothing about the difference — and
-// the difference is the part somebody reading the output needs to know.
+// The one thing it cannot report is an **unstaged mode change**, because `Stat` has no mode
+// (`issues/system/0132`). A *staged* mode change is visible, since both sides of that comparison are
+// recorded rather than read off the disk. The fixture holds no executable, so the difference does not arise
+// here — `checkout.test.ts` is where that boundary is measured.
 
 import { buildApp } from "../../platform/build.ts";
 
@@ -48,7 +48,7 @@ async function gitst(): Promise<string> {
 }
 
 Deno.test({
-  name: "both porcelain columns are the ones git prints, in git's order",
+  name: "all three of git's answers, in git's order — staged, unstaged and untracked",
   ignore: !haveGit,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "wac-git-st-" });
@@ -91,7 +91,18 @@ Deno.test({
       await Deno.writeTextFile(`${dir}/both.txt`, "staged then\n");
       await git(["add", "both.txt"]);
       await Deno.writeTextFile(`${dir}/both.txt`, "edited again\n"); // MM — both columns at once
-      await Deno.writeTextFile(`${dir}/untracked.txt`, "new\n");     // ?? — git's, not ours
+      await Deno.writeTextFile(`${dir}/untracked.txt`, "new\n");     // ?? — untracked
+      // An entirely untracked directory, which git collapses to one line; a directory with a tracked file
+      // in it, whose untracked contents are listed individually; and files an ignore rule covers.
+      await Deno.mkdir(`${dir}/fresh`);
+      await Deno.writeTextFile(`${dir}/fresh/one.txt`, "x\n");
+      await Deno.writeTextFile(`${dir}/fresh/two.txt`, "y\n");
+      await Deno.writeTextFile(`${dir}/sub/alsonew.txt`, "z\n");
+      await Deno.writeTextFile(`${dir}/.gitignore`, "*.tmp\n!keep.tmp\nbuilt/\n");
+      await Deno.writeTextFile(`${dir}/junk.tmp`, "ignored\n");
+      await Deno.writeTextFile(`${dir}/keep.tmp`, "negated back\n");
+      await Deno.mkdir(`${dir}/built`);
+      await Deno.writeTextFile(`${dir}/built/out`, "ignored\n");
 
       const theirs = (await git(["status", "--porcelain"])).raw.replace(/\n$/, "").split("\n");
       // **The fixture's own shape, asserted.** `MM` is the one that matters most: it is the only line that
@@ -101,7 +112,13 @@ Deno.test({
       assert(theirs.includes("MM both.txt"), "no file that is staged and then edited again");
       assert(theirs.includes("A  added.txt"), "no staged addition");
       assert(theirs.includes("D  gone.txt"), "no staged deletion");
-      assert(theirs.includes("?? untracked.txt"), "no untracked file, so the difference below is untested");
+      assert(theirs.includes("?? untracked.txt"), "no untracked file");
+      // **The shapes untracked reporting is easy to get wrong**, each asserted in git's own answer first.
+      assert(theirs.includes("?? fresh/"), `git did not collapse an untracked directory:\n${theirs.join("\n")}`);
+      assert(theirs.includes("?? sub/alsonew.txt"), "git did not list inside a directory holding a tracked file");
+      assert(theirs.includes("?? keep.tmp"), "the negated ignore rule did not bring keep.tmp back");
+      assert(!theirs.some((l) => l.includes("junk.tmp")), "git did not ignore junk.tmp");
+      assert(!theirs.some((l) => l.includes("built")), "git did not ignore the built/ directory");
       assert(!theirs.some((l) => l.endsWith(" same.txt")), "git thinks the unchanged file changed");
       assert(!theirs.some((l) => l.endsWith(" blob.bin")), "git thinks the untouched binary changed");
 
@@ -110,20 +127,21 @@ Deno.test({
       assert(r.code === 0, `gitst failed: ${dec.decode(r.stderr).trim()}`);
       const ours = dec.decode(r.stdout).replace(/\n$/, "").split("\n").filter((l) => l !== "");
 
-      // **A diff, not a set comparison.** Ours is git's minus the untracked line, in the same order.
-      const wanted = theirs.filter((l) => !l.startsWith("?? "));
+      // **A diff, not a set comparison** — and now the whole of git's answer, untracked lines included.
+      // Order is part of it: git groups tracked changes before untracked ones rather than sorting the lot,
+      // so `?? .gitignore` follows `M  a.txt` even though `.` sorts before `a`.
       assert(
-        ours.join("\n") === wanted.join("\n"),
-        `we say:\n${ours.join("\n")}\ngit says (without untracked):\n${wanted.join("\n")}`,
-      );
-      assert(
-        !ours.some((l) => l.includes("untracked.txt")),
-        "we reported an untracked file, which `statusOf` says it does not do",
+        ours.join("\n") === theirs.join("\n"),
+        `we say:\n${ours.join("\n")}\ngit says:\n${theirs.join("\n")}`,
       );
 
       // A clean tree is empty on both sides — the case that catches a status reporting every file.
       await git(["reset", "-q", "--hard", "HEAD"]);
-      await Deno.remove(`${dir}/untracked.txt`);
+      for (const junk of ["untracked.txt", ".gitignore", "junk.tmp", "keep.tmp", "sub/alsonew.txt"]) {
+        await Deno.remove(`${dir}/${junk}`);
+      }
+      await Deno.remove(`${dir}/fresh`, { recursive: true });
+      await Deno.remove(`${dir}/built`, { recursive: true });
       assert((await git(["status", "--porcelain"])).text === "", "git still sees changes after a reset");
       const clean = await new Deno.Command(await gitst(), { args: [dir], stdout: "piped", stderr: "piped" })
         .output();

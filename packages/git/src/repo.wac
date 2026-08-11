@@ -36,6 +36,7 @@ import { Commit, Who, formatCommit } from "./commit.wac";
 import { framed, looseFile } from "./object.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wac";
+import { Rule, ignored, parseIgnore } from "./ignore.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "../../std/src/vec.wac";
@@ -465,6 +466,81 @@ bool sameName(u8[] a, u8[] b) {
   return true;
 }
 
+/** Whether any index entry lives under `dir` — which decides whether git collapses it. */
+bool anyTrackedUnder(const Vec<IndexEntry> entries, string dir) {
+  string with = dir + "/";
+  for (i32 i = 0; i < entries.len(); i++) {
+    IndexEntry e = entries.get(i);
+    if (e.stage != 0) { continue; }
+    if (e.path.len() > with.len() && e.path.slice(0, with.len()) == with) { return true; }
+  }
+  return false;
+}
+
+/** Whether `path` is one of the index's own entries. */
+bool tracked(const Vec<IndexEntry> entries, string path) {
+  for (i32 i = 0; i < entries.len(); i++) {
+    if (entries.get(i).stage == 0 && entries.get(i).path == path) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Walk `dir` and push `?? ` lines for what is neither tracked nor ignored.
+ *
+ * **An entirely untracked directory collapses to one line ending in `/`**, which is what git prints and the
+ * reason this cannot simply list files: a fresh `node_modules` is one line to git and thousands to a walker
+ * that does not know the rule. If anything under it *is* tracked, git lists the untracked files inside
+ * individually, so the walk descends in that case and not otherwise.
+ *
+ * `.git` is skipped without consulting any rule, as git does — no `.gitignore` mentions it and every
+ * repository would be full of it otherwise.
+ */
+void untrackedUnder(Repo r, const Vec<Rule> rules, const Vec<IndexEntry> entries, string dir,
+                    string prefix, Vec<string> out, i32 depth) {
+  if (depth <= 0) { return; }
+  string[]? names = r.fs.readDir(dir);
+  if (names is null) { return; }
+  string[] list = names!;
+  // git orders its output by path, and the host's directory order is not promised to be anything.
+  for (i32 a = 1; a < list.len(); a++) {
+    string cur = list[a];
+    i32 b = a - 1;
+    while (b >= 0 && bytesAfter(list[b], cur)) {
+      list[b + 1] = list[b];
+      b = b - 1;
+    }
+    list[b + 1] = cur;
+  }
+  for (i32 i = 0; i < list.len(); i++) {
+    string name = list[i];
+    if (name == ".git") { continue; }
+    string rel = prefix == "" ? name : prefix + "/" + name;
+    Stat st = r.fs.stat(dir + "/" + name);
+    if (ignored(rules, rel, st.isDir)) { continue; }
+    if (st.isDir) {
+      if (anyTrackedUnder(entries, rel)) {
+        untrackedUnder(r, rules, entries, dir + "/" + name, rel, out, depth - 1);
+      } else {
+        out.push("?? " + rel + "/");
+      }
+      continue;
+    }
+    if (!tracked(entries, rel)) { out.push("?? " + rel); }
+  }
+}
+
+/** Byte comparison of two names, for the same reason `pathAfter` exists. */
+bool bytesAfter(string a, string b) {
+  u8[] x = a.toBytes();
+  u8[] y = b.toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] > y[i]; }
+  }
+  return x.len() > y.len();
+}
+
 /**
  * Whether `a`'s path sorts after `b`'s, comparing the bytes after the two status columns.
  *
@@ -502,6 +578,10 @@ bool pathAfter(string a, string b) {
  */
 export Vec<string> statusOf(Repo r) {
   Vec<string> out = Vec.create();
+  // **Two lists, because git's porcelain is grouped rather than sorted.** Tracked changes come first and
+  // untracked ones after, each sorted by path — so `?? .gitignore` follows `M  a.txt` even though `.`
+  // sorts before `a`. One global sort put them the other way round, which is how this was found.
+  Vec<string> untracked = Vec.create();
   FileResult f = r.fs.readFile(r.gitDir + "/index");
   if (!f.ok) { return out; }
   Vec<TreeAt> tree = Vec.create();
@@ -546,6 +626,13 @@ export Vec<string> statusOf(Repo r) {
         if (x != " " || y != " ") { out.push(x + y + " " + e.path); }
       }
 
+      // Untracked files, which need the ignore rules or they would be noise. Only the work tree's own
+      // `.gitignore` is read — `ignore.wac` says why it does not gather the other three sources.
+      Vec<Rule> rules = Vec.create();
+      FileResult ign = r.fs.readFile(r.workTree + "/.gitignore");
+      if (ign.ok) { rules = parseIgnore(ign.bytes); }
+      untrackedUnder(r, rules, idx.entries, r.workTree, "", untracked, 64);
+
       // In HEAD and not in the index: staged for deletion.
       for (i32 k = 0; k < tree.len(); k++) {
         bool present = false;
@@ -557,17 +644,24 @@ export Vec<string> statusOf(Repo r) {
       }
     }
   }
-  // git orders by path and so does this, so the two answers can be compared as text.
-  for (i32 i = 1; i < out.len(); i++) {
-    string cur = out.get(i);
+  // Each group ordered by path, then the untracked group appended after the tracked one.
+  sortLines(out);
+  sortLines(untracked);
+  for (i32 i = 0; i < untracked.len(); i++) { out.push(untracked.get(i)); }
+  return out;
+}
+
+/** Insertion sort by the path after the two status columns. */
+void sortLines(Vec<string> lines) {
+  for (i32 i = 1; i < lines.len(); i++) {
+    string cur = lines.get(i);
     i32 j = i - 1;
-    while (j >= 0 && pathAfter(out.get(j), cur)) {
-      out.set(j + 1, out.get(j));
+    while (j >= 0 && pathAfter(lines.get(j), cur)) {
+      lines.set(j + 1, lines.get(j));
       j = j - 1;
     }
-    out.set(j + 1, cur);
+    lines.set(j + 1, cur);
   }
-  return out;
 }
 
 /** A thin pack completed from what this repository holds, or why it could not be. */
