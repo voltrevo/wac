@@ -40,6 +40,7 @@ import { Kind } from "./object.wac";
 import { Index, PackIndex, find, parseIdx } from "./idx.wac";
 import { Inflation, inflate, inflateAt } from "../../gzip/src/inflate.wac";
 import { crc32 } from "../../gzip/src/crc32.wac";
+import { zlibCompress } from "./zlib.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { Vec } from "../../std/src/vec.wac";
 
@@ -548,4 +549,63 @@ bool nameGreater(u8[] names, i32 a, i32 b) {
     if (x != y) { return x > y; }
   }
   return false;
+}
+
+// ── writing ─────────────────────────────────────────────────────────────────────────────────────────
+//
+// `design/system/0005` step 7, and it says what to build: **a pack of whole objects, no deltas.** Deltas
+// are optional in the format, so this is valid and larger. Getting git's ratios is a search problem —
+// which base for which object, in which window, in which order — and nothing here needs it: the reader
+// above handles both delta kinds when it is git doing the compressing, and a push of a few objects is
+// bytes either way. Taking the small version, and saying so, is the plan's own instruction.
+
+/** Four bytes, big-endian. */
+void packU32(Buf out, i32 v) {
+  out.push((v >> 24) & 255);
+  out.push((v >> 16) & 255);
+  out.push((v >> 8) & 255);
+  out.push(v & 255);
+}
+
+/**
+ * A packfile holding `contents`, each with its type from `kinds` — 1 commit, 2 tree, 3 blob, 4 tag.
+ *
+ * The inputs are parallel rather than a `Vec` of pairs because both a wac caller and a host driving this
+ * from a test build them the same way, and `Vec<u8[]>` is the one container that crosses the boundary
+ * without a struct going with it.
+ *
+ * **The header varint here is the inverse of `rawAt`'s, and is not the other varint in this format.** Four
+ * bits of the size sit in the first byte beside the type, then seven at a time, least significant first.
+ * An `ofs-delta`'s base offset is written the other way — most significant group first, with a bias per
+ * continuation — and using one where the other belongs produces a pack that reads as a different object
+ * rather than as a broken one, which is the failure that costs an afternoon.
+ */
+export u8[] writePack(i32[] kinds, Vec<u8[]> contents) {
+  Buf out = Buf.create();
+  out.push('P');
+  out.push('A');
+  out.push('C');
+  out.push('K');
+  packU32(out, 2);
+  packU32(out, contents.len());
+  for (i32 i = 0; i < contents.len(); i++) {
+    u8[] body = contents.get(i);
+    i32 first = ((kinds[i] & 7) << 4) | (body.len() & 0x0f);
+    i32 rest = body.len() >> 4;
+    if (rest != 0) { first = first | 0x80; }
+    out.push(first);
+    while (rest != 0) {
+      i32 b = rest & 0x7f;
+      rest = rest >> 7;
+      if (rest != 0) { b = b | 0x80; }
+      out.push(b);
+    }
+    // Each object is its own zlib stream, which is what lets a reader find the next one without a length
+    // field: the inflater says where it ended.
+    out.pushAll(zlibCompress(body));
+  }
+  // Over everything above it, which is what `.idx` records as the pack's name and what `gitclone` uses
+  // for the filename.
+  out.pushAll(sha1(out.bytes()));
+  return out.take();
 }
