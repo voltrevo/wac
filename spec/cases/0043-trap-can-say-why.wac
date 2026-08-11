@@ -1,0 +1,8 @@
+// expect: answers f = 5
+// why: `trap` takes a message, and a program that never trips it runs as usual
+// from: specSingle's known false alarms — wacc's parser refuses the message
+export i32 f() {
+  i32 n = 5;
+  if (n < 0) { trap "n must not be negative"; }
+  return n;
+}

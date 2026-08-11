@@ -368,7 +368,16 @@ export struct Core {
    * is not authority and all three hosts have one.
    */
   fn[Pending<i64>(i32)] sleepMillis;
-  /** Cryptographically secure random bytes. */
+  /**
+   * Cryptographically secure random bytes, from one byte to a megabyte.
+   *
+   * The ceiling is the capability's rather than any host's, and asking for more is a fault instead
+   * of a short answer: a caller that wanted two megabytes of key material and silently received one
+   * is the worse failure. The floor of the *implementation* is a host detail that leaked once —
+   * Web Crypto refuses more than 65,536 bytes in a single call, so two of the three hosts threw on
+   * everything above that while the third chunked and did not (0122). `example/entropy.wac` walks
+   * the range on both hosts, one byte past that cap included.
+   */
   fn[Pending<u8[]>(i32)] randomBytes;
   /** A line of output. */
   fn[void(string)] log;

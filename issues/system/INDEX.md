@@ -7,9 +7,6 @@ record of what has been fixed and why.
 |---|---|---|---|
 | [0128](open/0128-the-native-half-of-the-two-host-differential-times-out-under-load.md) | the native half of the two-host differential times out under load, and passes alone | bug | wrong answer |
 | [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |
-| [0122](open/0122-randombytes-above-64-kib-fails-on-deno-and-the-browser.md) | `randomBytes` above 64 KiB fails on Deno and the browser — [gh#53](https://github.com/voltrevo/wac-mono/issues/53) | bug | trap |
-| [0121](open/0121-send-to-a-closed-child-feed-reports-success-and-drops-the-data.md) | `send` to a closed child feed reports success and drops the data — [gh#52](https://github.com/voltrevo/wac-mono/issues/52) | bug | wrong answer |
-| [0120](open/0120-child-output-sinks-are-not-awaited-so-backpressure-does-not-hold.md) | child output sinks are not awaited, so backpressure does not hold — [gh#51](https://github.com/voltrevo/wac-mono/issues/51) | bug | wrong answer |
 | [0119](open/0119-ethrpc-pads-odd-length-hex-where-its-own-comment-says-it-refuses.md) | ethrpc pads odd-length hex where its own comment says it refuses — [gh#50](https://github.com/voltrevo/wac-mono/issues/50) | bug | wrong answer |
 | [0118](open/0118-tor-cell-framing-treats-the-circ-id-byte-as-a-versions-command.md) | tor cell framing treats the circ-id byte as a VERSIONS command — [gh#48](https://github.com/voltrevo/wac-mono/issues/48) | bug | wrong answer |
 | [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |
@@ -34,7 +31,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-140 issues, 118 closed.
+140 issues, 121 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

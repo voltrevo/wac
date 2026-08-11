@@ -265,7 +265,7 @@ both at once, and not the fix first: a fix written first is aimed at whatever yo
 looking at, and the thing that told you it worked disappears when the slot ends. `spec/cases/README.md`
 has the long version.
 
-It reads **42 cases, met by the reference and by wacc alike**. It held two misses for one slot — an
+It reads **45 cases, met by the reference and by wacc alike**. It held two misses for one slot — an
 integer literal wider than its slot, and a nullable packed field, both accepted — and they are fixed,
 which took `specSingle` from 265 of 304 refused to 270. Both were already among its named misses,
 where they were a tally; four lines each was what it took to act on them.
@@ -280,6 +280,16 @@ on the way in. Both corrections went in as cases *before* the code was changed �
 The six `§wac-arr-bulk` diagnostics went the same way: `copyFrom` and `fill` were listed as builtins
 and neither was checked at all, which was the largest cluster left in `specSingle`'s named misses.
 Cases `0030` to `0035` first, then the rules — 270 of 304 refused becomes 276.
+
+**`trap` can say why**, and the parser had no room for the message — one of the two legal programs
+wacc refused. Carrying it turned out to sharpen rung 2 as well: `parse.test.ts` rendered the node as
+`(trap@1:3)` with the value dropped, so `trap "a"` and `trap "b"` compared *equal* and the oracle
+could not have seen the difference. Both sides print the message now. The twin came straight after,
+because accepting a message meant accepting any expression as one: `trap 5;` is refused, which the
+spec's own corpus noticed within a minute of the first half landing.
+
+Adding the arm also completed the statement match, and the `else` below it became unreachable — which
+is a rule this checker gained two slots ago, reporting on its own source.
 
 **A generic enum's variants have no bare name** — `Some` belongs to `Option<i32>` and to every other
 instance, so `a is Some` names nothing rather than narrowing anything. Taking the name away cost one
@@ -392,7 +402,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 277 of 304 illegal refused, 365 of 367 legal silent, the rest named |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 277 of 304 illegal refused, 366 of 367 legal silent, the rest named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |

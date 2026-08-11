@@ -1,0 +1,181 @@
+// What `send` answers when the thing it is sending to has stopped listening.
+//
+//   feed        ->  the child's echo, then the verdicts
+//   feed echo   ->  reads its input to the end and writes it back
+//   feed flood  ->  writes nine megabytes and stops, to fill a parent that is not reading
+//
+// **`send` answers `Pending<bool>`, and the bool is the whole point of it.** platform.wac says a
+// caller checks it; `packages/sh` checks it; the runtime with no JavaScript in it answers it from
+// `stream.write`, which is false once a stream is finished. The three JavaScript hosts wrote
+//
+//     if (kid !== undefined) { kid.in.push(p.slice(4)); return EMPTY; }
+//
+// — the queue's answer discarded and its promise not awaited, so a send into a child whose feed had
+// been closed reported success and dropped the bytes (issue 0121), and a send that should have
+// waited for room did not (0120). One line, the same in all three files.
+//
+// **The verdicts are answers rather than measurements**, so two hosts can be compared on them:
+//
+//   - a send to a live child lands — *yes*, or the capability does not work at all
+//   - a send after `closeFeed` does not land — *yes*, the fix
+//   - and the child, which read to the end before answering, echoes only what actually landed
+//   - a child that writes more than the queue holds loses nothing — the other direction, and the
+//     other half of the same mistake (0120): a full queue must make the writer *wait*, not fail
+//
+// The third is what makes the second more than an assertion about a return value: a host that
+// answered false and queued the bytes anyway would pass the middle line and fail this one. The
+// fourth needs more than `QUEUE_CAP` bytes to mean anything, which is why it sends nine megabytes
+// through a queue that holds eight: with fewer, every host passes by never filling anything.
+import { Child, Cli, Core, GRANT_NONE } from "../src/platform.wac";
+import { Read } from core;
+import { argvOf } from "../src/stream.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "echo") { return echo(cli); }
+  if (n > 0 && string.fromBytes(cli.arg(0).wait()) == "flood") { return flood(core, cli); }
+
+  Child kid = cli.spawnSelf(argvOf(string[]("echo", "feed")), GRANT_NONE, "", false, false).wait();
+  if (kid.unavailable()) {
+    core.warn("feed: this world cannot spawn: " + kid.error);
+    return 2;
+  }
+  if (kid.handle < 0) {
+    core.warn("feed: the child would not start: " + kid.error);
+    return 2;
+  }
+
+  // ── A send to a live child lands ──
+  bool first = cli.send(kid.handle, "kept\n".toBytes()).wait();
+  say(cli, "a send to a live child lands", first);
+
+  // ── And after its feed is closed, a send says so rather than claiming success ──
+  //
+  // `closeFeed` and not `closeSocket`: the child must stay alive to answer, which is the whole
+  // distinction between the two calls.
+  cli.closeFeed(kid.handle);
+  bool second = cli.send(kid.handle, "dropped\n".toBytes()).wait();
+  say(cli, "a send after closeFeed does not land", !second);
+
+  // ── What the child actually received ──
+  //
+  // It read to the end before writing, so this is everything that landed, in order.
+  string heard = "";
+  bool reading = true;
+  while (reading) {
+    match (cli.recv(kid.handle).wait()) {
+      case Data(bytes): { heard = heard + string.fromBytes(bytes); }
+      case End: { reading = false; }
+      case Failed(why): { core.warn("feed: reading the child failed: " + why); return 2; }
+    }
+  }
+  say(cli, "the child heard what landed and nothing else", heard == "heard: kept\n");
+
+  // ── And the other direction: a child writing more than the queue holds loses nothing ──
+  //
+  // The parent does not read while the child produces, so the queue fills and the child's next
+  // write has to wait. A host that acknowledged the write without waiting would drop everything
+  // past the cap and the total below would be short — silently, which is what made this worth a
+  // program rather than an assertion.
+  return flooded(core, cli) ? 0 : 2;
+}
+
+/** How much the flooding child writes: more than `QUEUE_CAP`, which is eight megabytes. */
+i32 FLOOD_BYTES() { return 9 * 1024 * 1024; }
+
+/** One block of the flood. `CHUNK` is 64 KiB, so this is a whole one. */
+i32 BLOCK() { return 65536; }
+
+/** Spawn a child that writes more than the queue holds, and count every byte it sent. */
+bool flooded(Core core, Cli cli) {
+  Child kid = cli.spawnSelf(argvOf(string[]("flood", "feed")), GRANT_NONE, "", false, false).wait();
+  if (kid.unavailable() || kid.handle < 0) {
+    core.warn("feed: the flooding child would not start: " + kid.error);
+    return false;
+  }
+  // **Not reading for a moment**, so the queue is certainly full before anything drains it. Without
+  // this the parent might keep up and the child would never have to wait, which is a race that
+  // passes rather than one that fails — the worst kind.
+  core.sleepMillis(300).wait();
+
+  i32 got = 0;
+  string tail = "";
+  bool reading = true;
+  while (reading) {
+    match (cli.recv(kid.handle).wait()) {
+      case Data(bytes): { got = got + bytes.len(); tail = string.fromBytes(bytes); }
+      case End: { reading = false; }
+      case Failed(why): { core.warn("feed: reading the flood failed: " + why); return false; }
+    }
+  }
+  say(cli, "a child that outruns its reader loses nothing", got == FLOOD_BYTES() + VERDICT_LEN());
+  // The child's own verdict, in its last chunk: it timed its writes and says whether they waited.
+  // A host that acknowledged a write into a full queue would have let it finish immediately.
+  say(cli, "and it waited for the reader rather than racing ahead", contains(tail, "waited: yes"));
+  return true;
+}
+
+/**
+ * The length of the line the flooding child ends with, which is part of what the parent counts.
+ *
+ * Fixed width, padded, because the parent's byte count would otherwise move with the *answer* — the
+ * first version wrote "yes" or "NO" and a host that failed the timing claim came up one byte short
+ * on the count as well, which reads as two failures where there is one.
+ */
+i32 VERDICT_LEN() { return 16; }
+
+/** Whether `needle` appears in `s` — this file imports nothing but the capability layer. */
+bool contains(string s, string needle) {
+  u8[] a = s.toBytes();
+  u8[] b = needle.toBytes();
+  if (b.len() > a.len()) { return false; }
+  for (i32 start = 0; start <= a.len() - b.len(); start++) {
+    bool same = true;
+    for (i32 i = 0; i < b.len(); i++) {
+      if (a[start + i] != b[i]) { same = false; }
+    }
+    if (same) { return true; }
+  }
+  return false;
+}
+
+/**
+ * The flooding child: nine megabytes, in whole chunks, and then its own verdict on whether it had
+ * to wait.
+ *
+ * It times itself because the waiting is invisible from the parent — the bytes all arrive either
+ * way, since a queue that holds a writer keeps its bytes rather than dropping them. What differs is
+ * *when*: a host that awaits its sink parks this loop until the parent reads, and a host that does
+ * not lets it run to the end at memory speed. The parent's 300ms of not reading is the floor, and
+ * 200 is well inside it — no upper bound, because how much longer is the machine's business.
+ */
+i32 flood(Core core, Cli cli) {
+  u8[] block = u8[BLOCK()](fill: 'x');
+  i64 began = core.monotonicNanos().wait();
+  i32 sent = 0;
+  while (sent < FLOOD_BYTES()) {
+    cli.write(block);
+    sent = sent + BLOCK();
+  }
+  i64 took = core.monotonicNanos().wait() - began;
+  u8[] line = u8[VERDICT_LEN()](fill: ' ');
+  u8[] said = ("waited: " + (took >= 200000000 ? "yes" : "NO")).toBytes();
+  line.copyFrom(said, 0, 0, said.len());
+  line[VERDICT_LEN() - 1] = '\n';
+  cli.write(line);
+  return 0;
+}
+
+/** The child: everything it is fed, in one line, once the feed has ended. */
+i32 echo(Cli cli) {
+  // `readStdin` is "all of standard input, to the end", so this call is itself the wait for the
+  // feed to close — which is what makes the parent's `closeFeed` observable from in here.
+  u8[] got = cli.readStdin().wait();
+  cli.write(("heard: " + string.fromBytes(got)).toBytes());
+  return 0;
+}
+
+/** One verdict, in a line that is the same on every host that keeps the promise. */
+void say(Cli cli, string claim, bool held) {
+  cli.write((claim + ": " + (held ? "yes" : "NO") + "\n").toBytes());
+}

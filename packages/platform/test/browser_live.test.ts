@@ -180,6 +180,17 @@ Deno.test({
       assertEquals(rt.includes("including roundtrip.txt"), true, rt);
       assertEquals(rt.includes("[exit 0]"), true, rt);
 
+      // `randomBytes` across its whole documented range, which is a *browser* claim and not only a
+      // Deno one: Web Crypto's 65,536-byte per-call cap is the specification's, so a page asking for
+      // a megabyte threw here exactly as it did under Deno (0122). `native_examples` compares Deno
+      // against wasmtime and cannot reach this host at all, so the same program runs here — every
+      // line a verdict, and a `NO` anywhere means a size the page cannot answer.
+      await buildApp("packages/platform/example/entropy.wac", `${dir}/entropy.html`, {}, "browser");
+      const ent = await run("entropy.html");
+      assertEquals(ent.includes("NO"), false, `a page could not answer some size:\n${ent}`);
+      assertEquals(ent.includes("1048576 bytes vary: yes"), true, ent);
+      assertEquals(ent.includes("[exit 0]"), true, ent);
+
       // An interactive application, driven by real clicks. This is the part no double reaches:
       // delegated listeners surviving a `render`, an event queue feeding a parked worker, and
       // state kept in a local across events because the program is a loop rather than a set of

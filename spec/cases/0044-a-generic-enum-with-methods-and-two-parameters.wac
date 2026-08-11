@@ -1,0 +1,16 @@
+// expect: answers f = 7
+// why: a generic enum's methods work on its instances, including one with two parameters
+// from: specSingle's known false alarms
+enum Option<T> {
+  Some(T v), None
+  T orElse(const this, T d) { return match (this) { case Some(v): v, case None: d }; }
+}
+enum Result<T, E> {
+  Ok(T v), Err(E e)
+  bool isOk(const this) { return match (this) { case Ok(_): true, case Err(_): false }; }
+}
+export i32 f() {
+  Option<i32> a = Option.Some(3);
+  Result<i32, i32> r = Result.Ok(4);
+  return a.orElse(0) + (r.isOk() ? 4 : 0);
+}

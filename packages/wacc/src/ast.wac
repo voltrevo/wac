@@ -212,7 +212,8 @@ export enum StmtKind {
   Return(Expr? value),
   Break,
   Continue,
-  Trap,
+  /** `trap;` or `trap <expr>;` — the message the host is told, in place of a bare unreachable. */
+  Trap(Expr? value),
   Match(Expr subject, Arm[] arms),
   Block(Stmt[] body),
   ExprStmt(Expr expr),
