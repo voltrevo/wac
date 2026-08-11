@@ -167,7 +167,7 @@ have never appeared in a status line: they are invisible to every rung.
 | diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
 | CLI: `check`, `compile`, `run` | done, `deno task waccx` |
 | CLI: `bindgen` | **not started** |
-| bind helpers in the module | memory, arrays, structs done; enums, statics, strings, callbacks **not** |
+| bind helpers in the module | memory, arrays (every element type), structs, enums, strings, methods and statics done; callbacks **not** — they need an import section (`issues/lang/0094`) |
 | **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
 | **host imports (an import section)** | **not started** — `issues/lang/0094` |
 | **coverage instrumentation** | **not started** — the repo's mutation and profile tooling needs it |
@@ -249,7 +249,18 @@ a `u8` field is stored as an `i32` and the accessor is plain `struct.get`. Array
 reading a `u8[]` element still needs `array.get_u`. wasm says which is which by name — *"Field 2 of
 type 0 has type i32. Use struct.get instead."*
 
-What is left is enum tags, static methods on structs, callback dispatchers and arrays of arrays.
+**The enum, string, method and array-accessor families are done too.** An enum crosses as
+`$bind$e_<E>_tag`, `_<V>_new` and `_<V>_get_<f>`; a `string` as the six `$bind$str_*`; a method as an
+export entry rather than a body, under `$bind$m_` or `$bind$sm_` depending on whether it takes a
+receiver; and every array type — not just the ones with a memory representation — gets `_new`,
+`_get`, `_set` and `_len`, with `_new`/`_new0` taking a fill when the element is a reference, which
+is what `string[]` and `u8[][]` are.
+
+The representation stayed ours: the reference gives an enum a base struct and a subtype per variant,
+and wacc lays every variant's payload out beside the tag in one struct. A host cannot tell, because
+it holds an opaque reference either way — the helper set is the contract and the layout is not.
+
+What is left is callback dispatchers.
 `json` stops at `$bind$e_JsonValue_tag` now and `zstd` at `$bind$sm_BitOut_create`. Two packages fail on something other than a missing
 helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
 its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which
