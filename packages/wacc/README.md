@@ -167,7 +167,7 @@ have never appeared in a status line: they are invisible to every rung.
 | diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
 | CLI: `check`, `compile`, `run` | done, `deno task waccx` |
 | CLI: `bindgen` | **not started** |
-| bind helpers in the module | memory, arrays (every element type), structs, enums, strings, methods and statics done; callbacks **not** — they need an import section (`issues/lang/0094`) |
+| bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
 | **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
 | **host imports (an import section)** | **not started** — `issues/lang/0094` |
 | **coverage instrumentation** | **not started** — the repo's mutation and profile tooling needs it |
@@ -256,7 +256,10 @@ The representation stayed ours: the reference gives an enum a base struct and a 
 and wacc lays every variant's payload out beside the tag in one struct. A host cannot tell, because
 it holds an opaque reference either way — the helper set is the contract and the layout is not.
 
-What is left is callback dispatchers, and one name: a static on a *generic instance* binds as
+**The callbacks are done too**, which was the one family that needed a section rather than more
+helper bodies: a module whose export takes `fn[i32(i32)]` imports `wac.cb0`, defines sixteen
+trampolines of that type, and answers `$bind$fnref_0(slot)` with the one for that slot. What is left
+is one name: a static on a *generic instance* binds as
 `$bind$sm_Vec__packages_std_src_vec$string_create`, so wacc would have to reproduce the reference's
 path-qualified spelling for a monomorphisation before a host could find it.
 
