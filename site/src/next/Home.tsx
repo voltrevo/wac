@@ -283,12 +283,13 @@ export default function Home() {
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
-          of record — though its output now runs, and by more than it did: <Lead>17 of 33 packages
-          pass their own test suites on modules wacc emitted</Lead>, 763 tests, with{" "}
-          {m({ children: "tor" })}&rsquo;s 305 among them. That was six a day ago, and what moved it
-          was one feature — the bindgen helpers that copy bytes between a GC array and linear
-          memory. The remainder are blocked on the same kind of thing rather than on many kinds,
-          which is the shape you want a gap to have.
+          of record — though its output now runs, and by more than it did: <Lead>24 of 34 packages
+          pass their own test suites on modules wacc emitted</Lead>, 1,138 tests, with{" "}
+          {m({ children: "tor" })}&rsquo;s 305 among them. That was six two days ago, and what moved
+          it was the bindgen helpers that carry values across the boundary, one family at a time.
+          What is left is mostly one family — a callback dispatcher — and four packages that emit
+          but answer wrongly, which is the harder half. {m({ children: "packages/git" })} is not
+          among the twenty-four: it declines a method on an enum.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>

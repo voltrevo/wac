@@ -20,10 +20,10 @@ Three sections carry most of what a reader wants: [What it does](#what-it-does) 
 
 ## The oracle is bash
 
-`test/corpus.ts` holds **821** scripts. `test/differential.test.ts` runs the **539** of them that
+`test/corpus.ts` holds **828** scripts. `test/differential.test.ts` runs the **542** of them that
 name no program this package has given up — plus thirteen globbing cases it builds against a
 directory of its own — through GNU bash and through this, and requires the same standard output
-*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **282**, the ones
+*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **286**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
 read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
@@ -290,6 +290,21 @@ do the whole job. The programs write through a `Sink` as they go now
 so `seq 1 2000000000 | head -1` prints `1` in 0.13 seconds where it used to trap after five, and
 `seq 1 200000000 | wc -c` prints GNU's own answer where it printed nothing and exited 126.
 
+**Every stage is a subshell, and that is bash's rule rather than a convenience.** A stage that
+assigns, `cd`s or defines a function affects nothing outside itself: `v=set; v=b | cat; echo "[$v]"`
+prints `[set]`, and `echo x | read v` leaves `v` empty exactly as it does in every POSIX shell. A
+*lone* command is not a pipeline — `v=b` on its own assigns — and the boundary is the only thing that
+distinguishes them, which is whether there is a pipe at all.
+
+It answered `[b]` until [0114](../../issues/system/closed/0114-a-pipeline-stage-is-not-a-subshell.md),
+and the argument for changing it was the oracle rather than taste: 828 corpus scripts are compared
+with bash script for script, so a divergence here is a corpus failure waiting for a fuzz seed — and
+`tools/shellFuzz.ts` seed 29 is exactly how it was found. Two things came out of the fix worth
+knowing, because both had been true of `( … )` for months and a subshell is rarer than a pipeline: a
+fork carries the parent's **filesystem, working directory and environment** now, where it used to
+start on `Fs.onHost` at the *host's* directory, and a command substitution copies `varNames` with
+`vars`, without which `set` inside `$( )` listed nothing.
+
 **A lone command streams too.** One stage is the same machinery as six, and a single command used to be
 the collecting case: `wacsh -c 'seq 1 2000000000'` built twenty gigabytes in the shell and trapped at
 one wasm array, and `cat missing f` printed its complaint and `f`'s contents in whichever order the two
@@ -513,8 +528,13 @@ and the programs themselves through `Sink` — but `> file` gathers the command'
 writes it afterwards, so a redirected command is bounded by memory however well it streams:
 `seq 1 2000000000 > out` traps where bash writes twenty gigabytes.
 [Issue 0070](../../issues/system/closed/0070-a-redirection-collects-a-childs-whole-output-before-writing-the-file.md)
-is that, with `openOutput` named as the capability it wants. `2>` and `2>&1` are not implemented at
-all, and say so.
+is that, with `openOutput` named as the capability it wants.
+
+This paragraph used to end "`2>` and `2>&1` are not implemented at all, and say so", two hundred
+lines above the section that describes them working. They do:
+`ls missing 2> err` writes the diagnostic to `err`, and `ls missing 2>&1 | cat` pipes it. What is
+still refused is a descriptor above 2 — see [What it does not do](#what-it-does-not-do), which has
+the whole of that rule and the two-entry table behind it.
 
 **The programs stream, and `sort` holds lines rather than bytes.** Each reads a chunk or a line at a
 time: `cat` and `tr` a chunk, `head`, `tail`, `wc`, `rev`, `nl`, `uniq` and `grep` a line — and `grep -q`
@@ -546,7 +566,12 @@ A malformed expansion is **fatal**, as it is in bash: `${x:}` prints nothing, ex
 abandons the rest of the line rather than quietly expanding to the empty string. Quietly
 expanding to something plausible is the failure mode this package exists to avoid.
 
-**`2>` is not implemented, and says so in those words.** Only standard output is captured through the
+**`2>` is implemented now**, and the two paragraphs below are the history of when it was not — kept
+because the bug in the middle of them is the best argument in this file for refusing rather than
+approximating, and because the *third* copy of "`2>` is not implemented" was still here this morning
+while the section above described the two-entry table making it work. Read them as a record.
+
+> `2>` is not implemented, and says so in those words. Only standard output is captured through the
 seam, so there is nothing of the error stream to redirect — and the message names the gap rather than
 the command: this shell is unfinished here, and the caller who wrote `2>err` was not wrong.
 
@@ -556,12 +581,19 @@ both of its callers that the output had gone to a file, so it went nowhere. A co
 read "said, not silently skipped" while the code silently skipped it. It answers false now, the output
 goes where it would have gone, and `test/gaps.test.ts` fails if it stops doing so.
 
-**`N>&M` is parsed and not implemented**, which is a deliberate pair. It used to be a *syntax error* —
+That was the state when the *refusal* was the whole feature. `ls missing 2> err` writes the
+diagnostic to `err` today, and `ls missing 2>&1 | cat` pipes it.
+
+**`N>&M` is implemented for the two descriptors there are**, and the paragraph that follows is why it
+was worth *parsing* before it was worth implementing. `2>&1`, `1>&2` and `>&2` work; `3>&1` is
+`sh: 3: Bad file descriptor`, which is the descriptor-above-2 rule above rather than an unparsed form.
+The history: it used to be a *syntax error* —
 the lexer made `2>&1` into three tokens and the redirection parser refused a target that was not a word
 — and a syntax error tells the caller they wrote something invalid, which `2>&1` is not. The parser
 recognises the form so the refusal can name the descriptors, and a refused stage fails the whole
 pipeline: `echo hi 2>&1 | cat` printed the refusal and exited 0, because the status came from `cat`
-succeeding at doing nothing.
+succeeding at doing nothing. That is the shape a refusal has to have, and it is still what a
+descriptor above 2 gets.
 
 **Standard error arrives when it happened**, interleaved with standard output as bash's is, which
 is what `2>&1` has to show. It used to be collected and flushed at the end through `Core.warn` —
