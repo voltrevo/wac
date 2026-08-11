@@ -20,6 +20,10 @@
 //
 // And **`git log` in the target** says the history arrived in order, not merely that the tip is there.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. Both need to happen before `Deno.test` registers anything, which is
+// why it is a static import here rather than something the builder could arrange. issues/system 0074.
+import "../../../harness/spawnRetry.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 import { buildApp } from "../../platform/build.ts";
 

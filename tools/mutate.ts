@@ -172,6 +172,14 @@ let totalToRun = 0;
 let ranCount = 0;
 /** What the run is doing, for a log that ends without warning. Set at each stage boundary. */
 let phase = "starting up";
+/**
+ * The staged copies of the project, one per parallel job.
+ *
+ * **Declared up here so the signal handler below can remove them.** It is used far lower down, where
+ * the comment explaining what staging costs lives; the reason it is hoisted is that a run cut short
+ * would otherwise leave a full copy of the project in `/tmp` — see the handler.
+ */
+const workDirs: string[] = [];
 for (const sig of ["SIGTERM", "SIGINT"] as const) {
   try {
     Deno.addSignalListener(sig, () => {
@@ -182,6 +190,19 @@ for (const sig of ["SIGTERM", "SIGINT"] as const) {
           `There is no score for this run, and what is above is a prefix rather than a sample: mutants\n` +
           `run in the order they were generated, so whole files may not have been reached.\n`,
       ));
+      // **`Deno.exit` does not run `finally`**, so the cleanup at the end of the run — which does
+      // exactly this — never happens on this path. Without it every interrupted sweep leaves a
+      // staged copy of the whole project behind, and this container can be stopped at any time, so
+      // that is the common exit rather than the rare one. 22 of them had accumulated over two days
+      // and filled the disk, which surfaced as thirty unrelated-looking test failures in packages
+      // nobody had touched.
+      //
+      // `removeSync`, not `remove`: the process is exiting, and an async cleanup would not finish.
+      for (const d of workDirs) {
+        try {
+          Deno.removeSync(d, { recursive: true });
+        } catch { /* already gone, or never created */ }
+      }
       Deno.exit(130);
     });
   } catch { /* a platform without this signal */ }
@@ -750,7 +771,6 @@ async function yieldToOthers(): Promise<void> {
  * Staging is a `cp -r` of the project, so a handful of copies costs a second and some
  * disk, and buys the whole run being parallel.
  */
-const workDirs: string[] = [];
 let unmeasurable: typeof toRun = [];
 let profile: Profile | null = null;
 let narrowed = 0, widened = 0;

@@ -6,6 +6,9 @@
 // its own — would be worse than the spawning it saves, because every test built on it would be
 // quietly testing something else.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. issues/system 0074.
+import "./spawnRetry.ts";
 import { appRunner } from "./appRun.ts";
 import { buildApp } from "../packages/platform/build.ts";
 

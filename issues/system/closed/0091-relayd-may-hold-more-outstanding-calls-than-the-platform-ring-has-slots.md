@@ -1,7 +1,7 @@
 # 0091 — `relayd` may hold more outstanding calls than the platform ring has slots
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — the budget is in, 2026-08-11 by agent-a
+- **Claimed by:** agent-a
 - **Reported by:** agent-b
 - **Date:** 2026-08-06
 - **Kind:** bug
@@ -109,3 +109,40 @@ Two things the platform change does contribute:
 
 The decision this issue is filed for — what a relay under pressure refuses first — is untouched by any of
 that.
+
+## Closed: the cap the issue asked for, against the count the relay already had
+
+**The relay was already counting.** The wait list is rebuilt each round from the accept, one `recv`
+per connection and one for each circuit end that is waiting — which *is* the number of outstanding
+calls, computed in the loop that builds it. So the budget needed no new bookkeeping, only a name:
+`outstanding(conns, live, accepting)` is that loop, called by the wait-list builder and by the guard,
+one function so the two cannot disagree about what the ring holds.
+
+`roomForCirc` refuses before the per-connection cap:
+
+    relayd: [3]  at 112 outstanding calls of 128, refusing a circuit
+
+with `DESTROY_RESOURCELIMIT`, which is what it already answers at `MAX_CIRCS` and what a real relay
+says when it will not take more work. `ringHasRoom(held)` is `held + 2 <= CALL_SLOTS - RING_MARGIN` —
+two because a fresh circuit can grow both a next hop and a stream, and a margin of 16 because a relay
+makes ordinary calls while it serves (a `send`, a TLS handshake, a directory read) and those hold
+slots that are not in the wait list.
+
+**A circuit is what gets refused**, which is the decision this issue was filed for. The reasoning is
+now a test rather than a paragraph: `packages/tor/test/wac/relayring_test.wac` asserts that
+connections alone never reach the ring (`1 + MAX_CONNS` is 65 of 128, so refusing connections would
+refuse the wrong thing early), that no held count at or beyond `CALL_SLOTS` is ever told there is
+room, that the answer is monotone and flips below the ring by the margin, and that the caps' own
+worst case — 1089, the number this issue measured — is refused.
+
+**What is checked and what is not.** Four cases on the policy, and the relay's own suite passes with
+the guard in place (`network_tor.test.ts`, both cases, 18s). What has no test is a relay actually
+carrying seven busy connections: standing that up needs a load harness this repo does not have, and
+the deadlock it would show is the one thing nobody has reproduced — which is why this issue was
+"latent, found by reading" from the day it was filed. The canary is the other direction: with
+`RING_MARGIN` set to 126, so the budget leaves no room at all, both `network_tor` cases fail — the
+network cannot come up, because the guard is refusing the circuits it is built from. That is the
+wiring proved live.
+
+`MAX_CONNS` and `MAX_CIRCS` are unchanged and still chosen for memory. The point of the budget is
+that they no longer have to be chosen for the ring as well.

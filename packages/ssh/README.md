@@ -28,7 +28,7 @@ deno task app:build packages/ssh/src/sshd.wac --allow-read --allow-net --allow-e
 ```
 
 `src/ssh.wac` is the whole program — argument parsing, the key file, known_hosts, the protocol.
-There is no TypeScript in `src/`. Built it is **352 KiB** and self-contained, and the shebang is
+There is no TypeScript in `src/`. Built it is **354 KiB** and self-contained, and the shebang is
 exactly its grants — measured 2026-08-11 with the `app:build` line above, which is dated because it
 said 151K for months while the platform runtime every executable carries grew underneath it.
 
@@ -75,7 +75,22 @@ Against OpenSSH 9.6 it negotiates `curve25519-sha256`, `ssh-ed25519` and
 
 ## Why the pieces look like this
 
-**`wire.wac`** — the six types of RFC 4251 §5. Two of them carry the mistakes:
+One subsection per file, bottom-up rather than alphabetically: the byte types first, then framing,
+then the handshake, then what runs on top —
+[`wire.wac`](#wirewac), [`packet.wac`](#packetwac), [`version.wac`](#versionwac), [`kex.wac`](#kexwac), [`cipher.wac`](#cipherwac), [`kexinit.wac`](#kexinitwac), [`privatekey.wac`](#privatekeywac), [`auth.wac`](#authwac), [`knownhosts.wac`](#knownhostswac), [`channel.wac`](#channelwac). Each says what the
+file is for and the mistake it exists to prevent, which is usually a rule that reads as decorative
+until a real server refuses the connection.
+
+The six not listed there are the two halves and the two programs: `client.wac` and `server.wac` are
+the handshakes as each end drives them, `conn.wac` is the buffering, framing, sealing and pair of
+sequence numbers they share — the plumbing that is the same in both directions and is written once —
+and `authorizedkeys.wac` decides whether a client's key may log in, which is the server's half of
+what `knownhosts.wac` does for the client. `ssh.wac` and `sshd.wac` are [the program](#the-program)
+and [the server](#the-server), below.
+
+### `wire.wac`
+
+the six types of RFC 4251 §5. Two of them carry the mistakes:
 
 `string` is arbitrary binary with a `uint32` length, not a C string. Host keys, signatures and the
 whole key exchange are strings nested inside strings, and a reader that stops at a zero byte
@@ -91,7 +106,9 @@ no-op, so a caller parses a whole message and checks once at the end. A length w
 set arrives in a signed `i32` as negative, which is refused rather than clamped — otherwise the
 bounds check is asked for a negative count and waves it through.
 
-**`packet.wac`** — the binary packet protocol, RFC 4253 §6. The length field is *inside* the
+### `packet.wac`
+
+the binary packet protocol, RFC 4253 §6. The length field is *inside* the
 encryption, which is why a reader cannot know how much to read before decrypting, and why
 `chacha20-poly1305@openssh.com` carries a separate key just for the length. Nothing is encrypted
 yet; this is the shape the cipher slots into.
@@ -103,14 +120,18 @@ the length produces packets a server accepts until encryption starts and then re
 The randomness comes from the caller, because wac cannot ask the host for entropy — the same
 arrangement [tls](../tls/README.md) uses.
 
-**`version.wac`** — the line each side sends before framing exists. A server may send any number
+### `version.wac`
+
+the line each side sends before framing exists. A server may send any number
 of banner lines first, and a client that reads exactly one line works against every server that
 has no banner, which during development is all of them. The CR LF is *not* part of the version
 string: both versions go into the exchange hash without their line endings, and including them
 produces a signature that verifies against nothing, far enough from here that the cause is not
 obvious.
 
-**`kex.wac`** — the exchange itself, and the key derivation of RFC 4253 §7.2. The exchange hash
+### `kex.wac`
+
+the exchange itself, and the key derivation of RFC 4253 §7.2. The exchange hash
 H is the security of the whole protocol in one value: the server signs it, so a peer that cannot
 produce that signature cannot have chosen any of its inputs, which is what stops an attacker in
 the middle from downgrading the algorithm lists.
@@ -128,7 +149,9 @@ transcription of the RFC using WebCrypto.
 An all-zero shared secret means the peer sent a low-order point and every session would share the
 same secret; RFC 8731 §3 requires aborting, and nothing later notices if you do not.
 
-**`cipher.wac`** — `chacha20-poly1305@openssh.com`, which is **not** the RFC 8439 AEAD that
+### `cipher.wac`
+
+`chacha20-poly1305@openssh.com`, which is **not** the RFC 8439 AEAD that
 `crypto/src/aead.wac` implements. Same two primitives, every structural choice different:
 
 Two keys, from 512 bits of key material — and the *first* 256 are K_2, the second K_1, which
@@ -152,7 +175,9 @@ separately, only `padding_length || payload || padding` is aligned, not the whol
 differ by exactly 4 bytes for every length, so a test that checks "aligned to something" passes
 with either.
 
-**`kexinit.wac`** — negotiation, RFC 4253 §7.1. The rule is asymmetric: the chosen algorithm is
+### `kexinit.wac`
+
+negotiation, RFC 4253 §7.1. The rule is asymmetric: the chosen algorithm is
 **the client's first preference that the server also supports**. Server order is ignored. Getting
 that backwards yields a client that negotiates something plausible and disagrees with the server
 about what was negotiated, which surfaces much later as a MAC failure.
@@ -164,7 +189,9 @@ client learns `rsa-sha2-256` is available rather than the SHA-1 that `ssh-rsa` i
 `kex-strict-c-v00@openssh.com` opts in to strict KEX, which forbids the unrelated messages the
 Terrapin attack (CVE-2023-48795) used to shift sequence numbers.
 
-**`privatekey.wac`** — the `openssh-key-v1` file format, which is not PKCS#8 and not PEM RSA.
+### `privatekey.wac`
+
+the `openssh-key-v1` file format, which is not PKCS#8 and not PEM RSA.
 `none` and `aes256-ctr`+`bcrypt` are read; anything else is refused by name rather than misread.
 
 **There is no MAC over the private section.** A wrong passphrase decrypts to plausible random
@@ -173,14 +200,18 @@ failing to match itself. That is a 2^-32 false accept by design, and it means th
 skipped — everything after it would otherwise be parsed out of noise. The private string is the
 32-byte seed followed by the public key again; only the first half is secret.
 
-**`auth.wac`** — publickey authentication, RFC 4252 §7. The signature covers **the session
+### `auth.wac`
+
+publickey authentication, RFC 4252 §7. The signature covers **the session
 identifier followed by the request without its signature field**, and the session id is what makes
 it worth anything: without it a signature is a bearer token that a malicious server could collect
 and replay to a third party as the client. The session id is length-prefixed as a `string` even
 though nothing follows that could be confused with it — omitting that length produces a signature
 the server rejects, indistinguishable from the key being wrong.
 
-**`knownhosts.wac`** — deciding whether the host key we verified is the one we *expected*. The
+### `knownhosts.wac`
+
+deciding whether the host key we verified is the one we *expected*. The
 key exchange proves the peer holds the private half of the key it presented; it says nothing about
 which peer that is. Without this, a man-in-the-middle presenting its own host key produces a
 perfectly valid exchange and the client proceeds.
@@ -203,7 +234,9 @@ distinction that matters is **unknown versus changed**: unknown is every first c
 known host presenting a different key is the case the file exists to catch, and must never be
 quietly folded into the first.
 
-**`channel.wac`** — the connection protocol, RFC 4254. Everything after authentication happens
+### `channel.wac`
+
+the connection protocol, RFC 4254. Everything after authentication happens
 inside a channel: open one, ask it to run something, read back interleaved stdout and stderr until
 the far end closes it.
 
@@ -336,8 +369,16 @@ does not return the cursor on a bare newline.
 
 The modes in the request — speeds, `VERASE`, `ICANON` — are **not read**. Canonical with echo is the one
 arrangement this serves, so a client asking for raw mode gets canonical: a gap rather than a translation.
-And `^C` throws away the line being typed but cannot end a running command, because nothing is running
-while the server waits for a keystroke. Interrupting one needs design/0001 step 3.
+And `^C` ends a running command, which it could not when this paragraph was written — it said
+"interrupting one needs design/0001 step 3", and step 3's process table was never the missing part.
+Delivery already worked: `kill -INT $$` ended a script with 130. What was missing is that `runScript`
+blocks this session loop, so while a line ran nothing read the channel and the keystroke sat in the
+socket until the command it was meant to end had finished. `Shell.askInterrupt` is the seam — a
+funcref and an `anyref` context, so a shell that is already busy can ask *this session* whether
+anything has arrived, through `Conn.ready`, which is `waitAny(ids, 0)` over the read this connection
+already has outstanding. `test/server.test.ts` drives it with OpenSSH's own client: `while true; do
+:; done`, a `^C`, then `echo alive=$?` printing 130 on a session that is still there. Type-ahead
+survives it, and an interrupt flushes what was typed, which is `ISIG` without `NOFLSH`.
 
 Without a pty — `ssh -T host` — nothing changes: the client keeps its own line editing, the server sees
 whole lines, and no prompt is written, because without a pty a real shell is not interactive and prints

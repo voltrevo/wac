@@ -254,9 +254,9 @@ export default function Home() {
           against four independent corpora rather than one: a generated sweep of{" "}
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          362 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          363 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
-          <Lead>200 of 202</Lead>.
+          <Lead>197 of 200</Lead>.
         </P>
         <P>
           The measurement that matters most is against the specification rather than against the
@@ -285,7 +285,7 @@ export default function Home() {
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
           of record — though its output now runs everything: <Lead>34 of 34 packages pass their own
-          test suites on modules wacc emitted</Lead>, 1,635 tests, with {m({ children: "tor" })}
+          test suites on modules wacc emitted</Lead>, 1,655 tests, with {m({ children: "tor" })}
           &rsquo;s 306 among them. It was six not long ago, and what moved it was the bindgen helpers
           that carry values across the boundary, one family at a time. What that does{" "}
           <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps

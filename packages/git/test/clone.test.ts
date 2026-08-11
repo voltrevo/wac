@@ -23,6 +23,10 @@
 // is the only thing standing between this and a repository git calls broken — remove it and `git fsck`
 // must fail, or the file is not doing the work this claims it does.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. Both need to happen before `Deno.test` registers anything, which is
+// why it is a static import here rather than something the builder could arrange. issues/system 0074.
+import "../../../harness/spawnRetry.ts";
 import { buildApp } from "../../platform/build.ts";
 
 const dec = new TextDecoder();
