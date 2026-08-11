@@ -12,7 +12,8 @@
 
 import { wacBind } from "../../../harness/wacBind.ts";
 import { testBounded } from "../../../harness/deadline.ts";
-import { freePort, haveSshd, type Server, startServer, stopServer } from "./server.ts";
+import { haveSshd, type Server, startServer, stopServer } from "./server.ts";
+import { holdPort } from "../../../harness/port.ts";
 
 const mod = await wacBind("packages/ssh/test/wac/probe.wac") as unknown as {
   sshMessageNumbers(): Int32Array;
@@ -855,7 +856,12 @@ testBounded({
   ignore: !haveSshd,
 }, async () => {
     const dir = await Deno.makeTempDir();
-    const port = freePort();
+    // **Held, not merely chosen** — the same reason `startServer` gives in `server.ts`: two
+    // `ssh-keygen` runs and a config write happen between here and sshd's bind, and a number handed
+    // over that early is a number something else takes. wac-mono 0069, and 0131 is what it looks
+    // like from outside. Released immediately before the spawn.
+    const held = holdPort();
+    const port = held.port;
     let sshd: Deno.ChildProcess | undefined;
     try {
       for (const name of ["hostkey", "clientkey"]) {
@@ -874,6 +880,7 @@ testBounded({
         "StrictModes no", "UsePAM no", "PasswordAuthentication no", "PidFile none",
       ].join("\n"));
 
+      held.release();
       sshd = new Deno.Command("/usr/sbin/sshd", {
         args: ["-D", "-f", `${dir}/sshd_config`], stdout: "null", stderr: "null",
       }).spawn();

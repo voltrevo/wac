@@ -1975,6 +1975,13 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
           countAt = countAt + 1;
         }
       }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (env.funcIndex[countAt] >= 0) { count = count + 1; }
+          countAt = countAt + 1;
+        }
+      }
       else: { }
     }
   }
@@ -2166,6 +2173,14 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
         for (i32 m = 0; m < methods.len(); m++) {
           env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
                                  methods[m].hasThis ? owner2 : ""));
+        }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string eowner2 = nameKeyOf(env, src, lexed, nameTok);
+        for (i32 m = 0; m < methods.len(); m++) {
+          env.sigType(emittedSig(env, src, lexed, methods[m].returnType, methods[m].params,
+                                 methods[m].hasThis ? eowner2 : ""));
         }
       }
       else: { }
@@ -2368,6 +2383,18 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   i32 emitAt = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string eowner = nameKeyOf(env, src, lexed, nameTok);
+        for (i32 m = 0; m < methods.len(); m++) {
+          if (env.funcIndex[emitAt] < 0) { emitAt = emitAt + 1; continue; }
+          emitAt = emitAt + 1;
+          emitFunction(types, funcs, exports, code, src, lexed, env, prog,
+                       "", methods[m].returnType, methods[m].params, methods[m].body,
+                       methods[m].hasThis ? eowner : "", index, declTypes);
+          index = index + 1;
+        }
+      }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         if (typeParams.len() > 0) { continue; }
         string owner = nameKeyOf(env, src, lexed, nameTok);
@@ -5815,7 +5842,6 @@ string emitBlockedOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         // A template emits nothing; its instances are enums of their own.
         if (typeParams.len() > 0) { continue; }
-        if (methods.len() > 0) { return "a method on an enum"; }
       }
       // An import is only a blocker when nothing resolved it. Linked, the names it brings in are
       // already in the pool — except a capability import, which names no file and would be a wasm
@@ -6252,6 +6278,24 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? owner : "";
         }
       }
+      // **An enum declares methods exactly as a struct does**, and this walk had no arm for it — so
+      // `Kind.word` was a function nothing registered, and the emittability walk declined the file
+      // with *a method on an enum* rather than emitting one. The instances of a *generic* enum have
+      // had their methods emitted all along, which is what made the gap look like a missing feature
+      // rather than a missing case. `spec/cases/0097`.
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        string eowner = nameKeyOf(env, src, lexed, nameTok);
+        for (i32 i = 0; i < methods.len(); i++) {
+          string[] epts = string[methods[i].params.len()]();
+          for (i32 j = 0; j < methods[i].params.len(); j++) {
+            epts[j] = typeOfTyName(env, src, lexed, methods[i].params[j].type);
+          }
+          env.addFunc(eowner + "." + tokenTextOf(src, lexed, methods[i].nameTok),
+                      typeOfTyName(env, src, lexed, methods[i].returnType), epts);
+          env.funcRecv[env.funcCount - 1] = methods[i].hasThis ? eowner : "";
+        }
+      }
       else: { }
     }
   }
@@ -6348,6 +6392,23 @@ void settleEmittable(Env env, u8[] src, Lexed lexed, Program prog) {
             if (env.funcOk[at] &&
                 !canEmit(src, lexed, env, methods[m].params, methods[m].body,
                          methods[m].hasThis ? owner : "",
+                         typeOfTyName(env, src, lexed, methods[m].returnType))) {
+              env.funcOk[at] = false;
+              changed = true;
+            }
+            at = at + 1;
+          }
+        }
+        // **And an enum's, in the same place in the order.** `at` walks the function table, so an
+        // arm that does not advance it does not merely skip a verdict: every function after it takes
+        // somebody else's. Registration puts an enum's methods here, so this must too.
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          string eowner = nameKeyOf(env, src, lexed, nameTok);
+          for (i32 m = 0; m < methods.len(); m++) {
+            if (env.funcOk[at] &&
+                !canEmit(src, lexed, env, methods[m].params, methods[m].body,
+                         methods[m].hasThis ? eowner : "",
                          typeOfTyName(env, src, lexed, methods[m].returnType))) {
               env.funcOk[at] = false;
               changed = true;

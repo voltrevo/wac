@@ -1,7 +1,7 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
-import { freePort } from "../../../harness/port.ts";
+import { withPort } from "../../../harness/port.ts";
 // The Node host's sockets, against the Deno host's, with a real client attached.
 //
 // **This path had no test.** `platform.test.ts` builds the same program for both runtimes and compares
@@ -129,14 +129,24 @@ Deno.test({
       // A port from the kernel rather than a literal: bound, read, released, then handed over. The
       // window between releasing and binding is a race, and it is a smaller one than sharing a fixed
       // number with every other suite on this machine.
-      // `freePort` rather than probe-and-close here: the port is handed to a *child*, so the window
-      // between the close and its bind is the race in wac-mono 0069.
-      const port = freePort();
+      // **`withPort`, because the port is handed to a *child*** and the window between letting it go
+      // and the child's bind is wac-mono 0069's race — 0131 is what that looks like from outside.
+      //
+      // The child's standard error is **kept** rather than discarded, which the retry needs: a bind
+      // failure has to arrive as an error whose text says `Address already in use`, or `isAddrInUse`
+      // cannot tell it from a real failure and `withPort` rethrows. It also makes the assertion
+      // below say why rather than only that.
+      await withPort(async (port) => {
       const child = new Deno.Command("node", {
         args: [nodeOut, "127.0.0.1", String(port)],
         stdout: "piped",
-        stderr: "null",
+        stderr: "piped",
       }).spawn();
+      let childErr = "";
+      const errReader = (async () => {
+        const d = new TextDecoder();
+        for await (const c of child.stderr) childErr += d.decode(c);
+      })();
       try {
         const dec = new TextDecoder();
         const seen: string[] = [];
@@ -155,19 +165,21 @@ Deno.test({
         assertEquals(
           line.includes(`127.0.0.1:${port}`),
           true,
-          `bound elsewhere: ${line || table}`,
+          `bound elsewhere: ${line || table}${childErr === "" ? "" : `\n  node said: ${childErr}`}`,
         );
 
         // Tidy: the server is waiting for a connection nobody is going to make.
         child.kill("SIGKILL");
         await child.status;
         await reader.catch(() => {});
+        await errReader.catch(() => {});
       } catch (e) {
         try {
           child.kill("SIGKILL");
         } catch { /* gone */ }
         throw e;
       }
+      });
     } finally {
       await Deno.remove(nodeOut).catch(() => {});
     }
