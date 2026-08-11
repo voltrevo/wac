@@ -104,15 +104,16 @@ worse than one that says which:
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.
 - **No config, no `.gitignore`.** Every file under the repository is committed.
-- **A status of the working tree, and not of the index.** `worktreeStatus` compares the working tree
-  against the index and answers in `git status --porcelain`'s second column — ` M` and ` D` — which
-  `example/gitst.wac` prints. On a fixture with a modified file, a modified file in a subdirectory, a
-  deleted file and an untracked one, our lines are git's, byte for byte, minus the untracked one. Three
-  things it does not do: **untracked files**, because deciding which count needs `.gitignore`; **a mode
-  change**, because `Stat` has no mode, which is
+- **A status of both porcelain columns, and not of untracked files.** `statusOf` compares the index
+  against `HEAD` and the working tree against the index, and `example/gitst.wac` prints the two columns in
+  git's order — so `diff <(git status --porcelain) <(gitst .)` is empty on a fixture holding a staged
+  change, an unstaged one in a subdirectory, a staged addition, a staged deletion, and a file staged and
+  then edited again (`MM`, which is what proves the columns are computed separately). Two things it does
+  not do: **untracked files**, because deciding which count needs `.gitignore`; and an **unstaged mode
+  change**, because `Stat` has no mode —
   [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md)
-  again and means git reports the executable bit where we cannot; and **the first porcelain column**,
-  which compares the index against `HEAD` and needs a commit's tree read.
+  again, so git sees an executable that lost its bit and we do not. A *staged* mode change is visible,
+  since both sides of that comparison are recorded rather than read off the disk.
 - **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —
