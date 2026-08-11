@@ -39,6 +39,21 @@ That is the honest answer for the layer it is in, because the capability underne
 comment. So the gap is at the capability surface, not in `packages/fs`, and `packages/fs`'s
 `FAULT_UNSUPPORTED` is it reporting the truth.
 
+## The same gap, read rather than written
+
+`Stat` has no `mode` field either — `exists`, `isFile`, `isDir`, `size`, `modifiedMillis`, `isSymlink`
+and nothing else. So the missing capability cuts both ways:
+
+- **writing**, above: a checkout cannot set the executable bit.
+- **reading**: building a tree *from* a working tree cannot tell an executable file from a plain one, so
+  every blob is recorded as `100644`. A commit made that way is valid — `git fsck --strict` accepts it
+  and `git log` shows it — but committing a tree that contained an executable records a mode change
+  nobody asked for.
+
+Both are one decision: whether a file's mode belongs on the capability surface. Filed together because
+splitting them would mean two issues whose fix is the same field, which is the duplication
+`issues/README.md` warns about.
+
 ## Notes
 
 Two things follow, and the second is why this is filed rather than fixed.

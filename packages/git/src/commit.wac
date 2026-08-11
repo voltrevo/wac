@@ -26,6 +26,7 @@
 import { Buf } from "../../bytes/src/buf.wac";
 import { decode, encode } from "../../codec/src/hex.wac";
 import { Vec } from "../../std/src/vec.wac";
+import { itoa64 } from "../../fmt/src/itoa.wac";
 
 /** Who did something, and when. */
 export struct Who {
@@ -238,3 +239,31 @@ export ParsedTag parseTag(u8[] content) {
   for (i32 i = at; i < content.len(); i++) { msg.push(content[i]); }
   return ParsedTag.Annotated(Tag(object!, kindWord, name, msg.toStr()));
 }
+
+/**
+ * Serialise a commit — the bytes that go inside a `commit <len>\0` frame.
+ *
+ * The order of the headers is not decoration: git writes `tree`, then every `parent`, then `author`,
+ * then `committer`, and `fsck --strict` complains about a commit whose headers are out of that order
+ * even though a parser would cope. So this writes git's order rather than the caller's.
+ *
+ * The message is written as given. A commit whose message does not end in a newline is legal and git
+ * makes them, so nothing is appended — a serialiser that "helpfully" added one would produce a
+ * different object from the one the caller described, which for a content-addressed store means a
+ * different commit.
+ */
+export u8[] formatCommit(u8[] tree, Vec<u8[]> parents, Who author, Who committer, string message) {
+  Buf out = Buf.create();
+  out.pushAll(("tree " + string.fromBytes(encode(tree)) + "\n").toBytes());
+  for (i32 i = 0; i < parents.len(); i++) {
+    out.pushAll(("parent " + string.fromBytes(encode(parents.get(i))) + "\n").toBytes());
+  }
+  out.pushAll(("author " + line(author) + "\n").toBytes());
+  out.pushAll(("committer " + line(committer) + "\n").toBytes());
+  out.push(10);
+  out.pushAll(message.toBytes());
+  return out.take();
+}
+
+/** `Name <email> 1700000000 +0000`, which is what `who` reads back. */
+string line(Who w) { return w.name + " " + itoa64(w.when) + " " + w.zone; }

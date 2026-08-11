@@ -21,13 +21,16 @@
 // step 5 of `design/system/0005`.
 
 import { Buf } from "../../bytes/src/buf.wac";
-import { Change, FileResult, Stat } from "../../platform/src/platform.wac";
+import { Change, FAULT_EXISTS, FileResult, Stat } from "../../platform/src/platform.wac";
 import { Fs as FsType } from "../../fs/src/fs.wac";
 import { decode } from "../../codec/src/hex.wac";
 import { Got, Pack, openPack, objectNamed } from "./pack.wac";
 import { Kind, Object, readLoose } from "./object.wac";
 import { RefValue, PackedRef, packedTarget, parsePackedRefs, parseRef } from "./refs.wac";
-import { Entry, Tree, parseTree } from "./tree.wac";
+import { Entry, Tree, parseTree, writeTree } from "./tree.wac";
+import { Commit, Who, formatCommit } from "./commit.wac";
+import { framed, looseFile } from "./object.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
 import { GitIndex, IndexEntry, Staged, writeIndex } from "./index.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
@@ -278,4 +281,188 @@ i32 modeNumber(string mode) {
   if (mode == "120000") { return 40960; }
   if (mode == "160000") { return 57344; }
   return 33188;
+}
+
+// ── writing ─────────────────────────────────────────────────────────────────────────────────────────
+//
+// design/system/0005 step 5. Everything above reads; from here on things are created.
+
+/** A new object's name, or why it could not be written. */
+export enum Stored {
+  Named(u8[] name),
+  NotStored(string why)
+}
+
+/**
+ * Write `content` as a loose object and answer its name.
+ *
+ * **An object that is already there is left alone.** Objects are immutable and named by their content,
+ * so rewriting one can only produce the same bytes — and git relies on that: it is what makes writing
+ * an object idempotent and what lets two processes write the same blob without a lock.
+ */
+export Stored writeObject(Repo r, Kind kind, u8[] content) {
+  u8[] name = sha1(framed(kind, content));
+  string hex = hexOf(name);
+  string dir = r.gitDir + "/objects/" + hex.slice(0, 2);
+  string path = dir + "/" + hex.slice(2, hex.len());
+  Stat there = r.fs.stat(path);
+  if (there.exists) { return Stored.Named(name); }
+  Change made = r.fs.mkdir(dir, true);
+  if (!made.ok() && made.fault != FAULT_EXISTS()) {
+    return Stored.NotStored("could not create " + dir + ": " + made.message);
+  }
+  Change wrote = r.fs.writeFile(path, looseFile(kind, content));
+  if (!wrote.ok()) { return Stored.NotStored("could not write " + path + ": " + wrote.message); }
+  return Stored.Named(name);
+}
+
+/**
+ * Write every file under `dir` as a blob and every directory as a tree, and answer the root's name.
+ *
+ * `.git` is skipped, which is the one name that must not be walked.
+ *
+ * **Every blob is recorded as `100644`.** `Stat` carries no mode, so an executable cannot be told from
+ * a plain file — issues/system/0132, the reading half of the same missing capability that stops a
+ * checkout setting the bit. A tree built from a working tree containing an executable therefore records
+ * a mode change nobody asked for, and this says so rather than pretending.
+ *
+ * An empty directory produces no entry, because git has no way to represent one. That is git's
+ * behaviour rather than a shortcut.
+ *
+ * `index` is filled with an entry per blob as the walk goes, in the tree's order — which is the order an
+ * index has to be in, so writing one afterwards needs no sort. A commit that moved a ref without also
+ * writing the index would leave `git status` reporting every file as deleted and untracked at once,
+ * which is what the first version of `gitci` did.
+ */
+export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> index) {
+  string[]? listing = r.fs.readDir(dir);
+  if (listing is null) { return Stored.NotStored("cannot read " + dir); }
+  string[] names = listing!;
+
+  // **Ordered before anything is written, not after.** The tree could be sorted at the end, but the
+  // index cannot: its entries are collected as the walk descends, so walking in `readDir` order puts
+  // `a/inner` before `a.b` and git answers `fatal: unordered stage entries in index`. Sorting the
+  // *listing* first makes both come out in order by construction.
+  Vec<string> kept = Vec.create();
+  Vec<bool> dirs = Vec.create();
+  for (i32 i = 0; i < names.len(); i++) {
+    string n = names[i];
+    if (n == ".git" || n == "." || n == "..") { continue; }
+    Stat st = r.fs.stat(dir + "/" + n);
+    if (!st.isDir && !st.isFile) { continue; }
+    kept.push(n);
+    dirs.push(st.isDir);
+  }
+  sortListing(kept, dirs);
+
+  Vec<Entry> entries = Vec.create();
+  for (i32 i = 0; i < kept.len(); i++) {
+    string n = kept.get(i);
+    string path = dir + "/" + n;
+    string rel = prefix == "" ? n : prefix + "/" + n;
+    if (dirs.get(i)) {
+      match (writeWorkTree(r, path, rel, index)) {
+        case NotStored(why): return Stored.NotStored(why);
+        case Named(sub): {
+          // A directory with nothing in it has no entry: git cannot represent one.
+          if (!isEmptyTree(sub)) { entries.push(Entry("40000", n, sub)); }
+        }
+      }
+    } else {
+      FileResult f = r.fs.readFile(path);
+      if (!f.ok) { return Stored.NotStored("cannot read " + path); }
+      match (writeObject(r, Kind.Blob, f.bytes)) {
+        case NotStored(why): return Stored.NotStored(why);
+        case Named(blob): {
+          entries.push(Entry("100644", n, blob));
+          index.push(IndexEntry(rel, blob, 33188, f.bytes.len(), 0));
+        }
+      }
+    }
+  }
+  return writeObject(r, Kind.Tree, writeTree(entries));
+}
+
+/**
+ * Sort a directory listing into git's tree order, carrying the is-a-directory flag with each name.
+ *
+ * Insertion sort, which is the wrong asymptotics for a directory of ten thousand names and the right
+ * amount of code for one of ten. Said rather than hidden: a repository with a very wide directory will
+ * notice.
+ */
+void sortListing(Vec<string> names, Vec<bool> dirs) {
+  for (i32 i = 1; i < names.len(); i++) {
+    string keyName = names.get(i);
+    bool keyDir = dirs.get(i);
+    i32 j = i - 1;
+    while (j >= 0 && sortsBefore(keyName, keyDir, names.get(j), dirs.get(j))) {
+      names.set(j + 1, names.get(j));
+      dirs.set(j + 1, dirs.get(j));
+      j = j - 1;
+    }
+    names.set(j + 1, keyName);
+    dirs.set(j + 1, keyDir);
+  }
+}
+
+/**
+ * git's order: by name as raw bytes, with a directory compared as though its name ended in `/`.
+ *
+ * This is the rule that has to be implemented rather than approximated. `a.b` sorts *before* the
+ * directory `a`, because `.` is 0x2E and `/` is 0x2F — so sorting plain names puts them the other way
+ * round and produces a tree with a different hash that git will read and disagree with every other
+ * client about.
+ */
+bool sortsBefore(string an, bool ad, string bn, bool bd) {
+  u8[] x = (an + (ad ? "/" : "")).toBytes();
+  u8[] y = (bn + (bd ? "/" : "")).toBytes();
+  i32 n = x.len() < y.len() ? x.len() : y.len();
+  for (i32 i = 0; i < n; i++) {
+    if (x[i] != y[i]) { return x[i] < y[i]; }
+  }
+  return x.len() < y.len();
+}
+
+/** The name of the empty tree, which git spells `4b825dc642cb6eb9a060e54bf8d69288fbee4904`. */
+bool isEmptyTree(u8[] name) {
+  return hexOf(name) == "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+}
+
+/**
+ * Commit a tree, and move a ref to it.
+ *
+ * The parent is whatever the ref names now, or no parent if it names nothing — which is how a first
+ * commit happens, and why this does not require one.
+ */
+export Stored commitTree(Repo r, u8[] tree, string refName, Who author, string message,
+                         Vec<IndexEntry> index) {
+  Vec<u8[]> parents = Vec.create();
+  u8[]? current = resolveRef(r, refName);
+  if (!(current is null)) { parents.push(current!); }
+
+  match (writeObject(r, Kind.Commit, formatCommit(tree, parents, author, author, message))) {
+    case NotStored(why): return Stored.NotStored(why);
+    case Named(commit): {
+      // A ref file is forty hex characters and a newline. Written whole rather than appended: git
+      // rewrites it too, and an interrupted append would leave a ref nothing can read.
+      Change moved = r.fs.writeFile(r.gitDir + "/" + refName, (hexOf(commit) + "\n").toBytes());
+      if (!moved.ok()) { return Stored.NotStored("could not update " + refName + ": " + moved.message); }
+      // The index too, or `git status` compares the new commit against the old index and reports every
+      // path as both deleted and untracked.
+      Change staged = r.fs.writeFile(r.gitDir + "/index", writeIndex(GitIndex(index, u8[0]())));
+      if (!staged.ok()) { return Stored.NotStored("could not write the index: " + staged.message); }
+      return Stored.Named(commit);
+    }
+  }
+}
+
+/** What `HEAD` points at, as a ref name — or empty if it is detached. */
+export string headRef(Repo r) {
+  FileResult f = r.fs.readFile(r.gitDir + "/HEAD");
+  if (!f.ok) { return ""; }
+  match (parseRef(f.bytes)) {
+    case Symbolic(target): return target;
+    case Direct(name): return "";
+    case Unparsed(why): return "";
+  }
 }
