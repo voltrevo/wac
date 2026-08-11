@@ -210,11 +210,10 @@ an unknown escape were invisible to every caller of this package.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    30 of 34 packages pass their own suite on wacc-emitted code (1,391 tests)
+    32 of 34 packages pass their own suite on wacc-emitted code (1,552 tests)
     why the rest do not:
-        2  $bind$sm_Vec__packages_std_src_vec$string_create
-        1  $bind$m_Vec__packages_std_src_vec$IndexEntry__packages_git_src_index_len
-        1  a static Shell.capturing, declined
+        1  no method Kind.word                    (git — an emitter gap)
+        1  a static Shell.capturing, declined     (sh)
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on
@@ -255,6 +254,10 @@ is what `string[]` and `u8[][]` are.
 The representation stayed ours: the reference gives an enum a base struct and a subtype per variant,
 and wacc lays every variant's payload out beside the tag in one struct. A host cannot tell, because
 it holds an opaque reference either way — the helper set is the contract and the layout is not.
+
+**Every bind family is emitted, and no package is blocked on a name any more** — the last one was a
+static on a generic instance, which binds under the reference's mangling:
+`$bind$sm_Vec__packages_std_src_vec$string_create`, with `Vec<u8[]>` spelled `…$u8_arr`.
 
 **The callbacks are done too**, which was the one family that needed a section rather than more
 helper bodies: a module whose export takes `fn[i32(i32)]` imports `wac.cb0`, defines sixteen
