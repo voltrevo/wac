@@ -3,11 +3,6 @@
 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. No TypeScript: `src/` is
 wac and the only thing outside it is the test suite.
 
-That number is a digit rather than a word because it kept going stale: it said fifty-nine when
-the dispatcher had sixty, and before that forty-two in one paragraph and something else in
-another. `test/box.test.ts` now compares it to the dispatcher, so adding an applet and
-forgetting the sentence is a failing test.
-
 It exists to exercise `packages/platform`'s capability world more widely than a single
 example could, and to be honest about what that world cannot yet do. Where an applet
 falls short of the real tool, it says so in its own file.
@@ -259,8 +254,20 @@ because "cannot stream" turned out to be wrong twice:
 
 Two that are easy to get wrong: **`tail` streams** — it has to *reach* the end but only
 has to *hold* N lines, so a ring of N costs what the flag asks for. **`head` need not
-reach the end at all**, and stops reading once it has its lines: `head -1` of a 176MB file
-returns in 0.036s.
+reach the end at all**, and stops reading once it has its lines.
+
+Measured again on 2026-08-11, on a 173 MiB file, with the executable's own start subtracted so the
+numbers are about the applets rather than about the floor every program here stands on
+([0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md)):
+
+    box true          0.139s     the floor
+    head -1           0.125s     a 173 MiB file and a 1-byte file cost the same
+    tail -1           1.243s     reaches the end, holds one line
+    wc -l             1.818s     reads everything, which is the job
+
+The `head` row is the whole claim in one line: it is not that `head` is *fast*, it is that its cost
+does not depend on the size of the file. This paragraph used to say "0.036s of a 176MB file", which
+is the same fact stated in a way that reads as a measurement of the file.
 
 `cp` streams through `lib/safe.wac`, which writes beside the target and renames into
 place. That needed `openOutput`: without it a program could not produce more output to a
@@ -287,6 +294,13 @@ hand-written expectation would have enshrined both.
 It also caught that a missing final newline is not handled uniformly by the real tools —
 `head`, `tail` and `rev` preserve it, `nl` and `uniq` add one — which no amount of
 reasoning from first principles would have produced.
+
+**The applet count is compared too.** "65 applets" in the first line is a digit rather than a word
+because it kept going stale: it said fifty-nine when the dispatcher had sixty, and before that
+forty-two in one paragraph and something else in another. `test/box.test.ts` reads it out of this
+README and counts `box.wac`'s branches, so adding an applet and forgetting the sentence is a failing
+test — and the usage message's list is held to the same dispatcher, because three counts were
+reachable and only two of them were tied together.
 
 **What a failure says is compared too, not only what a success prints.** Every applet here answers a
 fault category rather than a host sentence, and `platform.wac`'s `reasonOf` turns it into the words the

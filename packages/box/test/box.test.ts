@@ -14,7 +14,7 @@ import { appRunner } from "../../../harness/appRun.ts";
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 import { readUntil } from "../../../harness/deadline.ts";
-import { freePort } from "../../../harness/port.ts";  // one allocator, pid-partitioned — wac-mono 0069
+import { freePort, withPort } from "../../../harness/port.ts";  // one allocator, pid-partitioned — wac-mono 0069
 
 const BOX = "packages/box/src/box.wac";
 
@@ -1807,8 +1807,15 @@ Deno.test("httpd serves a directory, and refuses to leave it", async () => {
     // The file the traversal case is trying to reach, one level above the root.
     await Deno.writeTextFile(`${root}/../wac-httpd-secret.txt`, "should not be served\n");
 
-    const request = async (target: string) => {
-      const port = freePort();
+    // **`withPort` rather than `freePort`.** `freePort` binds a port, lets go, and hands back the
+    // number — and `harness/port.ts` says of it that "the window is the same one this file exists to
+    // shrink". Under a full suite that window is real: this test is one of the two sightings in
+    // wac-mono 0131, where the suite failed one test per run and a different one each time. `httpd`
+    // says `Address already in use (os error 98)` on its standard error when it loses the race,
+    // `waitForListening` puts what the child printed into the error it throws, and `isAddrInUse`
+    // reads it — so the retry is a retry of exactly this and nothing else.
+    const request = (target: string) =>
+      withPort(async (port) => {
       const server = new Deno.Command(built, {
         args: ["httpd", `-${port}`, root, "-o"],
         stdout: "piped",
@@ -1834,7 +1841,7 @@ Deno.test("httpd serves a directory, and refuses to leave it", async () => {
       conn.close();
       await server.status;
       return new TextDecoder().decode(new Uint8Array(parts));
-    };
+      });
 
     const index = await request("/");
     assertEquals(index.startsWith("HTTP/1.1 200 OK\r\n"), true, index.slice(0, 60));
@@ -1862,8 +1869,7 @@ Deno.test("httpd serves a directory, and refuses to leave it", async () => {
     assertEquals((await request("notes.txt")).startsWith("HTTP/1.1 400 "), true);
     assertEquals((await request("/a\\b")).startsWith("HTTP/1.1 403 "), true);
 
-    const post = await (async () => {
-      const port = freePort();
+    const post = await withPort(async (port) => {
       const server = new Deno.Command(built, {
         args: ["httpd", `-${port}`, root, "-o"], stdout: "piped", stderr: "piped",
       }).spawn();
@@ -1879,7 +1885,7 @@ Deno.test("httpd serves a directory, and refuses to leave it", async () => {
       conn.close();
       await server.status;
       return new TextDecoder().decode(buf.slice(0, n ?? 0));
-    })();
+    });
     assertEquals(post.startsWith("HTTP/1.1 405 "), true, post.slice(0, 60));
   } finally {
     await Deno.remove(built);
@@ -2122,8 +2128,7 @@ Deno.test("gets: TLS 1.3 in wac, against a real TLS server", async () => {
       l.close();
     `);
 
-    const startServer = async () => {
-      const port = freePort();
+    const startServer = () => withPort(async (port) => {
       const p = new Deno.Command(Deno.execPath(), {
         args: ["run", "-A", `${dir}/server.ts`, `${port}`],
         stdout: "piped",
@@ -2133,7 +2138,7 @@ Deno.test("gets: TLS 1.3 in wac, against a real TLS server", async () => {
       p.stdout.cancel();
       p.stderr.cancel();
       return { port, p };
-    };
+    });
 
     // `localhost` is in the certificate's SAN, and `ca.der` signed it.
     const good = await startServer();

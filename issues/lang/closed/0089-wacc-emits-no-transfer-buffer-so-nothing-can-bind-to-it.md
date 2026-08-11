@@ -1,6 +1,7 @@
 # 0089 — wacc emits no transfer buffer, so nothing that passes bytes can bind to it
 
-- **Status:** open — every family is emitted except a static on a *generic instance*
+- **Status:** closed — fixed 2026-08-11 by agent-b
+- **Fixed in:** the commit adding the instance method exports
 - **Claimed by:** agent-b, 2026-08-10
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
@@ -136,3 +137,35 @@ places that have to agree, and getting the mangling wrong leaves the helper as i
 
 Worth saying: **this is the only remaining blocker that is a *name*.** Everything else in the tally is
 an emitter decline with its own reason.
+
+## Closed — 2026-08-11, agent-b
+
+The last name is emitted:
+
+    $bind$sm_Vec__packages_std_src_vec$string_create
+    $bind$m_Vec__packages_std_src_vec$u8_arr_len
+
+which needed the three things the note above scoped, and one it did not:
+
+1. **The ordered paths reach the emitter.** `linkFiles` records what each file was called beside the
+   line it starts on, and `Env.filePaths` holds them by file index. Nothing else here needs a path —
+   every other key comes from `declare` — so it is carried for the boundary alone.
+2. **`mangleType`'s spelling, mirrored.** A template is qualified by its declaring file
+   (`fileTagOf`), each argument is mangled after a `$`, an array is `_arr`, a nullable is `_opt` and
+   a funcref is `fn_…_to_…`. Read off `compiler/wacResolve.ts` rather than derived: `Vec<u8[]>` is
+   `Vec__packages_std_src_vec$u8_arr`, and guessing `u8` there would have left the helper as
+   invisible as it was.
+3. **An instance's methods are exported from the instance table**, not from declarations — a
+   template's methods are emitted from a substitution and no `StructDecl` carries them.
+4. **The thing the note missed:** a template is never `declare`d at all, so there is no name-table
+   entry to look its file up in. The declaration's own line answers instead, which the export walk
+   has in hand.
+
+    32 of 34 packages pass their own suite on wacc-emitted code (1,552 tests)
+    why the rest do not:
+        1  no method Kind.word                     (git)
+        1  a static Shell.capturing, declined      (sh)
+
+**Neither is a name.** Both are emitter declines with their own reason, which is where this issue
+said the finish line was. `test/bindHelpers.test.ts` pins the mangling, including the `_arr` case
+that the first attempt got wrong.

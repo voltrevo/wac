@@ -99,10 +99,21 @@ answer is exactly what a fixture cannot catch.
   name transferred in between yields an owner and a resolver that never coexisted. Each answer's `key` is
   checked against the slot asked for at that position, because a node that reordered them would hand a
   caller the resolver where it asked for the owner and both are addresses of the same shape.
-- `src/getproof.wac` — `eth_getProof` and `eth_getBlockByNumber`, decoded into the byte arrays
-  `packages/mpt` verifies. The only place that knows both shapes: nothing above it has to know `0x` exists.
-  Malformed hex is refused rather than guessed at, because a nibble-shifted root verifies against nothing
-  and reads as a bad proof.
+- `src/jsonhex.wac` — the `0x…` strings a node answers in, decoded into the byte arrays `packages/mpt`
+  verifies. The only place that knows both shapes: nothing above it has to know `0x` exists. This bullet
+  said `src/getproof.wac`, which is the bullet above it.
+
+  **There are two hex encodings and they disagree about odd digits**, which is why there are two
+  functions rather than one. **DATA** — a hash, an address, a storage key, a proof node — is a byte
+  string and always an even number of digits, so `fromHexData` refuses an odd one: padding it
+  nibble-shifts the value, and a shifted root verifies against nothing and reads as a bad proof.
+  **QUANTITY** is a number written minimally, so `eth_blockNumber` answering `0x1a2` is legal and
+  `fromHexQuantity` pads it to a whole byte. One function did both, padding, under a comment stating
+  the DATA rule — [0119](../../issues/system/closed/0119-ethrpc-pads-odd-length-hex-where-its-own-comment-says-it-refuses.md),
+  and `src/header.wac`'s `isQuantity` table is what decides which a field is.
+
+- `src/header.wac` — re-encodes the header the node returned and hashes it, so a block hash the caller
+  trusts turns into a trusted state root. See *What a node is trusted for* above.
 - The HTTP itself is `packages/http/src/client.wac`, which is `Connection: close` and read-to-EOF. Keep-alive
   would want a connection object with state, and this package does not have one.
 

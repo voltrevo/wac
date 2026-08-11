@@ -1253,6 +1253,27 @@ export struct Env {
   string[] cbSigs;
   i32 cbSigCount;
 
+  /**
+   * The type each field was *written* with, kept until every declaration exists.
+   *
+   * A field's type is resolved by name, and a name from another file can only be resolved once that
+   * file's declarations are registered — which is not true while this pass is walking. The parent
+   * chain has had this treatment since it was written (`structParentToks`); a field's type
+   * needed it for the same reason and did not have it, so `struct Repo { FsType fs; }` — where
+   * `FsType` is `import { Fs as FsType }` — resolved to nothing and fell back to `i32`.
+   * `issues/lang/0097`, `spec/cases/0096`.
+   */
+  Ty?[] fieldTys;
+
+  /**
+   * What each file in the link order was called, by file index.
+   *
+   * Only the boundary needs it: a monomorphisation's bind name is the reference's, and the reference
+   * qualifies a template by its declaring file. Everything else here is keyed by `declare`, which
+   * needs no path at all. `issues/lang/0089`.
+   */
+  string[] filePaths;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1266,7 +1287,7 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0);
+               string[32](), 0, Ty?[16384](), string[512]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1632,7 +1653,7 @@ i32 countLines(string s) {
 }
 
 string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i32[] edges,
-                 string[] names) {
+                 string[] names, string[] filePaths) {
   string[] queue = string[256]();
   string[] seen = string[256]();
   // The import edges, by path: a file is imported before it has an index, so the pairs are recorded
@@ -1660,6 +1681,11 @@ string linkFiles(string[] paths, string[] sources, string entry, i32[] starts, i
     // A newline between files, so a file that ends mid-line cannot join itself to the next one —
     // and the line each file begins on, which is the whole of how a name is scoped to it afterwards.
     if (starts.len() > sn) { starts[sn] = countLines(out) + 1; }
+    // **And what the file was called.** The line boundaries say which file a declaration came from
+    // and nothing said what its name was, which is the whole of what a bind name for a
+    // monomorphisation needs: the reference spells `Vec<string>` from `packages/std/src/vec.wac` as
+    // `Vec__packages_std_src_vec$string`. `issues/lang/0089`.
+    if (filePaths.len() > sn - 1) { filePaths[sn - 1] = path; }
     out = out + body + "\n";
     u8[] b = body.toBytes();
     Lexed lexed = lex(b);
@@ -1751,7 +1777,9 @@ i32 declCountOf(string source) {
  * none of which an `i32` calculation needs, and each of which is a section that can be added when
  * something needs it rather than because a real module usually has one.
  */
-export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1](), string[1]()); }
+export u8[] emitModule(u8[] src) {
+  return emitModuleOf(src, -1, i32[1](), i32[1](), string[1](), string[1]());
+}
 
 /**
  * Whether emitting would register a type the section was already sized without.
@@ -1760,7 +1788,7 @@ export u8[] emitModule(u8[] src) { return emitModuleOf(src, -1, i32[1](), i32[1]
  * else wrong is that case and no other, since every other reason has already been reported by name.
  */
 bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
-  return emitModuleOf(src, entryDecls, starts, edges, names).len() == 8;
+  return emitModuleOf(src, entryDecls, starts, edges, names, string[1]()).len() == 8;
 }
 
 /**
@@ -1774,9 +1802,11 @@ export u8[] emitLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names);
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
-  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
+  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names,
+                      filePaths);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -1829,7 +1859,8 @@ void emitStructFields(B types, Env env, string owner) {
   writeStructFields(types, env, owner);
 }
 
-u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names) {
+u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
+                  string[] filePaths) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
@@ -1841,6 +1872,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
     env.fileFirstLine[env.fileCount] = starts[i];
+    if (env.fileCount < env.filePaths.len() && i - 1 < filePaths.len() && i >= 1) {
+      env.filePaths[env.fileCount] = filePaths[i - 1];
+    }
     env.fileCount = env.fileCount + 1;
   }
   for (i32 e = 0; e < edges[0]; e++) {
@@ -5709,7 +5743,7 @@ export string blockedLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names);
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, string[512]());
   if (blob == "") { return "an import of a file that was not supplied"; }
   return emitBlockedOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names);
 }
@@ -6075,6 +6109,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldOwners[env.fieldCount] = sname;
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
           env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[i].type);
+          env.fieldTys[env.fieldCount] = fields[i].type;
           env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
@@ -6138,6 +6173,12 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 i = 0; i < env.structCount; i++) {
     if (env.structParentToks[i] < 0) { continue; }
     env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
+  }
+  // And the fields, for the same reason and with the same timing: a field written with a name this
+  // file imported resolves only once the file it came from has been walked.
+  for (i32 i = 0; i < env.fieldCount; i++) {
+    if (env.fieldTys[i] is null) { continue; }
+    env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
   }
   // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
   // mutually visible is not the same as being defined, and wasm answers a child written first with
@@ -6406,15 +6447,45 @@ export string namesLinked(string[] paths, string[] sources, string entry) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
-  string blob = linkFiles(paths, sources, entry, starts, edges, names);
-  return blob == "" ? "" : emitNames(blob.toBytes());
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, string[512]());
+  return blob == "" ? "" : emitNamesOf(blob.toBytes(), starts, edges, names);
 }
 
+/** The single-file spelling, which has no file table and no imports to load. */
 export string emitNames(u8[] src) {
+  return emitNamesOf(src, i32[512](), i32[4096](), string[4096]());
+}
+
+/**
+ * What each emitted function is called, in the order the module emits them.
+ *
+ * **The same preamble the emitter runs**, and it did not have it: this built its `Env` from the blob
+ * alone, so every key was scoped to file 0 and `settleEmittable` declined a different set. The list
+ * then disagreed with the module — twelve exported functions of the first forty corpus files were
+ * missing from it outright — which matters because the only consumer of this is somebody holding a
+ * wasm error that says *function #N*. It sent me to `hexOf` for a fault in `openRepo`.
+ * `issues/lang/0097`.
+ */
+string emitNamesOf(u8[] src, i32[] starts, i32[] edges, string[] names) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
   Env env = Env.create();
+  for (i32 i = 0; i < starts.len(); i++) {
+    if (starts[i] == 0) { continue; }
+    env.fileFirstLine[env.fileCount] = starts[i];
+    env.fileCount = env.fileCount + 1;
+  }
+  for (i32 e = 0; e < edges[0]; e++) {
+    if (env.importCount >= env.importFrom.len()) { continue; }
+    env.importFrom[env.importCount] = edges[e * 2 + 1];
+    env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
+    env.importCount = env.importCount + 1;
+  }
   collectDeclarations(env, src, lexed, prog);
   assignGlobals(env, src, lexed);
   settleEmittable(env, src, lexed, prog);
@@ -7178,6 +7249,37 @@ void emitStringBindHelpers(B funcs, B code, Env env) {
 i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
                       string[] bindStructs, i32 bindStructCount) {
   i32 n = 0;
+  // **An instance's methods, which no declaration carries.** `Vec<string>.create` is emitted from a
+  // substitution rather than from a `StructDecl`, so the walk below — which reads declarations —
+  // cannot see it, and `packages/box` stopped at `$bind$sm_Vec__packages_std_src_vec$string_create`.
+  // Every instance the module builds is exported, not only the ones an export mentions: an instance
+  // exists at all because something in this module named it, and a name a host cannot call costs one
+  // export entry. `issues/lang/0089`.
+  for (i32 ii = 0; ii < env.instCount; ii++) {
+    string inst = env.instName[ii];
+    if (!env.isStructName(inst)) { continue; }
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() == 0) { continue; }
+          if (tokenTextOf(src, lexed, nameTok) != env.instOf[ii]) { continue; }
+          i32 tf = env.fileOf(tokenLine(lexed, nameTok));
+          string tplPath = tf >= 0 && tf < env.filePaths.len() ? env.filePaths[tf] : "";
+          string bind = bindNameOf(bindTypeSpelling(env, inst, tplPath));
+          for (i32 m = 0; m < methods.len(); m++) {
+            string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+            i32 at = env.funcAt(inst + "." + mn);
+            if (at < 0 || env.funcIndex[at] < 0) { continue; }
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bind + "_" + mn);
+            out.byte(0);
+            out.u32leb(env.funcIndex[at]);
+            n = n + 1;
+          }
+        }
+        else: { }
+      }
+    }
+  }
   for (i32 si = 0; si < bindStructCount; si++) {
     string owner = bindStructs[si];
     for (i32 d = 0; d < prog.decls.len(); d++) {
@@ -7213,6 +7315,135 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
     }
   }
   return n;
+}
+
+/**
+ * A declaring file's tag, the reference's way: the path without `.wac`, every other character `_`.
+ *
+ * `packages/std/src/vec.wac` is `packages_std_src_vec`, which is what makes
+ * `Vec__packages_std_src_vec` the name a monomorphisation is spelled from. `issues/lang/0089`.
+ */
+string fileTagOf(string path) {
+  u8[] a = path.toBytes();
+  i32 end = a.len();
+  if (end > 4 && a[end - 4] == 46 && a[end - 3] == 119 && a[end - 2] == 97 && a[end - 1] == 99) {
+    end = end - 4;                                            // a trailing `.wac`
+  }
+  u8[] out = u8[end]();
+  for (i32 i = 0; i < end; i++) {
+    i32 c = a[i];
+    bool ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    out[i] = ok ? c : 95;                                     // `_`
+  }
+  return string.fromBytes(out);
+}
+
+/** The file a declared key came from, or `""` — the key is what `declare` handed out. */
+string pathOfKey(Env env, string key) {
+  for (i32 i = 0; i < env.declCount; i++) {
+    if (env.declKeys[i] != key) { continue; }
+    i32 f = env.declFiles[i];
+    if (f < 0 || f >= env.fileCount) { return ""; }
+    return env.filePaths[f];
+  }
+  return "";
+}
+
+/**
+ * How the boundary spells a type: `Vec__packages_std_src_vec<string>`, `IndexEntry__packages_git…`.
+ *
+ * **The reference's spelling, because the glue is generated from it.** A plain struct crosses under
+ * its own name — `$bind$sm_Fs_inMemory` — and a *monomorphisation* is built out of canonical names,
+ * which are qualified by the declaring file. So the qualification is applied to a template and to
+ * each of its arguments, and to nothing else.
+ */
+string bindTypeSpelling(Env env, string t, string templatePath) {
+  // An array and a nullable are spelled by suffix, a funcref by its shape, and an instantiation by
+  // its arguments after a `$` — `mangleType` in `compiler/wacResolve.ts`, which is what the generated
+  // glue is named from. `u8[]` is `u8_arr`, and `Vec<u8[]>` from `packages/std/src/vec.wac` is
+  // `Vec__packages_std_src_vec$u8_arr`.
+  if (isArrayType(t)) { return bindTypeSpelling(env, elemOf(t), "") + "_arr"; }
+  u8[] a = t.toBytes();
+  if (a.len() > 1 && a[a.len() - 1] == 63) {                  // a trailing `?`
+    return bindTypeSpelling(env, t.slice(0, t.len() - 1), "") + "_opt";
+  }
+  if (isFuncrefType(t)) {
+    string fout = "fn_";
+    for (i32 i = 0; i < sigParamCount(t); i++) {
+      if (i > 0) { fout = fout + "_"; }
+      fout = fout + bindTypeSpelling(env, sigParamAt(t, i), "");
+    }
+    return fout + "_to_" + bindTypeSpelling(env, sigReturn(t), "");
+  }
+  if (!isInstance(t)) { return qualifiedName(env, t); }
+  // **The template's own file, handed in.** A generic declaration is never `declare`d — that table
+  // holds what the module *emits*, and a template emits nothing until it is instantiated — so there
+  // is no entry to look a path up in. The caller has the declaration in hand and its line says which
+  // file it came from.
+  string tpl = templateOf(t);
+  string out = templatePath == "" ? qualifiedName(env, tpl) : tpl + "__" + fileTagOf(templatePath);
+  // The arguments, split at the commas that are not inside a nested instantiation.
+  i32 depth = 0;
+  i32 start = -1;
+  for (i32 i = 0; i < a.len(); i++) {
+    i32 c = a[i];
+    if (c == 60) {                                            // `<`
+      depth = depth + 1;
+      if (depth == 1) { start = i + 1; }
+      continue;
+    }
+    if (c == 62) {                                            // `>`
+      depth = depth - 1;
+      if (depth != 0) { continue; }
+      out = out + "$" + bindTypeSpelling(env, t.slice(start, i), "");
+      continue;
+    }
+    if (c == 44 && depth == 1) {                              // `,` at the top level
+      out = out + "$" + bindTypeSpelling(env, t.slice(start, i), "");
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+/** A declared name with its file behind it; anything this module did not declare is left alone. */
+string qualifiedName(Env env, string name) {
+  string path = pathOfKey(env, name);
+  if (path == "" || path == " core") { return name; }
+  // The key may carry the `@<file>` a shadowed name got; the reference knows nothing of that.
+  string bare = name;
+  i32 at = name.indexOf("@");
+  if (at > 0) { bare = name.slice(0, at); }
+  return bare + "__" + fileTagOf(path);
+}
+
+/**
+ * What `wacBindgen` calls a type: every run of characters an identifier cannot hold becomes `$`.
+ *
+ * `Vec__packages_std_src_vec<string>` is `Vec__packages_std_src_vec$string`. `$` and not `_`,
+ * because a monomorphisation has to stay distinguishable from a struct somebody wrote — and wac's
+ * lexer rejects `$`, so a name holding one cannot come from source.
+ */
+string bindNameOf(string spelling) {
+  u8[] a = spelling.toBytes();
+  u8[] tmp = u8[a.len()]();
+  i32 n = 0;
+  bool pending = false;
+  for (i32 i = 0; i < a.len(); i++) {
+    i32 c = a[i];
+    bool ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95;
+    if (ok) {
+      if (pending && n > 0) { tmp[n] = 36; n = n + 1; }        // `$`, one per run
+      pending = false;
+      tmp[n] = c;
+      n = n + 1;
+    } else {
+      pending = true;
+    }
+  }
+  u8[] out = u8[n]();
+  for (i32 i = 0; i < n; i++) { out[i] = tmp[i]; }
+  return string.fromBytes(out);
 }
 
 /**
