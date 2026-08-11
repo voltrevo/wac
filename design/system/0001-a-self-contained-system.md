@@ -77,7 +77,7 @@ Nothing here needs a new host feature. It needs work, but the shape is already l
 - **Two process models exist.** `spawn`/`spawnSelf` give a real one (a worker, its own instance, its
   own grants); `pushChild`/`popChild` give an in-process one, which is what runs 65 applets in a
   browser tab. What is missing is that nobody keeps a table.
-- **A userland exists.** Sixty applets, a shell tested against bash script for script, `ssh`/`sshd`,
+- **A userland exists.** 65 applets, a shell tested against bash script for script, `ssh`/`sshd`,
   `httpd`, `tar`, `gzip`, `zstd`, `json`.
 - **Grants already narrow by construction**, which is a better answer than mode bits to "what may this
   session do". A session's world is built with what it is allowed and nothing else.

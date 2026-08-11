@@ -370,7 +370,7 @@ them is why the other two shells this section used to describe now live in `pack
 | | where | what it is |
 | --- | --- | --- |
 | `wacsh` | `packages/sh/src/sh.wac` | the shell on the real disk, builtins only |
-| `box sh` | `packages/box/src/bin/sh.wac` | the same shell, on the real disk, with sixty applets |
+| `box sh` | `packages/box/src/bin/sh.wac` | the same shell, on the real disk, with 65 applets |
 | `sealedsh` | `packages/box/src/bin/sealedsh.wac` | the same shell on `Fs.inMemory()`, built with no filesystem grants at all |
 | `imaged` | `packages/box/src/bin/imaged.wac` | the same shell again, on a filesystem loaded from a file and saved back to it |
 

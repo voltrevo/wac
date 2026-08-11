@@ -27,7 +27,7 @@ in both directions, `url` against WHATWG's test suite, `bignum` against `BigInt`
 
 What they add up to is more interesting:
 
-**`box` — a busybox.** Sixty applets in one program, chosen by the first argument, each
+**`box` — a busybox.** 65 applets in one program, chosen by the first argument, each
 differential-tested against the real tool where one exists. `cat`, `grep`, `sort`, `gzip`,
 `sha256sum`, `tar`, `diff`, `httpd`, `nc`. It streams: 300MB through `wc` peaks at 94MB of RSS.
 

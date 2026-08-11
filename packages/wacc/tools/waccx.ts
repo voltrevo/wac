@@ -15,9 +15,12 @@
 //
 //     deno run -A packages/wacc/tools/waccxMain.ts check main.wac
 //
-// Commands: `check`, `compile`, `run`. `bindgen` is absent because wacc has no bindgen at all.
+// Commands: `check`, `compile`, `run`, `bindgen`. The last writes TypeScript that calls the module,
+// for the types this generator covers — the numbers, `bool`, `string` and the numeric arrays — and
+// names on stderr what it declined.
 
 import { readGraph, type WacxCap } from "wac/wacx.ts";
+import { generate, parseSigs, unsupported } from "./waccBindgen.ts";
 import { wacDiag, type DiagError } from "wac/wacDiag.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -28,11 +31,13 @@ const USAGE = `waccx — the wacc toolchain
   waccx check   main.wac        type-check the entry file and its imports
   waccx compile main.wac        write main.wasm
   waccx run     main.wac fn a b compile, instantiate, call fn
+  waccx bindgen main.wac        write main.gen.ts — TypeScript that calls the module
 
 Exit codes: 0 success, 1 a compile or usage error, 2 the program trapped.`;
 
 type WaccApi = {
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
+  exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
 };
@@ -81,7 +86,7 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
     cap.out(USAGE);
     return { code: command === undefined ? 1 : 0 };
   }
-  if (!["check", "compile", "run"].includes(command)) {
+  if (!["check", "compile", "run", "bindgen"].includes(command)) {
     cap.err(`waccx: unknown command '${command}'\n\n${USAGE}`);
     return { code: 1 };
   }
@@ -123,6 +128,20 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   if (command === "compile") {
     const outPath = entry.replace(/\.wac$/, "") + ".wasm";
     await cap.writeFile(outPath, wasm);
+    return { code: 0 };
+  }
+
+  // **`bindgen`**: TypeScript that calls this module, beside it. What the generator cannot bind is
+  // reported rather than skipped — a caller who is told `makeP(i32) -> P` was declined can change the
+  // signature; one handed glue missing a function finds out at the call site.
+  if (command === "bindgen") {
+    const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
+    const declined = unsupported(sigs);
+    if (declined.length > 0) {
+      cap.err(`waccx bindgen: not bound yet — ${declined.join("; ")}`);
+    }
+    const outPath = entry.replace(/\.wac$/, "") + ".gen.ts";
+    await cap.writeFile(outPath, new TextEncoder().encode(generate(wasm, sigs)));
     return { code: 0 };
   }
 

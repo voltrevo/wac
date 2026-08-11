@@ -118,3 +118,87 @@ Deno.test("the README's transcript is the one the front page tests", async () =>
 
   assertEquals(ours, theirs, "the README's transcript has drifted from the front page's");
 });
+
+// ---------------------------------------------------------------------------------------------
+// The same figure, in every document that states it.
+//
+// `packages/box`'s README says out loud why its own count is a digit — "it kept going stale: it said
+// fifty-nine when the dispatcher had sixty, and before that forty-two in one paragraph and something
+// else in another" — and `box.test.ts` ties that digit to the dispatcher's own branches. That fixed
+// the copy with a test under it and nothing else. Six other live documents stated the size of `box`
+// too, and five of them said **sixty** or **sixty-odd** or **forty-two** while the dispatcher had 65:
+// `packages/README.md`'s one-line description of the package, `packages/sh`'s table of shells,
+// `native/README.md`, `packages/box/example/README.md` twice, `packages/platform/README.md` twice,
+// and `design/system/0001`'s userland claim.
+//
+// A word is what let it drift: "sixty" against 65 is 8%, which any tolerance this test could sanely
+// carry would wave through, and it reads as a round number rather than a claim. So the rule here is
+// the one box's README already states — **a count of applets in a live document is a digit** — and
+// then the digit is checked like any other figure.
+//
+// A count that is deliberately *not* the total goes in `NOT_THE_TOTAL` with the words and the reason.
+// That list is the maintenance cost and it is also the point: a new count appearing anywhere fails
+// until somebody says which kind it is.
+
+/** Where a number word is a real claim about how many applets there are, this is the whole list. */
+const WORD = /\b(ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(-[a-z]+)?\b/;
+
+/** Counts that are not the size of the program, each with what it does count. */
+const NOT_THE_TOTAL: { file: string; phrase: string; why: string }[] = [
+  {
+    file: "packages/box/README.md",
+    phrase: "a dozen applets were",
+    why: "how many were still stubs when the flag parser arrived",
+  },
+  {
+    file: "packages/box/README.md",
+    phrase: "Ten applets printed `c.message` raw",
+    why: "how many printed the host's sentence before 2026-08-09",
+  },
+  {
+    file: "packages/box/README.md",
+    phrase: "375 flags and 43 applets",
+    why: "the applets that take flags, which is the flag corpus rather than the program",
+  },
+];
+
+/** Every tracked markdown file outside `issues/`, which records what was true on a day. */
+async function liveDocs(): Promise<string[]> {
+  const r = await new Deno.Command("git", { args: ["ls-files", "*.md"], stdout: "piped" }).output();
+  const all = new TextDecoder().decode(r.stdout).split("\n").filter((l) => l.length > 0);
+  if (all.length === 0) throw new Error("git ls-files listed no markdown — this check would pass by seeing nothing");
+  return all.filter((p) => !p.startsWith("issues/"));
+}
+
+Deno.test("every document that counts box's applets counts them the same, in digits", async () => {
+  const actual = await applets();
+  const docs = await liveDocs();
+  const wrong: string[] = [];
+  let checked = 0;
+
+  for (const path of docs) {
+    const text = await Deno.readTextFile(new URL(`../${path}`, import.meta.url));
+    for (const line of text.split("\n")) {
+      for (const m of line.matchAll(/([A-Za-z0-9,-]+)[ -]applets\b/g)) {
+        const token = m[1];
+        const excused = NOT_THE_TOTAL.find((e) => e.file === path && line.includes(e.phrase));
+        if (excused !== undefined) continue;
+        if (WORD.test(token.toLowerCase())) {
+          wrong.push(`${path}: "${token} applets" — write the count as a digit, or say in NOT_THE_TOTAL what it counts`);
+          continue;
+        }
+        if (!/^\d[\d,]*$/.test(token)) continue; // "the applets", "its applets" — not a count
+        checked++;
+        const claimed = Number(token.replace(/,/g, ""));
+        if (!near(claimed, actual)) {
+          wrong.push(`${path}: "${claimed} applets", the dispatcher has ${actual}`);
+        }
+      }
+    }
+  }
+
+  // The corpus is eight or so occurrences across six files. Zero means the regex stopped matching,
+  // which is the failure this test cannot otherwise see: it would report a clean sweep of nothing.
+  if (checked === 0) throw new Error("no applet count was found in any live document — has the wording changed?");
+  assertEquals(wrong, [], `an applet count has gone stale:\n  ${wrong.join("\n  ")}`);
+});

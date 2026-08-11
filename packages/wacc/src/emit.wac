@@ -1875,6 +1875,78 @@ export string covTableLinked(string[] paths, string[] sources, string entry) {
                     names, filePaths);
 }
 
+/**
+ * What a host needs to know about a module's exports, as `name\tret\tparam,param` per line.
+ *
+ * The types are wac's own — `i32`, `string`, `u8[]`, a struct's name — because the generator on the
+ * other side decides how each crosses, and only the compiler knows which functions are exported and
+ * what they take. This is the half of bindgen that cannot live outside the compiler; the rest is
+ * text, and `packages/wacc/tools/waccBindgen.ts` writes it.
+ */
+export string exportSigsLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string[] names = string[4096]();
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return ""; }
+  u8[] src = blob.toBytes();
+  i32 entryDecls = declCountOf(sourceOf(paths, sources, entry));
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  Env env = Env.create();
+  for (i32 i = 0; i < starts.len(); i++) {
+    if (starts[i] == 0) { continue; }
+    env.fileFirstLine[env.fileCount] = starts[i];
+    env.fileCount = env.fileCount + 1;
+  }
+  for (i32 e = 0; e < edges[0]; e++) {
+    if (env.importCount >= env.importFrom.len()) { continue; }
+    env.importFrom[env.importCount] = edges[e * 2 + 1];
+    env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
+    env.importCount = env.importCount + 1;
+  }
+  collectDeclarations(env, src, lexed, prog);
+  assignGlobals(env, src, lexed);
+  settleEmittable(env, src, lexed, prog);
+
+  string out = "";
+  i32 at = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        bool ok = env.funcIndex[at] >= 0;
+        at = at + 1;
+        if (!ok || !exported) { continue; }
+        if (entryDecls >= 0 && d >= entryDecls) { continue; }
+        string line = tokenTextOf(src, lexed, nameTok) + "\t" +
+                      typeOfTyName(env, src, lexed, returnType) + "\t";
+        for (i32 i = 0; i < params.len(); i++) {
+          if (i > 0) { line = line + ","; }
+          line = line + typeOfTyName(env, src, lexed, params[i].type);
+        }
+        out = out + line + "\n";
+      }
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        if (typeParams.len() > 0) { continue; }
+        for (i32 m = 0; m < methods.len(); m++) { at = at + 1; }
+      }
+      else: { }
+    }
+  }
+  return out;
+}
+
 /** `--checked`: the same module with trapping arithmetic. */
 export u8[] emitLinkedChecked(string[] paths, string[] sources, string entry) {
   return emitLinkedWith(paths, sources, entry, true);
