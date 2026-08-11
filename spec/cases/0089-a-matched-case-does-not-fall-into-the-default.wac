@@ -1,0 +1,12 @@
+// expect: answers f = 1
+// why: a switch arm is a block, not a label — matching one does not run the default too
+// from: json wrote every escape twice, `"a\"b"` came back as `"a\""b"`
+export i32 f() {
+  i32 n = 0;
+  switch (2) {
+    case 1: { n = n + 1; }
+    case 2: { n = n + 1; }
+    default: { n = n + 100; }
+  }
+  return n;
+}

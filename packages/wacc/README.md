@@ -210,10 +210,10 @@ an unknown escape were invisible to every caller of this package.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    24 of 33 packages pass their own suite on wacc-emitted code (1,138 tests)
+    27 of 33 packages pass their own suite on wacc-emitted code (1,246 tests)
     why the rest do not:
         4  $bind$fnref_0
-        4  a wrong answer or a trap
+        1  $bind$sm_Vec__packages_std_src_vec$string_create
         1  a static Shell.capturing, declined
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
@@ -256,9 +256,15 @@ The representation stayed ours: the reference gives an enum a base struct and a 
 and wacc lays every variant's payload out beside the tag in one struct. A host cannot tell, because
 it holds an opaque reference either way — the helper set is the contract and the layout is not.
 
-What is left is callback dispatchers — every other missing-helper reason is gone from the tally, and
-what took its place is **four wrong answers**. Those are what the whole exercise was for: no amount
-of well-formedness checking finds a module that loads, runs, and disagrees.
+What is left is callback dispatchers, and one name: a static on a *generic instance* binds as
+`$bind$sm_Vec__packages_std_src_vec$string_create`, so wacc would have to reproduce the reference's
+path-qualified spelling for a monomorphisation before a host could find it.
+
+**The four wrong answers were three bugs, and none of them was arithmetic.** Two were the shape of a
+helper rather than its answer — `$bind$arr_u8Arr_new` took a fill the glue does not pass, which the
+boundary reports as *"type incompatibility when transforming from/to JS"* and names neither the
+helper nor the type. The third was `switch`: the matched arm ran and then the default ran too, so
+`packages/json` wrote every escape twice.
 `json` stops at `$bind$e_JsonValue_tag` now and `zstd` at `$bind$sm_BitOut_create`. Two packages fail on something other than a missing
 helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
 its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which

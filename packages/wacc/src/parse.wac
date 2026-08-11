@@ -1599,15 +1599,22 @@ Stmt parseSwitchStmt(P p) {
   p.expect(kRparen());
   p.expect(kLbrace());
   CaseList cases = CaseList.create();
+  // **The default is last or absent.** `switch_stmt = "switch" … "{" , { case_clause } ,
+  // [ default_clause ] , "}"` in `spec/spec/grammar.md`, and a `case` after it is not a switch the
+  // grammar describes. Reported at the `case`, which is the token that cannot be there.
+  // `spec/cases/0091`.
+  bool sawDefault = false;
   while (!p.at1(kRbrace()) && !p.at1(kEof())) {
     i32 caseLine = p.lineAt(0);
     i32 caseCol = p.colAt(0);
     if (p.at1(kCase())) {
+      if (sawDefault) { p.fail(perrExpected()); }
       p.advance();
       Expr v = parseExpr(p);
       p.expect(kColon());
       cases.push(Case(v, parseSwitchBody(p), caseLine, caseCol));
     } else if (p.at1(kDefault())) {
+      sawDefault = true;
       p.advance();
       p.expect(kColon());
       cases.push(Case(null, parseSwitchBody(p), caseLine, caseCol));

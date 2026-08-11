@@ -605,6 +605,46 @@ export function generateEmit(): Cell[] {
   // (`spec/cases/0073`) and reported this corpus, which is the sweep working as intended: the
   // generator is as capable of writing an illegal program as anything else here.
 
+  // **`switch`, which this generator did not have a single program of.** 4,455 programs and not one
+  // `switch`, so an emitter that ran the matched arm *and then the default* passed every rung: the
+  // corpus compiled, the sweep agreed, the self-host reached its fixed point. `packages/json` found
+  // it by writing every escape twice — `"a\"b"` came back as `"a\""b"` — and `spec/cases/0089` is
+  // the four-line version. The arms below put the match first, last, in the middle and nowhere, with
+  // and without a default, because "which arm ran" is exactly what was wrong.
+  const SWITCH_ARMS = `case 1: { n = n + 1; } case 2: { n = n + 20; } case 3: { n = n + 300; }`;
+  for (const subject of ["0", "1", "2", "3", "9"]) {
+    add(`switch with a default, subject ${subject}`,
+      `export i32 f() { i32 n = 0; switch (${subject}) { ${SWITCH_ARMS} default: { n = n + 4000; } } return n; }`);
+    add(`switch with no default, subject ${subject}`,
+      `export i32 f() { i32 n = 0; switch (${subject}) { ${SWITCH_ARMS} } return n; }`);
+    // `default` has to come last — *"'case' cannot appear after 'default'"* — so the ordering this
+    // family varies is the *cases'*, plus a switch that is nothing but a default.
+    add(`switch whose cases are out of order, subject ${subject}`,
+      `export i32 f() { i32 n = 0; switch (${subject}) { case 3: { n = n + 300; } case 1: { n = n + 1; } ` +
+      `case 2: { n = n + 20; } default: { n = n + 4000; } } return n; }`);
+    add(`switch that is only a default, subject ${subject}`,
+      `export i32 f() { i32 n = 0; switch (${subject}) { default: { n = n + 4000; } } return n; }`);
+    add(`switch on a local, subject ${subject}`,
+      `export i32 f() { i32 k = ${subject}; i32 n = 0; switch (k) { ${SWITCH_ARMS} default: { n = n + 4000; } } return n; }`);
+    add(`switch that returns from an arm, subject ${subject}`,
+      `export i32 f() { switch (${subject}) { case 1: { return 1; } case 2: { return 20; } ` +
+      `default: { return 4000; } } }`);
+    add(`switch inside a loop, subject ${subject}`,
+      `export i32 f() { i32 n = 0; for (i32 i = 0; i < 3; i++) { switch (${subject}) { ` +
+      `${SWITCH_ARMS} default: { n = n + 4000; } } } return n; }`);
+    add(`switch with a break in an arm, subject ${subject}`,
+      `export i32 f() { i32 n = 0; for (i32 i = 0; i < 3; i++) { switch (${subject}) { ` +
+      `case 1: { n = n + 1; break; } default: { n = n + 4000; } } n = n + 100000; } return n; }`);
+    add(`nested switch, subject ${subject}`,
+      `export i32 f() { i32 n = 0; switch (${subject}) { case 1: { switch (2) { case 2: { n = n + 7; } ` +
+      `default: { n = n + 70; } } } default: { n = n + 4000; } } return n; }`);
+  }
+  // A `char` subject, which is how the escaping code that found this is written.
+  add("switch on a character",
+    `export i32 f() { u8[] s = u8[]('a', '"', 'b'); i32 n = 0; ` +
+    `for (i32 i = 0; i < s.len(); i++) { switch (s[i]) { case '"': { n = n + 1; } ` +
+    `case 'a': { n = n + 20; } default: { n = n + 300; } } } return n; }`);
+
   // A template's static in the two slots an array gives it — a `fill:` and a literal element — where
   // the element type is the only thing that says which instantiation is meant.
   const BOX2 = `struct Box<T> { T v; Box<T> of(T x) { return Box(x); } T get(const this) { return this.v; } }\n`;

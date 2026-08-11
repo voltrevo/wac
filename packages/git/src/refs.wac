@@ -1,0 +1,126 @@
+// Refs: the names a repository keeps for the commits it cares about.
+//
+// A ref is stored in one of two ways and both have to be read, because git writes both and moves
+// between them without telling anyone:
+//
+//   - **loose**: a file at `.git/refs/heads/master` holding forty hex characters and a newline.
+//   - **packed**: one line per ref in `.git/packed-refs`, written by `git gc` or `git pack-refs`, after
+//     which the loose files are deleted.
+//
+// A reader that only looked at `refs/` finds nothing in a freshly cloned repository, and one that only
+// looked at `packed-refs` misses every branch created since the last gc. Both, loose winning, is what
+// git does.
+//
+// `HEAD` is a third thing: usually **symbolic**, holding `ref: refs/heads/master`, and occasionally
+// direct — a detached HEAD holds the object name itself. Resolving it therefore has to be able to
+// follow one ref to another, and to stop, since a symbolic ref could point at itself.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { decode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** What a single ref file holds. */
+export enum RefValue {
+  /** Forty hex characters: the object this ref names, as twenty raw bytes. */
+  Direct(u8[] name),
+  /** `ref: refs/heads/master` — the ref this one defers to. */
+  Symbolic(string target),
+  Unparsed(string why)
+}
+
+/** One line of `packed-refs`. */
+export struct PackedRef {
+  string name;
+  /** Twenty raw bytes. */
+  u8[] target;
+  /**
+   * For an annotated tag, the commit it eventually points at — git's `^` line.
+   *
+   * Empty when there is none. It is a cache rather than new information: the same answer is in the tag
+   * object. Keeping it means a tag can be resolved to a commit without reading one.
+   */
+  u8[] peeled;
+}
+
+/** Trim trailing CR and LF, which is the only whitespace a ref file is allowed to carry. */
+i32 trimmedEnd(u8[] b, i32 from, i32 to) {
+  i32 end = to;
+  while (end > from && (b[end - 1] == 10 || b[end - 1] == 13)) { end = end - 1; }
+  return end;
+}
+
+u8[]? hex20(u8[] b, i32 from, i32 to) {
+  if (to - from != 40) { return null; }
+  Buf h = Buf.create();
+  for (i32 i = from; i < to; i++) { h.push(b[i]); }
+  u8[]? raw = decode(h.bytes());
+  if (raw is null) { return null; }
+  if (raw!.len() != 20) { return null; }
+  return raw!;
+}
+
+string slice(u8[] b, i32 from, i32 to) {
+  Buf out = Buf.create();
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
+  return out.toStr();
+}
+
+/** Read one ref file — a loose ref, or `HEAD`. */
+export RefValue parseRef(u8[] file) {
+  i32 end = trimmedEnd(file, 0, file.len());
+  if (end == 0) { return RefValue.Unparsed("empty"); }
+  // `ref: ` is five bytes and the rest is a ref name.
+  if (end > 5 && file[0] == 'r' && file[1] == 'e' && file[2] == 'f' && file[3] == ':' && file[4] == ' ') {
+    return RefValue.Symbolic(slice(file, 5, end));
+  }
+  u8[]? name = hex20(file, 0, end);
+  if (name is null) { return RefValue.Unparsed("neither forty hex characters nor `ref: `"); }
+  return RefValue.Direct(name!);
+}
+
+/**
+ * Read `packed-refs`.
+ *
+ * The format is one ref per line, `<40 hex> <name>`, with two things that are easy to miss: a leading
+ * `#` line carrying capabilities, and a `^<40 hex>` line that **belongs to the ref above it** rather
+ * than being a ref of its own. A parser that treats every line as a ref invents a ref whose name is
+ * empty and loses the peel.
+ *
+ * Malformed lines are skipped rather than failing the file. git's own reader is lenient here and a
+ * single bad line in a repository's `packed-refs` should not make every branch in it unreachable.
+ */
+export Vec<PackedRef> parsePackedRefs(u8[] file) {
+  Vec<PackedRef> out = Vec.create();
+  i32 at = 0;
+  while (at < file.len()) {
+    i32 nl = at;
+    while (nl < file.len() && file[nl] != 10) { nl = nl + 1; }
+    i32 end = trimmedEnd(file, at, nl);
+    if (end > at) {
+      if (file[at] == '#') {
+        // The capabilities line. Nothing here needs it.
+      } else if (file[at] == '^') {
+        u8[]? peel = hex20(file, at + 1, end);
+        if (!(peel is null) && out.len() > 0) {
+          PackedRef last = out.get(out.len() - 1);
+          out.set(out.len() - 1, PackedRef(last.name, last.target, peel!));
+        }
+      } else {
+        u8[]? target = hex20(file, at, at + 40);
+        if (!(target is null) && end > at + 41 && file[at + 40] == 32) {
+          out.push(PackedRef(slice(file, at + 41, end), target!, u8[0]()));
+        }
+      }
+    }
+    at = nl + 1;
+  }
+  return out;
+}
+
+/** The target of `name` in a parsed `packed-refs`, or null. */
+export u8[]? packedTarget(const Vec<PackedRef> refs, string name) {
+  for (i32 i = 0; i < refs.len(); i++) {
+    if (refs.get(i).name == name) { return refs.get(i).target; }
+  }
+  return null;
+}

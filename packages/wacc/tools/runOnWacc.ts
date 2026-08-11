@@ -55,8 +55,11 @@ for (const pkg of packages) {
   // *wrong answer* — a stronger claim than the evidence, and the wrong one to act on. `json` and
   // `http` were both this: the module bound, and three of `json`'s four exported functions were not
   // in it. See `issues/lang/0090`.
-  const helper = out.match(/\$exports\.(\$bind\$\w+) is not a function/)?.[1];
-  const absent = out.match(/\$exports\.(\w+) is not a function/)?.[1];
+  // `\w` stops at a `$`, and a monomorphisation's bind name is full of them —
+  // `$bind$sm_Vec__packages_std_src_vec$string_create` did not match, so a missing helper was
+  // reported as *a wrong answer or a trap*: the stronger claim again, and the wrong one to act on.
+  const helper = out.match(/\$exports\.(\$bind\$[\w$]+) is not a function/)?.[1];
+  const absent = out.match(/\$exports\.([\w$]+) is not a function/)?.[1];
   const cause = helper ??
     (absent ? `missing export: ${absent}` : undefined) ??
     out.match(/Error: wacc cannot compile \S+ yet — (.+)/)?.[1] ??
