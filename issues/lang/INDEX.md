@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0099](open/0099-the-checkers-tables-are-sized-in-tokens-where-they-hold-declarations.md) | the checker's tables are sized in tokens where they hold declarations | performance | no error |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
 | [0087](open/0087-break-after-an-infinite-loop-crashes-the-compiler.md) | `break` after an infinite loop crashes the compiler with an uncaught TypeError | bug | compile error |
@@ -36,7 +35,7 @@ has been fixed and why.
 
 ## Closed
 
-99 issues, 71 closed.
+99 issues, 72 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
