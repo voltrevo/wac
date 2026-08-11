@@ -19,26 +19,13 @@ import { refuseFlags } from "../lib/flags.wac";
 import { itoa } from "../../../fmt/src/itoa.wac";
 import { concat } from "../lib/bytes.wac";
 import { recordsReady } from "../../../tls/src/record.wac";
-import { tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
+import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
          tlsClientPhase, tlsClientFailure } from "../../../tls/src/client.wac";
 import { Incoming, ParsedResponse, parseResponse } from "../../../http/src/incoming.wac";
 import { Read } from core;
 import { slice } from "../../../bytes/src/slice.wac";
 import { Fs } from "../../../fs/src/fs.wac";
 
-/** `[state][toSend][appData]`, each behind a big-endian u32 length. */
-struct Step { u8[] state; u8[] toSend; u8[] appData; }
-
-Step unpack(u8[] r) {
-  i32 at = 0;
-  u8[][] parts = u8[][3](fill: u8[0]());
-  for (i32 i = 0; i < 3; i++) {
-    i32 n = (r[at] << 24) | (r[at + 1] << 16) | (r[at + 2] << 8) | r[at + 3];
-    parts[i] = slice(r, at + 4, at + 4 + n);
-    at = at + 4 + n;
-  }
-  return Step(parts[0], parts[1], parts[2]);
-}
 
 export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   if (refuseFlags(core, a)) { return 1; }
@@ -56,7 +43,7 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
   // The store is DER certificates end to end, indexed by (start, end) pairs. One here.
   i32[] offsets = i32[](0, root.len());
 
-  Step s = unpack(tlsClientInit(
+  ClientStep s = clientStep(tlsClientInit(
     host.toBytes(), root, offsets,
     core.randomBytes(32).wait(),      // X25519 ephemeral
     core.randomBytes(32).wait(),      // P-256 ephemeral
@@ -100,8 +87,8 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
         + "Host: " + host + "\r\n"
         + "User-Agent: box\r\n"
         + "Connection: close\r\n\r\n";
-      Step out = unpack(tlsClientSend(s.state, req.toBytes()));
-      s = Step(out.state, out.toSend, u8[0]());
+      ClientStep out = clientStep(tlsClientSend(s.state, req.toBytes()));
+      s = ClientStep(out.state, out.toSend, u8[0]());
       if (!cli.send(sock.handle, s.toSend).wait()) { break; }
       requested = true;
     }
@@ -129,14 +116,14 @@ export i32 gets(Core core, Cli cli, Fs fs, Args a) {
     i32 ready = recordsReady(buffered);
     if (ready == 0) { continue; }
 
-    Step step = unpack(tlsClientFeed(s.state, slice(buffered, 0, ready)));
+    ClientStep step = clientStep(tlsClientFeed(s.state, slice(buffered, 0, ready)));
     buffered = slice(buffered, ready, buffered.len());
     s = step;
     if (s.toSend.len() > 0 && !cli.send(sock.handle, s.toSend).wait()) { break; }
     if (s.appData.len() > 0) { body = concat(body, s.appData); }
   }
 
-  unpack(tlsClientClose(s.state));
+  clientStep(tlsClientClose(s.state));
   cli.closeSocket(sock.handle);
 
   if (body.len() == 0) {
