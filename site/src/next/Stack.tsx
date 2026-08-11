@@ -192,8 +192,21 @@ export default function Stack() {
         </P>
         <Code label="a real client, our server" code={EX_SSH} lang="ts" />
         <P>
-          Ask it for a pty and it refuses, which is what a real sshd does when none is available —
-          a refusal a client already knows how to handle, rather than half a terminal it does not.
+          Ask it for a pty and it gives you one, which it refused for a year — and the refusal was the
+          honest answer at the time, because a client that gets a pty puts its terminal in raw mode and
+          stops echoing, expecting the server to echo every keystroke, and there was nothing here to
+          echo with. {m({ children: "packages/tty" })} is that something: every keystroke arrives on
+          its own, a line discipline decides what to send back and what counts as a line, and the
+          shell&rsquo;s output gets {m({ children: "\\r\\n" })} on the way out because a terminal in
+          raw mode does not return the cursor on a bare newline. <Lead>{m({ children: "^C" })} ends a
+          running command and the session carries on</Lead> — OpenSSH&rsquo;s own client, an infinite
+          loop, an interrupt, and {m({ children: "echo alive=$?" })} printing 130 on a session that is
+          still there.
+        </P>
+        <P>
+          The modes in the request — speeds, {m({ children: "VERASE" })}, {m({ children: "ICANON" })} —
+          are <em>not</em> read. Canonical with echo is the one arrangement this serves, so a client
+          asking for raw mode gets canonical: a gap rather than a translation.
         </P>
         <Sub id="applets" title={`${TOTALS.applets} programs it did not have to contain`}>
           <P>
@@ -311,8 +324,15 @@ export default function Stack() {
           <Code label="tor/src/socks.wac · the whole loop, less the branches" code={EX_WAIT} />
           <P>
             Against a local testnet it has carried 3.2MB across eight concurrent streams,
-            byte-identical. Built, the whole thing is <Lead>386.7 KiB</Lead> as a self-contained
-            executable — 234.2 KiB of wasm, 71.8 KiB gzipped.
+            byte-identical. Built, the whole thing is <Lead>513.7 KiB</Lead> as a self-contained
+            executable, 143.9 KiB gzipped — of which the wasm this repository compiles is{" "}
+            <Lead>133.8 KiB</Lead>, the rest being the floor every executable here stands on.
+            Measured 2026-08-11, and dated because a size is a snapshot: the figure before this one
+            said 386.7 KiB and had sat here long enough to read as a fact. That the floor dominates
+            is the finding rather than an aside —{" "}
+            {m({ children: "packages/platform" })}&rsquo;s own {m({ children: "wc" })}, which imports
+            the capability layer and nothing else, is 266 KiB, so the programs are noise on top of
+            it. Filed as issue 0129 rather than explained away.
           </P>
         </Sub>
         <Sub id="onion" title="It reaches onion services">
