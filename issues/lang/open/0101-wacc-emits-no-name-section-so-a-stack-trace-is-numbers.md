@@ -1,0 +1,53 @@
+# 0101 — wacc emits no name section, so a trap in its code is a stack of numbers
+
+- **Status:** open
+- **Claimed by:** (nobody yet — add yourself before working it)
+- **Reported by:** agent-b
+- **Date:** 2026-08-11
+- **Kind:** missing feature
+- **Symptom:** not implemented
+
+The reference writes a `name` custom section — `buildNameSection` in `compiler/wasmBuildBin.ts` — and
+wacc writes no custom section at all. Same file, both compilers:
+
+```
+reference -> 1 2 3 5 7 9 10 custom "name" 7446B
+wacc      -> 1   3 5 7 9 10
+```
+
+(`packages/json/src/json.wac`; section 2 is imports, which that build of wacc's had no need for.)
+
+## What is in the reference's, and why each part earns its place
+
+`buildNameSection` writes the function-name subsection (id 1) for four groups, and the comments beside
+them say what each one is for:
+
+* **the imported callback dispatchers**, as `wac.cb<j> <signature>` — so a profile shows four
+  distinguishable frames rather than four identical `cb` ones;
+* **the module's own functions**, under the *mangled* name, which carries the file — so two private
+  `helper`s in different files are tellable apart;
+* **the builtin helpers**;
+* **the bind helpers**, under the `$bind$…` names a host calls.
+
+## Why it is worth doing
+
+A trap in wacc-emitted code reports `wasm-function[147]`. The same program built by the reference
+reports the function's name and the file it came from. Everything that reads a stack — a failing
+package test under `WAC_WASM_FROM=wacc`, `harness/wacTestProfile`, a profiler, `wasm-objdump` — is
+reading numbers today, and the numbers move whenever anything before them in the module changes.
+
+It also matters for **priority 2**: this is a row the parity table does not have, and the ladder
+cannot see it, because every rung compares *behaviour* and a name section changes none.
+
+## Notes
+
+wacc already knows every name involved: `funcIndex`/`funcAt` hold the module's own functions, the
+bind helper names are built in `emitExports`, and the callback dispatchers are numbered where the
+import section is written. So this is a matter of writing the section, not of finding the names.
+
+The section is emitted last, after the code section, and is skipped by the reference when
+`names: false` — worth keeping that switch, since `fixpointEmit` and `selfHostEmit` compare wacc's
+output byte for byte and a name section is a large chunk of bytes to carry through a fixed point.
+Whether the two compilers' name sections should agree byte for byte is a separate question and
+probably not worth requiring: the differential is about behaviour, and the mangled names are already
+each compiler's own business.
