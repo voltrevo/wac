@@ -1987,7 +1987,7 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
         if (env.variantOwners[v] != name) { continue; }
         if (!first) { line = line + ";"; }
         first = false;
-        line = line + env.variantNames[v] + ":";
+        line = line + bareVariantName(env.variantNames[v]) + ":";
         for (i32 k = 0; k < env.variantArity[v]; k++) {
           if (k > 0) { line = line + "|"; }
           i32 slot = env.variantSlot[v] + k;
@@ -2035,10 +2035,10 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
     i32 at = env.funcAt(owner + "." + mn);
     if (at < 0 || env.funcIndex[at] < 0) { continue; }
     string line = "M\t" + bind + "\t" + mn + "\t" + (methods[m].hasThis ? "this" : "static") +
-                  "\t" + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].returnType)) + "\t";
+                  "\t" + metaTypeOfTy(env, src, lexed, methods[m].returnType) + "\t";
     for (i32 i = 0; i < methods[m].params.len(); i++) {
       if (i > 0) { line = line + ","; }
-      line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].params[i].type));
+      line = line + metaTypeOfTy(env, src, lexed, methods[m].params[i].type);
     }
     out = out + line + "\n";
   }
@@ -2102,10 +2102,10 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
         if (!ok || !exported) { continue; }
         if (entryDecls >= 0 && d >= entryDecls) { continue; }
         string line = tokenTextOf(src, lexed, nameTok) + "\t" +
-                      metaTypeSpelling(env, typeOfTyName(env, src, lexed, returnType)) + "\t";
+                      metaTypeOfTy(env, src, lexed, returnType) + "\t";
         for (i32 i = 0; i < params.len(); i++) {
           if (i > 0) { line = line + ","; }
-          line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, params[i].type));
+          line = line + metaTypeOfTy(env, src, lexed, params[i].type);
         }
         out = out + line + "\n";
       }
@@ -3050,7 +3050,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     bulkAt = bulkAt + 1;
     for (i32 v = 0; v < env.variantCount; v++) {
       if (env.variantOwners[v] != en2) { continue; }
-      string vn2 = env.variantNames[v];
+      string vn2 = bareVariantName(env.variantNames[v]);
       exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_new");
       exports.byte(0);
       exports.u32leb(bulkAt);
@@ -8167,6 +8167,36 @@ string bindKeyOf(Env env, string key) {
  * the metadata a host reads: `S` there means either of them, and `S@2` is not a name TypeScript can
  * declare, so `waccBindgen` wrote `export class S@2` and the file did not parse [issue 0100].
  */
+/**
+ * A variant's name without the key that tells two files' variants apart.
+ *
+ * A variant is scoped by its enum, and the enum's own name is already qualified where it needs to
+ * be — so `Ok` declared in two files needs nothing here beyond dropping the `@<file>` its key
+ * carries. Left on, it reached the metadata and the export names, and the generated glue declared
+ * `static Ok@5(request: Request)`, which is not a name TypeScript can spell [issue 0102].
+ */
+string bareVariantName(string key) {
+  i32 at = key.indexOf("@");
+  return at > 0 ? key.slice(0, at) : key;
+}
+
+/**
+ * A type as the metadata should spell it — the identity, and the `?` the identity drops.
+ *
+ * `typeOfTyName` answers with the *wasm* type, where `T?` and `T` are the same thing and the
+ * difference is the checker's to keep. A host cannot see it that way: `JsonValue? parse(u8[])` was
+ * recorded as returning `JsonValue`, so the glue never answered `null` and `parse("")` came back as
+ * a wrapper around nothing [issue 0102].
+ */
+string metaTypeOfTy(Env env, u8[] src, Lexed lexed, Ty t) {
+  string base = metaTypeSpelling(env, typeOfTyName(env, src, lexed, t));
+  if (base == "") { return base; }
+  match (t.kind) {
+    case Nullable(inner): { return base + "?"; }
+    else: { return base; }
+  }
+}
+
 string metaNameOf(Env env, string key) {
   if (env.ambiguousDecl(key)) { return qualifiedName(env, key); }
   return key;

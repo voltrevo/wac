@@ -11,9 +11,10 @@
 
 import { useEffect, useState } from "react";
 import InlineDemo from "../editor/InlineDemo";
+import Bootstrap from "../editor/Bootstrap";
 import { EX_ENUM } from "../snippets";
 import { TOTALS } from "../data/built";
-import { BLOB, A, Code, Lead, m, P, Page, Section, Table } from "./ui";
+import { BLOB, A, Caveat, Code, Lead, m, P, Page, Section, Table } from "./ui";
 import { ASSETS, c, font, space } from "./tokens";
 
 
@@ -43,6 +44,31 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     what:
       "Pixels computed in wac and blitted to a canvas, with the escape count under the pointer and a dropped file handed straight back.",
   },
+  {
+    file: `${ASSETS}gitpack.html`,
+    key: "gitpack",
+    title: "A packfile, opened in a tab",
+    src: `${BLOB}/packages/git/example/gitpage.wac`,
+    what:
+      "Drop `.git/objects/pack/pack-*.pack` from any repository on your machine. The index is thrown " +
+      "away in a pack, so packages/git rebuilds it — every object header, every zlib stream, every delta " +
+      "resolved against what came before — and then reads commits and trees out of it. There is no " +
+      "network here and none is needed: a page cannot open a socket, which is why the half that needs " +
+      "one is missing and the harder half is not.",
+  },
+  {
+    file: `${ASSETS}wacc.html`,
+    key: "wacc",
+    title: "The self-hosted compiler, in a tab",
+    src: `${BLOB}/packages/wacc/example/waccpage.wac`,
+    what:
+      "The playground below runs the *reference* compiler, which is TypeScript. This one runs wacc: " +
+      "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. Paste a " +
+      "program and the bytes that come back were produced by a compiler that is a wasm module in the " +
+      "same tab. What it does not show is the fixpoint — that needs the whole import closure, and " +
+      "running the second stage means instantiating a module the page just produced, which no wac " +
+      "program can do.",
+  },
 ];
 
 /** The built size of each demo, or nothing if this checkout has not built them. */
@@ -63,7 +89,7 @@ export default function Run() {
   const sizes = useSizes();
   return (
     <Page current="run">
-      <Section id="top" kicker="run it here" title="Three whole applications, in this browser">
+      <Section id="top" kicker="run it here" title={`${DEMOS.length} whole applications, in this browser`}>
         <P>
           These are not snippets and not a sandbox pretending to be one. Each is a complete wac
           program, compiled to wasm, running on a worker, talking to a capability world on the
@@ -114,6 +140,33 @@ export default function Run() {
           hosting cannot set them, so the page re-serves itself with the headers it needs and
           reloads once. It is the reason a demo works here at all rather than a detail of the demo.
         </P>
+      </Section>
+
+      <Section id="bootstrap" kicker="the one that needs running" title="wacc compiling itself, here">
+        <P>
+          <Lead>A compiler that reproduces itself is what a bootstrap means, and nothing short of
+          running it can show that.</Lead> The reference compiler — bundled into this page for the
+          playground below — compiles wacc&rsquo;s own {" "}
+          <A href={`${BLOB}/packages/wacc/src`}>eleven sources</A> into stage A. A compiles them into
+          B. B compiles them into C. If wacc is a compiler that reproduces itself, B and C are the
+          same bytes.
+        </P>
+        <P>
+          It runs on your machine, in this tab, and takes a second or two. The suite settles the same
+          claim in{" "}
+          <A href={`${BLOB}/packages/wacc/test/fixpointEmit.test.ts`}>fixpointEmit.test.ts</A> — this
+          is that argument with the reader holding the evidence instead of being told it.
+        </P>
+        <Bootstrap />
+        <Caveat title="what the page has to fetch, and why">
+          The page fetches wacc&rsquo;s sources and one small glue file, because{" "}
+          {m({ children: "wacBindgen" })} emits TypeScript with a wasm binary baked into it — and
+          stage B&rsquo;s bytes do not exist until stage A has run.{" "}
+          <A href={`${BLOB}/tools/syncBootstrap.ts`}>tools/syncBootstrap.ts</A> generates that glue
+          once with the binary replaced by a placeholder and transpiles it, so the page can substitute
+          each stage&rsquo;s own bytes. One glue serves every stage because every stage has the same
+          interface.
+        </Caveat>
       </Section>
 
       <Section id="playground" kicker="or write your own" title="The compiler, in the page">

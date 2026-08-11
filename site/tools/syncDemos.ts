@@ -52,6 +52,22 @@ const DEMOS: Demo[] = [
     grants: [],
     what: "a Mandelbrot set recomputed on every zoom, with the escape count under the pointer",
   },
+  {
+    file: "gitpack.html",
+    entry: "packages/git/example/gitpage.wac",
+    grants: [],
+    what:
+      "a real packfile from your own machine, opened in the tab: the index rebuilt from the pack alone, " +
+      "then commits and trees read out of it — no network, because a page has none",
+  },
+  {
+    file: "wacc.html",
+    entry: "packages/wacc/example/waccpage.wac",
+    grants: [],
+    what:
+      "the self-hosted compiler, in the tab: wacc — written in wac, compiled to wasm — compiling " +
+      "whatever wac you paste, where the playground elsewhere on this site runs the TypeScript one",
+  },
 ];
 
 const sizes: { file: string; size: string }[] = [];
