@@ -1416,6 +1416,28 @@ export struct Env {
   }
 
   /** Where a variant is in the table, so its tag, slot and arity come from one lookup. */
+  /**
+   * The key of `owner`'s variant written `written`, or `""`.
+   *
+   * **A variant is resolved inside its enum, not through the file.** `Kind.Tree` asked the name
+   * table what `Tree` meant and got `packages/git/src/tree.wac`'s *struct* — the key a second
+   * declaration of a name is given — so the qualified form stopped being a variant construction at
+   * all, and the walk fell through to reading `Kind` as a value: *unresolved name Kind*. The `@` in
+   * a shadowed key cannot appear in an identifier, so matching the prefix is exact.
+   * `spec/cases/0099`.
+   */
+  string variantKeyIn(const this, string owner, string written) {
+    for (i32 i = 0; i < this.variantCount; i++) {
+      if (this.variantOwners[i] != owner) { continue; }
+      if (this.variantNames[i] == written) { return this.variantNames[i]; }
+      if (this.variantNames[i].len() > written.len() &&
+          this.variantNames[i].slice(0, written.len() + 1) == written + "@") {
+        return this.variantNames[i];
+      }
+    }
+    return "";
+  }
+
   i32 variantAt(const this, string variant) {
     for (i32 i = 0; i < this.variantCount; i++) {
       if (this.variantNames[i] == variant) { return i; }
@@ -2889,9 +2911,7 @@ string variantOfMemberAt(u8[] src, Lexed lexed, Env env, Expr obj, i32 nameTok, 
       }
       string on = nameKeyOf(env, src, lexed, tok);
       if (!env.isEnumName(on)) { return ""; }
-      string vn = nameKeyOf(env, src, lexed, nameTok);
-      if (env.enumOf(vn) != on) { return ""; }
-      return vn;
+      return env.variantKeyIn(on, tokenTextOf(src, lexed, nameTok));
     }
     else: { return ""; }
   }

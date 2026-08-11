@@ -1,0 +1,17 @@
+// expect: answers f = 1
+// why: a variant belongs to its enum whatever else spells that name — another file's struct is a
+// why: different declaration and does not take the name away from it
+// from: packages/git — `Kind.Tree` where `tree.wac` also declares `struct Tree`
+// ---- tree.wac ----
+export struct Tree { i32 n; }
+export Tree mk() { return Tree(1); }
+// ---- kinds.wac ----
+export enum Kind { Blob, Tree }
+export i32 num(Kind k) { return match (k) { case Blob: 0, case Tree: 1 }; }
+// ---- main.wac ----
+import { Tree, mk } from "./tree.wac";
+import { Kind, num } from "./kinds.wac";
+export i32 f() {
+  Tree t = mk();
+  return num(Kind.Tree) + t.n - 1;
+}
