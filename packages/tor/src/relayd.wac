@@ -43,7 +43,7 @@
 // **No directory publication**, so nothing puts this relay in a consensus. A client reaches it by
 // being told, which is what a `Bridge` line is.
 
-import { Core, Cli, Socket, FileResult, Change, Pending } from "../../platform/src/platform.wac";
+import { Core, Cli, Socket, FileResult, Change, Pending, CALL_SLOTS } from "../../platform/src/platform.wac";
 import { Read } from core;
 import { Buf } from "../../bytes/src/buf.wac";
 import { Parsed, parseRequest } from "../../http/src/request.wac";
@@ -115,7 +115,7 @@ const i32 IDLE_TIMEOUT_MS = 120000;
 const i32 DIR_POLL_MS = 500;
 
 /** How many connections a relay will hold at once. Beyond this it refuses rather than collapses. */
-const i32 MAX_CONNS = 64;
+export const i32 MAX_CONNS = 64;
 
 /**
  * How many circuits one connection may carry.
@@ -124,7 +124,36 @@ const i32 MAX_CONNS = 64;
  * predictive building adds a few more. Eight is well clear of that and keeps the wait list, which is
  * rebuilt from every connection's circuits each round, a size worth walking.
  */
-const i32 MAX_CIRCS = 8;
+export const i32 MAX_CIRCS = 8;
+
+/**
+ * How much of the platform's ring to leave for everything that is not a wait-list entry.
+ *
+ * A relay makes ordinary calls while it serves — a `send`, a TLS handshake, a directory read — and
+ * each holds a slot for as long as it takes. Sixteen of 128 is room for those with the wait list at
+ * its ceiling.
+ */
+const i32 RING_MARGIN = 16;
+
+/**
+ * Whether one more circuit fits inside the ring, given what is outstanding now.
+ *
+ * **wac-mono 0091.** `MAX_CONNS` and `MAX_CIRCS` were chosen for memory and bear no relation to the
+ * ring: `MAX_CONNS * MAX_CIRCS * 2 + MAX_CONNS + 1` is 1089 against `CALL_SLOTS` of 128, which a
+ * relay reaches at about seven busy connections. Exceeding the ring does not degrade — a held slot
+ * waiting on a peer is RUNNING rather than READY, so the relay parks silently and every circuit on
+ * it stops. There is nothing to read afterwards, which is the worst way for a service to end.
+ *
+ * A circuit is what gets refused, for two reasons. Connections alone cannot exhaust the ring —
+ * `1 + MAX_CONNS` is 65, inside it with room to spare — so it is circuits that multiply. And a
+ * connection is cheap until it carries one, so refusing connections would refuse the wrong thing
+ * early. `roomForCirc` already answers DESTROY_RESOURCELIMIT at `MAX_CIRCS`, which is what a real
+ * relay says when it will not take more work.
+ *
+ * `+ 2` because a fresh circuit can grow both a next hop and a stream, and each is a `recv` in the
+ * wait list.
+ */
+export bool ringHasRoom(i32 held) { return held + 2 <= CALL_SLOTS - RING_MARGIN; }
 
 /**
  * A window, and how many cells of it a `SENDME` restores.
@@ -523,14 +552,7 @@ export i32 main(Core core, Cli cli) {
     // connection contributes one to three ids, and `owner`/`source` record which is which so the
     // answer can be translated back. Guessing that mapping instead of recording it is the bug this
     // shape exists to avoid.
-    i32 n = accepting ? 1 : 0;
-    for (i32 i = 0; i < live; i++) {
-      n = n + 1;
-      for (i32 j = 0; j < conns[i]!.circCount; j++) {
-        if (conns[i]!.circs[j]!.hasNext) { n = n + 1; }
-        if (conns[i]!.circs[j]!.hasStream) { n = n + 1; }
-      }
-    }
+    i32 n = outstanding(conns, live, accepting);
     i32[] ids = i32[n]();
     i32[] owner = i32[n]();
     i32[] source = i32[n]();
@@ -1271,7 +1293,7 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
         // A client with no descriptor for us — which is every client told about us by a `Bridge`
         // line — has no onion key and so cannot send a CREATE2. TLS has already authenticated us by
         // then, which is what makes CREATE_FAST safe here and nowhere else.
-        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE))) { continue; }
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE), conns, connCount)) { continue; }
         Created fast = answerCreateFast(cellCircId(cell, 0, ID_WIDE), cellPayload(cell, 0, ID_WIDE),
                                         randomBytes20(core));
         if (fast.cell.len() == 0) {
@@ -1286,7 +1308,7 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
       }
 
       if (command == cmdCreate2()) {
-        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE))) { continue; }
+        if (!roomForCirc(core, cli, c, cellCircId(cell, 0, ID_WIDE), conns, connCount)) { continue; }
         Created answer = answerCreate2(cellCircId(cell, 0, ID_WIDE), cellPayload(cell, 0, ID_WIDE),
                                        id.fingerprint, id.onionPrivate,
                                        clampScalar(core.randomBytes(32).wait()));
@@ -1610,13 +1632,42 @@ DirDocuments feedConn(Core core, Cli cli, Conn c, i32 source, i32 slot, Identity
 }
 
 /**
+ * Every call this relay has outstanding: the accept, one per connection, and one for each circuit end
+ * that is waiting on a peer.
+ *
+ * This is the number the wait list is built from — it *is* the wait list's length — and the number
+ * `CALL_SLOTS` bounds. One function rather than a count beside a build, because the two disagreeing
+ * would mean either a short list (a handle nobody waits on) or a budget that permits what the ring
+ * cannot hold.
+ */
+i32 outstanding(Conn?[] conns, i32 live, bool accepting) {
+  i32 n = accepting ? 1 : 0;
+  for (i32 i = 0; i < live; i++) {
+    n = n + 1;
+    for (i32 j = 0; j < conns[i]!.circCount; j++) {
+      if (conns[i]!.circs[j]!.hasNext) { n = n + 1; }
+      if (conns[i]!.circs[j]!.hasStream) { n = n + 1; }
+    }
+  }
+  return n;
+}
+
+/**
  * Whether a fresh circuit can be opened with this id, refusing it in the caller's stead if not.
  *
  * Two ways it cannot: the id is already in use on this connection, which is a protocol error, or this
  * connection is already carrying `MAX_CIRCS`. Both answer DESTROY, because a client that is told
  * nothing waits out its own timeout before trying another relay.
  */
-bool roomForCirc(Core core, Cli cli, Conn c, i32 circId) {
+bool roomForCirc(Core core, Cli cli, Conn c, i32 circId, Conn?[] conns, i32 live) {
+  // **The ring, before the per-connection cap.** `accepting` is not threaded down here, so this
+  // counts the accept whether or not one is outstanding: an overestimate of one, on the safe side.
+  if (!ringHasRoom(outstanding(conns, live, true))) {
+    core.warn("relayd: [" + itoa(c.id) + "]  at " + itoa(outstanding(conns, live, true)) +
+              " outstanding calls of " + itoa(CALL_SLOTS) + ", refusing a circuit");
+    c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_RESOURCELIMIT));
+    return false;
+  }
   if (findCirc(c, circId) >= 0) {
     core.warn("relayd: [" + itoa(c.id) + "]  circuit " + itoa(circId) + " is already open on this connection");
     c.tls = sendCell(cli, c.sockObj, c.tls, destroyCell(circId, DESTROY_PROTOCOL));

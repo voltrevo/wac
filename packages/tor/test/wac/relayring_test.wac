@@ -1,0 +1,58 @@
+// The ring budget: what a relay refuses before the platform's call ring runs out.
+//
+// wac-mono 0091, and the arithmetic is the whole issue. `MAX_CONNS` and `MAX_CIRCS` were chosen for
+// memory: 64 connections of 8 circuits, each circuit able to hold a `recv` for its next hop and one
+// for its stream, is `64 * 8 * 2 + 64 + 1` = **1089** outstanding calls against a ring of 128.
+// Exceeding the ring is not slow, it is a silent park — a held slot waiting on a peer is RUNNING
+// rather than READY — so the relay stops and there is nothing to read afterwards.
+//
+// What is tested here is the policy, not the counting: `outstanding` is the wait list's own length
+// and is exercised by every relay test in this package, while `ringHasRoom` is a decision that had
+// no test at all because it did not exist.
+
+import { T } from "../../../wactest/src/assert.wac";
+import { ringHasRoom, MAX_CONNS, MAX_CIRCS } from "../../src/relayd.wac";
+import { CALL_SLOTS } from "../../../platform/src/platform.wac";
+
+export string test_connections_alone_never_reach_the_ring() {
+  // The reason a *circuit* is what gets refused. A relay at `MAX_CONNS` with no circuits on any of
+  // them holds one call each and one accept — 65 of 128 — so it can still take a circuit. If this
+  // ever fails, refusing circuits is the wrong lever and the connection cap is the one to move.
+  T t = T.create();
+  t.isTrue(ringHasRoom(1 + MAX_CONNS), "a relay full of idle connections can still open a circuit");
+  return t.report();
+}
+
+export string test_the_ring_is_never_exceeded() {
+  // The property the issue is about: no held count at or beyond the ring is ever told there is room.
+  T t = T.create();
+  t.isTrue(!ringHasRoom(CALL_SLOTS), "a full ring has no room");
+  t.isTrue(!ringHasRoom(CALL_SLOTS - 1), "nor one short of full");
+  t.isTrue(!ringHasRoom(CALL_SLOTS * 2), "nor over-committed, which is the state 0091 describes");
+  return t.report();
+}
+
+export string test_it_answers_yes_then_no_and_stays_no() {
+  // Monotone, and the flip happens below the ring rather than at it — the margin is for the calls a
+  // relay makes while serving, which are not in the wait list.
+  T t = T.create();
+  i32 flip = -1;
+  for (i32 held = 0; held <= CALL_SLOTS; held++) {
+    if (!ringHasRoom(held) && flip < 0) { flip = held; }
+    if (flip >= 0) { t.isTrue(!ringHasRoom(held), "no room stays no room"); }
+  }
+  t.isTrue(flip > 1 + MAX_CONNS, "the flip is above what connections alone can hold");
+  t.isTrue(flip < CALL_SLOTS, "and below the ring, by the margin");
+  return t.report();
+}
+
+export string test_the_worst_case_the_caps_permit_is_still_far_past_the_ring() {
+  // Stated as a test so it cannot quietly stop being true: this is what the issue measured, and it
+  // is why the *dynamic* budget exists rather than a smaller `MAX_CIRCS`. Lowering the caps enough
+  // to make this fit would cost a relay most of what it can carry.
+  T t = T.create();
+  i32 worst = MAX_CONNS * MAX_CIRCS * 2 + MAX_CONNS + 1;
+  t.isTrue(worst > CALL_SLOTS * 8, "the caps permit many times the ring");
+  t.isTrue(!ringHasRoom(worst), "which the budget refuses");
+  return t.report();
+}
