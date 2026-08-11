@@ -2833,7 +2833,12 @@ string typeOfTyName(Env env, u8[] src, Lexed lexed, Ty t) {
         // `string` is a primitive by spelling and a reference by nature, so `string?` is a string.
         case Prim(tok): {
           string pn = tokenTextOf(src, lexed, tok);
-          return pn == "string" ? "string" : "";
+          // **`anyref` and `i31ref` are references too**, and they lex as primitives — which is how
+          // `anyref? interruptCtx;` became a field of no type at all, and `Shell.create` came back
+          // as *a null in a slot of no known type* for the whole of `packages/sh`. A `string` was
+          // already excepted here for exactly this reason; there are three such names, not one.
+          // `spec/cases/0098`.
+          return pn == "string" || pn == "anyref" || pn == "i31ref" ? pn : "";
         }
         else: { return typeOfTyName(env, src, lexed, inner); }
       }
@@ -5416,7 +5421,12 @@ string unsupportedExpr(u8[] src, Lexed lexed, Env env, Expr e) {
           return env.funcOk[fr2] ? "" : declinedBecause("a reference to " + nm, env, fr2);
         }
       }
-      if (ci < 0) { return "unresolved name " + nm; }
+      if (ci < 0) {
+        // With the line, because a name is unresolved *somewhere* and the file may use it ten times
+        // — `packages/git/src/repo.wac` says `Kind` in four places and only one of them was the
+        // problem. `issues/lang/0097`'s reduction cost an hour for want of this.
+        return "unresolved name " + nm + " on line " + numText(tokenLine(lexed, tok));
+      }
       // A constant is inlined, so whatever its initialiser needs, the *use site* needs. An array
       // constant would be allocated afresh at each use, which is a different program — declined until
       // there is a global to hold one.
