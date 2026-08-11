@@ -17,11 +17,18 @@ commands run from the repo root.
 
 [design/0001](../../design/system/0001-a-self-contained-system.md) step 1, filed as
 [0067](../../issues/system/closed/0067-no-filesystem-of-our-own-so-a-session-cannot-be-sealed-off-from-the-host.md).
-Every filesystem capability a program has is the *host's*, so `packages/ssh`'s demo hands each session the
-real disk of whatever ran the daemon, and the browser terminal hands it the tab's Origin Private File
-System. There is nothing that belongs to the system: nothing to seal a session inside, nothing to persist
-as an image, and nothing hermetic for a test to run against — which is where today's flakes come from,
-since every filesystem test needs a temp directory on a disk shared with everything else on the machine.
+**The state it was filed against**, which this package exists to have ended: every filesystem capability a
+program had was the *host's*, so `packages/ssh`'s demo handed each session the real disk of whatever ran
+the daemon, and the browser terminal handed it the tab's Origin Private File System. There was nothing
+that belonged to the system: nothing to seal a session inside, nothing to persist as an image, and
+nothing hermetic for a test to run against — which is where the flakes came from, since every filesystem
+test needed a temp directory on a disk shared with everything else on the machine.
+
+All three exist now, and the rest of this file is how. A session on `Fs.inMemory()` built with **no
+filesystem grants at all** is `sealed`; an image outlives the process that wrote it and is one file
+either host can open; and `packages/ssh`'s `sshd` serves that image on a runtime with no JavaScript in
+it, which is design/0001's arrival test. This paragraph read as a description of the present for months
+after that, which is the failure a *Why* section has: it is written the day the gap is real.
 
 ## One type with a mount table, and why not an interface
 
@@ -40,6 +47,28 @@ Mounts resolve by longest prefix, so `/home` mounted under a host `/` does what 
 order they were added in does not decide the answer. A mount *shadows* what it covers rather than merging
 with it, and a name that merely starts with the mount point — `/homework` against `/home` — is not under
 it.
+
+**There are four backings**, and every operation dispatches on which one a path lands in:
+
+| | what it is | where |
+| --- | --- | --- |
+| `Memory` | this program's own tree, and the default | below, and it is what a test wants |
+| `Host` | the real disk, through the capabilities of whoever built the filesystem | [The host is the oracle](#the-host-is-the-oracle) |
+| `Synth` | files that do not exist until read — `/dev`, `/proc` | [`/dev` and `/proc`](#dev-and-proc-which-cost-nothing-until-read) |
+| `Remote` | **another process's filesystem, reached by asking it** | below |
+
+`Remote` is the one a reader is most likely to be standing in without knowing: it is what a **spawned
+stage** gets. `seq 1 5 | cat > f` in a sealed session runs each stage as a separate instance, and a
+separate instance with a filesystem of its own would have a filesystem of the *host's* — which is
+[0116](../../issues/system/closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md), and
+was how a sealed session could read the machine it was running on. So a child stores nothing and
+duplicates nothing: every operation on that mount is a question its parent answers out of the one
+filesystem there is (`src/remote.wac`), and a child's permission checks are its parent's `user`'s.
+
+**Every dispatch on the backing needs an arm for `Remote`, and the compiler will not say so** — the
+matches end in `else`, which is the memory backing, so a forgotten arm is a remote mount quietly
+answering out of an empty local tree. `packages/box/test/sealing.test.ts` is what catches that, by
+running a sealed session whose stages read *and write* through the channel.
 
 ## The host is the oracle
 
@@ -216,4 +245,10 @@ the real filesystem, which is a better oracle than a probe could be.
   no such program yet.
 - **`rename` across mounts is refused**, in those words. Doing it means a copy and a delete, and a
   `Change` cannot report a partial one.
-- **No symbolic links.** `linkStat` is `stat` and says so.
+- **No symbolic links can be made here.** There is no call that creates one, so in a memory, image or
+  synthesised mount a name is never a link and `isSymlink` is false — as a fact about those backings
+  rather than as a shortcut. On a **host** mount it is not a fact at all: the real disk is full of
+  links, so `linkStat` dispatches like everything else and asks the host. This bullet said "`linkStat`
+  is `stat` and says so" for as long as that was true of every backing, which stopped when `box`'s
+  `tar` was found asking `cli.linkStat` behind the filesystem's back — in a session on an image, that
+  asked *this machine* about a path inside the image.
