@@ -104,14 +104,9 @@ latter host-side because a trap ends the module and no wac test can assert one. 
 silently measures nothing is exactly the shape this repo keeps finding (`crypto`'s `sha1.wac` read
 0.0% the same way), so the number is written down here rather than left to be discovered.
 
-Coverage needs an exercise, and an exercise only measures the code it drives, so each
-package supplies its own; `harness/wacCoverage.ts` is the shared half. The repo-level
-`deno task coverage` covers gzip only, which is [issues/0002](../../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
-
-The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts
-from the test suite it is meant to measure. Twice now it has reported a branch as
-uncovered that the tests do cover, and once the reverse. When it disagrees with the
-suite, the suite is right and `cov.ts` needs the input adding.
+How coverage works here, and the two ways `cov.ts` can be wrong about it, are in
+[`packages/README.md`](../README.md#coverage-and-why-it-belongs-here-rather-than-in-each-package) —
+these paragraphs were in three packages word for word.
 
 ## `Read` moved to `core`
 

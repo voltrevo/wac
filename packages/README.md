@@ -278,6 +278,29 @@ that re-exports them one value at a time just so TypeScript can reach them
 boundary, so there is no `i8[]`↔`Uint8Array` marshalling, no `i64`↔`bigint`, and
 no worrying about how `-0.0` or NaN survive the trip.
 
+## Coverage, and why it belongs here rather than in each package
+
+`deno task coverage:<package>` reports branch coverage for the twenty packages that have one, driven
+by a `cov.ts` in the package itself. **Coverage needs an exercise, and an exercise only measures the
+code it drives**, so each package supplies its own; `harness/wacCoverage.ts` is the shared half. The
+repo-level `deno task coverage` covers gzip only, which is
+[0002](../issues/system/closed/0002-coverage-and-mutate-only-see-gzip.md).
+
+**The hazard to know about: `cov.ts` is a second workload written by hand, so it drifts from the test
+suite it is meant to measure.** Twice it has reported a branch as uncovered that the tests do cover,
+and once the reverse. When it disagrees with the suite, the suite is right and `cov.ts` needs the
+input adding.
+
+Which is not the same as the number being wrong for a *third* reason: a source file the probe never
+calls at all reads **0.0%** and looks untested. `packages/bytes`'s `slice.wac` reads that way and is
+covered by `test/bounds.wac`; `packages/regex`'s `basic.wac` and `posix.wac` read that way until
+2026-08-11, when driving them from `cov.ts` moved the package from 62% to 86.4%. A file at zero is a
+question about the probe before it is a question about the tests.
+
+These two paragraphs were in `packages/bytes`, `packages/fmt` and `packages/json`, word for word, and
+in none of the other seventeen packages that have a coverage task. They are facts about the tooling
+rather than about any package, so they are here once and each package keeps only its own numbers.
+
 ## A README's *what is not here* is a claim, and it rots
 
 Most of these packages end with a section naming what they do not do — and the whole value of it is
@@ -286,7 +309,7 @@ else's success**: every other sentence describes what the code does and drifts o
 changes under it, but "there is no job control" is falsified by the commit that adds job control, and
 that commit's author is looking at `exec.wac` rather than here.
 
-Two were found false on 2026-08-10, and both had been for a while:
+Four have been found false, and each had been for a while:
 
 - `packages/tty` said "**No terminal modes.** Canonical with echo, always… **not implemented**" while
   `line.wac` had three, each measured against a pty. What was *actually* missing was a step further
@@ -294,6 +317,18 @@ Two were found false on 2026-08-10, and both had been for a while:
 - `packages/sh` said "**There is no job control**… no `wait`, no `jobs`, no `%1`" two hundred lines
   below a section describing `&`, `jobs`, `wait` and `kill %1` working. The same file contradicted
   itself, and the shell answered `[1]+ Running` when asked.
+- The same file said "**`2>` is not implemented, and says so in those words**" — in *two* places, one
+  of them inside the section whose first paragraph lists `2>`, `2>>`, `2>&1`, `1>&2`, `>&2` and
+  `2>&-` as working. Checked by running all six (2026-08-11). What is still refused is a descriptor
+  above 2, which is a different sentence.
+- `design/system/0001`'s step 5 asserted both that the `^C` criterion **is met** and, four paragraphs
+  later, that it **is still not met**. Both were true when written, and the cell was 1,376 words, so
+  nobody had the two sentences in view at once. Splitting it into sections is what made it visible.
+
+**Length is where these hide.** Three of the four were in files or cells long enough that the two
+halves of the contradiction were never on a screen together, and the fourth was the same sentence
+written twice. So a document that has grown past reading is not only tiresome — it is where a claim
+goes to stop being checked.
 
 So: **closing a gap includes deleting the sentence that denied it.** If the gap only got smaller, say
 what is left rather than leaving the old sentence to be right in spirit and wrong in fact — a reader
