@@ -1,14 +1,13 @@
 # regex
 
-A backtracking regular expression engine, with JavaScript's semantics.
+A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects
+`grep` reads, translated into them rather than implemented twice.
 
-**And POSIX *basic* ones, through `src/basic.wac`.** That is a rewrite rather than a second engine: basic
-and extended differ only in which spelling of `| + ? { ( )` is the operator and which is the literal, so a
-basic pattern becomes the equivalent extended one by swapping the escaping and nothing about matching
-changes. It exists because `grep` without `-E` reads basic, and both of this repo's greps were compiling
-their patterns as extended — so `grep 'a|b'` matched a-or-b where GNU matches three characters, silently
-(wac-mono 0104). The engine was never wrong; the callers were speaking a different dialect to the one they
-were named after.
+It is here because `RegExp` is an unusually strong oracle and this repository has no other way to
+check a matcher; [Why it is a package](#why-it-is-a-package) is that argument, and
+[Tests](#tests) is what it buys. What the engine will and will not accept is
+[The subset](#the-subset); what `grep` needs on top of it is
+[POSIX](#posix-which-is-a-different-dialect-and-now-says-so).
 
 ```wac
 import { compile, search, slotCount } from "../../regex/src/regex.wac";
@@ -78,11 +77,18 @@ copy, rather than one guarded loop.
 
 ## Tests
 
-`test/regex.test.ts`: ~2 500 hand-written (pattern, subject) comparisons across every construct,
-plus 8 000 generated patterns — half of them with nested groups and alternations, which is where
-all three bugs were. Every comparison checks capture positions, not just the match.
+`test/regex.test.ts`: **4 680** hand-written (pattern, subject) comparisons across every construct —
+154 patterns, most of them against the same 34 subjects — plus **8 000** generated patterns, half of
+them with nested groups and alternations, which is where all three bugs were. Every comparison checks
+capture positions, not just the match. (This said 2 500 for a while; the patterns were counted once
+and then added to.)
 
-`deno task coverage:regex` reports 91%.
+`deno task coverage:regex` reports **86.4%** as of 2026-08-11. It reported 62% the day before, of
+which the interesting part is *why*: `basic.wac` and `posix.wac` were both at **0.0%** — 118 of the
+package's 513 branch points — because the coverage run never called them. They were tested all along,
+by `test/basic.test.ts` against `/bin/grep`; what was missing was `cov.ts` driving the two entry
+points `test/probe.wac` has exported since those files existed. A table with two source files reading
+zero is one a reader learns to skim.
 
 Three outcomes are distinguished, and the tests treat them differently:
 
@@ -114,10 +120,16 @@ reason, and lifting it means a UTF-8-aware machine, not a bigger table.
 
 ## POSIX, which is a different dialect and now says so
 
-`grep` does not read this dialect. `basic.wac` has translated its *operators* since wac-mono 0104 —
-in basic regular expressions `| + ? { ( )` are literals and their backslashed forms are the
-operators — and `posix.wac` is the rest of the difference, which is inside the brackets and in three
-escapes:
+`grep` does not read this dialect, and **the engine was never wrong about that — the callers were
+speaking a different dialect to the one they were named after.** Both of this repository's greps
+compiled their patterns as extended, so `grep 'a|b'` matched a-or-b where GNU matches the three
+characters `a|b`, silently (wac-mono 0104).
+
+`basic.wac` has translated the *operators* since then — in basic regular expressions `| + ? { ( )`
+are literals and their backslashed forms are the operators, so a basic pattern becomes the equivalent
+extended one by swapping the escaping and **nothing about matching changes**. That is why this is a
+rewrite rather than a second engine. `posix.wac` is the rest of the difference, which is inside the
+brackets and in three escapes:
 
 | POSIX | here, before | now |
 | --- | --- | --- |

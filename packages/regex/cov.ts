@@ -15,6 +15,15 @@ const enc = new TextEncoder();
 const run = await instrument("packages/regex/test/probe.wac");
 const exec = run.mod.exec as (p: Uint8Array, s: Uint8Array, at: number) => Int32Array;
 const accepts = run.mod.accepts as (p: Uint8Array) => boolean;
+// The two POSIX dialects. `test/probe.wac` has exported these since `basic.wac` and `posix.wac`
+// existed and **nothing here called them**, so both files reported 0.0% — 118 of this package's 513
+// branch points, sitting in a table that reads as untested code. They are tested, by
+// `test/basic.test.ts` against `/bin/grep`; what was missing was the coverage run driving them.
+const execBasic = run.mod.execBasic as (p: Uint8Array, s: Uint8Array, at: number) => Int32Array;
+const execExtended = run.mod.execExtended as (p: Uint8Array, s: Uint8Array, at: number) => Int32Array;
+const basicAsExtended = run.mod.basicAsExtended as (p: Uint8Array) => Uint8Array;
+const whyBasic = run.mod.whyBasic as (p: Uint8Array) => string;
+const whyExtended = run.mod.whyExtended as (p: Uint8Array) => string;
 
 const SUBJECTS = [
   "", "a", "b", "ab", "ba", "aa", "abc", "abcabc", "aaa", "aaaa", "xay", "xaby",
@@ -95,5 +104,52 @@ for (
 
 /** A pattern that exhausts the step budget, which is its own return value. */
 exec(enc.encode("(a|a|aa)+b"), enc.encode("a".repeat(40)), 0);
+
+/**
+ * The POSIX dialects, over the patterns their own tests use.
+ *
+ * The same set as `test/basic.test.ts`, which is the file that judges these against `/bin/grep` —
+ * kept in step by hand, as the fuzzer generator above is. Both entry points get every pattern
+ * because a bracket expression means the same thing in both dialects and the *operators* are what
+ * differ, so running one and not the other would leave half of `basic.wac`'s translation table
+ * unreached.
+ */
+{
+  const DIALECT_PATTERNS = [
+    // The six characters whose spelling is inverted between the dialects, both ways round.
+    "a|b", "a\\|b", "a+", "a\\+", "a?", "a\\?", "a{2}", "a\\{2\\}",
+    "(a)", "\\(a\\)", "\\(ab\\)*", "a*", "*a", "^*a", "\\(*a\\)",
+    "a.b", "a\\.b", "^ab", "ab$", "^ab$", "[ab]", "[|]", "[+?{}()]", "[^ab]",
+    "[]a]", "[^]a]", "a\\{2,3\\}", "\\(a\\|b\\)c", "x\\|", "\\(\\)",
+    "a\\\\b", "\\.", "\\*", "^", "$", "", "ab*c", "a\\|b\\|c",
+    // Bracket expressions, which are `posix.wac`'s half and are the same in both dialects.
+    "[[:alpha:]]", "[[:alnum:]]", "[[:digit:]]", "[[:upper:]]", "[[:lower:]]", "[[:space:]]",
+    "[[:blank:]]", "[[:cntrl:]]", "[[:print:]]", "[[:graph:]]", "[[:punct:]]", "[[:xdigit:]]",
+    "[^[:digit:]]", "[[:alpha:][:digit:]]", "[[:digit:]abc]", "[a-c[:space:]]",
+    "[]]", "[a-]", "[-a]", "[.a.]", "[=a=]", "[[:foo:]]", "[[:alpha:]", "[a",
+    // GNU's backslash anchors, which are the only thing the engine itself learnt.
+    "\\<a", "a\\>", "\\<abc\\>", "\\`a", "a\\'", "\\`abc\\'", "\\<", "\\>", "x\\<y",
+  ];
+  const DIALECT_SUBJECTS = [
+    "", "a", "b", "ab", "abc", "a|b", "a+b", "a?b", "a{2}", "aa", "aab",
+    "(a)", "*a", "a.b", "axb", "a\\b", "abab", "ac", "]a", "aaa", "A", "1", " ", "\t",
+    "a b", "-a-", "_a", "x<y", "x`y", "a'",
+  ];
+  for (const p of DIALECT_PATTERNS) {
+    const pb = enc.encode(p);
+    // What a basic pattern translates to, which is the table `basic.wac` is.
+    basicAsExtended(pb);
+    for (const s of DIALECT_SUBJECTS) {
+      const sb = enc.encode(s);
+      execBasic(pb, sb, 0);
+      execExtended(pb, sb, 0);
+    }
+  }
+  // The refusal paths, which are where a dialect says whose problem a pattern is.
+  for (const p of ["\\(a", "a\\)", "[a", "[z-a]", "a\\{2,1\\}", "\\", "(?=a)", "\\1", "[[:foo:]]"]) {
+    whyBasic(enc.encode(p));
+    whyExtended(enc.encode(p));
+  }
+}
 
 report([run], "packages/regex/", { verbose });
