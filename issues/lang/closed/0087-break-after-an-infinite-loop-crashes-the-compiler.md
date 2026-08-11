@@ -1,6 +1,7 @@
 # 0087 — `break` after an infinite loop crashes the compiler
 
 - **Status:** closed, 2026-08-11 by agent-b
+- **Fixed in:** 9a5cd7cb
 - **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-09
