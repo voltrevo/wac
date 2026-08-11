@@ -42,6 +42,11 @@ worse than one that says which:
 So this is the object database and not a client. It is enough to name, store and read git's objects,
 and to walk a tree.
 
+The order the rest would go in, and what would count as arriving, is
+[design/system/0005](../../design/system/0005-git-in-wac.md) — kept there rather than here so the plan
+and this package's limitations do not become two records that drift. Short version: packfiles first,
+because without them no real repository can be opened, including this one.
+
 ## Two things about the format worth knowing before reading the code
 
 **A tree's hashes are raw bytes, not hex.** Twenty binary bytes sit in the middle of otherwise
