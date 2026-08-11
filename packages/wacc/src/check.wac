@@ -4230,6 +4230,27 @@ void checkStmt(C c, Stmt s, Ty want) {
     // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
     // and `continue` because the reference accepts it there, which is measured rather than read off
     // its message. Reported at the statement, which is the whole of it.
+    // **A trap's message is what the host is told, so it is text.** Accepting a message at all meant
+    // accepting any expression as one until this: `spec/cases/0043` is the message, `0045` is that it
+    // has to be a string.
+    case Trap(value): {
+      if (!(value is null)) {
+        Expr msg = value!;
+        c.expected = "string";
+        checkExpr(c, msg);
+        if (litKindOf(msg) != litNone()) {
+          if (litKindOf(msg) != litString()) {
+            c.reportWith(errOperandKind(), msg.line, msg.col,
+                         expectedFound("string", foundType(c, msg)));
+          }
+        } else {
+          string mt = typeOfExpr(c, msg);
+          if (mt != typeNone() && mt != "" && mt != "string") {
+            c.reportWith(errOperandKind(), msg.line, msg.col, expectedFound("string", mt));
+          }
+        }
+      }
+    }
     case Break: {
       if (c.loopDepth == 0) { c.report(errNoLoop(), s.line, s.col); }
     }
@@ -4320,7 +4341,6 @@ void checkStmt(C c, Stmt s, Ty want) {
       }
       c.loopDepth = c.loopDepth - 1;
     }
-    else: { }
   }
 }
 

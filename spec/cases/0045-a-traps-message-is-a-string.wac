@@ -1,0 +1,4 @@
+// expect: refused
+// why: the message is what the host is told, so it has to be text
+// from: the twin of 0043 — accepting a message meant accepting any expression as one
+export i32 f() { trap 5; }

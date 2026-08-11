@@ -179,7 +179,10 @@ function stmt(s: any): string {
     case "return":   return `(return${pos(s)} ${s.value === null ? "-" : expr(s.value)})`;
     case "break":    return `(break${pos(s)})`;
     case "continue": return `(continue${pos(s)})`;
-    case "trap":     return `(trap${pos(s)})`;
+    // The message is part of the node: `trap "a"` and `trap "b"` are different programs, and a
+    // rendering that dropped the value could not tell them apart — which it did until wacc started
+    // carrying one. `spec/cases/0043`.
+    case "trap":     return `(trap${pos(s)} ${s.value == null ? "-" : expr(s.value)})`;
     case "block":    return `(block${pos(s)}${stmtList(s.block.stmts)})`;
     case "expr":     return `(expr${pos(s)} ${expr(s.expr)})`;
   }

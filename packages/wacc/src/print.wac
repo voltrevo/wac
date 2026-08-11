@@ -498,7 +498,12 @@ void printStmt(Pr w, Stmt s) {
     }
     case Break:    { w.open("break", s.line, s.col); w.close(); }
     case Continue: { w.open("continue", s.line, s.col); w.close(); }
-    case Trap:     { w.open("trap", s.line, s.col); w.close(); }
+    case Trap(value): {
+      w.open("trap", s.line, s.col);
+      w.sp();
+      if (value is null) { w.s("-"); } else { printExpr(w, value!); }
+      w.close();
+    }
     case Block(body): {
       w.open("block", s.line, s.col);
       printStmtList(w, body);

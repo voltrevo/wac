@@ -1424,7 +1424,14 @@ export Stmt parseStatement(P p) {
   }
   if (p.at1(kBreak()))    { p.advance(); p.expect(kSemi()); return Stmt(StmtKind.Break, line, col); }
   if (p.at1(kContinue())) { p.advance(); p.expect(kSemi()); return Stmt(StmtKind.Continue, line, col); }
-  if (p.at1(kTrap()))     { p.advance(); p.expect(kSemi()); return Stmt(StmtKind.Trap, line, col); }
+  if (p.at1(kTrap())) {
+    // Shaped like `return`: a bare `trap;` or one carrying what the host should be told.
+    p.advance();
+    if (p.at1(kSemi())) { p.expect(kSemi()); return Stmt(StmtKind.Trap(null), line, col); }
+    Expr msg = parseExpr(p);
+    p.expect(kSemi());
+    return Stmt(StmtKind.Trap(msg), line, col);
+  }
   if (p.at1(kLbrace()))   { return Stmt(StmtKind.Block(parseBlock(p)), line, col); }
 
   if (looksLikeVarDecl(p)) { return parseVarDecl(p, false); }

@@ -77,7 +77,7 @@ const KNOWN_MISSES = new Set<string>([
 ]);
 
 /**
- * The two legal programs this checker refuses. It was fourteen when the corpus was first recorded.
+ * The one legal program this checker refuses. It was fourteen when the corpus was first recorded.
  *
  * Eleven were one bug: a local aliasing something const could not be *rebound*, so every linked-list
  * walk in the spec was illegal. A twelfth was `match` used as an expression not narrowing its
@@ -87,7 +87,6 @@ const KNOWN_MISSES = new Set<string>([
  */
 const KNOWN_FALSE_ALARMS = new Set<string>([
   "[§wac-generic-enum-7dkq2mv] a generic enum works, with methods and several arguments#0",
-  "[§wac-trap-message-4nqk8wm] a trap can say why#0",
 ]);
 
 Deno.test("rung 3: every single-file program the spec calls illegal, refused", () => {
