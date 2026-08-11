@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0095](open/0095-a-struct-named-like-a-variant-resolves-to-the-enum.md) | a struct whose name matches some enum's variant resolves to that enum | bug | invalid wasm |
 | [0094](open/0094-a-funcref-parameter-needs-a-host-dispatcher.md) | a funcref parameter needs a host dispatcher, and there is no import section | missing feature | not implemented |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
 | [0089](open/0089-wacc-emits-no-transfer-buffer-so-nothing-can-bind-to-it.md) | wacc emits no transfer buffer, so nothing that passes bytes can bind to it | missing feature | not implemented |
