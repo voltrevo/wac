@@ -65,13 +65,14 @@ worse than one that says which:
 
 - **No ref directory walk.** `repo.wac` resolves a ref by name; enumerating `refs/heads/` to list
   branches is not written.
-- **The fetch protocol works; the transport does not.** `src/fetch.wac` parses a real advertisement,
-  builds a request real `git upload-pack` answers, extracts the packfile from the reply, and
-  `indexPack` then builds an index for it so the objects can be read — the whole conversation, checked
-  against git locally. What is missing is only the network: **this container has no direct egress.** DNS
-  for anything outside fails and everything goes through a Squid proxy, while `Cli.connect` is a raw TCP
-  connect, so a real server needs `CONNECT host:443` spoken to the proxy before TLS starts. Nothing here
-  does that yet.
+- **Fetch reaches a real server now; the pack does not come back yet.** `example/gitls.wac` lists a
+  remote's refs over our own TLS, through this container's proxy, verifying against the system trust
+  store — and against real GitHub it agrees with `git ls-remote` on all **16,209** refs of
+  `ethereum/go-ethereum`. That composes `src/fetch.wac`, `packages/http`'s `CONNECT` tunnel,
+  `packages/tls`'s `roots.wac`, and the TLS client. What is *not* done is the second half: `POST
+  /git-upload-pack` with wants and haves, then `indexPack` on the pack that comes back. Both of those
+  already work against a local `git upload-pack` over a pipe, so what is missing is the request rather
+  than the protocol.
 - **No push.**
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree

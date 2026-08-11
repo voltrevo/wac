@@ -342,6 +342,40 @@ u8[] result(CConn c, u8[] toSend, u8[] appData) {
   return w.take();
 }
 
+/** The three parts every call in this file returns. */
+export struct ClientStep {
+  /** The connection, to hand to the next call. */
+  u8[] state;
+  /** Bytes to put on the socket, if any. */
+  u8[] toSend;
+  /** Plaintext the peer sent, if any. */
+  u8[] appData;
+}
+
+/**
+ * Decode what `tlsClientInit`, `tlsClientFeed` and `tlsClientSend` return.
+ *
+ * **Here because `result` above is what writes it.** Every caller has to undo that packing, and until
+ * this existed each wrote its own: `box`'s `gets` applet carried eleven lines of index arithmetic, and a
+ * second copy was about to be written for `design/system/0005`'s fetch. A format with one encoder and a
+ * decoder per caller is one where a caller can be wrong on its own.
+ *
+ * The three lengths are trusted, because the only thing that produces this is `result`. A caller handing
+ * over something else is handing over a state this file never made, which is not a case worth a branch.
+ */
+export ClientStep clientStep(u8[] r) {
+  i32 at = 0;
+  u8[][] parts = u8[][3](fill: u8[0]());
+  for (i32 i = 0; i < 3; i++) {
+    i32 n = (r[at] << 24) | (r[at + 1] << 16) | (r[at + 2] << 8) | r[at + 3];
+    u8[] part = u8[n]();
+    for (i32 k = 0; k < n; k++) { part[k] = r[at + 4 + k]; }
+    parts[i] = part;
+    at = at + 4 + n;
+  }
+  return ClientStep(parts[0], parts[1], parts[2]);
+}
+
 /** Give up, recording why, and produce the alert that says so. */
 u8[] fail(CConn c, i32 code, i32 alert, Writer out, Writer appData) {
   c.failure = code;
