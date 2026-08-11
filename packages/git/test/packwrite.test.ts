@@ -40,6 +40,7 @@ function assert(cond: boolean, msg: string): void {
 
 const pack = await wacBind("packages/git/src/pack.wac") as any;
 const fetchmod = await wacBind("packages/git/src/fetch.wac") as any;
+const probe = await wacBind("packages/git/test/wac/thinprobe.wac") as any;
 
 /** The pack format's own type numbers. */
 const KIND: Record<string, number> = { commit: 1, tree: 2, blob: 3, tag: 4 };
@@ -272,6 +273,89 @@ Deno.test({
         built.Built_idx.count === after,
         `we indexed ${built.Built_idx.count} objects and the header says ${after}`,
       );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "a thin pack completed from a repository's own objects is one git accepts",
+  ignore: !haveGit,
+  fn: async () => {
+    // The same shape as above — two commits over one large, mostly-unchanged file — because that is what
+    // makes a server deltify against what the client claims to hold.
+    const dir = await Deno.makeTempDir({ prefix: "wac-git-thinrepo-" });
+    const git = async (args: string[], cwd = dir) => {
+      const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "piped" }).output();
+      return { out: r.stdout, text: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim(), code: r.code };
+    };
+    try {
+      await git(["init", "-q", "-b", "main"]);
+      const body = "a line that repeats\n".repeat(400);
+      await Deno.writeTextFile(`${dir}/big.txt`, body);
+      await git(["add", "-A"]);
+      await git(["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-qm", "one"]);
+      await Deno.writeTextFile(`${dir}/big.txt`, body + "one more line\n");
+      await git(["add", "-A"]);
+      await git(["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-qm", "two"]);
+      const c1 = (await git(["rev-parse", "HEAD~1"])).text;
+      const c2 = (await git(["rev-parse", "HEAD"])).text;
+
+      const hex = (s: string) => Uint8Array.from(s.match(/../g)!.map((h) => parseInt(h, 16)));
+      const wants = fetchmod["Vec$u8Arr"].create();
+      const haves = fetchmod["Vec$u8Arr"].create();
+      wants.push(hex(c2));
+      haves.push(hex(c1));
+      const up = new Deno.Command("git", {
+        args: ["upload-pack", "--stateless-rpc", "."],
+        cwd: dir,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = up.stdin.getWriter();
+      await w.write(Uint8Array.from(fetchmod.wantRequest(wants, haves, "ofs-delta thin-pack", 0)));
+      await w.close();
+      const found = fetchmod.findPack((await up.output()).stdout);
+      assert(found.tag === "Packfile", `no pack in the reply: ${found.tag}`);
+      const thin = Uint8Array.from(found.Packfile_pack);
+
+      // **The shape, asserted.** Without a missing base there is nothing to complete.
+      const said = pack.indexPack(thin);
+      assert(said.tag === "Thin", `the pack is not thin (${said.tag}); nothing below would mean anything`);
+      assert(said.Thin_bases.len() === 1, `expected one missing base, got ${said.Thin_bases.len()}`);
+      const baseName = [...Uint8Array.from(said.Thin_bases.get(0))]
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+      const baseKind = (await git(["cat-file", "-t", baseName])).text;
+      const baseBody = (await git(["cat-file", baseKind, baseName])).out;
+
+      // **`Missing` before `Complete`**, so the arm that reports a base we do not have is exercised too —
+      // a completion that silently produced a pack without the base would otherwise look identical here.
+      const without = probe.whyIncomplete(thin, 0, new Uint8Array(0));
+      assert(
+        without.startsWith("missing: ") && without.includes(baseName),
+        `an empty repository should have said which object it needs: ${JSON.stringify(without)}`,
+      );
+
+      // And with the base planted in an in-memory repository, the completion happens there — `readObject`
+      // out of the store, `completePack` on top.
+      const whole = Uint8Array.from(probe.completeAgainst(thin, KIND[baseKind], baseBody));
+      assert(whole.length > thin.length, `the completed pack is ${whole.length} bytes and the thin one ${thin.length}`);
+      const before = (thin[8] << 24) | (thin[9] << 16) | (thin[10] << 8) | thin[11];
+      const after = (whole[8] << 24) | (whole[9] << 16) | (whole[10] << 8) | whole[11];
+      assert(after === before + 1, `the object count went ${before} -> ${after}`);
+
+      // The oracle, and it is the same command twice: it refuses the thin pack and accepts this one.
+      await Deno.writeFile(`${dir}/thin.pack`, thin);
+      const refused = await git(["index-pack", "thin.pack"]);
+      assert(
+        refused.code !== 0 && /unresolved delta/.test(refused.err),
+        `git index-pack accepted the thin pack, so the comparison means nothing: ${refused.err}`,
+      );
+      await Deno.writeFile(`${dir}/whole.pack`, whole);
+      const accepted = await git(["index-pack", "whole.pack"]);
+      assert(accepted.code === 0, `git index-pack refused the completed pack: ${accepted.err}`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

@@ -28,7 +28,7 @@ import { decode } from "../../codec/src/hex.wac";
 // declares `RepoAt.Opened`, and importing the enum too is a duplicate name the compiler refuses. It was
 // imported for a while to quiet a wacc false alarm — `no variant of that name` — which is fixed on the
 // checker side by `spec/cases/0095`, so the import became the only thing left that was wrong.
-import { Got, Pack, openPack, objectNamed } from "./pack.wac";
+import { Got, Indexed, Pack, completePack, indexPack, openPack, objectNamed } from "./pack.wac";
 import { Kind, Object, readLoose } from "./object.wac";
 import { RefValue, PackedRef, packedTarget, parsePackedRefs, parseRef } from "./refs.wac";
 import { Entry, Tree, parseTree, writeTree } from "./tree.wac";
@@ -368,6 +368,54 @@ export Stored writeObject(Repo r, Kind kind, u8[] content) {
  * writing the index would leave `git status` reporting every file as deleted and untracked at once,
  * which is what the first version of `gitci` did.
  */
+/** A thin pack completed from what this repository holds, or why it could not be. */
+export enum Completion {
+  /** The pack with its missing bases appended, ready for `indexPack`. */
+  Complete(u8[] pack),
+  /** It needs an object this repository does not have. Named, so a caller can go and get it. */
+  Missing(string why),
+  /** The pack is not thin, it is damaged. */
+  Unusable(string why)
+}
+
+/**
+ * Complete a thin pack from this repository's own objects.
+ *
+ * **This is the caller `completePack` was missing.** A server answering a request with `have`s may send
+ * deltas against objects it knows you hold, and until something read those objects out of a local store
+ * the completion was machinery with no user. `indexPack` says which names it needs; this reads them from
+ * here — loose or packed, since `readObject` looks in both — and hands them over.
+ *
+ * A pack that is already whole comes back unchanged rather than refused, so a caller that does not know
+ * which kind it received can put every pack through this.
+ *
+ * The variants avoid the name `Absent`, which `Got` already uses in this file: two enums whose variants
+ * collide have cost this package a day of somebody's time — see `issues/lang/0096` and `0097`.
+ */
+export Completion completeThin(Repo r, u8[] pack) {
+  match (indexPack(pack)) {
+    case Built(idx): { return Completion.Complete(pack); }
+    case Unindexable(why): { return Completion.Unusable(why); }
+    case Thin(bases): {
+      i32[] kinds = i32[bases.len()]();
+      Vec<u8[]> contents = Vec.create();
+      for (i32 i = 0; i < bases.len(); i++) {
+        match (readObject(r, bases.get(i))) {
+          case Absent(why): {
+            return Completion.Missing("the pack is deltified against " + hexOf(bases.get(i))
+              + ", which this repository does not have: " + why);
+          }
+          case Found(kind, data): {
+            kinds[i] = kind;
+            contents.push(data);
+          }
+        }
+      }
+      return Completion.Complete(completePack(pack, kinds, contents));
+    }
+  }
+}
+
 export Stored writeWorkTree(Repo r, string dir, string prefix, Vec<IndexEntry> index) {
   string[]? listing = r.fs.readDir(dir);
   if (listing is null) { return Stored.NotStored("cannot read " + dir); }

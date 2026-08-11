@@ -81,13 +81,15 @@ worse than one that says which:
 - **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, no
   config file, no `origin` remote written into one. The programs under `example/` take positional
   arguments and do one thing each.
-- **A thin pack can be completed; an incremental fetch is not wired up.** `indexPack` answers `Thin`
-  with the base names a pack is missing, and `completePack` appends them — which is what
-  `git index-pack --fix-thin` does, and it works by appending because a delta's base only has to be
-  *somewhere* in the pack. Measured against the command that adjudicates it: `git index-pack` refuses the
-  thin pack with `unresolved delta` and accepts the completed one. What is missing is the caller — a fetch
-  that sends `have`s, reads the bases out of its own object store, and completes the reply. Nothing does
-  that yet; `gitclone` and `gitfetch` send no `have`s and so never receive a thin pack.
+- **A thin pack can be completed from the local store; no program fetches incrementally.** `indexPack`
+  answers `Thin` with the base names a pack is missing, `completeThin` reads those out of a repository —
+  loose or packed — and `completePack` appends them, which is what `git index-pack --fix-thin` does. It
+  works by appending because a delta's base only has to be *somewhere* in the pack, which is also why it
+  needs no callback: wac has no closures. Measured against the command that adjudicates it, twice:
+  `git index-pack` refuses the thin pack with `unresolved delta` and accepts the completed one. What is
+  still missing is the program — nothing sends `have`s over the network and completes the reply, so
+  `gitclone` and `gitfetch` send none and never receive a thin pack. There is no `git fetch` or
+  `git pull` here.
 - **A pack can be written; push cannot.** `writePack` produces a pack of whole objects — no deltas, which
   is what `design/system/0005` step 7 asks for — and `git index-pack`, `git verify-pack -v` and
   `git unpack-objects` all accept it. What is missing is the conversation: `git-receive-pack`, the ref

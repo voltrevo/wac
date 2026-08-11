@@ -254,7 +254,7 @@ export default function Home() {
           against four independent corpora rather than one: a generated sweep of{" "}
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          358 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          359 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
           <Lead>200 of 202</Lead>.
         </P>
@@ -272,15 +272,15 @@ export default function Home() {
           than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>355 of the repository&rsquo;s 358 wac files</Lead> whole, and
+          The emitter compiles <Lead>356 of the repository&rsquo;s 359 wac files</Lead> whole, and
           the corpus being the live repository is why that count used to move in both directions —
           code written for other reasons walked in using what the emitter had not reached. It has
           caught up: nothing in the repository is declined any more, and all three files it cannot
           finish block on the same thing, which is not a language feature but an import the harness
-          does not supply. None of the 358 produces an invalid module, and — since
+          does not supply. None of the 359 produces an invalid module, and — since
           &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
           {m({ children: "export" })} a file declares is a function in the module rather than taking
-          the emitter&rsquo;s word — none of the 355 is missing one either. That is the
+          the emitter&rsquo;s word — none of the 356 is missing one either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
