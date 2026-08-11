@@ -291,7 +291,7 @@ i32 walk(Repo r, u8[] treeName, string dir, string prefix, Vec<IndexEntry> entri
                   // written with whatever mode the backing gives it and the caller is told.
                   // issues/system/0132.
                   if (e.mode == "100755") {
-                    Change mode = r.fs.chmod(path, 493);
+                    Change mode = r.fs.setExecutable(path, true);
                     if (!mode.ok()) { unset[0] = unset[0] + 1; }
                   }
                   // Written above like any other blob, because its content *is* the target path. What

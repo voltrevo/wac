@@ -104,10 +104,13 @@ past the fault byte**, because moving the fault is what silently misreads a repl
 not recompiled — `packages/platform/test/unnameable.test.ts` used to pin "the fault is last" and now
 pins the offsets themselves, which is the invariant that was actually meant.
 
-`packages/fs`'s `chmod` now applies the owner-execute bit on a host mount and **ignores the read and
-write bits**, which is a partial implementation reported as a success and is stated at the call site
-rather than left to be discovered. Nothing here needs the other bits enforced yet; a caller that does
-is not served.
+`packages/fs` grew **`setExecutable` beside `chmod`** rather than widening `chmod`. The first attempt did
+widen it — a host mount applied the owner-execute bit of the mode and answered success — and
+`packages/box`'s own test caught it: `chmod` there is a user-facing command, and `chmod 600 secret`
+reporting success while leaving the file world-readable is a worse answer than `not implemented`. So
+`chmod` on a host mount still refuses, `setExecutable` promises exactly one bit and delivers it, and the
+git checkout calls the narrow one. The child protocol gained `ASK_SET_EXECUTABLE` for the same reason it
+could not reuse `ASK_CHMOD`: `Stat` carries one bit, not a mode, so a child cannot compute what to send.
 
 ### What adjudicates it
 

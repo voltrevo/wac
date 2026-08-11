@@ -36,7 +36,7 @@ import { Change, Cli, FAULT_DENIED, FAULT_EXISTS, FAULT_NONE, FAULT_NOT_EMPTY, F
   PARENT_FS, Pending, Stat }
   from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
-import { Chan, parentUser, remoteChmod, remoteChown, remoteCloseOut, remoteIsHostPath, remoteMkdir,
+import { Chan, parentUser, remoteChmod, remoteChown, remoteSetExecutable, remoteCloseOut, remoteIsHostPath, remoteMkdir,
   remoteOpenOut, remoteReadDir, remoteReadFile, remoteReadSome, remoteRemove, remoteRename,
   remoteLinkStat, remoteStat, remoteWriteFile, remoteWriteOut } from "./remote.wac";
 import { resolvePath } from "./path.wac";
@@ -860,10 +860,10 @@ export struct Fs {
    * only true if something can actually *set* them: a field nothing writes is a field nothing tests, and
    * "exact metadata" was the whole argument for a format of our own rather than tar.
    *
-   * **On a host mount only the executable bit is applied**, because that is all `Cli.setExecutable`
-   * carries and the decision behind that is in issues/system/0132. The read and write bits of `mode` are
-   * ignored there — stated here rather than discovered, since a mode silently not applied is the thing
-   * this comment used to warn about. On an image mount the whole mode is recorded, as it always was.
+   * **Not implemented for a host mount**, still. `Cli` gained `setExecutable` (issues/system/0132) and
+   * that is one bit, not a mode — applying it here would honour a third of the argument and answer
+   * success, so `chmod 600` would report a file private that anyone can read. `setExecutable` below is
+   * the narrower call that promises only what it does. On an image mount the whole mode is recorded.
    */
   Change chmod(this, string path, i32 mode) {
     path = this.at(path);
@@ -875,17 +875,14 @@ export struct Fs {
       // `FAULT_DENIED` reached the user as "cannot access 'd': Permission denied", blaming the file
       // for something we simply have not written. `FAULT_UNSUPPORTED` has no fixed phrase, so the
       // message below is what a caller prints. wac-mono 0117.
-      // **Only the executable bit, and that is the whole of what the capability carries.** `Cli` has
-      // `setExecutable`, one bool, because git's regular-file modes differ only there and a browser's
-      // OPFS has no mode bits at all — issues/system/0132 records the decision. So the owner-execute
-      // bit of `mode` is applied and **the read and write bits are not**: a `chmod(path, 0600)` on a
-      // host mount does not make a file private.
+      // **Still refused, deliberately, even though the executable bit is now settable.** `Cli` carries
+      // `setExecutable` and nothing wider, so applying `mode` here would set one bit of it and report
+      // success — and `box`'s `chmod 600 secret` would tell a user the file is private when it is not.
+      // A partial mode reported as a whole one is worse than an error, which is what this comment said
+      // before the capability existed and is still the reason.
       //
-      // That is a partial implementation reported as a success, which is worth being uneasy about. It is
-      // the right trade only because the alternative was `FAULT_UNSUPPORTED` for every mode, which made
-      // a checkout unable to set a bit it could set — but a caller that needs the other bits enforced is
-      // not served here, and nothing in this repository is that caller yet.
-      case Host(cli): { return cli.setExecutable(path, (mode & 64) != 0).wait(); }
+      // `setExecutable` below is the call that says exactly what it does; the git checkout uses it.
+      case Host(cli): { return Change.of(FAULT_UNSUPPORTED(), "chmod on a host mount is not implemented"); }
       // Asked, and therefore implemented wherever the parent's own mount implements it — a child
       // that `chmod`s a file in an image changes the same inode its parent would have changed.
       case Remote(chan): { return remoteChmod(chan, path, mode); }
@@ -900,6 +897,38 @@ export struct Fs {
       return Change.of(FAULT_DENIED(), "operation not permitted");
     }
     this.nodes.get(node).setMode(mode);
+    return Change.of(FAULT_NONE(), "");
+  }
+
+  /**
+   * Make a file executable, or stop it being one — the one mode change every backing can express.
+   *
+   * **Separate from `chmod` because it promises less and can therefore deliver it.** `Cli` carries
+   * `setExecutable(path, bool)` and no wider mode (issues/system/0132), so a host mount can honour this
+   * exactly while `chmod` there would apply a third of its argument and answer success. A git checkout
+   * wants precisely this bit: `100755` against `100644`.
+   *
+   * On an image mount the recorded mode's three execute bits move together, following read the way
+   * `chmod +x` does, so a file readable only by its owner becomes executable only by its owner.
+   */
+  Change setExecutable(this, string path, bool on) {
+    path = this.at(path);
+    i32 mi = this.mountOf(path);
+    if (mi < 0) { return Change.of(FAULT_NOT_FOUND(), "no such file or directory"); }
+    Mount m = this.mounts.get(mi);
+    match (m.backing) {
+      case Host(cli): { return cli.setExecutable(path, on).wait(); }
+      case Remote(chan): { return remoteSetExecutable(chan, path, on); }
+      case Synth(rand): { return Change.of(FAULT_READ_ONLY(), "Read-only file system"); }
+      else: {}
+    }
+    i32 node = this.find(m, path);
+    if (node < 0) { return absentChange(node); }
+    if (this.user != ROOT() && this.nodes.get(node).owner != this.user) {
+      return Change.of(FAULT_DENIED(), "operation not permitted");
+    }
+    i32 mode = this.nodes.get(node).mode;
+    this.nodes.get(node).setMode(on ? mode | ((mode & 292) >> 2) : mode & ~73);
     return Change.of(FAULT_NONE(), "");
   }
 

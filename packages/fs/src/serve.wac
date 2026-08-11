@@ -11,7 +11,7 @@ import { Buf } from "../../bytes/src/buf.wac";
 import { Change, Cli, FAULT_OTHER } from "../../platform/src/platform.wac";
 import { Fs } from "./fs.wac";
 import { Reader, putString } from "./wire.wac";
-import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
+import { Chan, ASK_CHMOD, ASK_CHOWN, ASK_SET_EXECUTABLE, ASK_CLOSE_OUT, ASK_IS_HOST_PATH, ASK_LINK_STAT, ASK_MKDIR,
   ASK_OPEN_OUT, ASK_READ_DIR, ASK_READ_FILE, ASK_READ_SOME, ASK_REMOVE, ASK_USER, ASK_RENAME, ASK_STAT,
   ASK_WRITE_FILE, ASK_WRITE_OUT, answer, encodeChange, encodeFileResult, encodeNames, encodeStat }
   from "./remote.wac";
@@ -72,6 +72,9 @@ export bool serveOn(Chan c, Fs fs) {
   } else if (op == ASK_CHMOD()) {
     string path = r.string();
     encodeChange(out, fs.chmod(path, r.u32()));
+  } else if (op == ASK_SET_EXECUTABLE()) {
+    string path = r.string();
+    encodeChange(out, fs.setExecutable(path, r.byte() == 1));
   } else if (op == ASK_CHOWN()) {
     string path = r.string();
     encodeChange(out, fs.chown(path, r.string()));

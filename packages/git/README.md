@@ -152,8 +152,9 @@ worse than one that says which:
   it loses to `.git/info/exclude` and to a `.gitignore` — and the test's fixture makes all three disagree
   about the same three files, because one where they agree passes against a matcher that never read it.
 - **A file's mode is one bit wide.** `Cli.setExecutable` carries the executable bit and nothing else, so
-  `packages/fs`'s `chmod` applies that bit on a host mount and **ignores the read and write bits** — a
-  `chmod(path, 0600)` there does not make a file private. That is the decision recorded in
+  `packages/fs` grew a `setExecutable` beside `chmod` rather than widening `chmod` — which still refuses
+  on a host mount, because applying one bit of a mode and answering success would let `chmod 600 secret`
+  report a file private that anyone can read. That is the decision recorded in
   [issues/system/0132](../../issues/system/closed/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md),
   taken because git's regular-file modes differ only in that bit and a page's filesystem has no mode bits
   at all. A caller needing the rest enforced is not served, and nothing here is that caller.

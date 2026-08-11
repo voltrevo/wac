@@ -83,6 +83,14 @@ export i32 ASK_CLOSE_OUT() { return 13; }
 export i32 ASK_IS_HOST_PATH() { return 14; }
 export i32 ASK_LINK_STAT() { return 15; }
 export i32 ASK_USER() { return 16; }
+/**
+ * `setExecutable`, which is **not** `chmod` with a computed mode.
+ *
+ * A child cannot work out what mode to send: `Stat` carries one bit, not the read and write bits, so
+ * turning "make this executable" into a whole mode would mean inventing the rest. Appended as its own
+ * number rather than folded into `ASK_CHMOD` for that reason.
+ */
+export i32 ASK_SET_EXECUTABLE() { return 17; }
 
 /**
  * The channel to a filesystem in another process.
@@ -311,6 +319,13 @@ export Change remoteRemove(Chan c, string path, bool recursive) {
   Buf b = request(ASK_REMOVE());
   putString(b, path);
   b.push(recursive ? 1 : 0);
+  return decodeChange(ask(c, b));
+}
+
+export Change remoteSetExecutable(Chan c, string path, bool on) {
+  Buf b = request(ASK_SET_EXECUTABLE());
+  putString(b, path);
+  b.push(on ? 1 : 0);
   return decodeChange(ask(c, b));
 }
 
