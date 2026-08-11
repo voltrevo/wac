@@ -77,6 +77,31 @@ export bool noRefsIn(u8[] advertisement) {
 }
 
 /**
+ * The value a ref currently has according to `advertisement`, or twenty zeros if it has none.
+ *
+ * **This is the `old` half of the compare-and-swap, and taking it from the advertisement is the whole
+ * point.** A client that sent zeros for a ref that exists is telling the server "nobody has this yet",
+ * and a server that believed it would discard whatever was there. Reading it from what the server just
+ * said is what makes a push safe against somebody else having moved the ref — and if they move it between
+ * the advertisement and the push, the server refuses, which is the outcome that protects the commit.
+ *
+ * Bytes in and bytes out, for the reason `noRefsIn` gives: a parsed advertisement cannot cross between two
+ * bound modules.
+ */
+export u8[] oldFor(u8[] advertisement, string ref) {
+  match (parseAdvertisement(advertisement)) {
+    case Garbled(why): { return absentName(); }
+    case Said(ad) : {
+      if (noRefsYet(ad)) { return absentName(); }
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        if (ad.refs.get(i).name == ref) { return ad.refs.get(i).target; }
+      }
+      return absentName();
+    }
+  }
+}
+
+/**
  * The update commands, with the capabilities on the first line only.
  *
  * Same rule as a fetch's wants: a server reading capabilities on the second command is entitled to treat
