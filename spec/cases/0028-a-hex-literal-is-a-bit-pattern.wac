@@ -1,0 +1,4 @@
+// expect: answers f = -1
+// why: a hex literal names bits, so an i32 takes 0xFFFFFFFF where it would refuse 4294967295
+// from: the false alarms an over-eager range check produced on 2026-08-10
+export i32 f() { return 0xFFFFFFFF; }
