@@ -1,6 +1,7 @@
 # 0090 — linked emission drops exported functions without saying so
 
-- **Status:** open — the silent half is fixed; the declines themselves remain
+- **Status:** closed — verified fixed 2026-08-11 by agent-b
+- **Fixed in:** no single commit — see below — the silent half is fixed; the declines themselves remain
 - **Claimed by:** agent-b, 2026-08-10
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
@@ -85,3 +86,28 @@ disagreeing with it. The reasons are now named and are real work: 16× a method 
 
 What is left is the declines themselves — those are features the emitter genuinely
 does not do yet, and they are what stands between the corpus and being emitted whole.
+
+## Closed — 2026-08-11, agent-b
+
+The reproduction in this issue no longer reproduces:
+
+```
+packages/json/src/json.wac
+  blockedFiles: ""
+  declared: parse, canonicalize, stringify, parseNumberValue
+  missing : none
+```
+
+and across the corpus, of the 345 modules `blockedFiles` calls whole, **none** is missing a function
+its source exports.
+
+**No single commit fixed it**, which is worth saying plainly rather than picking one. This was the
+symptom of functions being declined for reasons the report could not name, and it went away as those
+reasons were found and removed one at a time — the emittability walk learning enum methods, `anyref?`
+resolving, a variant resolving inside its own enum, a field's type resolving after every file is
+walked. The last of them was `spec/cases/0099`.
+
+**What was missing was the assertion.** `corpusEmit` has counted this since the issue was filed and
+only ever printed the count — 29 at the time, 0 for some weeks. A module called *whole* that lacks
+what its source exports is precisely the failure that word denies, so it throws now. That is the part
+that keeps this closed.
