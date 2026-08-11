@@ -61,7 +61,7 @@ async function gitco(): Promise<string> {
  * `git gc` matters here: without it every object is loose and the pack path — most of the reading this
  * exercises — is never touched.
  */
-async function repo(withExecutable: boolean, withSymlink = false): Promise<{ dir: string; git: (a: string[]) => Promise<{ out: string; code: number }> }> {
+async function repo(withExecutable: boolean, withSymlink = false, withGitlink = false): Promise<{ dir: string; git: (a: string[]) => Promise<{ out: string; code: number }> }> {
   const dir = await Deno.makeTempDir({ prefix: "wac-git-co-" });
   const git = async (args: string[]) => {
     const r = await new Deno.Command("git", {
@@ -92,6 +92,13 @@ async function repo(withExecutable: boolean, withSymlink = false): Promise<{ dir
   // says so — and the point of putting one here is that the claim gets measured instead of predicted.
   if (withSymlink) await Deno.symlink("a.txt", `${dir}/link`);
   await git(["add", "-A"]);
+  // A gitlink, added through the index because there is no submodule to add: mode 160000 naming a commit
+  // that lives in the submodule's own repository. **The sha is deliberately one this repository does not
+  // have**, which is the real shape — a gitlink pointing at a local commit would exercise the ordinary
+  // read path and prove nothing.
+  if (withGitlink) {
+    await git(["update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,vendor/dep"]);
+  }
   await git(["commit", "-qm", "one"]);
   await git(["gc", "-q"]);
   return { dir, git };
@@ -235,6 +242,50 @@ Deno.test({
       const st = await Deno.lstat(`${dir}/link`);
       assert(!st.isSymlink && st.isFile, "the entry on disk is not the ordinary file this claims to write");
       assert(await Deno.readTextFile(`${dir}/link`) === "a.txt", "the file does not hold the link target");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "a gitlink checks out as the empty directory git leaves, and git calls it clean",
+  ignore: !haveGit,
+  fn: async () => {
+    const { dir, git } = await repo(false, false, true);
+    try {
+      // **The shape, asserted both ways.** A `160000` entry has to be in the tree, and the commit it names
+      // has to be absent — with it present this would take the ordinary read path and say nothing about
+      // submodules.
+      const tree = (await git(["ls-tree", "-r", "HEAD"])).out;
+      const line = tree.split("\n").find((l) => l.startsWith("160000 "));
+      assert(line !== undefined, `no gitlink in the tree:\n${tree}`);
+      const sha = line!.split(/\s+/)[2];
+      assert(
+        (await git(["cat-file", "-t", sha])).code !== 0,
+        `the gitlink's commit ${sha} is in this repository, so the submodule case is untested`,
+      );
+
+      await wipe(dir);
+      const r = await run(await gitco(), dir);
+      // Before this was handled, the whole checkout failed here — and with a message about nesting depth,
+      // which is what made it worth a test rather than a comment.
+      assert(r.code === 0, `gitco failed on a tree with a gitlink: ${r.err}`);
+      assert(r.err === "", `gitco warned: ${r.err}`);
+      // The gitlink is not a file, so it is not in the file count.
+      assert(r.out === "5 files", `gitco wrote ${JSON.stringify(r.out)}, expected "5 files"`);
+
+      // What git does with an uninitialised submodule, and what we now do: an empty directory, the
+      // gitlink in the index, and nothing to report.
+      const staged = (await git(["ls-files", "-s", "--", "vendor/dep"])).out;
+      assert(staged.startsWith(`160000 ${sha} 0`), `the index records ${JSON.stringify(staged)}`);
+      const st = await Deno.lstat(`${dir}/vendor/dep`);
+      assert(st.isDirectory, "vendor/dep is not a directory");
+      assert([...Deno.readDirSync(`${dir}/vendor/dep`)].length === 0, "vendor/dep is not empty");
+
+      const after = await git(["status", "--porcelain"]);
+      assert(after.out === "", `git called the checkout dirty: ${after.out}`);
+      assert((await git(["fsck"])).code === 0, "git fsck failed after a checkout with a gitlink");
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
