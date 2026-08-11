@@ -1,6 +1,7 @@
 # 0100 — the boundary names a struct by its spelling, so two same-named structs are one to a host
 
-- **Status:** open — the reference is done and wacc's helper names agree; what is left is wacc's *type* names
+- **Status:** closed, 2026-08-11 by agent-b
+- **Fixed in:** b1ad3005 (the reference), dfa6c8e0 and ff7bbe76 (wacc)
 - **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -129,3 +130,34 @@ compilers agree with each other either way, and every qualified name in the syst
 behaved like this — a generic instance is `Vec__packages_std_src_vec$string` for the same reason.
 It only becomes a problem if a manifest built in one place is read against a module built in
 another.
+
+## Resolution — all three, 2026-08-11
+
+The last piece was wacc's *type* names, in `ff7bbe76`. `metaNameOf` qualifies a key by its declaring
+file when the name is ambiguous, and `metaTypeSpelling` applies that to every name inside a composite
+— `S[]`, `S?`, `fn[S(i32)]`, `Vec<S>` — by rewriting the spelling rather than repeating the walk that
+produced it.
+
+**The interesting half was the second bug behind it.** With the type column fixed, the class names
+came out legal and unique and every export was still *unbound*: the signatures said `S` and `S@2`
+while the struct table said `S__a` and `S__b`. `exportSigsLinked` builds its own `Env` and had never
+collected the file paths, because nothing in that pass had needed them — so `qualifiedName` found no
+path and returned the bare key. **A qualification with nothing to qualify by does not fail; it
+answers with what it was given.** That is what made this a second bug rather than an obvious one, and
+it is worth remembering next to the first: both halves of this issue were a name that looked like an
+answer.
+
+Where the three parts landed:
+
+* the generated glue declaring one class twice — the reference in `b1ad3005`, wacc in `ff7bbe76`
+* an exported signature that cannot say which `S` it means — same two commits
+* wacc's counter (`$bind$s_S@2_new`) against the reference's file qualification — `dfa6c8e0`
+
+Both compilers emit byte-identical bind names for the same input, and both generate glue that
+imports, calls, and comes back with each function bound to *its* struct's class — checked by
+`compiler/wacBindgen.test.ts` and `packages/wacc/test/bindgen.test.ts`, which run what they generate.
+
+The path-dependence noted above is unchanged and shared: the tag comes from the path as given, so the
+same sources compiled through an absolute path spell it differently from a relative one. The two
+compilers agree either way. It would only bite a manifest built in one place and read against a
+module built in another, which is worth a separate issue if anyone ever does that.
