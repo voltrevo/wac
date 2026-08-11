@@ -7,7 +7,12 @@
 export type Expectation =
   | { kind: "emits" }
   | { kind: "refused" }
-  | { kind: "answers"; fn: string; value: string };
+  | { kind: "answers"; fn: string; value: string }
+  // A rule the other three cannot state: the program is legal, the module is built, and calling
+  // `fn` traps. Half of what `spec/spec/casts.md` promises is of this shape — `as!` is the checked
+  // cast — and so are the bounds checks and `!` on a null. A case that could only say "answers"
+  // had to leave those to prose [issue 0085].
+  | { kind: "traps"; fn: string };
 
 export type Case = {
   name: string;
@@ -49,6 +54,8 @@ export function parseCase(name: string, text: string): Case {
       if (spec === "emits") expect = { kind: "emits" };
       else if (spec === "refused") expect = { kind: "refused" };
       else {
+        const t = /^traps\s+(\S+)$/.exec(spec);
+        if (t) { expect = { kind: "traps", fn: t[1] }; continue; }
         const m = /^answers\s+(\S+)\s*=\s*(.+)$/.exec(spec);
         if (!m) throw new Error(`${name}: cannot read expectation ${JSON.stringify(spec)}`);
         expect = { kind: "answers", fn: m[1], value: m[2].trim() };

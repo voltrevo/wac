@@ -123,8 +123,10 @@ worse than one that says which:
   report is an **unstaged mode change**, because `Stat` has no mode —
   [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md); a
   staged one is visible, since both sides of that comparison are recorded rather than read off the disk.
-  Only the work tree's own `.gitignore` is read, not nested ones, `.git/info/exclude` or
-  `core.excludesFile`.
+  Ignore rules are gathered as git gathers them: `.git/info/exclude`, then the root `.gitignore`, then each
+  **nested** one as the walk descends, so a deeper file's rules win — which is how a `sub/.gitignore` holding
+  `!keep.log` brings back a file the root's `*.log` had ignored, without reaching outside `sub/`.
+  `core.excludesFile` is the one source still unread, because it needs a config parser.
 - **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —

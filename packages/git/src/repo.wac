@@ -496,9 +496,20 @@ bool tracked(const Vec<IndexEntry> entries, string path) {
  * `.git` is skipped without consulting any rule, as git does — no `.gitignore` mentions it and every
  * repository would be full of it otherwise.
  */
-void untrackedUnder(Repo r, const Vec<Rule> rules, const Vec<IndexEntry> entries, string dir,
+void untrackedUnder(Repo r, Vec<Rule> rules, const Vec<IndexEntry> entries, string dir,
                     string prefix, Vec<string> out, i32 depth) {
   if (depth <= 0) { return; }
+  // **This directory's own `.gitignore`, appended for this subtree and everything under it.** git reads one
+  // per directory and a deeper file overrides a shallower one, which falls out of last-match-wins as long as
+  // the deeper rules come later in the list — so they are appended on the way down. `rules` is copied per
+  // level rather than shared, because a sibling directory must not inherit its neighbour's rules.
+  Vec<Rule> here = Vec.create();
+  for (i32 i = 0; i < rules.len(); i++) { here.push(rules.get(i)); }
+  FileResult own = r.fs.readFile(dir + "/.gitignore");
+  if (own.ok) {
+    Vec<Rule> mine = parseIgnore(own.bytes, prefix);
+    for (i32 i = 0; i < mine.len(); i++) { here.push(mine.get(i)); }
+  }
   string[]? names = r.fs.readDir(dir);
   if (names is null) { return; }
   string[] list = names!;
@@ -517,10 +528,10 @@ void untrackedUnder(Repo r, const Vec<Rule> rules, const Vec<IndexEntry> entries
     if (name == ".git") { continue; }
     string rel = prefix == "" ? name : prefix + "/" + name;
     Stat st = r.fs.stat(dir + "/" + name);
-    if (ignored(rules, rel, st.isDir)) { continue; }
+    if (ignored(here, rel, st.isDir)) { continue; }
     if (st.isDir) {
       if (anyTrackedUnder(entries, rel)) {
-        untrackedUnder(r, rules, entries, dir + "/" + name, rel, out, depth - 1);
+        untrackedUnder(r, here, entries, dir + "/" + name, rel, out, depth - 1);
       } else {
         out.push("?? " + rel + "/");
       }
@@ -626,11 +637,15 @@ export Vec<string> statusOf(Repo r) {
         if (x != " " || y != " ") { out.push(x + y + " " + e.path); }
       }
 
-      // Untracked files, which need the ignore rules or they would be noise. Only the work tree's own
-      // `.gitignore` is read — `ignore.wac` says why it does not gather the other three sources.
+      // Untracked files, which need the ignore rules or they would be noise.
+      //
+      // **`.git/info/exclude` first, because it is the lowest precedence of the sources git reads.** The
+      // work tree's own `.gitignore` and every nested one are gathered by the walk itself, on the way down,
+      // so a deeper file's rules land later in the list and win — which is what last-match-wins gives.
+      // `core.excludesFile` is still absent: it needs a config parser, and `ignore.wac` says so.
       Vec<Rule> rules = Vec.create();
-      FileResult ign = r.fs.readFile(r.workTree + "/.gitignore");
-      if (ign.ok) { rules = parseIgnore(ign.bytes); }
+      FileResult exclude = r.fs.readFile(r.gitDir + "/info/exclude");
+      if (exclude.ok) { rules = parseIgnore(exclude.bytes, ""); }
       untrackedUnder(r, rules, idx.entries, r.workTree, "", untracked, 64);
 
       // In HEAD and not in the index: staged for deletion.

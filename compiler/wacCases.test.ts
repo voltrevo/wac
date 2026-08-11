@@ -18,7 +18,7 @@ Deno.test("cases: every case says what it is and what it wants", () => {
   const kinds = new Set(cases.map(c => c.expect.kind));
   // A corpus of nothing but rejections would say nothing about what a compiler must accept, and the
   // negative cases are half of why this exists.
-  for (const want of ["emits", "refused", "answers"]) {
+  for (const want of ["emits", "refused", "answers", "traps"]) {
     if (!kinds.has(want as "emits")) throw new Error(`no case expects ${want}`);
   }
 });
@@ -44,7 +44,15 @@ Deno.test("cases: the reference meets every one of them", async () => {
     try {
       got = inst.call(c.expect.fn, []);
     } catch (e) {
+      // A trap is what a `traps` case wants and the failure of every other kind. Only a
+      // `RuntimeError` counts: a host-side `TypeError` from the boundary is the harness being
+      // wrong about the program, not the program trapping.
+      if (c.expect.kind === "traps" && e instanceof WebAssembly.RuntimeError) continue;
       wrong.push(`${c.name}: ${c.expect.fn}() trapped — ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (c.expect.kind === "traps") {
+      wrong.push(`${c.name}: ${c.expect.fn}() answered ${String(got)}, and the case says it must trap`);
       continue;
     }
     if (String(got) !== c.expect.value) {

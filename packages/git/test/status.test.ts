@@ -14,6 +14,10 @@
 // tracked changes before untracked ones rather than sorting the lot, which one global sort got wrong and
 // this catches.
 //
+// Ignore rules are gathered the way git gathers them: `.git/info/exclude` first, then the root
+// `.gitignore`, then each nested one as the walk descends — so a deeper file's rules land later and win,
+// which is what last-match-wins gives. `core.excludesFile` is the one source still unread.
+//
 // The one thing it cannot report is an **unstaged mode change**, because `Stat` has no mode
 // (`issues/system/0132`). A *staged* mode change is visible, since both sides of that comparison are
 // recorded rather than read off the disk. The fixture holds no executable, so the difference does not arise
@@ -101,6 +105,13 @@ Deno.test({
       await Deno.writeTextFile(`${dir}/.gitignore`, "*.tmp\n!keep.tmp\nbuilt/\n");
       await Deno.writeTextFile(`${dir}/junk.tmp`, "ignored\n");
       await Deno.writeTextFile(`${dir}/keep.tmp`, "negated back\n");
+      // **A nested `.gitignore`, which only works if a deeper file's rules are applied after a shallower
+      // one's.** `sub/` holds a tracked file, so the walk descends into it rather than collapsing it. The
+      // same name at the root proves the nested rule does not reach outside its own directory.
+      await Deno.writeTextFile(`${dir}/sub/.gitignore`, "!inner.tmp\nscoped\n");
+      await Deno.writeTextFile(`${dir}/sub/inner.tmp`, "brought back by sub/.gitignore\n");
+      await Deno.writeTextFile(`${dir}/sub/scoped`, "ignored only under sub\n");
+      await Deno.writeTextFile(`${dir}/inner.tmp`, "still ignored at the root\n");
       await Deno.mkdir(`${dir}/built`);
       await Deno.writeTextFile(`${dir}/built/out`, "ignored\n");
 
@@ -119,6 +130,10 @@ Deno.test({
       assert(theirs.includes("?? keep.tmp"), "the negated ignore rule did not bring keep.tmp back");
       assert(!theirs.some((l) => l.includes("junk.tmp")), "git did not ignore junk.tmp");
       assert(!theirs.some((l) => l.includes("built")), "git did not ignore the built/ directory");
+      // The nested file's two effects, in git's own answer, before ours is compared to it.
+      assert(theirs.includes("?? sub/inner.tmp"), "the nested negation did not bring sub/inner.tmp back");
+      assert(!theirs.some((l) => l === "?? inner.tmp"), "the nested negation reached the root");
+      assert(!theirs.some((l) => l.includes("sub/scoped")), "the nested rule did not ignore its own name");
       assert(!theirs.some((l) => l.endsWith(" same.txt")), "git thinks the unchanged file changed");
       assert(!theirs.some((l) => l.endsWith(" blob.bin")), "git thinks the untouched binary changed");
 
@@ -137,7 +152,8 @@ Deno.test({
 
       // A clean tree is empty on both sides — the case that catches a status reporting every file.
       await git(["reset", "-q", "--hard", "HEAD"]);
-      for (const junk of ["untracked.txt", ".gitignore", "junk.tmp", "keep.tmp", "sub/alsonew.txt"]) {
+      for (const junk of ["untracked.txt", ".gitignore", "junk.tmp", "keep.tmp", "sub/alsonew.txt",
+                          "sub/.gitignore", "sub/inner.tmp", "sub/scoped", "inner.tmp"]) {
         await Deno.remove(`${dir}/${junk}`);
       }
       await Deno.remove(`${dir}/fresh`, { recursive: true });

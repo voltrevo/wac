@@ -14,13 +14,21 @@ nothing to run once found.
 
 A case is one `.wac` file. Its first lines are comments:
 
-    // expect: emits | refused | answers <fn> = <value>
+    // expect: emits | refused | traps <fn> | answers <fn> = <value>
     // why: one line, in the language of the rule rather than the bug
     // from: issues/lang/0092        (optional — where it came from)
 
 `emits` means it compiles. `refused` means it does not, at any phase — which phase is
 not the language's business. `answers f = 42` means it compiles, `f()` runs, and the
-result is 42.
+result is 42. `traps f` means it compiles and `f()` traps — and only a wasm trap counts,
+because a host-side error is the runner being wrong about the program rather than the
+program doing what the case says.
+
+`traps` was added for `issues/lang/0085`, where the rule is that a checked cast traps on a
+value that does not fit. Half of what `spec/spec/casts.md` promises has that shape, as do the
+bounds checks and `!` on a null, and a corpus with only the other three expectations could
+state none of it — the nearest a case could get was an answer, which is exactly the wrong
+answer the bug produced.
 
 More than one file, for anything about imports:
 

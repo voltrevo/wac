@@ -1,0 +1,7 @@
+// expect: answers f = 1073741823
+// why: the checked cast traps outside the range and not at its edge — 2^30-1 is the largest an i31 holds
+// from: issues/lang/0085
+export i32 f() {
+  i31ref r = 1073741823 as! i31ref;
+  return r as i32;
+}

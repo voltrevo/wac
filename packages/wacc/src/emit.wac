@@ -22,7 +22,7 @@ import {
   kPlus, kMinus, kStar, kSlash, kPercent, kAnd, kOr, kCaret, kShl, kShr, kShrU,
   kEq, kNe, kLt, kLe, kGt, kGe, kAndAnd, kOrOr, kBang, kTilde, kAssign, kInc,
   kPlusEq, kMinusEq, kStarEq, kSlashEq, kPercentEq, kAndEq, kOrEq, kCaretEq,
-  kShlEq, kShrEq, kShrUEq, kString, kAsAt,
+  kShlEq, kShrEq, kShrUEq, kString, kAsAt, kAsTilde,
 } from "./kinds.wac";
 
 /**
@@ -5238,6 +5238,13 @@ void emitConversion(B fb, Env env, string from, string to, i32 op) {
       fb.byte(251);
       fb.u32leb(23);   // ref.cast (ref i31) — a downcast out of the top type, which traps
       fb.byte(108);
+      return;
+    }
+    // **`as~` is the one spelling that wants the truncation.** The check below is what makes `as!`
+    // checked; emitting it for every spelling made `1073741824 as~ i31ref` trap where the language
+    // says it keeps the low bits — the raw cast is how a caller asks for exactly that.
+    if (op == kAsTilde()) {
+      fb.byte(251); fb.u32leb(28);   // ref.i31, and nothing around it
       return;
     }
     i32 t31 = env.scratchNamed("i31chk", "i32");

@@ -1,0 +1,7 @@
+// expect: answers f = -1073741824
+// why: `as~` is the cast that keeps the low bits — the same value `as!` refuses to lose, kept on purpose
+// from: issues/lang/0085
+export i32 f() {
+  i31ref r = 1073741824 as~ i31ref;
+  return r as i32;
+}
