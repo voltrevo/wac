@@ -254,9 +254,9 @@ export default function Home() {
           against four independent corpora rather than one: a generated sweep of{" "}
           <Lead>10,013 programs with 0 false alarms and 0 contradictions</Lead>, and — newest, and
           the only one written by nobody with this checker in mind — <Lead>the repository&rsquo;s own
-          363 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
+          364 files</Lead>, a Tor relay and an SSH server and the compiler itself, with no false
           alarm among them. Broken on purpose — twenty-three ways now, up from seven — it catches{" "}
-          <Lead>197 of 200</Lead>.
+          <Lead>192 of 195</Lead>.
         </P>
         <P>
           The measurement that matters most is against the specification rather than against the
@@ -272,12 +272,12 @@ export default function Home() {
           than the third of it anybody had measured.
         </P>
         <Caveat title="not finished">
-          The emitter compiles <Lead>359 of the repository&rsquo;s 362 wac files</Lead> whole, and
+          The emitter compiles <Lead>361 of the repository&rsquo;s 364 wac files</Lead> whole, and
           the corpus being the live repository is why that count used to move in both directions —
           code written for other reasons walked in using what the emitter had not reached. It has
           caught up: nothing in the repository is declined any more, and all three files it cannot
           finish block on the same thing, which is not a language feature but an import the harness
-          does not supply. None of the 362 produces an invalid module, and — since
+          does not supply. None of the 364 produces an invalid module, and — since
           &ldquo;whole&rdquo; was made to mean what it says, by checking every{" "}
           {m({ children: "export" })} a file declares is a function in the module rather than taking
           the emitter&rsquo;s word — none of the 359 is missing one either. That is the
@@ -285,8 +285,8 @@ export default function Home() {
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
           of record — though its output now runs everything: <Lead>34 of 34 packages pass their own
-          test suites on modules wacc emitted</Lead>, 1,655 tests, with {m({ children: "tor" })}
-          &rsquo;s 306 among them. It was six not long ago, and what moved it was the bindgen helpers
+          test suites on modules wacc emitted</Lead>, 1,663 tests, with {m({ children: "tor" })}
+          &rsquo;s 310 among them. It was six not long ago, and what moved it was the bindgen helpers
           that carry values across the boundary, one family at a time. What that does{" "}
           <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
           the reference&rsquo;s interface metadata, so a green package says this emitter is right for

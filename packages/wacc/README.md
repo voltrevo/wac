@@ -227,7 +227,7 @@ a variant construction at all.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
-    34 of 34 packages pass their own suite on wacc-emitted code (1,655 tests)
+    34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
 
 **That is priority 3 met**: every package in the repository passes its own suite on code wacc
 emitted, with the reference's bindgen standing behind it. What that does *not* say is that wacc
