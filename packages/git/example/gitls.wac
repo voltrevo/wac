@@ -1,66 +1,17 @@
 // `gitls <url>` — the refs a remote advertises, over our own TLS, through whatever proxy is set.
 //
-// This is `design/system/0005` step 6's first half as a **program**, which is the only shape that proves
-// it: every piece was already tested on its own and nothing joined them.
+// `design/system/0005` step 6's first half. The transport is `../src/transport.wac`; what is here is only
+// the part that is about git: ask for `info/refs`, parse the advertisement, print it.
 //
-//     tunnel  packages/http/src/proxy.wac      CONNECT, because there is no direct egress here
-//     roots   packages/tls/src/roots.wac       the system's PEM bundle as a trust store
-//     TLS     packages/tls/src/client.wac      the handshake and the records
-//     HTTP    packages/http/src/incoming.wac   the response
-//     git     ../src/fetch.wac                 the advertisement inside it
-//
-// The oracle is `git ls-remote <url>`, and the output format is its: `<sha>\t<ref>`, one per line. That
-// is not decoration — it makes the comparison a diff rather than an interpretation.
-//
-// ## The two things this arrangement gets wrong if you are not careful
-//
-// **The tunnel's leftover comes first.** A proxy may put the end of its `200` and the first bytes of the
-// tunnel in one packet, and `recv` hands over what arrived; so the TLS buffer starts as
-// `Tunnel.leftover` rather than empty. It is almost always empty here, because in TLS the client speaks
-// first — which is exactly why it would be missed.
-//
-// **`tlsClientInit` wants seconds.** `packages/box`'s `gets` records what happens otherwise: the
-// millisecond clock puts "now" around the year 57000, every certificate has expired, and the failure
-// arrives as `bad_certificate` looking like a chain problem.
+// The output format is `git ls-remote`'s — `<sha>\t<ref>` — which is not decoration. It makes the oracle a
+// diff rather than an interpretation, and `test/lsremote.test.ts` diffs it against the real thing.
 
-import { Cli, Core, FileResult, Socket } from "../../platform/src/platform.wac";
+import { Cli, Core } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
 import { encode } from "../../codec/src/hex.wac";
-import { Buf } from "../../bytes/src/buf.wac";
-import { slice } from "../../bytes/src/slice.wac";
-import { Store, pemBundle } from "../../tls/src/roots.wac";
-import { recordsReady } from "../../tls/src/record.wac";
-import { ClientStep, clientStep, tlsClientInit, tlsClientFeed, tlsClientSend, tlsClientClose,
-         tlsClientPhase, tlsClientFailure } from "../../tls/src/client.wac";
-import { Incoming, ParsedResponse, parseResponse } from "../../http/src/incoming.wac";
-import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../../http/src/proxy.wac";
 import { Ad, AdRef, Advertised, parseAdvertisement } from "../src/fetch.wac";
-
-/** Where the system keeps its trust store. */
-string bundlePath() { return "/etc/ssl/certs/ca-certificates.crt"; }
-
-/** `https://host/path` split into its two halves. `ok` false means it was not that. */
-struct Remote {
-  bool ok;
-  string host;
-  string path;
-}
-
-Remote parseRemote(string url) {
-  string rest = url;
-  i32 scheme = rest.indexOf("://");
-  if (scheme < 0) { return Remote(false, "", ""); }
-  // Only https: a plain-HTTP remote would work and is not what this is for, and `git://` is a different
-  // protocol rather than a different scheme on this one.
-  if (rest.slice(0, scheme) != "https") { return Remote(false, "", ""); }
-  rest = rest.slice(scheme + 3, rest.len());
-  i32 slash = rest.indexOf("/");
-  if (slash < 0) { return Remote(false, "", ""); }
-  string host = rest.slice(0, slash);
-  string path = rest.slice(slash, rest.len());
-  if (host.len() == 0) { return Remote(false, "", ""); }
-  return Remote(true, host, path);
-}
+import { Store } from "../../tls/src/roots.wac";
+import { Answer, Remote, parseRemote, request, systemStore } from "../src/transport.wac";
 
 export i32 main(Core core, Cli cli) {
   i32 n = cli.argCount().wait();
@@ -75,159 +26,40 @@ export i32 main(Core core, Cli cli) {
     return 2;
   }
 
-  // The trust store, from the system's own bundle rather than a certificate somebody chose.
-  FileResult bundle = cli.readFile(bundlePath()).wait();
-  if (!bundle.ok) {
-    core.warn("gitls: cannot read " + bundlePath() + ", so nothing can be verified");
-    return 1;
-  }
-  Store store = pemBundle(bundle.bytes);
+  Store store = systemStore(cli);
   if (store.offsets.len() == 0) {
-    core.warn("gitls: " + bundlePath() + " holds no certificates");
+    core.warn("gitls: cannot read a trust store, so nothing can be verified");
     return 1;
   }
   if (store.refused > 0) {
-    // Said rather than swallowed: a root that did not parse is one that cannot verify a chain, and the
-    // chain it would have verified fails later blaming the server.
+    // Said rather than swallowed: a root that did not parse cannot verify a chain, and the chain it
+    // would have verified fails later blaming the server.
     core.warn("gitls: " + itoa(store.refused) + " certificate(s) in the bundle did not decode");
   }
 
-  // The socket: through the proxy when there is one, straight out when there is not.
-  i32 handle = -1;
-  u8[] buffered = u8[0]();
-  u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
-  if (proxyVar is null) {
-    Socket direct = cli.connect(r.host, 443).wait();
-    if (direct.handle < 0) {
-      core.warn("gitls: " + r.host + ": " + direct.error);
-      return 1;
-    }
-    handle = direct.handle;
-  } else {
-    ProxyAt at = parseProxy(string.fromBytes(proxyVar!));
-    if (!at.ok) {
-      core.warn("gitls: HTTP_PROXY is not a proxy this can parse");
-      return 1;
-    }
-    Tunnel t = connectThrough(cli, at.host, at.port, r.host, 443);
-    if (!t.ok) {
-      core.warn("gitls: " + t.error);
-      return 1;
-    }
-    handle = t.handle;
-    // **First, before any `recv`.** See the header.
-    buffered = t.leftover;
-  }
-
-  ClientStep s = clientStep(tlsClientInit(
-    r.host.toBytes(), store.der, store.offsets,
-    core.randomBytes(32).wait(),
-    core.randomBytes(32).wait(),
-    core.randomBytes(64).wait(),
-    core.randomBytes(32).wait(),
-    core.nowMillis().wait() / 1000));
-  if (!cli.send(handle, s.toSend).wait()) {
-    core.warn("gitls: cannot send the client hello");
-    cli.closeSocket(handle);
-    return 1;
-  }
-
   string target = r.path + "/info/refs?service=git-upload-pack";
-  u8[] body = u8[0]();
-  bool requested = false;
-
-  while (true) {
-    i32 phase = tlsClientPhase(s.state);
-    if (phase == 4) {
-      // Over, which after a response is a `close_notify` rather than a failure — `gets` learned this
-      // the loud way and reported "handshake failed" on every successful fetch.
-      if (body.len() > 0) { break; }
-      core.warn("gitls: TLS to " + r.host + " failed (code " + itoa(tlsClientFailure(s.state)) + ")");
-      cli.closeSocket(handle);
-      return 1;
-    }
-    if (phase == 3 && !requested) {
-      string req = "GET " + target + " HTTP/1.1\r\n"
-        + "Host: " + r.host + "\r\n"
-        + "User-Agent: git/wac\r\n"
-        + "Accept: */*\r\n"
-        + "Connection: close\r\n\r\n";
-      ClientStep out = clientStep(tlsClientSend(s.state, req.toBytes()));
-      s = ClientStep(out.state, out.toSend, u8[0]());
-      if (!cli.send(handle, s.toSend).wait()) { break; }
-      requested = true;
-    }
-
-    // The leftover may already hold whole records, so this is asked before reading rather than after —
-    // a `recv` first would block on a peer that has already said everything it is going to.
-    i32 ready = recordsReady(buffered);
-    if (ready > 0) {
-      ClientStep step = clientStep(tlsClientFeed(s.state, slice(buffered, 0, ready)));
-      buffered = slice(buffered, ready, buffered.len());
-      s = step;
-      if (s.toSend.len() > 0 && !cli.send(handle, s.toSend).wait()) { break; }
-      if (s.appData.len() > 0) { body = concat(body, s.appData); }
-      continue;
-    }
-
-    bool closed = false;
-    match (cli.recv(handle).wait()) {
-      case Data(bytes): { buffered = concat(buffered, bytes); }
-      case End: { closed = true; }
-      case Failed(why): {
-        core.warn("gitls: " + r.host + ": " + why);
-        cli.closeSocket(handle);
-        return 1;
-      }
-    }
-    if (closed) { break; }
-  }
-
-  clientStep(tlsClientClose(s.state));
-  cli.closeSocket(handle);
-
-  if (body.len() == 0) {
-    core.warn("gitls: " + r.host + " said nothing");
+  Answer a = request(core, cli, store, r.host, target, u8[0](), "");
+  if (!a.ok) {
+    core.warn("gitls: " + a.error);
     return 1;
   }
-
-  match (parseResponse(body, "GET".toBytes(), true, 1 << 26)) {
-    case Incomplete: {
-      core.warn("gitls: the response ended mid-message");
+  if (a.status != 200) {
+    // A 401 is a private repository and a 404 is often the same thing, so the number is worth saying
+    // rather than calling it a protocol error.
+    core.warn("gitls: " + r.host + " answered " + itoa(a.status) + " for " + target);
+    return 1;
+  }
+  match (parseAdvertisement(a.body)) {
+    case Garbled(why): {
+      core.warn("gitls: the advertisement did not parse: " + why);
       return 1;
     }
-    case Bad(code): {
-      core.warn("gitls: unparseable response (" + itoa(code) + ")");
-      return 1;
-    }
-    case Ok(res): {
-      if (res.status != 200) {
-        // A 401 here is a private repository, and a 404 is often the same thing — worth saying which
-        // number came back rather than calling it a protocol error.
-        core.warn("gitls: " + r.host + " answered " + itoa(res.status) + " for " + target);
-        return 1;
+    case Said(ad): {
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        AdRef one = ad.refs.get(i);
+        core.log(string.fromBytes(encode(one.target)) + "\t" + one.name);
       }
-      match (parseAdvertisement(res.body)) {
-        case Garbled(why): {
-          core.warn("gitls: the advertisement did not parse: " + why);
-          return 1;
-        }
-        case Said(ad): {
-          // `git ls-remote`'s own format, so the two can be diffed rather than interpreted.
-          for (i32 i = 0; i < ad.refs.len(); i++) {
-            AdRef one = ad.refs.get(i);
-            core.log(string.fromBytes(encode(one.target)) + "\t" + one.name);
-          }
-          return 0;
-        }
-      }
+      return 0;
     }
   }
-}
-
-u8[] concat(u8[] a, u8[] b) {
-  u8[] out = u8[a.len() + b.len()]();
-  out.copyFrom(a, 0, 0, a.len());
-  out.copyFrom(b, 0, a.len(), b.len());
-  return out;
 }

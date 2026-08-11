@@ -164,8 +164,16 @@ export bool offers(const Advertised ad, string want) {
  * `haves` may be empty, which is a clone. When it is not, the server will answer `ACK`s before the pack
  * and send only what is missing — this asks for `done` immediately rather than negotiating in rounds,
  * which costs a larger pack and removes a conversation that would need several round trips.
+ *
+ * **`depth` above zero is a shallow request**, and where it goes is the part worth writing down: `deepen`
+ * belongs in the upload-request, after the wants and **before the flush that ends it** — not with the
+ * haves, which follow that flush. A server answers a deepened request with `shallow <sha>` lines before
+ * the pack, which `findPack` already skips along with `NAK` and `ACK`.
+ *
+ * Zero asks for the whole history, which is what a clone wants. Measured on
+ * `ethereum/eth2.0-specs`: `deepen 1` is 1.6MB and 790 objects.
  */
-export u8[] wantRequest(Vec<u8[]> wants, Vec<u8[]> haves, string capabilities) {
+export u8[] wantRequest(Vec<u8[]> wants, Vec<u8[]> haves, string capabilities, i32 depth) {
   Buf out = Buf.create();
   for (i32 i = 0; i < wants.len(); i++) {
     string line = "want " + string.fromBytes(encode(wants.get(i)));
@@ -174,6 +182,7 @@ export u8[] wantRequest(Vec<u8[]> wants, Vec<u8[]> haves, string capabilities) {
     if (i == 0 && capabilities != "") { line = line + " " + capabilities; }
     out.pushAll(writeText(line + "\n"));
   }
+  if (depth > 0) { out.pushAll(writeText("deepen " + itoa(depth) + "\n")); }
   out.pushAll(flushPkt());
   for (i32 i = 0; i < haves.len(); i++) {
     out.pushAll(writeText("have " + string.fromBytes(encode(haves.get(i))) + "\n"));

@@ -1,0 +1,149 @@
+// `gitfetch <https-url> [depth]` — ask a real server for a pack, index it, and read what we asked for.
+//
+// `design/system/0005` step 6's second half. The first half — the advertisement — is `gitls.wac`; this
+// adds the POST that produces a packfile, and then does the thing that makes the answer checkable:
+// **indexes the pack and reads the commit it asked for back out of it.**
+//
+// That last step is why this is worth more than a byte count. A pack is content-addressed, so a pack we
+// mis-parsed cannot produce an object whose SHA-1 is the name we wanted — `indexPack` hashes what each
+// object resolves to and `objectNamed` looks the wanted name up in the result. Getting the same commit
+// back out is the whole chain checking itself: TLS, HTTP, pkt-line, the pack format, delta resolution and
+// SHA-1.
+//
+// **`depth` defaults to 1**, which is a shallow fetch, and that is a test-cost decision rather than a
+// protocol one: `ethereum/eth2.0-specs` answers `deepen 1` with 1.6MB and 790 objects where its whole
+// history is far larger. `0` asks for everything.
+//
+// The `shallow <sha>` line a deepened request comes back with is already handled: `findPack` treats it as
+// a negotiation line, alongside `NAK` and `ACK`.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement,
+         wantRequest } from "../src/fetch.wac";
+import { Got, Indexed, Pack, indexPack, openIndexed, objectNamed } from "../src/pack.wac";
+import { PackIndex } from "../src/idx.wac";
+import { Store } from "../../tls/src/roots.wac";
+import { Answer, Remote, parseRemote, request, systemStore } from "../src/transport.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 1) {
+    core.warn("usage: gitfetch <https-url> [depth]");
+    return 2;
+  }
+  string url = string.fromBytes(cli.arg(0).wait());
+  i32 depth = 1;
+  if (n >= 2) {
+    string d = string.fromBytes(cli.arg(1).wait());
+    depth = 0;
+    u8[] digits = d.toBytes();
+    for (i32 i = 0; i < digits.len(); i++) {
+      i32 c = digits[i];
+      if (c < '0' || c > '9') {
+        core.warn("gitfetch: " + d + " is not a depth");
+        return 2;
+      }
+      depth = depth * 10 + (c - '0');
+    }
+  }
+
+  Remote r = parseRemote(url);
+  if (!r.ok) {
+    core.warn("gitfetch: " + url + " is not an https URL with a path");
+    return 2;
+  }
+  Store store = systemStore(cli);
+  if (store.offsets.len() == 0) {
+    core.warn("gitfetch: no trust store, so nothing can be verified");
+    return 1;
+  }
+
+  // What the server has.
+  Answer refs = request(core, cli, store, r.host,
+    r.path + "/info/refs?service=git-upload-pack", u8[0](), "");
+  if (!refs.ok) {
+    core.warn("gitfetch: " + refs.error);
+    return 1;
+  }
+  if (refs.status != 200) {
+    core.warn("gitfetch: " + r.host + " answered " + itoa(refs.status) + " for the advertisement");
+    return 1;
+  }
+  u8[] head = u8[0]();
+  string caps = "";
+  match (parseAdvertisement(refs.body)) {
+    case Garbled(why): {
+      core.warn("gitfetch: the advertisement did not parse: " + why);
+      return 1;
+    }
+    case Said(ad): {
+      caps = ad.capabilities;
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        AdRef one = ad.refs.get(i);
+        if (one.name == "HEAD") { head = one.target; }
+      }
+      if (head.len() != 20) {
+        core.warn("gitfetch: the advertisement names no HEAD");
+        return 1;
+      }
+      // Asked for only if offered. `ofs-delta` lets the server use the smaller kind of delta, and
+      // `pack.wac` reads both — so this is a size choice and not a correctness one.
+      string ask = "agent=wac/0";
+      if (offers(ad, "ofs-delta")) { ask = "ofs-delta " + ask; }
+      caps = ask;
+    }
+  }
+
+  Vec<u8[]> wants = Vec.create();
+  wants.push(head);
+  Vec<u8[]> haves = Vec.create();
+  Answer packed = request(core, cli, store, r.host, r.path + "/git-upload-pack",
+    wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
+  if (!packed.ok) {
+    core.warn("gitfetch: " + packed.error);
+    return 1;
+  }
+  if (packed.status != 200) {
+    core.warn("gitfetch: " + r.host + " answered " + itoa(packed.status) + " for the pack");
+    return 1;
+  }
+
+  u8[] pack = u8[0]();
+  match (findPack(packed.body)) {
+    case NoPack(why): {
+      core.warn("gitfetch: " + why);
+      return 1;
+    }
+    case Packfile(bytes): { pack = bytes; }
+  }
+
+  match (indexPack(pack)) {
+    case Unindexable(why): {
+      core.warn("gitfetch: the pack could not be indexed: " + why);
+      return 1;
+    }
+    case Built(idx): {
+      // **The check that matters.** A pack read wrongly cannot yield an object whose hash is the name we
+      // wanted, so asking for the commit back is the whole chain verifying itself.
+      Pack p = openIndexed(pack, idx);
+      match (objectNamed(p, head)) {
+        case Absent(why): {
+          core.warn("gitfetch: the pack does not contain the commit we asked for: " + why);
+          return 1;
+        }
+        case Found(kind, data): {
+          if (kind != 1) {
+            core.warn("gitfetch: HEAD came back as kind " + itoa(kind) + " rather than a commit");
+            return 1;
+          }
+          core.log(itoa(pack.len()) + " bytes, " + itoa(idx.count) + " objects, HEAD "
+            + string.fromBytes(encode(head)) + " is a commit of " + itoa(data.len()) + " bytes");
+          return 0;
+        }
+      }
+    }
+  }
+}
