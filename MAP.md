@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-35 packages, 97,099 lines of wac, 1709 tests,
-55 command-line programs and 5 browser pages.
+35 packages, 97,423 lines of wac, 1720 tests,
+56 command-line programs and 5 browser pages.
 
 ## Packages
 
@@ -30,7 +30,7 @@ In dependency order: nothing here imports anything below it.
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,790 | 150 | `bignum` |
 | [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,202 | 39 | `bytes` `fmt` `gzip` `platform` `std` |
-| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,003 | 29 | `bytes` `codec` `fmt` `platform` |
+| [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,327 | 40 | `bytes` `codec` `fmt` `platform` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |
 | [`tty`](packages/tty/) | What a terminal does to your keystrokes before a program sees them: echo, erase, kill, word erase, `^C`, `^D`. | 477 | 6 | `bytes` `platform` |
@@ -86,6 +86,7 @@ reach — see `packages/platform/README.md`.
 | `packages/platform/example/writeread.wac` | Can a socket be written to while a read on it is still outstanding? |
 | `packages/fs/example/ops.wac` | The same filesystem operations against memory or against the host, so the two can be compared. |
 | `packages/fs/example/saveimage.wac` | Save a filesystem that is partly the host's, and say what could not be saved. |
+| `packages/http/example/tunnel.wac` | `tunnel <host> <port>` — open a `CONNECT` tunnel through the proxy in `$HTTP_PROXY` and say so. |
 | `packages/tty/example/ttycat.wac` | A terminal and a `cat` behind it, so the line discipline can be compared with the kernel's. |
 | `packages/git/example/gitci.wac` | `git commit -a`, in wac. |
 | `packages/git/example/gitco.wac` | `git checkout`, in wac. |

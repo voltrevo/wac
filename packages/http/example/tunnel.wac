@@ -1,0 +1,65 @@
+// `tunnel <host> <port>` — open a `CONNECT` tunnel through the proxy in `$HTTP_PROXY` and say so.
+//
+// This exists to be **run**, which is the point: `src/proxy.wac`'s decisions are pure and tested
+// without a socket, and the loop that owns one — `connectThrough` — cannot be, for the same reason
+// `client.wac`'s `request` cannot. A program is the smallest thing that exercises it against a real
+// proxy, and `test/tunnel.test.ts` runs this one against the Squid this container has.
+//
+// It writes nothing and reads nothing: `--allow-net` and no other grant, so what it proves is about the
+// network and cannot be about anything else.
+
+import { Cli, Core } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { ProxyAt, Tunnel, connectThrough, parseProxy } from "../src/proxy.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 2) {
+    core.warn("usage: tunnel <host> <port>");
+    return 2;
+  }
+  string host = string.fromBytes(cli.arg(0).wait());
+  string portText = string.fromBytes(cli.arg(1).wait());
+
+  i32 port = 0;
+  u8[] digits = portText.toBytes();
+  if (digits.len() == 0) {
+    core.warn("tunnel: the port is empty");
+    return 2;
+  }
+  for (i32 i = 0; i < digits.len(); i++) {
+    i32 c = digits[i];
+    if (c < '0' || c > '9') {
+      core.warn("tunnel: " + portText + " is not a port");
+      return 2;
+    }
+    port = port * 10 + (c - '0');
+  }
+
+  // `HTTP_PROXY` rather than `HTTPS_PROXY`, though this container sets both to the same thing: the
+  // variable names which proxy to use for a scheme, and what is being opened here is a tunnel rather
+  // than an https request. A caller that wants the other one can say so once there is a reason to.
+  u8[]? proxyVar = cli.env("HTTP_PROXY").wait();
+  if (proxyVar is null) {
+    core.warn("tunnel: HTTP_PROXY is not set, so there is no proxy to go through");
+    return 1;
+  }
+  string url = string.fromBytes(proxyVar!);
+  ProxyAt at = parseProxy(url);
+  if (!at.ok) {
+    core.warn("tunnel: HTTP_PROXY is " + url + ", which is not a proxy this can parse");
+    return 1;
+  }
+
+  Tunnel t = connectThrough(cli, at.host, at.port, host, port);
+  if (!t.ok) {
+    core.warn("tunnel: " + t.error);
+    return 1;
+  }
+  // The leftover count is printed because it is the thing most likely to be zero everywhere it is
+  // tried and non-zero somewhere it matters — see the note in `src/proxy.wac`.
+  core.log("open to " + host + ":" + itoa(port) + " via " + at.host + ":" + itoa(at.port)
+    + ", " + itoa(t.leftover.len()) + " byte(s) already through");
+  cli.closeSocket(t.handle);
+  return 0;
+}
