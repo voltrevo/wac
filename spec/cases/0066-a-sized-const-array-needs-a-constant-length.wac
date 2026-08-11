@@ -1,0 +1,6 @@
+// expect: refused
+// why: the length is computed before anything runs, so a call cannot give it
+// from: specSingle's §wac-modconst-sized cluster
+i32 n() { return 3; }
+const i32[] T = i32[n()]();
+export i32 f() { return T[0]; }

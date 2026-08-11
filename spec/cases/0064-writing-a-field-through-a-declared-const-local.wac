@@ -1,0 +1,5 @@
+// expect: refused
+// why: `const` on a local stops writes through it, not only reassignment of the name
+// from: specSingle's §wac-const-deep cluster
+struct Tree { i32 val; Tree? left; Tree? right; }
+export void bad(Tree t) { const Tree ct = t; ct.val = 5; }

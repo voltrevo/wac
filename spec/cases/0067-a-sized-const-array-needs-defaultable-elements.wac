@@ -1,0 +1,6 @@
+// expect: refused
+// why: an enum has no default value, so there is nothing to fill the array with
+// from: specSingle's §wac-modconst-sized cluster
+enum E { A(i32 v), B }
+const E[] T = E[3]();
+export i32 f() { return T.len(); }

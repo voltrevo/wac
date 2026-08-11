@@ -5323,6 +5323,12 @@ export void checkModule(C c, Program prog) {
   for (i32 d = 0; d < prog.decls.len(); d++) {
     match (prog.decls[d].kind) {
       case ConstDecl(nameTok, type, init, exported): {
+        // **The initialiser is an expression, and nothing was walking it.** Every rule in this file
+        // about literals, elements, defaults and names applied to a local's initialiser and to none
+        // of these — `const E[] T = E[3]()` was silent where the same line inside a function was
+        // refused, and so was `i32[2](fill: "x")`. `spec/cases/0067` and `0068`.
+        c.expected = typeOfTy(c, type);
+        checkExpr(c, init);
         if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
         if (readsUnsettledConst(c, prog, init, settled, settledCount)) {
           c.report(errNotCompileTime(), init.line, init.col);
