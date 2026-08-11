@@ -36,6 +36,25 @@ export type BindType = {
   methods: { name: string; hasThis: boolean; ret: string; params: string[] }[];
 };
 
+/** A callback signature the module imports a dispatcher for. */
+export type Callback = { index: number; ret: string; params: string[]; wac: string };
+
+/** Parse the `C` lines — the callbacks, in the order `wac.cb<j>` is numbered. */
+export function parseCallbacks(wire: string): Callback[] {
+  const out: Callback[] = [];
+  for (const line of wire.split("\n")) {
+    if (!line.startsWith("C\t")) continue;
+    const [, index, ret, params, wac] = line.split("\t");
+    out.push({
+      index: Number(index),
+      ret,
+      params: params === "" || params === undefined ? [] : params.split(","),
+      wac,
+    });
+  }
+  return out;
+}
+
 /** Parse the `S`/`E`/`M` lines `bindTypesFiles` returns. */
 export function parseBindTypes(wire: string): BindType[] {
   const out: BindType[] = [];
@@ -92,19 +111,27 @@ const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void
 const BULK = new Set(["u8[]", "i8[]", "i32[]", "u32[]", "i64[]", "u64[]", "f32[]", "f64[]"]);
 
 /** Whether this signature is one this generator can write glue for. */
-export function supported(sig: ExportSig, types: BindType[] = []): boolean {
+export function supported(sig: ExportSig, types: BindType[] = [], cbs: Callback[] = []): boolean {
   const named = new Set(types.map(t => t.name));
+  const callable = new Set(cbs.map(c => c.wac));
+  // A funcref *parameter* is a host function coming in, which is what a dispatcher is for. One in
+  // return position would be a wac function going out — `$bind$callref_*` in the reference, which
+  // this emitter does not write yet — so it stays declined.
   const ok = (t: string) => SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t);
-  return ok(sig.ret) && sig.params.every(ok);
+  return ok(sig.ret) && sig.params.every(t => ok(t) || callable.has(t));
 }
 
 /** The classes in play, so `tsType` and the conversions can name them. */
 let namedTypes: Map<string, BindType> = new Map();
+/** The callbacks, by their wac spelling, so a parameter knows which dispatcher it belongs to. */
+let callbacks: Map<string, Callback> = new Map();
 
 /** The TypeScript type a wac type crosses as. */
 function tsType(t: string): string {
   const n = namedTypes.get(t);
   if (n) return n.name;
+  const c = callbacks.get(t);
+  if (c) return `(${c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ")}) => ${tsType(c.ret)}`;
   if (t === "void") return "void";
   if (t === "bool") return "boolean";
   if (t === "i64" || t === "u64") return "bigint";
@@ -129,6 +156,8 @@ function width(t: string): number {
 
 /** A value crossing *into* the module. */
 function toWasm(t: string, expr: string): string {
+  const c = callbacks.get(t);
+  if (c) return `$fnref${c.index}(${expr})`;
   if (t === "string") return `$strTo(${expr})`;
   if (BULK.has(t)) return `$arrTo_${t.slice(0, -2)}(${expr})`;
   if (namedTypes.has(t)) return `${expr}.$ref`;
@@ -221,9 +250,12 @@ function classFor(t: BindType): string[] {
  * choice the reference makes, and for the same reason: a `.gen.ts` that needs a `.wasm` beside it is
  * two things to keep in step.
  */
-export function generate(wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = []): string {
+export function generate(
+  wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
+): string {
   namedTypes = new Map(types.map(t => [t.name, t]));
-  const usable = sigs.filter(s => supported(s, types));
+  callbacks = new Map(cbs.map(c => [c.wac, c]));
+  const usable = sigs.filter(s => supported(s, types, cbs));
   const crossing = [
     ...usable.flatMap(s => [s.ret, ...s.params]),
     ...types.flatMap(t => [
@@ -240,7 +272,37 @@ export function generate(wasm: Uint8Array, sigs: ExportSig[], types: BindType[] 
   lines.push(`const WASM = "${btoa(String.fromCharCode(...wasm))}";`);
   lines.push("const bytes = Uint8Array.from(atob(WASM), c => c.charCodeAt(0));");
   lines.push("const $mod = new WebAssembly.Module(bytes as BufferSource);");
-  lines.push("const $inst = new WebAssembly.Instance($mod, {});");
+  lines.push("");
+
+  if (cbs.length > 0) {
+    lines.push("// A host function reaches wac as a *slot number*: JavaScript cannot make a WasmGC");
+    lines.push("// funcref, so the module defines one trampoline per slot and imports a dispatcher");
+    lines.push("// that this file supplies. `$fnrefN` registers a function and answers the funcref.");
+    for (const c of cbs) {
+      const params = c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+      const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
+      const raw = c.params.map((p, i) => `a${i}: unknown`).join(", ");
+      lines.push(`const $cbs${c.index}: ((${params}) => ${tsType(c.ret)})[] = [];`);
+      lines.push(`const $cbd${c.index} = ($slot: number${raw ? ", " + raw : ""}) =>`);
+      lines.push(`  ${toWasm(c.ret, `$cbs${c.index}[$slot](${fwd})`)};`);
+      lines.push(`function $fnref${c.index}(f: (${params}) => ${tsType(c.ret)}): unknown {`);
+      lines.push(`  let slot = $cbs${c.index}.indexOf(f);`);
+      lines.push("  if (slot < 0) {");
+      lines.push(`    slot = $cbs${c.index}.length;`);
+      lines.push("    if (slot >= 16) {");
+      lines.push(`      throw new RangeError("at most 16 distinct ${c.wac} functions can be passed to this module");`);
+      lines.push("    }");
+      lines.push(`    $cbs${c.index}.push(f);`);
+      lines.push("  }");
+      lines.push(`  return ($exports.$bind$fnref_${c.index} as CallableFunction)(slot);`);
+      lines.push("}");
+      lines.push("");
+    }
+    const dispatchers = cbs.map(c => `cb${c.index}: $cbd${c.index}`).join(", ");
+    lines.push(`const $inst = new WebAssembly.Instance($mod, { wac: { ${dispatchers} } });`);
+  } else {
+    lines.push("const $inst = new WebAssembly.Instance($mod, {});");
+  }
   lines.push("const $exports = $inst.exports as Record<string, CallableFunction>;");
   lines.push("");
 
@@ -299,7 +361,7 @@ export function generate(wasm: Uint8Array, sigs: ExportSig[], types: BindType[] 
 }
 
 /** What this generator declined, so a caller learns it rather than discovering it at run time. */
-export function unsupported(sigs: ExportSig[], types: BindType[] = []): string[] {
-  return sigs.filter(s => !supported(s, types))
+export function unsupported(sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = []): string[] {
+  return sigs.filter(s => !supported(s, types, cbs))
     .map(s => `${s.name}(${s.params.join(", ")}) -> ${s.ret}`);
 }

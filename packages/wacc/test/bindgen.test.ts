@@ -7,7 +7,9 @@
 // arithmetic.
 
 import { wacBind } from "../../../harness/wacBind.ts";
-import { generate, parseBindTypes, parseSigs, supported, unsupported } from "../tools/waccBindgen.ts";
+import {
+  generate, parseBindTypes, parseCallbacks, parseSigs, supported, unsupported,
+} from "../tools/waccBindgen.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const emitFiles = mod.emitFiles as (p: string[], s: string[], e: string) => Uint8Array;
@@ -70,23 +72,29 @@ Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
 export i32 fine(i32 n) { return n; }
 export P makeP(i32 n) { return P(n); }
 export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
+export fn[i32(i32)] handOut() { return handOut; }
 `;
   const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
-  const types = parseBindTypes(bindTypes(["m.wac"], [src], "m.wac"));
-  const declined = unsupported(sigs, types);
-  if (!sigs.some(s => s.name === "fine" && supported(s, types))) {
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const types = parseBindTypes(wire);
+  const cbs = parseCallbacks(wire);
+  const declined = unsupported(sigs, types, cbs);
+  if (!sigs.some(s => s.name === "fine" && supported(s, types, cbs))) {
     throw new Error("a scalar export was declined");
   }
-  // A struct is bound now; a callback is what is left, and it is *named*.
-  if (declined.length !== 1 || !declined[0].startsWith("viaCallback")) {
-    throw new Error(`declined ${JSON.stringify(declined)}, wanted just viaCallback`);
+  // A struct crosses, and so does a callback *in*. What is left is a funcref going the other way —
+  // a wac function handed to the host — which needs `$bind$callref_*`, a helper this emitter does
+  // not write yet. It is named rather than skipped, which is the whole rule here.
+  if (declined.length !== 1 || !declined[0].startsWith("handOut")) {
+    throw new Error(`declined ${JSON.stringify(declined)}, wanted just handOut`);
   }
   // And the glue that is generated holds only what it can honour — a caller reaching for `makeP`
   // gets a missing export at import time rather than a wrong answer at run time.
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
-  const source = generate(wasm, sigs, types);
+  const source = generate(wasm, sigs, types, cbs);
   if (!source.includes("export function fine")) throw new Error("the supported export is missing");
-  if (source.includes("export function viaCallback")) throw new Error("glue was generated for a funcref");
+  if (!source.includes("export function viaCallback")) throw new Error("a callback parameter was declined");
+  if (source.includes("export function handOut")) throw new Error("glue was generated for a funcref return");
 });
 
 const TYPED = `struct Point { i32 x; i32 y;
@@ -138,6 +146,69 @@ Deno.test("bindgen: a struct and an enum cross as classes holding the reference"
     eq("circle(9).tag", g.circle(9).tag, "Circle");
 
     if (wrong.length > 0) throw new Error(`${wrong.length} wrong answer(s):\n  ${wrong.join("\n  ")}`);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
+Deno.test("bindgen: a JavaScript function crosses as a callback wac can call", async () => {
+  const src = `export i32 twice(fn[i32(i32)] cb) { return cb(1) + cb(2); }
+export i32 apply(fn[i32(i32)] f, i32 n) { return f(f(n)); }
+export bool anyOf(fn[bool(i32)] p, i32 a, i32 b) { return p(a) || p(b); }
+`;
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const cbs = parseCallbacks(wire);
+  // Two distinct signatures, and the numbering is the module's import order — `cb0` is the one the
+  // module imports first, and a generator that guessed would answer the wrong callback.
+  if (cbs.length !== 2) throw new Error(`${cbs.length} callback signatures, wanted 2`);
+  if (cbs[0].wac !== "fn[i32(i32)]") throw new Error(`cb0 is ${cbs[0].wac}`);
+
+  const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(path, generate(wasm, sigs, parseBindTypes(wire), cbs));
+  try {
+    // deno-lint-ignore no-explicit-any
+    const g = await import(`file://${path}`) as Record<string, any>;
+    const wrong: string[] = [];
+    const eq = (what: string, got: unknown, want: unknown) => {
+      if (String(got) !== String(want)) wrong.push(`${what}: ${got}, wanted ${want}`);
+    };
+    eq("twice(x => x * 10)", g.twice((n: number) => n * 10), 30);
+    eq("apply(x => x + 1, 5)", g.apply((n: number) => n + 1, 5), 7);
+    // A second signature, and a `bool` coming back out of a callback.
+    eq("anyOf(n => n > 3, 1, 9)", g.anyOf((n: number) => n > 3, 1, 9), true);
+    eq("anyOf(n => n > 30, 1, 9)", g.anyOf((n: number) => n > 30, 1, 9), false);
+    if (wrong.length > 0) throw new Error(`${wrong.length} wrong answer(s):\n  ${wrong.join("\n  ")}`);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
+Deno.test("bindgen: the seventeenth distinct callback is a diagnosis, not a wrong answer", async () => {
+  // Its own module, because the slots are per instance and per signature: a test that had already
+  // passed two functions in was measuring 14 rather than 16, which is how this was written the
+  // first time.
+  const src = `export i32 apply(fn[i32(i32)] f, i32 n) { return f(n); }\n`;
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
+  const wire = bindTypes(["m.wac"], [src], "m.wac");
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(
+    path,
+    generate(wasm, parseSigs(exportSigs(["m.wac"], [src], "m.wac")), parseBindTypes(wire), parseCallbacks(wire)),
+  );
+  try {
+    // deno-lint-ignore no-explicit-any
+    const g = await import(`file://${path}`) as Record<string, any>;
+    const held: ((n: number) => number)[] = [];
+    for (let i = 0; i < 16; i++) held.push((n: number) => n + i);
+    for (const f of held) g.apply(f, 0);
+    // Passing one already registered costs no slot, which is what the `indexOf` is for.
+    for (const f of held) g.apply(f, 0);
+    if (g.apply(held[3], 10) !== 13) throw new Error("a re-registered callback answered wrongly");
+    let threw = "";
+    try { g.apply((n: number) => n - 1, 0); } catch (e) { threw = (e as Error).message; }
+    if (!threw.includes("16")) throw new Error(`a 17th callback gave ${threw || "no error"}`);
   } finally {
     await Deno.remove(path);
   }

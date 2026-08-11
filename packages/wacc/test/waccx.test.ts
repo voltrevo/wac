@@ -179,6 +179,7 @@ export i32 area(i32 w, i32 h) { return w * h; }
 export string label(string s) { return s; }
 export P boxed(i32 n) { return P(n); }
 export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
+export fn[i32(i32)] handOut() { return handOut; }
 `;
   const { cap, err, written } = memory({ "main.wac": src });
   const r = await waccx(["bindgen", "main.wac"], cap);
@@ -190,13 +191,15 @@ export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
   for (const want of ["export function area", "export function label", "$bind$str_from_mem"]) {
     if (!text.includes(want)) throw new Error(`the glue has no ${want}`);
   }
-  // A struct crosses as a class, so `boxed` is bound now — and a *callback* is not, which is the
-  // boundary this test moved to when structs landed. What matters is unchanged: what cannot be
+  // A struct crosses as a class and a callback crosses in, so `boxed` and `viaCallback` are bound.
+  // What is left is a funcref going *out* — a wac function handed to the host — and the boundary
+  // moves here rather than the assertion being deleted. What matters is unchanged: what cannot be
   // bound is said rather than discovered at the call site.
   if (!text.includes("export class P")) throw new Error("no class for the struct");
   if (!text.includes("export function boxed")) throw new Error("a struct return was declined");
-  if (text.includes("export function viaCallback")) throw new Error("glue was generated for a funcref");
-  if (!err.join("").includes("viaCallback")) {
+  if (!text.includes("export function viaCallback")) throw new Error("a callback parameter was declined");
+  if (text.includes("export function handOut")) throw new Error("glue was generated for a funcref return");
+  if (!err.join("").includes("handOut")) {
     throw new Error(`stderr did not name what it declined: ${err.join("")}`);
   }
 });
