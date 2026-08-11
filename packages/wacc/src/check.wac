@@ -1144,6 +1144,18 @@ export struct C {
    * bounded by the number of structs, so a cycle in the parent chain — which the reference rejects
    * separately — terminates here rather than hanging.
    */
+  /** The type of a struct's `i`th field, in declaration order — what a positional argument goes into. */
+  string fieldTypeAtIndex(this, string owner, i32 i) {
+    string at = templateOf(owner);
+    i32 seen = 0;
+    for (i32 k = 0; k < this.fieldCount; k++) {
+      if (this.fieldOwners[k] != at) { continue; }
+      if (seen == i) { return substituteType(this, owner, this.fieldTypes[k]); }
+      seen = seen + 1;
+    }
+    return typeNone();
+  }
+
   string fieldType(this, string owner, string name) {
     // The table is keyed by template — `Box`, never `Box<i32>` — so an instantiation resolves to its
     // template to find the field and substitutes on the way back out.
@@ -2427,7 +2439,15 @@ void checkExpr(C c, Expr e) {
     // A real `Call` is a method or a funcref. A method call is `Call(Member(receiver, name), args)`
     // and is checked; a funcref call has no name to look up and is not.
     case Call(callee, args): {
-      for (i32 i = 0; i < args.len(); i++) { checkExpr(c, args[i]); }
+      // **A variant construction's arguments have slots, and they are the payload's.** `Wrap.W(Box(5))`
+      // puts a `Box<T>` in the first one, which is what a bare `Box(5)` needs to know which instance
+      // it is — without it the construction was checked against no slot at all and refused as "not
+      // callable". `spec/cases/0046`.
+      string payloadOwner = variantCalleeOwner(c, callee);
+      for (i32 i = 0; i < args.len(); i++) {
+        if (payloadOwner != "") { c.expected = c.fieldTypeAtIndex(payloadOwner, i); }
+        checkExpr(c, args[i]);
+      }
       match (callee.kind) {
         case Member(obj, nameTok): {
           // The **object**, not the whole callee. Walking the callee as an expression would read
@@ -3541,6 +3561,29 @@ bool isArrayBuiltin(string name) {
 
 bool isStringBuiltin(string name) {
   return name == "len" || name == "slice" || name == "toBytes" || name == "indexOf";
+}
+
+/**
+ * The variant a call is constructing — `Wrap.W(…)` answers `W` — or `""` for anything else.
+ *
+ * Named by the variant rather than the enum because that is what the field table is keyed by: a
+ * variant is a struct whose fields are its payload, which is how `case W(b)` finds `b` a type.
+ */
+string variantCalleeOwner(C c, Expr callee) {
+  match (callee.kind) {
+    case Member(obj, nameTok): {
+      match (obj.kind) {
+        case Ident(tok): {
+          string en = tokenText(c, tok);
+          string vn = tokenText(c, nameTok);
+          if (c.isEnum(en) && c.variantArityIn(en, vn) >= 0) { return vn; }
+          return "";
+        }
+        else: { return ""; }
+      }
+    }
+    else: { return ""; }
+  }
 }
 
 void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] args) {

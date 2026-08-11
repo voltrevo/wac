@@ -1,0 +1,9 @@
+// expect: answers f = 5
+// why: the slot a constructor takes its arguments from can be a variant's payload, not only a local
+// from: the last of specSingle's known false alarms
+struct Box<T> { T v; }
+enum Wrap<T> { W(Box<T> b) }
+export i32 f() {
+  Wrap<i32> w = Wrap.W(Box(5));
+  return match (w) { case W(b): b.v };
+}

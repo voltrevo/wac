@@ -265,7 +265,7 @@ both at once, and not the fix first: a fix written first is aimed at whatever yo
 looking at, and the thing that told you it worked disappears when the slot ends. `spec/cases/README.md`
 has the long version.
 
-It reads **45 cases, met by the reference and by wacc alike**. It held two misses for one slot — an
+It reads **47 cases**: the reference meets all of them and wacc meets 46, the one left being half fixed and named. It held two misses for one slot — an
 integer literal wider than its slot, and a nullable packed field, both accepted — and they are fixed,
 which took `specSingle` from 265 of 304 refused to 270. Both were already among its named misses,
 where they were a tally; four lines each was what it took to act on them.
@@ -280,6 +280,18 @@ on the way in. Both corrections went in as cases *before* the code was changed �
 The six `§wac-arr-bulk` diagnostics went the same way: `copyFrom` and `fill` were listed as builtins
 and neither was checked at all, which was the largest cluster left in `specSingle`'s named misses.
 Cases `0030` to `0035` first, then the rules — 270 of 304 refused becomes 276.
+
+**The last false alarm was not what its ledger entry said**, which is the argument for reducing before
+fixing. The entry read "a generic enum works, with methods and several arguments"; the program wacc
+actually refused was one line of it — `Wrap<i32> w = Wrap.W(Box(5));` — and the reason was that a
+variant construction gave its arguments no slot at all, so a bare `Box(5)` had nowhere to take its
+type arguments from and was called *not callable*. A payload is a slot like any other now, which
+`spec/cases/0047` pins.
+
+What is left of it is narrower and written down rather than guessed: for a **generic** enum the
+payload type keeps its `T`, because `substituteType` resolves through the struct table and an enum
+instance is not in it, so `Box<T>` never becomes `Box<i32>`. The error moved from *not callable* to a
+field mismatch, which is the more accurate complaint about the same gap.
 
 **`trap` can say why**, and the parser had no room for the message — one of the two legal programs
 wacc refused. Carrying it turned out to sharpen rung 2 as well: `parse.test.ts` rendered the node as

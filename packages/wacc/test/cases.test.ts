@@ -27,12 +27,17 @@ const enc = new TextEncoder();
 const cases = await loadCases();
 
 /**
- * The cases wacc does not meet yet, each with what it is waiting for. **Empty.**
+ * The cases wacc does not meet yet, each with what it is waiting for.
  *
- * It held two on the day this corpus was written, both also among `specSingle`'s named misses, where
- * they were a tally rather than something anybody could run. Four lines each was enough to fix them.
+ * One, and it is half fixed: the slot now reaches the constructor, which is what `0047` pins, and
+ * what is left is substituting a generic enum's type argument into its payload.
  */
-const KNOWN_MISSES = new Map<string, string>([]);
+const KNOWN_MISSES = new Map<string, string>([
+  ["0046-a-bare-generic-constructor-as-an-argument.wac",
+   "a generic enum's payload type keeps its `T`: the slot reaches the constructor now, but " +
+   "`substituteType` resolves through the struct table and an enum instance is not in it, so " +
+   "`Box<T>` never becomes `Box<i32>` and the argument reads as a field mismatch"],
+]);
 
 Deno.test("cases: wacc against the corpus", async () => {
   const missed: string[] = [];
