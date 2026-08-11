@@ -28,6 +28,7 @@
 import { Buf } from "../../bytes/src/buf.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { sha1 } from "../../crypto/src/sha1.wac";
 
 /** Where every object in a pack is, and what it is called. */
 export struct PackIndex {
@@ -155,4 +156,86 @@ export i32 find(const PackIndex idx, u8[] name) {
     if (cmp < 0) { lo = mid + 1; } else { hi = mid - 1; }
   }
   return -1;
+}
+
+// ── writing ─────────────────────────────────────────────────────────────────────────────────────────
+//
+// `design/system/0005` step 8: a clone receives a pack with no index and has to leave one on disk, because
+// git will not read the pack without it. Everything above reads an index; this writes one.
+
+/** Four bytes, big-endian. Written from an `i32`'s bit pattern, so a top-bit-set marker works. */
+void u32be(Buf out, i32 v) {
+  out.push((v >> 24) & 255);
+  out.push((v >> 16) & 255);
+  out.push((v >> 8) & 255);
+  out.push(v & 255);
+}
+
+/**
+ * Serialise a version-2 index.
+ *
+ * `packChecksum` is the pack's own trailing SHA-1 — the last twenty bytes of the `.pack`. It is not a
+ * field of `PackIndex` because an index describes *where objects are*, and that string identifies the file
+ * it describes rather than anything in this table; a caller always has it, since it read the pack.
+ *
+ * **The fanout is written cumulatively**, the same rule the reader above warns about from the other side: a
+ * per-byte count here produces an index git reads as a smaller pack and looks up wrongly.
+ *
+ * **Offsets over 2 GiB go in the large table**, flagged by the top bit of the 4-byte slot. Packs that big
+ * are rare and the branch is not: `git verify-pack` on an index whose flag was never set reports every
+ * object past the boundary at a wrong offset.
+ */
+export u8[] writeIdx(const PackIndex idx, u8[] packChecksum) {
+  Buf out = Buf.create();
+  out.push(255);
+  out.push('t');
+  out.push('O');
+  out.push('c');
+  u32be(out, 2);
+
+  // The cumulative fanout, from the first byte of each name.
+  i32[] upto = i32[256]();
+  for (i32 i = 0; i < idx.count; i++) {
+    i32 first = idx.names[i * 20];
+    upto[first] = upto[first] + 1;
+  }
+  i32 running = 0;
+  for (i32 b = 0; b < 256; b++) {
+    running = running + upto[b];
+    u32be(out, running);
+  }
+
+  for (i32 i = 0; i < idx.count * 20; i++) { out.push(idx.names[i]); }
+  for (i32 i = 0; i < idx.count; i++) { u32be(out, idx.crcs[i] as@ i32); }
+
+  // Offsets, and the table the big ones live in. Built alongside, because the flag in the small slot is
+  // an index into it and both are only known while walking.
+  Buf large = Buf.create();
+  i32 bigs = 0;
+  i64 fits = 2147483647 as i64;
+  for (i32 i = 0; i < idx.count; i++) {
+    i64 off = idx.offsets[i];
+    if (off > fits) {
+      // Top bit set, and the rest is the position in the table below.
+      u32be(out, (1 << 31) | bigs);
+      // **`as@` and not `as~`.** These are bit-takings rather than numeric conversions: `as~` *clamps*
+      // to the target's range, so the low half of any offset past 2 GiB came out as 2147483647 and the
+      // table held 0x7FFFFFFF for every entry — a wrong offset for exactly the objects the table exists
+      // for. `as@` keeps the low 32 bits, which is what a big-endian split needs. Found by the
+      // round-trip test below rather than by reading this line.
+      u32be(large, (off >> (32 as i64)) as@ i32);
+      u32be(large, off as@ i32);
+      bigs = bigs + 1;
+    } else {
+      // Clamping cannot bite here — the branch is what guarantees it fits — but the same cast is used
+      // for the same reason: what is wanted is the bottom four bytes.
+      u32be(out, off as@ i32);
+    }
+  }
+  out.pushAll(large.bytes());
+
+  for (i32 i = 0; i < 20; i++) { out.push(packChecksum[i]); }
+  // The trailer is over everything above it, this file's own bytes — not over the pack.
+  out.pushAll(sha1(out.bytes()));
+  return out.take();
 }

@@ -40,6 +40,8 @@ const pack = await wacBind("packages/git/src/pack.wac") as any;
 const obj = await wacBind("packages/git/src/object.wac") as any;
 // deno-lint-ignore no-explicit-any
 const idxmod = await wacBind("packages/git/src/idx.wac") as any;
+// A `PackIndex` cannot cross between two bound modules — see the probe's own header.
+const probe = await wacBind("packages/git/test/wac/idxprobe.wac") as any;
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -314,4 +316,67 @@ Deno.test({
       await Deno.remove(dir, { recursive: true });
     }
   },
+});
+
+Deno.test({
+  name: "the index we write is the file git wrote, byte for byte",
+  ignore: !haveGit,
+  fn: async () => {
+    const { dir, packPath, idxPath } = await packed();
+    try {
+      const packBytes = await Deno.readFile(packPath);
+      const built = pack.indexPack(packBytes);
+      assert(built.tag === "Built", `indexPack failed: ${built.tag === "Unindexable" ? built.Unindexable_why : ""}`);
+
+      // The pack's own trailing SHA-1 goes in the index's second-to-last field. It is not in `PackIndex`
+      // because it identifies the file being described rather than anything in the table.
+      const checksum = packBytes.subarray(packBytes.length - 20);
+      const ours = Uint8Array.from(probe.indexToIdx(packBytes, checksum));
+      const theirs = await Deno.readFile(idxPath);
+
+      // **This is a stronger claim than the comparison above, and deliberately so.** That one checks
+      // names and offsets; the CRC-32 per object, the cumulative fanout and both trailing hashes were
+      // computed by us and compared with nothing. A wrong CRC makes an index git accepts and
+      // `git verify-pack` rejects, which is the kind of wrong that shows up much later.
+      assert(
+        ours.length === theirs.length,
+        `our index is ${ours.length} bytes and git's is ${theirs.length}`,
+      );
+      for (let i = 0; i < theirs.length; i++) {
+        if (ours[i] !== theirs[i]) {
+          // Where, in terms of the layout, rather than just which byte.
+          const n = built.Built_idx.count;
+          const where = i < 8
+            ? "the magic and version"
+            : i < 8 + 1024
+            ? `the fanout, entry ${(i - 8) >> 2}`
+            : i < 8 + 1024 + n * 20
+            ? `an object name, ${(i - 8 - 1024) / 20 | 0}`
+            : i < 8 + 1024 + n * 24
+            ? `a CRC-32, object ${(i - 8 - 1024 - n * 20) >> 2}`
+            : i < 8 + 1024 + n * 28
+            ? `an offset, object ${(i - 8 - 1024 - n * 24) >> 2}`
+            : i < theirs.length - 20
+            ? "the large-offset table or the pack checksum"
+            : "the index's own trailing hash";
+          throw new Error(`byte ${i} is ${ours[i]} and git's is ${theirs[i]} — in ${where}`);
+        }
+      }
+
+      // The fixture's shape, asserted: a fanout that is all in one bucket, or a pack of one object, would
+      // agree by accident. `big.txt` twice gives a delta, and five objects spread the first byte around.
+      assert(built.Built_idx.count >= 8, `a pack of ${built.Built_idx.count} objects is too small`);
+      const firstBytes = new Set<number>();
+      for (let i = 0; i < built.Built_idx.count; i++) firstBytes.add(built.Built_idx.names[i * 20]);
+      assert(firstBytes.size >= 4, `every name starts with one of ${firstBytes.size} bytes; the fanout is barely exercised`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("an index with offsets past 2 GiB round-trips through the large-offset table", () => {
+  // Entirely inside wac — see the probe's header for why, and for why `parseIdx` is the oracle when git
+  // will not produce the file to compare against.
+  assert(probe.largeOffsetRoundTrips(), "an offset over 2 GiB did not survive being written and read back");
 });

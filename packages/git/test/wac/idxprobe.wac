@@ -1,0 +1,85 @@
+// Indexing and serialising in one call, so a `PackIndex` never has to cross to JavaScript.
+//
+// `test/pack.test.ts` binds `pack.wac` and `idx.wac` separately, and each `wacBind` is its own wasm
+// instance with its own types — so a `PackIndex` produced by one is not the type the other's `writeIdx`
+// accepts, and handing it over is `type incompatibility when transforming from/to JS`. The struct stays
+// inside wac and only bytes come out.
+//
+// This is the whole reason `test/wac/` exists in other packages: the thing worth testing is sometimes a
+// composition, and a composition of two modules has to be written in the language they are written in.
+
+import { Index, PackIndex, parseIdx, writeIdx } from "../../src/idx.wac";
+import { Indexed, indexPack } from "../../src/pack.wac";
+
+/**
+ * Index `pack` and write the index out.
+ *
+ * Empty means `indexPack` refused, which the caller checks for separately — it binds `indexPack` itself
+ * and gets the reason from there, so repeating it here would be a second way to say the same thing.
+ */
+export u8[] indexToIdx(u8[] pack, u8[] checksum) {
+  match (indexPack(pack)) {
+    case Unindexable(why): { return u8[0](); }
+    case Built(idx): { return writeIdx(idx, checksum); }
+  }
+}
+
+/**
+ * Write an index whose offsets do not fit in 31 bits, read it back, and say whether it survived.
+ *
+ * **No pack here is over 2 GiB**, so git will not produce an index with a large-offset table to compare
+ * against — and the code that writes one is real code. An untested branch in a format writer is the kind
+ * that gets discovered by whoever first clones a big repository, so this uses `parseIdx` as the oracle
+ * instead: that reader is itself checked against git's own files byte for byte, which is what makes it
+ * worth trusting for the one case git will not hand over.
+ *
+ * `2147483648` is the boundary: the 4-byte slot holds offsets below it, and the top bit flags the rest.
+ * One offset on each side of it, so a writer that flagged everything or nothing fails.
+ */
+export bool largeOffsetRoundTrips() {
+  i32 n = 3;
+  u8[] names = u8[n * 20]();
+  // Ascending and with distinct first bytes, so the fanout is not all in one bucket.
+  for (i32 i = 0; i < n; i++) { names[i * 20] = i * 64; }
+  i64[] offs = i64[n]();
+  offs[0] = 12;
+  offs[1] = 2147483648;
+  offs[2] = 5000000000;
+  u32[] crcs = u32[n]();
+  crcs[0] = 1;
+  crcs[1] = 2;
+  crcs[2] = 3;
+  u8[] checksum = u8[20]();
+  for (i32 i = 0; i < 20; i++) { checksum[i] = i + 1; }
+
+  u8[] bytes = writeIdx(PackIndex(n, names, offs, crcs), checksum);
+  match (parseIdx(bytes)) {
+    case Rejected(why): { return false; }
+    case Loaded(back): {
+      if (back.count != n) { return false; }
+      for (i32 i = 0; i < n; i++) {
+        if (back.offsets[i] != offs[i]) { return false; }
+        if (back.crcs[i] != crcs[i]) { return false; }
+      }
+      return true;
+    }
+  }
+}
+
+/** The bytes of the fabricated large-offset index, so a failure can be read from outside. */
+export u8[] largeOffsetBytes() {
+  i32 n = 3;
+  u8[] names = u8[n * 20]();
+  for (i32 i = 0; i < n; i++) { names[i * 20] = i * 64; }
+  i64[] offs = i64[n]();
+  offs[0] = 12;
+  offs[1] = 2147483648;
+  offs[2] = 5000000000;
+  u32[] crcs = u32[n]();
+  crcs[0] = 1;
+  crcs[1] = 2;
+  crcs[2] = 3;
+  u8[] checksum = u8[20]();
+  for (i32 i = 0; i < 20; i++) { checksum[i] = i + 1; }
+  return writeIdx(PackIndex(n, names, offs, crcs), checksum);
+}
