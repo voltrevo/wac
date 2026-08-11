@@ -2058,7 +2058,18 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 
   // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
   // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
-  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + bulkCount * 3 + structHelpers;
+  // **Where each block of functions begins, said once.** The order is fixed — the user's, then the
+  // string helpers, then the buffer, the array families, the struct families, and the start function
+  // last — and four places used to spell that arithmetic out separately. They disagreed the moment a
+  // family was added between them, which arrives as "invalid start func reference" or as a call to
+  // the wrong function several dozen instructions later. `issues/lang/0094` adds imports in front of
+  // all of it, and wasm numbers imported functions first, so every one of these gains the same term.
+  i32 stringHelpers = needsStrings ? 9 : 0;
+  i32 memHelperAt = count + stringHelpers;
+  i32 arrayHelpersAt = memHelperAt + 1;
+  i32 structHelpersAt = arrayHelpersAt + bulkCount * 3;
+  i32 startFunctionAt = structHelpersAt + structHelpers;
+  i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + bulkCount * 3 + structHelpers;
   funcs.u32leb(count + helpers);
   exports.u32leb(exportCount + 2 + bulkCount * 3 + structHelpers);
   code.u32leb(count + helpers);
@@ -2387,7 +2398,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     // last and numbered by hand, and adding a helper in front of it without moving this produced
     // *"invalid start func reference"* — the index named a function that is now the buffer helper.
     emitStartFunction(funcs, code, src, lexed, env,
-                      index + (needsStrings ? 9 : 0) + 1 + bulkCount * 3 + structHelpers, declTypes);
+                      startFunctionAt, declTypes);
   }
 
   // **The type section is written before the code that names types.** If emitting a body registered
@@ -2407,11 +2418,11 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   exports.name("$bind$mem");
   exports.byte(2);    // a memory
   exports.u32leb(0);
-  i32 helperBase = count + (needsStrings ? 9 : 0);
+  i32 helperBase = memHelperAt;
   exports.name("$bind$mem_ensure");
   exports.byte(0);    // a function
   exports.u32leb(helperBase);
-  i32 bulkAt = helperBase + 1;
+  i32 bulkAt = arrayHelpersAt;
   for (i32 bi = 0; bi < env.arrayCount; bi++) {
     string bt = env.arrayTypes[bi];
     if (!isBulkArray(bt)) { continue; }
@@ -2453,7 +2464,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + bulkCount * 3 + structHelpers);
+    st.u32leb(startFunctionAt);
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment

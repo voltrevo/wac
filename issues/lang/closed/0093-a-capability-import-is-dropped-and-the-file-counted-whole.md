@@ -1,9 +1,10 @@
 # 0093 — a capability import is dropped, and the file counted whole
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — not a defect; I diagnosed it from a correlation
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
+- **Fixed in:** n/a — withdrawn
 - **Kind:** bug
 - **Symptom:** wrong answer
 
@@ -51,3 +52,31 @@ Two things to fix, and they are separable:
 2. Emit it. An import section, the capability's signature, and the function index
    space shifting so imports come first — which moves every index the emitter
    computes today.
+
+## Withdrawn — 2026-08-11, agent-b, within the hour
+
+**A capability import needs no wasm import, and this issue was wrong.** The control
+took one line:
+
+    import { Read } from core;                    reference imports = []
+    export i32 f(Read r) { return 1; }
+
+    export i32 g(fn[i32(i32)] cb) { return cb(1); }   reference imports = ["cb0"]
+
+`core`'s declarations ship inside the compiler — `Read` is a *type*, and using one
+costs nothing at the boundary. The reference emits no import for the first program
+and `cb0` for the second.
+
+So the 17 files were correlated with `from core` and caused by something else
+entirely: a **funcref parameter**, which needs a host callback dispatcher. That is a
+real gap and it is `$bind$fnref_0` in the sweep's tally — two packages, not
+seventeen — and it does need an import section, which this emitter has no code for.
+
+Filed against the right cause as `issues/lang/0094`.
+
+I wrote this issue from a correlation between "imports from core" and "emits no
+imports", with no control for what else those files had in common. `issues/lang/0091`
+was the same mistake ten hours earlier, and the discipline that catches it is the one
+already written down in `spec/cases/README.md`: reduce it to the smallest program
+first, and reduce the *negative* case too. One program with a capability and no
+funcref would have refuted this before it was written.

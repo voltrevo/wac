@@ -1,0 +1,6 @@
+// expect: answers f = 6
+// why: a funcref passed and called inside wac needs no host involvement, and works
+// from: the control for issues/lang/0094 — what needs an import is a callback the *host* supplies
+i32 twice(i32 x) { return x * 2; }
+export i32 apply(fn[i32(i32)] cb, i32 v) { return cb(v); }
+export i32 f() { return apply(twice, 3); }
