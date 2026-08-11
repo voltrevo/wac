@@ -1,7 +1,7 @@
 # 0135 — a background job runs the name as an external program, so no builtin can be backgrounded
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** (nobody — the diagnostic half is done, the gap is not)
 - **Reported by:** agent-a
 - **Date:** 2026-08-11
 - **Kind:** bug
@@ -69,3 +69,52 @@ spawn — which is exactly what the pipeline stages already do (`fork()` copies 
 
 Refusing `&` for builtins by name is the third option and is worse than either: `sleep 5 &` is one
 of the few things anybody types at a shell, and every applet-less build would refuse all of them.
+
+## 2026-08-11, later: the diagnostic is fixed, the gap is not — and my recommendation was wrong
+
+**Done.** The two names that reach the spawn and come back as `No such file or directory` now say
+what they are. A builtin with an applet twin still works exactly as before, because there a program
+of that name really does exist:
+
+    $ wacsh -c 'echo hi & wait'
+    sh: echo: a builtin cannot be backgrounded: a background job is a separate instance of this
+    program, and this build has no program of that name
+
+    $ wacsh -c 'f() { echo fn; }; f & wait'
+    sh: f: a shell function cannot be backgrounded: a background job is a separate instance of this
+    program and functions are defined in this one
+
+    $ boxsh -c 'echo hi & wait'
+    hi
+
+`packages/sh/test/gaps.test.ts` asserts both, and asserts the property behind them: **no script in
+that table may be answered with "No such file or directory"**, which is the sentence that blames the
+caller for a name this shell has. Canaried by taking the check out: `echo hi & wait should say a
+builtin cannot be backgrounded: "sh: echo: No such file or directory"`.
+
+**Not done, and the recommendation above needs replacing.** I wrote that the child should re-enter
+the shell as `sh -c '<the command>'`, "close to what the pipeline path already does". Two things say
+otherwise, and both were found by reading the entry points rather than the shell:
+
+1. **`-c` does not reach a shell in every build.** A background child is `spawnSelf`, which re-enters
+   *this program's* `main`. In `packages/box/src/bin/imaged.wac` that main takes the **image path** as
+   its first argument — `spawnSelf(["-c", …])` would try to boot an image called `-c`. The multi-call
+   mains dispatch on argv[0] as an applet name first, and `-c` is not an applet, so there is nothing
+   to catch it.
+
+2. **Worse: a child shell built by `bin/sh.wac` gets the *host* filesystem.** It does
+   `Shell.create(core, cli)` — the real disk — where an applet child is given the parent's filesystem
+   over the channel. So backgrounding a builtin out of a sealed session by that route would hand the
+   child the machine the session was sealed off from, which is
+   [0116](../closed/0116-a-spawned-stage-gets-the-hosts-world-not-the-sessions.md) again and a worse
+   bug than the one being fixed.
+
+So the shape of the fix is: **the child has to be a shell that is built the way an applet child is
+built** — with the parent-channel world, reached through the same dispatch every multi-call `main`
+already does. `bin/sh.wac` says why there is no `box sh` applet to reach: "`box.wac` imports every
+applet, and an applet that wired in `boxRun` would import `box.wac` back". That cycle is the real
+obstacle, and it is a packaging question rather than a shell one.
+
+A narrower route worth weighing: the child only ever has to run **one builtin**, so it does not need
+the applet table at all — a shell with no external commands would do, and the cycle does not arise
+for that. What it does need is the parent's filesystem, which is the part `boxApplet` is doing.

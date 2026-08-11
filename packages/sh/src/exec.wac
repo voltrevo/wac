@@ -1006,6 +1006,29 @@ void runBackground(Shell sh, AndOr list) {
     return;
   }
 
+  // **A name that exists and cannot be run *this way* says so, rather than "No such file or
+  // directory".** A background job is a separate instance of this program started with the command
+  // as its arguments, so what it can run is what this build has as a *program*. A builtin is not one
+  // and a function is not one — and both used to reach the spawn and come back as a missing file,
+  // which blames the caller for a name that is right there. wac-mono 0135.
+  //
+  // A builtin with an applet twin keeps working, because there a program of that name really does
+  // exist: `echo hi &` runs `box`'s `echo`. That the *foreground* would have run the builtin is a
+  // divergence worth knowing about and is in the README rather than hidden here.
+  string bgName = argv.get(0);
+  if (sh.funcs.has(bgName)) {
+    sh.err(("sh: " + bgName + ": a shell function cannot be backgrounded: a background job is a "
+          + "separate instance of this program and functions are defined in this one\n").toBytes());
+    sh.status = 2;
+    return;
+  }
+  if (isBuiltin(bgName) && !containsSlash(bgName) && !programExists(sh, bgName)) {
+    sh.err(("sh: " + bgName + ": a builtin cannot be backgrounded: a background job is a separate "
+          + "instance of this program, and this build has no program of that name\n").toBytes());
+    sh.status = 2;
+    return;
+  }
+
   PathFault badBg = pathFault(sh, argv.get(0));
   if (badBg.status != 0) {
     sh.err(("sh: " + argv.get(0) + ": " + badBg.why + "\n").toBytes());
@@ -1849,6 +1872,18 @@ bool spawnableName(Shell sh, string name) {
   if (name == "" || containsSlash(name)) { return false; }
   if (sh.funcs.has(name)) { return false; }
   if (isBuiltin(name)) { return false; }
+  return programExists(sh, name);
+}
+
+/**
+ * Whether this build has a *program* of that name — an applet wired in, or a `/bin` entry.
+ *
+ * Separate from `spawnableName` because the two questions differ for exactly the names that matter
+ * here: `echo` is a builtin *and* a `box` applet, so it is not spawnable as a stage (the builtin
+ * wins) and a program of that name does exist. `&` needs the second question — see `runBackground`.
+ */
+bool programExists(Shell sh, string name) {
+  if (binProgram(sh, name) != "") { return true; }
   string[] mine = sh.externalNames();
   for (i32 i = 0; i < mine.len(); i++) {
     if (mine[i] == name) { return true; }

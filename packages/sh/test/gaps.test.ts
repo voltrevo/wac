@@ -228,15 +228,28 @@ Deno.test({
       // third descriptor there and carries on, because it has descriptors to make. This refuses it,
       // which is a real divergence and the honest one: a shell that cannot create the descriptor should
       // not pretend the redirection happened.
+      // **A name that exists and cannot be run *that way*.** `&` starts a separate instance of this
+      // program with the command as its arguments, so it can only run what the build has as a
+      // *program* — and this build has none, being `packages/sh` alone. Both of these used to reach
+      // the spawn and come back as `No such file or directory`, which says the caller typed a name
+      // that is not there when it is a builtin of this very shell. wac-mono 0135, which is open: the
+      // gap is that they cannot be backgrounded at all, and this is only the sentence about it.
       for (const [script, want] of [
         ["echo hi 1>&3", "3: Bad file descriptor"],
         ["echo hi 3>&1", "3: Bad file descriptor"],
         ["echo hi 1>&-", "closing standard output is not implemented"],
         ["echo hi 3>f", "redirecting fd 3 is not implemented"],
+        ["echo hi & wait", "a builtin cannot be backgrounded"],
+        ["jobs & wait", "a builtin cannot be backgrounded"],
+        ["f() { echo fn; }; f & wait", "a shell function cannot be backgrounded"],
       ]) {
         const got = await run(script);
         assertEquals(got.err.includes(want), true, `${script} should say ${want}: ${JSON.stringify(got.err)}`);
         assertEquals(got.err.includes("syntax error"), false, `${script} is not a syntax error`);
+        assertEquals(
+          got.err.includes("No such file or directory"), false,
+          `${script} must not blame the caller for a name this shell has: ${JSON.stringify(got.err)}`,
+        );
       }
     } finally {
       await Deno.remove(built);

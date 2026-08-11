@@ -424,22 +424,31 @@ cannot be compared with it.
 lines above this line, which is where a reader would have found the contradiction. What `&` still
 refuses by name is a list, a pipeline or a redirection, each of which needs a subshell to run in.
 
-**But `&` runs the name as an external program, so a builtin cannot go in the background.** A child
-is `spawnSelf` with the command as its arguments, and the child resolves that name the way any
-program is resolved — which finds an applet where the build has one and nothing at all where it does
-not. So in `wacsh`, whose commands are all builtins, *every* background job fails:
+**But `&` runs a *program*, so a builtin or a function cannot go in the background.** A child is
+`spawnSelf` with the command as its arguments, so what `&` can run is what the build has as a
+program: an applet where there is one, and nothing at all where there is not. In `wacsh`, whose
+commands are all builtins, that is every background job. It is refused by name rather than attempted:
 
     $ wacsh -c 'echo hi & wait'
-    sh: echo: No such file or directory          # bash prints hi
+    sh: echo: a builtin cannot be backgrounded: a background job is a separate instance of this
+    program, and this build has no program of that name           # bash prints hi
 
-    $ boxsh -c 'echo hi & wait'                  # works, because `echo` is also an applet
+    $ boxsh -c 'echo hi & wait'                  # works: `echo` is a builtin *and* an applet
     hi
-    $ boxsh -c 'shift & wait'                    # a builtin with no applet twin, so it does not
-    sh: shift: No such file or directory
+    $ boxsh -c 'shift & wait'                    # a builtin with no applet twin
+    sh: shift: a builtin cannot be backgrounded: …
 
-The job table is right about it either way — `true & jobs` prints `[1]+  Running  true &` — which is
-what makes this look like working job control until something is waited for.
-[0135](../../issues/system/open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md).
+Which is the one place a background command and a foreground one mean different things: `echo` in the
+foreground is the builtin and behind `&` it is `box`'s applet. They agree today, and if they ever
+stop, this is why.
+
+Both of those said `No such file or directory` until 2026-08-11 — a name this shell has, reported as
+a name that is not there. `packages/sh/test/gaps.test.ts` holds the property: nothing in that table
+may answer with that sentence.
+[0135](../../issues/system/open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md)
+is open for the gap itself, and records why the obvious fix — spawn `sh -c` — is not one: in
+`imaged`'s build that argument is an image path, and a child shell built the ordinary way gets the
+*host* filesystem, which would undo 0116 for a sealed session.
 
 What is genuinely absent is **suspension**: no `^Z`, no `fg`, no `bg`, and no stopped state in the
 table. That needs a signal a running child can be made to stop on, and the only delivery this system
