@@ -1,0 +1,4 @@
+// expect: refused
+// why: the declared type is the slot, and a float literal does not fit an i32
+const i32 A = 1.5;
+export i32 g() { return A; }

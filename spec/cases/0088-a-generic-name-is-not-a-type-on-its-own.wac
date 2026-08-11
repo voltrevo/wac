@@ -1,0 +1,4 @@
+// expect: refused
+// why: `Box` is a template; `Box<i32>` is a type — a written type has to say which instance it is
+struct Box<T> { T v; }
+export i32 f() { Box b = Box(1); return b.v; }

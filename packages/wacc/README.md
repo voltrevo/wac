@@ -160,7 +160,7 @@ have never appeared in a status line: they are invisible to every rung.
 | what the reference does | wacc |
 |---|---|
 | lex, parse | done — token- and node-identical on every file |
-| type check | 288 of 304 spec rejections, 366 of 367 acceptances |
+| type check | 303 of 304 spec rejections, 367 of 367 acceptances — the one left is a multi-file case recorded with one file |
 | emit wasm | 336 of 343 files whole, 0 invalid |
 | self-host | done, and the reference cannot |
 | diagnostics: message | done, and the wording agrees where both speak |
@@ -189,23 +189,36 @@ hand-written cases a working corpus cannot contain: unterminated everything, eve
 precedence level, `else if` chains, trailing commas, a nested `>>>` close, and the comparisons that
 must *not* be read as type arguments.
 
+**Rung 3 now meets the spec.** 303 of the 304 single-file programs the suite calls illegal are
+refused and all 367 it calls legal are silent; across files it is 15 of 15 and 41 of 41; `spec/cases`
+is 88 of 88 with no named misses on either side. The one program left is a *multi-file* case the
+recorder kept one file of — `main.wac` importing from a `b.wac` nobody supplied — so refusing it
+would mean refusing every import.
+
+Fifteen rules closed in one pass, each written as a case first: `const` initialisers that are not
+constant, packed nullables below the outermost `[]`, writing a narrowed name inside its own branch,
+template arity, a variant name shared by two enums, a parent struct nobody declared, a string literal
+used as an arithmetic operand, a payload written in a type test, laundering a const reference through
+a field or an element, `core` importing a name it does not export, inference reading through a
+funcref call, a generic instantiating itself with a bigger type, a template written where a type
+belongs, and a generic enum's payload substitution. One was not a checker rule at all: `dumpErrors`
+computed the lexer's errors and dropped them, so an unterminated comment, an unterminated string and
+an unknown escape were invisible to every caller of this package.
+
 **Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
 `harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    16 of 33 packages pass their own suite on wacc-emitted code (743 tests)
-    — taken before 2026-08-10's reporting fix, and due a re-measurement: a package
-      whose export was silently dropped now refuses with a reason instead
+    22 of 33 packages pass their own suite on wacc-emitted code (1,102 tests)
     why the rest do not:
-        5  $bind$arr_i32_len
-        2  $bind$arr_i32_from_mem
         2  $bind$arr_u8Arr_new
         2  $bind$sm_Fs_inMemory
         2  $bind$fnref_0
-        2  a missing export or a wrong answer
-        1  untyped member
-        1  $bind$str_len
+        2  $bind$str_len
+        1  $bind$s_Canonical_get_code
+        1  $bind$s_FseTable_get_symbol
+        1  a static Shell.capturing, declined
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on
@@ -332,10 +345,18 @@ variant construction gave its arguments no slot at all, so a bare `Box(5)` had n
 type arguments from and was called *not callable*. A payload is a slot like any other now, which
 `spec/cases/0047` pins.
 
-What is left of it is narrower and written down rather than guessed: for a **generic** enum the
-payload type keeps its `T`, because `substituteType` resolves through the struct table and an enum
-instance is not in it, so `Box<T>` never becomes `Box<i32>`. The error moved from *not callable* to a
-field mismatch, which is the more accurate complaint about the same gap.
+What was left of it took three fixes that each looked like the whole thing: the enum table recorded
+no type parameters at all, so `substituteType` could not say what `Wrap`'s `T` was called; a bare
+`Box(5)` was then checked against the letter `T`, a type nobody wrote; and the slot the construction
+lands in was read from `c.expected` *after* the top of `checkExpr` had cleared it — the same trap the
+array and construction arms two screens up already carry a comment about. `spec/cases/0046` answers
+`5` now, and the acceptance side of the contract is 367 of 367.
+
+Fixing it broke a rejection, which is the corpus earning its keep in the other direction: `Box b =
+Box(1)` had been refused because the bare `Box(1)` mismatched its own field, and with that complaint
+gone nothing said the *declared* type was a template. `spec/cases/0088` says it directly — a template
+is not a type — and the rule now reports at the written type rather than at an argument three tokens
+away.
 
 **`trap` can say why**, and the parser had no room for the message — one of the two legal programs
 wacc refused. Carrying it turned out to sharpen rung 2 as well: `parse.test.ts` rendered the node as
@@ -447,7 +468,8 @@ shadows it, and arms whose values agree. The exhaustiveness half had been blocke
 enum a variant belongs to — the comment saying so is still in the history — and that stopped being
 true the day imported names started entering under the importer's own name for them.
 
-The two false alarms and the 39 illegal programs still accepted are named in `specSingle.test.ts`.
+One illegal program is still accepted and no legal one is refused; the one left is named in
+`specSingle.test.ts`, and it is a multi-file case the recorder kept one file of.
 
 That is a change of aim, not of method. A disagreement with the reference is now a question —
 *which of us is right?* — rather than a defect report against this checker, and a program wacc
@@ -458,12 +480,12 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 288 of 304 illegal refused, 366 of 367 legal silent, the rest named |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 303 of 304 illegal refused, 367 of 367 legal silent, the one left named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |
 | `sweep.test.ts` | 10,013 generated programs | no false alarm, no contradiction; 99% recall printed |
-| `checkSweep.test.ts` | the emitter's 4,104 valid programs | no false alarm — nothing skipped |
+| `checkSweep.test.ts` | the emitter's 4,102 valid programs | no false alarm — nothing skipped |
 | `mutateCheck.test.ts` | those programs, broken 26 ways | no contradiction; 94% recall printed |
 | `corpusCheck.test.ts` | the repository's own 341 files, imports in scope | no false alarm |
 | `corpusMutate.test.ts` | those files, broken seven ways | no contradiction where the reference says one thing; 96% recall printed |

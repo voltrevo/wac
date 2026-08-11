@@ -65,7 +65,7 @@ export function parseDiagnostics(wire: string): DiagError[] {
       file,
       line: Number(ln),
       col: Number(col),
-      phase: phase === "parse" ? "parse" : "typecheck",
+      phase: phase === "parse" || phase === "lex" ? phase : "typecheck",
       span: Number(span) > 0 ? Number(span) : 1,
       ...(annotation ? { annotation } : {}),
       ...(hint ? { hint } : {}),

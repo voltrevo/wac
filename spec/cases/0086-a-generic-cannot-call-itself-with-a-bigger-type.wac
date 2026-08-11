@@ -1,0 +1,5 @@
+// expect: refused
+// why: `grow<T>` calling `grow<Box<T>>` needs an unbounded tower of instantiations
+struct Box<T> { T v; }
+i32 grow<T>(T a) { Box<T> b = Box(a); return grow(b); }
+export i32 f() { i32 x = 1; return grow(x); }

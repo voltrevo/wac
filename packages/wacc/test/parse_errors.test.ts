@@ -32,7 +32,9 @@ import {
 import { wacBind } from "../../../harness/wacBind.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
-const dumpErrors = mod.dumpErrors as (src: Uint8Array) => Int32Array;
+// The parser's own surface, not the front end's: `dumpErrors` carries the lexer's errors too, and
+// this instrument compares parsers and asserts every code is a declared `perr*`.
+const dumpErrors = mod.dumpParseErrors as (src: Uint8Array) => Int32Array;
 
 type Diag = { line: number; col: number; code: number };
 

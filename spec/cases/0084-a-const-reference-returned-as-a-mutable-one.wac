@@ -1,0 +1,6 @@
+// expect: emits
+// why: the same hole seen from the other end — a return type has no place to write `const` either,
+// why: so the constness is lost on the way out and nothing can complain
+struct S { i32 v; }
+S h(const S c) { return c; }
+export i32 f(const S c) { return h(c).v; }

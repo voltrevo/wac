@@ -598,23 +598,12 @@ export function generateEmit(): Cell[] {
     `export bool f() { Res<i32, string> r = Res.Ok(3); Res<i32, string> b = Res.Err("no"); ` +
     `return r.isOk() && !b.isOk(); }`);
 
-  // Two enums in one module that share a variant name. The corpus has an `Opened.Ok` and a
-  // `Found.Ok`, and resolving an arm by file scope rather than within the enum being matched finds
-  // whichever was declared first — a different enum's variant with the same spelling.
-  const TWO = `enum Opened { Ok(i32 fd), Denied }\nenum Found { Ok(i32 at), Missing }\n`;
-  for (const [subject, arms, expect] of [
-    ["Opened.Ok(7)", "case Ok(fd): { return fd; } case Denied: { return -1; }", "Opened"],
-    ["Opened.Denied", "case Ok(fd): { return fd; } case Denied: { return -1; }", "Opened"],
-    ["Found.Ok(9)", "case Ok(at): { return at; } case Missing: { return -2; }", "Found"],
-    ["Found.Missing", "case Ok(at): { return at; } case Missing: { return -2; }", "Found"],
-  ] as const) {
-    add(`two enums one variant name: ${subject}`,
-      TWO + `export i32 f() { ${expect} v = ${subject}; match (v) { ${arms} } }`);
-  }
-  add("two enums one variant name, both matched",
-    TWO + `i32 a(Opened o) { match (o) { case Ok(fd): { return fd; } case Denied: { return -1; } } }\n` +
-    `i32 b(Found g) { match (g) { case Ok(at): { return at * 10; } case Missing: { return -2; } } }\n` +
-    `export i32 f() { return a(Opened.Ok(3)) + b(Found.Ok(4)); }`);
+  // **Two enums in one module cannot share a variant name.** Five programs here did, to probe an
+  // arm resolving by file scope rather than within the enum being matched — and the reference
+  // answers `duplicate name 'Ok'` at the second enum, so the hazard they described is not reachable
+  // in a legal program and these were never valid to emit. Found when the checker learned the rule
+  // (`spec/cases/0073`) and reported this corpus, which is the sweep working as intended: the
+  // generator is as capable of writing an illegal program as anything else here.
 
   // A template's static in the two slots an array gives it — a `fill:` and a literal element — where
   // the element type is the only thing that says which instantiation is meant.

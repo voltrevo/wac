@@ -1,0 +1,5 @@
+// expect: refused
+// why: a variant is a bare name at file scope, so two enums declaring one collide
+enum Shape { Circle(f64 r) }
+enum Hole  { Circle(f64 r) }
+export i32 f() { return 0; }

@@ -1,0 +1,3 @@
+// expect: refused
+// why: arithmetic wants numbers, and a string literal is no more one than a named string is
+export i32 f() { i32 x = 1; i32 y = x + "s"; return y; }

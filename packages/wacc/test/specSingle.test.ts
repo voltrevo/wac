@@ -30,53 +30,40 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 16 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The one program the spec calls illegal that this checker still accepts. It was 47, then 16.
  *
- * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
- * groups: generic inference failures,
- * `§wac-packed-nullable` in the positions the packed type is refused in, and module-level `const`
- * initialisers that are not constant.
+ * And it is not a rule: the case is a *multi-file* program recorded with one file. What the spec
+ * writes is `main.wac` importing `foo` from a `b.wac` that does not export it, and the recording
+ * kept the file that carries the `// error:` marker — so what reaches this test is an import of a
+ * file nobody supplied. Refusing it would mean refusing every import, which is the opposite of
+ * right. The multi-file contract next door holds the rule that governs it, and it passes 15 of 15.
  *
- * The eight that went were `match`, and they went together because they are one feature: covering
- * every variant, not naming one twice, not writing an `else` that nothing reaches, not matching a
- * nullable, not rebinding the subject an arm has narrowed, not shadowing it with a binding, and arms
- * whose values disagree.
+ * The 15 that went in one pass were nine rules: `const` initialisers that are not constant, packed
+ * nullables below the outermost `[]`, a narrowed name being written in its own branch, template
+ * arity, a variant name shared by two enums, a parent struct nobody declared, a string literal used
+ * as an operand, a payload written in a type test, laundering a const reference through a field or
+ * an element, `core` importing a name it does not export, inference through a funcref call, a
+ * generic instantiating itself with a bigger type — and one that was never a checker rule at all:
+ * the lexer's errors were computed and then dropped on the floor by `dumpErrors`.
  *
  * None of these were visible before the corpus was recorded rather than read: the text extractor
  * found 101 of the 304 illegal programs the suite runs, and every one of these lives in the other
  * two thirds.
  */
 const KNOWN_MISSES = new Set<string>([
-  "[§wac-core-read-6kv4pnx] Read distinguishes an empty read from a failed one#1",
-  "every block the spec marks `// error:` is still an error#14",
   "every block the spec marks `// error:` is still an error#30",
-  "every block the spec marks `// error:` is still an error#55",
-  "[§wac-diag-lex-unterm-comment-r4jn8xq] unterminated block comment is a lex-phase error#0",
-  "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#4",
-  "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#10",
-  "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#3",
-  "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#5",
-  "[§wac-generic-template-check-2wkq7nm] a mistake independent of T is caught at the definition#1",
-  "[§wac-generic-struct-9tkq4wm] the errors a generic can raise#1",
-  "[§wac-narrow-if-2mkq8vp] what does not narrow, and the const rule#1",
-  "[§enum-is-qualified-8jkq4wp] a payload written in a type test is rejected#0",
-  "[§wac-const-deep-j6b1nyg] what deep const does refuse#5",
-  "[§wac-const-deep-j6b1nyg] what deep const does refuse#6",
-  "[§wac-packed-nullable-2knq6wv] an array of them is refused too#3",
 ]);
 
 /**
- * The one legal program this checker refuses. It was fourteen when the corpus was first recorded.
+ * The legal programs this checker refuses. **None.** It was fourteen when the corpus was recorded.
  *
  * Eleven were one bug: a local aliasing something const could not be *rebound*, so every linked-list
  * walk in the spec was illegal. A twelfth was `match` used as an expression not narrowing its
- * subject, which is fixed here — only the statement form narrowed, so `case Circle: s.radius` looked
- * for a field on the un-narrowed subject. The two left are two features: a generic enum's
- * constructor is not callable, and the parser does not accept `trap` with a message.
+ * subject. The thirteenth was the parser not accepting `trap` with a message. The last was a generic
+ * enum's constructor: `Wrap.W(Box(5))` could not be built, because the payload's written type kept
+ * the enum's `T` and the bare `Box(5)` was then asked to be one.
  */
-const KNOWN_FALSE_ALARMS = new Set<string>([
-  "[§wac-generic-enum-7dkq2mv] a generic enum works, with methods and several arguments#0",
-]);
+const KNOWN_FALSE_ALARMS = new Set<string>([]);
 
 Deno.test("rung 3: every single-file program the spec calls illegal, refused", () => {
   const cases = singleFileCases().filter(c => !c.ok);

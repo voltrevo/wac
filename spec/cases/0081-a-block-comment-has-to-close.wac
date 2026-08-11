@@ -1,0 +1,4 @@
+// expect: refused
+// why: a comment that never closes swallows the rest of the file, which cannot be what was meant
+export i32 f() { return 1; }
+/* opened and never closed

@@ -1,0 +1,4 @@
+// expect: refused
+// why: `Rec<T>` holding a `Rec<Rec<T>>` needs an infinite tower of types to lay out
+struct Rec<T> { T v; Rec<Rec<T>>? deeper; }
+export i32 f() { Rec<i32> r = Rec<i32>(1, null); return r.v; }

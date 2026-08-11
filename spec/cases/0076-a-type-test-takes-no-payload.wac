@@ -1,0 +1,4 @@
+// expect: refused
+// why: `is` asks which variant, not what it holds
+enum Shape { Point, Circle(f64 radius) }
+export i32 f() { Shape s = Shape.Circle(1.0); return (s is Shape.Circle(1.0)) ? 1 : 0; }

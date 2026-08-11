@@ -29,15 +29,13 @@ const cases = await loadCases();
 /**
  * The cases wacc does not meet yet, each with what it is waiting for.
  *
- * One, and it is half fixed: the slot now reaches the constructor, which is what `0047` pins, and
- * what is left is substituting a generic enum's type argument into its payload.
+ * **Empty.** It held one until a generic enum's payload could be substituted: `Wrap<i32> w =
+ * Wrap.W(Box(5))` needed three things that were each missing on their own — the enum table recorded
+ * no type parameters, a bare `Box(5)` was checked against the letter `T` rather than against
+ * nothing, and the slot the construction lands in was read from `c.expected` after the top of
+ * `checkExpr` had already cleared it.
  */
-const KNOWN_MISSES = new Map<string, string>([
-  ["0046-a-bare-generic-constructor-as-an-argument.wac",
-   "a generic enum's payload type keeps its `T`: the slot reaches the constructor now, but " +
-   "`substituteType` resolves through the struct table and an enum instance is not in it, so " +
-   "`Box<T>` never becomes `Box<i32>` and the argument reads as a field mismatch"],
-]);
+const KNOWN_MISSES = new Map<string, string>([]);
 
 Deno.test("cases: wacc against the corpus", async () => {
   const missed: string[] = [];

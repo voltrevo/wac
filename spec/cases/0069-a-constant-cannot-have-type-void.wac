@@ -1,0 +1,4 @@
+// expect: refused
+// why: void is the absence of a value, and a constant is a value
+const void A = 1;
+export i32 g() { return 0; }

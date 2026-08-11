@@ -12,6 +12,21 @@
 // at the values involved — a message that invents `expected i32` when it does not know is worse than
 // one that omits it.
 
+/**
+ * The lex-phase codes — `err*` in `lex.wac`, and a third space again: 1–7, which is why the phase
+ * column has to say which space a number came from.
+ */
+export string lexMessage(i32 code) {
+  if (code == 1) { return "unexpected character"; }
+  if (code == 2) { return "unterminated string"; }
+  if (code == 3) { return "unknown escape"; }
+  if (code == 4) { return "unterminated block comment"; }
+  if (code == 5) { return "unterminated character literal"; }
+  if (code == 6) { return "empty character literal"; }
+  if (code == 7) { return "character literal holds more than one character"; }
+  return "the lexer refused this";
+}
+
 /** The parse-phase codes, which are a separate space from the checker's — `perr*` in `parse.wac`. */
 export string parseMessage(i32 code) {
   if (code == 20) { return "unexpected token"; }

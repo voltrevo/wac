@@ -29,7 +29,15 @@ export type SpecCase = { tag: string; name: string; src: string };
  * programs came back as parse errors that way, and the reading — not the compiler — was wrong.
  */
 function unescapeTemplate(raw: string): string {
-  return raw.replace(/\\([\s\S])/g, (_, ch) => (ch === "`" || ch === "$" || ch === "\\" ? ch : "\\" + ch));
+  // `\uXXXX` is decoded, unlike the rest, because there is nothing else it could mean: wac's grammar
+  // lists seven escapes (`n t r \\ " \' 0`) and `u` is not one of them, so the written form is not a
+  // program at all. The spec runs `"a😀b"` — the recorded corpus in `specCases.json` holds the emoji
+  // — and handing the checker `"a\uD83D\uDE00b"` asked it about two escapes the language does not
+  // have. It answered correctly and looked like a false alarm.
+  const decoded = raw
+    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  return decoded.replace(/\\([\s\S])/g, (_, ch) => (ch === "`" || ch === "$" || ch === "\\" ? ch : "\\" + ch));
 }
 
 /**

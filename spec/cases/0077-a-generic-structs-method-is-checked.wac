@@ -1,0 +1,4 @@
+// expect: refused
+// why: a template's body is still checked — this is wrong whatever T is
+struct V<T> { T[] d; i32 n; void bad(this) { this.n = this.n + "x"; } }
+export i32 f() { return 1; }

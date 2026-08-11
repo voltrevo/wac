@@ -1,0 +1,6 @@
+// expect: emits
+// why: the one hole variables.md names — const lives on the variable, not in the type, so a
+// why: non-const parameter accepts it and may write through it (issue 0052)
+struct S { i32 v; }
+void g(S s) { s.v = 9; }
+export i32 f(const S c) { g(c); return c.v; }

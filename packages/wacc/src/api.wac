@@ -6,7 +6,7 @@
 // the canonical dump that `test/parse.test.ts` compares against the reference.
 
 import { lex, Lexed, tokenStride } from "./lex.wac";
-import { checkMessage, parseMessage, hintFor } from "./diag.wac";
+import { checkMessage, lexMessage, parseMessage, hintFor } from "./diag.wac";
 import { P, parseProgram } from "./parse.wac";
 import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
@@ -30,12 +30,37 @@ export string dump(u8[] src) {
  * Separate from `dump` because a caller comparing ASTs and a caller comparing
  * diagnostics want different things, and returning both would mean a struct.
  */
-export i32[] dumpErrors(u8[] src) {
+/**
+ * The **parser's** errors alone, with the lexer's left out.
+ *
+ * `dumpErrors` is the front end's answer — what a caller asking *is this a program?* wants, and
+ * lexical errors belong in it. This one exists for the instrument next to it: `parse_errors.test.ts`
+ * compares this parser against the reference's parser, and asserts of every code that some `perr*`
+ * constant declares it. The lexer's codes are a space of their own (1–7), so mixing them in makes a
+ * parser instrument fail on a lexer's answer.
+ */
+export i32[] dumpParseErrors(u8[] src) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   parseProgram(p);
   i32[] out = i32[p.errorCount * 3]();
   for (i32 i = 0; i < p.errorCount * 3; i++) { out[i] = p.errors[i]; }
+  return out;
+}
+
+export i32[] dumpErrors(u8[] src) {
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  parseProgram(p);
+  // **The lexer's errors are errors too**, and this function dropped them. An unterminated block
+  // comment, an unterminated string, an unknown escape and an unterminated character literal were
+  // all found by `lex` and then thrown away with the `Lexed` that held them — no caller of this
+  // package could see one, because every caller comes through here. They go first: a lexical
+  // complaint is about text the parser never got to see. `spec/cases/0081`.
+  i32 lexCount = lexed.errorCount * 3;
+  i32[] out = i32[lexCount + p.errorCount * 3]();
+  for (i32 i = 0; i < lexCount; i++) { out[i] = lexed.errors[i]; }
+  for (i32 i = 0; i < p.errorCount * 3; i++) { out[lexCount + i] = p.errors[i]; }
   return out;
 }
 
@@ -161,6 +186,14 @@ export string diagnoseFiles(string[] paths, string[] sources, string entry) {
     Lexed lexed = lex(src);
     P p = P.create(src, lexed.tokens, lexed.tokenCount);
     parseProgram(p);
+    // A lexical complaint names its own phase — the reference has four (`lex`, `parse`, `resolve`,
+    // `typecheck`) and this package emitted two, because it never had a lex error to emit.
+    for (i32 e = 0; e < lexed.errorCount; e++) {
+      out = out + paths[i] + "\t" + numText(lexed.errors[e * 3 + 1]) + "\t"
+          + numText(lexed.errors[e * 3 + 2]) + "\tlex\t" + lexMessage(lexed.errors[e * 3])
+          + "\t\t\t1\n";
+      parseFailed = true;
+    }
     for (i32 e = 0; e < p.errorCount; e++) {
       string note = e < p.errorNotes.len() ? p.errorNotes[e] : "";
       // The span is the token the parser stopped on. A checker diagnostic has no width to give — it

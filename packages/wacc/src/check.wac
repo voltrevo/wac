@@ -393,7 +393,24 @@ string substituteType(C c, string owner, string written) {
   string base = genericBase(owner);
   string template = base == "" ? owner : base;
   i32 si = c.structAt(template);
-  if (si < 0 || c.structParamCount[si] == 0) { return written; }
+  // **An enum instance is not in the struct table.** `Wrap<i32>` owns a payload written `Box<T>`,
+  // and asking the struct table what `Wrap`'s parameters are called answered *nothing* — so the
+  // payload kept its `T` and `Wrap.W(Box(5))` read as a field mismatch. The two tables answer the
+  // same question about the same kind of name; only one of them was ever asked. `spec/cases/0046`.
+  i32 ei = si >= 0 ? -1 : c.enumAt(template);
+  string[] params = string[0]();
+  if (si >= 0) {
+    params = string[c.structParamCount[si]]();
+    for (i32 i = 0; i < params.len(); i++) {
+      params[i] = c.structParamNames[c.structParamAt[si] + i];
+    }
+  } else if (ei >= 0) {
+    params = string[c.enumParamCount[ei]]();
+    for (i32 i = 0; i < params.len(); i++) {
+      params[i] = c.enumParamNames[c.enumParamAt[ei] + i];
+    }
+  }
+  if (params.len() == 0) { return written; }
 
   // Peel `[]` and `?` off, substitute the core, and put them back in the order they came off.
   string core = written;
@@ -409,9 +426,19 @@ string substituteType(C c, string owner, string written) {
   // with no arguments to put anywhere — `K` means `K` there and the written type is already the
   // answer. Without this the recursion below rebuilt `MapEntry<K, V>` out of nothing and reported a
   // field against a type that does not exist.
-  if (args.len() == 0) { return written; }
-  for (i32 i = 0; i < c.structParamCount[si]; i++) {
-    if (c.structParamNames[c.structParamAt[si] + i] != core) { continue; }
+  if (args.len() == 0) {
+    // **Outside the template's own body a bare parameter is unknown, not a type.** Inside `Map<K,
+    // V>` the receiver is `Map` and `K` means `K` — that is the case above. At a call site, `Box(5)`
+    // is a bare construction whose `T` the arguments decide, and answering `T` reported the literal
+    // against a type nobody wrote: *expected T, found i32*. The parameters being active is what
+    // separates the two, exactly as it does everywhere else in this file.
+    for (i32 i = 0; i < params.len(); i++) {
+      if (params[i] == core && !isActiveParam(c, core)) { return typeNone(); }
+    }
+    return written;
+  }
+  for (i32 i = 0; i < params.len(); i++) {
+    if (params[i] != core) { continue; }
     if (i >= args.len()) { return typeNone(); }
     return args[i] + suffix;
   }
@@ -600,6 +627,17 @@ export struct C {
   /** Enum names. An enum has no default value, which is the only thing recorded about one here. */
   string[] enumNames;
   i32 enumCount;
+  /**
+   * A generic enum's type parameters, laid out exactly as a struct's are.
+   *
+   * Nothing recorded them until `Wrap<i32> w = Wrap.W(Box(5))` needed them: substituting a type
+   * argument into a payload asks the owner what its parameters are called, and an enum could not
+   * answer — so `Box<T>` stayed `Box<T>` and the constructor's argument read as a mismatch.
+   */
+  string[] enumParamNames;
+  i32[] enumParamAt;
+  i32[] enumParamCount;
+  i32 enumParamTotal;
   /** How many of `names` are module-level and outlive a function. */
   i32 globalCount;
   /**
@@ -754,6 +792,14 @@ export struct C {
   string[] activeParams;
   i32 activeParamCount;
   /**
+   * The generic function whose body is being walked, or `""`.
+   *
+   * Only self-recursion needs it: `grow<T>` calling `grow` with a `Box<T>` instantiates itself
+   * again with a bigger type, which never bottoms out. Calling *another* generic that way is
+   * finite, so the name is the whole of what separates the two.
+   */
+  string activeFunc;
+  /**
    * Which enum each variant belongs to, and how many payload fields it has.
    *
    * A variant is *also* declared as a struct under its bare name, because that is how `is Circle`
@@ -785,7 +831,9 @@ export struct C {
   C create(u8[] src, i32[] toks, i32 capacity) {
     return C(src, toks, string[capacity](), string[capacity](), bool[capacity](),
              bool[capacity](), 0,
-             string[capacity](), 0, 0,
+             string[capacity](), 0,
+             string[capacity](), i32[capacity](), i32[capacity](), 0,
+             0,
              string[capacity](), string[capacity](),
              string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
              string[capacity](), string[capacity](), bool[capacity](), bool[capacity](),
@@ -795,7 +843,7 @@ export struct C {
              string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
              i32[capacity](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), string[capacity](), 0, false, false, string[16](), 0,
+             i32[capacity * 3](), string[capacity](), 0, false, false, string[16](), 0, "",
              string[capacity](), string[capacity](), i32[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), 0);
   }
@@ -1207,10 +1255,25 @@ export struct C {
    */
   void clearScope(this) { this.nameCount = this.globalCount; }
 
-  void declareEnum(this, string name) {
+  void declareEnum(this, string name, string[] typeParams) {
     if (this.enumCount >= this.enumNames.len()) { return; }
     this.enumNames[this.enumCount] = name;
+    this.enumParamAt[this.enumCount] = this.enumParamTotal;
+    this.enumParamCount[this.enumCount] = typeParams.len();
+    for (i32 i = 0; i < typeParams.len(); i++) {
+      if (this.enumParamTotal >= this.enumParamNames.len()) { break; }
+      this.enumParamNames[this.enumParamTotal] = typeParams[i];
+      this.enumParamTotal = this.enumParamTotal + 1;
+    }
     this.enumCount = this.enumCount + 1;
+  }
+
+  /** Which entry holds this enum, or -1. */
+  i32 enumAt(const this, string name) {
+    for (i32 i = 0; i < this.enumCount; i++) {
+      if (this.enumNames[i] == name) { return i; }
+    }
+    return -1;
   }
 
   /** Record `Enum.Variant` with its payload count, ambiguity and all. */
@@ -1386,11 +1449,37 @@ export string typeOfTy(C c, Ty t) {
       // saying so was a wrong answer rather than a missing message: an unresolved name had no type
       // index, so `x is Circle` fell back to a table keyed by bare name and answered about whichever
       // module's `Circle` was declared first.
+      // **A template takes the number of arguments it declares.** `Box<i32, f64>` names no type, and
+      // the arity is the one thing that can be checked here without instantiating anything.
+      // `spec/cases/0072`.
+      if (typeArgs.len() > 0) {
+        i32 sat = c.structAt(base);
+        if (sat >= 0 && c.structParamCount[sat] != typeArgs.len()) {
+          c.report(errUndefinedType(), t.line, t.col);
+          return typeNone();
+        }
+      }
       if (c.scopeTypes && !knownTypeName(c, base)) {
         c.reportWith(errUndefinedType(), t.line, t.col, "no type " + base + " in scope");
         return typeNone();
       }
-      if (typeArgs.len() == 0) { return base; }
+      // **A template is not a type.** `Box b = Box(1)` writes the name of a thing that takes an
+      // argument and gives none, and the language wants `Box<i32>`. This was refused by accident
+      // until now — the construction's field read as *expected T, found i32*, a complaint about the
+      // wrong half of the program, and it went silent the moment a bare `Box(5)` stopped being asked
+      // to be a `T`. Inside the template's own body the bare name is how the receiver is written,
+      // which is what the active parameters say. `spec/cases/0088`.
+      if (typeArgs.len() == 0) {
+        i32 gsi = c.structAt(base);
+        i32 gei = c.enumAt(base);
+        bool template = (gsi >= 0 && c.structParamCount[gsi] > 0) ||
+                        (gei >= 0 && c.enumParamCount[gei] > 0);
+        if (template && c.activeParamCount == 0) {
+          c.reportWith(errUndefinedType(), t.line, t.col, base + " takes type arguments");
+          return typeNone();
+        }
+        return base;
+      }
       string out = base + "<";
       for (i32 i = 0; i < typeArgs.len(); i++) {
         string a = typeOfTy(c, typeArgs[i]);
@@ -2206,9 +2295,23 @@ void checkExpr(C c, Expr e) {
         return;
       }
       if (!sameType && !comparison) { return; }
+      string nl2 = naturalTypeOf(c, left);
+      string nr2 = naturalTypeOf(c, right);
       // A literal operand takes the other side's type, so `x + 1` is legal for any numeric `x` and
       // demanding they agree would report the code everybody writes.
-      if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) { return; }
+      if (litKindOf(left) != litNone() || litKindOf(right) != litNone()) {
+        // **A literal only adapts inside its own family.** That is the whole content of the skip
+        // above, and it was written as *every* literal adapts — so `x + s` was refused for a named
+        // `string s` and `x + "s"` was accepted, which is the same program twice. A string literal
+        // is a string whatever slot it lands in and has nothing to take from the other side.
+        // Asked through `naturalTypeOf`, which is what fills a literal's own family in; two
+        // literals are the rule further up, and a comparison is the reference-type rule's.
+        bool oneString = (nl2 == "string") != (nr2 == "string");
+        if (sameType && !bothLit && oneString && nl2 != typeNone() && nr2 != typeNone()) {
+          c.report(errOperandMismatch(), e.line, e.col);
+        }
+        return;
+      }
       string a = typeOfExpr(c, left);
       string b = typeOfExpr(c, right);
       if (a == typeNone() || b == typeNone() || a == b) { return; }
@@ -2236,6 +2339,14 @@ void checkExpr(C c, Expr e) {
     // asked about. Both land on the `is`, which is this node's own position.
     case Is(left, target, other, negated): {
       checkExpr(c, left);
+      // **A type test needs no payload** — `[§enum-is-qualified-8jkq4wp]`: `s is Shape.Circle(1.0)`
+      // is an error rather than silently false. The right of `is` parses as an expression when it is
+      // qualified, so a variant *construction* arrives here looking like an ordinary identity test
+      // against a freshly built value, which can never be identical to anything. Asked of the shape
+      // rather than of the type, because the construction is what is wrong. `spec/cases/0076`.
+      if (!(other is null) && isVariantConstruction(c, other!)) {
+        c.report(errOperandKind(), e.line, e.col);
+      }
       if (!(other is null)) { checkExpr(c, other!); }
       // **The target is a type, and this is the only place that reads it as one.** Every other rule
       // here asks about the left operand, so `mkA() is Circle` never resolved `Circle` at all — and a
@@ -2482,8 +2593,21 @@ void checkExpr(C c, Expr e) {
       // it is — without it the construction was checked against no slot at all and refused as "not
       // callable". `spec/cases/0046`.
       string payloadOwner = variantCalleeOwner(c, callee);
+      // **In the instance's world, not the template's.** The slot `W` declares is written `Box<T>`,
+      // and handing that to a bare `Box(5)` asks it to be a `Box<T>` — a type nobody wrote. Which
+      // instance it is comes from the slot the construction itself lands in: `Wrap<i32> w = …` is
+      // the only place `i32` is said. `spec/cases/0046`.
+      // `want`, not `c.expected`: the slot is read and cleared at the top of this function, exactly
+      // as the array and construction arms above already note.
+      string outerSlot = want;
+      string outerBase = genericBase(outerSlot);
+      bool ownerKnown = payloadOwner != "" && outerBase != "" && c.enumAt(outerBase) >= 0 &&
+                        c.variantArityIn(outerBase, payloadOwner) >= 0;
       for (i32 i = 0; i < args.len(); i++) {
-        if (payloadOwner != "") { c.expected = c.fieldTypeAtIndex(payloadOwner, i); }
+        if (payloadOwner != "") {
+          string slot = c.fieldTypeAtIndex(payloadOwner, i);
+          c.expected = ownerKnown ? substituteType(c, outerSlot, slot) : slot;
+        }
         checkExpr(c, args[i]);
       }
       match (callee.kind) {
@@ -2551,8 +2675,13 @@ void checkIncr(C c, Lvalue target, i32 line, i32 col) {
  * element to exist.
  */
 void checkPackedNullable(C c, string t, Ty at) {
+  // **Every `[]`, not the outermost one.** `u8?[][]` is an array of arrays of a nullable packed
+  // type, and stripping one suffix left `u8?[]`, which is not itself packed. `spec/cases/0070`.
   string inner = t;
-  if (isArrayName(inner)) { inner = dropLast(inner, 2); }
+  for (i32 guard = 0; guard < 8; guard++) {
+    if (!isArrayName(inner)) { break; }
+    inner = dropLast(inner, 2);
+  }
   string unwrapped = withoutNull(inner);
   if (unwrapped != "" && isPackedName(unwrapped)) {
     Ty base = baseTy(at);
@@ -2748,6 +2877,93 @@ bool startsWithFn(string t) {
  * What this does **not** do is check each argument against its substituted parameter type. That
  * needs the substitution, and being wrong in the silent direction is the rule here.
  */
+/**
+ * A type **as written**, with the type parameters left standing: `Box<T>`, `T[]`, `T?`.
+ *
+ * `typeOfTy` answers `unknown` for all of these on purpose — `T` stands for whatever a call site
+ * binds, so no question about it has an answer. But a *local* declared `Box<T> b` still needs a
+ * spelling for one rule: a generic that instantiates itself with a type built out of its own
+ * parameter never bottoms out, and unknown cannot tell `grow(b)` from `grow(a)`.
+ */
+string writtenTy(C c, Ty t) {
+  match (t.kind) {
+    case Prim(tok): { return tokenText(c, tok); }
+    case Named(tok, typeArgs): {
+      string base = c.renamed(tokenText(c, tok));
+      if (typeArgs.len() == 0) { return base; }
+      string out = base + "<";
+      for (i32 i = 0; i < typeArgs.len(); i++) {
+        if (i > 0) { out = out + ", "; }
+        out = out + writtenTy(c, typeArgs[i]);
+      }
+      return out + ">";
+    }
+    case Arr(elem): { return writtenTy(c, elem) + "[]"; }
+    case Nullable(inner): { return writtenTy(c, inner) + "?"; }
+    else: { return ""; }
+  }
+}
+
+/** Whether a written type is exactly one of the type parameters in scope. */
+bool isActiveParam(C c, string t) {
+  for (i32 i = 0; i < c.activeParamCount; i++) {
+    if (c.activeParams[i] == t) { return true; }
+  }
+  return false;
+}
+
+/**
+ * Whether a written type *mentions* a type parameter in scope — `Box<T>`, `T[]`, `T?`.
+ *
+ * A whole-name match: `Tree` does not mention `T`, which a substring search would say it does.
+ */
+bool mentionsActiveParam(C c, string t) {
+  u8[] b = t.toBytes();
+  for (i32 i = 0; i < c.activeParamCount; i++) {
+    u8[] p = c.activeParams[i].toBytes();
+    if (p.len() == 0) { continue; }
+    for (i32 at = 0; at + p.len() <= b.len(); at++) {
+      bool hit = true;
+      for (i32 k = 0; k < p.len(); k++) {
+        if (b[at + k] != p[k]) { hit = false; }
+      }
+      if (!hit) { continue; }
+      bool beforeOk = at == 0 || !isNameByte(b[at - 1]);
+      i32 after = at + p.len();
+      bool afterOk = after >= b.len() || !isNameByte(b[after]);
+      if (beforeOk && afterOk) { return true; }
+    }
+  }
+  return false;
+}
+
+/** A byte a name may be spelled with, so a whole-name match knows where one ends. */
+bool isNameByte(i32 b) {
+  return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
+}
+
+/** Whether an expression is a call made *through a funcref value* rather than to a named function. */
+bool funcrefCall(C c, Expr e) {
+  match (e.kind) {
+    // `g(1)` where `g` is a local reaches here as a **`Construct`**, not a `Call`: `name(args)` is
+    // ambiguous until something says whether `name` is a type, and the parser leaves that to the
+    // checker. Both spellings are the same question here.
+    case Construct(ctype, args, named): {
+      match (ctype.kind) {
+        case Named(tok, typeArgs): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
+        else: { return false; }
+      }
+    }
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Ident(tok): { return startsWithFn(c.typeOfName(tokenText(c, tok))); }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
+  }
+}
+
 void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   i32 n = c.funcTypeParamCount[at];
   if (n == 0) { return; }
@@ -2763,6 +2979,12 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
     // one because *its* question is what the call returns, where a literal must not pin the answer.
     // Two questions, one argument, and the fourth time this session that "a literal has no type of
     // its own" has been the wrong half of the rule to reach for.
+    // **A call through a funcref says nothing about `T`.** `id(g(1))` for `fn[i32(i32)] g` is a
+    // compile error the spec spells out — *"a call through a funcref, whose return type is not read
+    // here"* — and this checker could name the type, which is not the same as the language reading
+    // it. Bound by nothing, so `T` reaches the unbound report below exactly as `null` does.
+    // `spec/cases/0085`.
+    if (funcrefCall(c, args[i])) { continue; }
     string got = foundType(c, args[i]);
     bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
   }
@@ -2773,6 +2995,20 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   // read a funcref, which is the direction to be wrong in.
   for (i32 i = 0; i < args.len(); i++) {
     if (startsWithFn(c.funcParamTypes[c.funcParamAt[at] + i])) { return; }
+  }
+  // **A generic that instantiates itself with a bigger type never bottoms out.** `i32 grow<T>(T a)
+  // { Box<T> b = Box(a); return grow(b); }` asks for `grow<Box<T>>`, then `grow<Box<Box<T>>>`, and
+  // no depth limit makes that finite. The binding is what says so: an ordinary recursion binds `T`
+  // to `T` — a recursive sort calling itself on the same `T[]` is the commonest shape in the
+  // language — and this one binds it to a type that *contains* `T`. `spec/cases/0086`.
+  if (c.activeParamCount > 0 && name == c.activeFunc) {
+    for (i32 t = 0; t < n; t++) {
+      if (bound[t] == "" || isActiveParam(c, bound[t])) { continue; }
+      if (!mentionsActiveParam(c, bound[t])) { continue; }
+      c.reportWith(errCallArity(), call.line, call.col,
+                   "instantiating " + name + " again with " + bound[t]);
+      return;
+    }
   }
   // **Inside a generic function nothing is evident.** `T twice<T>(T a) { return id(id(a)); }` calls
   // `id` with a value whose type *is* the enclosing `T`, which this checker holds as an unknown type
@@ -2787,6 +3023,7 @@ void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
   // and why that case survives this guard.
   for (i32 i = 0; i < args.len(); i++) {
     if (litKindOf(args[i]) == litNull()) { continue; }
+    if (funcrefCall(c, args[i])) { continue; }
     if (foundType(c, args[i]) == typeNone()) { return; }
   }
   for (i32 t = 0; t < n; t++) {
@@ -3007,6 +3244,33 @@ Lvalue rootOf(Lvalue lv) {
  * assigning to `p.x` through a const `p` is a const-reference one. Same constness, different
  * complaint, because one rebinds the name and the other reaches past it.
  */
+/**
+ * Whether an expression is a **const binding by name** — `c`, and not `c.field` or `this.items[i]`.
+ *
+ * The narrow question on purpose. A path *rooted* at something const is read all over this
+ * repository — `out[i] = this.items[i]!` in `parse.wac` copies out of a `const this` and is
+ * ordinary — and only the binding itself carries the constness the language tracks.
+ */
+bool constName(C c, Expr e) {
+  match (e.kind) {
+    case Ident(tok): {
+      string n = tokenText(c, tok);
+      return c.isConstName(n) || c.isAliasOnlyName(n);
+    }
+    else: { return false; }
+  }
+}
+
+/** Whether a write target is reached *through* something — a field or an element, not a name. */
+bool indirectLvalue(Lvalue lv) {
+  match (lv.kind) {
+    case LField(base, nameTok): { return true; }
+    case LIndex(base, index): { return true; }
+    case LUnwrap(base): { return indirectLvalue(base); }
+    else: { return false; }
+  }
+}
+
 bool constPath(C c, Lvalue lv) {
   match (lv.kind) {
     case LIdent(tok): { return c.isConstName(tokenText(c, tok)); }
@@ -4176,6 +4440,14 @@ void declareStmt(C c, Stmt s) {
       string vbase = vcore == "" ? vt : vcore;
       bool writable = isArrayName(vbase) || c.isStruct(vbase);
       bool aliasesConst = writable && constExpr(c, init);
+      // **A local built out of a live type parameter keeps its written spelling.** `Box<T> b` is
+      // unknown to every other rule here, and has to be — but the name then carries no trace of `T`
+      // at all, which is what a self-instantiating generic is recognised by. Only when the written
+      // type *mentions* a parameter in scope: everything else already has a real answer.
+      if (vt == typeNone() && c.activeParamCount > 0) {
+        string wt = writtenTy(c, type);
+        if (wt != "" && !isActiveParam(c, wt) && mentionsActiveParam(c, wt)) { vt = wt; }
+      }
       c.declareConst(tokenText(c, nameTok), vt, isConst || aliasesConst);
       // Recorded as the aliasing kind, so a write *through* it is still refused while rebinding the
       // name is not. `while (cur is not null) { cur = cur!.next; }` walks a list in a `const this`
@@ -4259,6 +4531,28 @@ i32 narrowingsOf(C c, Expr cond, string[] outNames, string[] outTypes, i32 n) {
   }
 }
 
+/** Whether an expression builds an enum variant: `Shape.Circle(1.0)`, or a bare `Circle(1.0)`. */
+bool isVariantConstruction(C c, Expr e) {
+  match (e.kind) {
+    case Call(callee, args): {
+      match (callee.kind) {
+        case Member(obj, nameTok): {
+          match (obj.kind) {
+            case Ident(tok): {
+              string en = tokenText(c, tok);
+              return c.isEnum(en) && c.variantArityIn(en, tokenText(c, nameTok)) >= 0;
+            }
+            else: { return false; }
+          }
+        }
+        case Ident(tok): { return c.isVariantName(tokenText(c, tok)); }
+        else: { return false; }
+      }
+    }
+    else: { return false; }
+  }
+}
+
 /**
  * A condition, which must be a boolean.
  *
@@ -4300,6 +4594,20 @@ void checkStmt(C c, Stmt s, Ty want) {
     case Assign(target, op, rhs): {
       c.expected = typeOfLvalue(c, target);
       checkExpr(c, rhs);
+      // **A const reference stored somewhere that outlives the binding.** `h.i = c` and `xs[0] = c`
+      // put a `const S` where nothing downstream can tell it apart from a mutable one — the write
+      // `h.i.v = 2` is then accepted, which is the laundering `[§wac-const-deep-j6b1nyg]` refuses.
+      // A *local* is the exception and not an oversight: `S t = c;` propagates the constness onto
+      // the new name instead (`markAliasOnly`), because a name is something this checker can track
+      // and a field of some struct on the heap is not. `spec/cases/0079`, `0080`.
+      if (tokenKind(c, op) == kAssign() && indirectLvalue(target) && constName(c, rhs)) {
+        string rt = typeOfExpr(c, rhs);
+        string rcore = withoutNull(rt);
+        string rbase = rcore == "" ? rt : rcore;
+        if (isArrayName(rbase) || c.isStruct(rbase)) {
+          c.report(errConstReference(), rhs.line, rhs.col);
+        }
+      }
       // Every assignment writes, compound or not — `n += 1` on a const is refused exactly as `n = 1`
       // is, so this comes before the plain-`=` gate below.
       checkWrite(c, target);
@@ -4426,12 +4734,22 @@ void checkStmt(C c, Stmt s, Ty want) {
       string[] nTypes = string[8]();
       i32 nCount = narrowingsOf(c, cond, nNames, nTypes, 0);
       string[] saved = string[nCount]();
+      bool[] savedConst = bool[nCount]();
+      bool[] savedAlias = bool[nCount]();
       for (i32 i = 0; i < nCount; i++) {
         saved[i] = c.typeOfName(nNames[i]);
+        // **A narrowed name is const for the branch**, exactly as a match arm's subject is: writing
+        // to it would leave the narrowing describing a value that has gone. `spec/cases/0071`.
+        savedConst[i] = c.isConstName(nNames[i]);
+        savedAlias[i] = c.isAliasOnlyName(nNames[i]);
         c.setType(nNames[i], nTypes[i]);
+        c.setConstFlags(nNames[i], true, false);
       }
       checkAll(c, then, want);
-      for (i32 i = 0; i < nCount; i++) { c.setType(nNames[i], saved[i]); }
+      for (i32 i = 0; i < nCount; i++) {
+        c.setType(nNames[i], saved[i]);
+        c.setConstFlags(nNames[i], savedConst[i], savedAlias[i]);
+      }
       checkAll(c, els, want);
     }
     // `break` and `continue` need something to leave. Switches count for both — `break` obviously,
@@ -4838,6 +5156,11 @@ bool mentionsParam(C c, Ty t, i32[] typeParams) {
 void checkDuplicates(C c, Program prog) {
   string[] names = string[512]();
   i32 n = 0;
+  // A variant is reachable as a bare name — `Circle(1.0)` with no `Shape.` in front of it — so two
+  // enums declaring one leave the file with a name that means two things. Kept across the whole walk
+  // rather than per enum, which is the only way the collision is visible at all. `spec/cases/0073`.
+  string[] variantNames = string[256]();
+  i32 vn = 0;
   for (i32 d = 0; d < prog.decls.len(); d++) {
     string name = "";
     match (prog.decls[d].kind) {
@@ -4878,6 +5201,21 @@ void checkDuplicates(C c, Program prog) {
       }
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         name = tokenText(c, nameTok);
+        for (i32 v = 0; v < variants.len(); v++) {
+          string vname = tokenText(c, variants[v].nameTok);
+          bool dupv = false;
+          for (i32 k = 0; k < vn; k++) {
+            if (variantNames[k] == vname) { dupv = true; }
+          }
+          if (dupv) {
+            c.report(errDuplicateName(), tokenLine(c, variants[v].nameTok),
+                     tokenCol(c, variants[v].nameTok));
+          }
+          if (vn < variantNames.len()) {
+            variantNames[vn] = vname;
+            vn = vn + 1;
+          }
+        }
         // A variant's payload fields are named like a struct's, and collide like them.
         for (i32 v = 0; v < variants.len(); v++) {
           string[] payload = string[64]();
@@ -4979,7 +5317,9 @@ export void declareModule(C c, Program prog, string[] only) {
     match (prog.decls[d].kind) {
       case EnumDecl(nameTok, variants, exported, methods, typeParams): {
         if (!wantedName(only, tokenText(c, nameTok))) { continue; }
-        c.declareEnum(c.renamed(tokenText(c, nameTok)));
+        string[] etps = string[typeParams.len()]();
+        for (i32 i = 0; i < typeParams.len(); i++) { etps[i] = tokenText(c, typeParams[i]); }
+        c.declareEnum(c.renamed(tokenText(c, nameTok)), etps);
         // Each variant is a type of its own, with its payload as fields. `s is Circle` narrows `s`
         // to `Circle`, and `s.radius` then has to find a `radius` somewhere — so the variant has to
         // be as much a struct as anything else here. Registered under its bare name, which is how
@@ -5199,6 +5539,12 @@ void checkDeclaredTypeNames(C c, Program prog) {
     match (prog.decls[d].kind) {
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
         setActiveParams(c, typeParams);
+        // `struct R : Shape` with no `Shape` anywhere: a parent is a written type name like any
+        // other, and every other position that takes one is already checked. Reported at the parent
+        // itself, which is the only part of the declaration that is wrong. `spec/cases/0074`.
+        if (parentTok >= 0 && !c.isStruct(tokenText(c, parentTok))) {
+          c.report(errUndefinedType(), tokenLine(c, parentTok), tokenCol(c, parentTok));
+        }
         for (i32 i = 0; i < fields.len(); i++) {
           // A packed type has no room for the absent case, in a field exactly as in a parameter or
           // a local — the rule was written for the two positions somebody happened to hit first.
@@ -5279,6 +5625,17 @@ export void checkModule(C c, Program prog) {
         if (quoted.len() >= 2 && quoted.slice(1, quoted.len() - 1) == "core") {
           c.report(errUnknownModule(), tokenLine(c, pathTok), tokenCol(c, pathTok));
         }
+        // **`core` holds one type today** — `spec/spec/imports.md`, which says so in those words and
+        // sets a high bar for a second. A name it does not export is `no such export`, the same
+        // complaint a `./file.wac` import gets, and it is checkable here because `core` ships inside
+        // the compiler rather than living on disk. `spec/cases/0087`.
+        if (prefixTok >= 0 && tokenText(c, prefixTok) == "core") {
+          for (i32 i = 0; i < items.len(); i++) {
+            if (tokenText(c, items[i].nameTok) == "Read") { continue; }
+            c.report(errNoSuchExport(), tokenLine(c, items[i].nameTok),
+                     tokenCol(c, items[i].nameTok));
+          }
+        }
         for (i32 i = 0; i < items.len(); i++) {
           // **Only when nothing better is known.** Declaring an imported name as unknown is what
           // makes a single-file check silent about it rather than calling it undefined — but when
@@ -5327,7 +5684,16 @@ export void checkModule(C c, Program prog) {
         // about literals, elements, defaults and names applied to a local's initialiser and to none
         // of these — `const E[] T = E[3]()` was silent where the same line inside a function was
         // refused, and so was `i32[2](fill: "x")`. `spec/cases/0067` and `0068`.
-        c.expected = typeOfTy(c, type);
+        string constType = typeOfTy(c, type);
+        // A constant is a value, and `void` is the absence of one. `spec/cases/0069`.
+        if (constType == "void") { c.report(errVoidType(), type.line, type.col); }
+        checkPackedNullable(c, constType, type);
+        // A literal initialiser is asked whether it fits, exactly as a local's is — `const i32 A =
+        // 1.5` is a float in an integer's slot. `spec/cases/0075`.
+        if (litKindOf(init) != litNone() && constType != typeNone()) {
+          reportLiteral(c, constType, init, errInitTypeMismatch(), init.line, init.col);
+        }
+        c.expected = constType;
         checkExpr(c, init);
         if (callsAFunction(c, init)) { c.report(errNotCompileTime(), init.line, init.col); }
         if (readsUnsettledConst(c, prog, init, settled, settledCount)) {
@@ -5426,6 +5792,7 @@ export void checkModule(C c, Program prog) {
           c.activeParams[c.activeParamCount] = tokenText(c, typeParams[i]);
           c.activeParamCount = c.activeParamCount + 1;
         }
+        c.activeFunc = tokenText(c, nameTok);
         c.clearScope();
         checkParams(c, params);
         for (i32 i = 0; i < params.len(); i++) {

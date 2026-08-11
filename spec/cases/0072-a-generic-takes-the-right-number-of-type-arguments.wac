@@ -1,0 +1,4 @@
+// expect: refused
+// why: `Box<T>` has one parameter, so `Box<i32, f64>` names no type
+struct Box<T> { T v; }
+export i32 f() { Box<i32, f64> b = Box(1); return 0; }

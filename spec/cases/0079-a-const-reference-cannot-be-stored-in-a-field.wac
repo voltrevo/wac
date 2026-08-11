@@ -1,0 +1,5 @@
+// expect: refused
+// why: storing a const reference in a mutable field launders it — the field could then write through it
+struct Inner { i32 v; }
+struct Holder { Inner i; }
+export i32 f(const Inner c) { Holder h = Holder(Inner(1)); h.i = c; return h.i.v; }

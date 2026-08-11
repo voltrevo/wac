@@ -1,0 +1,4 @@
+// expect: refused
+// why: a struct cannot inherit from a name nothing declares
+struct BadRect : Shape { f64 w; }
+export i32 f() { return 0; }

@@ -1,0 +1,4 @@
+// expect: refused
+// why: an element of a mutable array is a mutable reference, so the same laundering applies
+struct S { i32 v; }
+export i32 f(const S s) { S[] xs = S[1](fill: S(0)); xs[0] = s; return xs[0].v; }
