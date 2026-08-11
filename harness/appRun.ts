@@ -25,13 +25,28 @@
 // *about* process boundaries — `spawn`, exit codes across a real fork, `Text file busy` — still
 // wants the executable, and `buildApp` is still there for it.
 //
-// It also does not make a second run cheap. The app contract is `main(Core, Cli) -> i32` run once:
-// `entry.ts`'s worker waits for one start message, runs, and returns. So each `run` is a fresh
-// worker, which is why this is 1.75× and not 10× — the bundle is parsed and the wasm compiled every
-// time. Making the worker serve repeated runs is the "service" its own comment anticipates, and is
-// wac-mono issue 0076.
+// ## A second run is cheap, and it was not
+//
+// `entry.ts`'s worker used to run `main` once and return, so every `run` here was a fresh worker
+// that parsed the bundle and compiled the wasm again: **41.5ms a run for `packages/sh`, 67.1ms for
+// `packages/box`**, times every case in a differential. That was issue 0076, and three things had to
+// be true to fix it.
+//
+//   - **`main` may be called twice in one instance.** Safe by construction, not by convention: wac
+//     has no module-level variables, so a program's state is reachable from its own frame and gone
+//     when it returns.
+//   - **The capabilities may not be rebuilt per run.** bindgen registers one wasm function per host
+//     function and sixteen per signature can be live, so rebuilding `Core` and `Cli` each time died
+//     on the fifth run. `entry.ts` builds them once and `Bridge.rebind` re-points them at each run's
+//     buffer.
+//   - **The worker goes back in the pool when the run is over**, not when `spawnChild` terminates
+//     it. `terminate` is called from `shutdown`, including on the error path, and returning it from
+//     there hands one worker to two runs — which showed up as empty output four cases later.
+//
+// The pool is **per runner**, held in the closure below rather than in a table keyed by (entry,
+// grants), for the same reason: two runners are two callers.
 
-import { spawnChild } from "../packages/platform/host/children.ts";
+import { blobWorker, spawnChild, type WorkerLike } from "../packages/platform/host/children.ts";
 import { serveHostCalls } from "../packages/platform/host/respond.ts";
 import { denoWorld } from "../packages/platform/host/deno.ts";
 import { type Bridge, bridgeOf, newBridge } from "../packages/platform/host/layout.ts";
@@ -119,8 +134,31 @@ async function workerSource(entry: string, grants: Grants): Promise<string> {
  * (entry, grants) across every runner in the process, so twenty tests asking for the same program
  * build it once.
  */
+/**
+ * Every kept worker, so that whatever happens they are terminated on the way out.
+ *
+ * `Deno.test` has no suite-level teardown and its resource sanitizer counts a live worker, so a
+ * worker kept with no way out turns a saving into a leak report in whichever test runs last.
+ */
+const keptWorkers = new Set<WorkerLike>();
+let sweeping = false;
+function sweepOnExit(): void {
+  if (sweeping) return;
+  sweeping = true;
+  globalThis.addEventListener("unload", () => {
+    for (const w of keptWorkers) {
+      try { w.terminate(); } catch { /* already gone */ }
+    }
+    keptWorkers.clear();
+  });
+}
+
 export async function appRunner(entry: string, grants: Grants = {}): Promise<AppRunner> {
   const source = await workerSource(entry, grants);
+  sweepOnExit();
+
+  /** This runner's idle worker, and this runner's alone — see the note at the top. */
+  let idle: WorkerLike | undefined;
 
   return {
     async run(args, opts = {}) {
@@ -128,6 +166,12 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
       // call and which one. Without it a wedged run reports "still running" and nothing else, which is
       // where wac-mono 0082 stood for two days.
       let bridge: Bridge | undefined;
+      // Taken for the duration of this run rather than borrowed: two overlapping runs must not be
+      // handed the same worker, and finding none is how the second knows to make its own.
+      const kept = idle;
+      idle = undefined;
+      let mine: WorkerLike | undefined;
+      let reusable = true;
       // And the responder, because "the worker is waiting" and "the host stopped answering" are the two
       // halves of a stall and the slot table alone cannot tell them apart: a sweep count that stops
       // moving says the loop is parked, and `running: false` says it is gone.
@@ -167,12 +211,36 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
           bridge = newBridge();
           return bridge;
         },
+        // `makeWorker` is the injection point `spawnChild` documents, which is why none of this
+        // needed a change in `children.ts`.
+        (src) => {
+          const inner = mine = kept ?? blobWorker(src);
+          return {
+            post: (m) => inner.post(m),
+            onMessage: (f) => {
+              inner.onMessage(f);
+              // A worker announces `{ready: true}` once, at module scope, and a reused one will not
+              // do it again — so this answers for it. A statement of fact: the bundle *has*
+              // evaluated, which is all the notice ever meant. Queued, so the caller finishes wiring
+              // its handlers first, as it would with a real one.
+              if (kept !== undefined) queueMicrotask(() => f({ ready: true }));
+            },
+            onError: (f) => inner.onError((m) => { reusable = false; f(m); }),
+            // Deliberately nothing: the run decides, at the end, where it knows whether it was clean.
+            terminate: () => {},
+          };
+        },
       );
 
       const note = opts.note ?? (() => {});
       note("loading");
       const why = await child.loaded;
-      if (why !== "") throw new Error(`${entry} did not load: ${why}`);
+      if (why !== "") {
+        reusable = false;
+        if (mine !== undefined) keptWorkers.delete(mine);
+        try { mine?.terminate(); } catch { /* already gone */ }
+        throw new Error(`${entry} did not load: ${why}`);
+      }
 
       // **Drain before waiting, not after.** The output queues are capped at 8 MB, so reading only
       // after `exit` breaks any program that writes more than that. Measured, with the drain moved
@@ -260,8 +328,21 @@ export async function appRunner(entry: string, grants: Grants = {}): Promise<App
         note("draining");
         const [bytes, errBytes] = await draining;
         note("done");
+        // **Back in the pool here**, after the exit has settled and the output has drained — the one
+        // moment the worker is known to be idle and parked on its next start message. A negative
+        // code is a child that did not answer for itself, and nothing can say where it stopped.
+        if (reusable && code >= 0 && mine !== undefined) {
+          idle = mine;
+          keptWorkers.add(mine);
+        } else if (mine !== undefined) {
+          keptWorkers.delete(mine);
+          try { mine.terminate(); } catch { /* already gone */ }
+        }
         return { code, out: dec.decode(bytes), err: dec.decode(errBytes), bytes };
       } catch (e) {
+        reusable = false;
+        if (mine !== undefined) keptWorkers.delete(mine);
+        try { mine?.terminate(); } catch { /* already gone */ }
         try {
           child.kill();
         } catch {

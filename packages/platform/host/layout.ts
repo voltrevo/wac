@@ -245,6 +245,21 @@ export type Bridge = {
   resBuf(i: number): Uint8Array;
   /** Slot `i`'s inline answer area — always available, and small. */
   inline(i: number): Uint8Array;
+  /**
+   * Point this same object at a different `SharedArrayBuffer`.
+   *
+   * **For a worker that runs more than one program**, which is what `harness/appRun.ts` wants and
+   * what issue 0076 is about. A second run needs a second bridge, and the obvious way — build a new
+   * `Bridge` and new capabilities over it — dies at the *fifth* run with "at most 16 distinct
+   * fn[void(i32)] functions can be passed to this module": bindgen registers one wasm function per
+   * host function, sixteen live per signature, and each rebuild of `Core` and `Cli` burns another
+   * batch.
+   *
+   * So the object outlives the buffer. Nothing captures what this replaces — `call.ts` reads
+   * `b.ctrl` on every `Atomics.load`, and the three accessors index their arrays at call time — so
+   * a capability closure built over this bridge on the first run is still correct on the tenth.
+   */
+  rebind(sab: SharedArrayBuffer): void;
 };
 
 /** Which pool: requests are freed by the host, responses by the worker. */
@@ -320,13 +335,27 @@ export function bridgeOf(sab: SharedArrayBuffer): Bridge {
   for (let i = 0; i < SLOTS; i++) {
     inlines.push(new Uint8Array(sab, INLINE_OFFSET + i * INLINE_BYTES, INLINE_BYTES));
   }
-  return {
+  const b: Bridge = {
     sab,
     ctrl,
     reqBuf: (i: number) => reqs[i],
     resBuf: (i: number) => ress[i],
     inline: (i: number) => inlines[i],
+    rebind: (next: SharedArrayBuffer) => {
+      b.sab = next;
+      b.ctrl = new Int32Array(next, 0, CTRL_INTS);
+      // In place, so that the closures above — which hold these arrays, not their contents — see the
+      // new views without being rebuilt.
+      for (let i = 0; i < BUFS; i++) {
+        reqs[i] = new Uint8Array(next, REQ_OFFSET + i * BUF_BYTES, BUF_BYTES);
+        ress[i] = new Uint8Array(next, RES_OFFSET + i * BUF_BYTES, BUF_BYTES);
+      }
+      for (let i = 0; i < SLOTS; i++) {
+        inlines[i] = new Uint8Array(next, INLINE_OFFSET + i * INLINE_BYTES, INLINE_BYTES);
+      }
+    },
   };
+  return b;
 }
 
 export function newBridge(): Bridge {

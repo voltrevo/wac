@@ -1,7 +1,7 @@
 # 0076 — an app worker runs `main` once, so a test pays a fresh one per case
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-05
 - **Kind:** performance
@@ -177,3 +177,47 @@ failure became five.
 
 Nothing is committed. The measurements stand: this is worth ten to thirteen times on every harness
 run in the repository, and it is now blocked on one specific change rather than on a decision.
+
+## Done — agent-a, 2026-08-11
+
+Three changes, and the third is the one this issue could not have known about.
+
+**`entry.ts`'s worker loops.** `runAsWorker` takes a start message, runs `main`, posts the result and
+waits for the next instead of returning. `nextMessage` clears `buffered` as it hands it over, and the
+`onmessage` handler clears `deliver` as it fires — a resolver that has already run cannot answer the
+next wait, and a looping worker has one.
+
+**`harness/appRun.ts` keeps one worker per runner.** Per *runner*, in the closure, not in a table
+keyed by (entry, grants): two runners are two callers and a shared worker gives each run's `main` the
+other's bridge. It goes back after `child.exit` settles and the output has drained — not from
+`terminate`, which `spawnChild` calls from `shutdown` including on the error path — and a negative
+exit code keeps it out of the pool.
+
+**And the capabilities are built once per worker**, which is what the fifth run was failing on:
+
+    wac: at most 16 distinct fn[void(i32)] functions can be passed to this module
+
+`platform.wac` documents that limit at the top of `Pending` — bindgen registers one wasm function per
+host function, sixteen live per signature — and a world rebuilt per run burns three of them each
+time. So `Bridge` gained `rebind(sab)`: the same object is pointed at each run's buffer, and `Core`
+and `Cli` are built on the first run only. Nothing captures what `rebind` replaces — `call.ts` reads
+`b.ctrl` on every `Atomics.load` and the three accessors index their arrays at call time — so a
+closure built over that bridge on the first run is still correct on the twelfth.
+
+### What it is worth
+
+| | per run, before | after |
+| --- | --- | --- |
+| `packages/box`, `cat` | 67.1 ms | **4.3 ms** |
+| `packages/sh`, `-c 'echo hi'` | 41.5 ms | **6.5 ms** |
+| `platform/example/wc` | 29.0 ms | **2.6 ms** |
+
+`packages/sh/test/differential.test.ts`, which is the biggest single consumer: **13s → 8s**.
+
+**Canaried** by `harness/appRun.test.ts`'s new case, which runs one program twelve times through one
+runner: rebuilding the world per run fails it at the fifth, with the funcref message. That test is
+the thing that keeps this fixed, and it is written against the number that broke it rather than
+against a round one.
+
+Green: `harness/` (47 with the differential), `packages/platform` (148), `packages/box`'s corpus and
+applets (26), `packages/sh`'s differential (10).
