@@ -24,6 +24,9 @@ means agreeing about what the object *is*.
 | `src/commit.wac` | commits and annotated tags — the two objects git stores as text |
 | `src/refs.wac` | refs, loose and packed, and `HEAD` as a symbolic one |
 | `src/index.wac` | `.git/index` — read and written, extensions preserved |
+| `src/repo.wac` | a repository over `packages/fs`: object lookup, refs, checkout |
+| `example/gitco.wac` | `git checkout`, as a program |
+| `example/gitci.wac` | `git commit -a`, as a program |
 
 The header is the whole reason `"hello\n"` is `ce013625…` rather than SHA-1 of those six bytes, and
 it puts the kind inside the identity: the same bytes as a blob and as a tag are two different
@@ -35,6 +38,16 @@ the index has for them, deltas and all, in about ten seconds. That check needs n
 implementation: an object's name is the SHA-1 of its bytes, so being wrong and agreeing is not
 available.
 
+**It commits.** `example/gitci.wac` writes every file as a blob, every directory as a tree, a commit
+whose parent is whatever the branch names now, and moves the branch — updating `.git/index` in the same
+pass. `git fsck --strict` accepts the result, `git log` shows the commit with its parent, and
+`git status` is empty afterwards.
+
+**It checks a repository out.** `example/gitco.wac` is a program — no TypeScript in the path — that
+resolves `HEAD`, reads the commit's tree out of loose objects or a pack, writes every file and
+subdirectory, and writes a matching `.git/index`. Delete a repository's working tree, run it, and
+`git status --porcelain` is empty with `git fsck` clean. The one exception is the executable bit, below.
+
 It walks history. Given this repository's own objects it resolves `HEAD` through a symbolic ref, reads
 the commit, and follows parents to the root — **445 commits, identical to `git rev-list --first-parent`,
 crossing 88 merges, over 142 loose objects and 303 packed ones**, in a tenth of a second.
@@ -44,14 +57,19 @@ crossing 88 merges, over 142 loose objects and 303 packed ones**, in a tenth of 
 Named rather than approximated, because a git implementation that quietly did some of these would be
 worse than one that says which:
 
-- **No unified object store.** Loose and packed objects are read by different calls and the
-  *caller* decides the order to try them in. Every caller wanting both writes that themselves, which is
-  the first thing the repository layer should take over.
-- **No ref directory walk.** `refs.wac` parses a ref file and `packed-refs`; enumerating `refs/heads/`
-  needs a filesystem, and this package still takes bytes rather than an `Fs`.
+- **No ref directory walk.** `repo.wac` resolves a ref by name; enumerating `refs/heads/` to list
+  branches is not written.
 - **No network.** No protocol, no fetch, no push.
-- **No working tree.** Nothing checks a tree out or diffs one against a directory, so the index can be
-  read and rewritten but not *built* from a directory.
+- **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
+  neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
+  produce different commits, which for a content-addressed store is the one thing worth avoiding.
+- **No config, no `.gitignore`.** Every file under the repository is committed.
+- **Checkout, not diff.** A tree can be written to a working tree with a matching index; nothing
+  compares a directory against a tree, so there is no `status` of our own.
+- **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
+  capability exists on `Cli`, so an executable checks out without it and git reports that one file as
+  modified. Counted and reported rather than silent —
+  [issues/system/0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md).
 - **SHA-1 only.** git can be configured for SHA-256 object names; this implements the format that is
   still the default and does not detect the other.
 
@@ -62,7 +80,8 @@ The order the rest would go in, and what would count as arriving, is
 [design/system/0005](../../design/system/0005-git-in-wac.md) — kept there rather than here so the plan
 and this package's limitations do not become two records that drift. Short version: packfiles first,
 and packfile reading, refs and commits are done. Next is the index and a working tree, which together
-give `status` and `checkout`. The index half is done; checking a tree out is what remains.
+give `status` and `checkout`, and step 5 writing a repository git accepts — all done. What remains is
+step 6, fetch over our own TLS, and step 7, writing packfiles.
 
 ## Two things about the format worth knowing before reading the code
 
@@ -86,6 +105,8 @@ deno test -A packages/git/test/interop.test.ts     # objects and trees
 deno test -A packages/git/test/pack.test.ts        # packfiles
 deno test -A packages/git/test/history.test.ts     # refs, commits, and walking them
 deno test -A packages/git/test/index.test.ts       # .git/index, judged by `git status`
+deno test -A packages/git/test/checkout.test.ts    # a working tree we rebuilt, judged by `git status`
+deno test -A packages/git/test/commit.test.ts      # a commit we made, audited by `git fsck --strict`
 ```
 
 Both skip themselves, loudly, where git is not installed.

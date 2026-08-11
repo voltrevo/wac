@@ -1,0 +1,64 @@
+// `git checkout`, in wac.
+//
+//     gitco <repo-dir>          # check HEAD's tree out over the working tree, and write the index
+//
+// The point of this program rather than a test harness: a checkout has to read an unknown number of
+// objects and write an unknown number of files, so it cannot be driven from outside without the driver
+// becoming the client. This is the client. Everything it does — resolving `HEAD`, reading loose objects
+// and packs, walking trees, writing files, writing `.git/index` — is `packages/git` over `packages/fs`,
+// with no TypeScript in the path.
+//
+// **The oracle is `git status`.** `test/checkout.test.ts` deletes a repository's working tree, runs this
+// to rebuild it, and asks git whether the result is clean. That is a hard test to pass by accident: a
+// wrong mode, a wrong byte, a missing file or an index in the wrong order all show up by name.
+
+import { Cli, Core, FAULT_NONE } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { RepoAt, Written, checkout, head, openRepo, treeOfCommit } from "../src/repo.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 1) {
+    core.warn("usage: gitco <repo-dir>");
+    return 2;
+  }
+  string root = string.fromBytes(cli.arg(0).wait());
+  Fs fs = Fs.onHost(cli, 0);
+
+  match (openRepo(fs, root + "/.git", root)) {
+    case NoRepo(why): {
+      core.warn("gitco: " + why);
+      return 1;
+    }
+    case Opened(repo): {
+      u8[]? at = head(repo);
+      if (at is null) {
+        core.warn("gitco: HEAD does not resolve to a commit");
+        return 1;
+      }
+      u8[]? tree = treeOfCommit(repo, at!);
+      if (tree is null) {
+        core.warn("gitco: HEAD is not a commit, or names no tree");
+        return 1;
+      }
+      match (checkout(repo, tree!, root)) {
+        case Stopped(why): {
+          core.warn("gitco: " + why);
+          return 1;
+        }
+        case Files(count, modesUnset): {
+          core.log(itoa(count) + " files");
+          if (modesUnset > 0) {
+            // Said rather than swallowed: `git status` would otherwise be the first thing to mention
+            // it, and it would blame the file. issues/system/0132.
+            core.warn("gitco: " + itoa(modesUnset) +
+              " file(s) wanted the executable bit and this filesystem cannot set it" +
+              " — git will report them as modified");
+          }
+          return 0;
+        }
+      }
+    }
+  }
+}
