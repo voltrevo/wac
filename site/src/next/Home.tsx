@@ -37,7 +37,7 @@ const BOOTSTRAP = `stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    11 sources, 198,937 bytes, identical`;
+B == C    11 sources, 203,102 bytes, identical`;
 
 export const TRANSCRIPT: [string, string][] = [
   ["seq 1 20 | grep 7 | wc -l", "2"],
@@ -263,8 +263,8 @@ export default function Home() {
           other compiler, and it got worse by being taken properly. This page said the checker
           refused every rejection the spec documents, with no exceptions — a true sentence about a
           third of the spec, because the extractor scanned the test file as text and found 101 of
-          its 304 illegal programs. Over all of them it refuses <Lead>265 of 304</Lead> and misses
-          39, and of the programs the spec says are legal it stays silent on{" "}
+          its 304 illegal programs. Over all of them it refuses <Lead>277 of 304</Lead> and misses
+          27, and of the programs the spec says are legal it stays silent on{" "}
           <Lead>365 of 367</Lead> and wrongly refuses 2. The two false alarms are the ones that
           matter: this checker is meant never to invent a diagnostic, and that invariant had been
           asserted over a third of its domain.
@@ -274,13 +274,19 @@ export default function Home() {
           number went down this week, which is what a corpus that is the live repository does: the
           new code arrived using a member this emitter cannot type yet, so four files that nothing
           had written before now block on it, and three more on an import the harness does not
-          supply. None of the 342 produces an invalid module, which is the
+          supply. None of the 342 produces an invalid module, and — since &ldquo;whole&rdquo; was
+          made to mean what it says, by checking every {m({ children: "export" })} a file declares is
+          a function in the module rather than taking the emitter&rsquo;s word — none of the 335 is
+          missing one either. That is the
           property that had to hold before a fixpoint meant anything: a walk that approved what the
           emitter cannot emit would reach one on garbage. Everything here is still built with the
           TypeScript compiler today. It is the seed, and the self-hosted one is not yet the compiler
-          of record — though its output now runs: six packages pass their own test suites on modules
-          wacc emitted, {m({ children: "tor" })} among them with 305 tests. Most of the rest fail on
-          one missing feature rather than on many, which is the shape you want a gap to have.
+          of record — though its output now runs, and by more than it did: <Lead>17 of 33 packages
+          pass their own test suites on modules wacc emitted</Lead>, 763 tests, with{" "}
+          {m({ children: "tor" })}&rsquo;s 305 among them. That was six a day ago, and what moved it
+          was one feature — the bindgen helpers that copy bytes between a GC array and linear
+          memory. The remainder are blocked on the same kind of thing rather than on many kinds,
+          which is the shape you want a gap to have.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>

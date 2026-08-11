@@ -481,7 +481,7 @@ export default function Stack() {
           the ones this page carried.</Lead> The contract was built on an extractor that read the
           test file as text and found 101 of its 304 illegal programs, so &ldquo;101 of 101 refused,
           no exceptions&rdquo; was true of a third of the spec. Over the whole of it the checker
-          refuses <Lead>265 of 304</Lead> and misses 39; of the programs the spec calls legal it is
+          refuses <Lead>277 of 304</Lead> and misses 27; of the programs the spec calls legal it is
           silent on <Lead>365 of 367</Lead> and wrongly refuses 2. Across files, where the recording
           was right from the start, it is 15 of 15 and 41 of 41.
         </P>
@@ -515,7 +515,7 @@ export default function Stack() {
           plainly: the corpus is the live repository, so code written for other reasons walks in
           using things this emitter has not reached yet. Four files now block on a member it cannot
           type, three on an import the harness does not supply. Every answer it gives for the
-          specification&rsquo;s own cases agrees — 322 of 322, from the 235 of 275 programs it emits
+          specification&rsquo;s own cases agrees — 351 of 351, from the 240 of 275 programs it emits
           whole — and all 84 of the specification&rsquo;s rejections are also its. And <em>none of the 342
           produces an invalid module</em>, which is the property that had to hold before the
           fixpoint meant anything: a walk that approves a function the emitter cannot actually emit

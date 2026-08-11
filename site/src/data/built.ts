@@ -20,19 +20,19 @@ export type BuiltPackage = {
 /** Package count, lines of wac, tests, command-line programs, browser pages. */
 export const TOTALS = {
   packages: 34,
-  lines: 91210,
+  lines: 91669,
   /** wac-mono's *packages* — the number that belongs beside the package table. */
-  tests: 1658,
-  programs: 50,
+  tests: 1662,
+  programs: 51,
   pages: 5,
   /**
-   * The whole repository: the packages (1658), and the compiler, harness and tooling
-   * around them (1325).
+   * The whole repository: the packages (1662), and the compiler, harness and tooling
+   * around them (1328).
    *
    * An undercount, because a test generated in a helper or a loop is one declaration and several
    * runs — the suites themselves report more than this.
    */
-  testsAll: 2983,
+  testsAll: 2990,
   /** Scripts in the bash differential corpus — `packages/sh/test/corpus.ts`. */
   corpus: 821,
   /** Applets `packages/box` dispatches, which is what `boxNames()` returns and `/bin` lists. */
@@ -51,14 +51,14 @@ export const BUILT: BuiltPackage[] = [
   { name: "datetime", what: "The proleptic Gregorian calendar, and RFC 3339 timestamps.", lines: 272, tests: 15 },
   { name: "fmt", what: "Numbers to and from text.", lines: 1199, tests: 27 },
   { name: "gzip", what: "gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac.", lines: 1994, tests: 83 },
-  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4007, tests: 147 },
+  { name: "platform", what: "A capability world for wac applications, so a program can be written entirely in wac — no TypeScript of its own — and still read files, tell…", lines: 4091, tests: 149 },
   { name: "regex", what: "A backtracking regular expression engine, with JavaScript's semantics.", lines: 1515, tests: 21 },
   { name: "stream", what: "Run a wac transform as a ReadableStream/WritableStream pair, so it consumes input as it arrives instead of taking the whole thing at once.", lines: 97, tests: 14 },
   { name: "url", what: "A WHATWG URL parser: parse, serialize, and resolve a reference against a base.", lines: 1219, tests: 27 },
-  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 16773, tests: 91 },
+  { name: "wacc", what: "Porting the wac compiler to wac, so it can eventually compile itself.", lines: 17106, tests: 92 },
   { name: "zstd", what: "Zstandard (RFC 8878) in wac.", lines: 3038, tests: 48 },
   { name: "abi", what: "The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values.", lines: 560, tests: 9 },
-  { name: "crypto", what: "SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305, AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and…", lines: 5790, tests: 150 },
+  { name: "crypto", what: "The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing.", lines: 5790, tests: 150 },
   { name: "fs", what: "A filesystem that belongs to the system rather than to the host.", lines: 3193, tests: 39 },
   { name: "http", what: "HTTP/1.1: parsing requests and responses, and writing both.", lines: 1003, tests: 29 },
   { name: "json", what: "JSON (RFC 8259) parsing and serialization, written in wac.", lines: 955, tests: 51 },
@@ -68,7 +68,7 @@ export const BUILT: BuiltPackage[] = [
   { name: "bls", what: "BLS signature verification on BLS12-381 — the Ethereum parameters and encodings.", lines: 4051, tests: 45 },
   { name: "mpt", what: "Merkle-Patricia proofs, verified — the piece that turns \"a provider told me\" into \"the state root I already verified commits to this\".", lines: 489, tests: 27 },
   { name: "server", what: "An HTTP server written in wac.", lines: 328, tests: 20 },
-  { name: "sh", what: "A shell, in wac.", lines: 7029, tests: 30 },
+  { name: "sh", what: "A shell, in wac, whose definition of correct is GNU bash: a corpus of scripts runs through both and the two must agree on standard output…", lines: 7071, tests: 31 },
   { name: "ssz", what: "Everything an Altair light client needs is done and checked against Ethereum's vectors.", lines: 802, tests: 26 },
   { name: "tls", what: "TLS 1.3 (RFC 8446) in wac.", lines: 3789, tests: 96 },
   { name: "box", what: "65 applets in one program, chosen by the first argument — 64 tools and help, which prints the list.", lines: 8129, tests: 122 },
