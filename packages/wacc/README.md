@@ -1402,10 +1402,13 @@ an array of it, a function taking and returning it, a nullable widened from it. 
 generated axis rather than a curated one, which was the point of the file. Accepted grew **495 → 834**.
 
 **The first thing the new family found was not a wacc bug.** `fn[i32(i32)][2](fill: a)` is the one
-hole in a seventeen-type row: the reference's *parser* reports seven errors and its checker then says
+hole in a seventeen-type row: the reference's *parser* reported seven errors and its checker then said
 *"type 'null' is not an array"*, a type nothing in the program mentions. Sized array construction with
-a funcref element does not parse, while the unsized form, the parameter form, and every other element
-type do. That is [wac 0079](../../issues/lang/open/0079-a-sized-array-of-funcrefs-does-not-parse.md).
+a funcref element did not parse, while the unsized form, the parameter form, and every other element
+type did. That was
+[wac 0079](../../issues/lang/closed/0079-a-sized-array-of-funcrefs-does-not-parse.md), and it was the
+same hole in both parsers — a funcref is the one element type that ends in `]` itself, so `parseType`
+had already eaten the brackets and only the unsized spelling was reachable. Both are fixed.
 
 The sweep now skips programs the reference's parser rejects, and says how many. That is the boundary
 rather than a workaround: rung 3 compares type checkers, and a program that did not parse has no type
