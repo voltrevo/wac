@@ -3545,7 +3545,7 @@ string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   if (subjT == typeNone() || subjT == "") { return typeNone(); }
   string subjCore = withoutNull(subjT);
   if (subjCore == "") { subjCore = subjT; }
-  string subjOwner = enumOfSubject(c, subjCore);
+  string subjOwner = enumOfSubject(c, subjCore, isVariantConstruction(c, subject));
   if (subjOwner == "" || !c.isEnum(subjOwner)) { return typeNone(); }
   // **The enum is what may be generic, not the variant.** `Opt<T> { Some(T v) }` registers `Some` as
   // an ordinary struct whose field is written `T`, so binding `v` to it says a working `case Some(v):
@@ -5512,10 +5512,17 @@ export void declareModule(C c, Program prog, string[] only) {
  * (`spec/cases/0073`), but one of them may be imported, and then the payload under that name
  * belongs to neither. `spec/cases/0093`.
  */
-string enumOfSubject(C c, string t) {
+string enumOfSubject(C c, string t, bool built) {
   string base = genericBase(t);
   string owner = base == "" ? t : base;
   if (c.isEnum(owner)) { return owner; }
+  // **Only for a subject this file built itself.** `match (E.A(1))`'s type is the variant `A`, and
+  // mapping it to `E` is the whole point of this function. But a *type name* that happens to match a
+  // local variant is a different thing: `packages/git/src/repo.wac` declares `RepoAt.Opened` and
+  // matches a value whose type is `pack.wac`'s `enum Opened`, which it never imported — so the name
+  // resolved to `RepoAt`, and every arm of the real enum came back as "no variant of that name".
+  // A name is only read as a variant when the expression in hand is a construction of one.
+  if (!built) { return ""; }
   i32 owners = 0;
   string only = "";
   for (i32 i = 0; i < c.variantCount; i++) {
@@ -5535,8 +5542,19 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     c.report(errMatchNullable(), subject.line, subject.col);
     return;
   }
-  string owner = enumOfSubject(c, t);
+  string owner = enumOfSubject(c, t, isVariantConstruction(c, subject));
   if (owner == "" || !c.isEnum(owner)) { return; }
+  // **And the file has to be able to see what that enum holds.** `packages/git/src/repo.wac` matches
+  // on `pack.wac`'s `enum Opened` while declaring a variant of its own called `Opened`, and imports
+  // the *function* rather than the enum — so the name resolves to an enum whose variants are not in
+  // this file's table at all. Every rule below counts them: an arm was "no variant of that name"
+  // and the match "does not cover every variant", both about an enum nobody here can enumerate.
+  // Nothing is knowable, which is the same answer an unknown subject gets. `spec/cases/0095`.
+  i32 known = 0;
+  for (i32 k = 0; k < c.variantCount; k++) {
+    if (c.variantOwners[k] == owner) { known = known + 1; }
+  }
+  if (known == 0) { return; }
   // **Reported only for a name that is nobody's variant.** Belonging to *this* enum is the question
   // the reference answers, and answering it needs to know which file the subject's type came from —
   // the provenance this checker does not keep, and the reason `case Match:` in `packages/ssh` was

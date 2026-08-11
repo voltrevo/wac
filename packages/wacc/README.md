@@ -210,10 +210,10 @@ an unknown escape were invisible to every caller of this package.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    27 of 33 packages pass their own suite on wacc-emitted code (1,246 tests)
+    30 of 34 packages pass their own suite on wacc-emitted code (1,391 tests)
     why the rest do not:
-        4  $bind$fnref_0
-        1  $bind$sm_Vec__packages_std_src_vec$string_create
+        2  $bind$sm_Vec__packages_std_src_vec$string_create
+        1  $bind$m_Vec__packages_std_src_vec$IndexEntry__packages_git_src_index_len
         1  a static Shell.capturing, declined
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus

@@ -1,0 +1,247 @@
+// The fetch conversation: what a server advertises, what we ask for, and finding the pack in the reply.
+//
+// This is protocol **v0/v1**, the one every server still speaks, over the smart-HTTP shape:
+//
+//     GET  /info/refs?service=git-upload-pack   ->  a refs advertisement
+//     POST /git-upload-pack                     ->  wants and haves, then a packfile back
+//
+// The same bytes go over `git://` and over a pipe to `git upload-pack --stateless-rpc`, which is what
+// `test/fetch.test.ts` uses as its oracle: real git, locally, with no network in the way.
+//
+// ## The advertisement
+//
+//     0107<sha> HEAD\0multi_ack thin-pack side-band ... symref=HEAD:refs/heads/main agent=git/2.43.0
+//     003d<sha> refs/heads/main
+//     0000
+//
+// **The capabilities are on the first line only, after a NUL**, and everything after that NUL is a
+// space-separated list rather than part of the ref name. A parser that split the first line on spaces
+// gets a ref called `HEAD` with a capability list glued to it.
+//
+// Over HTTP there is one extra packet first — `# service=git-upload-pack\n` and a flush — which
+// `git upload-pack --advertise-refs` does not write. Both shapes are accepted, because a client that
+// only understood one would work against a pipe and not a server, or the reverse.
+//
+// ## The request
+//
+//     0032want <sha> multi_ack side-band-64k ofs-delta\n     capabilities on the FIRST want only
+//     0032want <sha>\n
+//     0000                                                    flush ends the wants
+//     0009done\n
+//
+// **`side-band-64k` is deliberately not asked for.** With it the pack arrives interleaved with progress
+// messages on channel 2 and has to be de-multiplexed; without it the reply is one `NAK` packet and then
+// the pack as raw bytes. Asking for less makes the reply simpler, and progress output is not something
+// a library wants. `ofs-delta` *is* asked for, because it is what lets the server use the smaller kind
+// of delta, and `packages/git`'s pack reader handles both.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Pkt, flushPkt, readPkt, writeText } from "./pktline.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { decode, encode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** One ref a server advertised. */
+export struct AdRef {
+  string name;
+  /** Twenty raw bytes. */
+  u8[] target;
+}
+
+/** What a server said when asked. */
+export struct Advertised {
+  Vec<AdRef> refs;
+  /** The capability list from the first line, space separated and verbatim. */
+  string capabilities;
+}
+
+export enum Ad {
+  Said(Advertised ad),
+  Garbled(string why)
+}
+
+/** Twenty bytes from forty hex characters. */
+u8[]? hex20(u8[] b, i32 from) {
+  if (from + 40 > b.len()) { return null; }
+  Buf h = Buf.create();
+  for (i32 i = from; i < from + 40; i++) { h.push(b[i]); }
+  u8[]? raw = decode(h.bytes());
+  if (raw is null) { return null; }
+  if (raw!.len() != 20) { return null; }
+  return raw!;
+}
+
+string slice(u8[] b, i32 from, i32 to) {
+  Buf out = Buf.create();
+  for (i32 i = from; i < to; i++) { out.push(b[i]); }
+  return out.toStr();
+}
+
+/**
+ * Parse a refs advertisement.
+ *
+ * Accepts both shapes: with the HTTP `# service=` preamble and without it. The preamble is recognised
+ * rather than skipped blindly — a packet starting `#` at the front of an advertisement can only be that,
+ * and skipping the first packet unconditionally would eat a ref if the preamble were absent.
+ */
+export Ad parseAdvertisement(u8[] b) {
+  i32[] pos = i32[1]();
+  Vec<AdRef> refs = Vec.create();
+  string caps = "";
+  bool first = true;
+
+  bool reading = true;
+  while (reading) {
+    match (readPkt(b, pos)) {
+      case Broken(why): return Ad.Garbled(why);
+      case Done: { reading = false; }
+      case Delim: { }
+      case ResponseEnd: { reading = false; }
+      case Flush: {
+        // The flush after the `# service=` line, or the end of the advertisement. If refs have been
+        // read, this is the end; if not, it closed the preamble and the refs follow.
+        if (refs.len() > 0) { reading = false; }
+      }
+      case Line(payload): {
+        if (payload.len() > 0 && payload[0] == '#') {
+          // `# service=git-upload-pack\n` — the HTTP preamble. Not a ref.
+          continue;
+        }
+        u8[]? target = hex20(payload, 0);
+        if (target is null) { return Ad.Garbled("a ref line does not start with forty hex characters"); }
+        if (payload.len() < 42 || payload[40] != 32) {
+          return Ad.Garbled("a ref line has no space after its object name");
+        }
+        // The name runs to a NUL, a newline, or the end — and the NUL is what separates the
+        // capabilities on the first line.
+        i32 end = payload.len();
+        i32 nul = -1;
+        for (i32 i = 41; i < payload.len(); i++) {
+          if (payload[i] == 0) { nul = i; end = i; break; }
+          if (payload[i] == 10) { end = i; break; }
+        }
+        refs.push(AdRef(slice(payload, 41, end), target!));
+        if (first && nul >= 0) {
+          i32 capsEnd = payload.len();
+          for (i32 i = nul + 1; i < payload.len(); i++) {
+            if (payload[i] == 10) { capsEnd = i; break; }
+          }
+          caps = slice(payload, nul + 1, capsEnd);
+        }
+        first = false;
+      }
+    }
+  }
+  if (refs.len() == 0) { return Ad.Garbled("no refs were advertised"); }
+  return Ad.Said(Advertised(refs, caps));
+}
+
+/** Whether the capability list contains `want`. */
+export bool offers(const Advertised ad, string want) {
+  u8[] hay = ad.capabilities.toBytes();
+  u8[] needle = want.toBytes();
+  if (needle.len() == 0) { return false; }
+  for (i32 i = 0; i + needle.len() <= hay.len(); i++) {
+    bool hit = true;
+    for (i32 k = 0; k < needle.len(); k++) {
+      if (hay[i + k] != needle[k]) { hit = false; break; }
+    }
+    // A whole word: `no-done` must not match inside `multi_ack_detailed no-done` twice, and `ofs-delta`
+    // must not be found inside a longer name.
+    if (hit) {
+      bool leftOk = i == 0 || hay[i - 1] == 32;
+      i32 after = i + needle.len();
+      bool rightOk = after == hay.len() || hay[after] == 32;
+      if (leftOk && rightOk) { return true; }
+    }
+  }
+  return false;
+}
+
+/**
+ * Build the body of a fetch: what we want, what we already have, and `done`.
+ *
+ * `haves` may be empty, which is a clone. When it is not, the server will answer `ACK`s before the pack
+ * and send only what is missing — this asks for `done` immediately rather than negotiating in rounds,
+ * which costs a larger pack and removes a conversation that would need several round trips.
+ */
+export u8[] wantRequest(Vec<u8[]> wants, Vec<u8[]> haves, string capabilities) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < wants.len(); i++) {
+    string line = "want " + string.fromBytes(encode(wants.get(i)));
+    // **Capabilities go on the first want only.** A server reading them on the second is entitled to
+    // treat the whole line as a malformed want.
+    if (i == 0 && capabilities != "") { line = line + " " + capabilities; }
+    out.pushAll(writeText(line + "\n"));
+  }
+  out.pushAll(flushPkt());
+  for (i32 i = 0; i < haves.len(); i++) {
+    out.pushAll(writeText("have " + string.fromBytes(encode(haves.get(i))) + "\n"));
+  }
+  out.pushAll(writeText("done\n"));
+  return out.take();
+}
+
+/** What came back from a fetch. */
+export enum Reply {
+  /** The packfile, with the negotiation packets stripped. */
+  Packfile(u8[] pack),
+  NoPack(string why)
+}
+
+/**
+ * Find the packfile in a fetch reply.
+ *
+ * Without `side-band`, the reply is a sequence of `NAK`/`ACK` packets and then the pack as **raw bytes,
+ * not in packets** — so this reads packets until one is not a negotiation line, and everything from
+ * there is the pack. That is the shape asking for less bought: with side-band the pack would arrive
+ * split across channel-1 packets interleaved with progress on channel 2.
+ *
+ * A reply whose pack does not start `PACK` is refused rather than handed on, because the most common
+ * thing a server sends instead is an error in a packet, and passing that to a pack reader turns a
+ * server's message into "not a pack: the magic is missing".
+ */
+export Reply findPack(u8[] b) {
+  i32[] pos = i32[1]();
+  bool looking = true;
+  while (looking) {
+    i32 before = pos[0];
+    match (readPkt(b, pos)) {
+      case Broken(why): {
+        // Not a packet: the pack starts here. `PACK` is not valid hex, so this is the ordinary way out
+        // rather than a failure.
+        pos[0] = before;
+        looking = false;
+      }
+      case Done: return Reply.NoPack("the reply ended before a packfile");
+      case Flush: { }
+      case Delim: { }
+      case ResponseEnd: { }
+      case Line(payload): {
+        if (isNegotiation(payload)) { continue; }
+        if (payload.len() > 3 && payload[0] == 'E' && payload[1] == 'R' && payload[2] == 'R') {
+          return Reply.NoPack("the server said: " + slice(payload, 4, payload.len()));
+        }
+        // A packet that is neither: the pack began inside it, which means this reply is banded after
+        // all. Refuse rather than guess.
+        return Reply.NoPack("unexpected packet before the pack; is the reply side-banded?");
+      }
+    }
+  }
+  i32 at = pos[0];
+  if (at + 4 > b.len() || b[at] != 'P' || b[at + 1] != 'A' || b[at + 2] != 'C' || b[at + 3] != 'K') {
+    return Reply.NoPack("what follows the negotiation is not a packfile");
+  }
+  u8[] pack = u8[b.len() - at]();
+  for (i32 i = 0; i < pack.len(); i++) { pack[i] = b[at + i]; }
+  return Reply.Packfile(pack);
+}
+
+/** `NAK`, `ACK …` and `shallow …` — the lines that precede a pack. */
+bool isNegotiation(u8[] p) {
+  if (p.len() >= 3 && p[0] == 'N' && p[1] == 'A' && p[2] == 'K') { return true; }
+  if (p.len() >= 3 && p[0] == 'A' && p[1] == 'C' && p[2] == 'K') { return true; }
+  if (p.len() >= 7 && p[0] == 's' && p[1] == 'h' && p[2] == 'a' && p[3] == 'l' && p[4] == 'l'
+      && p[5] == 'o' && p[6] == 'w') { return true; }
+  return false;
+}

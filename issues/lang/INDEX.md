@@ -5,7 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0097](open/0097-wacc-rejects-a-match-arm-in-packages-git-and-the-suite-is-red.md) | wacc rejects a match arm in `packages/git`, and the shared suite is red | bug | wrong answer |
+| [0097](open/0097-a-linked-git-repo-emits-an-invalid-module.md) | wacc emits an invalid module for `packages/git/src/repo.wac` | bug | invalid wasm |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
 | [0089](open/0089-wacc-emits-no-transfer-buffer-so-nothing-can-bind-to-it.md) | wacc emits no transfer buffer, so nothing that passes bytes can bind to it | missing feature | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
