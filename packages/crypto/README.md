@@ -1,8 +1,14 @@
 # crypto
 
-SHA-256, SHA-512/384, SHA-3, SHAKE, keccak256, HMAC, HKDF, bcrypt_pbkdf, ChaCha20-Poly1305,
-AES-CTR, AES-GCM, X25519, Ed25519, NIST P-256 and P-384, RSA signature verification and
-ML-KEM-768, written in wac.
+The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling
+nothing. `packages/platform` gives a program `randomBytes` and no algorithms, so a protocol written
+entirely in wac has nowhere else to get a digest or a key exchange from: `ssh`, `tls`, `tor`, `ssz`,
+`bls`, `mpt`, `ens`, `ethrpc` and `box` all get theirs here. [Status](#status) lists every one with its spec
+and how far it goes; the sections after it explain the parts of each that are not obvious.
+
+Two things to read before the code. [Testing](#testing) — two oracles, because one is not enough,
+and most of the suite is written in wac rather than TypeScript. [Side channels](#side-channels) —
+a measurement rather than a disclaimer, which is what the warning below rests on.
 
 > **Not for production.** Two routines here are known to leak, and the rest are uniform
 > only at the level this can measure. See [Side channels](#side-channels) — that section

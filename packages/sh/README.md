@@ -1,9 +1,9 @@
 # sh
 
-A shell, in wac. Quoting, parameter expansion with the `:-`/`:=`/`:?`/`:+` operators, command
-substitution in both spellings, arithmetic, here-documents, `read`, pipelines, redirection,
-`&&`/`||`, `if`/`while`/`until`/`for`/`case`, functions, subshells, globbing, positional parameters,
-exit statuses — checked against GNU bash, script for script.
+A shell, in wac, whose definition of *correct* is GNU bash: a corpus of scripts runs through both
+and the two must agree on standard output **and** exit status, script for script. Anything this
+shell does differently from bash is a bug in this shell, and that is what makes the package worth
+reading — [The oracle is bash](#the-oracle-is-bash) says why nothing weaker would do.
 
 ```sh
 deno task app packages/sh/src/sh.wac --allow-read --allow-env -- -c 'seq 1 10 | grep 1 | wc -l'
@@ -14,12 +14,23 @@ deno task app:build packages/sh/src/sh.wac --allow-read --allow-write --allow-en
 A package of [wac-mono](../../README.md) — see the root README for layout and how to run things.
 All commands run from the repo root.
 
+Three sections carry most of what a reader wants: [What it does](#what-it-does) and
+[What it does not do](#what-it-does-not-do) for the edges, and
+[Why the pieces look like this](#why-the-pieces-look-like-this) for the code.
+
 ## The oracle is bash
 
-`test/differential.test.ts` runs 817 scripts through GNU bash and through this, and requires the
-same standard output *and* the same exit status. For a shell that is the only test worth much:
-the behaviour is defined by what the real one does, and nearly every rule has a case where the
-obvious implementation is subtly wrong.
+`test/corpus.ts` holds **821** scripts. `test/differential.test.ts` runs the **539** of them that
+name no program this package has given up — plus thirteen globbing cases it builds against a
+directory of its own — through GNU bash and through this, and requires the same standard output
+*and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **282**, the ones
+naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
+those applets. Between them every script in the corpus is compared with bash. The three counts are
+checked against `corpus.ts` by `test/counts.test.ts`, because this paragraph said 817 for a while
+after the corpus had grown and the differential had shrunk — wrong in both directions at once.
+
+For a shell that is the only test worth much: the behaviour is defined by what the real one does,
+and nearly every rule has a case where the obvious implementation is subtly wrong.
 
 It earned its place on the first run. Three of eighty-three scripts disagreed, all one bug: the
 lexer accumulated `x=` and `"a b c"` into a single part and marked the whole thing quoted, so
@@ -371,6 +382,18 @@ rather than to the shell, and `packages/box/test/imaged.test.ts` fails if that e
 `packages/fs`'s `synth` are all in `packages/box/test` now. Each one asks about a *filesystem*, and every
 question you can ask a shell about a filesystem is asked with a *command* — so once this package had no
 commands, this was no longer the package that could ask.
+
+## What it does
+
+Everything in this list is compared with bash by the corpus above rather than merely present:
+
+- **Words.** Quoting in all three spellings, globbing, and positional parameters.
+- **Expansion.** Parameters with the `:-`/`:=`/`:?`/`:+` operators, command substitution in both
+  spellings, arithmetic, and here-documents.
+- **Control flow.** `if`/`while`/`until`/`for`/`case`, functions, subshells, `&&`/`||`, and exit
+  statuses.
+- **Plumbing.** Pipelines, redirection, `read`, and background jobs — with the limits the next
+  section names, which are the part of this list worth reading twice.
 
 ## What it does not do
 
