@@ -172,3 +172,24 @@ Deno.test("how many of wacc's diagnostics carry their operands", async () => {
   );
   if (diagnostics === 0) throw new Error("no diagnostics at all — the harness is not working");
 });
+
+Deno.test("waccx bindgen: writes glue beside the entry, and names what it declined", async () => {
+  const src = `struct P { i32 x; }
+export i32 area(i32 w, i32 h) { return w * h; }
+export string label(string s) { return s; }
+export P boxed(i32 n) { return P(n); }
+`;
+  const { cap, err, written } = memory({ "main.wac": src });
+  const r = await waccx(["bindgen", "main.wac"], cap);
+  if (r.code !== 0) throw new Error(`exit ${r.code}: ${err.join("")}`);
+
+  const glue = written.get("main.gen.ts");
+  if (typeof glue === "undefined") throw new Error(`wrote ${[...written.keys()].join(", ")}`);
+  const text = typeof glue === "string" ? glue : new TextDecoder().decode(glue);
+  for (const want of ["export function area", "export function label", "$bind$str_from_mem"]) {
+    if (!text.includes(want)) throw new Error(`the glue has no ${want}`);
+  }
+  // A struct return is not bound yet, and the point is that this is *said* rather than discovered.
+  if (text.includes("export function boxed")) throw new Error("glue was generated for a struct return");
+  if (!err.join("").includes("boxed")) throw new Error(`stderr did not name what it declined: ${err.join("")}`);
+});

@@ -166,12 +166,12 @@ have never appeared in a status line: they are invisible to every rung.
 | diagnostics: message | done, and the wording agrees where both speak |
 | diagnostics: annotation, hint, span | operands on 75%, help on 23%, a real span on 58% |
 | CLI: `check`, `compile`, `run` | done, `deno task waccx` |
-| CLI: `bindgen` | **not started** |
+| CLI: `bindgen` | done — `waccx bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
+| bindgen — generating the host glue | **started** — the numbers, `bool`, `string` and the numeric arrays cross; structs, enums and callbacks do not yet, and are named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
-| **constant folding** | **not started** — `wacConstEval`, 152 lines |
+| constant folding | **not needed** — the same programs work by another route; see below |
 | `--checked` arithmetic | done — add, subtract and multiply trap where the value does not fit, and the default build is byte-identical |
 
 Priority 3 is the number this README has been quoting — 22 of 33 packages passing their own suites
@@ -204,6 +204,17 @@ funcref call, a generic instantiating itself with a bigger type, a template writ
 belongs, and a generic enum's payload substitution. One was not a checker rule at all: `dumpErrors`
 computed the lexer's errors and dropped them, so an unterminated comment, an unterminated string and
 an unknown escape were invisible to every caller of this package.
+
+**Constant folding is the one row this table will not gain**, and it is worth saying why rather than
+leaving it as a gap. The reference folds because a wasm global's initialiser must be a *constant
+expression*: `const i32[] T = i32[](1 + 2, 4)` puts its elements in one, and `1 + 2` has to have
+become `3` before emission. wacc reaches the same place from the other side — a global whose value it
+cannot write as a constant expression is declared mutable and assigned by the start function, which
+works for arithmetic and for everything else too. `spec/cases/0100` holds a constant array of
+computed elements against both compilers, and they agree.
+
+What folding would buy is smaller modules and one less start function, which is an optimisation
+rather than a feature. It is not on the ladder and it is not what priority 2 is about.
 
 **Nothing in the repository is declined any more.** The last four were one line — `anyref` lexes as a
 primitive and the nullable arm kept only `string`, so `anyref? interruptCtx` was a field of no type
