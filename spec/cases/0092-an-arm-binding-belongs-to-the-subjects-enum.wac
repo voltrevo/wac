@@ -1,0 +1,16 @@
+// expect: answers f = 3
+// why: the arm binds a payload of the enum being matched, not of a local enum that spells a
+// why: variant the same way — the name is scoped to its own file, and this one is imported
+// from: issues/lang/0096, found writing packages/git
+// ---- a.wac ----
+export enum Unzipped { Ok(u8[] bytes), Bad(string why) }
+export Unzipped unzip(i32 n) { return Unzipped.Ok(u8[3](fill: 7)); }
+// ---- main.wac ----
+import { Unzipped, unzip } from "./a.wac";
+enum Object { Ok(i32 kind, u8[] content), Bad(string why) }
+export i32 f() {
+  match (unzip(1)) {
+    case Bad(why): { return 0; }
+    case Ok(raw): { return raw.len(); }
+  }
+}

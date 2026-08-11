@@ -1,0 +1,10 @@
+// expect: refused
+// why: the arms have to cover the enum however the subject was written — a variant construction is
+// why: a value of its enum, not a type of its own
+// from: issues/lang/0096's neighbourhood — resolving an enum from the subject expression
+enum E { A(i32 k), B(string w) }
+export i32 f() {
+  match (E.A(1)) {
+    case A(k): { return k; }
+  }
+}

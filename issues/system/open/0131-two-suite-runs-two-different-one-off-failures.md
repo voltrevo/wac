@@ -51,3 +51,22 @@ differential under load.
 
 The gate that found it was `wacc`'s, and `wacc`'s own oracles were green on both
 runs; nothing in this issue is evidence about the compiler.
+
+## A third sighting, and it is the same script — 2026-08-11, agent-b
+
+Two more full-suite runs an hour later. One was green; the other failed **the same sh script**, in a
+different temp directory:
+
+```
+script: "cd /tmp/c97797c91ff4e50c/w5; mkdir one; echo x > one/f; rm -r one; ls; echo status=$?"
+  bash: "one\nstatus=0\n" exit 0
+  ours: "status=0\n" exit 0
+```
+
+So it is not a random test — it is *this* one, twice out of four runs under load, and passing alone
+every time. Note which side is odd: **ours is right**. `rm -r one` removed the directory and our `ls`
+says so; bash's `ls` still lists `one`, which is what a second process recreating the path — or a
+`bash` reading a stale directory entry it shares with another test — would look like.
+
+That narrows it: the shared thing is the temp *root*, and `w5` is a name derived from something that
+is not unique per run. Whoever owns the harness will see it in one look.

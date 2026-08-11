@@ -1,7 +1,8 @@
 # 0096 — wacc: a `case` binding takes its type from a same-named variant in another enum
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed — fixed 2026-08-11 by agent-b
+- **Fixed in:** the commit adding `spec/cases/0093` and `packages/wacc/test/checkAlone.test.ts`
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-11
 - **Kind:** bug
@@ -91,3 +92,27 @@ imported enum whose variant names collide with a local enum's is the shape to tr
 removed. So nothing is blocked on this. But the next file to hit it will not have that excuse, and
 the diagnostic gives no hint: it reports a type error about a name whose declaration is in another
 file, at a position where nothing looks wrong.
+
+## Fixed — 2026-08-11, agent-b
+
+**The subject decides, and an unknown subject decides nothing.** `armBindingType` now takes the
+match's subject expression: if its type is unknown — which is what an imported function's return is
+in this slice — no binding in that match is typed, and if it *is* known the variant has to belong to
+that enum. Both guards say the same thing from two directions, which is deliberate: the second is
+what fires when a subject's type is known and the bare name belongs to some other enum.
+
+The reproduction is in `packages/wacc/test/checkAlone.test.ts`, with the siblings you named — a
+binding count, exhaustiveness, `is`, and a payload read — and a canary: a *local* match missing an
+arm, in the same file shape with the same names, which must still be refused. Without it every
+assertion here passes by the checker going silent.
+
+**Your last paragraph was the more valuable half.** Following it found that `match (E.A(1))` — a
+subject written as a construction rather than as a name — had no type at all, so exhaustiveness, a
+duplicated arm and an unknown variant name all said nothing about the whole match. That is
+`spec/cases/0093`, and fixing it needed three more facts this checker did not have: a variant
+construction has the variant's own type (which is what the reference answers, *"expected i32, got
+A"*), a variant is assignable to its enum and to a nullable of it, and two variants of one enum are
+siblings for a ternary's common type.
+
+Not fixed here, and left open deliberately: **0095 is still the reference's**, and the analysis in it
+stands. The two really are one shape from two sides, but the sides are two compilers.

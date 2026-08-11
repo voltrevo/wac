@@ -525,6 +525,15 @@ export bool assignable(C c, string want, string got) {
   // `as!`. Upcasting *by assignment* is the same fact as upcasting by cast, one syntax along, and was
   // missed because nothing in the spec corpus assigns a child to a parent.
   if (c.isStruct(want) && c.isStruct(got) && descendsFrom(c, got, want)) { return true; }
+  // **A variant is a value of its enum.** `Option<i32> a = Option.Some(5);` — the source has the
+  // variant's own type, which is what the reference answers too (*"expected i32, got A"*), and the
+  // slot has the enum's. Compared against the *template*, so an instance takes its own variants:
+  // `Option<i32>` accepts `Some`, and `Other<i32>` does not.
+  // Under any `?` as well: `E? e = E.A(5);` is the nullable slot taking a value, and the two
+  // questions — is it the right type, may it be absent — are separate ones.
+  string wantCore = withoutNull(want) == "" ? want : withoutNull(want);
+  string wantBase = genericBase(wantCore) == "" ? wantCore : genericBase(wantCore);
+  if (c.isEnum(wantBase) && c.variantArityIn(wantBase, got) >= 0) { return true; }
   // `anyref` holds any **reference**: a struct, an array, a string, a nullable one of those. Not a
   // primitive — `anyref r = someI32` is a mismatch — so this is not simply "accepts everything".
   //
@@ -1851,6 +1860,22 @@ export string typeOfExpr(C c, Expr e) {
     case Call(callee, args): {
       match (callee.kind) {
         case Member(obj, nameTok): {
+          // **A variant construction is a value, and had no type at all.** `E.A(1)` is an `A` — the
+          // reference says so in as many words, *"expected i32, got A"* — and it reaches here as a
+          // member call on a name that is an enum rather than a value, so `receiverType` answered
+          // unknown and every rule downstream went quiet. `match (E.A(1))` was the visible one: the
+          // subject had no type, so exhaustiveness, a duplicated arm and a name no variant declares
+          // all said nothing about the whole match. `spec/cases/0093`.
+          match (obj.kind) {
+            case Ident(tok): {
+              string en = tokenText(c, tok);
+              if (c.isEnum(en) && !c.isDeclaredName(en) &&
+                  c.variantArityIn(en, tokenText(c, nameTok)) >= 0) {
+                return tokenText(c, nameTok);
+              }
+            }
+            else: { }
+          }
           string recvT = receiverType(c, obj);
           if (recvT == typeNone() || recvT == "") { return typeNone(); }
           // **A field holding a funcref answers what its signature says.** `Cli`'s members are
@@ -2409,7 +2434,7 @@ void checkExpr(C c, Expr e) {
       checkArmVariants(c, subject, arms);
       for (i32 i = 0; i < arms.len(); i++) {
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
         checkBindingCollision(c, subject, arms[i]);
         // **An arm of an expression match narrows too.** Only the statement form did, so
@@ -3504,10 +3529,24 @@ bool reachesStruct(C c, string from, string target, i32 depth) {
  * Unknown when the variant is not one this checker holds, which is the usual direction: a generic
  * enum's payload is written in its parameters, and a name that means nothing here means nothing.
  */
-string armBindingType(C c, Arm arm, i32 b) {
+string armBindingType(C c, Expr subject, Arm arm, i32 b) {
   if (arm.variantTok < 0) { return typeNone(); }
   string variant = tokenText(c, arm.variantTok);
   if (!c.isStruct(variant)) { return typeNone(); }
+  // **A binding belongs to the enum being matched, and this asked the file instead.**
+  // `match (unzip(f))` on an imported `Unzipped { Ok(u8[] bytes) }`, in a file that also declares
+  // `Object { Ok(i32 kind, …) }`, bound `raw` to the *local* `Ok`'s first payload and reported every
+  // use of it — a false alarm about a name whose declaration is in another file. The owner guard
+  // below could not see it: exactly one enum declares `Ok` as far as this slice knows, and it is the
+  // wrong one. So the subject decides, and when the subject's type is unknown — which is what an
+  // imported function's return is here — nothing about the binding is knowable.
+  // `issues/lang/0096`, `spec/cases/0093`.
+  string subjT = typeOfExpr(c, subject);
+  if (subjT == typeNone() || subjT == "") { return typeNone(); }
+  string subjCore = withoutNull(subjT);
+  if (subjCore == "") { subjCore = subjT; }
+  string subjOwner = enumOfSubject(c, subjCore);
+  if (subjOwner == "" || !c.isEnum(subjOwner)) { return typeNone(); }
   // **The enum is what may be generic, not the variant.** `Opt<T> { Some(T v) }` registers `Some` as
   // an ordinary struct whose field is written `T`, so binding `v` to it says a working `case Some(v):
   // v` returns a `T` where an `i32` was declared. Six programs said so at once.
@@ -3522,6 +3561,10 @@ string armBindingType(C c, Arm arm, i32 b) {
     owner = c.variantOwners[i];
   }
   if (owners != 1) { return typeNone(); }
+  // And the one that declares it has to be the one being matched. Two enums cannot both declare `Ok`
+  // in one file — `spec/cases/0073` — so this fires when the other declarer is imported, where the
+  // payload fields under that bare name are the *local* enum's and belong to neither.
+  if (owner != subjOwner) { return typeNone(); }
   i32 n = 0;
   for (i32 i = 0; i < c.fieldCount; i++) {
     if (c.fieldOwners[i] != variant) { continue; }
@@ -3592,6 +3635,15 @@ bool isCastRef(C c, string t) {
 bool shareAncestor(C c, string a, string b) {
   string ac = withoutNull(a) == "" ? a : withoutNull(a);
   string bc = withoutNull(b) == "" ? b : withoutNull(b);
+  // **Two variants of one enum are siblings**, in exactly the sense two structs with one parent are:
+  // `y ? E.A(3) : E.B(4)` is an `E`, and each branch has its own variant's type. The parent chain
+  // cannot say so — a variant is registered as a struct with no parent — so the enum that owns them
+  // answers instead. `spec/cases/0093`'s neighbourhood.
+  string ao = variantOwnerOf(c, ac);
+  if (ao != "" && ao == variantOwnerOf(c, bc)) { return true; }
+  if (ao != "" && (ao == bc || genericBase(bc) == ao)) { return true; }
+  string bo = variantOwnerOf(c, bc);
+  if (bo != "" && (bo == ac || genericBase(ac) == bo)) { return true; }
   string walk = ac;
   for (i32 guard = 0; guard < 16; guard++) {
     if (walk == "") { return false; }
@@ -3599,6 +3651,18 @@ bool shareAncestor(C c, string a, string b) {
     walk = c.parentOf(walk);
   }
   return false;
+}
+
+/** The enum that declares this variant, or `""` — ambiguous when two enums do, so nobody's. */
+string variantOwnerOf(C c, string name) {
+  i32 owners = 0;
+  string only = "";
+  for (i32 i = 0; i < c.variantCount; i++) {
+    if (c.variantNames[i] != name) { continue; }
+    owners = owners + 1;
+    only = c.variantOwners[i];
+  }
+  return owners == 1 ? only : "";
 }
 
 /** Whether `sub` inherits from `super`, which is what makes a cast between them a downcast. */
@@ -4476,7 +4540,7 @@ void declareStmt(C c, Stmt s) {
         // `inner`; without this, the local's type leaked across and `typeOfTy(c, inner)` was reported
         // as an argument mismatch against its own parameter.
         for (i32 b = 0; b < arms[i].bindingToks.len(); b++) {
-          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, arms[i], b));
+          c.declare(tokenText(c, arms[i].bindingToks[b]), armBindingType(c, subject, arms[i], b));
         }
         declareAll(c, arms[i].body);
       }
@@ -5437,6 +5501,31 @@ export void declareModule(C c, Program prog, string[] only) {
  * an instantiation asks its template, since `Opt<i32>` and `Opt` have the same variants by
  * construction.
  */
+/**
+ * The enum a subject is a value of — `E` for an `E`, and `E` for an `E.A(1)`.
+ *
+ * A variant construction has the *variant's* own type, because a variant is registered as a struct
+ * of its own: that is how `case A:` narrows and how a payload is found. So `match (E.A(1))` asked
+ * `isEnum` about `A` and was told no, and every rule keyed on that question — exhaustiveness, a
+ * duplicated arm, a name no variant declares — said nothing at all about the whole match.
+ * Ambiguity answers `""`: two enums declaring one variant name cannot happen in a file
+ * (`spec/cases/0073`), but one of them may be imported, and then the payload under that name
+ * belongs to neither. `spec/cases/0093`.
+ */
+string enumOfSubject(C c, string t) {
+  string base = genericBase(t);
+  string owner = base == "" ? t : base;
+  if (c.isEnum(owner)) { return owner; }
+  i32 owners = 0;
+  string only = "";
+  for (i32 i = 0; i < c.variantCount; i++) {
+    if (c.variantNames[i] != owner) { continue; }
+    owners = owners + 1;
+    only = c.variantOwners[i];
+  }
+  return owners == 1 ? only : "";
+}
+
 void checkArmVariants(C c, Expr subject, Arm[] arms) {
   string t = typeOfExpr(c, subject);
   if (t == typeNone() || t == "") { return; }
@@ -5446,9 +5535,8 @@ void checkArmVariants(C c, Expr subject, Arm[] arms) {
     c.report(errMatchNullable(), subject.line, subject.col);
     return;
   }
-  string base = genericBase(t);
-  string owner = base == "" ? t : base;
-  if (!c.isEnum(owner)) { return; }
+  string owner = enumOfSubject(c, t);
+  if (owner == "" || !c.isEnum(owner)) { return; }
   // **Reported only for a name that is nobody's variant.** Belonging to *this* enum is the question
   // the reference answers, and answering it needs to know which file the subject's type came from —
   // the provenance this checker does not keep, and the reason `case Match:` in `packages/ssh` was
