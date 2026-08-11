@@ -28,8 +28,8 @@ strings tac tail
 tar tee touch tr true uniq unzstd urldecode urlencode uuid wc wget yes zstd
 ```
 
-111K, drawing on this repo's `crypto`, `codec`, `regex`, `gzip`, `datetime` and `url`
-packages, so it is the widest composition here.
+**815 KiB** built, drawing on this repo's `crypto`, `codec`, `regex`, `gzip`, `datetime` and `url`
+packages, so it is the widest composition here. Measured 2026-08-11 with the `app:build` line above.
 
 **Several applets are a few lines over a package.** `gzip` is `gzipBest`, `date` is the
 clock capability and `rfc3339.format`, `crc32` and `urlencode` likewise. Those packages
@@ -115,11 +115,18 @@ also built alone — the entry point is four lines and imports the applet file u
 
 | built alone | shebang | size |
 | --- | --- | --- |
-| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 47K |
-| `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 51K |
-| `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 59K |
-| `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 47K |
-| `box` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 111K |
+| `wc` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 347 KiB |
+| `sha256sum` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache` | 350 KiB |
+| `grep` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read` | 367 KiB |
+| `cp` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 347 KiB |
+| `box` | `#!/usr/bin/env -S DENO_EMIT_CACHE_MODE=disable deno run --no-code-cache --allow-read --allow-write` | 815 KiB |
+
+Measured 2026-08-11. **This table said 47K to 111K until then**, and the interesting part is that all
+five grew together: the four single applets differ from each other by 20 KiB and from a `wc` that
+does nothing but count standard input by almost nothing. What grew is the floor every executable
+stands on — `packages/platform/example/wc.wac`, which imports no package at all, builds to 266 KiB.
+That is [0129](../../issues/system/open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md),
+filed rather than fixed here because it belongs to `platform` rather than to `box`.
 
 `wc` and `sha256sum` come out with **no permissions at all** — they read standard input
 and write a line, and a program that only does that needs nothing from anyone. Handed a

@@ -2,8 +2,8 @@
 
 Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it.
 
-Both ends of the protocol, in other words. The package started as a client and the name stuck, but
-what is here now is most of a small Tor network and the tools to stand one up:
+The package started as a client and the name stuck, but what is here now is most of a small Tor
+network and the tools to stand one up:
 
 | | where | state |
 | --- | --- | --- |
@@ -25,6 +25,35 @@ other half. *How it is tested* says what that means in each case, and **what is 
 is at the bottom**, under *What is not here*: the guard algorithm is partial, there is no circuit
 padding, isolation is by port rather than by credential, and none of this should be pointed at the
 real network.
+
+### A path through the rest
+
+This is a long file because the protocol is large and each part earned its paragraphs the day it
+worked. Read it in one of four directions rather than top to bottom:
+
+- **What it does, and what that cost** — [The client](#the-client),
+  [Why this is possible at all](#why-this-is-possible-at-all),
+  [The SOCKS proxy](#the-socks-proxy), [HTTPS over Tor](#https-over-tor),
+  [Onion services](#onion-services), [Being a relay](#being-a-relay), and
+  [Standing a network up](#standing-a-network-up--srcnetworkwac) for a whole one on your own machine.
+- **Whether to believe any of it** — [How it is tested](#how-it-is-tested),
+  [Measured against the real network](#measured-against-the-real-network),
+  [A warning about the relay tests](#a-warning-about-the-relay-tests), and
+  [`INTEROP.md`](INTEROP.md), which is the same claim by component and direction.
+- **The protocol, where it is easy to get wrong** — [ntor](#ntor),
+  [Believing the directory](#believing-the-directory), [Choosing a path](#choosing-a-path),
+  [Exit policies](#exit-policies), [Circuits are reused, and retired](#circuits-are-reused-and-retired),
+  [Link padding](#link-padding),
+  [Relay cells, and the two things that are easy to get wrong](#relay-cells-and-the-two-things-that-are-easy-to-get-wrong),
+  and [Bootstrapping is not circular](#bootstrapping-is-not-circular).
+- **The bugs, which are the best reading here** —
+  [Reading C tor, and the line this package draws](#reading-c-tor-and-the-line-this-package-draws),
+  [Fuzzing found a remote crash](#fuzzing-found-a-remote-crash),
+  [The bug the proxy found immediately](#the-bug-the-proxy-found-immediately), and
+  [Four things the specification does not say plainly](#four-things-the-specification-does-not-say-plainly).
+
+[The layers, and where each lives](#the-layers-and-where-each-lives) is the file-by-file map if you
+would rather start from the source.
 
 ## The client
 
@@ -50,8 +79,19 @@ all sharing one pinned guard, and every connection becomes a stream on the circu
 port. Against the testnet it has carried 3.2MB across eight concurrent streams, byte-identical,
 and 400KB back the other way.
 
-Built, it is **386.7 KiB** as a self-contained executable — 234.2 KiB of wasm, 71.8 KiB
-gzipped — of which the proxy costs 14.4 KiB over the fetch-and-exit program.
+Built, it is **490.1 KiB** as a self-contained executable — 259.5 KiB of wasm, 77.6 KiB gzipped — of
+which the proxy costs **19.5 KiB** over the fetch-and-exit program. Measured 2026-08-11:
+
+```sh
+deno task app:build packages/tor/src/app.wac   --allow-net --allow-read --allow-write -o tor
+deno task app:build packages/tor/src/socks.wac --allow-net --allow-read --allow-write -o torsocks
+deno task app:native packages/tor/src/app.wac  --allow-net --allow-read --allow-write -o torn
+```
+
+Dated, because it is a snapshot and the last one sat here saying 386.7 KiB until this file was read
+with a build beside it. `deno task size` reports the layers separately — 133.5 KiB of wasm for the
+whole client without the program around it, against 86.2 for the TLS 1.3 client alone — and those
+four rows are what `size/` exists to keep re-measurable.
 
 It reaches **onion services**. `src/hsconnect.wac` takes a `.onion` address and fetches a page from
 the service behind it — over our own circuits, end to end, against a real one:
