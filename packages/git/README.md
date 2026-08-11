@@ -81,9 +81,18 @@ worse than one that says which:
   not a prefix — the clone's `HEAD` has 2007 commits and 21,065 reachable objects in the source repository
   too. The full-depth run is a measurement taken deliberately rather than a suite test, because ten
   megabytes per run is a cost every push would pay; `depth 1` is what the tests pin.
-- **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, no
-  config file, no `origin` remote written into one. The programs under `example/` take positional
-  arguments and do one thing each.
+- **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, and no
+  `origin` remote written into a config file. The programs under `example/` take positional arguments and
+  do one thing each. Config is now *read* but never written: `src/configfiles.wac` searches the four files
+  git searches, lowest first — `/etc/gitconfig`, `${XDG_CONFIG_HOME:-~/.config}/git/config`,
+  `~/.gitconfig`, then `<gitdir>/config` — and `configOf` takes the last of a name, which is git's answer
+  per key. `gitci` reads `user.name` and `user.email` through it, `gitst` reads `core.excludesFile`. That
+  order came from `git config --list --show-origin`, and two parts of it are not what they look like:
+  **both** global files are read and merge per key rather than the dotfile replacing the XDG one, and
+  `XDG_CONFIG_HOME` being unset does not switch that file off — git falls back to `~/.config`. Still not
+  done: `[include]` and `includeIf` are not followed, `$GIT_CONFIG_SYSTEM`, `$GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_NOSYSTEM` are not read, and the `/etc/gitconfig` level is read but **not tested**, since a
+  suite cannot write `/etc`.
 - **A thin pack can be completed from the local store; no program fetches incrementally.** `indexPack`
   answers `Thin` with the base names a pack is missing, `completeThin` reads those out of a repository —
   loose or packed — and `completePack` appends them, which is what `git index-pack --fix-thin` does. It
@@ -129,10 +138,14 @@ worse than one that says which:
   report is an **unstaged mode change**, because `Stat` has no mode —
   [0132](../../issues/system/open/0132-a-checkout-onto-a-host-mount-cannot-set-the-executable-bit.md); a
   staged one is visible, since both sides of that comparison are recorded rather than read off the disk.
-  Ignore rules are gathered as git gathers them: `.git/info/exclude`, then the root `.gitignore`, then each
-  **nested** one as the walk descends, so a deeper file's rules win — which is how a `sub/.gitignore` holding
-  `!keep.log` brings back a file the root's `*.log` had ignored, without reaching outside `sub/`.
-  `core.excludesFile` is the one source still unread, because it needs a config parser.
+  Ignore rules are gathered as git gathers them, **all four sources, lowest first**: `core.excludesFile`,
+  `.git/info/exclude`, the root `.gitignore`, then each **nested** one as the walk descends, so a deeper
+  file's rules win — which is how a `sub/.gitignore` holding `!keep.log` brings back a file the root's
+  `*.log` had ignored, without reaching outside `sub/`. The **program** supplies `core.excludesFile`'s
+  bytes rather than the library reading them: its value is usually `~/…`, expanding that needs `HOME`, and
+  a `Repo` holds only an `Fs`. Where it sits was measured with `git check-ignore -v` rather than assumed —
+  it loses to `.git/info/exclude` and to a `.gitignore` — and the test's fixture makes all three disagree
+  about the same three files, because one where they agree passes against a matcher that never read it.
 - **The executable bit cannot be set.** `packages/fs` cannot `chmod` a host mount, because no such
   capability exists on `Cli`, so an executable checks out without it and git reports that one file as
   modified. Counted and reported rather than silent —

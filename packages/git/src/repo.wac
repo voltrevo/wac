@@ -579,15 +579,20 @@ bool pathAfter(string a, string b) {
  * the two columns are independent: a file staged and then edited again is `MM`, which is the case that
  * proves they are computed separately rather than one being derived from the other.
  *
- * **What is still absent is untracked files**, and the reason has not changed: finding them means walking
- * the working tree and deciding which count means `.gitignore`. A mode change is absent too — `Stat` has no
- * mode, `issues/system/0132` — so an executable that lost its bit is invisible in the second column, though
- * a *staged* mode change is visible in the first, because both sides of that comparison are recorded.
+ * **`excludes` is the content of `core.excludesFile`, and the caller reads it rather than this.** The value
+ * is usually `~/.gitignore_global`, and expanding that `~` needs `HOME` — which needs a `Cli`, which a
+ * `Repo` does not carry and should not start carrying to answer a question about ignore rules. So the
+ * program that knows about environments resolves the path and hands over the bytes, and this parses them
+ * as the lowest-precedence rules. Empty bytes mean the setting is unset, which is the common case.
+ *
+ * A mode change is still absent — `Stat` has no mode, `issues/system/0132` — so an executable that lost its
+ * bit is invisible in the second column, though a *staged* mode change is visible in the first, because
+ * both sides of that comparison are recorded.
  *
  * Linear searches over the index rather than a map: wac has no hash map, the fixtures are small, and a
  * repository where this matters wants a different data structure than a status is the place to introduce.
  */
-export Vec<string> statusOf(Repo r) {
+export Vec<string> statusOf(Repo r, u8[] excludes) {
   Vec<string> out = Vec.create();
   // **Two lists, because git's porcelain is grouped rather than sorted.** Tracked changes come first and
   // untracked ones after, each sorted by path — so `?? .gitignore` follows `M  a.txt` even though `.`
@@ -639,13 +644,21 @@ export Vec<string> statusOf(Repo r) {
 
       // Untracked files, which need the ignore rules or they would be noise.
       //
-      // **`.git/info/exclude` first, because it is the lowest precedence of the sources git reads.** The
-      // work tree's own `.gitignore` and every nested one are gathered by the walk itself, on the way down,
-      // so a deeper file's rules land later in the list and win — which is what last-match-wins gives.
-      // `core.excludesFile` is still absent: it needs a config parser, and `ignore.wac` says so.
-      Vec<Rule> rules = Vec.create();
+      // **The four sources in the order git applies them, lowest first**, because the whole contract of the
+      // rule list is that later rules win. `excludes` is `core.excludesFile`, handed in by the caller;
+      // `.git/info/exclude` is read here; the work tree's own `.gitignore` and every nested one are
+      // gathered by the walk itself on the way down, so a deeper file's rules land later and win.
+      //
+      // **That order was measured rather than taken from the documentation.** With `both.txt` in a
+      // `core.excludesFile` and `!both.txt` in `.git/info/exclude`, `git check-ignore -v` names
+      // `.git/info/exclude` as the deciding line and `git status` lists the file; with `!kept.txt` in the
+      // excludes file and `kept.txt` in a `.gitignore`, the `.gitignore` decides. Getting these two the
+      // wrong way round produces a matcher that agrees with git on every path where the sources agree and
+      // differs on exactly the paths where they do not, which is the class of mistake a tidy fixture
+      // passes straight through.
+      Vec<Rule> rules = parseIgnore(excludes, "");
       FileResult exclude = r.fs.readFile(r.gitDir + "/info/exclude");
-      if (exclude.ok) { rules = parseIgnore(exclude.bytes, ""); }
+      if (exclude.ok) { rules.extend(parseIgnore(exclude.bytes, "")); }
       untrackedUnder(r, rules, idx.entries, r.workTree, "", untracked, 64);
 
       // In HEAD and not in the index: staged for deletion.
