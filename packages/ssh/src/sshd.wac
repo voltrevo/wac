@@ -152,11 +152,14 @@ export i32 main(Core core, Cli cli) {
       core.warn("sshd: accept: " + c.error);
       break;
     }
-    serve(core, cli, c.handle, host, o, fs);
+    bool saved = serve(core, cli, c.handle, host, o, fs);
     cli.closeSocket(c.handle);
-    // After the connection, not during it: a session that ends badly has still done work, and a client
-    // that hangs up mid-command has still created what it created.
-    if (o.image != "") { save(core, cli, "sshd", o.image, fs); }
+    // **Only when the session did not save for itself.** A session writes the image before it tells
+    // the client the command finished (0108), which is what makes "the client has exited" mean the
+    // image is on disk. This is for the paths that end before that: a handshake that failed has
+    // changed nothing, but a client that hung up *mid-command* has still created what it created,
+    // and that case is the reason this line was written.
+    if (o.image != "" && !saved) { save(core, cli, "sshd", o.image, fs); }
     if (o.once) { break; }
   }
   cli.closeSocket(listener.handle);
@@ -236,14 +239,25 @@ Shell sessionShell(Core core, Cli cli, Options o, Fs fs, Terminal terminal) {
 }
 
 /** One connection, to completion. Errors are logged and end the connection, never the server. */
-void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
+/**
+ * One connection, from the version exchange to the channel close.
+ *
+ * **Answers whether it wrote the image**, because when it did the caller must not write it again: an
+ * image save walks every reachable node, so a second one per connection is the whole cost twice. The
+ * caller still saves for every path that returns before a command ran — a client that hung up during
+ * the handshake has changed nothing, but one that hung up *mid-command* has changed whatever it
+ * changed, and that is the case this used to be written for.
+ */
+bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
+  // Whether this connection has already written the image — see the note above.
+  bool saved = false;
   Conn conn = Conn.create(core, cli, sock);
   u8[] sessionId = handshake(conn, host);
   if (conn.failed()) {
     core.warn("sshd: " + conn.error);
     // Only worth sending once the transport works; before that the client cannot read it.
     if (conn.encrypted) { conn.sendPacket(disconnect(byApplication(), conn.error.toBytes())); }
-    return;
+    return saved;
   }
 
   // **The system reads the policy, not the last user.** `Fs.user` is whatever the previous connection
@@ -256,15 +270,16 @@ void serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
   if (who == "") {
     if (conn.failed()) { core.warn("sshd: " + conn.error); }
     conn.sendPacket(disconnect(byApplication(), "no supported authentication methods".toBytes()));
-    return;
+    return saved;
   }
   // **The session acts as them from here.** Every file it touches is checked against this name, and
   // anything it creates is owned by it — design/0001 step 4, and the reason `mode` and `owner` stopped
   // being decoration.
   fs.setUser(who);
 
-  session(conn, cli, core, o, fs);
+  bool saved = session(conn, cli, core, o, fs);
   if (conn.failed()) { core.warn("sshd: " + conn.error); }
+  return saved;
 }
 
 /** Version exchange, key exchange and NEWKEYS. Returns the session id, which is H. */
@@ -449,24 +464,36 @@ string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
 }
 
 /** One session channel, one command. */
-void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
+/**
+ * One channel: the request, the command, and the close.
+ *
+ * **Answers whether it wrote the image.** The write happens before the client is told the command
+ * finished, which is the whole of issue 0108: `sshd` saved after the connection was over, and a
+ * client exits the moment it has the exit status — so an operator who stops the server as soon as
+ * `ssh` returns could stop it before the save had started, and the next boot found the world as it
+ * was before the session. Two tests carried a second connection to hide it, saying so in comments.
+ */
+bool session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
+  // False until the save below actually runs: every path that returns before the command has run has
+  // changed nothing this function is responsible for writing, and `serve`'s caller saves for those.
+  bool saved = false;
   u8[] payload = conn.readPacket();
-  if (conn.failed()) { return; }
+  if (conn.failed()) { return saved; }
   Incoming m = parse(payload);
   if (!m.ok || m.kind != msgChannelOpen()) {
     conn.fail("expected a channel open");
-    return;
+    return saved;
   }
   // The client's number is in the open; ours is whatever we say. They need not agree, and the
   // confirmation is the one message carrying both.
   i32 clientChannel = readOpenChannel(payload);
   if (clientChannel < 0) {
     conn.sendPacket(openFailure(0, 3, "only session channels".toBytes()));
-    return;
+    return saved;
   }
   if (!conn.sendPacket(openConfirmation(clientChannel, ourChannel(), windowSize(), maxPacketSize()))) {
     conn.fail("cannot confirm the channel");
-    return;
+    return saved;
   }
 
   // Requests until one asks us to run something. A client sends several first, and **which of them
@@ -496,10 +523,10 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   Terminal terminal = Terminal("", 0, 0);
   for (i32 i = 0; i < 32 && command.len() == 0 && !interactive; i++) {
     u8[] p = conn.readPacket();
-    if (conn.failed()) { return; }
+    if (conn.failed()) { return saved; }
     Incoming r = parse(p);
-    if (!r.ok) { conn.fail("a channel message did not parse"); return; }
-    if (r.kind == msgChannelClose() || r.kind == msgChannelEof()) { return; }
+    if (!r.ok) { conn.fail("a channel message did not parse"); return saved; }
+    if (r.kind == msgChannelClose() || r.kind == msgChannelEof()) { return saved; }
     if (r.kind != msgChannelRequest()) { continue; }
 
     u8[] name = requestName(p);
@@ -540,14 +567,28 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
   }
   if (command.len() == 0 && !interactive) {
     conn.fail("the client never asked to run anything");
-    return;
+    return saved;
   }
-  if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return; }
+  if (!conn.sendPacket(channelSuccess(clientChannel))) { conn.fail("cannot accept the command"); return saved; }
 
   Result result = interactive
     ? interactiveSession(conn, cli, core, clientChannel, o, fs, pty, terminal)
     : run(cli, core, command, o, fs, terminal);
-  if (conn.failed()) { return; }
+  if (conn.failed()) { return saved; }
+
+  // **The image is written here, before the client is told anything.** A client exits on the exit
+  // status below, so anything after that point is a race against whoever stops the server — which is
+  // the whole of 0108. Writing first makes "the client has exited" mean "the image is on disk",
+  // which is the property design/0001 step 2 asks for: a session's writes survive a restart.
+  //
+  // Before the *output* too, and deliberately: the bytes are already in `result`, so nothing is lost
+  // by sending them a few milliseconds later, and a save that failed should not follow output that
+  // claimed the work was done.
+  if (o.image != "") {
+    save(core, cli, "sshd", o.image, fs);
+    saved = true;
+  }
+
   if (result.out.len() > 0) { conn.sendPacket(channelData(clientChannel, result.out)); }
   if (result.err.len() > 0) { conn.sendPacket(channelStderr(clientChannel, result.err)); }
   conn.sendPacket(exitStatus(clientChannel, result.status));
@@ -565,11 +606,12 @@ void session(Conn conn, Cli cli, Core core, Options o, Fs fs) {
     if (conn.failed()) {
       // The client hanging up first is the ordinary case, not a failure to report.
       conn.error = "";
-      return;
+      return saved;
     }
     Incoming r = parse(p);
-    if (r.ok && r.kind == msgChannelClose()) { return; }
+    if (r.ok && r.kind == msgChannelClose()) { return saved; }
   }
+  return saved;
 }
 
 /**

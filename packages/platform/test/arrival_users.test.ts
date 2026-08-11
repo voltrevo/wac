@@ -193,13 +193,20 @@ Deno.test({
       ].join("; ");
       const made = await ssh(first.port, "admin", "root", build);
       assertEquals(made.code, 0, `building the world: ${made.err}`);
-      // Said on the server that wrote it, and load-bearing: without a second connection the image has
-      // not been written when the server is killed, and the next one boots an empty world (0108).
-      const check = await ssh(first.port, "admin", "root", "cat /etc/passwd");
-      assertEquals(check.out.includes("ada:x:1000"), true, `${check.out} / ${check.err}`);
+      // **No second connection.** This used to need one: the image was written after the connection
+      // was over, so killing the server as soon as `ssh` returned could beat the save and the next
+      // host booted an empty world (0108). A session writes before it tells the client the command
+      // finished now, so the assertion can be made where it means more — on the file itself, once
+      // the server that wrote it is gone.
     } finally {
       await stop(server);
     }
+
+    // The image on disk carries the table, checked with nothing running: an image that never got the
+    // users and a second host that cannot read them are different failures, and this rules out the
+    // first before the second host is asked anything.
+    const onDisk = new TextDecoder().decode(await Deno.readFile(image));
+    assertEquals(onDisk.includes("ada:x:1000"), true, "the stopped server left an image with no users");
 
     if (native === null) return;
 
