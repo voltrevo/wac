@@ -39,6 +39,7 @@ function assert(cond: boolean, msg: string): void {
 }
 
 const pack = await wacBind("packages/git/src/pack.wac") as any;
+const fetchmod = await wacBind("packages/git/src/fetch.wac") as any;
 
 /** The pack format's own type numbers. */
 const KIND: Record<string, number> = { commit: 1, tree: 2, blob: 3, tag: 4 };
@@ -164,6 +165,113 @@ Deno.test({
 
       await Deno.remove(into, { recursive: true });
       await Deno.remove(fresh, { recursive: true });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "a thin pack says what it needs, and the completed one is what git accepts",
+  ignore: !haveGit,
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "wac-git-thin-" });
+    const git = async (args: string[], cwd = dir) => {
+      const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "piped" }).output();
+      return { out: r.stdout, text: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim(), code: r.code };
+    };
+    try {
+      // Two commits over one large, mostly-unchanged file. That shape is what makes the server deltify
+      // against what we claim to have: a second commit touching only small files gives whole objects and
+      // the thin case never arises.
+      await git(["init", "-q", "-b", "main"]);
+      const body = "a line that repeats\n".repeat(400);
+      await Deno.writeTextFile(`${dir}/big.txt`, body);
+      await git(["add", "-A"]);
+      await git(["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-qm", "one"]);
+      await Deno.writeTextFile(`${dir}/big.txt`, body + "one more line\n");
+      await git(["add", "-A"]);
+      await git(["-c", "user.name=a", "-c", "user.email=a@b", "commit", "-qm", "two"]);
+      const c1 = (await git(["rev-parse", "HEAD~1"])).text;
+      const c2 = (await git(["rev-parse", "HEAD"])).text;
+
+      // Ask for the second commit while claiming the first: the server may then send a delta against an
+      // object it knows we hold, and that is a thin pack.
+      // **From `fetchmod`, not from `pack`.** Each `wacBind` is its own wasm instance with its own types,
+      // so a `Vec` made by one is not the type the other accepts — that is
+      // `type incompatibility when transforming from/to JS`, and it is the same wall `test/wac/idxprobe.wac`
+      // exists for. The `contents` Vec below is made from `pack`, because `completePack` is `pack`'s.
+      const wants = fetchmod["Vec$u8Arr"].create();
+      const haves = fetchmod["Vec$u8Arr"].create();
+      const hex = (s: string) => Uint8Array.from(s.match(/../g)!.map((h) => parseInt(h, 16)));
+      wants.push(hex(c2));
+      haves.push(hex(c1));
+      const req = Uint8Array.from(fetchmod.wantRequest(wants, haves, "ofs-delta thin-pack", 0));
+      const up = new Deno.Command("git", {
+        args: ["upload-pack", "--stateless-rpc", "."],
+        cwd: dir,
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = up.stdin.getWriter();
+      await w.write(req);
+      await w.close();
+      const reply = (await up.output()).stdout;
+      const found = fetchmod.findPack(reply);
+      assert(found.tag === "Packfile", `no pack in the reply: ${found.tag}`);
+      const thin = Uint8Array.from(found.Packfile_pack);
+
+      // **The shape, asserted.** Without a reference delta whose base is absent there is nothing thin
+      // here, and everything below would pass while testing an ordinary pack.
+      const said = pack.indexPack(thin);
+      assert(
+        said.tag === "Thin",
+        `the pack is not thin (${said.tag}), so this test proves nothing about completing one`,
+      );
+      const needed: Uint8Array[] = [];
+      for (let i = 0; i < said.Thin_bases.len(); i++) needed.push(Uint8Array.from(said.Thin_bases.get(i)));
+      assert(needed.length >= 1, "a thin pack that needs nothing is not thin");
+
+      // **The canary: the same command that refuses this must accept what we build from it.** Unpiped, so
+      // the exit code is git's own.
+      await Deno.writeFile(`${dir}/thin.pack`, thin);
+      const refused = await git(["index-pack", "thin.pack"]);
+      assert(
+        refused.code !== 0 && /unresolved delta/.test(refused.err),
+        `git index-pack accepted a thin pack, so the comparison below means nothing: ${refused.err}`,
+      );
+
+      // The bases, out of the repository that has them — which is what an incremental fetch would do
+      // against its own object store.
+      const kinds: number[] = [];
+      const contents = pack["Vec$u8Arr"].create();
+      for (const name of needed) {
+        const hexName = [...name].map((b) => b.toString(16).padStart(2, "0")).join("");
+        const kind = (await git(["cat-file", "-t", hexName])).text;
+        assert(KIND[kind] !== undefined, `the base ${hexName} is a ${kind}`);
+        const raw = await git(["cat-file", kind, hexName]);
+        assert(raw.code === 0, `cannot read the base ${hexName}`);
+        kinds.push(KIND[kind]);
+        contents.push(raw.out);
+      }
+      const whole = Uint8Array.from(pack.completePack(thin, kinds, contents));
+
+      const before = (thin[8] << 24) | (thin[9] << 16) | (thin[10] << 8) | thin[11];
+      const after = (whole[8] << 24) | (whole[9] << 16) | (whole[10] << 8) | whole[11];
+      assert(after === before + needed.length, `the count went ${before} -> ${after} for ${needed.length} added`);
+
+      await Deno.writeFile(`${dir}/whole.pack`, whole);
+      const accepted = await git(["index-pack", "whole.pack"]);
+      assert(accepted.code === 0, `git index-pack refused the completed pack: ${accepted.err}`);
+
+      // And ours agrees it is no longer thin.
+      const built = pack.indexPack(whole);
+      assert(built.tag === "Built", `we still call the completed pack ${built.tag}`);
+      assert(
+        built.Built_idx.count === after,
+        `we indexed ${built.Built_idx.count} objects and the header says ${after}`,
+      );
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

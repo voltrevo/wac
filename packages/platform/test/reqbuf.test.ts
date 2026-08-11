@@ -9,6 +9,28 @@
 import { attached, BUF_BYTES, BUFS, newBridge, REQ_FREE_AT, S_REQ_BUF, SLOTS, slotAt } from "../host/layout.ts";
 import { serveHostCalls } from "../host/respond.ts";
 import { newScheduler } from "../host/schedule.ts";
+import { loadNow } from "../../../harness/bounded.ts";
+
+/**
+ * Wait until `cond()` holds, or fail saying which condition and how busy the machine was.
+ *
+ * **Not a sleep.** Two places here waited a fixed 150-200ms for a state the very next line asserts, and a
+ * fixed wall clock is a guess about how busy the machine is. The 150ms one lost that guess inside a full
+ * suite: the worker had not started yet, so every request buffer was still free and the assertion read
+ * `got: 8, want: 7` — the exact opposite of the state it was written to catch, reported as though the
+ * buffer had been released early.
+ *
+ * Polling for the condition the assertion is about cannot change what the test exercises, because it is
+ * the same predicate. The bound is generous for `harness/bounded.ts`'s reason: it exists to turn a wedge
+ * into a readable failure, not to police latency.
+ */
+async function until(cond: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`${what} did not happen within 10s (${loadNow()})`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -78,6 +100,13 @@ Deno.test("a call the host answers without taking still gives its buffer back", 
   const worker = onWorker(b, `(() => { collect(b, submit(b, 1, new Uint8Array(${BUF_BYTES} + 16))); return "answered"; })()`);
   try {
     // Let the call reach the handler, then stop the responder under it.
+    //
+    // **Still a sleep, deliberately.** The other two became `until` because the condition they waited for
+    // was the assertion on the next line, so polling it is the same predicate. This one is not: what it
+    // waits for is "the call reached the handler and the last chunk is still attached", which is a
+    // judgement about a state in the middle rather than something asserted here — and a poll for the
+    // wrong predicate would make this pass while testing something else. Left as it is, and named, so
+    // whoever sees it fail knows it is the same hazard rather than a new one.
     await new Promise((r) => setTimeout(r, 200));
     await responder.stop();
     const said = await Promise.race([
@@ -110,7 +139,7 @@ Deno.test("a call the host never even took gives its buffer back", async () => {
   });
   const worker = onWorker(b, `(() => { collect(b, submit(b, 1, new Uint8Array(64))); return "answered"; })()`);
   try {
-    await new Promise((r) => setTimeout(r, 150));
+    await until(() => reqFree(b) === BUFS - 1, "the worker publishing its request buffer");
     assertEquals(reqFree(b), BUFS - 1, "the worker is holding the request buffer it published with");
     responder.stop();
     const said = await Promise.race([
@@ -140,8 +169,12 @@ Deno.test("a cancelled call gives its request buffer back too", async () => {
   );
   try {
     assertEquals(await worker.said, "cancelled");
-    // The sweep hands a cancelled slot back; give it a moment to run.
-    await new Promise((r) => setTimeout(r, 200));
+    // The sweep hands a cancelled slot back. Waited for rather than slept past, for the reason `until`
+    // gives — this one had not yet failed anywhere, and it is the same shape as the one that did.
+    await until(
+      () => stillAttached(b).length === 0 && reqFree(b) === BUFS,
+      "the sweep handing back a cancelled slot",
+    );
     assertEquals(
       stillAttached(b).length,
       0,

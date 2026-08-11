@@ -333,6 +333,15 @@ export Got objectNamed(const Pack p, u8[] name) {
 /** A pack indexed from its own bytes. */
 export enum Indexed {
   Built(PackIndex idx),
+  /**
+   * The pack is **thin**: one or more reference deltas name a base the pack does not contain, which is
+   * what a server sends when it knows what you already have. The names are what it needs, deduplicated.
+   *
+   * A thin pack is not a damaged one, and telling them apart is the whole reason this variant exists —
+   * `git index-pack` refuses both with `pack has N unresolved delta`, and only one of them can be
+   * repaired. `completePack` is the repair: append the bases and index the result.
+   */
+  Thin(Vec<u8[]> bases),
   Unindexable(string why)
 }
 
@@ -420,11 +429,26 @@ export Indexed indexPack(u8[] pack) {
   Vec<i32> resolvedKind = Vec.create();
   for (i32 i = 0; i < count; i++) { resolved.push(u8[0]()); resolvedKind.push(0); }
   Buf names = Buf.create();
+  Vec<u8[]> need = Vec.create();
   for (i32 i = 0; i < count; i++) {
-    if (!resolveInto(i, count, offsets, kinds, bases, payloads, baseNames, resolved, resolvedKind, 64)) {
-      return Indexed.Unindexable("a delta chain could not be resolved");
+    if (resolveInto(i, count, offsets, kinds, bases, payloads, baseNames, resolved, resolvedKind, 64)) {
+      continue;
     }
+    // **A reference delta is the thin case; anything else is damage.** An `ofs-delta` names its base by
+    // position inside this pack, so one that will not resolve has no base to ask anybody for. A
+    // `ref-delta` names it by hash, which is precisely how a sender refers to something it believes the
+    // receiver already has.
+    if (kinds[i] != 7) { return Indexed.Unindexable("a delta chain could not be resolved"); }
+    u8[] want = baseNames.get(i);
+    bool already = false;
+    for (i32 k = 0; k < need.len(); k++) {
+      bool same = true;
+      for (i32 q = 0; q < 20; q++) { if (need.get(k)[q] != want[q]) { same = false; break; } }
+      if (same) { already = true; break; }
+    }
+    if (!already) { need.push(want); }
   }
+  if (need.len() > 0) { return Indexed.Thin(need); }
   for (i32 i = 0; i < count; i++) {
     names.pushAll(sha1(framed(kindOf(resolvedKind.get(i)), resolved.get(i))));
   }
@@ -580,6 +604,22 @@ void packU32(Buf out, i32 v) {
  * continuation — and using one where the other belongs produces a pack that reads as a different object
  * rather than as a broken one, which is the failure that costs an afternoon.
  */
+void pushObject(Buf out, i32 kind, u8[] body) {
+  i32 first = ((kind & 7) << 4) | (body.len() & 0x0f);
+  i32 rest = body.len() >> 4;
+  if (rest != 0) { first = first | 0x80; }
+  out.push(first);
+  while (rest != 0) {
+    i32 b = rest & 0x7f;
+    rest = rest >> 7;
+    if (rest != 0) { b = b | 0x80; }
+    out.push(b);
+  }
+  // Each object is its own zlib stream, which is what lets a reader find the next one without a length
+  // field: the inflater says where it ended.
+  out.pushAll(zlibCompress(body));
+}
+
 export u8[] writePack(i32[] kinds, Vec<u8[]> contents) {
   Buf out = Buf.create();
   out.push('P');
@@ -588,24 +628,33 @@ export u8[] writePack(i32[] kinds, Vec<u8[]> contents) {
   out.push('K');
   packU32(out, 2);
   packU32(out, contents.len());
-  for (i32 i = 0; i < contents.len(); i++) {
-    u8[] body = contents.get(i);
-    i32 first = ((kinds[i] & 7) << 4) | (body.len() & 0x0f);
-    i32 rest = body.len() >> 4;
-    if (rest != 0) { first = first | 0x80; }
-    out.push(first);
-    while (rest != 0) {
-      i32 b = rest & 0x7f;
-      rest = rest >> 7;
-      if (rest != 0) { b = b | 0x80; }
-      out.push(b);
-    }
-    // Each object is its own zlib stream, which is what lets a reader find the next one without a length
-    // field: the inflater says where it ended.
-    out.pushAll(zlibCompress(body));
-  }
+  for (i32 i = 0; i < contents.len(); i++) { pushObject(out, kinds[i], contents.get(i)); }
   // Over everything above it, which is what `.idx` records as the pack's name and what `gitclone` uses
   // for the filename.
+  out.pushAll(sha1(out.bytes()));
+  return out.take();
+}
+
+/**
+ * Complete a thin pack by appending the objects it was missing.
+ *
+ * This is what `git index-pack --fix-thin` does, and appending is the reason it works without anything
+ * resembling a callback: a delta's base only has to be *somewhere in the pack*, not before it, so bases
+ * added at the end resolve exactly as bases in the middle do. **wac has no closures**, so a resolver
+ * handed in was never an option — and this is the better shape anyway, because the completed pack is a
+ * file git accepts rather than a value only this library understands.
+ *
+ * The old trailer goes: it covered the old bytes. The count in the header grows by what was added.
+ */
+export u8[] completePack(u8[] pack, i32[] kinds, Vec<u8[]> contents) {
+  if (pack.len() < 32) { return pack; }
+  i32 was = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+  Buf out = Buf.create();
+  for (i32 i = 0; i < 8; i++) { out.push(pack[i]); }
+  packU32(out, was + contents.len());
+  // Everything between the header and the old trailing checksum, verbatim.
+  for (i32 i = 12; i < pack.len() - 20; i++) { out.push(pack[i]); }
+  for (i32 i = 0; i < contents.len(); i++) { pushObject(out, kinds[i], contents.get(i)); }
   out.pushAll(sha1(out.bytes()));
   return out.take();
 }

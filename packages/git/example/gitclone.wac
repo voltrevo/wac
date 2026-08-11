@@ -168,6 +168,15 @@ export i32 main(Core core, Cli cli) {
       core.warn("gitclone: the pack could not be indexed: " + why);
       return 1;
     }
+    // **Not reachable from here, and answered rather than left to fall through.** This asks with no
+    // `have`, so the server has nothing to delta against and sends a complete pack; a thin one would mean
+    // it deltified against an object we never claimed. `completePack` is what repairs one, and the caller
+    // that will need it is an incremental fetch, which is not this program.
+    case Thin(bases): {
+      core.warn("gitclone: the server sent a thin pack, wanting " + itoa(bases.len())
+        + " object(s) we did not ask about");
+      return 1;
+    }
     case Built(idx): {
       Change wrotePack = fs.writeFile(stem + ".pack", pack);
       if (!wrotePack.ok()) {

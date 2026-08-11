@@ -20,6 +20,9 @@ import { Indexed, indexPack } from "../../src/pack.wac";
 export u8[] indexToIdx(u8[] pack, u8[] checksum) {
   match (indexPack(pack)) {
     case Unindexable(why): { return u8[0](); }
+    // A thin pack has no index until it is completed, which is `packwrite.test.ts`'s business, not this
+    // probe's. Empty, like the refusal above.
+    case Thin(bases): { return u8[0](); }
     case Built(idx): { return writeIdx(idx, checksum); }
   }
 }

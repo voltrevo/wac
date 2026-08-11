@@ -81,9 +81,13 @@ worse than one that says which:
 - **No `git` command-line.** There is no `gitclone`-shaped argument parser, no `--bare`, no `-b`, no
   config file, no `origin` remote written into one. The programs under `example/` take positional
   arguments and do one thing each.
-- **No incremental fetch.** `wantRequest` takes haves, and a server answering a request with haves sends
-  a **thin** pack — a delta whose base is an object you already have. `src/pack.wac` reports such a base
-  as absent rather than resolving it from the local store, so only a full or `deepen`-limited fetch works.
+- **A thin pack can be completed; an incremental fetch is not wired up.** `indexPack` answers `Thin`
+  with the base names a pack is missing, and `completePack` appends them — which is what
+  `git index-pack --fix-thin` does, and it works by appending because a delta's base only has to be
+  *somewhere* in the pack. Measured against the command that adjudicates it: `git index-pack` refuses the
+  thin pack with `unresolved delta` and accepts the completed one. What is missing is the caller — a fetch
+  that sends `have`s, reads the bases out of its own object store, and completes the reply. Nothing does
+  that yet; `gitclone` and `gitfetch` send no `have`s and so never receive a thin pack.
 - **A pack can be written; push cannot.** `writePack` produces a pack of whole objects — no deltas, which
   is what `design/system/0005` step 7 asks for — and `git index-pack`, `git verify-pack -v` and
   `git unpack-objects` all accept it. What is missing is the conversation: `git-receive-pack`, the ref
