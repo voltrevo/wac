@@ -12,7 +12,7 @@ import { buildApp } from "../build.ts";
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
-import { freePort } from "../../../harness/port.ts";
+import { withPort } from "../../../harness/port.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -67,11 +67,12 @@ Deno.test("a child serves a socket it cannot see", async () => {
     await buildApp("packages/platform/example/inetd.wac", inetd, { read: true, net: true });
     await buildApp("packages/platform/example/wc.wac", child, {}, "deno", true);
 
-    // A port the OS just confirmed is free. Racy in principle; the alternative is a fixed
-    // port that collides with the other agents sharing this container, which is worse.
-    // `freePort`: this port goes to a spawned `inetd`, so the close-then-bind window is 0069's race.
-    const port = freePort();
-
+    // **`withPort`, because this port goes to a spawned `inetd`** — the window between letting the
+    // port go and the child binding it is 0069's race, and 0131 is what it looks like from the
+    // outside: one test per suite run, a different one each time. The retry is safe to reach here
+    // because the assertion below carries the child's log, so a bind failure arrives as an error
+    // whose text says `Address already in use`, which is what `isAddrInUse` reads.
+    await withPort(async (port) => {
     const p = new Deno.Command(inetd, {
       args: [String(port), child],
       stdout: "piped",
@@ -106,6 +107,7 @@ Deno.test("a child serves a socket it cannot see", async () => {
     assertEquals(reply.trim(), "1 3 14", reply);
     // The handler's output went to the socket, not to the terminal it was launched from.
     assertEquals(dec.decode(out), "", dec.decode(out));
+    });
   } finally {
     for (const f of [inetd, child]) await Deno.remove(f);
   }

@@ -11,7 +11,7 @@
 // allocator's own contract, so uniqueness is checked against what it returns, and bindability is checked
 // through `holdPort`, where the listener is already open.
 
-import { freePort, holdPort, isAddrInUse, withPort } from "./port.ts";
+import { holdPort, isAddrInUse, withPort } from "./port.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -67,7 +67,9 @@ Deno.test("no port is handed out twice, even after release", () => {
     for (const h of held) h.release();
   }
   // And after releasing them all, the same numbers are not offered again — `port: 0` would have.
-  const after = freePort();
+  const afterHeld = holdPort();
+  afterHeld.release();
+  const after = afterHeld.port;
   assertEquals(seen.has(after), false, `port ${after} came back after being released`);
 });
 
