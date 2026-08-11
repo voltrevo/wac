@@ -91,19 +91,13 @@ export function holdPort(): Held {
   );
 }
 
-/**
- * A port nothing is listening on, released before it is returned.
- *
- * For callers that cannot hold — where the port has to be a plain number long before anything binds it.
- * The window is the same one this file exists to shrink, so prefer `holdPort` or `withPort`; this is
- * kept because two call sites genuinely need the number early, and a helper that forces them to lie
- * about their shape is worse than one that names the cost.
- */
-export function freePort(): number {
-  const held = holdPort();
-  held.release();
-  return held.port;
-}
+// **`freePort` was here and is gone.** It answered "a port nothing is listening on, released before it
+// is returned", for callers that could not hold one — and its own comment said "the window is the same
+// one this file exists to shrink". Six callers used it, and wac-mono 0131 is what that window looks
+// like from outside: the full suite failing one test per run, a different one each time, because a
+// number handed over early is a number something else can take. Every one of them is `withPort` now,
+// which retries a bind failure and rethrows anything else. Deleted rather than left with a corrected
+// comment, because a helper that hands out a number nobody is holding is an invitation to the same bug.
 
 /**
  * Run `start` with a held port, released just before `start` is called, retrying on `AddrInUse`.

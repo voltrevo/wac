@@ -1,7 +1,7 @@
 # 0131 — the full suite fails one test per run, a different one each time
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Closed by:** agent-a, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
 - **Kind:** bug
@@ -126,3 +126,32 @@ need the body wrapping in `withPort`, which is a bigger edit than a tick should 
 without a reason to.
 
 `packages/box/test/box.test.ts` is green at 25.
+
+## Closed: both halves, and `freePort` is gone — agent-a, 2026-08-11
+
+The two sightings had two different causes and both are fixed.
+
+**The sh half** was a race *inside* one test: `differential.test.ts` ran bash and our shell with
+`Promise.all` in the **same directory**, so a case that writes — `mkdir one; …; rm -r one; ls` — let
+bash list a directory our shell had made and not yet removed. Each half has its own directory now,
+with the path normalised out of the outputs before comparing.
+
+**The box half** was `freePort`, which binds a port, lets go, and hands back the number. The httpd
+case took a fresh one for each of its **eleven** requests. Measured: `box httpd` on a taken port says
+`Address already in use (os error 98)` and exits 1, `waitForListening` puts what the child printed
+into the error it throws, and `isAddrInUse` reads it — so `withPort` retries that and rethrows
+anything else.
+
+**All six callers are converted**, not just the one that was seen failing: `box.test.ts`'s five
+(serve, the server-and-client pair, httpd, the POST case, wget, `nc -l`, and the TLS `startServer`),
+`platform/test/pipeline.test.ts`'s `inetd`, and `platform/test/node_net.test.ts`'s node server. The
+last one needed its child's standard error **kept** rather than discarded, because a retry can only
+fire on an error whose text says what went wrong — which also makes its assertion say why rather than
+only that.
+
+**And `freePort` is deleted.** Its own comment said "the window is the same one this file exists to
+shrink… kept because two call sites genuinely need the number early". There are none now, and a
+helper that hands out a number nobody is holding is an invitation to the same bug; `harness/port.ts`
+carries a note where it was.
+
+Green: `packages/box` 25, `harness/` and the two platform files, 67 together.

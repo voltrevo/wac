@@ -14,7 +14,7 @@ import { appRunner } from "../../../harness/appRun.ts";
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 import { readUntil } from "../../../harness/deadline.ts";
-import { freePort, withPort } from "../../../harness/port.ts";  // one allocator, pid-partitioned — wac-mono 0069
+import { withPort } from "../../../harness/port.ts";  // one allocator, pid-partitioned — wac-mono 0069
 
 const BOX = "packages/box/src/box.wac";
 
@@ -1579,8 +1579,11 @@ Deno.test("box's network applets: a wac server and a wac client, over real TCP",
   const built = await Deno.makeTempFile({ prefix: "wac-net-" });
   try {
     await buildApp(BOX, built, { net: true });
-    const port = freePort();
-
+    // `withPort` rather than `freePort`: the number is handed to a *child*, so the window between
+    // letting go and its bind is the race wac-mono 0069 named and 0131 saw. `serve` prints
+    // `Address already in use` when it loses, `waitForListening` puts what the child printed into
+    // the error it throws, and `isAddrInUse` reads it — so this retries that and nothing else.
+    await withPort(async (port) => {
     // `-o` serves one connection and exits. Not `-1`: a leading digit is how this argument
     // parser spells a number, so `serve -8080 -1` set the port to 1 — which is how the
     // first run of this ended up listening on port 1.
@@ -1617,11 +1620,12 @@ Deno.test("box's network applets: a wac server and a wac client, over real TCP",
 
     server.stdout.cancel();
     assertEquals((await server.status).code, 0, "the server exited cleanly");
+    });
 
     // And the client half against the server half: two wac programs, one socket, no
     // TypeScript in between. Started together — `serve` blocks in `accept` until `get`
     // arrives, which is the whole point of a synchronous capability world.
-    const port2 = freePort();
+    await withPort(async (port2) => {
     const server2 = new Deno.Command(built, {
       args: ["serve", `-${port2}`, "-o"],
       stdout: "piped",
@@ -1640,13 +1644,17 @@ Deno.test("box's network applets: a wac server and a wac client, over real TCP",
     assertEquals(body.trimEnd().endsWith("wac http server"), true, body.slice(0, 200));
     server2.stdout.cancel();
     assertEquals((await server2.status).code, 0, "the second server exited cleanly");
+    });
 
     // Without the grant, nothing — whatever the arguments say.
+    //
+    // Any port will do here and none has to be free: the grant check refuses before a socket is
+    // asked for, which is the assertion. A number that nothing binds cannot race with anything.
     const noNet = await Deno.makeTempFile({ prefix: "wac-nonet-" });
     try {
       await buildApp(BOX, noNet, {});
       const denied = new Deno.Command(noNet, {
-        args: ["get", "127.0.0.1", "/", `-${port}`],
+        args: ["get", "127.0.0.1", "/", "-9"],
         stdout: "piped",
         stderr: "piped",
       }).outputSync();
@@ -1925,17 +1933,18 @@ Deno.test("split writes many files, and wget writes one", async () => {
     assertEquals(missing, true, "an empty fourth piece was created");
 
     // wget, against box's own httpd — two wac programs and a file at the end of it.
-    const port = freePort();
-    const server = new Deno.Command(built, {
-      args: ["httpd", `-${port}`, dir, "-o"], stdout: "piped", stderr: "piped",
-    }).spawn();
-    await waitForListening(server, port);
-    server.stdout.cancel();
-    server.stderr.cancel();
-    const got = run(["wget", "127.0.0.1", "/big.txt", "saved.txt", `-${port}`], dir);
-    assertEquals(got.code, 0, new TextDecoder().decode(got.stderr));
-    assertEquals(await Deno.readTextFile(`${dir}/saved.txt`), lines, "wget saved the body");
-    await server.status;
+    await withPort(async (port) => {
+      const server = new Deno.Command(built, {
+        args: ["httpd", `-${port}`, dir, "-o"], stdout: "piped", stderr: "piped",
+      }).spawn();
+      await waitForListening(server, port);
+      server.stdout.cancel();
+      server.stderr.cancel();
+      const got = run(["wget", "127.0.0.1", "/big.txt", "saved.txt", `-${port}`], dir);
+      assertEquals(got.code, 0, new TextDecoder().decode(got.stderr));
+      assertEquals(await Deno.readTextFile(`${dir}/saved.txt`), lines, "wget saved the body");
+      await server.status;
+    });
   } finally {
     await Deno.remove(built);
     await Deno.remove(dir, { recursive: true });
@@ -2246,7 +2255,7 @@ Deno.test("nc -l takes one connection", async () => {
   const built = await Deno.makeTempFile({ prefix: "wac-ncl-" });
   try {
     await buildApp(BOX, built, { net: true });
-    const port = freePort();
+    await withPort(async (port) => {
     const server = new Deno.Command(built, {
       args: ["nc", `-${port}`, "-l"],
       stdin: "piped",
@@ -2270,6 +2279,7 @@ Deno.test("nc -l takes one connection", async () => {
       "over the wire",
       "the listener did not relay what it was sent",
     );
+    });
   } finally {
     await Deno.remove(built);
   }
