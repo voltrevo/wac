@@ -290,13 +290,13 @@ export default function Home() {
           that carry values across the boundary, one family at a time. What that does{" "}
           <em>not</em> mean is the interesting part: the harness swaps only the wasm bytes and keeps
           the reference&rsquo;s interface metadata, so a green package says this emitter is right for
-          it rather than that wacc produced its bindings. It can now produce some of them —{" "}
-          {m({ children: "waccx bindgen" })} writes glue for the scalars, {m({ children: "bool" })},{" "}
-          {m({ children: "string" })}, the eight numeric array types, and structs and enums — as classes
-          holding the reference — and <Lead>names what it declined</Lead> rather than emitting a call
-          that will not work. A callback is what is left on that list, and nothing yet runs a package
-          through wacc&rsquo;s own bindings instead of the reference&rsquo;s — which is what stands
-          between here and the compiler of record.
+          it rather than that wacc produced its bindings. It has a bindgen of its own now —{" "}
+          {m({ children: "waccx bindgen" })}, which writes the glue and <Lead>names what it
+          declined</Lead> rather than emitting a call that will not work — and what it covers is growing
+          week by week, which is why this paragraph does not list it. What has not happened is the
+          swap: <Lead>nothing yet runs a package through wacc&rsquo;s own bindings instead of the
+          reference&rsquo;s</Lead>, and that, rather than any particular type, is what stands between
+          here and the compiler of record.
         </Caveat>
         <P>
           <span style={{ fontSize: 14.5, color: c.dim }}>
