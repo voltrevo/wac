@@ -549,6 +549,69 @@ fn run_until_stopped(store: &mut Store<Host>, stop: Option<Arc<AtomicBool>>) {
 /// What a child's trap says when it was stopped rather than broken. Matched, not shown to anyone.
 const STOPPED: &str = "wacland: stopped by its parent";
 
+/// The module, compiled once and kept.
+///
+/// **`Module::from_file` compiles with cranelift every run**, and that is most of what this runtime
+/// costs before it does anything: measured at roughly 3 ms per KB of wasm, so `wacsh` — 582 KB —
+/// took **1.7 seconds to answer `true`**, against 116 ms for the same program on the Deno host and
+/// 0.7 ms for bash. A 94 KB example took 213 ms, which is the same rate; the cost tracks the module
+/// and not the work.
+///
+/// That is a correctness problem and not only a slow one. `native_shell` and `native_hostfs` run
+/// twenty-odd scripts through this binary, each paying the compile again, and they bound each script
+/// with `timeout` — so on a machine at three times its core count the compile alone approaches the
+/// bound and the test reports the two hosts disagreeing (issue 0128). Raising the bound hides it;
+/// not compiling twenty times removes it.
+///
+/// So the compiled artifact is cached beside the `.wasm`, which is where the tests already put one
+/// build and run it many times. `deserialize_file` is `unsafe` because it trusts the artifact to
+/// have been produced by this exact engine: the guard is that the file is written by this program,
+/// keyed by the wasm's own bytes and this wasmtime's version, and any mismatch recompiles rather
+/// than being repaired.
+///
+/// Written to a temporary name and renamed, because two of these run at once in the test suite and a
+/// half-written artifact that another process reads is the one failure worse than recompiling.
+fn compiled(engine: &Engine, wasm_path: &Path) -> Result<Module, wasmtime::Error> {
+    let wasm = std::fs::read(wasm_path)?;
+    let key = cache_key(&wasm);
+    let cached = wasm_path.with_extension(format!("cwasm-{key:016x}"));
+    if cached.exists() {
+        // SAFETY: written below by this program, from this engine, and named after the hash of the
+        // wasm it was compiled from — a different module or a different wasmtime gets a different
+        // name and misses rather than loading something it should not.
+        if let Ok(m) = unsafe { Module::deserialize_file(engine, &cached) } {
+            return Ok(m);
+        }
+        // A stale or truncated artifact is not an error worth reporting: compiling is always correct.
+        let _ = std::fs::remove_file(&cached);
+    }
+    let module = Module::new(engine, &wasm)?;
+    if let Ok(bytes) = module.serialize() {
+        let tmp = cached.with_extension(format!("cwasm-{key:016x}.{}", std::process::id()));
+        if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &cached).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+    Ok(module)
+}
+
+/// The wasmtime this binary was built against, so an upgrade cannot reuse an artifact from the old one.
+const WASMTIME_BUILD: &str = env!("WASMTIME_BUILD");
+
+/// A name for a compiled artifact: the wasm's bytes and the wasmtime that would load it.
+///
+/// FNV-1a rather than anything cryptographic — this decides whether to *reuse a cache entry we
+/// wrote*, not whether to trust a stranger's file, and a collision costs a recompile because
+/// `deserialize_file` checks its own header and is allowed to fail.
+fn cache_key(wasm: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in wasm.iter().chain(env!("CARGO_PKG_VERSION").as_bytes()).chain(WASMTIME_BUILD.as_bytes()) {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wasmtime::Error> {
     let mut config = Config::new();
     // The ABI is made of references — a wac string, a struct and a funcref all cross as one — so the
@@ -562,7 +625,7 @@ fn run(m: Arc<Manifest>, wasm_path: &Path, args: Vec<Vec<u8>>) -> Result<i32, wa
     config.epoch_interruption(true);
     let engine = Engine::new(&config)?;
     tick_epochs(&engine);
-    let module = Module::from_file(&engine, wasm_path)?;
+    let module = compiled(&engine, wasm_path)?;
     let world = Arc::new(World { engine: engine.clone(), module: module.clone(), manifest: m.clone() });
     let mut host = Host::new(m.callbacks.len(), args, m.grants.clone());
     host.world = Some(world);
