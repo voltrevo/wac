@@ -216,10 +216,12 @@ a variant construction at all.
 reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
 else. `tools/runOnWacc.ts` runs every package that way and counts:
 
-    32 of 34 packages pass their own suite on wacc-emitted code (1,552 tests)
-    why the rest do not:
-        1  no method Kind.word                    (git — an emitter gap)
-        1  a static Shell.capturing, declined     (sh)
+    34 of 34 packages pass their own suite on wacc-emitted code (1,631 tests)
+
+**That is priority 3 met**: every package in the repository passes its own suite on code wacc
+emitted, with the reference's bindgen standing behind it. What that does *not* say is that wacc
+replaces the reference — priorities 1 and 2 are where that lives, and the tooling table above still
+has rows nobody has started.
 
 `tor` alone is 305 tests, and `unicode`, `url`, `zstd`'s neighbours and eleven others pass outright. Compiling the corpus
 was never the same as running it, and this is the first time anything in the repository has run on
