@@ -1,0 +1,5 @@
+// expect: refused
+// why: a module constant's initialiser is an expression like any other, and its parts have types
+// from: found while closing §wac-modconst-sized — the whole position was unchecked
+const i32[] T = i32[2](fill: "x");
+export i32 f() { return T[0]; }
