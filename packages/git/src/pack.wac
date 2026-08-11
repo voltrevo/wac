@@ -1,0 +1,304 @@
+// Reading a `.pack` — the format every real repository keeps its objects in.
+//
+// A pack is a twelve-byte header, then objects back to back, then a twenty-byte SHA-1 of everything
+// before it. Each object is a variable-length header and a zlib stream, and an object may be a
+// **delta** against another one in the same pack, chained.
+//
+// ## The object header
+//
+//     byte 0:  ttt ssss   with the high bit meaning "another byte follows"
+//     bytes:   sssssss    seven more size bits each, least significant group first
+//
+// The type is three bits: 1 commit, 2 tree, 3 blob, 4 tag, 6 offset-delta, 7 reference-delta. 5 is
+// unused and 0 is invalid.
+//
+// **The size in that header is the size of the data at this offset, which for a delta is the delta and
+// not the object.** `git verify-pack -v` prints the same number, so the two can be compared directly —
+// and it is a different number from `git cat-file -s`, which is the reconstructed object. Both are
+// checked in `test/pack.test.ts`, because a reader that confused them would agree with one oracle and
+// not the other.
+//
+// ## Two varints that are not the same varint
+//
+// The size above is little-endian groups: `size |= (b & 0x7f) << shift`. An **offset delta** encodes
+// its distance differently — `ofs = ((ofs + 1) << 7) | (b & 0x7f)` — which is not the same function
+// and has no zero-length representation, so reusing one decoder for both silently misreads any chain
+// longer than 127 bytes. They are two functions here for that reason.
+//
+// ## Where a compressed stream ends
+//
+// Nothing in the object header says how long the compressed bytes are, and `packages/gzip`'s
+// `inflate` does not report what it consumed. So an object's stream is bounded by **the next object's
+// offset**, taken from the index — which is why `openPack` sorts the offsets and keeps them. The last
+// object ends where the trailing checksum begins. Walking sequentially and inflating to find each
+// boundary would work too and would mean inflating every object to read one.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { Index, PackIndex, find, parseIdx } from "./idx.wac";
+import { inflate } from "../../gzip/src/inflate.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** A pack and its index, ready to be read from. */
+export struct Pack {
+  u8[] bytes;
+  PackIndex idx;
+  /** Every object's offset, ascending — what bounds each compressed stream. */
+  i64[] byOffset;
+}
+
+export enum Opened {
+  Ready(Pack pack),
+  Refused(string why)
+}
+
+/** What sits at an offset, before any delta is followed. */
+export enum Raw {
+  /** A complete object: kind 1..4 and its bytes. */
+  Whole(i32 kind, u8[] data),
+  /** A delta against the object at `base`, which is an absolute pack offset. */
+  FromOffset(i64 base, u8[] delta),
+  /** A delta against a named object, which may not be in this pack at all. */
+  FromName(u8[] baseName, u8[] delta),
+  Damaged(string why)
+}
+
+/** A resolved object: its kind and its reconstructed bytes. */
+export enum Got {
+  Found(i32 kind, u8[] data),
+  Absent(string why)
+}
+
+/** Heapsort, because a pack can hold half a million objects and insertion sort cannot. */
+void sortOffsets(i64[] a) {
+  i32 n = a.len();
+  for (i32 start = n / 2 - 1; start >= 0; start--) { siftDown(a, start, n); }
+  for (i32 end = n - 1; end > 0; end--) {
+    i64 t = a[0]; a[0] = a[end]; a[end] = t;
+    siftDown(a, 0, end);
+  }
+}
+
+void siftDown(i64[] a, i32 root0, i32 end) {
+  i32 root = root0;
+  while (root * 2 + 1 < end) {
+    i32 child = root * 2 + 1;
+    if (child + 1 < end && a[child] < a[child + 1]) { child = child + 1; }
+    if (a[root] >= a[child]) { return; }
+    i64 t = a[root]; a[root] = a[child]; a[child] = t;
+    root = child;
+  }
+}
+
+export Opened openPack(u8[] pack, u8[] idxBytes) {
+  if (pack.len() < 32) { return Opened.Refused("shorter than a header and a checksum"); }
+  if (pack[0] != 'P' || pack[1] != 'A' || pack[2] != 'C' || pack[3] != 'K') {
+    return Opened.Refused("not a pack: the magic is missing");
+  }
+  i32 version = (pack[4] << 24) | (pack[5] << 16) | (pack[6] << 8) | pack[7];
+  if (version != 2 && version != 3) {
+    return Opened.Refused("pack version " + itoa(version) + " is not 2 or 3");
+  }
+  i32 count = (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
+
+  match (parseIdx(idxBytes)) {
+    case Rejected(why): return Opened.Refused("index: " + why);
+    case Loaded(idx): {
+      // **The two files must agree about how many objects there are.** They are written together and
+      // a mismatch means one of them belongs to a different pack — which otherwise shows up as
+      // offsets that land in the middle of an object.
+      if (idx.count != count) {
+        return Opened.Refused("the pack holds " + itoa(count) + " objects and the index describes " +
+          itoa(idx.count));
+      }
+      i64[] sorted = i64[idx.count]();
+      for (i32 i = 0; i < idx.count; i++) { sorted[i] = idx.offsets[i]; }
+      sortOffsets(sorted);
+      return Opened.Ready(Pack(pack, idx, sorted));
+    }
+  }
+}
+
+/** Where the object starting at `off` must end: the next object's offset, or the checksum. */
+i64 endOf(const Pack p, i64 off) {
+  i32 lo = 0;
+  i32 hi = p.byOffset.len() - 1;
+  i64 best = (p.bytes.len() - 20) as i64;
+  while (lo <= hi) {
+    i32 mid = lo + (hi - lo) / 2;
+    if (p.byOffset[mid] > off) { best = p.byOffset[mid]; hi = mid - 1; } else { lo = mid + 1; }
+  }
+  return best;
+}
+
+export Raw rawAt(const Pack p, i64 off) {
+  if (off < 12 || off >= (p.bytes.len() - 20) as i64) { return Raw.Damaged("offset is outside the pack"); }
+  i32 at = off as~ i32;
+  i32 b = p.bytes[at];
+  i32 kind = (b >> 4) & 7;
+  i32 size = b & 0x0f;
+  i32 shift = 4;
+  at = at + 1;
+  while ((b & 0x80) != 0) {
+    if (at >= p.bytes.len()) { return Raw.Damaged("size runs off the end"); }
+    b = p.bytes[at];
+    size = size | ((b & 0x7f) << shift);
+    shift = shift + 7;
+    at = at + 1;
+  }
+  if (kind == 0 || kind == 5) { return Raw.Damaged("object type " + itoa(kind) + " is not defined"); }
+
+  i64 base = 0;
+  u8[] baseName = u8[0]();
+  if (kind == 6) {
+    i32 c = p.bytes[at];
+    at = at + 1;
+    i64 ofs = (c & 0x7f) as i64;
+    while ((c & 0x80) != 0) {
+      if (at >= p.bytes.len()) { return Raw.Damaged("a delta offset runs off the end"); }
+      c = p.bytes[at];
+      at = at + 1;
+      // Not the size varint's function: each further byte adds one before shifting, so there is no
+      // encoding of zero and every length is used exactly once.
+      ofs = ((ofs + 1) << 7) | ((c & 0x7f) as i64);
+    }
+    base = off - ofs;
+    if (base < 12) { return Raw.Damaged("a delta points before the first object"); }
+  } else if (kind == 7) {
+    if (at + 20 > p.bytes.len()) { return Raw.Damaged("a base name runs off the end"); }
+    baseName = u8[20]();
+    for (i32 k = 0; k < 20; k++) { baseName[k] = p.bytes[at + k]; }
+    at = at + 20;
+  }
+
+  i64 end = endOf(p, off);
+  if ((at as i64) >= end) { return Raw.Damaged("no room for the compressed data"); }
+  // The zlib header is two bytes and the four-byte Adler-32 sits at the end. `inflate` wants the raw
+  // deflate between them, and the checksum is skipped rather than verified — the index carries a
+  // CRC-32 of these same bytes, which is the check this format actually offers, and the object's own
+  // name is a hash of what comes out.
+  i32 from = at + 2;
+  i32 upto = (end as~ i32) - 4;
+  if (upto <= from) { return Raw.Damaged("compressed data is too short to be a zlib stream"); }
+  u8[] slice = u8[upto - from]();
+  for (i32 i = 0; i < slice.len(); i++) { slice[i] = p.bytes[from + i]; }
+  u8[] data = inflate(slice);
+
+  // **The header's size is checked against what came out**, which is the one place a misread varint
+  // shows up immediately rather than as a wrong answer later.
+  if (data.len() != size) {
+    return Raw.Damaged("header says " + itoa(size) + " bytes and " + itoa(data.len()) + " inflated");
+  }
+
+  if (kind == 6) { return Raw.FromOffset(base, data); }
+  if (kind == 7) { return Raw.FromName(baseName, data); }
+  return Raw.Whole(kind, data);
+}
+
+/** A little-endian group varint, as a delta header uses. Returns the value; `at` advances via `pos`. */
+i32 deltaSize(u8[] d, i32[] pos) {
+  i32 v = 0;
+  i32 shift = 0;
+  i32 c = 0x80;
+  while ((c & 0x80) != 0 && pos[0] < d.len()) {
+    c = d[pos[0]];
+    pos[0] = pos[0] + 1;
+    v = v | ((c & 0x7f) << shift);
+    shift = shift + 7;
+  }
+  return v;
+}
+
+/**
+ * Apply a delta to a base, giving the object.
+ *
+ * The instruction stream is one byte of command and then its operands: with the high bit set it is a
+ * **copy** from the base, whose offset and length are assembled from whichever of the next seven bytes
+ * the low bits select; without it, the low seven bits are a **literal length** and that many bytes
+ * follow. A command byte of zero is invalid rather than a no-op, which is worth refusing because it is
+ * what a truncated stream of zeroes looks like.
+ */
+export u8[]? applyDelta(u8[] base, u8[] delta) {
+  i32[] pos = i32[1]();
+  i32 wantBase = deltaSize(delta, pos);
+  i32 wantOut = deltaSize(delta, pos);
+  if (wantBase != base.len()) { return null; }
+
+  Buf out = Buf.create();
+  while (pos[0] < delta.len()) {
+    i32 cmd = delta[pos[0]];
+    pos[0] = pos[0] + 1;
+    if ((cmd & 0x80) != 0) {
+      i32 cpOff = 0;
+      i32 cpSize = 0;
+      if ((cmd & 0x01) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | delta[pos[0]]; pos[0] = pos[0] + 1; }
+      if ((cmd & 0x02) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 8); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x04) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 16); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x08) != 0) { if (pos[0] >= delta.len()) { return null; } cpOff = cpOff | (delta[pos[0]] << 24); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x10) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | delta[pos[0]]; pos[0] = pos[0] + 1; }
+      if ((cmd & 0x20) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] << 8); pos[0] = pos[0] + 1; }
+      if ((cmd & 0x40) != 0) { if (pos[0] >= delta.len()) { return null; } cpSize = cpSize | (delta[pos[0]] << 16); pos[0] = pos[0] + 1; }
+      // Zero means 65536, which is the one special case in the encoding: a three-byte length field
+      // cannot say 0x10000 and a copy of nothing would be pointless, so the value is reused.
+      if (cpSize == 0) { cpSize = 0x10000; }
+      if (cpOff < 0 || cpOff + cpSize > base.len()) { return null; }
+      for (i32 i = 0; i < cpSize; i++) { out.push(base[cpOff + i]); }
+    } else {
+      if (cmd == 0) { return null; }
+      if (pos[0] + cmd > delta.len()) { return null; }
+      for (i32 i = 0; i < cmd; i++) { out.push(delta[pos[0] + i]); }
+      pos[0] = pos[0] + cmd;
+    }
+  }
+  u8[] made = out.take();
+  // The delta states its own result length, so a stream that produced anything else was misread.
+  if (made.len() != wantOut) { return null; }
+  return made;
+}
+
+/**
+ * The object at `off`, with every delta in its chain followed.
+ *
+ * Recursive, and bounded by `depth` rather than by trust: git's own chains reach fifty, and a pack
+ * whose deltas form a cycle would otherwise be an infinite loop rather than an error. A cycle cannot
+ * happen in an offset chain, which always points backwards — but a reference delta can name anything.
+ */
+export Got objectAt(const Pack p, i64 off, i32 depth) {
+  if (depth <= 0) { return Got.Absent("delta chain is longer than this reader will follow"); }
+  match (rawAt(p, off)) {
+    case Damaged(why): return Got.Absent(why);
+    case Whole(kind, data): return Got.Found(kind, data);
+    case FromOffset(base, delta): {
+      match (objectAt(p, base, depth - 1)) {
+        case Absent(why): return Got.Absent(why);
+        case Found(kind, baseData): {
+          u8[]? made = applyDelta(baseData, delta);
+          if (made is null) { return Got.Absent("a delta did not apply to its base"); }
+          return Got.Found(kind, made!);
+        }
+      }
+    }
+    case FromName(name, delta): {
+      i32 at = find(p.idx, name);
+      if (at < 0) {
+        // A pack fetched with `--thin` refers to objects the receiver already has, and this reader has
+        // only the one pack — so this is a real limitation rather than corruption, and says which.
+        return Got.Absent("the base of a reference delta is not in this pack");
+      }
+      match (objectAt(p, p.idx.offsets[at], depth - 1)) {
+        case Absent(why): return Got.Absent(why);
+        case Found(kind, baseData): {
+          u8[]? made = applyDelta(baseData, delta);
+          if (made is null) { return Got.Absent("a delta did not apply to its base"); }
+          return Got.Found(kind, made!);
+        }
+      }
+    }
+  }
+}
+
+/** The object called `name`, or why not. */
+export Got objectNamed(const Pack p, u8[] name) {
+  i32 at = find(p.idx, name);
+  if (at < 0) { return Got.Absent("not in this pack"); }
+  return objectAt(p, p.idx.offsets[at], 64);
+}

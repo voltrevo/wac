@@ -8,10 +8,14 @@
 
 ## Why this document exists
 
-`packages/git` exists and is not git. It names, stores and reads loose objects and parses a tree — 347
-lines — and it cannot read the repository it lives in, because that repository has packfiles. The gap
-between "an object database" and "a client" is most of the work, and it is easy to build the next
-convenient piece rather than the next necessary one.
+`packages/git` exists and is not git. The gap between "an object database" and "a client" is most of
+the work, and it is easy to build the next convenient piece rather than the next necessary one.
+
+When this was written the package was 347 lines and could not read the repository it lives in, because
+that repository keeps its objects in a pack. Step 2 closed that. The point of the document is unchanged:
+reading objects is the part where the format punishes you immediately, and everything after it — refs,
+an index, a working tree, a wire protocol — is where a client that looks finished can still be wrong in
+ways only real git will tell you about.
 
 ## What we are aiming at
 
@@ -126,9 +130,9 @@ Written down now, while it is cheap to say:
 | # | step | state |
 |---|---|---|
 | 1. objects and trees | **done.** [`packages/git`](../../packages/git/README.md) — names agree with `git hash-object` on every case tried, `git cat-file` reads our loose objects, and a tree git wrote parses to what `ls-tree` prints and serialises back byte-identical. Six tests, skipped loudly where git is absent. Not among the packages that pass on wacc-emitted code: it declines a method on an enum |
-| 2. packfiles, read | not started. The blocker for everything after it, and the reason this package cannot open the repository it lives in |
-| 3. refs, commits, tags | not started. `Kind.Commit` round-trips as bytes; nothing reads the `tree` or `parent` lines out of one |
-| 4. index and working tree | not started |
+| 2. packfiles, read | **done.** `src/idx.wac` and `src/pack.wac` — version-2 index with the large-offset table, object headers, offset and reference deltas, chains bounded at 64. Every one of the **18,209 objects in this repository's own pack** reconstructs to bytes that hash back to its index name, in ten seconds; headers match `git verify-pack -v` field for field, including that its size column is the *delta* for a delta and `cat-file -s` is the object. Not done: a thin pack's reference delta whose base is outside the pack is reported absent rather than resolved, which is a fetch concern and named in step 6 |
+| 3. refs, commits, tags | **done.** `src/refs.wac` and `src/commit.wac` — loose and packed refs, `HEAD` symbolic and detached, commits with zero or more parents, annotated tags, and a `gpgsig` continuation that does not eat the message. Walking this repository's own history gives **445 commits identical to `git rev-list --first-parent`**, 88 merges crossed, root reached, across 142 loose and 303 packed objects. Not done: enumerating `refs/heads/` needs a filesystem, and nothing yet combines loose and packed lookup — the caller picks the order |
+| 4. index and working tree | next, and the two risky halves are the index's stat cache and whether `packages/fs` can answer `ctime`, `dev`, `ino` and `uid` at all — see "what could make this not worth finishing" |
 | 5. writing a repository git accepts | not started. Step 1 can write the objects; nothing writes a ref |
 | 6. fetch | not started |
 | 7. packfiles, write | not started, and deliberately last |

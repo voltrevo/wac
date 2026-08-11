@@ -1,0 +1,158 @@
+// A pack index — `.idx`, version 2 — which is how anything finds an object in a `.pack`.
+//
+// The pack itself is objects back to back with no table of contents, so the index is not an
+// optimisation: without it the only way to find an object is to inflate every object before it.
+//
+// ## The layout, in order
+//
+//     "\377tOc"          magic, chosen so a version-1 index (which starts with its own fanout) can
+//                        be told apart — the first four bytes of a v1 fanout can never be this
+//     u32                version, 2
+//     u32 × 256          fanout: the *cumulative* count of objects whose first byte is <= i
+//     20 × n             object names, sorted as raw bytes
+//     u32 × n            a CRC-32 per object of its compressed bytes in the pack
+//     u32 × n            offsets into the pack; the top bit set means "an index into the table below"
+//     u64 × m            offsets that do not fit in 31 bits
+//     20                 SHA-1 of the pack
+//     20                 SHA-1 of everything above in this file
+//
+// **The fanout is cumulative, and that is the one thing to get right.** `fanout[i]` is the number of
+// objects whose first byte is `i` *or less*, so the count for byte `i` is `fanout[i] - fanout[i-1]`
+// and the total is `fanout[255]`. Reading it as a per-byte count gives a plausible smaller number and
+// a lookup that silently misses.
+//
+// Offsets are `i64` here even though a 4-byte field holds most of them, because the large-offset
+// table exists precisely for packs over 2 GiB and a type that cannot represent those would push the
+// failure to whoever first opened a big repository.
+
+import { Buf } from "../../bytes/src/buf.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** Where every object in a pack is, and what it is called. */
+export struct PackIndex {
+  i32 count;
+  /** `count × 20` raw bytes, sorted. */
+  u8[] names;
+  /** `count` offsets into the pack, in the same order as `names`. */
+  i64[] offsets;
+  /** `count` CRC-32s of each object's compressed bytes, in the same order. */
+  u32[] crcs;
+
+  /** The `i`th object's name, as forty hex characters. */
+  string hexAt(const this, i32 i) {
+    u8[] one = u8[20]();
+    for (i32 k = 0; k < 20; k++) { one[k] = this.names[i * 20 + k]; }
+    return string.fromBytes(encode(one));
+  }
+
+  /** The `i`th object's name, as twenty raw bytes. */
+  u8[] nameAt(const this, i32 i) {
+    u8[] one = u8[20]();
+    for (i32 k = 0; k < 20; k++) { one[k] = this.names[i * 20 + k]; }
+    return one;
+  }
+}
+
+/** A parsed index, or why it could not be read. */
+export enum Index {
+  Loaded(PackIndex idx),
+  Rejected(string why)
+}
+
+/** A big-endian u32 at `at`. */
+i64 be32(u8[] b, i32 at) {
+  return ((b[at] as i64) << 24) | ((b[at + 1] as i64) << 16)
+       | ((b[at + 2] as i64) << 8) | (b[at + 3] as i64);
+}
+
+/** A big-endian u64 at `at`. */
+i64 be64(u8[] b, i32 at) {
+  i64 hi = be32(b, at);
+  i64 lo = be32(b, at + 4);
+  return (hi << 32) | lo;
+}
+
+export Index parseIdx(u8[] b) {
+  if (b.len() < 8 + 1024 + 40) { return Index.Rejected("shorter than an empty version-2 index"); }
+  if (b[0] != 0xff || b[1] != 0x74 || b[2] != 0x4f || b[3] != 0x63) {
+    // A version-1 index has no magic and starts straight into its fanout, so this is also the check
+    // that refuses one rather than misreading it.
+    return Index.Rejected("not a version-2 index: the magic is missing");
+  }
+  i64 version = be32(b, 4);
+  if (version != 2) { return Index.Rejected("index version " + itoa(version as~ i32) + " is not 2"); }
+
+  i32 fanout = 8;
+  i64 n64 = be32(b, fanout + 255 * 4);
+  if (n64 < 0 || n64 > 100000000) { return Index.Rejected("implausible object count"); }
+  i32 n = n64 as~ i32;
+
+  i32 namesAt = fanout + 1024;
+  i32 crcsAt = namesAt + n * 20;
+  i32 offsAt = crcsAt + n * 4;
+  i32 bigAt = offsAt + n * 4;
+  if (bigAt + 40 > b.len()) { return Index.Rejected("truncated before the trailing checksums"); }
+
+  u8[] names = u8[n * 20]();
+  for (i32 i = 0; i < n * 20; i++) { names[i] = b[namesAt + i]; }
+
+  u32[] crcs = u32[n]();
+  for (i32 i = 0; i < n; i++) { crcs[i] = be32(b, crcsAt + i * 4) as~ u32; }
+
+  i64[] offsets = i64[n]();
+  for (i32 i = 0; i < n; i++) {
+    i64 raw = be32(b, offsAt + i * 4);
+    if ((raw & 0x80000000) == 0) {
+      offsets[i] = raw;
+    } else {
+      // The low 31 bits index the large-offset table, which is why a pack over 2 GiB needs one at all.
+      i32 slot = (raw & 0x7fffffff) as~ i32;
+      if (bigAt + slot * 8 + 8 > b.len() - 40) {
+        return Index.Rejected("a large-offset slot points past the table");
+      }
+      offsets[i] = be64(b, bigAt + slot * 8);
+    }
+  }
+
+  // **The names must be sorted**, and checking it is cheap next to trusting it: every lookup here and
+  // in git is a binary search over this order, and an unsorted index answers "not present" for
+  // objects that are.
+  for (i32 i = 1; i < n; i++) {
+    i32 cmp = 0;
+    for (i32 k = 0; k < 20; k++) {
+      i32 a = names[(i - 1) * 20 + k];
+      i32 c = names[i * 20 + k];
+      if (a != c) { cmp = a < c ? -1 : 1; break; }
+    }
+    if (cmp >= 0) { return Index.Rejected("object names are not in ascending order at " + itoa(i)); }
+  }
+
+  return Index.Loaded(PackIndex(n, names, offsets, crcs));
+}
+
+/**
+ * The position of `name` in the index, or -1.
+ *
+ * Binary search, which is what the sorted order is for. The fanout would narrow the range first and is
+ * not used: it saves eight comparisons out of about twenty on a repository-sized pack, and the table
+ * it reads is the one thing in this format most likely to be subtly wrong, so a lookup that does not
+ * depend on it is a lookup that keeps working while the fanout is being checked.
+ */
+export i32 find(const PackIndex idx, u8[] name) {
+  if (name.len() != 20) { return -1; }
+  i32 lo = 0;
+  i32 hi = idx.count - 1;
+  while (lo <= hi) {
+    i32 mid = lo + (hi - lo) / 2;
+    i32 cmp = 0;
+    for (i32 k = 0; k < 20; k++) {
+      i32 a = idx.names[mid * 20 + k];
+      i32 c = name[k];
+      if (a != c) { cmp = a < c ? -1 : 1; break; }
+    }
+    if (cmp == 0) { return mid; }
+    if (cmp < 0) { lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return -1;
+}
