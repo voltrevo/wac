@@ -3,6 +3,19 @@
 import "../../../harness/spawnRetry.ts";
 import { buildApp } from "../../platform/build.ts";
 import { fixtures, sweep } from "../../../tools/shellFuzz.ts";
+import { testBounded } from "../../../harness/deadline.ts";
+import { loadNow } from "../../../harness/bounded.ts";
+
+/**
+ * Where this test had got to, for the report if it never gets any further.
+ *
+ * A wedge here does not fail this test — nothing bounds a `Deno.test` body, so the run continues
+ * until `tools/push.sh` cuts the whole suite at 45 minutes and **nobody's push lands**, which is what
+ * happened on 2026-08-11: this case and one in `sealed.test.ts` were "still running" when the gate
+ * gave up, and both pass alone in well under a minute. A bound turns that into one failing test with
+ * a sentence saying which seed and which script.
+ */
+let reached = "(nothing yet)";
 // The generator, on fixed seeds, as an ordinary test.
 //
 // `tools/shellFuzz.ts` is the exploring tool — any seed, any count. This is the ratchet: a handful of
@@ -38,10 +51,11 @@ const haveBash = await (async () => {
   }
 })();
 
-Deno.test({
+testBounded({
   name: "generated scripts answer what bash answers, on the seeds that have been checked",
   ignore: !haveBash,
-  fn: async () => {
+  onTimeout: () => console.error(`fuzz: the case did not finish (${loadNow()}). It had reached ${reached}`),
+}, async () => {
     const shell = await Deno.makeTempFile({ prefix: "sh-fuzz-" });
     const dir = await Deno.makeTempDir({ prefix: "sh-fuzz-" });
     try {
@@ -58,6 +72,7 @@ Deno.test({
       // Thirty scripts a seed, four seeds: enough to cover the shapes and quick enough to sit in the
       // gate. The tool is where a thousand belong.
       for (const seed of [1, 3, 11, 47]) {
+        reached = `seed ${seed}`;
         for (const d of await sweep(shell, seed, 30, dir)) {
           // **A bound that fired is not a difference**, and saying so is the whole of this branch.
           // It read as one on 2026-08-10: `seed 3: v=set; until [ -f nosuchfile ]; do :; break; done`
@@ -83,5 +98,4 @@ Deno.test({
       await Deno.remove(shell).catch(() => {});
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }
-  },
 });
