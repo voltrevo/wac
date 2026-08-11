@@ -1,0 +1,8 @@
+// expect: refused
+// why: the same `break` after a loop that can finish — the two spellings must not disagree
+// from: issues/lang/0087
+export i32 f() {
+  while (false) { }
+  break;
+  return 1;
+}

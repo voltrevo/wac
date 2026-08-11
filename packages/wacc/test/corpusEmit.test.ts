@@ -81,6 +81,15 @@ Deno.test("rung 4: the repository corpus, compiled", async () => {
     `${invalid} invalid. Blocked by: ${top}`);
   console.log(`    of the ${whole} whole, ${short} are missing an export the source declares ` +
     `— issues/lang/0090`);
+  // **Asserted, not just counted.** This was 29 when `issues/lang/0090` was filed and printing it
+  // was the right first move: a number nobody could act on yet. It has been 0 since the emitter
+  // stopped dropping functions, and a module called *whole* that is missing what its source
+  // exports is exactly the failure the word denies — so it fails the suite now rather than
+  // scrolling past in a log.
+  if (short > 0) {
+    throw new Error(`${short} module(s) called whole are missing an export the source declares ` +
+      `— issues/lang/0090`);
+  }
 
   // The canary: a harness that compiled nothing would report that nothing is wrong.
   if (whole === 0) throw new Error("no corpus file was emitted in full — the harness is not reaching the emitter");

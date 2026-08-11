@@ -1,0 +1,8 @@
+// expect: refused
+// why: a statement that cannot run is still a statement — an undeclared name in it is an error, not a thing nobody looks at
+// from: issues/lang/0087
+export i32 f() {
+  while (true) { }
+  y = 1;
+  return 1;
+}
