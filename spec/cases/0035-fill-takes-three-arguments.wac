@@ -1,0 +1,4 @@
+// expect: refused
+// why: value, start, count — two of them leaves the extent unsaid
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); a.fill(1, 2); }

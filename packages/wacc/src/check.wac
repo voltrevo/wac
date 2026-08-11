@@ -3501,6 +3501,26 @@ string builtinReturnType(string recv, string name) {
   return "";
 }
 
+/**
+ * An offset or a length handed to a bulk builtin — a count, so an integer.
+ *
+ * A literal is asked whether the family fits, exactly as an index is; anything else is asked what it
+ * is, and nothing is said about a type this checker cannot name.
+ */
+void checkCountArg(C c, Expr e) {
+  i32 lit = litKindOf(e);
+  if (lit != litNone()) {
+    if (!acceptsLiteral("i32", lit)) {
+      c.reportWith(errBuiltinArg(), e.line, e.col, expectedFound("i32", foundType(c, e)));
+    }
+    return;
+  }
+  string t = typeOfExpr(c, e);
+  if (t != typeNone() && t != "" && !isIntegerName(t)) {
+    c.reportWith(errBuiltinArg(), e.line, e.col, expectedFound("i32", t));
+  }
+}
+
 bool isArrayBuiltin(string name) {
   return name == "len" || name == "copyFrom" || name == "fill";
 }
@@ -3572,6 +3592,46 @@ void checkMethodCall(C c, Expr call, Expr callee, Expr obj, string name, Expr[] 
   // `len()` is the one method an array and a string share, and it takes nothing.
   if ((isArrayName(recv) || recv == "string") && name == "len") {
     if (args.len() != 0) { c.report(errBuiltinArity(), call.line, call.col); }
+    return;
+  }
+  // **The bulk pair.** `copyFrom(src, srcStart, dstStart, count)` moves elements between two arrays,
+  // so the source is an array holding the same kind; `fill(value, start, count)` writes one value
+  // across a range. Both were listed as builtins and neither was checked, which is six of the spec's
+  // own programs — `spec/cases/0030` through `0035`.
+  if (isArrayName(recv) && name == "copyFrom") {
+    if (args.len() != 4) {
+      c.report(errBuiltinArity(), call.line, call.col);
+      return;
+    }
+    // **A literal has no type of its own**, so `typeOfExpr` answers nothing for `copyFrom(5, …)` and
+    // the guard below would let it past. `foundType` gives a literal the type it naturally has,
+    // which is the whole of what makes `5` not an array.
+    string srcT = foundType(c, args[0]);
+    if (srcT != typeNone() && srcT != "" && srcT != recv) {
+      c.reportWith(errBuiltinArg(), args[0].line, args[0].col, expectedFound(recv, srcT));
+    }
+    for (i32 i = 1; i < args.len(); i++) { checkCountArg(c, args[i]); }
+    return;
+  }
+  if (isArrayName(recv) && name == "fill") {
+    if (args.len() != 3) {
+      c.report(errBuiltinArity(), call.line, call.col);
+      return;
+    }
+    // **A packed element widens to `i32` on the way out and takes one on the way in.** `u8[]` filled
+    // from an `i32` is how `packages/zstd/src/block.wac` writes a run, and asking for a `u8` exactly
+    // refused a working file — `spec/cases/0036`.
+    string el = dropLast(recv, 2);
+    if (isPackedName(el)) { el = "i32"; }
+    if (litKindOf(args[0]) != litNone()) {
+      reportLiteral(c, el, args[0], errBuiltinArg(), args[0].line, args[0].col);
+    } else {
+      string vt = typeOfExpr(c, args[0]);
+      if (vt != typeNone() && vt != "" && !assignable(c, el, vt)) {
+        c.reportWith(errBuiltinArg(), args[0].line, args[0].col, expectedFound(el, vt));
+      }
+    }
+    for (i32 i = 1; i < args.len(); i++) { checkCountArg(c, args[i]); }
     return;
   }
   // A method on something that has none. A primitive has no methods at all, and an array has only

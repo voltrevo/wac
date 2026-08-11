@@ -1,0 +1,4 @@
+// expect: refused
+// why: what fills an i32 array is an i32
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); a.fill("x", 0, 2); }

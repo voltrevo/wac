@@ -1,0 +1,4 @@
+// expect: refused
+// why: an offset into an array is a count, and a float is not one
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); a.copyFrom(a, 0.5, 0, 1); }

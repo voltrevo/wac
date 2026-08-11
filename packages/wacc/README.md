@@ -265,15 +265,21 @@ both at once, and not the fix first: a fix written first is aimed at whatever yo
 looking at, and the thing that told you it worked disappears when the slot ends. `spec/cases/README.md`
 has the long version.
 
-It reads **29 cases, met by the reference and by wacc alike**. It held two misses for one slot — an
+It reads **36 cases, met by the reference and by wacc alike**. It held two misses for one slot — an
 integer literal wider than its slot, and a nullable packed field, both accepted — and they are fixed,
 which took `specSingle` from 265 of 304 refused to 270. Both were already among its named misses,
 where they were a tally; four lines each was what it took to act on them.
 
-The corpus caught the fix, too. Range-checking integer literals refused `0xFFFFFFFF` in an `i32`,
-which is legal — a hex literal names *bits* and a decimal one names a number — and that showed up as
-four spec acceptances and eight working files. `0028` and `0029` are the pair that pin it, and they
-went in before the correction rather than after.
+The corpus keeps catching the fix as well as the defect, which is the argument for it. Range-checking
+integer literals refused `0xFFFFFFFF` in an `i32`, which is legal — a hex literal names *bits* and a
+decimal one names a number. Checking `fill`'s value against the element type refused
+`packages/zstd/src/block.wac`, because a packed element widens to `i32` on the way out and takes one
+on the way in. Both corrections went in as cases *before* the code was changed — `0028`, `0029`,
+`0036` — so the rule that was briefly broken now has a program that fails if it breaks again.
+
+The six `§wac-arr-bulk` diagnostics went the same way: `copyFrom` and `fill` were listed as builtins
+and neither was checked at all, which was the largest cluster left in `specSingle`'s named misses.
+Cases `0030` to `0035` first, then the rules — 270 of 304 refused becomes 276.
 
 ## The toolchain
 
@@ -379,7 +385,7 @@ they find real rules cheaply. What they no longer are is a definition of correct
 
 | oracle | input | what it asserts |
 |---|---|---|
-| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 270 of 304 illegal refused, 365 of 367 legal silent, the rest named |
+| `specSingle.test.ts` | the 671 one-file programs the suite **runs** | **the contract** — 276 of 304 illegal refused, 365 of 367 legal silent, the rest named |
 | `specMulti.test.ts` | the spec's 56 programs that take more than one file | **the contract** — all 15 illegal refused, all 41 legal silent |
 | `specCheck.test.ts` | the 101 illegal programs read out of the text | the subset above, pinned with no exceptions at all |
 | `specAccept.test.ts` | the 262 legal programs read out of the text | the same, from the accepting side |

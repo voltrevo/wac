@@ -30,11 +30,10 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 34 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The 28 programs the spec calls illegal that this checker still accepts. It was 47.
  *
  * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
- * groups: a literal that does not fit its context (`§wac-litctx-nofit`), the six `§wac-arr-bulk`
- * diagnostics that say *which* argument is wrong, generic inference failures,
+ * groups: generic inference failures,
  * `§wac-packed-nullable` in the positions the packed type is refused in, and module-level `const`
  * initialisers that are not constant.
  *
@@ -76,12 +75,6 @@ const KNOWN_MISSES = new Set<string>([
   "[§wac-const-deep-j6b1nyg] what deep const does refuse#6",
   "[§wac-packed-nullable-2knq6wv] a nullable packed type is refused where the packed type is#2",
   "[§wac-packed-nullable-2knq6wv] an array of them is refused too#3",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#0",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#1",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#2",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#3",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#4",
-  "[§wac-arr-bulk-7kmq4wn] the diagnostics say which argument is wrong#5",
 ]);
 
 /**

@@ -1,0 +1,4 @@
+// expect: refused
+// why: src, srcStart, dstStart, count — a copy with three of them says nothing about how much
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); a.copyFrom(a, 0, 0); }

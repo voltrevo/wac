@@ -1,0 +1,4 @@
+// expect: refused
+// why: the source of a bulk copy is an array, and a number is not one
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); a.copyFrom(5, 0, 0, 1); }

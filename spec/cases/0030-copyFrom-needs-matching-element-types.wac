@@ -1,0 +1,4 @@
+// expect: refused
+// why: a bulk copy moves elements, so both arrays have to hold the same kind
+// from: specSingle's §wac-arr-bulk cluster
+export void f() { i32[] a = i32[2](fill: 0); i64[] b = i64[2](fill: 0); a.copyFrom(b, 0, 0, 2); }
