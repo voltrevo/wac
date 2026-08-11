@@ -1979,7 +1979,12 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // **After every declaration has named its types**, which is the pass above: a `u8[]` that appears
   // only in a signature — `export u8[] echo(u8[] b)` — is registered there and nowhere earlier, so
   // asking before it answered no for exactly the modules a host most wants to call.
-  bool needsBytes = hasArrayType(env, "u8[]");
+  // **Every array an export can carry, not just `u8[]`.** Each one needs three helpers and two
+  // signatures, and the count decides every index after them — see `issues/lang/0089`.
+  i32 bulkCount = 0;
+  for (i32 bi = 0; bi < env.arrayCount; bi++) {
+    if (isBulkArray(env.arrayTypes[bi])) { bulkCount = bulkCount + 1; }
+  }
 
   // The instances, in the order `collectInstances` registered them: after every declaration and
   // **before the helpers**, which is where their indices are. Getting this wrong is not a subtle
@@ -2031,9 +2036,9 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
 
   // `+ 1` for `$bind$mem_ensure`, which every module carries: the boundary needs it whenever an
   // exported signature moves bytes, and deciding that here would mean asking what a host will bind.
-  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + (needsBytes ? 3 : 0);
+  i32 helpers = (needsStrings ? 9 : 0) + (startNeeded ? 1 : 0) + 1 + bulkCount * 3;
   funcs.u32leb(count + helpers);
-  exports.u32leb(exportCount + 2 + (needsBytes ? 3 : 0));
+  exports.u32leb(exportCount + 2 + bulkCount * 3);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2108,11 +2113,13 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   // Before `declTypes` is taken, or the type section is sized without it and the module is declined
   // — which is what happened first time round, and the emitter said so by returning eight bytes.
   env.sigType("fn[i32(i32)]");
-  // The byte-array family, when there is a `u8[]` to move. Both `_len` and `_to_mem` answer an `i32`
-  // from an array, so the three helpers need two signatures between them.
-  if (needsBytes) {
-    env.sigType("fn[i32(u8[])]");
-    env.sigType("fn[u8[](i32)]");
+  // Two signatures per array type: `_len` and `_to_mem` both answer an `i32` from one, `_from_mem`
+  // answers one from an `i32`.
+  for (i32 bi = 0; bi < env.arrayCount; bi++) {
+    string bt = env.arrayTypes[bi];
+    if (!isBulkArray(bt)) { continue; }
+    env.sigType("fn[i32(" + bt + ")]");
+    env.sigType("fn[" + bt + "(i32)]");
   }
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
@@ -2289,10 +2296,14 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     emitStringCompare(funcs, code, env);
   }
   emitMemEnsure(funcs, code, env);
-  if (needsBytes) {
-    emitArrU8Len(funcs, code, env);
-    emitArrU8ToMem(funcs, code, env);
-    emitArrU8FromMem(funcs, code, env);
+  // In `arrayTypes` order, which is the order the exports below name them in — a helper's index is
+  // its position among the helpers and nothing else.
+  for (i32 bi = 0; bi < env.arrayCount; bi++) {
+    string bt = env.arrayTypes[bi];
+    if (!isBulkArray(bt)) { continue; }
+    emitArrLen(funcs, code, env, bt);
+    emitArrToMem(funcs, code, env, bt);
+    emitArrFromMem(funcs, code, env, bt);
   }
 
   B out = B.create();
@@ -2336,7 +2347,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
     // last and numbered by hand, and adding a helper in front of it without moving this produced
     // *"invalid start func reference"* — the index named a function that is now the buffer helper.
     emitStartFunction(funcs, code, src, lexed, env,
-                      index + (needsStrings ? 9 : 0) + 1 + (needsBytes ? 3 : 0), declTypes);
+                      index + (needsStrings ? 9 : 0) + 1 + bulkCount * 3, declTypes);
   }
 
   // **The type section is written before the code that names types.** If emitting a body registered
@@ -2360,16 +2371,21 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   exports.name("$bind$mem_ensure");
   exports.byte(0);    // a function
   exports.u32leb(helperBase);
-  if (needsBytes) {
-    exports.name("$bind$arr_u8_len");
+  i32 bulkAt = helperBase + 1;
+  for (i32 bi = 0; bi < env.arrayCount; bi++) {
+    string bt = env.arrayTypes[bi];
+    if (!isBulkArray(bt)) { continue; }
+    string el = elemOf(bt);
+    exports.name("$bind$arr_" + el + "_len");
     exports.byte(0);
-    exports.u32leb(helperBase + 1);
-    exports.name("$bind$arr_u8_to_mem");
+    exports.u32leb(bulkAt);
+    exports.name("$bind$arr_" + el + "_to_mem");
     exports.byte(0);
-    exports.u32leb(helperBase + 2);
-    exports.name("$bind$arr_u8_from_mem");
+    exports.u32leb(bulkAt + 1);
+    exports.name("$bind$arr_" + el + "_from_mem");
     exports.byte(0);
-    exports.u32leb(helperBase + 3);
+    exports.u32leb(bulkAt + 2);
+    bulkAt = bulkAt + 3;
   }
 
   section(out, 1, types);
@@ -2379,7 +2395,7 @@ u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] 
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
-    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + (needsBytes ? 3 : 0));
+    st.u32leb(count + (needsStrings ? 9 : 0) + 1 + bulkCount * 3);
     section(out, 8, st);
   }
   // **Every function declared as referenceable.** `ref.func` on a function that no element segment
@@ -6604,17 +6620,71 @@ bool hasArrayType(Env env, string t) {
 }
 
 /**
- * `$bind$arr_u8_len(a) -> i32` — how many bytes the array holds.
+ * The element types a bulk transfer knows how to move, and how.
  *
- * The first of the three a host needs to move a `u8[]` across the boundary: it asks the length,
- * allocates, and then copies through the staging buffer. `array.len` is the whole of it.
+ * `width` is bytes per element; `load` and `store` are the linear-memory opcodes; `get` is the
+ * `array.get` variant, which differs for the packed types because a `u8` widens unsigned and an `i8`
+ * widens signed. Answers `-1` for a width when the element is not a primitive this can move — an
+ * array of structs crosses element by element through other helpers, not through the buffer.
  */
-void emitArrU8Len(B funcs, B code, Env env) {
-  i32 at = env.arrayType("u8[]");
-  funcs.u32leb(env.sigType("fn[i32(u8[])]"));
+i32 bulkWidth(string el) {
+  if (el == "u8" || el == "i8") { return 1; }
+  if (el == "u16" || el == "i16") { return 2; }
+  if (el == "i32" || el == "u32" || el == "f32") { return 4; }
+  if (el == "i64" || el == "u64" || el == "f64") { return 8; }
+  return -1;
+}
 
+i32 bulkLoad(string el) {
+  if (el == "u8" || el == "i8") { return 45; }      // i32.load8_u
+  if (el == "u16" || el == "i16") { return 47; }    // i32.load16_u
+  if (el == "i32" || el == "u32") { return 40; }    // i32.load
+  if (el == "i64" || el == "u64") { return 41; }    // i64.load
+  if (el == "f32") { return 42; }
+  if (el == "f64") { return 43; }
+  return -1;
+}
+
+i32 bulkStore(string el) {
+  if (el == "u8" || el == "i8") { return 58; }      // i32.store8
+  if (el == "u16" || el == "i16") { return 59; }    // i32.store16
+  if (el == "i32" || el == "u32") { return 54; }    // i32.store
+  if (el == "i64" || el == "u64") { return 55; }    // i64.store
+  if (el == "f32") { return 56; }
+  if (el == "f64") { return 57; }
+  return -1;
+}
+
+/** `array.get` for a packed element is signed or unsigned by the element; everything else is plain. */
+i32 bulkGet(string el) {
+  if (el == "i8" || el == "i16") { return 12; }     // array.get_s
+  if (el == "u8" || el == "u16") { return 13; }     // array.get_u
+  return 11;                                        // array.get
+}
+
+/** The wasm value type an element arrives as, which is not the element's own for a packed one. */
+string bulkValType(string el) {
+  if (el == "i64" || el == "u64") { return "i64"; }
+  if (el == "f32") { return "f32"; }
+  if (el == "f64") { return "f64"; }
+  return "i32";
+}
+
+/** Whether this array type can cross through the staging buffer at all. */
+bool isBulkArray(string t) {
+  return isArrayType(t) && !isArrayType(elemOf(t)) && bulkWidth(elemOf(t)) > 0;
+}
+
+/**
+ * `$bind$arr_<el>_len(a) -> i32` — how many elements the array holds.
+ *
+ * The first of three a host needs to move an array across the boundary: it asks the length,
+ * allocates, and copies through the staging buffer.
+ */
+void emitArrLen(B funcs, B code, Env env, string arrType) {
+  funcs.u32leb(env.sigType("fn[i32(" + arrType + ")]"));
   B b = B.create();
-  b.u32leb(0);                          // no locals
+  b.u32leb(0);
   b.byte(32); b.u32leb(0);
   b.byte(251); b.u32leb(15);            // array.len
   b.byte(11);
@@ -6623,16 +6693,18 @@ void emitArrU8Len(B funcs, B code, Env env) {
 }
 
 /**
- * `$bind$arr_u8_to_mem(a) -> i32` — copy the array into the staging buffer, and answer its length.
+ * `$bind$arr_<el>_to_mem(a) -> i32` — copy the array into the staging buffer, answer its length.
  *
- * Byte at a time rather than `array.copy`, which moves between two WasmGC arrays and not between an
- * array and linear memory: there is no bulk instruction for this direction. The caller has already
- * called `$bind$mem_ensure`, so writing past the end traps rather than growing — which is the right
- * way round, since a silent short copy is a wrong answer and a trap is not.
+ * Element at a time rather than `array.copy`, which moves between two WasmGC arrays and not between
+ * an array and linear memory: there is no bulk instruction for this direction. The host has already
+ * called `$bind$mem_ensure`, so writing past the end traps rather than growing — the right way
+ * round, since a short copy is a wrong answer and a trap is not.
  */
-void emitArrU8ToMem(B funcs, B code, Env env) {
-  i32 at = env.arrayType("u8[]");
-  funcs.u32leb(env.sigType("fn[i32(u8[])]"));
+void emitArrToMem(B funcs, B code, Env env, string arrType) {
+  string el = elemOf(arrType);
+  i32 at = env.arrayType(arrType);
+  i32 w = bulkWidth(el);
+  funcs.u32leb(env.sigType("fn[i32(" + arrType + ")]"));
 
   B b = B.create();
   b.u32leb(1);
@@ -6641,17 +6713,19 @@ void emitArrU8ToMem(B funcs, B code, Env env) {
   b.byte(65); b.i32leb(0); b.byte(33); b.u32leb(1);
   b.byte(32); b.u32leb(0); b.byte(251); b.u32leb(15); b.byte(33); b.u32leb(2);
 
-  b.byte(2); b.byte(64);                // block
-  b.byte(3); b.byte(64);                // loop
-  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2); b.byte(78);   // i >= n
-  b.byte(13); b.u32leb(1);              // br_if out of the block
-  b.byte(32); b.u32leb(1);              // address — a byte wide, so the index is the offset
+  b.byte(2); b.byte(64);
+  b.byte(3); b.byte(64);
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2); b.byte(78);
+  b.byte(13); b.u32leb(1);
+  // The address is the index scaled by the element's width.
+  b.byte(32); b.u32leb(1);
+  if (w > 1) { b.byte(65); b.i32leb(w); b.byte(108); }             // i32.mul
   b.byte(32); b.u32leb(0); b.byte(32); b.u32leb(1);
-  b.byte(251); b.u32leb(13); b.u32leb(at);                        // array.get_u — packed, so not 11
-  b.byte(58); b.u32leb(0); b.u32leb(0);                           // i32.store8
+  b.byte(251); b.u32leb(bulkGet(el)); b.u32leb(at);
+  b.byte(bulkStore(el)); b.u32leb(0); b.u32leb(0);
   b.byte(32); b.u32leb(1); b.byte(65); b.i32leb(1); b.byte(106);
   b.byte(33); b.u32leb(1);
-  b.byte(12); b.u32leb(0);              // br to the loop
+  b.byte(12); b.u32leb(0);
   b.byte(11);
   b.byte(11);
   b.byte(32); b.u32leb(2);
@@ -6661,14 +6735,16 @@ void emitArrU8ToMem(B funcs, B code, Env env) {
 }
 
 /**
- * `$bind$arr_u8_from_mem(count) -> u8[]` — a new array holding `count` bytes of the staging buffer.
+ * `$bind$arr_<el>_from_mem(count) -> <el>[]` — a new array holding `count` elements of the buffer.
  *
  * The local holding it is nullable, because `array.new_default` is what fills it and a local has to
  * have a type before that runs; the `ref.as_non_null` at the end is what the signature promises.
  */
-void emitArrU8FromMem(B funcs, B code, Env env) {
-  i32 at = env.arrayType("u8[]");
-  funcs.u32leb(env.sigType("fn[u8[](i32)]"));
+void emitArrFromMem(B funcs, B code, Env env, string arrType) {
+  string el = elemOf(arrType);
+  i32 at = env.arrayType(arrType);
+  i32 w = bulkWidth(el);
+  funcs.u32leb(env.sigType("fn[" + arrType + "(i32)]"));
 
   B b = B.create();
   b.u32leb(2);
@@ -6682,11 +6758,12 @@ void emitArrU8FromMem(B funcs, B code, Env env) {
 
   b.byte(2); b.byte(64);
   b.byte(3); b.byte(64);
-  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(0); b.byte(78);   // i >= count
+  b.byte(32); b.u32leb(2); b.byte(32); b.u32leb(0); b.byte(78);
   b.byte(13); b.u32leb(1);
-  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2);               // array, index
-  b.byte(32); b.u32leb(2);                                        // address
-  b.byte(45); b.u32leb(0); b.u32leb(0);                           // i32.load8_u
+  b.byte(32); b.u32leb(1); b.byte(32); b.u32leb(2);
+  b.byte(32); b.u32leb(2);
+  if (w > 1) { b.byte(65); b.i32leb(w); b.byte(108); }
+  b.byte(bulkLoad(el)); b.u32leb(0); b.u32leb(0);
   b.byte(251); b.u32leb(14); b.u32leb(at);                        // array.set
   b.byte(32); b.u32leb(2); b.byte(65); b.i32leb(1); b.byte(106);
   b.byte(33); b.u32leb(2);

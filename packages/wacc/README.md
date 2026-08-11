@@ -186,14 +186,14 @@ compiles now has somewhere to move bytes through, and every package that stopped
 emitted, so the helper's signature is registered in the pre-pass beside the string helpers'; asking
 for it while emitting makes the emitter decline the module, which it does by returning eight bytes.
 
-**The `u8[]` family is done too** — `$bind$arr_u8_len`, `_to_mem` and `_from_mem` — which is what
-took the measurement from 6 packages to 16. There is no bulk instruction between a WasmGC array and
-linear memory, so both directions are a byte-at-a-time loop; and a packed `u8[]` is `i8` underneath,
-so reading an element is `array.get_u` rather than `array.get`, which wasm says by name.
+**The array family is done for every element type an export can carry.** `_len`, `_to_mem` and
+`_from_mem` are emitted per array type, from one table of width, load, store and `array.get` variant
+— the packed types differ in two ways at once, since a `u8` widens unsigned and an `i8` widens
+signed, and `u8[]` is `i8` underneath. There is no bulk instruction between a WasmGC array and linear
+memory, so both directions are an element-at-a-time loop.
 
-What is left is the same three helpers for the other element types an export can carry — `i32[]` is
-five of the eight remaining failures and is the same code with a different width and load — plus the
-struct-method, callback and string families. Two packages fail on something other than a missing
+What is left is the **struct** family — `$bind$s_<Struct>_get_<field>` and its neighbours — then
+enum tags and callback dispatchers. `zstd` and `json` stop there now rather than at an array. Two packages fail on something other than a missing
 helper, and they are two different defects rather than one. `json` is **`issues/lang/0090`**: three of
 its four exported functions are simply not in the module, and `blockedFiles` reports nothing — which
 matters beyond one package, because `corpusEmit` counts a file *whole* exactly when `blockedFiles` is
