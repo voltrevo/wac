@@ -229,7 +229,20 @@ C checkFiles(string[] paths, string[] sources, string entry) {
   Lexed elexed = lex(esrc);
   P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
   Program eprog = parseProgram(ep);
-  C c = C.create(esrc, elexed.tokens, elexed.tokenCount);
+  // **Sized for what will go in it, not for the file it starts from.** Every table in `C` is
+  // `capacity` long, and the capacity was the *entry's* token count — while the loop below fills it
+  // with the declarations of every file the entry imports. A small file with a large closure
+  // therefore ran out of room silently: `packages/sh/src/sh.wac` is a hundred lines and pulls in
+  // `exec.wac`, so `Shell`'s later fields were never registered and `sh.externalSpawnable = true`
+  // came back as *no such field* — a false alarm, which is the one direction this package treats as
+  // absolute. Counted by lexing the contributors first; they are lexed again below, which is a few
+  // milliseconds against a wrong answer. `issues/lang/0098`.
+  i32 capacity = elexed.tokenCount;
+  for (i32 i = 0; i < paths.len(); i++) {
+    if (paths[i] == entry) { continue; }
+    capacity = capacity + lex(sources[i].toBytes()).tokenCount;
+  }
+  C c = C.create(esrc, elexed.tokens, capacity);
 
   // **Which names, and from which file.** Filtering by name alone is not enough: `rlp.wac` exports a
   // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —

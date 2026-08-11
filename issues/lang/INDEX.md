@@ -5,7 +5,6 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
-| [0097](open/0097-a-linked-git-repo-emits-an-invalid-module.md) | wacc emits an invalid module for `packages/git/src/repo.wac` | bug | invalid wasm |
 | [0090](open/0090-linked-emission-drops-exported-functions-without-saying-so.md) | linked emission drops exported functions without saying so | bug | not implemented |
 | [0089](open/0089-wacc-emits-no-transfer-buffer-so-nothing-can-bind-to-it.md) | wacc emits no transfer buffer, so nothing that passes bytes can bind to it | missing feature | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
@@ -37,7 +36,7 @@ has been fixed and why.
 
 ## Closed
 
-97 issues, 68 closed.
+98 issues, 70 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran
