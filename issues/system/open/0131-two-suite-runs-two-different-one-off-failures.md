@@ -52,7 +52,7 @@ differential under load.
 The gate that found it was `wacc`'s, and `wacc`'s own oracles were green on both
 runs; nothing in this issue is evidence about the compiler.
 
-## A third sighting, and it is the same script — 2026-08-11, agent-b
+## A third and fourth sighting, both the same script — 2026-08-11, agent-b
 
 Two more full-suite runs an hour later. One was green; the other failed **the same sh script**, in a
 different temp directory:
@@ -70,3 +70,8 @@ says so; bash's `ls` still lists `one`, which is what a second process recreatin
 
 That narrows it: the shared thing is the temp *root*, and `w5` is a name derived from something that
 is not unique per run. Whoever owns the harness will see it in one look.
+
+A fourth, an hour later, same script again and a third temp root (`/tmp/9855d643aa656d2e/w5`), passing
+alone immediately afterwards. Four full-suite runs, three failures, all `w5`, all this script — and
+the directory name is the only part that changes. It is worth someone opening the harness rather than
+another agent recording a fifth.

@@ -1,6 +1,6 @@
 # 0089 — wacc emits no transfer buffer, so nothing that passes bytes can bind to it
 
-- **Status:** open — the buffer and the `u8[]` family are emitted; other element types are not
+- **Status:** open — every family is emitted except a static on a *generic instance*
 - **Claimed by:** agent-b, 2026-08-10
 - **Reported by:** agent-b
 - **Date:** 2026-08-10
@@ -103,3 +103,36 @@ cheapest next step. **The two wrong answers are the interesting ones**: they are
 whole exercise was for, and no amount of well-formedness checking would have found them.
 
 Re-measure with `deno run -A packages/wacc/tools/runOnWacc.ts`.
+
+## Everything but one name — 2026-08-11, agent-b
+
+The families are done: memory, every array element type (with `_new`/`_get`/`_set`/`_len`, and
+`_new0` where the element is a `string`), structs, enums, strings, methods and statics, and callbacks
+through an import section (`issues/lang/0094`). The tally:
+
+    30 of 34 packages pass their own suite on wacc-emitted code (1,391 tests)
+    why the rest do not:
+        2  $bind$sm_Vec__packages_std_src_vec$string_create                       (box, fs)
+        1  $bind$m_Vec__packages_std_src_vec$IndexEntry__packages_git_src_index_len  (git)
+        1  a static Shell.capturing, declined                                     (sh)
+
+**What is left is one name, and it is two features rather than one.**
+
+`box`, `fs` and `git` call a method or a static on a *generic instance*, and the glue asks for it under the reference's
+spelling: `bindName("Vec__packages_std_src_vec<string>")`. Two things stand between wacc and that:
+
+1. **The methods of an instance are not exported at all.** `bindMethodExports` walks declarations and
+   skips anything generic, because an instance's methods are emitted from a substitution rather than
+   from a declaration. They would need collecting from `env.instName`/`instOf` instead.
+2. **wacc does not spell an instance the way the reference does.** The reference qualifies a template
+   by its declaring file — `fileTag(path)` is the path minus `.wac` with every non-alphanumeric
+   replaced by `_` — and wacc keys a shadowed name as `Vec@<fileno>` instead. The *paths* do not
+   reach the emitter at all: `emitLinked` hands `emitModuleOf` a blob plus line boundaries, so
+   `Env.fileOf(line)` knows which file a declaration came from and nothing knows what it was called.
+
+So the work is: carry the ordered paths into `Env`, add the reference's `fileTag` spelling for
+instances, and export an instance's methods from the instance tables. None of it is deep; it is three
+places that have to agree, and getting the mangling wrong leaves the helper as invisible as it is now.
+
+Worth saying: **this is the only remaining blocker that is a *name*.** Everything else in the tally is
+an emitter decline with its own reason.
