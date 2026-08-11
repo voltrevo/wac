@@ -1,5 +1,5 @@
 // RSA verification at the host boundary.
-import { rsaVerifyPkcs1, rsaVerifyPss, modPow, fromBytes, toBytes } from "../../src/rsa.wac";
+import { rsaVerifyPkcs1, rsaVerifyPss, modPow, modPowSecret, fromBytes, toBytes } from "../../src/rsa.wac";
 
 export bool verifyPkcs1(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen) {
   return rsaVerifyPkcs1(n, e, msg, sig, hashLen);
@@ -10,4 +10,13 @@ export bool verifyPss(u8[] n, u8[] e, u8[] msg, u8[] sig, i32 hashLen, i32 saltL
 /** s^e mod n, so modular exponentiation can be checked against BigInt on its own. */
 export u8[] modExp(u8[] base, u8[] exp, u8[] mod) {
   return toBytes(modPow(fromBytes(base), fromBytes(exp), fromBytes(mod)), mod.len());
+}
+
+/**
+ * `base^exp mod m` through the **secret-exponent** path, which is the one a private-key operation
+ * takes. `modExp` above is the public one, and the two differ in cost per bit rather than in shape —
+ * which is exactly what wac-mono 0099 needs measured separately.
+ */
+export u8[] modExpSecret(u8[] base, u8[] exp, u8[] mod, i32 bits) {
+  return toBytes(modPowSecret(fromBytes(base), fromBytes(exp), fromBytes(mod), bits), mod.len());
 }

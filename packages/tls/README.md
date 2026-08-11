@@ -167,13 +167,15 @@ certificate's key type at zero and path building skips it, rather than trapping 
 system trust store here holds 121 roots and some use things this does not implement, and
 one exotic root must not take down the parse of the other 120.
 
-**An RSA server key must be 1024-bit.** Not a design decision — a 2048-bit private-key operation
-does not finish in any time a peer would wait, which is
-[0099](../../issues/system/open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md): more than
-3500x for a change the arithmetic says should cost about 8x, so the suspicion is `modPow` rather
-than "big numbers are slow". Nothing in `packages/tor` is blocked, since tor's link and identity
-keys are 1024-bit, and every test in the tree uses that size — which is exactly why nothing saw
-it until a server tried a real certificate.
+**An RSA server key was said to have to be 1024-bit**, and that is fixed:
+`test/rsa_server_interop.test.ts` completes a 2048-bit handshake against OpenSSL in **218 ms**, and
+runs both sizes because 1024 alone is what hid the fault. The paragraph that stood here said "a
+2048-bit private-key operation does not finish in any time a peer would wait… more than 3500x for a
+change the arithmetic says should cost about 8x, so the suspicion is `modPow`". The suspicion was
+wrong and worth keeping: `modPowSecret` over a 2048-bit modulus is **47 ms**, and what did not finish
+was `encodeConn`, which wrote the modulus behind a one-byte length prefix and trapped on the 256th
+byte. Reported as a hang because the test's driver loop caught the trap and went on waiting.
+[0099](../../issues/system/closed/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md).
 
 **PSS parameters are assumed, not parsed.** A certificate signed with RSASSA-PSS carries
 its hash and salt length in the algorithm parameters; this assumes SHA-256 with a

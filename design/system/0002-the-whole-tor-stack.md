@@ -2168,9 +2168,11 @@ in it after.
 
 The key is **separate from the identity and short-lived**, as tor's link key is. Reusing the identity
 key would have meant the long-lived private key doing a signature on every connection, which is a
-worse property than the fingerprint this closes. 1024-bit, which is tor's size and also the only size
-that works: issue 0099 records that a 2048-bit private-key operation does not finish in any time a
-peer would wait, and this key signs a CertificateVerify per connection.
+worse property than the fingerprint this closes. 1024-bit, which is tor's size — and it was described here as the
+only size that works, on 0099's reading that a 2048-bit private-key operation does not finish in any
+time a peer would wait. That reading was wrong: the signature is 47 ms and what did not finish was a
+one-byte length prefix in `encodeConn` trapping on a 256-byte modulus. 0099 is closed and a 2048-bit
+handshake completes in 218 ms, so the size here is tor's requirement rather than ours.
 
 **Three commits for one field**, and the shape is worth keeping. `rsaSignPss` was the primitive and
 its differential was the first time anything checked our PSS *signing* rather than our verifying;

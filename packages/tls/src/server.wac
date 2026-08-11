@@ -122,9 +122,14 @@ u8[] encodeConn(Conn c) {
   w.u32(c.certDer.len());
   w.bytes(c.certDer);
   w.vec8(c.seed);
-  w.vec8(c.rsaN);
-  w.vec8(c.rsaE);
-  w.vec8(c.rsaD);
+  // **`vec16`, because these three are the only fields here whose length is the *key's* rather than a
+  // hash's.** A 2048-bit modulus is 256 bytes and `vec8` traps above 255, so every RSA key at or above
+  // the size anyone outside Tor would choose made this trap before the handshake had read a byte —
+  // wac-mono 0099, where it was reported as `modPowSecret` being slow because the trap arrived as a
+  // hang. The other fields are 32 or 48 bytes by their hash and stay as they are.
+  w.vec16(c.rsaN);
+  w.vec16(c.rsaE);
+  w.vec16(c.rsaD);
   w.vec8(c.ephemeralPriv);
   w.vec8(c.serverRandom);
   return w.take();
@@ -145,9 +150,9 @@ Conn decodeConn(u8[] state) {
   u8[] transcript = r.take(r.u32());
   u8[] certDer = r.take(r.u32());
   u8[] seed = r.vec8();
-  u8[] rsaN = r.vec8();
-  u8[] rsaE = r.vec8();
-  u8[] rsaD = r.vec8();
+  u8[] rsaN = r.vec16();
+  u8[] rsaE = r.vec16();
+  u8[] rsaD = r.vec16();
   u8[] eph = r.vec8();
   u8[] rnd = r.vec8();
   r.expectEnd();

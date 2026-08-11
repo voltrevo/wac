@@ -12,7 +12,6 @@ record of what has been fixed and why.
 | [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |
 | [0107](open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) | a C tor fetching from our onion service times out intermittently — likely the same fault as 0106 | bug | hangs |
 | [0106](open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md) | the onion-service test goes red under load, and its 30s timeout cannot tell busy from wedged | bug | wrong answer |
-| [0099](open/0099-a-2048-bit-rsa-private-key-operation-does-not-finish.md) | a 2048-bit RSA private-key operation does not finish in any time a test will wait | performance | hangs |
 | [0097](open/0097-how-much-of-packages-tor-is-ours-rather-than-a-transliteration.md) | how much of `packages/tor` is genuinely ours rather than a transliteration of C tor? | task | no error |
 | [0095](open/0095-sha256-is-13x-off-openssl-and-most-of-it-is-not-shape.md) | `sha256` is 13x off OpenSSL, and most of that is not a shape problem | performance | not implemented |
 | [0094](open/0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md) | nothing has ever run `wasm-opt` over what we ship, and it halves the module | performance | not implemented |
@@ -29,7 +28,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-146 issues, 129 closed.
+146 issues, 130 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

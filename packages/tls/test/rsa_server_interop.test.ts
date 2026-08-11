@@ -6,12 +6,20 @@
 // relay is therefore distinguishable from every real one by the first thing it sends. See
 // `packages/tor/README.md`, *What is not here*.
 //
-// The key is 1024-bit, which is what tor uses for a link key and is also what our bignum can sign
-// with inside a test's patience: a 2048-bit private-key operation is 2048 squarings and
-// multiplications of 2048-bit numbers in `modPowSecret`, and the first version of this test sat in
-// one for four minutes before being killed. That is a performance fact about `packages/crypto`
-// rather than a limit on what works, and it is written down here because a test that hangs teaches
-// nothing about why.
+// **Both key sizes, and the second one is here because of what the first one hid.** 1024-bit is what
+// tor uses for a link key. 2048 is what anyone outside tor would pick, and this file ran only 1024
+// with a comment saying why: "a 2048-bit private-key operation is 2048 squarings and multiplications
+// of 2048-bit numbers in `modPowSecret`, and the first version of this test sat in one for four
+// minutes before being killed."
+//
+// That was wrong, and it was wrong in a way worth keeping written down. `modPowSecret` over a
+// 2048-bit modulus takes **47 ms** — measured through `packages/crypto/test/wac/rsa_probe.wac`'s
+// `modExpSecret`, at 256/512/1024/1536/2048 bits, where the curve is the 8x per doubling the
+// arithmetic predicts. What actually happened is that `encodeConn` wrote the modulus behind a
+// **one-byte length prefix**, and a 2048-bit modulus is 256 bytes, so `vec8` trapped before the
+// handshake had read a byte. The trap surfaced as a hang because the loop below caught it and went on
+// waiting for a client that was itself waiting — see the `catch` there, which now says which of the
+// two happened. wac-mono 0099.
 //
 // The certificate and the key are made by OpenSSL rather than by us, and the client is OpenSSL, so
 // nothing in this test is ours on both ends — which for a signature scheme is the only arrangement
@@ -46,10 +54,10 @@ function unpack(r: Uint8Array) {
   return { state: take(), toSend: take(), appData: take() };
 }
 
-/** An RSA key and a self-signed certificate for it, both made by OpenSSL. */
-async function opensslRsaIdentity(dir: string) {
+/** An RSA key of `bits` and a self-signed certificate for it, both made by OpenSSL. */
+async function opensslRsaIdentity(dir: string, bits: number) {
   const gen = await new Deno.Command("openssl", {
-    args: ["req", "-x509", "-newkey", "rsa:1024", "-keyout", `${dir}/key.pem`, "-out",
+    args: ["req", "-x509", "-newkey", "rsa:2048", "-keyout", `${dir}/key.pem`, "-out",
            `${dir}/cert.pem`, "-days", "1", "-nodes", "-subj", "/CN=wac.test",
            "-outform", "DER"],
     stdout: "piped", stderr: "piped",
@@ -80,10 +88,11 @@ async function opensslRsaIdentity(dir: string) {
   };
 }
 
-Deno.test("tls: OpenSSL completes a handshake with our server's RSA certificate", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "wac-tls-rsa-" });
+for (const bits of [1024, 2048]) {
+Deno.test(`tls: OpenSSL completes a handshake with our server's ${bits}-bit RSA certificate`, async () => {
+  const dir = await Deno.makeTempDir({ prefix: `wac-tls-rsa-${bits}-` });
   try {
-    const id = await opensslRsaIdentity(dir);
+    const id = await opensslRsaIdentity(dir, bits);
 
     const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (listener.addr as Deno.NetAddr).port;
@@ -133,7 +142,15 @@ Deno.test("tls: OpenSSL completes a handshake with our server's RSA certificate"
         } finally {
           try { conn.close(); } catch { /* already closed */ }
         }
-      } catch { /* the client hung up */ }
+      } catch (e) {
+        // **Which of the two this is matters more than it looks.** A client that hung up is the
+        // ordinary end of a failed handshake and says nothing; a *trap in our own wasm* is the
+        // defect, and swallowing it here left both ends waiting — the server had stopped reading
+        // and the client was waiting for a ServerHello that would never come, so a one-line bug
+        // presented as a four-minute hang and was filed as a performance problem (0099). Deno
+        // reports a wac `trap` as a `RuntimeError`, which nothing that happens to a socket does.
+        if (e instanceof WebAssembly.RuntimeError) throw e;
+      }
       try { listener.close(); } catch { /* already closed */ }
       return received;
     })();
@@ -166,3 +183,4 @@ Deno.test("tls: OpenSSL completes a handshake with our server's RSA certificate"
     await Deno.remove(dir, { recursive: true });
   }
 });
+}

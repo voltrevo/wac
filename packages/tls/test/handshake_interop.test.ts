@@ -83,7 +83,14 @@ function serveOnce(reply: string): { port: number; done: Promise<string | null>;
       } finally {
         try { conn.close(); } catch { /* already closed */ }
       }
-    } catch { /* the client hung up, or the listener closed */ }
+    } catch (e) {
+      // A client that hung up and a listener that closed are the ordinary ends of this loop. A
+      // **trap in our own wasm** is not, and swallowing it here leaves the peer waiting for a flight
+      // that will never come — which is how 0099 spent four minutes looking like a slow signature
+      // when it was a one-byte length prefix trapping on a 256-byte modulus. Deno reports a wac
+      // `trap` as a `RuntimeError`; nothing a socket does produces one.
+      if (e instanceof WebAssembly.RuntimeError) throw e;
+    }
     close();
     return received;
   })();
