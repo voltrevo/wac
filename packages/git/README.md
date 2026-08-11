@@ -1,8 +1,10 @@
 # git
 
-git in wac: the object database, and enough of a client to fetch from a real server. Reads and writes
-the objects a repository is made of and agrees with `git` about what every one of them is called; lists
-a remote's refs and fetches a pack over its own TLS.
+git in wac: the object database, a working tree, and a client that clones a real repository over its own
+TLS. Reads and writes the objects a repository is made of and agrees with `git` about what every one of
+them is called; checks a commit out to files and reports how they differ afterwards in `git status`'s own
+words; clones from GitHub, and pushes to a local repository — over the network needs credentials, which
+this does not have and does not want.
 
 ```
 $ git hash-object --stdin <<< "hello"
