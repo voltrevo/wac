@@ -1,0 +1,98 @@
+// `namesFiles` against the module it describes.
+//
+// Its only consumer is somebody holding a wasm error that says *function #N* — the engine names no
+// function, so this list is how a number becomes a name. That makes a disagreement worse than
+// useless: it is a confident wrong answer, and it sent one investigation to `hexOf` for a fault in
+// `openRepo` (`issues/lang/0097`). The cause was that the list was built from an `Env` with no file
+// table and no import edges, so it declined a different set of functions than the emitter did.
+//
+// Asserted through the *export section*, which is the only place a name and an index appear together
+// in the module itself. An imported function occupies an index too, and they come first.
+
+import { loadCorpus } from "./corpus.ts";
+import { wacBind } from "../../../harness/wacBind.ts";
+
+const mod = await wacBind("packages/wacc/src/api.wac");
+const emitFiles = mod.emitFiles as (p: string[], s: string[], e: string) => Uint8Array;
+const namesFiles = mod.namesFiles as (p: string[], s: string[], e: string) => string;
+
+/** Every exported function's name and index, read out of the module's export section. */
+function exportedFunctions(b: Uint8Array): [string, number][] {
+  let p = 8;
+  const u32 = () => {
+    let r = 0, sh = 0, x = 0;
+    do { x = b[p++]; r |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80);
+    return r >>> 0;
+  };
+  const sec = new Map<number, number>();
+  while (p < b.length) { const id = b[p++], size = u32(); sec.set(id, p); p += size; }
+  const out: [string, number][] = [];
+  if (!sec.has(7)) return out;
+  p = sec.get(7)!;
+  const n = u32();
+  for (let i = 0; i < n; i++) {
+    const len = u32();
+    const name = new TextDecoder().decode(b.subarray(p, p + len));
+    p += len;
+    const kind = b[p++], idx = u32();
+    if (kind === 0) out.push([name, idx]);
+  }
+  return out;
+}
+
+/** How many functions the module imports — they are numbered before anything it defines. */
+function importedFunctions(b: Uint8Array): number {
+  let p = 8;
+  const u32 = () => {
+    let r = 0, sh = 0, x = 0;
+    do { x = b[p++]; r |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80);
+    return r >>> 0;
+  };
+  const sec = new Map<number, number>();
+  while (p < b.length) { const id = b[p++], size = u32(); sec.set(id, p); p += size; }
+  if (!sec.has(2)) return 0;
+  p = sec.get(2)!;
+  const n = u32();
+  let funcs = 0;
+  for (let i = 0; i < n; i++) {
+    const l1 = u32(); p += l1;
+    const l2 = u32(); p += l2;
+    const kind = b[p++];
+    u32();
+    if (kind === 0) funcs++;
+  }
+  return funcs;
+}
+
+Deno.test("rung 4: every exported function is where `namesFiles` says it is", async () => {
+  const entries = await loadCorpus("packages/wacc/test/names.test.ts");
+  const paths = entries.map(([name]) => name);
+  const sources = entries.map(([, src]) => src);
+
+  const wrong: string[] = [];
+  let checkedFiles = 0;
+  let checkedExports = 0;
+  for (const [file] of entries) {
+    const bytes = Uint8Array.from(emitFiles(paths, sources, file) as unknown as number[]);
+    if (bytes.length <= 8 || !WebAssembly.validate(bytes)) continue;
+    const names = namesFiles(paths, sources, file).split("\n");
+    const nimp = importedFunctions(bytes);
+    checkedFiles++;
+    for (const [name, idx] of exportedFunctions(bytes)) {
+      // The helpers are not source functions and have no line in this list.
+      if (name.startsWith("$bind$")) continue;
+      checkedExports++;
+      const said = names[idx - nimp] ?? "(past the end of the list)";
+      if (said !== name) wrong.push(`${file}: ${name} is function #${idx}, the list says ${said}`);
+    }
+  }
+
+  // The canary: a walk that emitted nothing would agree with everything.
+  if (checkedFiles < 100) throw new Error(`only ${checkedFiles} modules were readable — the harness is not reaching the emitter`);
+  if (checkedExports < 200) throw new Error(`only ${checkedExports} exports checked — too few to mean anything`);
+  console.log(`    rung 4 names: ${checkedExports} exports across ${checkedFiles} modules, all where the list says`);
+  if (wrong.length > 0) {
+    throw new Error(`${wrong.length} exported function(s) are not where \`namesFiles\` puts them:\n  ` +
+      wrong.slice(0, 8).join("\n  "));
+  }
+});
