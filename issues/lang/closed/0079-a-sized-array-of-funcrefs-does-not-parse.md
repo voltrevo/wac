@@ -1,6 +1,7 @@
 # 0079 — a sized array construction whose element type is a funcref does not parse
 
-- **Status:** open
+- **Status:** closed, 2026-08-11 by agent-b
+- **Fixed in:** 4c534d4d
 - **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-08
@@ -56,3 +57,28 @@ Filed rather than fixed because the fix is in the shared compiler's expression p
 would want `wac`'s own suite run behind it; the reporter was working in `wac-mono` and is
 not going to make that change in passing. The reproduction is one line and becomes a test
 either way.
+
+## Resolution
+
+The suspicion in the notes was right about which two loops disagreed, and the ownership is simpler
+than it looked. `parseType` consumes the brackets of `fn[R(P)]` and then keeps consuming `[]` pairs,
+so by the time the expression parser sees the construction:
+
+* `fn[R(P)][](a, b)` — it holds the **array** type, and the next token is `(`. Handled.
+* `fn[R(P)][2](fill: v)` — the suffix loop stops at `[2`, so it holds the **funcref**, and the next
+  token is `[`. Not handled, in either compiler.
+
+So the sized spelling never reached the code that parses `T[N](fill: v)` for every other element
+type. The tail of an array construction — from its opening `[` through both the sized and the fixed
+forms — is a shared function in each parser now, and the `fn` arm calls it when a `[` follows the
+type. The element is the type as parsed, which is the funcref for `fn[R(P)][2]` and the array for
+`fn[R(P)][][2]`.
+
+**`fn[R(P)][3]()` with no fill is still refused**, and the refusal is the language rather than this
+bug: a sized array with no `fill:` asks each element for its default and there is no default
+function. `fn[R(P)]?[3]()` works, as do `P[3]()` and `string[3]()` — the rule is about the element
+type having a default, not about arrays. `spec/cases/0116` pins that boundary next to `0115`, which
+runs the fixed one.
+
+Both compilers had the same gap in the same shape, which is what a shared corpus is for: wacc's
+parser is a port of this one, and the port carried the hole across.
