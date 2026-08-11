@@ -1,0 +1,257 @@
+// `CONNECT` through an HTTP proxy, so that what follows on the socket is the other end.
+//
+// `client.wac` speaks HTTP *to* a server. This speaks HTTP to a **proxy** and then stops, leaving a
+// socket that is no longer carrying HTTP at all:
+//
+//     CONNECT github.com:443 HTTP/1.1
+//     Host: github.com:443
+//
+//     HTTP/1.1 200 Connection established
+//
+//     <-- from here the bytes are whatever the caller tunnels, usually a TLS handshake -->
+//
+// `design/system/0005` step 6 is why this exists. The container `packages/git` is built in has **no
+// direct egress** — external DNS does not resolve and everything outbound goes through Squid — while
+// `Cli.connect` is a raw TCP connect, so no real server can be reached without this. It is not
+// git-specific and does not belong in `packages/git`: `CONNECT` is HTTP, and `box`'s `gets` applet
+// wants it for the same reason.
+//
+// ## The split, which is this package's own rule
+//
+// `client_probe.wac` puts it plainly: *the host owns the socket in between, so the client's decisions
+// are all here and testable without one.* So the decisions are pure functions over bytes —
+// `connectRequest` builds what to send, `readReply` says what has come back — and `connectThrough` is
+// only the loop that owns a socket. Everything below that is worth a test is reachable without one.
+//
+// ## Three things that are easy to get wrong, and are therefore what the tests are about
+//
+// **The reply ends at the blank line, not at the socket's end.** `client.wac` can read to EOF because it
+// asked for `Connection: close`; here the socket stays open, and reading past the blank line consumes
+// the tunnelled protocol — or blocks for ever waiting for a peer that is waiting for us.
+//
+// **Bytes past the blank line are kept.** A proxy may put the end of its reply and the start of the
+// tunnel in one packet, and `recv` hands over what arrived rather than what was asked for. Dropping the
+// remainder loses the first record of any protocol whose far end speaks first. TLS is not one — the
+// client sends the hello — so this is precisely the case that passes everywhere it is tested and fails
+// against something else later. `Established` carries the offset for that reason.
+//
+// **A refusal is the proxy's own words.** Squid answers `403` for a host that is not on its allowlist,
+// and that is operational information rather than a network error: the fix is a line in a file on the
+// host. A caller reporting "connection failed" sends somebody to look at the wrong thing.
+
+import { Cli, Socket } from "../../platform/src/platform.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+
+/** Where a proxy is. */
+export struct ProxyAt {
+  bool ok;
+  string host;
+  i32 port;
+}
+
+/**
+ * `http://gateway:3128`, the shape `HTTP_PROXY` and `HTTPS_PROXY` carry.
+ *
+ * The scheme is accepted and ignored: `https://` in a proxy variable means "the proxy to use for https",
+ * not "speak TLS to the proxy", and treating it as the latter is a well-worn mistake. A missing port is
+ * 3128 rather than 80, because nothing in this container listens on 80 and a default that dials the
+ * wrong port produces a timeout where a message would do.
+ */
+export ProxyAt parseProxy(string url) {
+  string rest = url;
+  i32 scheme = rest.indexOf("://");
+  if (scheme >= 0) { rest = rest.slice(scheme + 3, rest.len()); }
+  i32 slash = rest.indexOf("/");
+  if (slash >= 0) { rest = rest.slice(0, slash); }
+  if (rest.len() == 0) { return ProxyAt(false, "", 0); }
+
+  // The **last** colon, scanned by hand because wac has `indexOf` and no `lastIndexOf`.
+  //
+  // A bracketed IPv6 authority — `[::1]:3128` — would want the bracket honoured rather than the last
+  // colon taken, and this does not do that. No proxy variable in this container carries one, and a
+  // branch nothing reaches is worse than an absence somebody can find.
+  i32 colon = -1;
+  u8[] restBytes = rest.toBytes();
+  for (i32 i = 0; i < restBytes.len(); i++) {
+    if (restBytes[i] == ':') { colon = i; }
+  }
+  if (colon < 0) { return ProxyAt(true, rest, 3128); }
+
+  string host = rest.slice(0, colon);
+  string portText = rest.slice(colon + 1, rest.len());
+  if (host.len() == 0 || portText.len() == 0) { return ProxyAt(false, "", 0); }
+  i32 port = 0;
+  u8[] digits = portText.toBytes();
+  for (i32 i = 0; i < digits.len(); i++) {
+    i32 c = digits[i];
+    if (c < '0' || c > '9') { return ProxyAt(false, "", 0); }
+    port = port * 10 + (c - '0');
+    if (port > 65535) { return ProxyAt(false, "", 0); }
+  }
+  if (port == 0) { return ProxyAt(false, "", 0); }
+  return ProxyAt(true, host, port);
+}
+
+/** The request that opens a tunnel to `host:port`. */
+export u8[] connectRequest(string host, i32 port) {
+  string authority = host + ":" + itoa(port);
+  // **No `Connection: close`**, which would ask the proxy to hang up on the thing being opened.
+  string head = "CONNECT " + authority + " HTTP/1.1\r\n"
+    + "Host: " + authority + "\r\n"
+    + "User-Agent: wac\r\n"
+    + "\r\n";
+  return head.toBytes();
+}
+
+/** What a proxy's reply says, given everything read so far. */
+export enum ProxyReply {
+  /** The blank line has not arrived. Read more and ask again. */
+  NeedMore,
+  /** A tunnel is open. `at` is the first byte that belongs to the tunnel rather than to the reply. */
+  Established(i32 at),
+  /** The proxy answered and said no. The text is its own first line. */
+  Refused(string line),
+  /** Not an HTTP reply at all. */
+  NotHttp(string line)
+}
+
+/**
+ * Read a proxy's reply out of what has arrived so far.
+ *
+ * Pure, and called after every `recv`: a caller cannot know in advance how many reads a reply takes, and
+ * the answer has to be the same whether it arrived in one packet or in twenty.
+ */
+export ProxyReply readReply(u8[] b) {
+  i32 end = headerEnd(b);
+  if (end < 0) {
+    // A reply that is already not HTTP is worth saying so about before the blank line arrives, since one
+    // may never come — a plain TCP echo, or a server that is not a proxy, would otherwise read as
+    // "need more" for ever.
+    if (b.len() >= 5 && !looksHttp(b)) { return ProxyReply.NotHttp(firstLine(b)); }
+    return ProxyReply.NeedMore;
+  }
+  i32 status = statusOf(b);
+  if (status < 0) { return ProxyReply.NotHttp(firstLine(b)); }
+  if (status < 200 || status > 299) { return ProxyReply.Refused(firstLine(b)); }
+  return ProxyReply.Established(end);
+}
+
+/** A tunnel, or why there is not one. */
+export struct Tunnel {
+  bool ok;
+  /** Still open when `ok`, with the proxy's reply consumed and nothing more. `-1` otherwise. */
+  i32 handle;
+  /**
+   * Whatever arrived after the proxy's blank line, belonging to the tunnelled protocol.
+   *
+   * Usually empty. A caller must feed these to its protocol **before** reading the socket again.
+   */
+  u8[] leftover;
+  string error;
+}
+
+/** How much of a reply to read before deciding the proxy will not finish one. */
+i32 replyCap() { return 1 << 16; }
+
+/**
+ * Open a tunnel to `host:port` through the proxy at `proxyHost:proxyPort`.
+ *
+ * The only thing here that owns a socket, and deliberately the only thing that is not a pure function of
+ * its arguments. It is closed on every failure path, so a caller that gets `ok` false owns nothing.
+ */
+export Tunnel connectThrough(Cli cli, string proxyHost, i32 proxyPort, string host, i32 port) {
+  Socket s = cli.connect(proxyHost, proxyPort).wait();
+  if (s.handle < 0) {
+    return Tunnel(false, -1, u8[0](), "the proxy at " + proxyHost + ":" + itoa(proxyPort)
+      + " could not be reached: " + s.error);
+  }
+  if (!cli.send(s.handle, connectRequest(host, port)).wait()) {
+    cli.closeSocket(s.handle);
+    return Tunnel(false, -1, u8[0](), "the proxy accepted a connection and not a request");
+  }
+
+  string authority = host + ":" + itoa(port);
+  Buf all = Buf.create();
+  while (true) {
+    match (cli.recv(s.handle).wait()) {
+      case Data(bytes): { all.pushAll(bytes); }
+      case End: {
+        cli.closeSocket(s.handle);
+        // Distinct from a refusal on purpose: nothing was said, so there is no status to report and the
+        // cause is upstream of any policy the proxy has.
+        return Tunnel(false, -1, u8[0](), "the proxy closed the connection before answering");
+      }
+      case Failed(why): {
+        cli.closeSocket(s.handle);
+        return Tunnel(false, -1, u8[0](), "reading the proxy's reply failed: " + why);
+      }
+    }
+    u8[] soFar = all.bytes();
+    match (readReply(soFar)) {
+      case NeedMore: {
+        if (all.len > replyCap()) {
+          cli.closeSocket(s.handle);
+          return Tunnel(false, -1, u8[0](), "the proxy sent " + itoa(all.len)
+            + " bytes without finishing a reply");
+        }
+      }
+      case NotHttp(line): {
+        cli.closeSocket(s.handle);
+        return Tunnel(false, -1, u8[0](), "the proxy's reply is not HTTP: " + line);
+      }
+      case Refused(line): {
+        cli.closeSocket(s.handle);
+        // The proxy's own line, verbatim. A 403 here is an allowlist, not a network.
+        return Tunnel(false, -1, u8[0](), "the proxy refused " + authority + ": " + line);
+      }
+      case Established(at): {
+        u8[] leftover = u8[soFar.len() - at]();
+        for (i32 i = 0; i < leftover.len(); i++) { leftover[i] = soFar[at + i]; }
+        return Tunnel(true, s.handle, leftover, "");
+      }
+    }
+  }
+  // Unreachable: every arm above either returns or loops.
+  return Tunnel(false, -1, u8[0](), "unreachable");
+}
+
+/** One past the `\r\n\r\n` that ends a reply's head, or -1. */
+i32 headerEnd(u8[] b) {
+  for (i32 i = 0; i + 3 < b.len(); i++) {
+    if (b[i] == 13 && b[i + 1] == 10 && b[i + 2] == 13 && b[i + 3] == 10) { return i + 4; }
+  }
+  return -1;
+}
+
+/** Whether the first bytes could begin an HTTP reply. */
+bool looksHttp(u8[] b) {
+  return b.len() >= 5 && b[0] == 'H' && b[1] == 'T' && b[2] == 'T' && b[3] == 'P' && b[4] == '/';
+}
+
+/** The status code from `HTTP/1.1 200 …`, or -1 if the line is not that shape. */
+i32 statusOf(u8[] b) {
+  if (!looksHttp(b)) { return -1; }
+  i32 at = -1;
+  for (i32 i = 5; i < b.len(); i++) {
+    if (b[i] == 13 || b[i] == 10) { break; }
+    if (b[i] == 32) { at = i + 1; break; }
+  }
+  if (at < 0 || at + 2 >= b.len()) { return -1; }
+  i32 v = 0;
+  for (i32 i = at; i < at + 3; i++) {
+    if (b[i] < '0' || b[i] > '9') { return -1; }
+    v = v * 10 + (b[i] - '0');
+  }
+  return v;
+}
+
+/** The first line, without its terminator, for a message. */
+string firstLine(u8[] b) {
+  Buf out = Buf.create();
+  for (i32 i = 0; i < b.len(); i++) {
+    if (b[i] == 13 || b[i] == 10) { break; }
+    out.push(b[i]);
+  }
+  return out.toStr();
+}
