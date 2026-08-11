@@ -31,9 +31,11 @@
 // the whole contract: **later rules win**, so a caller appends `.git/info/exclude` first, then the root
 // `.gitignore`, then each nested one as it descends. `repo.wac`'s walk does exactly that.
 //
-// **`core.excludesFile` is not read**, because it needs a config parser and there is none here. That is one
-// of git's four sources missing, and a matcher that silently applied three where git applies four would be
-// wrong in exactly the way `git check-ignore` catches — so it is said rather than hidden.
+// **`core.excludesFile` is a source this does not fetch either**, for a sharper reason than the rest: its
+// value is usually `~/…`, expanding that needs `HOME`, and nothing at this layer has an environment. The
+// program supplies its bytes as the first rules in the list, which puts it where git puts it — below
+// `.git/info/exclude`, measured with `git check-ignore -v` rather than read off the documentation.
+// `example/gitst.wac` does that, and `test/status.test.ts` fails if the order is reversed.
 
 import { Buf } from "../../bytes/src/buf.wac";
 import { Vec } from "../../std/src/vec.wac";

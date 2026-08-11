@@ -1,0 +1,95 @@
+// The four files git reads for one setting, in the order it reads them.
+//
+// `config.wac` parses bytes and knows nothing about where they came from, which is what lets it be tested
+// against `git config --list --file` directly. This is the other half: finding the files. It is separate
+// because the search needs a `Cli` — for `HOME` and `XDG_CONFIG_HOME` — and giving the parser an
+// environment to keep them in one file would cost that test.
+//
+// ## The order, measured rather than recalled
+//
+//     /etc/gitconfig                                system
+//     ${XDG_CONFIG_HOME:-$HOME/.config}/git/config  global
+//     $HOME/.gitconfig                              global
+//     <gitdir>/config                               local, and the winner
+//
+// `git config --list --show-origin` prints exactly that, in exactly that order, and `configOf`'s
+// last-one-wins then gives git's answer for free.
+//
+// **Both global files are read, not one or the other.** With `user.name` in `~/.gitconfig` and
+// `user.email` in `~/.config/git/config`, git answers with both — so a reader that treated the dotfile as
+// *replacing* the XDG file would lose an email that is set, which is the shape of bug that ends with a
+// commit refused for a user who configured one. The dotfile is read second, so it wins where they collide.
+//
+// **`XDG_CONFIG_HOME` unset does not mean no XDG file.** git falls back to `$HOME/.config`, and measuring
+// that was worth it: the obvious reading is that the variable being unset switches the file off, and it
+// does not.
+//
+// **A file that is not there is not an error.** Every level is optional and most are usually absent; git
+// answers from whatever it found. So does this.
+//
+// ## What is still not searched
+//
+// `$GIT_CONFIG_SYSTEM` and `$GIT_CONFIG_GLOBAL` override the system and global paths, and `GIT_CONFIG_NOSYSTEM`
+// switches the first off. They are not read here — this repository's own tests use them, so they are not
+// exotic — and `[include]`/`includeIf` are still not followed, which `config.wac` says.
+//
+// **`/etc/gitconfig` is read but not tested**, and the two are worth separating: a suite cannot write
+// `/etc`, so the system level was only ever exercised through `$GIT_CONFIG_SYSTEM` in the probe that
+// established this order. The other three levels are pinned by `test/configchain.test.ts`. Counting the
+// system one as covered because the code names it is exactly the reasoning that makes a green suite mean
+// less than it appears to.
+
+import { Cli, FileResult } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Setting, parseConfig } from "./config.wac";
+import { Vec } from "../../std/src/vec.wac";
+
+/** `$HOME`, or `""` when it is unset — which is not an error, only a search that finds less. */
+string homeOf(Cli cli) {
+  u8[]? home = cli.env("HOME").wait();
+  return home is null ? "" : string.fromBytes(home!);
+}
+
+/** Append `path`'s settings if it can be read, and say nothing if it cannot. */
+void addFile(Fs fs, Vec<Setting> into, string path) {
+  FileResult f = fs.readFile(path);
+  if (f.ok) { into.extend(parseConfig(f.bytes)); }
+}
+
+/**
+ * Every setting from every file git would read for a repository at `gitDir`, lowest precedence first.
+ *
+ * Hand the result to `configOf`, which takes the last of a name — so the local file beats the dotfile,
+ * which beats the XDG file, which beats the system one, per key rather than per file.
+ *
+ * `gitDir` may be `""` for a search with no repository, which is what a program does before it has opened
+ * one — the three other levels are still worth reading.
+ */
+export Vec<Setting> configChain(Cli cli, Fs fs, string gitDir) {
+  Vec<Setting> all = Vec.create();
+  addFile(fs, all, "/etc/gitconfig");
+  string home = homeOf(cli);
+  u8[]? xdg = cli.env("XDG_CONFIG_HOME").wait();
+  if (!(xdg is null)) {
+    addFile(fs, all, string.fromBytes(xdg!) + "/git/config");
+  } else if (home != "") {
+    // The fallback git uses when the variable is unset, which is not the same as reading no XDG file.
+    addFile(fs, all, home + "/.config/git/config");
+  }
+  if (home != "") { addFile(fs, all, home + "/.gitconfig"); }
+  if (gitDir != "") { addFile(fs, all, gitDir + "/config"); }
+  return all;
+}
+
+/**
+ * Expand a leading `~/` against `HOME`, which is how a configured path is almost always written.
+ *
+ * Anything else is returned as it stands, including a relative path — git resolves those against the
+ * current directory and so does whatever opens this. An unset `HOME` leaves the `~` in place rather than
+ * producing a path rooted at `/`, since a wrong absolute path is worse than one that visibly failed.
+ */
+export string expandTilde(Cli cli, string path) {
+  if (path.len() < 2 || path.slice(0, 2) != "~/") { return path; }
+  string home = homeOf(cli);
+  return home == "" ? path : home + path.slice(1, path.len());
+}

@@ -1,0 +1,15 @@
+// expect: answers f = 12
+// why: two modules may each declare an `S`, and the helpers a host reaches them through must not be one name
+// from: issues/lang/0080
+// ---- a.wac ----
+export struct S { i32 x; }
+export S mkA() { return S(1); }
+// ---- b.wac ----
+export struct S { i32 y; i32 z; }
+export S mkB() { return S(2, 3); }
+// ---- main.wac ----
+import { S as SA, mkA } from "./a.wac";
+import { S as SB, mkB } from "./b.wac";
+export SA a() { return mkA(); }
+export SB b() { return mkB(); }
+export i32 f() { return a().x * 10 + b().y; }

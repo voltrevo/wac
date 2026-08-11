@@ -1,9 +1,9 @@
 // git's configuration file, parsed — which two other things were waiting on.
 //
-// `example/gitci.wac` writes a fixed author because it had no way to read `user.name`, and `ignore.wac`
-// leaves `core.excludesFile` unread for the same reason. Both are one parser away, and the parser has an
+// `example/gitci.wac` wrote a fixed author because it had no way to read `user.name`, and `ignore.wac`
+// left `core.excludesFile` unread for the same reason. Both were one parser away, and the parser has an
 // exact oracle: `git config --list --file <path>` prints one `name=value` per setting, so being right is a
-// diff rather than an argument.
+// diff rather than an argument. Both now read it.
 //
 // ## The format, and the parts that are not obvious
 //
@@ -25,7 +25,8 @@
 // means true to the things that read it. Reading it as an empty string would make it false.
 //
 // **The last setting of a name wins**, which is how a repository's `.git/config` overrides what came from a
-// user's file when the two are concatenated by the caller.
+// user's file when the two are concatenated by the caller. `configfiles.wac` is that caller: it finds the
+// four files git reads and concatenates them in git's order, so this rule is what produces git's answer.
 //
 // ## What it does not do
 //

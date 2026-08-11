@@ -691,6 +691,8 @@ type WasmTypeCtxFull = WasmTypeCtx & {
   bindStructs: StructEntry[];
   /** The enums a JS caller can reach, bound as a tag plus per-variant accessors. */
   bindEnums: EnumEntry[];
+  /** What each of those is called in its helper names, by type index — see `bindAliases`. */
+  bindAlias: Map<number, string>;
 };
 
 function buildTypeCtxFull(
@@ -778,10 +780,12 @@ function buildTypeCtxFull(
   // Bind helpers come after the builtin helpers
   const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
   const { structs: bindStructs, enums: bindEnums } = reachableBinds(result, partialCtx);
+  const bindAlias = bindAliases(bindStructs, bindEnums);
   const bindBaseIdx = base.funcBase + numUserFuncs + helpers.length;
-  const bindHelpers = buildBindHelpers(result, { ...partialCtx, bindStructs, bindEnums, bindBaseIdx });
+  const bindHelpers = buildBindHelpers(
+    result, { ...partialCtx, bindStructs, bindEnums, bindAlias, bindBaseIdx });
 
-  return { ...partialCtx, bindHelpers, bindStructs, bindEnums };
+  return { ...partialCtx, bindHelpers, bindStructs, bindEnums, bindAlias };
 }
 
 // ── Builtin helper function signatures ────────────────────────────────────────
@@ -1153,6 +1157,45 @@ export function bindName(structName: string): string {
   return structName.replace(/[^A-Za-z0-9_]+/g, "$").replace(/^\$+|\$+$/g, "");
 }
 
+/**
+ * The name each bind helper family is built from, keyed by the struct's type index.
+ *
+ * Usually the declared name — `$bind$s_S_new` — because that is what a host reads and what the
+ * native manifest keys a struct by. But two modules may each declare an `S`: the core keeps their
+ * identities apart, and the helpers were named from the declaration alone, so both emitted
+ * `$bind$s_S_new` and the module was refused — *"Duplicate export name '$bind$s_S_new'"*
+ * [issue 0080, GitHub wac#9].
+ *
+ * A name that more than one of them wants is qualified by the declaring file, for **all** of them
+ * rather than for whichever lost a race: `S__a` and `S__b`. That keeps the name a property of the
+ * struct rather than of the order they were met in, which is what the manifest needs — it has no
+ * other way to tell two structs apart, so a counter would leave it ambiguous in a new way.
+ */
+function bindAliases(structs: StructEntry[], enums: EnumEntry[]): Map<number, string> {
+  const alias = new Map<number, string>();
+  // Structs and enums are grouped apart because their helpers are prefixed apart: a struct `S` is
+  // `$bind$s_S_*` and an enum `S` is `$bind$e_S_*`, so those two never collide with each other.
+  for (const group of [
+    structs.map((s) => ({ idx: s.typeIndex, name: s.name, file: s.filePath })),
+    enums.map((e) => ({ idx: e.base.typeIndex, name: e.name, file: e.filePath })),
+  ]) {
+    const byName = new Map<string, typeof group>();
+    for (const g of group) {
+      const k = bindName(g.name);
+      const at = byName.get(k);
+      if (at) at.push(g); else byName.set(k, [g]);
+    }
+    for (const [bare, members] of byName) {
+      for (const m of members) {
+        alias.set(m.idx, members.length === 1
+          ? bare
+          : bindName(`${m.name}__${m.file.replace(/\.wac$/, "").replace(/[^A-Za-z0-9]/g, "_")}`));
+      }
+    }
+  }
+  return alias;
+}
+
 /** The wasm value type a bind accessor uses for a field — packed fields cross as i32. */
 function bindFieldValType(t: WacType, ctx: WasmTypeCtx): number[] {
   if (t.kind === "prim" && ["u8", "i8", "u16", "i16"].includes(t.name)) return [0x7F];
@@ -1332,6 +1375,7 @@ function buildBindHelpers(
     orderedSigs: { params: WacType[]; ret: WacType }[];
     bindStructs: StructEntry[];
     bindEnums: EnumEntry[];
+    bindAlias: Map<number, string>;
     /** Wasm function index of the first bind helper. */
     bindBaseIdx: number;
   },
@@ -1385,7 +1429,7 @@ function buildBindHelpers(
   for (const s of ctx.bindStructs) {
     const fields = ctx.structFields.get(`@${s.typeIndex}`) ?? [];
     const sref = [0x64, ...sleb(s.typeIndex)];
-    const safe = bindName(s.name);
+    const safe = ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name);
 
     // `new`: every field in declaration order, inherited ones first.
     const newParams: number[] = [];
@@ -1431,7 +1475,7 @@ function buildBindHelpers(
   for (const en of ctx.bindEnums) {
     const baseIdx = en.base.typeIndex;
     const bref = [0x64, ...sleb(baseIdx)];
-    const eSafe = bindName(en.name);
+    const eSafe = ctx.bindAlias.get(en.base.typeIndex) ?? bindName(en.name);
     const tagField = (ctx.structFields.get(`@${baseIdx}`) ?? [])
       .find((f) => f.name === ENUM_TAG_FIELD);
     if (!tagField) continue;
@@ -2290,7 +2334,8 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         // static `get` and they are different functions.
         const isStatic = fe.origin.kind === "method" && !fe.origin.decl.hasThis;
         const prefix = isStatic ? "$bind$sm_" : "$bind$m_";
-        const nameBytes = new TextEncoder().encode(`${prefix}${bindName(s.name)}_${mname}`);
+        const nameBytes = new TextEncoder().encode(
+          `${prefix}${ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name)}_${mname}`);
         entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex + ctx.funcBase)]);
       }
     }
@@ -2761,7 +2806,7 @@ export function wasmBindMeta(
     return methods;
   };
   const enums: BindEnumInfo[] = ctx.bindEnums.map((en) => ({
-    bind: bindName(en.name),
+    bind: ctx.bindAlias.get(en.base.typeIndex) ?? bindName(en.name),
     wac: en.name,
     display: result.genericDisplay.get(en.name) ?? en.name,
     variants: en.variants.map((v) => ({
@@ -2782,7 +2827,7 @@ export function wasmBindMeta(
   }));
   const structs = ctx.bindStructs.map((s) => {
     return {
-      bind: bindName(s.name),
+      bind: ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name),
       wac: s.name,
       display: result.genericDisplay.get(s.name) ?? s.name,
       fields: (ctx.structFields.get(`@${s.typeIndex}`) ?? [])
