@@ -3023,12 +3023,29 @@ Output ls(Shell sh, Vec<string> argv) {
     // `ls -a` lists `.` and `..` as well. The platform's `readDir` does not report them — they are
     // not entries, they are a convention about how paths are written — so a real `ls` synthesises
     // them and so does this. Without them `ls -a | sort` differed from bash by exactly two lines.
-    if (all) { out.pushAll(".\n..\n".toBytes()); }
+    //
+    // **They are sorted with everything else, which they were not.** They went straight into the
+    // output ahead of the listing, which is right only while nothing in the directory sorts below
+    // `.` — and under `LC_ALL=C` a file called `-dash` does. GNU sorts every name it prints and the
+    // synthesised pair are names. Every `ls -a` in the corpus was over a directory where the two
+    // orders agree, which is how it stood.
+    Vec<string> shown = Vec.create();
+    if (all) { shown.push("."); shown.push(".."); }
     string[] listed = names!;
     for (i32 j = 0; j < listed.len(); j++) {
       if (!all && listed[j].len() > 0 && listed[j].toBytes()[0] == '.') { continue; }
-      out.pushAll((listed[j] + "\n").toBytes());
+      shown.push(listed[j]);
     }
+    // Byte order, which is what `ls` does under `LC_ALL=C` — the environment every comparison in this
+    // repo uses, and the one bash runs under in the differential. Insertion sort: a directory listing
+    // is small and this is the same three lines `set` with no arguments already uses.
+    for (i32 j = 1; j < shown.len(); j++) {
+      string key = shown.get(j);
+      i32 k = j - 1;
+      while (k >= 0 && shown.get(k) > key) { shown.set(k + 1, shown.get(k)); k--; }
+      shown.set(k + 1, key);
+    }
+    for (i32 j = 0; j < shown.len(); j++) { out.pushAll((shown.get(j) + "\n").toBytes()); }
     if (paths.len() > 1 && i + 1 < paths.len()) { out.pushAll("\n".toBytes()); }
   }
   return Output(out.take(), errs.take(), status, true, false);
