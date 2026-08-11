@@ -1,7 +1,18 @@
 // Imported for its side effect: retries a spawn that fails with "Text file busy" and names
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
-import { boundedInput, DEFAULT_SECONDS } from "../../../harness/bounded.ts";
+import { boundedInput, DEFAULT_SECONDS, loadNow } from "../../../harness/bounded.ts";
+import { testBounded } from "../../../harness/deadline.ts";
+
+/**
+ * Which case the differential below is on, for the report if it stops there.
+ *
+ * Nothing bounds a `Deno.test` body, so a wedge here runs until `tools/push.sh` cuts the suite at 45
+ * minutes and no agent's push lands — which is what this case and `fuzz.test.ts`'s did on
+ * 2026-08-11, both of them passing alone in under a minute. The bound makes it one failing test that
+ * says which script it was on.
+ */
+let onCase = "(nothing yet)";
 // A sealed shell with the applets: sixty commands over a filesystem that is not the host's.
 //
 // This is the test wac-mono 0109 was filed for. An applet used to take a `Cli` and read the *host*
@@ -82,7 +93,10 @@ Deno.test("the applets work on a filesystem that is not the host's", async () =>
  * The fixtures are written by the shell itself, because in a sealed world there is no other way to put a
  * file anywhere.
  */
-Deno.test("the applets answer the same on an in-memory filesystem as the real tools do on disk", async () => {
+testBounded({
+  name: "the applets answer the same on an in-memory filesystem as the real tools do on disk",
+  onTimeout: () => console.error(`sealed: the case did not finish (${loadNow()}). It was on ${onCase}`),
+}, async () => {
   const { buildApp } = await import("../../platform/build.ts");
   const built = await Deno.makeTempFile({ prefix: "box-sealed-applets-" });
   const dir = await Deno.makeTempDir({ prefix: "box-sealed-applets-" });
@@ -134,6 +148,7 @@ Deno.test("the applets answer the same on an in-memory filesystem as the real to
 
     const bad: string[] = [];
     for (const script of CASES) {
+      onCase = JSON.stringify(script);
       // bash needs a fresh directory per case; the sealed shell starts from an empty world every time.
       const caseDir = await Deno.makeTempDir({ prefix: "sealed-case-" });
       try {

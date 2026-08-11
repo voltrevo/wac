@@ -2,6 +2,7 @@
 // whoever held the file, if anyone did. wac-mono 0074.
 import "../../../harness/spawnRetry.ts";
 import { pool } from "../../../harness/inFlight.ts";
+import { loadNow } from "../../../harness/bounded.ts";
 import { CORPUS, needsProgram } from "../../sh/test/corpus.ts";
 // The shell corpus, through a shell built with **these** applets.
 //
@@ -65,9 +66,10 @@ Deno.test({
        * match — a shell whose `-q` reads everything hangs here rather than failing, and the bound is
        * what turns that into a result.
        */
-      const run = async (cmd: string, script: string, dir: string) => {
+      const run = async (cmd: string, script: string, dir: string, seconds = 20) => {
+        const started = performance.now();
         const r = await new Deno.Command("timeout", {
-          args: ["20", cmd, "-c", script],
+          args: [String(seconds), cmd, "-c", script],
           cwd: dir,
           stdin: "null",
           stdout: "piped",
@@ -76,7 +78,10 @@ Deno.test({
           clearEnv: true,
         }).output();
         const d = new TextDecoder();
-        return { out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code, hung: r.code === 124 };
+        return {
+          out: d.decode(r.stdout), err: d.decode(r.stderr), code: r.code, hung: r.code === 124,
+          ms: Math.round(performance.now() - started),
+        };
       };
 
       const differences: string[] = [];
@@ -87,16 +92,48 @@ Deno.test({
         try {
           note("bash+boxsh");
           const [want, got] = await Promise.all([run("bash", script, dir), run(built, script, dir)]);
-          if (got.hung && !want.hung) {
-            differences.push(`script: ${JSON.stringify(script)}\n  bash finished; ours did not, in 20s`);
-            return;
+          let ours = got;
+          if (ours.hung && !want.hung) {
+            // **A bound is not a verdict on a machine three agents share.** Twenty seconds is there so
+            // one genuine hang cannot wedge the suite — `seq 1 100000 | grep -q 5` finishes only
+            // because `-q` stops at the first match, and a shell whose `-q` reads everything would sit
+            // here for ever. But at load 15 with four cases in flight inside a suite that is itself
+            // parallel, `grep -c 'a\+'` over five lines reached it too, and the gate reported "ours
+            // did not finish" about a script that takes 40ms alone. That is starvation wearing a
+            // defect's clothes, and it cost a push.
+            //
+            // So a case that hits the bound is re-run **alone, with three times the bound**, in a
+            // fresh directory, before anything is claimed. Once, not until green: if it hangs again
+            // the report says both attempts, and if it finishes its answer is compared like any
+            // other — a slow case still has to agree with bash.
+            const retryDir = await Deno.makeTempDir({ prefix: "box-corpus-retry-" });
+            try {
+              note("retry alone");
+              const again = await run(built, script, retryDir, 60);
+              if (again.hung) {
+                differences.push(
+                  `script: ${JSON.stringify(script)}\n` +
+                  `  bash finished in ${want.ms}ms; ours did not, in 20s and not in 60s alone either` +
+                  ` (${loadNow()})`,
+                );
+                return;
+              }
+              console.error(
+                `corpus: ${JSON.stringify(script)} hit the 20s bound and finished in ${again.ms}ms ` +
+                `alone — ${loadNow()}, so this is the machine rather than the shell`,
+              );
+              ours = again;
+            } finally {
+              await Deno.remove(retryDir, { recursive: true }).catch(() => {});
+            }
           }
-          if (want.out !== got.out || want.code !== got.code) {
+          const got2 = ours;
+          if (want.out !== got2.out || want.code !== got2.code) {
             differences.push(
               `script: ${JSON.stringify(script)}\n` +
               `  bash: ${JSON.stringify(want.out)} exit ${want.code}\n` +
-              `  ours: ${JSON.stringify(got.out)} exit ${got.code}` +
-              (got.err.trim() === "" ? "" : `\n  stderr: ${got.err.trim().split("\n")[0]}`),
+              `  ours: ${JSON.stringify(got2.out)} exit ${got2.code}` +
+              (got2.err.trim() === "" ? "" : `\n  stderr: ${got2.err.trim().split("\n")[0]}`),
             );
           }
         } finally {

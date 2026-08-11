@@ -235,3 +235,43 @@ Deno.test("docs: a README's `name(…)` names something that exists", async () =
     );
   }
 });
+
+/**
+ * The capability table in `packages/platform`'s README lists **every** field of `Core`, `Cli` and
+ * `Page`.
+ *
+ * The checks above ask whether a name the README quotes exists. This asks the other direction —
+ * whether a name the *code* has reached the README — and it is the direction that rots, because
+ * adding a capability is a change to `platform.wac` and the table is somewhere else.
+ *
+ * It is here rather than in `packages/platform` because the failure has a twin next door:
+ * `packages/box`'s README lists its applets, and on 2026-08-11 that list was two names short — `id`
+ * and `whoami` were dispatched, printed by `box help`, and missing from the document — while the
+ * *count* in the same file had been checked against the dispatcher for days. A checked number beside
+ * an unchecked list is exactly the shape that produces it. `box.test.ts` holds that one; this is the
+ * other list of names a reader is entitled to treat as complete.
+ */
+Deno.test("docs: platform's capability table lists every capability", async () => {
+  const src = await Deno.readTextFile("packages/platform/src/platform.wac");
+  const { program } = wacParse(wacLex(src).tokens, "packages/platform/src/platform.wac");
+  const readme = await Deno.readTextFile("packages/platform/README.md");
+  const table = /\| \| capability \| grant \|[\s\S]*?\n\n/.exec(readme);
+  if (table === null) throw new Error("platform's README has no capability table — has it been renamed?");
+  const listed = new Set([...table[0].matchAll(/`([A-Za-z][A-Za-z0-9]*)`/g)].map((m) => m[1]));
+
+  const missing: string[] = [];
+  for (const item of program.items) {
+    if (item.tag !== "struct" || !["Core", "Cli", "Page"].includes(item.name)) continue;
+    // A funcref field is a capability; a plain one is bookkeeping the caller never sees.
+    for (const f of item.fields) {
+      if (f.type.kind !== "funcref") continue;
+      if (!listed.has(f.name)) missing.push(`${item.name}.${f.name}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `${missing.length} capability(ies) are in platform.wac and not in the README's table:\n  ` +
+        missing.join("\n  ") + "\n\nAdd the row, with the grant it needs — that column is the point.",
+    );
+  }
+});
