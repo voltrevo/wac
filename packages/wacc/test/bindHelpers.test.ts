@@ -114,6 +114,39 @@ Deno.test("bind helpers: the array constructors have the arity the glue calls th
   }
 });
 
+Deno.test("bind helpers: an instance's methods carry the reference's mangled name", () => {
+  // A monomorphisation is named from *canonical* names — the template qualified by its declaring
+  // file, then each argument mangled — because that is what `wacBindgen` generates its glue against.
+  // `packages/box` and `packages/fs` stopped at `$bind$sm_Vec__packages_std_src_vec$string_create`
+  // for want of exactly this. `issues/lang/0089`.
+  const b = Uint8Array.from(emitFiles(
+    ["packages/std/src/vec.wac", "packages/std/src/main.wac"],
+    [
+      "export struct Vec<T> { T[] items; i32 n;\n" +
+      "  Vec<T> create() { return Vec<T>(T[0](), 0); }\n" +
+      "  i32 len(const this) { return this.n; }\n}\n",
+      'import { Vec } from "./vec.wac";\n' +
+      "export i32 f() { Vec<string> a = Vec.create(); Vec<u8[]> b = Vec.create(); " +
+      "return a.len() + b.len(); }\n",
+    ],
+    "packages/std/src/main.wac",
+  ) as unknown as number[]);
+  const names = new Set(
+    WebAssembly.Module.exports(new WebAssembly.Module(b as BufferSource)).map(e => e.name),
+  );
+  const want = [
+    "$bind$sm_Vec__packages_std_src_vec$string_create",
+    "$bind$m_Vec__packages_std_src_vec$string_len",
+    // An array argument is `_arr` rather than `[]`, which is `mangleType`'s spelling and not ours.
+    "$bind$sm_Vec__packages_std_src_vec$u8_arr_create",
+    "$bind$m_Vec__packages_std_src_vec$u8_arr_len",
+  ];
+  const missing = want.filter(n => !names.has(n));
+  if (missing.length > 0) {
+    throw new Error(`missing: ${missing.join(", ")}\n  got: ${[...names].filter(n => n.includes("Vec")).join(", ")}`);
+  }
+});
+
 Deno.test("bind helpers: a string, an enum and a method reach the host under the names bindgen uses", () => {
   const a = arities(
     "enum Shape { Circle(f64 r), Empty }\n" +
