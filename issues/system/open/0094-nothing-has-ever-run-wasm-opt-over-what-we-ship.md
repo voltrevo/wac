@@ -1,6 +1,6 @@
 # 0094 — nothing has ever run `wasm-opt` over what we ship, and it halves the module
 
-- **Status:** open
+- **Status:** open — decided, not yet built
 - **Reported by:** agent-a
 - **Date:** 2026-08-06
 - **Kind:** performance
@@ -105,3 +105,25 @@ built *executable*, and the floor is not the wasm. `wc`'s executable is 273,774 
 is module and **148,750 is JavaScript**; `box sh`'s is 927,210 of which **148,942 is JavaScript** — the
 same 149 KB either side of a program six times the size. Optimising the module takes `wc` from 274 KB
 to 222 KB and cannot touch the rest.
+
+## Decided 2026-08-11: a flag, off by default
+
+The operator, asked which of the two shapes item 1 above proposes: **"flag, off by default."**
+
+So `app:build` gains `--optimize`, nothing changes unless it is asked for, and what a built artifact
+contains stays *exactly* what the compiler produced — which is the debugging property item 1 said was
+worth naming before giving up, and this repository leans on it more than most: rung 4 compares
+modules under a canonical form, `deno task size` attributes bytes to layers, `deadexports` reads the
+module, and the coverage instrumentation is emitted rather than added. An optimiser between the
+compiler and the artifact means every one of those has to say which side of it it is on.
+
+The cost of the choice, so it is not a surprise later: the 36–41% stays theoretical for everything we
+actually ship until somebody types the flag. That is the trade accepted, not an oversight.
+
+Item 2 answers itself with item 1: `npm:binaryen` stays a dev dependency, reached by the flag and by
+`tools/wasmopt.ts`, and it does not touch wac's "no binaryen" claim, which is about the compiler.
+
+**What is left is the building**, and it is ordinary work: `--optimize` on `app:build`, pinned at
+`binaryen@131` or later — 108, which is what `apt` gives, cannot parse our modules at all — and a
+test that the flag produces a smaller artifact that still runs. Item 3, what 41% says about the
+emitter, stays open and stays wac's rather than this repo's.

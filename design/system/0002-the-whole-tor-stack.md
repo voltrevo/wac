@@ -81,6 +81,13 @@ whose identity key is a file beside the binary is an operator surprise.
 `packages/ssh`'s README and it is equally true of this stack. A review is not a gate we can pass
 ourselves.
 
+**And it is unscheduled.** Asked on 2026-08-11 whether a review by someone outside this project is
+arrangeable, the operator answered *not right now*. So this condition is known to be outside our
+control and has no horizon — which is worth stating plainly rather than leaving as the last unticked
+box: the other eight can close and this stack still must not carry a stranger's traffic. Nothing
+about that argues against doing the eight; it argues against believing the list is complete when they
+are done.
+
 **9. The sandbox is opened deliberately.** The proxy allowlist is by domain and the directory
 authorities are IP-addressed, so the real network is unreachable from this container by construction.
 That wall comes down by the operator's decision and not by anybody's convenience — and when it does,
