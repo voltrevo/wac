@@ -13,6 +13,7 @@
 import { type Handlers } from "./respond.ts";
 import { EMPTY_ARG, argBytes, i32le, i64le, readI32le, str, unstr } from "./call.ts";
 import { GRANT_ENV, GRANT_NET, GRANT_READ, GRANT_WRITE, OP } from "./ops.ts";
+import { randomBytes } from "./entropy.ts";
 import { ChildStack, joinPath, packCaptured, unpackPush } from "./child.ts";
 import { ByteQueue } from "./queue.ts";
 import {
@@ -341,16 +342,7 @@ export function nodeWorld(
       new Promise<Uint8Array>((ok) =>
         setTimeout(() => ok(i64le(BigInt(Math.round(performance.now() * 1e6)))), readI32le(p))
       ),
-    [OP.RANDOM_BYTES]: (p) => {
-      const n = readI32le(p);
-      if (n < 0 || n > 1 << 20) throw new Error(`randomBytes(${n}) out of range`);
-      // getRandomValues caps at 64KiB per call on every engine that has it.
-      const out = new Uint8Array(n);
-      for (let at = 0; at < n; at += 65536) {
-        crypto.getRandomValues(out.subarray(at, Math.min(at + 65536, n)));
-      }
-      return out;
-    },
+    [OP.RANDOM_BYTES]: (p) => randomBytes(readI32le(p)),
     // `log` is standard output, so a child's lines are kept with the rest of its output rather
     // than appearing on the parent's terminal. Thirty of `box`'s applets write this way.
     [OP.LOG]: async (p) => {
@@ -628,7 +620,18 @@ export function nodeWorld(
     },
     [OP.SEND]: async (p) => {
       const kid = children.get(readI32le(p));
-      if (kid !== undefined) { kid.in.push(p.slice(4)); return EMPTY; }
+      if (kid !== undefined) {
+        // **Awaited, and its answer is the capability's answer.** `ByteQueue.push` waits for room
+        // and answers false once the queue has ended, which is exactly what `send` promises — and
+        // this line discarded both: a send after `closeFeed` reported success and dropped the bytes
+        // (0121), and a send into a full queue did not wait, so backpressure did not hold (0120).
+        // The runtime with no JavaScript in it has always answered `stream.write` here.
+        //
+        // Throwing is how a `Pending<bool>` says false on this side: `provider.ts`'s `ok` is
+        // "collect did not throw", which is the same route `deny` already takes.
+        if (!await kid.in.push(p.slice(4))) throw new Error("the child's input has ended");
+        return EMPTY;
+      }
       if (readI32le(p) === PARENT_FS_HANDLE && opts.parentFs !== undefined) {
         await opts.parentFs.req.push(p.slice(4));
         return EMPTY;

@@ -18,9 +18,30 @@
 //! `closeFeed` ends a child's input without stopping it — `wc` must see the end while still alive —
 //! and `closeSocket` stops it outright. So a queue carries a flag for "no more will be written" and
 //! separately can be abandoned by its reader.
+//!
+//! ## And a queue has a bottom
+//!
+//! A `write` into a queue nobody is draining **waits**, exactly as writing to a full pipe does. This
+//! was unbounded until `packages/platform/example/feed.wac` asked both hosts the same question: a
+//! child writing nine megabytes into a parent that would not read for 300ms finished immediately
+//! here and had to wait on every JavaScript host, whose `ByteQueue` has held a cap since it existed.
+//! A producer that never waits is a producer whose output is held entirely in memory, and `box yes`
+//! writes for ever by design.
+//!
+//! The cap is `CAP` below, and it is the *same eight megabytes* `host/children.ts` uses, because a
+//! program that behaves differently on two hosts because their buffers differ is the thing this
+//! whole layer exists to prevent. Only capped queues wait: `finish` wakes every waiting writer, so a
+//! reader that goes away turns a wait into `false` rather than a wedge.
 
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
+
+/// How much may sit in a queue nobody is reading before a writer has to wait.
+///
+/// `host/children.ts`'s `QUEUE_CAP`, to the byte. The two numbers are the same fact about how much a
+/// program may run ahead of its reader, and a difference between them would be a difference in
+/// behaviour between two hosts running the same program.
+const CAP: usize = 8 << 20;
 
 #[derive(Default)]
 struct Inner {
@@ -34,11 +55,36 @@ struct Inner {
 pub struct Stream {
     inner: Mutex<Inner>,
     ready: Condvar,
+    /// Whether a writer must wait for room. False for the queues where waiting would deadlock —
+    /// see `uncapped`.
+    capped: bool,
 }
 
 impl Stream {
+    /// A queue that makes a writer wait once it holds `CAP` bytes: a child's two output streams.
+    pub fn capped() -> Self {
+        Self { capped: true, ..Self::default() }
+    }
+
+    /// A queue with no bottom, for the two directions where a wait would be a deadlock rather than
+    /// backpressure.
+    ///
+    /// **The filesystem channel**, both ways: a child asks and its parent answers on the same thread
+    /// that would be waiting for room, so a full request queue would stop the only thing that could
+    /// drain it. And **a child's standard input**, which `host/children.ts` also leaves uncapped —
+    /// the parent decides how much to send and can stop, which is not true of a child that writes.
+    pub fn uncapped() -> Self {
+        Self::default()
+    }
+
     pub fn write(&self, bytes: &[u8]) -> bool {
         let mut inner = self.inner.lock().unwrap();
+        // **Wait for room, and only then look at `done` again.** A writer parked here is woken by
+        // either a reader draining or the stream ending, and the two must be told apart on the way
+        // out: ending is `false`, room is a write that lands.
+        while self.capped && !inner.done && inner.bytes.len() >= CAP {
+            inner = self.ready.wait(inner).unwrap();
+        }
         if inner.done {
             // The reader has gone, or the writer already ended it. False is what `write` answers to a
             // closed pipe, and what a program like `yes` is written to notice.
@@ -65,7 +111,13 @@ impl Stream {
         let mut inner = self.inner.lock().unwrap();
         loop {
             if !inner.bytes.is_empty() {
-                return inner.bytes.drain(..).collect();
+                let taken: Vec<u8> = inner.bytes.drain(..).collect();
+                // Room, so a writer parked on a full queue may carry on. Notified while holding the
+                // lock and before returning, because the alternative is a producer left asleep with
+                // an empty queue in front of it.
+                drop(inner);
+                self.ready.notify_all();
+                return taken;
             }
             if inner.done {
                 return Vec::new();
@@ -78,7 +130,10 @@ impl Stream {
     pub fn take_now(&self) -> Option<Vec<u8>> {
         let mut inner = self.inner.lock().unwrap();
         if !inner.bytes.is_empty() {
-            return Some(inner.bytes.drain(..).collect());
+            let taken: Vec<u8> = inner.bytes.drain(..).collect();
+            drop(inner);
+            self.ready.notify_all();
+            return Some(taken);
         }
         if inner.done {
             return Some(Vec::new());

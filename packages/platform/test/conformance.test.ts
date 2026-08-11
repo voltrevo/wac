@@ -115,7 +115,11 @@ const COVERAGE: Record<string, Cover> = {
   },
   EXIT_CODE: { where: "native_hostfs: the status of every AGREED script" },
   CLOSE_SOCKET: { where: "native_hostfs: `kill %1` is delivered by closing the child" },
-  CLOSE_FEED: { where: "native_shell: pipelines in the corpus slice" },
+  CLOSE_FEED: {
+    where: "native_shell: pipelines in the corpus slice — and native_examples' `feed`, which is the " +
+      "only place the *distinction* from `closeSocket` is asked on both hosts: the child has to stay " +
+      "alive to say what it heard, which a stop would prevent",
+  },
   CWD: { where: "native_hostfs: every script `cd`s first, by design" },
   WRITE_STDOUT: { where: "native_shell: 25 corpus scripts, byte for byte" },
   WRITE_STDERR: { where: "native_hostfs: stderr compared on every AGREED script" },
@@ -147,10 +151,14 @@ const COVERAGE: Record<string, Cover> = {
       "measure the machine — `harness/bounded.ts` makes the same argument at greater length",
   },
   RANDOM_BYTES: {
-    where: "native_shell: `head -c 16 /dev/urandom | wc -c` on both hosts, and `head -c 1` beside " +
-      "it. The bytes are random by definition and are not compared; the two claims that *are* " +
-      "comparable are the length and that a sealed session gets a CSPRNG **without a grant** — " +
-      "`Backing.Synth` carries `randomBytes` and nothing else — and both are now asked on both",
+    where: "native_examples: `entropy` walks the documented range — 1 byte, the 65,536-byte Web " +
+      "Crypto cap, one byte past it, and the megabyte ceiling — and asks of each that the length " +
+      "came back and that a large block is not one repeated byte, which is what an unfilled chunk " +
+      "looks like. The bytes are random by definition and are not compared. This entry used to " +
+      "rest on `head -c 16 /dev/urandom | wc -c` in native_shell, which still runs and still says " +
+      "a sealed session gets a CSPRNG **without a grant** — but sixteen bytes is on the near side " +
+      "of every boundary, and 0122 was two hosts throwing above 64 KiB inside a range all three " +
+      "of them bounds-checked as legal",
   },
   LOG: { gap: "no comparison: `log` goes to the host's own stream, which the two hosts frame differently" },
   WARN: { gap: "as LOG" },
@@ -178,7 +186,15 @@ const COVERAGE: Record<string, Cover> = {
       "reads a file is `send` and `recv` in both directions on both hosts — which is why this " +
       "stopped being a gap without a test being written for it",
   },
-  SEND: { where: "native_shell: as RECV, and the same traffic" },
+  SEND: {
+    where: "native_shell: as RECV, and the same traffic — plus native_examples' `feed`, which asks " +
+      "the part a pipeline never reaches: what the **bool** says. `send` answers `Pending<bool>` and " +
+      "three JavaScript hosts were not answering it at all (`kid.in.push(...)` with the result " +
+      "discarded), so a send after `closeFeed` reported success and dropped the bytes — 0121, and " +
+      "0120 in the same line. The example also asks the other direction, where the native host was " +
+      "the one out of step: its queues had no cap, so a child writing nine megabytes into a parent " +
+      "that would not read never waited, while every JavaScript host held it at eight",
+  },
   SPAWN: {
     gap: "**not implemented in the native runtime**, which is the answer rather than a missing test. " +
       "What `spawn` takes is a program's *source*, and on the JavaScript hosts that means a worker " +

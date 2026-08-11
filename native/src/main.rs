@@ -2193,15 +2193,17 @@ fn spawn_instance(
         net: mine.net && (want & GRANT_NET) != 0,
     };
 
-    let stdin = Arc::new(Stream::default());
-    let stdout = Arc::new(Stream::default());
-    let stderr = Arc::new(Stream::default());
+    // Its input is uncapped and its two outputs are not: the parent chooses how much to send, and a
+    // child that writes for ever must be made to wait. `host/children.ts` divides them the same way.
+    let stdin = Arc::new(Stream::uncapped());
+    let stdout = Arc::new(Stream::capped());
+    let stderr = Arc::new(Stream::capped());
     // The filesystem channel: the child asks on `fsreq` and its parent answers on `fsrep`. Both
     // ends exist whether or not either side uses them — a channel nobody speaks on costs two
     // queues, and deciding at spawn time which children may ask would be a grant, which this is
     // deliberately not. See `Child.fsHandle`.
-    let fsreq = Arc::new(Stream::default());
-    let fsrep = Arc::new(Stream::default());
+    let fsreq = Arc::new(Stream::uncapped());
+    let fsrep = Arc::new(Stream::uncapped());
     if !serve_fs {
         // **A parent that will not serve says so before the child runs.** Finishing the reply queue
         // is what makes `Fs.overParent` answer immediately instead of waiting: the child asks one
