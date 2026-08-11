@@ -1305,6 +1305,10 @@ export struct Env {
   i32 covCount;
   string covTable;
 
+  /** The funcref signatures handed out, one `$bind$callref_<j>` each. */
+  string[] outSigs;
+  i32 outSigCount;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1319,7 +1323,7 @@ export struct Env {
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
                string[32](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
-               false, 0, "");
+               false, 0, "", string[32](), 0);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1928,6 +1932,16 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   // that supplies its dispatchers in another order would answer the wrong callback. The same walk
   // the emitter uses, so the two cannot drift.
   env.cbSigCount = collectCallbackSigs(env, src, lexed, prog);
+  env.outSigCount = collectOutSigs(env, src, lexed, prog, env.outSigs);
+  for (i32 j = 0; j < env.outSigCount; j++) {
+    string og = env.outSigs[j];
+    string line = "O\t" + numText(j) + "\t" + sigReturn(og) + "\t";
+    for (i32 i = 0; i < sigParamCount(og); i++) {
+      if (i > 0) { line = line + ","; }
+      line = line + sigParamAt(og, i);
+    }
+    out = out + line + "\t" + og + "\n";
+  }
   for (i32 j = 0; j < env.cbSigCount; j++) {
     string cb = env.cbSigs[j];
     string line = "C\t" + numText(j) + "\t" + sigReturn(cb) + "\t";
@@ -2265,6 +2279,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // **Before anything is numbered.** An imported function occupies index 0, so every index below is
   // measured from the number of them. `issues/lang/0094`.
   env.cbSigCount = collectCallbackSigs(env, src, lexed, prog);
+  env.outSigCount = collectOutSigs(env, src, lexed, prog, env.outSigs);
   bool startNeeded = needsStartFunction(env, src, lexed);
   if (startNeeded) { env.addFunc(" start", "void", string[0]()); }
   if (env.full) { return bareModule(); }
@@ -2463,13 +2478,15 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   i32 bindStrHelpers = needsStrings ? 6 : 0;
   i32 cbHelpers = env.cbSigCount * (callbackSlots() + 1);
   i32 covHelpers = env.coverage ? 3 : 0;
+  i32 outHelpers = env.outSigCount;
   i32 enumHelpersAt = structHelpersAt + structHelpers;
   i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
   i32 covHelpersAt = cbHelpersAt + cbHelpers;
-  i32 startFunctionAt = covHelpersAt + covHelpers;
+  i32 outHelpersAt = covHelpersAt + covHelpers;
+  i32 startFunctionAt = outHelpersAt + outHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers + covHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers + covHelpers + outHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
@@ -2477,7 +2494,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   i32 methodExportCount = bindMethodExports(methodExports, env, src, lexed, prog, bindStructs,
                                             bindStructCount);
   exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
-                 env.cbSigCount + covHelpers + methodExportCount);
+                 env.cbSigCount + covHelpers + outHelpers + methodExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2614,6 +2631,10 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     env.sigType(env.cbSigs[j]);
     env.sigType(dispatchSig(env.cbSigs[j]));
     env.sigType("fn[" + env.cbSigs[j] + "(i32)]");
+  }
+  for (i32 j = 0; j < env.outSigCount; j++) {
+    env.sigType(env.outSigs[j]);
+    env.sigType(callrefSig(env.outSigs[j]));
   }
   if (env.coverage) {
     env.sigType("fn[void()]");
@@ -2854,6 +2875,7 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     emitCallbackHelpers(funcs, code, env, j, cbHelpersAt + j * (callbackSlots() + 1));
   }
   if (env.coverage) { emitCoverageHelpers(funcs, code, env); }
+  for (i32 j = 0; j < env.outSigCount; j++) { emitCallrefHelper(funcs, code, env, env.outSigs[j]); }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -3039,6 +3061,11 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     exports.name("$bind$fnref_" + numText(j));
     exports.byte(0);
     exports.u32leb(cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
+  }
+  for (i32 j = 0; j < env.outSigCount; j++) {
+    exports.name("$bind$callref_" + numText(j));
+    exports.byte(0);
+    exports.u32leb(outHelpersAt + j);
   }
   if (env.coverage) {
     exports.name("__cov_init");
@@ -8140,6 +8167,59 @@ i32 collectCallbackSigs(Env env, u8[] src, Lexed lexed, Program prog) {
     }
   }
   return n;
+}
+
+/**
+ * The funcref signatures handed *out* — returned by an exported function.
+ *
+ * JavaScript cannot call a WasmGC function reference, but it can call an export that does the
+ * `call_ref` for it. So a returned funcref crosses as a closure over one helper per signature: the
+ * mirror of the trampolines that bring one in. `issues/lang/0089`'s last row.
+ */
+i32 collectOutSigs(Env env, u8[] src, Lexed lexed, Program prog, string[] out) {
+  i32 n = 0;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    match (prog.decls[d].kind) {
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        if (!exported || typeParams.len() > 0) { continue; }
+        string rt = typeOfTyName(env, src, lexed, returnType);
+        if (!isFuncrefType(rt)) { continue; }
+        bool seen = false;
+        for (i32 k = 0; k < n; k++) { if (out[k] == rt) { seen = true; } }
+        if (seen || n >= out.len()) { continue; }
+        out[n] = rt;
+        n = n + 1;
+      }
+      else: { }
+    }
+  }
+  return n;
+}
+
+/** The helper's signature for one of them: the reference first, then what it takes. */
+string callrefSig(string cb) {
+  string out = "fn[" + sigReturn(cb) + "(" + cb;
+  for (i32 i = 0; i < sigParamCount(cb); i++) { out = out + "," + sigParamAt(cb, i); }
+  return out + ")]";
+}
+
+/**
+ * `$bind$callref_<j>(f, …) -> ret` — call a funcref the module handed out.
+ *
+ * The receiver comes first so a host can bind it: the generated closure holds the reference and
+ * passes the arguments after it, which is the reference's order and therefore the glue's.
+ */
+void emitCallrefHelper(B funcs, B code, Env env, string cb) {
+  funcs.u32leb(env.sigType(callrefSig(cb)));
+  i32 np = sigParamCount(cb);
+  B b = B.create();
+  b.u32leb(0);
+  for (i32 i = 0; i < np; i++) { b.byte(32); b.u32leb(i + 1); }
+  b.byte(32); b.u32leb(0);                          // the callee, last
+  b.byte(20); b.u32leb(env.sigType(cb));            // call_ref
+  b.byte(11);
+  code.u32leb(b.len);
+  code.bytes(b);
 }
 
 /** The dispatcher's signature for a callback: the slot first, then what the callback takes. */

@@ -41,9 +41,18 @@ export type Callback = { index: number; ret: string; params: string[]; wac: stri
 
 /** Parse the `C` lines — the callbacks, in the order `wac.cb<j>` is numbered. */
 export function parseCallbacks(wire: string): Callback[] {
+  return parseSigLines(wire, "C");
+}
+
+/** Parse the `O` lines — the funcrefs handed out, one `$bind$callref_<j>` each. */
+export function parseOutRefs(wire: string): Callback[] {
+  return parseSigLines(wire, "O");
+}
+
+function parseSigLines(wire: string, tag: string): Callback[] {
   const out: Callback[] = [];
   for (const line of wire.split("\n")) {
-    if (!line.startsWith("C\t")) continue;
+    if (!line.startsWith(`${tag}\t`)) continue;
     const [, index, ret, params, wac] = line.split("\t");
     out.push({
       index: Number(index),
@@ -106,31 +115,45 @@ export function parseBindTypes(wire: string): BindType[] {
   return out;
 }
 
+/** Whether a callback's own parameters and result are things a host can hand over. */
+export function usableSig(c: Callback): boolean {
+  return ![c.ret, ...c.params].some(t => t.startsWith("fn["));
+}
+
 const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void"]);
 /** The arrays that cross through the staging buffer, which is where `_to_mem`/`_from_mem` exist. */
 const BULK = new Set(["u8[]", "i8[]", "i32[]", "u32[]", "i64[]", "u64[]", "f32[]", "f64[]"]);
 
 /** Whether this signature is one this generator can write glue for. */
-export function supported(sig: ExportSig, types: BindType[] = [], cbs: Callback[] = []): boolean {
+export function supported(
+  sig: ExportSig, types: BindType[] = [], cbs: Callback[] = [], outs: Callback[] = [],
+): boolean {
   const named = new Set(types.map(t => t.name));
-  const callable = new Set(cbs.map(c => c.wac));
-  // A funcref *parameter* is a host function coming in, which is what a dispatcher is for. One in
-  // return position would be a wac function going out — `$bind$callref_*` in the reference, which
-  // this emitter does not write yet — so it stays declined.
+  // **A callback whose own signature mentions a funcref is not one a host can supply.** The
+  // dispatcher would take a WasmGC reference as an argument, and JavaScript has no way to make or
+  // read one; the module still imports it, so the glue below defines a dispatcher that throws
+  // rather than leaving `wac.cbN` unbound and the instantiation failing.
+  const callable = new Set(cbs.filter(usableSig).map(c => c.wac));
+  const handedOut = new Set(outs.filter(usableSig).map(c => c.wac));
+  // A funcref *parameter* is a host function coming in, which a dispatcher answers; one in return
+  // position is a wac function going out, which `$bind$callref_*` answers. A funcref nested inside
+  // another signature — a callback that itself takes one — is neither, and stays declined.
   const ok = (t: string) => SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t);
-  return ok(sig.ret) && sig.params.every(t => ok(t) || callable.has(t));
+  return (ok(sig.ret) || handedOut.has(sig.ret)) && sig.params.every(t => ok(t) || callable.has(t));
 }
 
 /** The classes in play, so `tsType` and the conversions can name them. */
 let namedTypes: Map<string, BindType> = new Map();
 /** The callbacks, by their wac spelling, so a parameter knows which dispatcher it belongs to. */
 let callbacks: Map<string, Callback> = new Map();
+/** The funcrefs handed out, so a return knows which `callref` helper calls it. */
+let outRefs: Map<string, Callback> = new Map();
 
 /** The TypeScript type a wac type crosses as. */
 function tsType(t: string): string {
   const n = namedTypes.get(t);
   if (n) return n.name;
-  const c = callbacks.get(t);
+  const c = callbacks.get(t) ?? outRefs.get(t);
   if (c) return `(${c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ")}) => ${tsType(c.ret)}`;
   if (t === "void") return "void";
   if (t === "bool") return "boolean";
@@ -166,6 +189,15 @@ function toWasm(t: string, expr: string): string {
 
 /** A value crossing *out* of it. */
 function fromWasm(t: string, expr: string): string {
+  const o = outRefs.get(t);
+  if (o) {
+    // A closure over the reference: JavaScript cannot call a funcref, but it can call the export
+    // that does the `call_ref`, and the reference goes in front of the arguments.
+    const args = o.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
+    const fwd = o.params.map((p, i) => toWasm(p, `a${i}`)).join(", ");
+    const call = `($exports.$bind$callref_${o.index} as CallableFunction)($f${fwd ? ", " + fwd : ""})`;
+    return `(($f) => (${args}) => ${fromWasm(o.ret, call)})(${expr})`;
+  }
   if (t === "string") return `$strFrom(${expr})`;
   if (BULK.has(t)) return `$arrFrom_${t.slice(0, -2)}(${expr})`;
   if (namedTypes.has(t)) return `new ${namedTypes.get(t)!.name}(${expr})`;
@@ -252,10 +284,12 @@ function classFor(t: BindType): string[] {
  */
 export function generate(
   wasm: Uint8Array, sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [],
+  outs: Callback[] = [],
 ): string {
   namedTypes = new Map(types.map(t => [t.name, t]));
   callbacks = new Map(cbs.map(c => [c.wac, c]));
-  const usable = sigs.filter(s => supported(s, types, cbs));
+  outRefs = new Map(outs.map(c => [c.wac, c]));
+  const usable = sigs.filter(s => supported(s, types, cbs, outs));
   const crossing = [
     ...usable.flatMap(s => [s.ret, ...s.params]),
     ...types.flatMap(t => [
@@ -279,6 +313,15 @@ export function generate(
     lines.push("// funcref, so the module defines one trampoline per slot and imports a dispatcher");
     lines.push("// that this file supplies. `$fnrefN` registers a function and answers the funcref.");
     for (const c of cbs) {
+      if (!usableSig(c)) {
+        // The import must be satisfied or the module will not instantiate, and this can only ever
+        // be reached by wac calling a callback no host could have registered.
+        lines.push(`const $cbd${c.index} = () => {`);
+        lines.push(`  throw new Error("${c.wac} cannot be supplied from JavaScript");`);
+        lines.push("};");
+        lines.push("");
+        continue;
+      }
       const params = c.params.map((p, i) => `a${i}: ${tsType(p)}`).join(", ");
       const fwd = c.params.map((p, i) => fromWasm(p, `a${i}`)).join(", ");
       const raw = c.params.map((p, i) => `a${i}: unknown`).join(", ");
@@ -361,7 +404,9 @@ export function generate(
 }
 
 /** What this generator declined, so a caller learns it rather than discovering it at run time. */
-export function unsupported(sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = []): string[] {
-  return sigs.filter(s => !supported(s, types, cbs))
+export function unsupported(
+  sigs: ExportSig[], types: BindType[] = [], cbs: Callback[] = [], outs: Callback[] = [],
+): string[] {
+  return sigs.filter(s => !supported(s, types, cbs, outs))
     .map(s => `${s.name}(${s.params.join(", ")}) -> ${s.ret}`);
 }
