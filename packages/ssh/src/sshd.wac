@@ -719,7 +719,16 @@ bool keystrokeArrived(anyref ctx) {
     }
     Incoming m = parse(p);
     if (!m.ok) { continue; }
-    if (m.kind == msgChannelEof() || m.kind == msgChannelClose()) { return true; }
+    // **An EOF is not an interrupt.** The client's standard input ended — `ssh host cmd < /dev/null`,
+    // or a script that wrote what it had and closed — which says no more input is coming and says
+    // nothing at all about the command that is running. Reported as an interrupt it ended that
+    // command instead, so `ssh -tt` closing its stdin killed whatever it had just asked for and the
+    // session came back with the echo of the line and none of its output (wac-mono 0133).
+    // Recorded exactly as a `^D` is, and honoured in the same place: after this command, and after
+    // anything typed before it.
+    if (m.kind == msgChannelEof()) { k.eof = true; continue; }
+    // A *close* is the channel going away, which does mean nobody is waiting for the output.
+    if (m.kind == msgChannelClose()) { return true; }
     if (m.kind != msgChannelData()) { continue; }
     for (i32 i = 0; i < m.data.len(); i++) {
       Typed t = k.tty.feed(m.data[i]);

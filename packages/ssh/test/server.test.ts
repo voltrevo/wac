@@ -454,6 +454,54 @@ testBounded({
 });
 
 testBounded({
+  name: "a client that closes its stdin does not interrupt the command that is running — 0133",
+  ignore: !haveSshd,
+}, async () => {
+    // **Closing stdin is not `^C`.** `ssh` sends a channel EOF when its own standard input ends, and
+    // that means "no more input", exactly as `^D` does. It does not mean "stop what you are doing":
+    // `ssh host 'sh -c "sleep 1; echo hi"' < /dev/null` prints `hi`, and so does every shell.
+    //
+    // The command here takes a second or two on purpose, so the EOF lands *while it runs* rather
+    // than at the prompt — which is the interleaving a busy machine produces and an idle one does
+    // not, and is why 0133 was one failure in a full suite and 0/10 alone.
+    let s: Wacsshd | undefined;
+    try {
+      s = await startWacsshd();
+      const r = new Deno.Command("ssh", {
+        args: [
+          "-tt", "-F", "/dev/null", "-i", `${s.dir}/clientkey`, "-p", String(s.port),
+          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "BatchMode=yes", "claude@127.0.0.1",
+        ],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "piped",
+      }).spawn();
+      const w = r.stdin.getWriter();
+      await w.write(new TextEncoder().encode(
+        "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; echo done=$? ran=$i\n",
+      ));
+      await w.write(new Uint8Array([4]));   // `^D`: end the session, once the command has finished
+      await w.close();                      // ...and with it the client's stdin, which is the EOF
+      const out = await r.output();
+      const got = text(out.stdout);
+      // `ran=200000` rather than `done=0` alone: it says the loop reached the end rather than
+      // that *something* printed, and a command that was cut short prints neither. The count is
+      // also what keeps the case honest about its own timing — 200,000 iterations is a second and
+      // a half in this shell, so the EOF the client sends microseconds after the line cannot
+      // arrive at the prompt instead, which is the case that always passed.
+      if (!got.includes("done=0 ran=200000")) {
+        throw new Error(
+          "the command did not survive the client's EOF: " + JSON.stringify(got.slice(-300)) +
+            " err=" + JSON.stringify(text(out.stderr).slice(-200)),
+        );
+      }
+    } finally {
+      await stopWacsshd(s);
+    }
+});
+
+testBounded({
   name: "a line typed while a command is running is still a command",
   ignore: !haveSshd,
 }, async () => {
