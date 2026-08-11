@@ -560,6 +560,11 @@ Deno.test("box's applets agree with the system tools they imitate", async () => 
       assertEquals(ours.code, 1, `a failed read exits 1, as ${applet} does`);
     }
 
+    // The directory the two unreadable paths live in, removed here rather than left behind: this was
+    // one directory per run, and the machine had 1,061 of them on 2026-08-11 with the disk at 100%
+    // and every agent's push failing on it. `chmod 000` is why it needs the recursive form.
+    await Deno.chmod(denied, 0o600).catch(() => {});
+    await Deno.remove(fixtureDir, { recursive: true }).catch(() => {});
     // The usage message lists every applet, wrapped. Nothing looked at it, so `wrapped` could return the
     // empty string — and the list of what this program can do would simply be missing.
     const help = await box([]);
