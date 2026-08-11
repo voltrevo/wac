@@ -2512,6 +2512,11 @@ function inferCall(
       return null;
     }
 
+    // Deep const: what this call hands back is only const if the method could be handing back
+    // something the receiver reaches. A `const this` method whose every `return` builds a value out
+    // of copies cannot be, and its result is an ordinary mutable value [issue 0060].
+    freshCallResults.set(expr, returnsOnlyFreshValues(mdecl.body, ctx));
+
     // Deep const: calling a non-const method through a const reference
     if (!mdecl.thisConst && exprIsConst(baseExpr, env, ctx)) {
       errAt(ctx,
@@ -3165,13 +3170,83 @@ function exprIsConst(expr: Expr, env: VarEnv, ctx: Ctx): boolean {
     // is what an accessor does. Part of the same hole — see issue 0052.
     // Either branch const-rooted taints the result (conservative).
     case "ternary": return exprIsConst(expr.then, env, ctx) || exprIsConst(expr.else_, env, ctx);
-    // A method call through a const receiver yields a const result: const is
-    // deep, and anything the method hands back was reached through that
-    // receiver (conservatively so — a const accessor returning a fresh object
-    // is also treated as const).
-    case "call":   return expr.callee.kind === "field" && exprIsConst(expr.callee.expr, env, ctx);
+    // A method call through a const receiver yields a const result — unless the method can only be
+    // handing back something it built. See `callResultIsFresh`, which decides that at the call site
+    // where the method's declaration is in hand, and records it here.
+    case "call":
+      return expr.callee.kind === "field" && exprIsConst(expr.callee.expr, env, ctx) &&
+        freshCallResults.get(expr) !== true;
     default:       return false;
   }
+}
+
+/**
+ * Call expressions whose result cannot alias anything the receiver can reach.
+ *
+ * Filled in at the call site, where the method's declaration is available, and read by
+ * `exprIsConst` — which is a predicate over an expression and has no way to resolve a method
+ * itself without re-running inference over the receiver.
+ */
+const freshCallResults = new WeakMap<object, boolean>();
+
+/**
+ * Can this expression only produce a value that nothing else already holds?
+ *
+ * A construction is a new object, but that is not enough on its own: `Box(this.inner)` is a fresh
+ * `Box` whose field is the receiver's `inner`, and writing through it writes through the const
+ * reference the receiver was. So a field that could hold a reference has to be built from something
+ * fresh in turn; a field that cannot — an `i32`, a `string` — is a copy and can be built from
+ * anything, which is what makes `Counter(this.n)` fresh [issue 0060].
+ *
+ * Anything else is treated as not fresh, including a nested call: this is a syntactic question with
+ * a conservative default, not an escape analysis.
+ */
+function isFreshValue(e: Expr, ctx: Ctx): boolean {
+  if (e.kind === "arrNew") {
+    if (!isMutableRefType(e.elem)) return true;   // a copy per element
+    const elems = [...e.fixed, ...(e.fill ? [e.fill] : [])];
+    return elems.length > 0 && elems.every((x) => isFreshValue(x, ctx));
+  }
+  if (e.kind !== "construct") return false;
+  if (e.ctype.kind !== "struct") return isMutableRefType(e.ctype) === false;
+  const fields = allFields(entryOfType(e.ctype, ctx));
+  if (fields.length === 0) return e.args.length === 0 && (e.named?.length ?? 0) === 0;
+  const byName = new Map((e.named ?? []).map((n) => [n.name, n.val]));
+  for (let i = 0; i < fields.length; i++) {
+    if (!isMutableRefType(fields[i].type)) continue;   // a copy, whatever it was built from
+    const arg = e.named ? byName.get(fields[i].name) : e.args[i];
+    // A field with no argument is the type's default — a fresh one, or a null.
+    if (arg === undefined) continue;
+    if (!isFreshValue(arg, ctx)) return false;
+  }
+  return true;
+}
+
+/** Does every `return` in this body hand back something freshly built? */
+function returnsOnlyFreshValues(body: Block, ctx: Ctx): boolean {
+  let sawReturn = false;
+  let fresh = true;
+  const walkStmt = (st: Stmt): void => {
+    switch (st.kind) {
+      case "return":
+        sawReturn = true;
+        if (!st.value || !isFreshValue(st.value, ctx)) fresh = false;
+        return;
+      case "if":
+        st.then.stmts.forEach(walkStmt);
+        if (st.els?.kind === "else-block") st.els.block.stmts.forEach(walkStmt);
+        else if (st.els?.kind === "else-if") walkStmt(st.els.stmt);
+        return;
+      case "while": case "dowhile": st.body.stmts.forEach(walkStmt); return;
+      case "for":   st.body.stmts.forEach(walkStmt); return;
+      case "block": st.block.stmts.forEach(walkStmt); return;
+      case "switch": st.cases.forEach((c) => c.body.forEach(walkStmt)); return;
+      case "match":  st.arms.forEach((a) => a.body.forEach(walkStmt)); return;
+      default: return;
+    }
+  };
+  body.stmts.forEach(walkStmt);
+  return sawReturn && fresh;
 }
 
 /** Types through which a write could reach shared state — binding a const

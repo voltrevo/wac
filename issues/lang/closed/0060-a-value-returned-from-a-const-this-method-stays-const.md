@@ -1,7 +1,8 @@
 # 0060 — a value returned from a `const this` method stays const
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed, 2026-08-11 by agent-b
+- **Fixed in:** 0cf90e66
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-02
 - **Kind:** bug
@@ -63,3 +64,35 @@ hand.
 Not urgent: the workaround is local and obvious once you know the rule. It is filed because
 the error message points at the mutating call rather than at the `const this` that caused
 it, so the next person meets it as "why can't I mutate my own local".
+
+## Resolution
+
+The taint was at the call: `exprIsConst` said a call through a const receiver yields a const result,
+full stop, and its own comment admitted the approximation — *"a const accessor returning a fresh
+object is also treated as const"*. The notes above asked whether a non-struct return is affected too;
+it is not, because only a reference can carry constness, which is why `i32 size(const this)` never
+showed it.
+
+The rule asks what the method can hand back now. A construction is **fresh** when every field that
+could hold a reference is built from something fresh in turn:
+
+* `Counter(this.n)` — fresh. An `i32` field is a copy whatever built it.
+* `Box(this.i)` — not fresh. Writing through that field writes through the receiver.
+* `Box(Inner(this.i.x))` — fresh again, one level down.
+
+A call through a const receiver is const unless every `return` in the method is fresh. Anything else
+is not fresh, a nested call and a named construction included: a syntactic question with a
+conservative default rather than an escape analysis.
+
+Still refused, and checked as cases and probes: returning `this`, wrapping the receiver's array in a
+fresh outer array, an accessor handing back a field, and a method with one fresh return and one leaky
+one.
+
+**Two things worth keeping from doing it twice.** `spec/cases/0119` — the half that must keep failing
+— was written as `this.peek().x = 9` and passed for the wrong reason: a call is not an lvalue in wac,
+so it was a *parse* error. It binds to a local now. And in wacc the answer cannot be computed where
+the methods are declared: the field types it asks about are not all known yet, and doing it there
+reported 38 working files at one position in the linked blob. The table holds each method's body and
+answers at the call site instead.
+
+`packages/crypto/src/sha1.wac` can have its `clone` back, which is where this was found.

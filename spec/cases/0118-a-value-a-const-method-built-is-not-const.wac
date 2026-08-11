@@ -1,0 +1,18 @@
+// expect: answers f = 1
+// why: `const this` protects what the receiver can reach, and a value the method built out of copies is not that
+// from: issues/lang/0060
+struct Counter {
+  i32 n;
+  Counter create() { return Counter(0); }
+  void bump(this) { this.n += 1; }
+  Counter clone(const this) { return Counter(this.n); }
+  i32 peek(const this) {
+    Counter copy = this.clone();
+    copy.bump();
+    return copy.n;
+  }
+}
+export i32 f() {
+  Counter c = Counter.create();
+  return c.peek();
+}
