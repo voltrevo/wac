@@ -1,0 +1,6 @@
+// expect: refused
+// why: a sized array without `fill:` asks each element for its default, and there is no default function
+// from: issues/lang/0079
+export void f() {
+  fn[i32(i32)][] v = fn[i32(i32)][3]();
+}
