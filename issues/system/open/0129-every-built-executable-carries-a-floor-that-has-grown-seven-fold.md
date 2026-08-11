@@ -1,7 +1,7 @@
 # 0129 — every built executable carries a floor that has grown seven-fold
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** (nobody — the arithmetic is done, the bundling question is open)
 - **Reported by:** agent-a
 - **Date:** 2026-08-11
 - **Kind:** performance
@@ -48,12 +48,30 @@ optimises:
 
 1. **How much of the 266 KiB is the embedded wasm** (base64 is 4/3 of 91.6 KiB ≈ 122 KiB) and how
    much is host JavaScript. That is arithmetic on one file and nobody has done it.
+   **Done, 2026-08-11 — and it is the answer to the whole issue:**
+
+   | executable | total | embedded wasm | the rest, which is JavaScript |
+   |---|---:|---:|---:|
+   | `platform/example/wc.wac` | 273,774 | 93,766 | **148,750** |
+   | `box/src/bin/sh.wac` | 927,210 | 583,699 | **148,942** |
+
+   The JS is **the same 149 KB** under a program that reads standard input and under one carrying 65
+   applets and a shell. That is the floor, in one number, and it is the host bundle rather than
+   anything the compiler emitted.
 2. **Whether the 92 KiB wasm floor is the language runtime or the capability layer.** `deno task
    size` already measures layers for `packages/tor`; the same treatment for a program that uses one
    capability would say which.
-3. **What `wasm-opt` would take off**, which is [0094](0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md)
-   — open since 2026-08-06 and never run over anything. It is the cheapest of the three to answer and
-   the only one that needs a tool this container does not have.
+3. **What `wasm-opt` would take off**, which is [0094](0094-nothing-has-ever-run-wasm-opt-over-what-we-ship.md).
+   **Measured 2026-08-11**: −41% on this program's module (93,766 → 55,143), which takes the
+   executable from 273,774 to **222,274** — and the optimised module runs, checked by patching it back
+   into the executable and comparing output. So the cheapest lead is real and it is a third of the
+   problem: 149 KB of JavaScript is left, untouched by any wasm tool.
+
+   Which re-scopes this issue. The question is no longer "where does the floor come from" but **what
+   does a program that never spawns, never draws and never opens a socket need from the host bundle**
+   — `entry.ts`, `layout.ts`, `respond.ts`, `children.ts` and the rest go in whole, and a `wc` uses
+   almost none of it. That is a bundling question, not a compiler one, and it is where the next 149 KB
+   is.
 
 ## Why it matters, and why it might not
 

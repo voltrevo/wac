@@ -69,3 +69,39 @@ and the array's identity are semantics, not slack.
 
 Which is the answer to "should the optimizer handle this for us": it handles the generic half. The half
 that matters is a shape question, and it stays ours.
+
+## 2026-08-11: measured on what we actually ship, and the output runs
+
+The table above is a probe. Here it is on real programs, through `binaryen@131` from npm at `-O3`
+with the GC features on:
+
+| module | emitted | `wasm-opt -O3` | | time |
+|---|---:|---:|---:|---:|
+| an empty program | 1,934 | 479 | −75% | 0.1s |
+| `platform/example/wc.wac` | 93,766 | 55,143 | −41% | 1s |
+| `sh/src/sh.wac` | 280,138 | 164,869 | −41% | 4.6s |
+| `box/src/bin/sh.wac` | 583,699 | 374,188 | −36% | 15.6s |
+
+**And it still works**, which the probe above never asked. A built executable embeds its module as
+base64, so the optimised bytes go back in with a string replacement and the executable runs:
+
+    $ wc-exe README.md            193 1456 9218
+    $ wc-exe-opt README.md        193 1456 9218
+
+    $ boxsh -c 'echo a b c | tr " " "\n" | sort -r | head -2; seq 1 100 | sha256sum'
+    c b 93d4e5c77838e0aa5cb6647c385c810a7c2782bf769029e6c420052048ab22bb   # both builds, identical
+
+That is not a proof of semantic preservation — it is two programs, one of them the whole shell — but
+it is the check the decision below needs and it had not been run.
+
+**Pin the version, and say why.** Ubuntu 24.04's `binaryen` is **108** and cannot read our modules at
+all: `[parse exception: Bad type form -50 (at 0:14)]`, which is the wasm-GC type encoding it predates.
+Anyone reaching for `apt install binaryen` gets a tool that fails on the first byte of the type
+section. `npm:binaryen@131` reads them without a flag beyond the feature switches.
+
+**What this does not fix**, and it is the more useful half:
+[0129](0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) is about the floor on a
+built *executable*, and the floor is not the wasm. `wc`'s executable is 273,774 bytes of which 93,766
+is module and **148,750 is JavaScript**; `box sh`'s is 927,210 of which **148,942 is JavaScript** — the
+same 149 KB either side of a program six times the size. Optimising the module takes `wc` from 274 KB
+to 222 KB and cannot touch the rest.
