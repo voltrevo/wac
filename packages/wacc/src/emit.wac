@@ -3324,6 +3324,15 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         fb.byte(64);
         env.depth = env.depth + 1;
         emitBody(fb, src, lexed, env, cases[i].body);
+        // **Leave the switch when an arm has run.** A wac `case` is a block and not a label, so
+        // nothing falls out of it — and this emitted the arms as a chain of `if`s with the default
+        // *after* them, unconditionally. A later case did not run, because its comparison failed;
+        // the default ran every time. `packages/json` wrote every escape twice and `"a\"b"` came
+        // back as `"a\""b"`: the `case '"'` arm pushed `\"` and then `default` pushed the byte
+        // again. The branch is to the block this statement opened, which is where `break` goes too.
+        // `spec/cases/0089`.
+        fb.byte(12);
+        fb.u32leb(env.depth - env.breakAt);
         env.depth = env.depth - 1;
         fb.byte(11);
       }
@@ -7181,7 +7190,12 @@ string bindArrSuffix(string el) {
  * layout. A struct element is nullable on both sides and takes the one-argument form.
  */
 bool arrNeedsFill(Env env, string el) {
-  if (isArrayType(el)) { return true; }
+  // **A `string` element only.** The reference declares an array element non-null exactly when it is
+  // a `string`; an element that is itself an array is declared nullable, so `array.new_default`
+  // serves and the glue calls `$bind$arr_u8Arr_new(n)` with one argument. Emitting the two-argument
+  // form for it is not a wrong answer but a wrong *shape*: `packages/bls` stopped with "type
+  // incompatibility when transforming from/to JS" at the call, which is the boundary refusing an
+  // arity nobody generated glue for. Read off the generated glue rather than reasoned about.
   return el == "string";
 }
 

@@ -1,0 +1,10 @@
+// expect: refused
+// why: the grammar is `{ case_clause } , [ default_clause ]` — the default is last or absent
+export i32 f() {
+  i32 n = 0;
+  switch (1) {
+    default: { n = n + 1; }
+    case 1: { n = n + 2; }
+  }
+  return n;
+}
