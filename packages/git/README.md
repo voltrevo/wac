@@ -96,10 +96,15 @@ worse than one that says which:
   thin pack needs a **moved ref in a complete history**, which cannot be arranged against a repository we
   do not control — so the thin path is exercised against a local `git upload-pack`, which does produce
   one, and cannot be exercised against GitHub at all.
-- **A pack can be written; push cannot.** `writePack` produces a pack of whole objects — no deltas, which
-  is what `design/system/0005` step 7 asks for — and `git index-pack`, `git verify-pack -v` and
-  `git unpack-objects` all accept it. What is missing is the conversation: `git-receive-pack`, the ref
-  advertisement in the other direction, and the update commands that go with it.
+- **A push works against `git receive-pack`, and not against a host that wants credentials.**
+  `src/receive.wac` builds the update commands and reads the report; `example/gitpush.wac` writes the
+  request — commands then pack — on standard output, so it pipes straight into `receive-pack`. Measured:
+  seven objects for two commits over a subdirectory, `unpack ok`, `ok refs/heads/main`, the ref moved,
+  `git log` in the target showing both commits in order, `git fsck` clean. The object count is compared
+  against `git rev-list --objects`, because a walk that missed a parent's tree still produces a pack the
+  server unpacks. What is missing is **everything about a remote**: no authentication, so no pushing to a
+  host that asks; no negotiation, so only a create into an empty repository rather than a fast-forward
+  onto refs somebody else moved; and no `git push` that finds its own remote.
 - **No author from anywhere.** `gitci` writes a fixed identity and a fixed timestamp, because it has
   neither a clock nor a config reader. Inventing either quietly would make two runs of the same tree
   produce different commits, which for a content-addressed store is the one thing worth avoiding.

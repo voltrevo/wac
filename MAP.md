@@ -4,8 +4,8 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-35 packages, 99,784 lines of wac, 1745 tests,
-60 command-line programs and 5 browser pages.
+35 packages, 100,167 lines of wac, 1748 tests,
+61 command-line programs and 5 browser pages.
 
 ## Packages
 
@@ -43,7 +43,7 @@ In dependency order: nothing here imports anything below it.
 | [`tls`](packages/tls/) | TLS 1.3 (RFC 8446) in wac. | 3,954 | 100 | `bytes` `codec` `crypto` |
 | [`box`](packages/box/) | 65 applets in one program, chosen by the first argument — 64 tools and `help`, which prints the list. | 8,116 | 122 | `bytes` `codec` `crypto` `datetime` `fmt` `fs` `gzip` `http` `json` `platform` `regex` `server` `sh` `std` `tls` `unicode` `url` `zstd` |
 | [`ens`](packages/ens/) | The name a person types, turned into the node a contract is asked about. | 389 | 13 | `bytes` `crypto` `mpt` |
-| [`git`](packages/git/) | git in wac: the object database, and enough of a client to fetch from a real server. | 4,273 | 45 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
+| [`git`](packages/git/) | git in wac: the object database, and enough of a client to fetch from a real server. | 4,656 | 48 | `bytes` `codec` `crypto` `fmt` `fs` `gzip` `http` `platform` `std` `tls` |
 | [`lightclient`](packages/lightclient/) | **The Altair sync protocol works. | 642 | 12 | `bls` `ssz` |
 | [`tor`](packages/tor/) | Tor in wac, both ends: a client and SOCKS5 proxy, a relay, a directory authority, an onion-service client, and a test network with no C tor in it. | 16,043 | 295 | `bytes` `codec` `crypto` `datetime` `fmt` `http` `platform` `std` `tls` `wactest` |
 | [`ethrpc`](packages/ethrpc/) | Asking an Ethereum node a question, so the packages that *verify* answers have something to verify. | 762 | 6 | `codec` `crypto` `ens` `fmt` `http` `json` `mpt` `platform` `rlp` |
@@ -105,6 +105,7 @@ reach — see `packages/platform/README.md`.
 | `packages/git/example/gitco.wac` | `git checkout`, in wac. |
 | `packages/git/example/gitfetch.wac` | `gitfetch <https-url> [depth]` — ask a real server for a pack, index it, and read what we asked for. |
 | `packages/git/example/gitls.wac` | `gitls <url>` — the refs a remote advertises, over our own TLS, through whatever proxy is set. |
+| `packages/git/example/gitpush.wac` | `gitpush <repo-dir> <advertisement-file> <ref>` — the request half of a push, on standard output. |
 | `packages/git/example/gitst.wac` | `gitst <repo-dir>` — how the working tree differs from the index, in `git status --porcelain`'s words. |
 | `packages/tor/src/app.wac` | A Tor client, entire. |
 | `packages/tor/src/dird.wac` | A directory authority's HTTP port: serve the consensus, the certificate and the descriptor. |

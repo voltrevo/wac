@@ -32,7 +32,7 @@ import { Got, Indexed, Pack, completePack, indexPack, openPack, objectNamed } fr
 import { Kind, Object, readLoose } from "./object.wac";
 import { RefValue, PackedRef, packedTarget, parsePackedRefs, parseRef } from "./refs.wac";
 import { Entry, Tree, parseTree, writeTree } from "./tree.wac";
-import { Commit, Who, formatCommit } from "./commit.wac";
+import { Commit, Parsed, Who, formatCommit, parseCommit } from "./commit.wac";
 import { framed, looseFile } from "./object.wac";
 import { sha1 } from "../../crypto/src/sha1.wac";
 import { GitIndex, IndexEntry, Staged, parseIndex, writeIndex } from "./index.wac";
@@ -662,6 +662,88 @@ void sortLines(Vec<string> lines) {
     }
     lines.set(j + 1, cur);
   }
+}
+
+/** One object a push has to carry: the pack's own kind number, and the name. */
+export struct Reachable {
+  /** 1 commit, 2 tree, 3 blob — the numbers `writePack` takes. */
+  i32 kind;
+  u8[] name;
+}
+
+bool haveName(const Vec<Reachable> seen, u8[] name) {
+  for (i32 i = 0; i < seen.len(); i++) {
+    if (sameName(seen.get(i).name, name)) { return true; }
+  }
+  return false;
+}
+
+/** Add every tree and blob under `treeName`, depth-first. */
+bool reachTree(Repo r, u8[] treeName, Vec<Reachable> out, i32 depth) {
+  if (depth <= 0) { return false; }
+  if (haveName(out, treeName)) { return true; }
+  match (readObject(r, treeName)) {
+    case Absent(why): { return false; }
+    case Found(kind, data): {
+      if (kind != 2) { return false; }
+      out.push(Reachable(2, treeName));
+      match (parseTree(data)) {
+        case Bad(why): { return false; }
+        case Ok(list): {
+          for (i32 i = 0; i < list.len(); i++) {
+            Entry e = list.get(i);
+            if (e.isTree()) {
+              if (!reachTree(r, e.hash, out, depth - 1)) { return false; }
+            } else if (e.mode == "160000") {
+              // A gitlink names a commit in the submodule's repository. It is not ours to send, and a
+              // server does not expect it — this is the one entry a push steps over.
+              continue;
+            } else if (!haveName(out, e.hash)) {
+              out.push(Reachable(3, e.hash));
+            }
+          }
+          return true;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Every object reachable from `commit` — itself, its ancestors, and all their trees and blobs.
+ *
+ * This is what a push of a new ref has to carry, and it is deliberately the *whole* history rather than a
+ * difference: computing a difference needs to know what the far end already has, which is a negotiation
+ * this does not do. A push into an empty repository is the case that needs no negotiation at all, and it is
+ * the case `receive.wac`'s tests use.
+ *
+ * Empty means something was missing or malformed — a caller cannot push a history it cannot read.
+ */
+export Vec<Reachable> reachableFrom(Repo r, u8[] commit, i32 depth) {
+  Vec<Reachable> out = Vec.create();
+  Vec<u8[]> queue = Vec.create();
+  queue.push(commit);
+  i32 at = 0;
+  while (at < queue.len()) {
+    u8[] name = queue.get(at);
+    at = at + 1;
+    if (haveName(out, name)) { continue; }
+    match (readObject(r, name)) {
+      case Absent(why): { return Vec.create(); }
+      case Found(kind, data): {
+        if (kind != 1) { return Vec.create(); }
+        out.push(Reachable(1, name));
+        match (parseCommit(data)) {
+          case Malformed(why): { return Vec.create(); }
+          case Understood(c): {
+            if (!reachTree(r, c.tree, out, depth)) { return Vec.create(); }
+            for (i32 i = 0; i < c.parents.len(); i++) { queue.push(c.parents.get(i)); }
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** A thin pack completed from what this repository holds, or why it could not be. */

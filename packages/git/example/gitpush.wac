@@ -1,0 +1,101 @@
+// `gitpush <repo-dir> <advertisement-file> <ref>` — the request half of a push, on standard output.
+//
+// A push is two exchanges with `git receive-pack`: read what it has, then send the updates and a pack. This
+// program is the middle: it takes the advertisement as a file and writes the request — update commands, then
+// the packfile — to standard output, so a caller can pipe it straight back. That shape is deliberate. It
+// keeps the program a function of its inputs, so a test can run `receive-pack` twice with files in between
+// rather than wiring two processes together, and it is how `git upload-pack` and `git receive-pack` are
+// themselves built: stdio, not a socket.
+//
+// **What it does not do is decide anything.** The ref, and the old value that makes the update a
+// compare-and-swap, come from the caller — because a client that guessed the old value would overwrite
+// whatever was there, and the server's refusal is the only thing standing between a wrong guess and
+// somebody's lost commit. This one creates a ref: it sends forty zeros and the server refuses if the ref
+// exists.
+
+import { Cli, Core, FileResult } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { decode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Ad, Advertised, parseAdvertisement } from "../src/fetch.wac";
+import { Update, absentName, noRefsYet, updateRequest } from "../src/receive.wac";
+import { Reachable, RepoAt, head, openRepo, reachableFrom, readObject } from "../src/repo.wac";
+import { Got, writePack } from "../src/pack.wac";
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 3) {
+    core.warn("usage: gitpush <repo-dir> <advertisement-file> <ref>");
+    return 2;
+  }
+  string root = string.fromBytes(cli.arg(0).wait());
+  string advPath = string.fromBytes(cli.arg(1).wait());
+  string ref = string.fromBytes(cli.arg(2).wait());
+  Fs fs = Fs.onHost(cli, 0);
+
+  FileResult adv = fs.readFile(advPath);
+  if (!adv.ok) {
+    core.warn("gitpush: cannot read " + advPath);
+    return 1;
+  }
+  match (parseAdvertisement(adv.bytes)) {
+    case Garbled(why): {
+      core.warn("gitpush: the advertisement did not parse: " + why);
+      return 1;
+    }
+    case Said(ad): {
+      // Only a create is implemented, so anything already there is a refusal here rather than a surprise
+      // from the server.
+      if (!noRefsYet(ad)) {
+        core.warn("gitpush: the target already has refs, and this only creates one");
+        return 1;
+      }
+    }
+  }
+
+  match (openRepo(fs, root + "/.git", root)) {
+    case NoRepo(why): {
+      core.warn("gitpush: " + why);
+      return 1;
+    }
+    case Opened(repo): {
+      u8[]? tip = head(repo);
+      if (tip is null) {
+        core.warn("gitpush: HEAD does not resolve to a commit");
+        return 1;
+      }
+      Vec<Reachable> objects = reachableFrom(repo, tip!, 64);
+      if (objects.len() == 0) {
+        core.warn("gitpush: nothing reachable from HEAD, or an object could not be read");
+        return 1;
+      }
+
+      i32[] kinds = i32[objects.len()]();
+      Vec<u8[]> bodies = Vec.create();
+      for (i32 i = 0; i < objects.len(); i++) {
+        kinds[i] = objects.get(i).kind;
+        match (readObject(repo, objects.get(i).name)) {
+          case Absent(why): {
+            core.warn("gitpush: " + why);
+            return 1;
+          }
+          case Found(kind, data): { bodies.push(data); }
+        }
+      }
+
+      Vec<Update> updates = Vec.create();
+      updates.push(Update(ref, absentName(), tip!));
+      if (!cli.write(updateRequest(updates, "report-status"))) {
+        core.warn("gitpush: cannot write the update commands");
+        return 1;
+      }
+      if (!cli.write(writePack(kinds, bodies))) {
+        core.warn("gitpush: cannot write the pack");
+        return 1;
+      }
+      core.warn("gitpush: " + itoa(objects.len()) + " objects for " + ref);
+      return 0;
+    }
+  }
+}
