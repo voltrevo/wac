@@ -5,10 +5,10 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0130](open/0130-local-outside-a-function-is-fatal-in-bash-and-a-diagnostic-here.md) | `local` outside a function is fatal in bash and a diagnostic here — a failed special builtin should end the script | bug | wrong answer |
 | [0129](open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) | every built executable carries a floor that has grown seven-fold — a `wc` is 347 KiB | performance | no error |
 | [0128](open/0128-the-native-half-of-the-two-host-differential-times-out-under-load.md) | the native half of the two-host differential times out under load, and passes alone | bug | wrong answer |
 | [0126](open/0126-a-server-wide-key-is-root-in-every-image-that-server-serves.md) | a key in the server's own `authorized_keys` is root in every image that server serves | missing feature | wrong answer |
-| [0114](open/0114-a-pipeline-stage-is-not-a-subshell.md) | a pipeline stage is not a subshell, so an assignment in one leaks into the shell | bug | wrong answer |
 | [0108](open/0108-a-sessions-writes-can-be-lost-if-the-server-stops-straight-after.md) | a session's writes can be lost if the server is stopped straight after | bug | wrong answer |
 | [0107](open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md) | a C tor fetching from our onion service times out intermittently — likely the same fault as 0106 | bug | hangs |
 | [0106](open/0106-the-onion-service-test-goes-red-under-load-on-a-shared-machine.md) | the onion-service test goes red under load, and its 30s timeout cannot tell busy from wedged | bug | wrong answer |
@@ -29,7 +29,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-141 issues, 124 closed.
+142 issues, 125 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
