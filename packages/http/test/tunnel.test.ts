@@ -12,6 +12,9 @@
 // below check the *proxy's* behaviour rather than the internet's: `example.com` is not assumed
 // reachable, only that Squid answers about it one way or the other.
 
+// Imported for its side effect: retries a spawn that fails with "Text file busy", and installs the
+// `WAC_PROFILE` coverage wrapper. issues/system 0074.
+import "../../../harness/spawnRetry.ts";
 import { buildApp } from "../../platform/build.ts";
 
 const dec = new TextDecoder();
