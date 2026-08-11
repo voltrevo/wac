@@ -1293,6 +1293,18 @@ export struct Env {
    */
   bool checked;
 
+  /**
+   * Coverage instrumentation: a counter per branch point, and the table that says what each is.
+   *
+   * `covCount` is assigned as the points are discovered — emission order *is* the numbering, which
+   * is why the table is built in the same walk rather than derived afterwards. Global 0 holds the
+   * counters when this is on, so every constant's global index shifts by one, exactly as an import
+   * shifts every function's.
+   */
+  bool coverage;
+  i32 covCount;
+  string covTable;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1306,7 +1318,8 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "", false);
+               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "", false,
+               false, 0, "");
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1839,6 +1852,29 @@ bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges,
  * is the same reason the reference takes a map rather than a directory. A path it names and the
  * caller did not supply is a bare module rather than a wrong one.
  */
+/**
+ * The same module instrumented: a counter per branch point, and `__cov_init/_len/_get` to read them.
+ *
+ * The table saying what each counter *is* comes from `covTableLinked`, which emits the module and
+ * throws the bytes away — the numbering is emission order, so the only way to know it is to emit.
+ */
+export u8[] emitLinkedCovered(string[] paths, string[] sources, string entry) {
+  return emitLinkedWith2(paths, sources, entry, false, true);
+}
+
+/** `index\tline\tcol\tkind` per point, in counter order. */
+export string covTableLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string[] names = string[4096]();
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return ""; }
+  Env env = Env.create();
+  return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+                    names, filePaths);
+}
+
 /** `--checked`: the same module with trapping arithmetic. */
 export u8[] emitLinkedChecked(string[] paths, string[] sources, string entry) {
   return emitLinkedWith(paths, sources, entry, true);
@@ -1849,6 +1885,10 @@ export u8[] emitLinked(string[] paths, string[] sources, string entry) {
 }
 
 u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked) {
+  return emitLinkedWith2(paths, sources, entry, checked, false);
+}
+
+u8[] emitLinkedWith2(string[] paths, string[] sources, string entry, bool checked, bool covered) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
@@ -1856,7 +1896,7 @@ u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
   return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
-                          names, filePaths, checked);
+                          names, filePaths, checked, covered);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -1911,17 +1951,32 @@ void emitStructFields(B types, Env env, string owner) {
 
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths) {
-  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false);
+  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false, false);
+}
+
+/** The point table for an instrumented build, which only emitting can produce. */
+string covTableOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
+                  string[] filePaths) {
+  Env probe = Env.create();
+  emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, false, true, probe);
+  return probe.covTable;
 }
 
 u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
-                      string[] filePaths, bool checked) {
+                      string[] filePaths, bool checked, bool covered) {
+  return emitModuleOfInto(src, entryDecls, starts, edges, names, filePaths, checked, covered,
+                          Env.create());
+}
+
+u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
+                      string[] filePaths, bool checked, bool covered, Env envIn) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
-  Env env = Env.create();
+  Env env = envIn;
   env.checked = checked;
+  env.coverage = covered;
 
   // The file table first: every key handed out below is derived from it, and a registration made
   // before it is loaded would be scoped to file 0 whatever line it is on.
@@ -1954,6 +2009,10 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // together: a module that has strings at all is likely to compare or join them, and an unused one
   // costs a few dozen bytes. `u8[]` is registered here too — `toBytes` names it, and a type has to
   // exist before the section that declares it is written.
+  // **The counter array, before anything counts the array table.** Registering it later would leave
+  // the array-accessor family's four signatures per type unregistered for this one, and the type
+  // section is sized before those are asked for — which the emitter answers by declining the module.
+  if (env.coverage) { env.arrayType("i32[]"); }
   bool needsStrings = env.arrayCount > 0 && hasStringType(env);
   if (needsStrings) {
     env.arrayType("u8[]");
@@ -2198,12 +2257,14 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   // reference uses, and the same condition the nine internal ones already carry.
   i32 bindStrHelpers = needsStrings ? 6 : 0;
   i32 cbHelpers = env.cbSigCount * (callbackSlots() + 1);
+  i32 covHelpers = env.coverage ? 3 : 0;
   i32 enumHelpersAt = structHelpersAt + structHelpers;
   i32 bindStrHelpersAt = enumHelpersAt + enumHelpers;
   i32 cbHelpersAt = bindStrHelpersAt + bindStrHelpers;
-  i32 startFunctionAt = cbHelpersAt + cbHelpers;
+  i32 covHelpersAt = cbHelpersAt + cbHelpers;
+  i32 startFunctionAt = covHelpersAt + covHelpers;
   i32 helpers = stringHelpers + (startNeeded ? 1 : 0) + 1 + arrHelpers + structHelpers +
-                enumHelpers + bindStrHelpers + cbHelpers;
+                enumHelpers + bindStrHelpers + cbHelpers + covHelpers;
   funcs.u32leb(count + helpers);
   // Built now for its count, appended at the end of the section: every index it names belongs to a
   // function the walk above has already numbered.
@@ -2211,7 +2272,7 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   i32 methodExportCount = bindMethodExports(methodExports, env, src, lexed, prog, bindStructs,
                                             bindStructCount);
   exports.u32leb(exportCount + 2 + arrHelpers + structHelpers + enumHelpers + bindStrHelpers +
-                 env.cbSigCount + methodExportCount);
+                 env.cbSigCount + covHelpers + methodExportCount);
   code.u32leb(count + helpers);
 
   // **Every function's signature, before the section is sized.** They share the table with the
@@ -2348,6 +2409,11 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     env.sigType(env.cbSigs[j]);
     env.sigType(dispatchSig(env.cbSigs[j]));
     env.sigType("fn[" + env.cbSigs[j] + "(i32)]");
+  }
+  if (env.coverage) {
+    env.sigType("fn[void()]");
+    env.sigType("fn[i32()]");
+    env.sigType("fn[i32(i32)]");
   }
   if (startNeeded) { env.sigType("fn[void()]"); }
   if (needsStrings) {
@@ -2582,6 +2648,7 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 j = 0; j < env.cbSigCount; j++) {
     emitCallbackHelpers(funcs, code, env, j, cbHelpersAt + j * (callbackSlots() + 1));
   }
+  if (env.coverage) { emitCoverageHelpers(funcs, code, env); }
 
   B out = B.create();
   // `\0asm`, then version 1 as four little-endian bytes.
@@ -2598,8 +2665,22 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 i = 0; i < env.constCount; i++) {
     if (env.constGlobal[i] >= 0) { globalCount = globalCount + 1; }
   }
-  globals.u32leb(globalCount);
-  for (i32 g = 0; g < globalCount; g++) {
+  globals.u32leb(globalCount + (env.coverage ? 1 : 0));
+  if (env.coverage) {
+    // `i32[]`, mutable, one slot per point — `array.new_default` over a constant length is a
+    // constant expression, so the counters exist before any code runs and `__cov_init` only has to
+    // clear them.
+    writeValType(globals, env, "i32[]");
+    globals.byte(1);
+    globals.byte(65); globals.i32leb(env.covCount);
+    globals.byte(251); globals.u32leb(7); globals.u32leb(env.arrayType("i32[]"));
+    globals.byte(11);
+  }
+  // **From where the constants' indices start**, which is one along when the counter array has taken
+  // global 0. Writing from zero left every constant's entry unwritten — the section then ended early
+  // and the next byte was read as a value type.
+  i32 firstConst = env.coverage ? 1 : 0;
+  for (i32 g = firstConst; g < globalCount + firstConst; g++) {
     for (i32 i = 0; i < env.constCount; i++) {
       if (env.constGlobal[i] != g) { continue; }
       writeValType(globals, env, env.constTypes[i]);
@@ -2754,6 +2835,17 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     exports.byte(0);
     exports.u32leb(cbHelpersAt + j * (callbackSlots() + 1) + callbackSlots());
   }
+  if (env.coverage) {
+    exports.name("__cov_init");
+    exports.byte(0);
+    exports.u32leb(covHelpersAt);
+    exports.name("__cov_len");
+    exports.byte(0);
+    exports.u32leb(covHelpersAt + 1);
+    exports.name("__cov_get");
+    exports.byte(0);
+    exports.u32leb(covHelpersAt + 2);
+  }
   exports.bytes(methodExports);
 
   section(out, 1, types);
@@ -2772,7 +2864,9 @@ u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   }
   section(out, 3, funcs);
   section(out, 5, mem);
-  if (globalCount > 0) { section(out, 6, globals); }
+  // The counter array is a global too, so a module with no constants still has a globals section
+  // when it is instrumented — without which `global.get 0` names nothing.
+  if (globalCount > 0 || env.coverage) { section(out, 6, globals); }
   section(out, 7, exports);
   if (startNeeded) {
     B st = B.create();
@@ -3416,10 +3510,19 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       fb.byte(4);    // if
       fb.byte(64);   // blocktype: nothing
       env.depth = env.depth + 1;
+      covPoint(fb, env, "then", s.line, s.col);
       emitBody(fb, src, lexed, env, then);
       if (els.len() > 0) {
         fb.byte(5);  // else
+        covPoint(fb, env, "else", s.line, s.col);
         emitBody(fb, src, lexed, env, els);
+      }
+      // **An `else` a host can tell apart from a missing one.** wasm needs no `else` arm for an
+      // `if` with none, but a coverage reader does: a point that never fires and a branch that was
+      // never written are different facts about a program.
+      if (els.len() == 0 && env.coverage) {
+        fb.byte(5);
+        covPoint(fb, env, "else", s.line, s.col);
       }
       fb.byte(11);   // end
       env.depth = env.depth - 1;
@@ -3493,6 +3596,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         fb.byte(4);
         fb.byte(64);
         env.depth = env.depth + 1;
+        covPoint(fb, env, "case", cases[i].line, cases[i].col);
         emitBody(fb, src, lexed, env, cases[i].body);
         // **Leave the switch when an arm has run.** A wac `case` is a block and not a label, so
         // nothing falls out of it — and this emitted the arms as a chain of `if`s with the default
@@ -3508,6 +3612,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
       }
       for (i32 i = 0; i < cases.len(); i++) {
         if (!(cases[i].value is null)) { continue; }
+        covPoint(fb, env, "case", cases[i].line, cases[i].col);
         emitBody(fb, src, lexed, env, cases[i].body);
       }
       fb.byte(11);
@@ -3631,6 +3736,7 @@ void emitLoop(B fb, u8[] src, Lexed lexed, Env env, Expr? cond, Stmt[] inner, St
   fb.byte(64);
   env.depth = env.depth + 1;
   env.continueAt = env.depth;
+  covPoint(fb, env, "loop", cond is null ? 0 : cond!.line, cond is null ? 0 : cond!.col);
   emitBody(fb, src, lexed, env, inner);
   fb.byte(11);
   env.depth = env.depth - 1;
@@ -4614,6 +4720,88 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
  * comparisons each have a `_u` twin that an unsigned type would want instead, and choosing between
  * them is the first thing a second numeric type will need.
  */
+/**
+ * Record a branch point and emit its counter increment.
+ *
+ * The index *is* the position in the table, and the table is built as the points are emitted — so
+ * emission order is the numbering, and a host reading `__cov_get(i)` and the table's `i`th row is
+ * looking at the same place in the program. A no-op when instrumentation is off, which is what keeps
+ * an ordinary build byte-identical.
+ */
+void covPoint(B fb, Env env, string kind, i32 line, i32 col) {
+  if (!env.coverage) { return; }
+  i32 idx = env.covCount;
+  env.covCount = env.covCount + 1;
+  env.covTable = env.covTable + numText(idx) + "\t" + numText(line) + "\t" + numText(col) + "\t"
+                 + kind + "\n";
+  i32 at = env.arrayType("i32[]");
+  fb.byte(35); fb.u32leb(0);                       // global.get 0
+  fb.byte(65); fb.i32leb(idx);
+  fb.byte(35); fb.u32leb(0);
+  fb.byte(65); fb.i32leb(idx);
+  fb.byte(251); fb.u32leb(11); fb.u32leb(at);      // array.get
+  fb.byte(65); fb.i32leb(1);
+  fb.byte(106);                                    // i32.add
+  fb.byte(251); fb.u32leb(14); fb.u32leb(at);      // array.set
+}
+
+/**
+ * `__cov_init()`, `__cov_len()` and `__cov_get(i)` — the three a host reads counters through.
+ *
+ * The names are the reference's, because a consumer written against one compiler should work against
+ * the other. The *representation* is ours, as everywhere else on this boundary: the counters live in
+ * a global `i32[]` rather than anywhere a caller can see, and `init` clears rather than allocates,
+ * since a constant-expression global already made the array.
+ */
+void emitCoverageHelpers(B funcs, B code, Env env) {
+  i32 at = env.arrayType("i32[]");
+
+  // `__cov_init()` — every counter back to zero.
+  funcs.u32leb(env.sigType("fn[void()]"));
+  B ib = B.create();
+  ib.u32leb(1);
+  ib.u32leb(1); ib.byte(127);                      // one i32 local: the cursor
+  ib.byte(65); ib.i32leb(0); ib.byte(33); ib.u32leb(0);
+  ib.byte(2); ib.byte(64);
+  ib.byte(3); ib.byte(64);
+  ib.byte(32); ib.u32leb(0);
+  ib.byte(65); ib.i32leb(env.covCount);
+  ib.byte(78);                                     // i32.ge_s
+  ib.byte(13); ib.u32leb(1);
+  ib.byte(35); ib.u32leb(0);
+  ib.byte(32); ib.u32leb(0);
+  ib.byte(65); ib.i32leb(0);
+  ib.byte(251); ib.u32leb(14); ib.u32leb(at);      // array.set
+  ib.byte(32); ib.u32leb(0); ib.byte(65); ib.i32leb(1); ib.byte(106);
+  ib.byte(33); ib.u32leb(0);
+  ib.byte(12); ib.u32leb(0);
+  ib.byte(11);
+  ib.byte(11);
+  ib.byte(11);
+  code.u32leb(ib.len);
+  code.bytes(ib);
+
+  // `__cov_len()` — how many points this module has.
+  funcs.u32leb(env.sigType("fn[i32()]"));
+  B lb = B.create();
+  lb.u32leb(0);
+  lb.byte(65); lb.i32leb(env.covCount);
+  lb.byte(11);
+  code.u32leb(lb.len);
+  code.bytes(lb);
+
+  // `__cov_get(i)` — the count at a point.
+  funcs.u32leb(env.sigType("fn[i32(i32)]"));
+  B gb = B.create();
+  gb.u32leb(0);
+  gb.byte(35); gb.u32leb(0);
+  gb.byte(32); gb.u32leb(0);
+  gb.byte(251); gb.u32leb(11); gb.u32leb(at);      // array.get
+  gb.byte(11);
+  code.u32leb(gb.len);
+  code.bytes(gb);
+}
+
 /** Whether this is an integer type, which is what `--checked` has anything to say about. */
 bool isIntType(string t) {
   return t == "i32" || t == "u32" || t == "i64" || t == "u64";
@@ -5108,6 +5296,9 @@ void emitFunction(B types, B funcs, B exports, B code, u8[] src, Lexed lexed, En
   // not final until the last instruction is written. Same shape as a section, whose length is only
   // knowable once its contents are: build it apart, then write the header and splice it in.
   B insns = B.create();
+  // **A point at the entry**, so a function that is never called is visible as such rather than as a
+  // body whose branches happen not to have fired.
+  covPoint(insns, env, "entry", 0, 0);
   emitBody(insns, src, lexed, env, body);
 
   B fb = B.create();
@@ -6875,7 +7066,8 @@ void emitStartFunction(B funcs, B code, u8[] src, Lexed lexed, Env env, i32 inde
 }
 
 void assignGlobals(Env env, u8[] src, Lexed lexed) {
-  i32 next = 0;
+  // **Global 0 is the counter array** when instrumenting, so a constant's global starts at one.
+  i32 next = env.coverage ? 1 : 0;
   for (i32 i = 0; i < env.constCount; i++) {
     string t = env.constTypes[i];
     if (!isArrayType(t) && !env.isStructName(t)) { continue; }

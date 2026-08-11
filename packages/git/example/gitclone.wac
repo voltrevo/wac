@@ -1,0 +1,241 @@
+// `gitclone <https-url> <dir> [depth]` — a clone, as one program.
+//
+// `design/system/0005` step 8, and the row that closes the document. Every piece it uses was built and
+// measured separately and **nothing composed them**, which is why this exists rather than another
+// library: a clone is the claim the whole plan was written to make, and four passing tests plus an
+// inference is not that claim.
+//
+//     advertisement   ../src/fetch.wac        what the server has, and which branch HEAD is
+//     pack            ../src/fetch.wac        wants, and the packfile out of the reply
+//     index           ../src/pack.wac, idx    built by walking the pack, then written beside it
+//     refs            here                    HEAD, the branch, and `shallow` if the fetch was
+//     checkout        ../src/repo.wac         the tree into files, and an index describing them
+//
+// Adjudicated by `git fsck` and `git status --porcelain` on the directory this leaves behind — the same
+// two commands step 4 is held to, now against a repository fetched from a server instead of one git
+// made locally.
+//
+// ## Three things a clone needs that a fetch does not
+//
+// **A `.git` that git recognises.** `HEAD` as a symbolic ref, the branch under `refs/heads/`, and
+// `objects/pack/` for the pack to live in. Nothing else: no config, no logs, no description. git reads a
+// repository with those three and no more.
+//
+// **The pack named the way git names it.** `pack-<hash>.pack` where the hash is the pack's own trailing
+// SHA-1 — checked against this repository's own pack, whose filename stem is exactly that. git finds
+// packs by scanning `objects/pack/*.idx`, so any stem would work; matching the convention costs nothing
+// and means a person looking at the directory sees what they expect.
+//
+// **`shallow`, when the fetch was deepened.** The pack holds a commit whose parent it does not contain,
+// and without that file `git fsck` calls the repository broken — correctly, since nothing else says the
+// history was cut deliberately. This is the one file that is easy to forget and produces a failure that
+// looks like a bad pack rather than a missing line.
+
+import { Cli, Core, FAULT_NONE, Change } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement, shallowsIn,
+         symrefOfHead, wantRequest } from "../src/fetch.wac";
+import { Indexed, indexPack } from "../src/pack.wac";
+import { PackIndex, writeIdx } from "../src/idx.wac";
+import { RepoAt, Written, checkout, treeOfCommit } from "../src/repo.wac";
+import { openRepo } from "../src/repo.wac";
+import { Store } from "../../tls/src/roots.wac";
+import { Answer, Remote, parseRemote, request, systemStore } from "../src/transport.wac";
+
+/** Forty hex characters for twenty bytes. */
+string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 2) {
+    core.warn("usage: gitclone <https-url> <dir> [depth]");
+    return 2;
+  }
+  string url = string.fromBytes(cli.arg(0).wait());
+  string dir = string.fromBytes(cli.arg(1).wait());
+  // **One by default, which is a shallow clone.** A full history is what a clone usually means and is
+  // also megabytes; the depth is the argument so a caller chooses, and `0` asks for everything.
+  i32 depth = 1;
+  if (n >= 3) {
+    string d = string.fromBytes(cli.arg(2).wait());
+    depth = 0;
+    u8[] digits = d.toBytes();
+    for (i32 i = 0; i < digits.len(); i++) {
+      if (digits[i] < '0' || digits[i] > '9') {
+        core.warn("gitclone: " + d + " is not a depth");
+        return 2;
+      }
+      depth = depth * 10 + (digits[i] - '0');
+    }
+  }
+
+  Remote r = parseRemote(url);
+  if (!r.ok) {
+    core.warn("gitclone: " + url + " is not an https URL with a path");
+    return 2;
+  }
+  Store store = systemStore(cli);
+  if (store.offsets.len() == 0) {
+    core.warn("gitclone: no trust store, so nothing can be verified");
+    return 1;
+  }
+
+  Fs fs = Fs.onHost(cli, 0);
+  string gitDir = dir + "/.git";
+  Change made = fs.mkdir(gitDir + "/objects/pack", true);
+  if (!made.ok()) {
+    core.warn("gitclone: cannot make " + gitDir + "/objects/pack: " + made.message);
+    return 1;
+  }
+  Change madeRefs = fs.mkdir(gitDir + "/refs/heads", true);
+  if (!madeRefs.ok()) {
+    core.warn("gitclone: cannot make " + gitDir + "/refs/heads: " + madeRefs.message);
+    return 1;
+  }
+
+  // What the server has.
+  Answer refs = request(core, cli, store, r.host,
+    r.path + "/info/refs?service=git-upload-pack", u8[0](), "");
+  if (!refs.ok) {
+    core.warn("gitclone: " + refs.error);
+    return 1;
+  }
+  if (refs.status != 200) {
+    core.warn("gitclone: " + r.host + " answered " + itoa(refs.status) + " for the advertisement");
+    return 1;
+  }
+  u8[] head = u8[0]();
+  string branch = "";
+  string caps = "";
+  match (parseAdvertisement(refs.body)) {
+    case Garbled(why): {
+      core.warn("gitclone: the advertisement did not parse: " + why);
+      return 1;
+    }
+    case Said(ad): {
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        AdRef one = ad.refs.get(i);
+        if (one.name == "HEAD") { head = one.target; }
+      }
+      branch = symrefOfHead(ad);
+      caps = offers(ad, "ofs-delta") ? "ofs-delta agent=wac/0" : "agent=wac/0";
+    }
+  }
+  if (head.len() != 20) {
+    core.warn("gitclone: the advertisement names no HEAD");
+    return 1;
+  }
+  if (branch == "") {
+    // Said rather than invented: git guesses at `refs/heads/master` here, and a wrong guess produces a
+    // repository whose `HEAD` points at a branch that does not exist.
+    core.warn("gitclone: the server did not say which branch HEAD is, and this does not guess");
+    return 1;
+  }
+
+  // The pack.
+  Vec<u8[]> wants = Vec.create();
+  wants.push(head);
+  Vec<u8[]> haves = Vec.create();
+  Answer got = request(core, cli, store, r.host, r.path + "/git-upload-pack",
+    wantRequest(wants, haves, caps, depth), "application/x-git-upload-pack-request");
+  if (!got.ok) {
+    core.warn("gitclone: " + got.error);
+    return 1;
+  }
+  if (got.status != 200) {
+    core.warn("gitclone: " + r.host + " answered " + itoa(got.status) + " for the pack");
+    return 1;
+  }
+  u8[] pack = u8[0]();
+  match (findPack(got.body)) {
+    case NoPack(why): {
+      core.warn("gitclone: " + why);
+      return 1;
+    }
+    case Packfile(bytes): { pack = bytes; }
+  }
+  Vec<u8[]> cuts = shallowsIn(got.body);
+
+  // The index, and both files under the name git would give them.
+  u8[] checksum = u8[20]();
+  for (i32 i = 0; i < 20; i++) { checksum[i] = pack[pack.len() - 20 + i]; }
+  string stem = gitDir + "/objects/pack/pack-" + hexOf(checksum);
+  match (indexPack(pack)) {
+    case Unindexable(why): {
+      core.warn("gitclone: the pack could not be indexed: " + why);
+      return 1;
+    }
+    case Built(idx): {
+      Change wrotePack = fs.writeFile(stem + ".pack", pack);
+      if (!wrotePack.ok()) {
+        core.warn("gitclone: cannot write the pack: " + wrotePack.message);
+        return 1;
+      }
+      Change wroteIdx = fs.writeFile(stem + ".idx", writeIdx(idx, checksum));
+      if (!wroteIdx.ok()) {
+        core.warn("gitclone: cannot write the index: " + wroteIdx.message);
+        return 1;
+      }
+      core.log(itoa(idx.count) + " objects in " + itoa(pack.len()) + " bytes");
+    }
+  }
+
+  // The refs. `HEAD` is symbolic, as it is in every repository git makes.
+  Change wroteRef = fs.writeFile(gitDir + "/" + branch, (hexOf(head) + "\n").toBytes());
+  if (!wroteRef.ok()) {
+    core.warn("gitclone: cannot write " + branch + ": " + wroteRef.message);
+    return 1;
+  }
+  Change wroteHead = fs.writeFile(gitDir + "/HEAD", ("ref: " + branch + "\n").toBytes());
+  if (!wroteHead.ok()) {
+    core.warn("gitclone: cannot write HEAD: " + wroteHead.message);
+    return 1;
+  }
+  if (cuts.len() > 0) {
+    string lines = "";
+    for (i32 i = 0; i < cuts.len(); i++) { lines = lines + hexOf(cuts.get(i)) + "\n"; }
+    Change wroteShallow = fs.writeFile(gitDir + "/shallow", lines.toBytes());
+    if (!wroteShallow.ok()) {
+      core.warn("gitclone: cannot write shallow: " + wroteShallow.message);
+      return 1;
+    }
+  }
+
+  // The working tree, which is step 4's code doing step 4's job on somebody else's repository.
+  match (openRepo(fs, gitDir, dir)) {
+    case NoRepo(why): {
+      core.warn("gitclone: the repository we just wrote does not open: " + why);
+      return 1;
+    }
+    case Opened(repo): {
+      u8[]? tree = treeOfCommit(repo, head);
+      if (tree is null) {
+        core.warn("gitclone: HEAD is not a commit, or names no tree");
+        return 1;
+      }
+      match (checkout(repo, tree!, dir)) {
+        case Stopped(why): {
+          core.warn("gitclone: " + why);
+          return 1;
+        }
+        case Files(count, modesUnset, linksAsFiles): {
+          core.log(itoa(count) + " files on " + branch);
+          if (linksAsFiles > 0) {
+            core.warn("gitclone: " + itoa(linksAsFiles) +
+              " symlink(s) were written as ordinary files holding their target" +
+              " — this filesystem cannot create one, and git will report them as typechanged");
+          }
+          if (modesUnset > 0) {
+            core.warn("gitclone: " + itoa(modesUnset) +
+              " file(s) wanted the executable bit and this filesystem cannot set it" +
+              " — git will report them as modified");
+          }
+          return 0;
+        }
+      }
+    }
+  }
+}
