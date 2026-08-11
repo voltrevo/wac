@@ -1,0 +1,5 @@
+// expect: refused
+// why: one type parameter cannot be two types at once
+// from: specSingle's §wac-generic-fn cluster
+T max<T>(T a, T b) { return a > b ? a : b; }
+export i32 f() { i32 x = 1; f64 y = 2.0; return max(x, y) as! i32; }

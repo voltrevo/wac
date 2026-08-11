@@ -2697,6 +2697,68 @@ bool startsWithFn(string t) {
  * argument(s), got 1"* — and pairing arguments with parameters positionally when the counts differ
  * would report the wrong ones anyway.
  */
+/**
+ * Whether a call to a generic function says what its type parameters are.
+ *
+ * Three ways it can fail and they are one rule: a parameter no argument's type mentions
+ * (`T zero<T>()`), an argument whose type is not evident (`id(null)` — a null is not a value of
+ * anything), and an argument whose shape cannot match the parameter's (`unbox(p)` where `p` is a `P`
+ * and the parameter is `Box<T>`). All three end with a `T` nobody has bound, which is the thing to
+ * report, and `bindTypeParams` already answers it — it binds what it can and says nothing about
+ * what it cannot, so an unbound name after every argument means the call did not determine it.
+ *
+ * What this does **not** do is check each argument against its substituted parameter type. That
+ * needs the substitution, and being wrong in the silent direction is the rule here.
+ */
+void checkGenericInference(C c, i32 at, string name, Expr[] args, Expr call) {
+  i32 n = c.funcTypeParamCount[at];
+  if (n == 0) { return; }
+  string[] names = string[n]();
+  string[] bound = string[n]();
+  for (i32 i = 0; i < n; i++) {
+    names[i] = c.funcTypeParamNames[c.funcTypeParamAt[at] + i];
+    bound[i] = "";
+  }
+  for (i32 i = 0; i < args.len(); i++) {
+    // **A literal does say what `T` is, here.** `pick(3, 9, true)` infers `i32` from the literals and
+    // the language means it — `spec/tour.wac` says so and `genericCallReturn` passes `typeNone` for
+    // one because *its* question is what the call returns, where a literal must not pin the answer.
+    // Two questions, one argument, and the fourth time this session that "a literal has no type of
+    // its own" has been the wrong half of the rule to reach for.
+    string got = foundType(c, args[i]);
+    bindTypeParams(c, c.funcParamTypes[c.funcParamAt[at] + i], got, names, bound);
+  }
+  // **A funcref parameter is not judged.** `mapOption<T, U>(Option<T> o, fn[U(T)] f)` binds `U`
+  // through the *shape* of a function type, and `bindTypeParams` decomposes arrays, nullables and
+  // generic instances but not `fn(…) -> …`. Reporting an unbound `U` here refused
+  // `packages/std/test/wac/option_test.wac`, which is correct code. Silence until the binder can
+  // read a funcref, which is the direction to be wrong in.
+  for (i32 i = 0; i < args.len(); i++) {
+    if (startsWithFn(c.funcParamTypes[c.funcParamAt[at] + i])) { return; }
+  }
+  // **Inside a generic function nothing is evident.** `T twice<T>(T a) { return id(id(a)); }` calls
+  // `id` with a value whose type *is* the enclosing `T`, which this checker holds as an unknown type
+  // on purpose — so every argument looks inevident and every call looks uninferrable. The enclosing
+  // parameters being active is exactly the condition, and it is the same silence the rest of this
+  // file keeps about a type it cannot name.
+  if (c.activeParamCount > 0) { return; }
+  // **An argument this checker cannot name is its own limit, not the program's.** `id(true ? x : 0)`,
+  // `id(s[1])` and `which(i32[2]())` are all inferrable and all answer `typeNone` here, and reporting
+  // them refused three of the spec's own programs. A `null` is the one argument that is genuinely
+  // evident *and* nameless — it is not a value of anything, which is why the spec refuses `id(null)`
+  // and why that case survives this guard.
+  for (i32 i = 0; i < args.len(); i++) {
+    if (litKindOf(args[i]) == litNull()) { continue; }
+    if (foundType(c, args[i]) == typeNone()) { return; }
+  }
+  for (i32 t = 0; t < n; t++) {
+    if (bound[t] != "") { continue; }
+    c.reportWith(errCallArity(), call.line, call.col,
+                 "nothing in the call says what " + names[t] + " is");
+    return;
+  }
+}
+
 void checkCall(C c, string name, Expr[] args, Expr call) {
   i32 at = c.funcAt(name);
   if (at < 0) { return; }
@@ -2706,9 +2768,13 @@ void checkCall(C c, string name, Expr[] args, Expr call) {
     c.report(errCallArity(), call.line, call.col);
     return;
   }
-  // Arity applies to a generic function; the *types* do not, until the parameters are bound, and
-  // binding them is the caller's job rather than this rule's.
-  if (c.funcGenerics[at]) { return; }
+  // Arity applies to a generic function; the *types* do not, until the parameters are bound. Binding
+  // them is what this asks about — not whether each argument fits, which needs the substitution this
+  // checker does not perform, but whether the call determines `T` at all.
+  if (c.funcGenerics[at]) {
+    checkGenericInference(c, at, name, args, call);
+    return;
+  }
   for (i32 i = 0; i < args.len(); i++) {
     string want = c.funcParamTypes[c.funcParamAt[at] + i];
     if (want == typeNone()) { continue; }
