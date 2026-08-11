@@ -102,3 +102,27 @@ is substituted, so a script printing any other path still shows a real differenc
 **Left open**, because this is one of the two sightings: the `packages/box/test/box.test.ts` httpd
 failure is a different resource — a port rather than a directory — and nothing here touches it. If it
 recurs after this, it is its own bug rather than another face of this one.
+
+## The box half: `freePort` hands back a number nothing is holding — agent-a, 2026-08-11
+
+`harness/port.ts` says it plainly about its own function: "For callers that cannot hold — where the
+port has to be a plain number long before anything binds it. **The window is the same one this file
+exists to shrink**, so prefer `holdPort` or `withPort`."
+
+`box.test.ts`'s httpd case was one of those callers, and it takes a fresh port for **each of its
+eleven requests**, so it had eleven windows per run. Under a full suite that is enough. `httpd` says
+`httpd: 37451: Address already in use (os error 98)` when it loses the race — measured, by binding a
+port and starting it on that one — `waitForListening` puts what the child printed into the error it
+throws, and `port.ts`'s `isAddrInUse` matches that text. So `withPort` retries exactly this and
+rethrows anything else, which is what its contract asks for.
+
+Converted: the httpd request helper, the POST case beside it, and `startServer` in the TLS case —
+the three that were already closures and so could be wrapped without restructuring a test body.
+
+**Not converted, and worth knowing which:** four sites where `freePort()` sits in the middle of a
+test body (`serve`, the two-server case, `wget` against httpd, `nc -l`). Each spawns its child on the
+next statement, so the window is as small as this shape allows and the retry is what they lack. They
+need the body wrapping in `withPort`, which is a bigger edit than a tick should make at its end
+without a reason to.
+
+`packages/box/test/box.test.ts` is green at 25.
