@@ -26,8 +26,9 @@ directory of its own — through GNU bash and through this, and requires the sam
 *and* the same exit status. `packages/box/test/corpus.test.ts` runs the other **282**, the ones
 naming one of the eleven programs that moved to `packages/box` (0103), through a shell built with
 those applets. Between them every script in the corpus is compared with bash. The three counts are
-checked against `corpus.ts` by `test/counts.test.ts`, because this paragraph said 817 for a while
-after the corpus had grown and the differential had shrunk — wrong in both directions at once.
+read out of this paragraph and checked against `corpus.ts` by `tools/designClaims.test.ts`, because
+it said 817 for a while after the corpus had grown and the differential had shrunk — wrong in both
+directions at once. This is the only document that states the size; the rest link here.
 
 For a shell that is the only test worth much: the behaviour is defined by what the real one does,
 and nearly every rule has a case where the obvious implementation is subtly wrong.

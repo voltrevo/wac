@@ -22,12 +22,17 @@
 //   - every "`N` applets" — against `box.wac`'s dispatcher, which is the same source
 //     `packages/box/README.md` is held to
 //   - every "`N` scripts" — against `packages/sh/test/corpus.ts`, which is the corpus itself
+//   - the three counts in `packages/sh/README.md`, which is now the **only** document that states
+//     the corpus size: everywhere else says "the whole corpus" and links to it. That README said 817
+//     while the corpus had grown to 821 and the differential had *shrunk* to 539 — wrong in both
+//     directions at once, because 0103 moved eleven programs to `packages/box` and `usesDeleted`
+//     filters out the 282 scripts naming one, which `packages/box/test/corpus.test.ts` runs instead.
 //
 // Both are *every occurrence*, not the first: the box README's own drift was a second paragraph that
 // disagreed with the first, and four of design/0001's five applet counts would have passed a check that
 // stopped at one.
 
-import { CORPUS } from "../packages/sh/test/corpus.ts";
+import { CORPUS, needsProgram, usesDeleted } from "../packages/sh/test/corpus.ts";
 
 /** Local, because this repo has no third-party dependencies. */
 function assertEquals<T>(got: T, want: T, msg?: string): void {
@@ -90,6 +95,28 @@ Deno.test("every corpus size a design document states is the corpus's", async ()
   assertEquals(wrong.join("\n"), "", "a design document claims more scripts than there are");
 });
 
+Deno.test("the shell README states the corpus split the corpus actually has", async () => {
+  // Three numbers rather than one, because the split is the part a reader needs: it is what says a
+  // script naming `grep` is still compared with bash, somewhere else. A total on its own would stay
+  // true through the exact change that made the differential wrong.
+  const readme = await Deno.readTextFile("packages/sh/README.md");
+  const claimed = [...readme.matchAll(/\*\*(\d+)\*\*/g)].map((m) => Number(m[1])).slice(0, 3);
+
+  const total = CORPUS.length;
+  const differential = CORPUS.filter((s) => !usesDeleted(s)).length;
+  const box = CORPUS.filter(needsProgram).length;
+
+  assertEquals(
+    claimed.join("/"),
+    [total, differential, box].join("/"),
+    `the README claims ${claimed.join("/")}, the corpus is ${total}/${differential}/${box}`,
+  );
+
+  // Every script is on exactly one side. If this fails, one suite has stopped covering scripts the
+  // other never took — the gap the split was written to rule out.
+  assertEquals(differential + box, total, "a script is in both halves, or in neither");
+});
+
 Deno.test("the checks above have something to check", () => {
   // The canary, and it is not decoration: both tests above pass vacuously if the regexes match nothing
   // — which is what would happen the day somebody rewrites a count as words. Four of design/0001's were
@@ -101,7 +128,16 @@ Deno.test("the checks above have something to check", () => {
     true,
     "design/0001 states no applet count in digits — a spelled-out number cannot be checked",
   );
-  assertEquals([...text.matchAll(/\d+ scripts/g)].length > 0, true, "design/0001 states no corpus size");
+  // The corpus size is deliberately **not** here any more: it was in six documents, all of them
+  // copies of one number, and five said 817 after it was 821. design/0001 now says "the whole
+  // corpus" and links to `packages/sh/README.md`, which is where the digits live — so that is where
+  // the canary looks. A link cannot drift; a second copy of a number always does.
+  const shReadme = Deno.readTextFileSync("packages/sh/README.md");
+  assertEquals(
+    [...shReadme.matchAll(/\*\*\d+\*\*/g)].length >= 3,
+    true,
+    "packages/sh/README.md no longer states the corpus split in digits — nothing above can check it",
+  );
   // And that the sources are real, so a mis-read file cannot make both lists trivially empty.
   assertEquals(appletCount > 50, true, `box.wac dispatches only ${appletCount} applets`);
   assertEquals(CORPUS.length > 500, true, `the corpus has only ${CORPUS.length} scripts`);
