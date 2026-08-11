@@ -141,10 +141,12 @@ Deno.test("bindgen: a struct and an enum cross as classes holding the reference"
 
     const c = g.Shape.Circle(2.5);
     eq("Shape.Circle(2.5).tag", c.tag, "Circle");
-    eq("its payload", c.Circle_r(), 2.5);
+    // A getter, not a method — the reference's generator writes one, and a caller reads
+    // `c.Circle_r`. This asserted the method form and so pinned the defect [issue 0102].
+    eq("its payload", c.Circle_r, 2.5);
     eq("radius(c)", g.radius(c), 2.5);
     eq("Shape.Empty().tag", g.Shape.Empty().tag, "Empty");
-    eq("a string payload", g.Shape.Named("hi").Named_what(), "hi");
+    eq("a string payload", g.Shape.Named("hi").Named_what, "hi");
     // Round-tripping through wac: the enum comes back as a wrapper, not as a number.
     eq("circle(9).tag", g.circle(9).tag, "Circle");
 

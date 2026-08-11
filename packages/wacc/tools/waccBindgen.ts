@@ -146,6 +146,23 @@ const SCALARS = new Set(["i32", "u32", "i64", "u64", "f32", "f64", "bool", "void
 /** The arrays that cross through the staging buffer, which is where `_to_mem`/`_from_mem` exist. */
 const BULK = new Set(["u8[]", "i8[]", "i32[]", "u32[]", "i64[]", "u64[]", "f32[]", "f64[]"]);
 
+/**
+ * The helper suffix an array's family is exported under — `string[]` is `string`, `u8[][]` is
+ * `u8Arr`, `u8[][][]` is `u8ArrArr`. The module builds the same name from the same rule, and the
+ * two have to agree or the glue calls a function that is not there.
+ */
+function arrSuffix(t: string): string {
+  const el = t.slice(0, -2);
+  return el.endsWith("[]") ? `${arrSuffix(el)}Arr` : el;
+}
+
+/** An array whose elements are references — a `string[]` or an array of arrays. */
+function isRefArray(t: string, named: Set<string>): boolean {
+  if (!t.endsWith("[]") || BULK.has(t)) return false;
+  const el = t.slice(0, -2);
+  return el === "string" || el.endsWith("[]") || named.has(el);
+}
+
 /** Whether this signature is one this generator can write glue for. */
 export function supported(
   sig: ExportSig, types: BindType[] = [], cbs: Callback[] = [], outs: Callback[] = [],
@@ -160,7 +177,15 @@ export function supported(
   // A funcref *parameter* is a host function coming in, which a dispatcher answers; one in return
   // position is a wac function going out, which `$bind$callref_*` answers. A funcref nested inside
   // another signature — a callback that itself takes one — is neither, and stays declined.
-  const ok = (t: string) => SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t);
+  // **`T?` is `T` plus null.** wac's wasm type is the same for both — every reference this emitter
+  // writes is nullable — but a host has to be told, or `JsonValue? parse(u8[])` hands back a wrapper
+  // around nothing where the caller checks for `null` [issue 0102].
+  const ok = (t0: string): boolean => {
+    const t = t0.endsWith("?") ? t0.slice(0, -1) : t0;
+    if (t0.endsWith("?") && SCALARS.has(t)) return false;   // no boxed `i32?` at the boundary
+    return SCALARS.has(t) || t === "string" || BULK.has(t) || named.has(t) ||
+      (isRefArray(t, named) && ok(t.slice(0, -2)));
+  };
   return (ok(sig.ret) || handedOut.has(sig.ret)) && sig.params.every(t => ok(t) || callable.has(t));
 }
 
@@ -173,6 +198,7 @@ let outRefs: Map<string, Callback> = new Map();
 
 /** The TypeScript type a wac type crosses as. */
 function tsType(t: string): string {
+  if (t.endsWith("?")) return `${tsType(t.slice(0, -1))} | null`;
   const n = namedTypes.get(t);
   if (n) return n.name;
   const c = callbacks.get(t) ?? outRefs.get(t);
@@ -182,6 +208,7 @@ function tsType(t: string): string {
   if (t === "i64" || t === "u64") return "bigint";
   if (t === "string") return "string";
   if (BULK.has(t)) return arrayClass(t);
+  if (isRefArray(t, new Set(namedTypes.keys()))) return `${tsType(t.slice(0, -2))}[]`;
   return "number";
 }
 
@@ -201,16 +228,27 @@ function width(t: string): number {
 
 /** A value crossing *into* the module. */
 function toWasm(t: string, expr: string): string {
+  // `null` crosses as `null`: the wasm type already admits it, so only the wrapper has to be
+  // unwrapped when there is one.
+  if (t.endsWith("?")) {
+    const inner = t.slice(0, -1);
+    return namedTypes.has(inner) ? `(${expr} === null ? null : ${toWasm(inner, expr)})` : expr;
+  }
   const c = callbacks.get(t);
   if (c) return `$fnref${c.index}(${expr})`;
   if (t === "string") return `$strTo(${expr})`;
   if (BULK.has(t)) return `$arrTo_${t.slice(0, -2)}(${expr})`;
+  if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrTo_${arrSuffix(t)}(${expr})`;
   if (namedTypes.has(t)) return `${expr}.$ref`;
   return expr;
 }
 
 /** A value crossing *out* of it. */
 function fromWasm(t: string, expr: string): string {
+  if (t.endsWith("?")) {
+    const inner = t.slice(0, -1);
+    return `((r) => r === null ? null : ${fromWasm(inner, "r")})(${expr})`;
+  }
   const o = outRefs.get(t);
   if (o) {
     // A closure over the reference: JavaScript cannot call a funcref, but it can call the export
@@ -222,6 +260,7 @@ function fromWasm(t: string, expr: string): string {
   }
   if (t === "string") return `$strFrom(${expr})`;
   if (BULK.has(t)) return `$arrFrom_${t.slice(0, -2)}(${expr})`;
+  if (isRefArray(t, new Set(namedTypes.keys()))) return `$arrFrom_${arrSuffix(t)}(${expr})`;
   if (namedTypes.has(t)) return `new ${namedTypes.get(t)!.name}(${expr})`;
   if (t === "bool") return `${expr} !== 0`;
   return `${expr} as ${tsType(t)}`;
@@ -276,7 +315,10 @@ function classFor(t: BindType): string[] {
     for (const v of t.variants) {
       for (const f of v.payload) {
         lines.push(`  /** The \`${f.name}\` of a \`${v.name}\` — check \`tag\` first. */`);
-        lines.push(`  ${v.name}_${f.name}(): ${tsType(f.type)} {`);
+        // A getter, as the reference's generator writes it: a caller reads `v.Bool_value`, and a
+        // method of that name hands back the function object instead — which compares unequal to
+        // everything and reads as a wrong answer rather than a missing feature [issue 0102].
+        lines.push(`  get ${v.name}_${f.name}(): ${tsType(f.type)} {`);
         lines.push(`    return ${fromWasm(f.type, `($exports.$bind$e_${t.bind}_${v.name}_get_${f.name} as CallableFunction)(this.$ref)`)};`);
         lines.push("  }");
       }
@@ -320,12 +362,27 @@ export function generate(
       ...t.methods.flatMap(m => [m.ret, ...m.params]),
     ]),
   ];
+  // **An array of arrays needs its element's helpers too.** `u8[][]` is built by calling
+  // `$arrTo_u8` per element, and that only exists if `u8[]` is itself in the crossing set — which it
+  // is not, when nothing in a signature says `u8[]` on its own. The glue referred to a function
+  // nobody had written [issue 0102].
+  for (const t of [...crossing]) {
+    let el = t;
+    while (el.endsWith("[]") && !BULK.has(el)) { el = el.slice(0, -2); crossing.push(el); }
+  }
   const needsMem = crossing.some(t => t === "string" || BULK.has(t));
   const lines: string[] = [];
 
   lines.push("// Generated by packages/wacc/tools/waccBindgen.ts — do not edit.");
   lines.push("");
-  lines.push(`const WASM = "${btoa(String.fromCharCode(...wasm))}";`);
+  // In chunks: `String.fromCharCode(...wasm)` spreads every byte as an argument, and a module of
+  // any size overflows the call stack — `packages/sh` is 900 KB and answered
+  // `RangeError: Maximum call stack size exceeded` from the generator rather than from wac.
+  let b64 = "";
+  for (let i = 0; i < wasm.length; i += 0x8000) {
+    b64 += String.fromCharCode(...wasm.subarray(i, i + 0x8000));
+  }
+  lines.push(`const WASM = "${btoa(b64)}";`);
   lines.push("const bytes = Uint8Array.from(atob(WASM), c => c.charCodeAt(0));");
   lines.push("const $mod = new WebAssembly.Module(bytes as BufferSource);");
   lines.push("");
@@ -395,6 +452,40 @@ export function generate(
     lines.push("  $buffer(n);");
     lines.push("  ($exports.$bind$str_to_mem as CallableFunction)(w);");
     lines.push("  return new TextDecoder().decode(new Uint8Array($memory.buffer).slice(0, n));");
+    lines.push("}");
+    lines.push("");
+  }
+
+  // **The arrays whose elements are references.** There is no staging buffer for these — an element
+  // is a WasmGC value, not bytes — so they are built and read one element at a time through the
+  // `_new`/`_set`/`_get`/`_len` family the module exports for every array type. `string[]`'s `_new`
+  // takes a fill because a string reference has no default; an array element is nullable and does
+  // not, which is why the two are spelled apart [issue 0102].
+  const namedSet = new Set(namedTypes.keys());
+  for (const t of new Set(crossing.filter(t => isRefArray(t, namedSet)))) {
+    const sfx = arrSuffix(t);
+    const el = t.slice(0, -2);
+    const ets = tsType(el);
+    lines.push(`function $arrTo_${sfx}(a: ${ets}[]): unknown {`);
+    if (el === "string") {
+      lines.push(`  if (a.length === 0) return ($exports.$bind$arr_${sfx}_new0 as CallableFunction)();`);
+      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new as CallableFunction)(a.length, ${toWasm(el, "a[0]")});`);
+    } else {
+      lines.push(`  const w = ($exports.$bind$arr_${sfx}_new as CallableFunction)(a.length);`);
+    }
+    lines.push(`  for (let i = 0; i < a.length; i++) {`);
+    lines.push(`    ($exports.$bind$arr_${sfx}_set as CallableFunction)(w, i, ${toWasm(el, "a[i]")});`);
+    lines.push("  }");
+    lines.push("  return w;");
+    lines.push("}");
+    lines.push("");
+    lines.push(`function $arrFrom_${sfx}(w: unknown): ${ets}[] {`);
+    lines.push(`  const n = ($exports.$bind$arr_${sfx}_len as CallableFunction)(w) as number;`);
+    lines.push(`  const out: ${ets}[] = [];`);
+    lines.push(`  for (let i = 0; i < n; i++) {`);
+    lines.push(`    out.push(${fromWasm(el, `($exports.$bind$arr_${sfx}_get as CallableFunction)(w, i)`)});`);
+    lines.push("  }");
+    lines.push("  return out;");
     lines.push("}");
     lines.push("");
   }

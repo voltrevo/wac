@@ -1,6 +1,6 @@
 # 0126 — a key in the server's own `authorized_keys` is root in every image that server serves
 
-- **Status:** open — the decision is made, the work is not
+- **Status:** closed 2026-08-11 — refused, with the boundary at the user table
 - **Reported by:** agent-a
 - **Date:** 2026-08-09
 - **Kind:** missing feature
@@ -99,3 +99,30 @@ Still to do, and it is ordinary work now: refuse in `authenticate`, pin it with 
 `-a`-only key is refused *when there is an image* and still admitted when there is not, say it in
 `sshd`'s usage and in design/0001 step 4, and note in `packages/ssh`'s README that the server-wide
 key is a no-image mechanism.
+
+## Built, and where the boundary landed
+
+`authenticate` refuses a key that only the server's `-a` file names **once the image has a user
+table**, and says so on the server's own error stream — "a key from … names no user in this image —
+refused; put it in that user's ~/.ssh/authorized_keys instead" — because from the client end a refusal
+looks the same as a wrong key.
+
+**The boundary is the table, not the `-i`, and that is a decision inside the decision.** Every image
+starts empty: `sshd -i fresh.wacimg` boots a world with no `/etc/passwd`, which is how the two-users
+test builds one in the first place. Refusing there would mean a fresh image could never be entered to
+create its first user, and the demo's story would become "prepare an image elsewhere, then log in".
+So the rule is exactly *"there is somebody to outrank, and this key is not one of them"*. Without
+`-i` nothing changes: `/etc/passwd` on a host mount is the machine's table and says nothing about who
+may log in here, which is why the condition asks about the image rather than about the file.
+
+**The test that pinned the old behaviour is where the change had to be made**, which is what it was
+for. It read: "what this test does is make the behaviour something somebody has to change on
+purpose." Running the change against it first gave exactly the failure it promised —
+
+    the server-wide key's privileges changed; if that was deliberate, 0126 is the place:
+    "claude@127.0.0.1: Permission denied (publickey)."
+
+— and it now asserts the refusal, while the session above it that *builds* the image is labelled as
+the other half of the rule: the same key, admitted, because there is no table yet.
+
+Ran: `packages/ssh`, 57 tests.
