@@ -170,7 +170,7 @@ have never appeared in a status line: they are invisible to every rung.
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
 | **bindgen — generating the host glue** | **not started** — 1,011 lines in the reference |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
-| **coverage instrumentation** | **not started** — the repo's mutation and profile tooling needs it |
+| coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | **constant folding** | **not started** — `wacConstEval`, 152 lines |
 | `--checked` arithmetic | done — add, subtract and multiply trap where the value does not fit, and the default build is byte-identical |
 

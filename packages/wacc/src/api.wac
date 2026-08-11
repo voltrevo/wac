@@ -12,7 +12,8 @@ import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
          errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, blockedLinked, namesLinked,
+import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
+         covTableLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -117,6 +118,19 @@ export u8[] emitFiles(string[] paths, string[] sources, string entry) {
  */
 export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
   return emitLinkedChecked(paths, sources, entry);
+}
+
+/**
+ * The same module instrumented for coverage: a counter per branch point, read through
+ * `__cov_init()`, `__cov_len()` and `__cov_get(i)`.
+ */
+export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
+  return emitLinkedCovered(paths, sources, entry);
+}
+
+/** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */
+export string covTableFiles(string[] paths, string[] sources, string entry) {
+  return covTableLinked(paths, sources, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
