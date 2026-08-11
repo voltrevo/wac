@@ -17,7 +17,8 @@ network and the tools to stand one up:
 
 [`INTEROP.md`](INTEROP.md) is the same claim laid out by component **and direction**, with *pinned*,
 *live* and *ours only* kept apart — it is where a regression shows, and where to look before believing
-a row above.
+a row above. Since 2026-08-11 it also says, per cell, whether anything **re-runs** the live ones:
+seven are in the suite and eight were witnessed by hand and can rot without going red.
 
 Every row is checked against C tor rather than against another part of this package — parsers, cell
 formats and key material pinned by tor's own code, and the live ones witnessed by a C tor doing the

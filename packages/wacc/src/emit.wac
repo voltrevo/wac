@@ -1361,6 +1361,25 @@ export struct Env {
   }
 
   /**
+   * Is this name declared in more than one file?
+   *
+   * The key may carry the `@<file>` a second declaration was given, and the question is about the
+   * *name* — so both `S` and `S@2` answer yes when two modules declare an `S`. What the bind helpers
+   * do with that is qualify both of them by their file rather than leave the first one holding a
+   * name that would mean either [issue 0100].
+   */
+  bool ambiguousDecl(this, string key) {
+    string bare = key;
+    i32 at = key.indexOf("@");
+    if (at > 0) { bare = key.slice(0, at); }
+    i32 n = 0;
+    for (i32 i = 0; i < this.declCount; i++) {
+      if (this.declNames[i] == bare) { n = n + 1; }
+    }
+    return n > 1;
+  }
+
+  /**
    * The key a name means when it is *used* at this line: this file's declaration, or anyone's.
    *
    * The fallback is deliberately permissive — a file here can see a name it never imported — which
@@ -1957,9 +1976,12 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
     // — and only a monomorphisation is qualified and mangled. `collectBindStructs` holds no
     // instances, so this set is the plain half; saying `bindTypeSpelling` here would have qualified
     // every one of them and sent the glue looking for helpers nobody exported.
-    string bind = name;
+    //
+    // The exception is a name two modules declare: those are qualified at the export sites, and
+    // this has to say the same thing or the glue looks for a helper that is not there [issue 0100].
+    string bind = bindKeyOf(env, name);
     if (env.isEnumName(name)) {
-      string line = "E\t" + name + "\t" + bind + "\t";
+      string line = "E\t" + metaNameOf(env, name) + "\t" + bind + "\t";
       bool first = true;
       for (i32 v = 0; v < env.variantCount; v++) {
         if (env.variantOwners[v] != name) { continue; }
@@ -1970,17 +1992,18 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
           if (k > 0) { line = line + "|"; }
           i32 slot = env.variantSlot[v] + k;
           line = line + payloadFieldName(env.fieldNameAt(name, slot)) + ":" +
-                 env.fieldTypeAt(name, slot);
+                 metaTypeSpelling(env, env.fieldTypeAt(name, slot));
         }
       }
       out = out + line + "\n";
     } else {
       if (!bindableStruct(env, name)) { continue; }
-      string line = "S\t" + name + "\t" + bind + "\t";
+      string line = "S\t" + metaNameOf(env, name) + "\t" + bind + "\t";
       i32 fc = env.fieldCountOf(name);
       for (i32 f = 0; f < fc; f++) {
         if (f > 0) { line = line + ","; }
-        line = line + env.fieldNameAt(name, f) + ":" + env.fieldTypeAt(name, f);
+        line = line + env.fieldNameAt(name, f) + ":" +
+               metaTypeSpelling(env, env.fieldTypeAt(name, f));
       }
       out = out + line + "\n";
     }
@@ -2012,10 +2035,10 @@ string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Me
     i32 at = env.funcAt(owner + "." + mn);
     if (at < 0 || env.funcIndex[at] < 0) { continue; }
     string line = "M\t" + bind + "\t" + mn + "\t" + (methods[m].hasThis ? "this" : "static") +
-                  "\t" + typeOfTyName(env, src, lexed, methods[m].returnType) + "\t";
+                  "\t" + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].returnType)) + "\t";
     for (i32 i = 0; i < methods[m].params.len(); i++) {
       if (i > 0) { line = line + ","; }
-      line = line + typeOfTyName(env, src, lexed, methods[m].params[i].type);
+      line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, methods[m].params[i].type));
     }
     out = out + line + "\n";
   }
@@ -2046,6 +2069,12 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
   for (i32 i = 0; i < starts.len(); i++) {
     if (starts[i] == 0) { continue; }
     env.fileFirstLine[env.fileCount] = starts[i];
+    // **The paths, which this pass used not to keep.** Nothing here needed them until a type name
+    // had to say *which* module's `S` it meant: `qualifiedName` builds that from the declaring
+    // file, and with no paths it silently answered with the bare key instead [issue 0100].
+    if (env.fileCount < env.filePaths.len() && i >= 1 && i - 1 < filePaths.len()) {
+      env.filePaths[env.fileCount] = filePaths[i - 1];
+    }
     env.fileCount = env.fileCount + 1;
   }
   for (i32 e = 0; e < edges[0]; e++) {
@@ -2073,10 +2102,10 @@ export string exportSigsLinked(string[] paths, string[] sources, string entry) {
         if (!ok || !exported) { continue; }
         if (entryDecls >= 0 && d >= entryDecls) { continue; }
         string line = tokenTextOf(src, lexed, nameTok) + "\t" +
-                      typeOfTyName(env, src, lexed, returnType) + "\t";
+                      metaTypeSpelling(env, typeOfTyName(env, src, lexed, returnType)) + "\t";
         for (i32 i = 0; i < params.len(); i++) {
           if (i > 0) { line = line + ","; }
-          line = line + typeOfTyName(env, src, lexed, params[i].type);
+          line = line + metaTypeSpelling(env, typeOfTyName(env, src, lexed, params[i].type));
         }
         out = out + line + "\n";
       }
@@ -2995,17 +3024,17 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
     string sn2 = bindStructs[si5];
     if (env.isEnumName(sn2)) { continue; }
     if (!bindableStruct(env, sn2)) { continue; }
-    exports.name("$bind$s_" + sn2 + "_new");
+    exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_new");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     i32 sfc2 = env.fieldCountOf(sn2);
     for (i32 f = 0; f < sfc2; f++) {
       string fn2 = env.fieldNameAt(sn2, f);
-      exports.name("$bind$s_" + sn2 + "_get_" + fn2);
+      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_get_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt);
-      exports.name("$bind$s_" + sn2 + "_set_" + fn2);
+      exports.name("$bind$s_" + bindKeyOf(env, sn2) + "_set_" + fn2);
       exports.byte(0);
       exports.u32leb(bulkAt + 1);
       bulkAt = bulkAt + 2;
@@ -3015,19 +3044,19 @@ u8[] emitModuleOfInto(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, strin
   for (i32 si7 = 0; si7 < bindStructCount; si7++) {
     string en2 = bindStructs[si7];
     if (!env.isEnumName(en2)) { continue; }
-    exports.name("$bind$e_" + en2 + "_tag");
+    exports.name("$bind$e_" + bindKeyOf(env, en2) + "_tag");
     exports.byte(0);
     exports.u32leb(bulkAt);
     bulkAt = bulkAt + 1;
     for (i32 v = 0; v < env.variantCount; v++) {
       if (env.variantOwners[v] != en2) { continue; }
       string vn2 = env.variantNames[v];
-      exports.name("$bind$e_" + en2 + "_" + vn2 + "_new");
+      exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_new");
       exports.byte(0);
       exports.u32leb(bulkAt);
       bulkAt = bulkAt + 1;
       for (i32 k = 0; k < env.variantArity[v]; k++) {
-        exports.name("$bind$e_" + en2 + "_" + vn2 + "_get_" +
+        exports.name("$bind$e_" + bindKeyOf(env, en2) + "_" + vn2 + "_get_" +
                      payloadFieldName(env.fieldNameAt(en2, env.variantSlot[v] + k)));
         exports.byte(0);
         exports.u32leb(bulkAt);
@@ -7990,7 +8019,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
-            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
             out.byte(0);
             out.u32leb(env.funcIndex[at]);
             n = n + 1;
@@ -8003,7 +8032,7 @@ i32 bindMethodExports(B out, Env env, u8[] src, Lexed lexed, Program prog,
             string mn = tokenTextOf(src, lexed, methods[m].nameTok);
             i32 at = env.funcAt(owner + "." + mn);
             if (at < 0 || env.funcIndex[at] < 0) { continue; }
-            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + owner + "_" + mn);
+            out.name((methods[m].hasThis ? "$bind$m_" : "$bind$sm_") + bindKeyOf(env, owner) + "_" + mn);
             out.byte(0);
             out.u32leb(env.funcIndex[at]);
             n = n + 1;
@@ -8114,6 +8143,58 @@ string qualifiedName(Env env, string name) {
   i32 at = name.indexOf("@");
   if (at > 0) { bare = name.slice(0, at); }
   return bare + "__" + fileTagOf(path);
+}
+
+/**
+ * What a bind helper calls a plain struct or enum: its own name, or a file-qualified one when more
+ * than one module declares that name.
+ *
+ * The reference does the same and spells it the same way, which is the point — a host reads these
+ * names, and the native manifest keys a struct by one. Naming the *second* declaration `S@2` and
+ * leaving the first as `S` made the answer depend on which was met first, and left `S` meaning
+ * either of them [issue 0100].
+ */
+string bindKeyOf(Env env, string key) {
+  if (env.ambiguousDecl(key)) { return bindNameOf(qualifiedName(env, key)); }
+  return bindNameOf(key);
+}
+
+/**
+ * What a host should call the type this key names.
+ *
+ * The key is an *identity* — `S` for the first declaration of a name and `S@2` for a second one in
+ * another file — and it is the right thing everywhere inside this emitter. It is the wrong thing in
+ * the metadata a host reads: `S` there means either of them, and `S@2` is not a name TypeScript can
+ * declare, so `waccBindgen` wrote `export class S@2` and the file did not parse [issue 0100].
+ */
+string metaNameOf(Env env, string key) {
+  if (env.ambiguousDecl(key)) { return qualifiedName(env, key); }
+  return key;
+}
+
+/**
+ * `metaNameOf` for every name inside a type string — `S[]`, `S?`, `fn[S(i32)]`, `Vec<S>`.
+ *
+ * A type reaches the metadata already spelled, so this rewrites the spelling rather than repeating
+ * the walk that built it: a second implementation of that walk is one that drifts from the first.
+ */
+string metaTypeSpelling(Env env, string t) {
+  u8[] a = t.toBytes();
+  string out = "";
+  string cur = "";
+  for (i32 i = 0; i < a.len(); i++) {
+    i32 c = a[i];
+    // The characters a key can hold: an identifier, plus the `@` a second declaration carries, plus
+    // `$` and `.` from the names this compiler mints. Everything else separates one name from the
+    // next and is copied through.
+    bool part = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ||
+                c == 95 || c == 64 || c == 36 || c == 46;
+    if (part) { cur = cur + t.slice(i, i + 1); continue; }
+    if (cur != "") { out = out + metaNameOf(env, cur); cur = ""; }
+    out = out + t.slice(i, i + 1);
+  }
+  if (cur != "") { out = out + metaNameOf(env, cur); }
+  return out;
 }
 
 /**

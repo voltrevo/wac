@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0136](open/0136-the-suite-leaves-its-temp-directories-behind-and-the-disk-filled.md) | the suite leaves temp directories behind — 2,300 of them, and the disk filled | bug | no error |
 | [0135](open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md) | a background job runs the name as an external program, so no builtin can be backgrounded | bug | wrong answer |
 | [0134](open/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md) | the `fs` coverage ratchet has been red since `Remote` arrived — 92 branch points measured nowhere | task | no error |
 | [0129](open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) | every built executable carries a floor that has grown seven-fold — a `wc` is 347 KiB | performance | no error |
@@ -27,7 +28,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-147 issues, 132 closed.
+148 issues, 132 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
