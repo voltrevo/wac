@@ -62,7 +62,7 @@ Deno.test("cases: wacc against the corpus", async () => {
       if (why !== "") {
         met = false;
         detail = why;
-      } else if (c.expect.kind === "answers") {
+      } else if (c.expect.kind === "answers" || c.expect.kind === "traps") {
         const bytes = Uint8Array.from(emitFiles(paths, sources, c.entry) as unknown as number[]);
         try {
           // **The imports the module declares.** A funcref *parameter* means a host function may be
@@ -86,14 +86,23 @@ Deno.test("cases: wacc against the corpus", async () => {
             detail = `no ${c.expect.fn} export`;
           } else {
             const got = String((fn as () => unknown)());
-            if (got !== c.expect.value) {
+            if (c.expect.kind === "traps") {
+              met = false;
+              detail = `answered ${got}, and the case says it must trap`;
+            } else if (got !== c.expect.value) {
               met = false;
               detail = `answered ${got}, wanted ${c.expect.value}`;
             }
           }
         } catch (e) {
-          met = false;
-          detail = `did not run — ${e instanceof Error ? e.message : String(e)}`;
+          // A `traps` case wants exactly this, and only a wasm trap counts — anything else is the
+          // harness failing to run the program rather than the program trapping.
+          if (c.expect.kind === "traps" && e instanceof WebAssembly.RuntimeError) {
+            met = true;
+          } else {
+            met = false;
+            detail = `did not run — ${e instanceof Error ? e.message : String(e)}`;
+          }
         }
       }
     }

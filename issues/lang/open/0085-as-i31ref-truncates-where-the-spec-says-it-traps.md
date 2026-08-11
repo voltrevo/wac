@@ -1,7 +1,7 @@
 # 0085 — `as! i31ref` truncates where the spec says it is checked
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-b
 - **Date:** 2026-08-09
 - **Kind:** bug

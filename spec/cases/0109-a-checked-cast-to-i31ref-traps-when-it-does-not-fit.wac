@@ -1,0 +1,7 @@
+// expect: traps f
+// why: `as!` is the checked cast — a value a 31-bit reference cannot hold is a trap, not its low bits
+// from: issues/lang/0085
+export i32 f() {
+  i31ref r = 1073741824 as! i31ref;
+  return r as i32;
+}

@@ -1583,11 +1583,36 @@ class FuncEmitter {
         }
         return; // other ref upcasts need no instruction
       }
-      if (e.op === "as!") {
-        // i32 → i31ref: ref.i31
+      // `as~` is the truncating cast, and `ref.i31` truncating is precisely what it means: keep
+      // the low thirty-one bits, whatever was above them. Nothing was emitted for it at all, so
+      // the i32 stayed on the stack where an i31ref was wanted and the module did not validate —
+      // which is the spelling the checker's own hint recommends when `as` is refused as lossy.
+      if (e.op === "as~") {
         if (fromT.kind === "prim" && fromT.name === "i32" &&
             toT.kind === "prim" && toT.name === "i31ref") {
           this.emit(0xFB, 0x1C); // ref.i31
+          return;
+        }
+        if (fromT.kind === "prim" && fromT.name === "i31ref" &&
+            toT.kind === "prim" && toT.name === "i32") {
+          this.emit(0xFB, 0x1D); // i31.get_s
+          return;
+        }
+      }
+      if (e.op === "as!") {
+        // i32 → i31ref: checked, then ref.i31.
+        //
+        // `ref.i31` keeps the low thirty-one bits and says nothing about the rest, so on its own it
+        // is the *unchecked* cast: 2^30 came back as -2^30, having silently changed sign [issue
+        // 0085]. `as!` promises exact-or-trap for every other member of the family, and an i31
+        // holds a signed 31-bit value — so anything outside [-2^30, 2^30-1] traps here rather than
+        // arriving as a different number.
+        if (fromT.kind === "prim" && fromT.name === "i32" &&
+            toT.kind === "prim" && toT.name === "i31ref") {
+          const I31MAX = 1073741823, I31MIN = -1073741824;
+          this.guardI32(I31MAX, 0x4A);   // x >s  2^30 - 1
+          this.guardI32(I31MIN, 0x48);   // x <s -2^30
+          this.emit(0xFB, 0x1C);         // ref.i31
           return;
         }
         // i31ref → i32: i31.get_s
