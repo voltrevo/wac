@@ -1,6 +1,6 @@
 # 0126 — a key in the server's own `authorized_keys` is root in every image that server serves
 
-- **Status:** open
+- **Status:** open — the decision is made, the work is not
 - **Reported by:** agent-a
 - **Date:** 2026-08-09
 - **Kind:** missing feature
@@ -77,3 +77,25 @@ image with a server-wide key, which is why it is filed rather than done.
 nobody. It is unrelated to this issue's escalation — which goes through `root` — and is recorded here
 only because the two look identical when you first meet them, and the first version of that fix
 claimed to have closed this.
+
+## 2026-08-11: decided, and it is option 2
+
+This was filed as a decision and it has one now. Asked whether any of this is meant to be used by
+somebody other than us — specifically whether `packages/tor` is ever pointed at the real network —
+the operator answered **yes, eventually**. The same axis settles this issue: a demo the design calls
+"offerable to a stranger" is one where a key that names nobody must not have the run of the image.
+
+So **option 2**: with `-i`, users are data in the image (design/0001 D5) and the `-a` file is not part
+of that data, so a key allowed only by `-a` is refused. An operator who wants in puts their key in
+root's own `~/.ssh/authorized_keys` inside the image — which is a thing somebody has to write down,
+and this is the writing down.
+
+What that costs, said before it is done rather than after: it is a **behaviour change** for anybody
+serving an image with a server-wide key, and at least one test drives exactly that shape. Both are
+the point rather than an obstacle — the change is what makes the criterion in design/0001 step 4
+("two keys, two homes, and neither can read the other's private file") true of a third key as well.
+
+Still to do, and it is ordinary work now: refuse in `authenticate`, pin it with a test that a
+`-a`-only key is refused *when there is an image* and still admitted when there is not, say it in
+`sshd`'s usage and in design/0001 step 4, and note in `packages/ssh`'s README that the server-wide
+key is a no-image mechanism.

@@ -126,8 +126,12 @@ and in a young codebase those call sites are a schedule rather than an objection
 a transform — wac has no closures, so no adapter can sit between them, and `gzip` has no business
 depending on a capability world. It used to live in `packages/bytes`, the lowest package in the
 tree; it is now in `core`, the module the compiler ships, which is the same argument carried one
-step further. Being below everything in *this* repo stops being enough the moment `platform` is a
-repo of its own, and two declarations of `Read` can never be converted into each other. So:
+step further: two declarations of `Read` can never be converted into each other, and a funcref
+signature names it by type, so it has to be the one declaration everybody gets. The stronger version
+of this — that being lowest in *this* repo stops being enough once `platform` is a repo of its own —
+is [no longer on the
+table](../../issues/system/closed/0092-the-capability-layer-should-be-its-own-repo.md), and the
+conclusion does not rest on it. So:
 
 ```wac
 import { Read } from core;

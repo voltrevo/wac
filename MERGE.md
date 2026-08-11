@@ -111,7 +111,8 @@ rather than anything here, and is recorded rather than dismissed.
 
 ## Still open, and now unblocked by the merge
 
-[0092](issues/system/open/0092-the-capability-layer-should-be-its-own-repo.md) — extracting the
-capability layer into its own repository — is **obsoleted** by this merge and should be closed. The
+[0092](issues/system/closed/0092-the-capability-layer-should-be-its-own-repo.md) — extracting the
+capability layer into its own repository — was **obsoleted** by this merge and is closed as of
+2026-08-11, when the operator confirmed it: one wac repo for the foreseeable future. The
 directory provider it was blocked on is worth keeping on its own terms: it is what lets a package
 come from somewhere other than the file beside you, which is what third-party packages need.

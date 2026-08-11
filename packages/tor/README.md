@@ -22,10 +22,16 @@ seven are in the suite and eight were witnessed by hand and can rot without goin
 
 Every row is checked against C tor rather than against another part of this package — parsers, cell
 formats and key material pinned by tor's own code, and the live ones witnessed by a C tor doing the
-other half. *How it is tested* says what that means in each case, and **what is deliberately missing
-is at the bottom**, under *What is not here*: the guard algorithm is partial, there is no circuit
-padding, isolation is by port rather than by credential, and none of this should be pointed at the
-real network.
+other half. *How it is tested* says what that means in each case, and **what is missing is at the
+bottom**, under *What is not here*: the guard algorithm is partial, there is no circuit padding,
+isolation is by port rather than by credential, and none of this should be pointed at the real
+network *today*.
+
+**"Today" is doing work in that sentence.** The operator confirmed on 2026-08-11 that the real
+network is an eventual destination, which makes that list a set of conditions rather than a set of
+decisions — the nine that have to close are written down in
+[design/0002](../../design/system/0002-the-whole-tor-stack.md), under *Before it carries a stranger's
+traffic*, so that none of them has to be argued at the moment somebody wants to skip it.
 
 ### A path through the rest
 
@@ -106,7 +112,9 @@ the service behind it — over our own circuits, end to end, against a real one:
 See *Onion services* below for what that involved and the two things only a live service could have
 caught.
 
-It should still not be pointed at the real network — see *What is not here*.
+It should still not be pointed at the real network — see *What is not here*, and
+[design/0002](../../design/system/0002-the-whole-tor-stack.md)'s *Before it carries a stranger's
+traffic* for what would have to be true first.
 
 ## Why this is possible at all
 
@@ -812,6 +820,14 @@ names, and a test that runs it. Every mechanism it needs now exists.
 **The real network.** Directory authorities are reached by IP and this sandbox's proxy
 allowlist is by domain, so they answer 403; torproject.org is blocked outright. Everything
 here is verified offline or against a locally built tor.
+
+That is the sandbox rather than the plan: the real network is an eventual destination (operator,
+2026-08-11), and the wall comes down by decision rather than by convenience. Nine things have to be
+true first, and they are listed once in
+[design/0002](../../design/system/0002-the-whole-tor-stack.md) — guards, padding, stream isolation,
+the descriptor revision counter, a rate limit, the timing claims, key handling, a review by somebody
+who did not write it, and the allowlist itself. Everything else in this section is a gap in the same
+sense: something that has to close, not something we chose.
 
 **Concurrent read and write past the send window.** `#spend` throws rather than blocking if
 the send window empties while a cell is waiting to be read, since draining the read side
