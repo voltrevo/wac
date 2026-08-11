@@ -1,0 +1,5 @@
+// expect: refused
+// why: the type arguments come from the slot, and a receiver position is not one
+// from: specSingle's generic cluster — the other side of spec/cases/0001
+struct Box<T> { T v; i32 get(const this) { return 1; } }
+export i32 f() { return Box(1).get(); }

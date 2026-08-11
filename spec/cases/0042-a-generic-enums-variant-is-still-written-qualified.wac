@@ -1,0 +1,9 @@
+// expect: answers f = 1
+// why: the bare name is gone but `Option.None` is how you write one, and that has to keep working
+// from: spec/tour.wac and std's tests, which removing the bare name too eagerly refused
+enum Option<T> { Some(T v), None }
+export i32 f() {
+  Option<i32> a = Option.Some(1);
+  Option<i32> b = Option.None;
+  return match (a) { case Some(v): v, case None: 0 };
+}

@@ -766,6 +766,8 @@ export struct C {
   string[] variantOwners;
   string[] variantNames;
   i32[] variantArities;
+  /** Whether each variant can be written bare — see `markVariantBare`. */
+  bool[] variantBare;
   i32 variantCount;
 
   /**
@@ -794,7 +796,7 @@ export struct C {
              i32[capacity](), 0, 0, 0,
              0, "",
              i32[capacity * 3](), string[capacity](), 0, false, false, string[16](), 0,
-             string[capacity](), string[capacity](), i32[capacity](), 0,
+             string[capacity](), string[capacity](), i32[capacity](), bool[capacity](), 0,
              string[capacity](), string[capacity](), 0);
   }
 
@@ -1200,11 +1202,23 @@ export struct C {
   }
 
   /** Record `Enum.Variant` with its payload count, ambiguity and all. */
+  /**
+   * Whether this variant has a bare name — false for a generic enum's, whose variants belong to its
+   * instances. Kept beside the table rather than derived, because by the time somebody writes `is
+   * Some` the enum's type parameters are three lookups away.
+   */
+  void markVariantBare(this, string name, bool bare) {
+    for (i32 i = this.variantCount - 1; i >= 0; i--) {
+      if (this.variantNames[i] == name) { this.variantBare[i] = bare; return; }
+    }
+  }
+
   void declareVariant(this, string owner, string name, i32 arity) {
     if (this.variantCount >= this.variantNames.len()) { return; }
     this.variantOwners[this.variantCount] = owner;
     this.variantNames[this.variantCount] = name;
     this.variantArities[this.variantCount] = arity;
+    this.variantBare[this.variantCount] = true;
     this.variantCount = this.variantCount + 1;
   }
 
@@ -1232,7 +1246,7 @@ export struct C {
    */
   bool isVariantName(const this, string name) {
     for (i32 i = 0; i < this.variantCount; i++) {
-      if (this.variantNames[i] == name) { return true; }
+      if (this.variantNames[i] == name && this.variantBare[i]) { return true; }
     }
     return false;
   }
@@ -4745,8 +4759,18 @@ export void declareModule(C c, Program prog, string[] only) {
         // `is` writes it; the qualified `Shape.Circle` is a construction and goes elsewhere.
         for (i32 vi = 0; vi < variants.len(); vi++) {
           string vname = tokenText(c, variants[vi].nameTok);
-          c.declareStruct(vname, "", string[0]());
+          // **A generic enum's variants have no bare name.** `Some` belongs to `Option<i32>` and to
+          // every other instance, so it names no type on its own — `a is Some` is a name nobody
+          // declared rather than a narrowing (`spec/cases/0037`). A non-generic enum's variant *is*
+          // a bare name, which is how `s is Circle` narrows.
+          //
+          // The variant still goes in the table, because `Option.None` is how one is written and
+          // that has to keep working — skipping the registration entirely refused four working files
+          // and `spec/tour.wac` itself. What it loses is the bare *type*: `spec/cases/0042`.
+          bool bare = typeParams.len() == 0;
+          if (bare) { c.declareStruct(vname, "", string[0]()); }
           c.declareVariant(tokenText(c, nameTok), vname, variants[vi].fields.len());
+          c.markVariantBare(vname, bare);
           for (i32 fi = 0; fi < variants[vi].fields.len(); fi++) {
             c.declareFieldConst(vname, tokenText(c, variants[vi].fields[fi].nameTok),
                                 typeOfTy(c, variants[vi].fields[fi].type), false);

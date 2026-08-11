@@ -1,0 +1,8 @@
+// expect: refused
+// why: and again as a cast target, which is the third place a type name can be written
+// from: specSingle's generic cluster
+enum Option<T> {
+  Some(T v), None
+  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+}
+export i32 f() { Option<i32> a = Option.Some(1); return (a as! Some).v; }

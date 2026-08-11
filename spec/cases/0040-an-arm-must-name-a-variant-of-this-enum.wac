@@ -1,0 +1,8 @@
+// expect: refused
+// why: belonging to some enum is not the question — the arm has to belong to the subject's
+// from: specSingle's generic cluster
+enum Option<T> {
+  Some(T v), None
+  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+}
+export i32 f() { Option<i32> a = Option.Some(1); return match (a) { case Nope(v): v, case None: 0 }; }

@@ -1,0 +1,8 @@
+// expect: refused
+// why: the same name in a declaration — an instance's variant is not a type of its own
+// from: specSingle's generic cluster
+enum Option<T> {
+  Some(T v), None
+  bool isSome(const this) { return match (this) { case Some(_): true, case None: false }; }
+}
+export i32 f() { Option<i32> a = Option.Some(1); Some s = a; return s.v; }

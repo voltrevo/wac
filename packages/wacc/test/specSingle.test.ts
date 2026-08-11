@@ -30,7 +30,7 @@ function refuses(c: Case): boolean {
 }
 
 /**
- * The 28 programs the spec calls illegal that this checker still accepts. It was 47.
+ * The 27 programs the spec calls illegal that this checker still accepts. It was 47.
  *
  * Named rather than counted, and they are a handful of rules rather than 39 bugs. What is left, in
  * groups: generic inference failures,
@@ -59,7 +59,6 @@ const KNOWN_MISSES = new Set<string>([
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#4",
   "[§wac-modconst-notconst-r4jn9kq] non-constant initialisers are rejected#10",
   "[§wac-modconst-sized-5wnq8kt] the length must be constant and the elements defaultable#1",
-  "[§wac-generic-enum-7dkq2mv] a generic enum's variants have no bare name#0",
   "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#1",
   "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#2",
   "[§wac-generic-fn-5hvq3mt] inference failures and misuse are compile errors#3",
