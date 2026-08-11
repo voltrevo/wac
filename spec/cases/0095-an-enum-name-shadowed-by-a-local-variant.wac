@@ -1,0 +1,17 @@
+// expect: answers f = 7
+// why: the subject's enum is the one its own file declares — a local variant that spells that
+// why: enum's name is a different thing, and says nothing about which arms cover it
+// from: packages/git/src/repo.wac, which has `RepoAt.Opened` and imports a function returning
+// from: pack.wac's `enum Opened`
+// ---- a.wac ----
+export enum Opened { Ready(i32 n), Refused(string why) }
+export Opened openIt(i32 n) { return Opened.Ready(n); }
+// ---- main.wac ----
+import { openIt } from "./a.wac";
+enum RepoAt { Opened(i32 at), Missing }
+export i32 f() {
+  match (openIt(7)) {
+    case Ready(n): { return n; }
+    case Refused(why): { return 0; }
+  }
+}
