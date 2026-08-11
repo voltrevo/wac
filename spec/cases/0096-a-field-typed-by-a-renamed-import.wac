@@ -1,0 +1,14 @@
+// expect: answers f = 7
+// why: `import { Fs as FsType }` renames a type for this file, and a field written with the new
+// why: name holds the same thing the old one does
+// from: issues/lang/0097 — packages/git/src/repo.wac has `FsType fs;` and the field came out i32
+// ---- a.wac ----
+export struct Fs { i32 n; }
+export Fs mk(i32 n) { return Fs(n); }
+// ---- main.wac ----
+import { Fs as FsType, mk } from "./a.wac";
+struct Repo { FsType fs; i32 at; }
+export i32 f() {
+  Repo r = Repo(mk(7), 1);
+  return r.fs.n;
+}

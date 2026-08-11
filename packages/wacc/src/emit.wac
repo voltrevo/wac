@@ -1253,6 +1253,18 @@ export struct Env {
   string[] cbSigs;
   i32 cbSigCount;
 
+  /**
+   * The type each field was *written* with, kept until every declaration exists.
+   *
+   * A field's type is resolved by name, and a name from another file can only be resolved once that
+   * file's declarations are registered — which is not true while this pass is walking. The parent
+   * chain has had this treatment since it was written (`structParentToks`); a field's type
+   * needed it for the same reason and did not have it, so `struct Repo { FsType fs; }` — where
+   * `FsType` is `import { Fs as FsType }` — resolved to nothing and fell back to `i32`.
+   * `issues/lang/0097`, `spec/cases/0096`.
+   */
+  Ty?[] fieldTys;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1266,7 +1278,7 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0);
+               string[32](), 0, Ty?[16384]());
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -6075,6 +6087,7 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
           env.fieldOwners[env.fieldCount] = sname;
           env.fieldNames[env.fieldCount] = tokenTextOf(src, lexed, fields[i].nameTok);
           env.fieldTypes[env.fieldCount] = typeOfTyName(env, src, lexed, fields[i].type);
+          env.fieldTys[env.fieldCount] = fields[i].type;
           env.fieldNullable[env.fieldCount] = isNullableTy(fields[i].type);
           env.fieldCount = env.fieldCount + 1;
         }
@@ -6138,6 +6151,12 @@ void collectDeclarations(Env env, u8[] src, Lexed lexed, Program prog) {
   for (i32 i = 0; i < env.structCount; i++) {
     if (env.structParentToks[i] < 0) { continue; }
     env.structParents[i] = nameKeyOf(env, src, lexed, env.structParentToks[i]);
+  }
+  // And the fields, for the same reason and with the same timing: a field written with a name this
+  // file imported resolves only once the file it came from has been walked.
+  for (i32 i = 0; i < env.fieldCount; i++) {
+    if (env.fieldTys[i] is null) { continue; }
+    env.fieldTypes[i] = typeOfTyName(env, src, lexed, env.fieldTys[i]!);
   }
   // **A supertype must be declared before its subtype**, and a rec group does not lift that: being
   // mutually visible is not the same as being defined, and wasm answers a child written first with
