@@ -191,7 +191,7 @@ must *not* be read as type arguments.
 
 **Rung 3 now meets the spec.** 303 of the 304 single-file programs the suite calls illegal are
 refused and all 367 it calls legal are silent; across files it is 15 of 15 and 41 of 41; `spec/cases`
-is 88 of 88 with no named misses on either side. The one program left is a *multi-file* case the
+is 111 of 111 with no named misses on either side. The one program left is a *multi-file* case the
 recorder kept one file of — `main.wac` importing from a `b.wac` nobody supplied — so refusing it
 would mean refusing every import.
 
@@ -336,6 +336,11 @@ and `linkEmit` for what linking can get wrong.
 comes out compiles them again, and the two are byte-identical — `fixpointEmit` and `selfHostEmit`.
 
 ## The cases
+
+**A case can say a program traps** as of `issues/lang/0085`, alongside compiling, being refused and
+answering a value. Half of what `spec/spec/casts.md` promises is of that shape — `as!` is the checked
+cast — and the nearest a case could get before was an answer, which was exactly the wrong answer the
+bug produced.
 
 `spec/cases` is a corpus of whole programs, each four to ten lines, each carrying its own
 expectation — `emits`, `refused`, or `answers f = 42`. No reference compiler to agree with, no

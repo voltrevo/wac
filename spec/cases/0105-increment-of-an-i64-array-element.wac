@@ -1,0 +1,8 @@
+// expect: answers f = 3
+// why: the same one, added to an element rather than a field
+// from: issues/lang/0082
+export i64 f() {
+  i64[] a = i64[](1, 2);
+  a[1]++;
+  return a[1];
+}

@@ -1,0 +1,9 @@
+// expect: answers f = 2
+// why: `++` adds one at the width of what it increments, and a field is not narrower than a local
+// from: issues/lang/0082
+struct P { i64 x; }
+export i64 f() {
+  P p = P(1);
+  p.x++;
+  return p.x;
+}

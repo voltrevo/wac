@@ -1583,11 +1583,36 @@ class FuncEmitter {
         }
         return; // other ref upcasts need no instruction
       }
-      if (e.op === "as!") {
-        // i32 → i31ref: ref.i31
+      // `as~` is the truncating cast, and `ref.i31` truncating is precisely what it means: keep
+      // the low thirty-one bits, whatever was above them. Nothing was emitted for it at all, so
+      // the i32 stayed on the stack where an i31ref was wanted and the module did not validate —
+      // which is the spelling the checker's own hint recommends when `as` is refused as lossy.
+      if (e.op === "as~") {
         if (fromT.kind === "prim" && fromT.name === "i32" &&
             toT.kind === "prim" && toT.name === "i31ref") {
           this.emit(0xFB, 0x1C); // ref.i31
+          return;
+        }
+        if (fromT.kind === "prim" && fromT.name === "i31ref" &&
+            toT.kind === "prim" && toT.name === "i32") {
+          this.emit(0xFB, 0x1D); // i31.get_s
+          return;
+        }
+      }
+      if (e.op === "as!") {
+        // i32 → i31ref: checked, then ref.i31.
+        //
+        // `ref.i31` keeps the low thirty-one bits and says nothing about the rest, so on its own it
+        // is the *unchecked* cast: 2^30 came back as -2^30, having silently changed sign [issue
+        // 0085]. `as!` promises exact-or-trap for every other member of the family, and an i31
+        // holds a signed 31-bit value — so anything outside [-2^30, 2^30-1] traps here rather than
+        // arriving as a different number.
+        if (fromT.kind === "prim" && fromT.name === "i32" &&
+            toT.kind === "prim" && toT.name === "i31ref") {
+          const I31MAX = 1073741823, I31MIN = -1073741824;
+          this.guardI32(I31MAX, 0x4A);   // x >s  2^30 - 1
+          this.guardI32(I31MIN, 0x48);   // x <s -2^30
+          this.emit(0xFB, 0x1C);         // ref.i31
           return;
         }
         // i31ref → i32: i31.get_s
@@ -2758,7 +2783,28 @@ class FuncEmitter {
     // runs twice.
     this.emitFieldIncrAssign(e.lval, e.op === "++" ? "+=" : "-=", env, t);
     this.emitLvalGet(e.lval, env);           // new value
-    if (!e.prefix) this.emit(...one, undo);  // postfix: old = new ∓ 1
+    if (!e.prefix) {
+      this.emit(...one, undo);               // postfix: old = new ∓ 1
+      // …and a packed element does not survive that arithmetic. The value in the array was
+      // truncated to 8 or 16 bits when it was stored, so `255 + 1 - 1` is 255 only if the
+      // narrowing happens again: without it `u8 255` postfix-incremented answered -1, and
+      // `i8 127` answered -129 — values the array cannot hold [issue 0084].
+      this.emitPackedNarrow(e.lval, env);
+    }
+  }
+
+  /** Narrow a computed i32 back to what a packed element would hold, as a store-and-read would. */
+  private emitPackedNarrow(lv: Lvalue, env: TypeEnv): void {
+    if (lv.kind !== "lv-index") return;
+    const bt = lvalType(lv.base, env, this.ctx);
+    const elem = bt.kind === "array" ? bt.elem
+               : bt.kind === "nullable" && bt.inner.kind === "array" ? bt.inner.elem
+               : I32;
+    const en = elem.kind === "prim" ? elem.name : "";
+    if (en === "u8")       this.emit(0x41, 0xFF, 0x01, 0x71);  // i32.const 255;   i32.and
+    else if (en === "u16") this.emit(0x41, 0xFF, 0xFF, 0x03, 0x71); // i32.const 65535; i32.and
+    else if (en === "i8")  this.emit(0xC0);                    // i32.extend8_s
+    else if (en === "i16") this.emit(0xC1);                    // i32.extend16_s
   }
 
   private emitAssign(
@@ -2827,12 +2873,7 @@ class FuncEmitter {
       this.emitExpr(lval.idx, env);     // idx for array.set
       this.emitLvalGet(lval.base, env); // arr ref for array.get
       this.emitExpr(lval.idx, env);     // idx for array.get
-      // packed elements must read through array.get_u — array.get is invalid on
-      // i8/i16 arrays and would fail wasm validation [see arrays.md]
-      const packed = elem.kind === "prim" &&
-        (elem.name === "i8" || elem.name === "i16" || elem.name === "u8" || elem.name === "u16");
-      if (packed) this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u (read old)
-      else        this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get   (read old)
+      this.emitArrayGet(aIdx, elem); // read old, extended as its type says
       this.emitCompoundRhs(rhs, env, elem, op.slice(0,-1));
       this.emitBinOpCode(op.slice(0,-1), elem);
     } else {
@@ -2917,9 +2958,14 @@ class FuncEmitter {
   }
 
   private emitFieldIncrAssign(lval: Lvalue, compOp: string, env: TypeEnv, t: WacType): void {
-    // For a non-ident lval like arr[i]++ or obj.x++
-    // Just emit as compound assign with i32.const 1
-    const rhs: Expr = { kind: "int", value: "1", line: 0, col: 0 };
+    // For a non-ident lval like arr[i]++ or obj.x++: a compound assignment of 1.
+    //
+    // `resolved` is what the type checker writes on a literal that took its type from context,
+    // and this literal has never been near the checker — it is made here. Leaving it off left
+    // the width to a default of i32, so `p.x++` on an `i64` field emitted `i64.add` over an
+    // `i32.const` and the module did not validate [issue 0082]. The same `p.x += 1` written out
+    // works precisely because the checker resolved *its* literal.
+    const rhs: Expr = { kind: "int", value: "1", line: 0, col: 0, resolved: t };
     if (lval.kind === "lv-field") {
       this.emitFieldAssign(
         lval as { kind: "lv-field"; base: Lvalue; field: string },
@@ -2931,6 +2977,22 @@ class FuncEmitter {
         compOp, rhs, env,
       );
     }
+  }
+
+  /**
+   * Read an array element, extending a packed one the way its type says.
+   *
+   * There is one right answer per element type and three places that need it — reading an
+   * index expression, reading the old value of a compound assignment, and reading back what
+   * `++` produced — and they disagreed. `array.get` on a packed array is not valid wasm at all
+   * [issue 0084], and `array.get_u` on an `i8[]` is valid and wrong: `a[0] /= 2` on -8 read 248
+   * and stored 124. Add/sub hid it, because they wrap the same either way.
+   */
+  private emitArrayGet(aIdx: number, elem: WacType): void {
+    const en = elem.kind === "prim" ? elem.name : "";
+    if (en === "i8" || en === "i16")      this.emit(0xFB, 0x0C, ...uleb(aIdx)); // array.get_s
+    else if (en === "u8" || en === "u16") this.emit(0xFB, 0x0D, ...uleb(aIdx)); // array.get_u
+    else                                  this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
   }
 
   /** Emit the value of an lvalue (for reading). */
@@ -2957,7 +3019,7 @@ class FuncEmitter {
         const aIdx = this.ctx.arrTypeIdx.get(typeKey(elem))!;
         this.emitLvalGet(lv.base, env);
         this.emitExpr(lv.idx, env);
-        this.emit(0xFB, 0x0B, ...uleb(aIdx)); // array.get
+        this.emitArrayGet(aIdx, elem);
         break;
       }
       case "lv-unwrap": {
