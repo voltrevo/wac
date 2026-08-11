@@ -19,18 +19,24 @@ means agreeing about what the object *is*.
 | `src/zlib.wac` | RFC 1950 framing over `packages/gzip`'s deflate, with Adler-32 verified on the way in |
 | `src/object.wac` | the four kinds, the `<kind> <len>\0<content>` framing git hashes, and loose files |
 | `src/tree.wac` | tree entries — mode, name, and twenty raw bytes of hash |
+| `src/idx.wac` | a pack index: names, offsets, and the binary search over them |
+| `src/pack.wac` | a packfile: object headers, offset and reference deltas, chains |
 
 The header is the whole reason `"hello\n"` is `ce013625…` rather than SHA-1 of those six bytes, and
 it puts the kind inside the identity: the same bytes as a blob and as a tag are two different
 objects, which `test/interop.test.ts` pins.
+
+It reads packfiles, which means it can read a real repository — including this one. Every one of the
+**18,209 objects** in this repository's own 8.7 MB pack reconstructs to bytes that hash back to the name
+the index has for them, deltas and all, in about ten seconds. That check needs no second
+implementation: an object's name is the SHA-1 of its bytes, so being wrong and agreeing is not
+available.
 
 ## What it does not do yet
 
 Named rather than approximated, because a git implementation that quietly did some of these would be
 worse than one that says which:
 
-- **No packfiles.** A repository that has been gc'd keeps most of its objects in a `.pack`, and this
-  reads loose objects only. That is the largest single gap and the obvious next piece.
 - **No index.** No `.git/index`, so no staging area and no `git add`.
 - **No refs, no commits parsed.** `Kind.Commit` round-trips as bytes; nothing here reads the `tree`,
   `parent` and `author` lines out of one, or resolves a branch name.
@@ -45,7 +51,7 @@ and to walk a tree.
 The order the rest would go in, and what would count as arriving, is
 [design/system/0005](../../design/system/0005-git-in-wac.md) — kept there rather than here so the plan
 and this package's limitations do not become two records that drift. Short version: packfiles first,
-because without them no real repository can be opened, including this one.
+and packfile *reading* is done. Next is refs and commit parsing, which together give `log`.
 
 ## Two things about the format worth knowing before reading the code
 
@@ -65,8 +71,11 @@ already has git's order.
 means there is no room for two implementations to disagree politely.
 
 ```sh
-deno test -A packages/git/test/interop.test.ts     # skips itself, loudly, with no git installed
+deno test -A packages/git/test/interop.test.ts     # objects and trees
+deno test -A packages/git/test/pack.test.ts        # packfiles
 ```
+
+Both skip themselves, loudly, where git is not installed.
 
 Both directions, because they are different failures: `git cat-file` reads objects this package
 wrote, and this package reads objects `git hash-object -w` wrote.
