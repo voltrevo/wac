@@ -7,11 +7,12 @@
 // arithmetic.
 
 import { wacBind } from "../../../harness/wacBind.ts";
-import { generate, parseSigs, supported, unsupported } from "../tools/waccBindgen.ts";
+import { generate, parseBindTypes, parseSigs, supported, unsupported } from "../tools/waccBindgen.ts";
 
 const mod = await wacBind("packages/wacc/src/api.wac");
 const emitFiles = mod.emitFiles as (p: string[], s: string[], e: string) => Uint8Array;
 const exportSigs = mod.exportSigsFiles as (p: string[], s: string[], e: string) => string;
+const bindTypes = mod.bindTypesFiles as (p: string[], s: string[], e: string) => string;
 
 const SRC = `export i32 addTwo(i32 a, i32 b) { return a + b; }
 export f64 half(f64 x) { return x / 2.0; }
@@ -68,17 +69,76 @@ Deno.test("bindgen: what it cannot bind is named, not silently skipped", () => {
   const src = `struct P { i32 x; }
 export i32 fine(i32 n) { return n; }
 export P makeP(i32 n) { return P(n); }
+export i32 viaCallback(fn[i32(i32)] cb) { return cb(1); }
 `;
   const sigs = parseSigs(exportSigs(["m.wac"], [src], "m.wac"));
-  const declined = unsupported(sigs);
-  if (!sigs.some(s => s.name === "fine" && supported(s))) throw new Error("a scalar export was declined");
-  if (declined.length !== 1 || !declined[0].startsWith("makeP")) {
-    throw new Error(`declined ${JSON.stringify(declined)}, wanted just makeP`);
+  const types = parseBindTypes(bindTypes(["m.wac"], [src], "m.wac"));
+  const declined = unsupported(sigs, types);
+  if (!sigs.some(s => s.name === "fine" && supported(s, types))) {
+    throw new Error("a scalar export was declined");
+  }
+  // A struct is bound now; a callback is what is left, and it is *named*.
+  if (declined.length !== 1 || !declined[0].startsWith("viaCallback")) {
+    throw new Error(`declined ${JSON.stringify(declined)}, wanted just viaCallback`);
   }
   // And the glue that is generated holds only what it can honour — a caller reaching for `makeP`
   // gets a missing export at import time rather than a wrong answer at run time.
   const wasm = Uint8Array.from(emitFiles(["m.wac"], [src], "m.wac") as unknown as number[]);
-  const source = generate(wasm, sigs);
+  const source = generate(wasm, sigs, types);
   if (!source.includes("export function fine")) throw new Error("the supported export is missing");
-  if (source.includes("export function makeP")) throw new Error("glue was generated for a struct return");
+  if (source.includes("export function viaCallback")) throw new Error("glue was generated for a funcref");
+});
+
+const TYPED = `struct Point { i32 x; i32 y;
+  i32 sum(const this) { return this.x + this.y; }
+  Point origin() { return Point(0, 0); }
+}
+enum Shape { Empty, Circle(f64 r), Named(string what) }
+export Point shift(Point p, i32 by) { return Point(p.x + by, p.y); }
+export f64 radius(Shape s) { return match (s) { case Circle(r): r, else: 0.0 }; }
+export Shape circle(f64 r) { return Shape.Circle(r); }
+`;
+
+Deno.test("bindgen: a struct and an enum cross as classes holding the reference", async () => {
+  const wasm = Uint8Array.from(emitFiles(["m.wac"], [TYPED], "m.wac") as unknown as number[]);
+  const sigs = parseSigs(exportSigs(["m.wac"], [TYPED], "m.wac"));
+  const types = parseBindTypes(bindTypes(["m.wac"], [TYPED], "m.wac"));
+  if (types.length !== 2) throw new Error(`${types.length} bound types, wanted Point and Shape`);
+  if (unsupported(sigs, types).length > 0) {
+    throw new Error(`declined: ${unsupported(sigs, types).join(", ")}`);
+  }
+
+  const path = await Deno.makeTempFile({ suffix: ".gen.ts" });
+  await Deno.writeTextFile(path, generate(wasm, sigs, types));
+  try {
+    // deno-lint-ignore no-explicit-any
+    const g = await import(`file://${path}`) as Record<string, any>;
+    const wrong: string[] = [];
+    const eq = (what: string, got: unknown, want: unknown) => {
+      if (String(got) !== String(want)) wrong.push(`${what}: ${got}, wanted ${want}`);
+    };
+
+    const p = g.Point.$of(3, 4);
+    eq("Point.$of(3,4).sum()", p.sum(), 7);
+    eq("p.x", p.x, 3);
+    p.y = 10;                                    // a setter writes through the reference
+    eq("p.sum() after p.y = 10", p.sum(), 13);
+    eq("Point.origin().sum()", g.Point.origin().sum(), 0);
+    // A wrapper handed straight back into the module: nothing is copied, so the same object
+    // reaches wac and comes back out as another wrapper.
+    eq("shift(p, 1).x", g.shift(p, 1).x, 4);
+
+    const c = g.Shape.Circle(2.5);
+    eq("Shape.Circle(2.5).tag", c.tag, "Circle");
+    eq("its payload", c.Circle_r(), 2.5);
+    eq("radius(c)", g.radius(c), 2.5);
+    eq("Shape.Empty().tag", g.Shape.Empty().tag, "Empty");
+    eq("a string payload", g.Shape.Named("hi").Named_what(), "hi");
+    // Round-tripping through wac: the enum comes back as a wrapper, not as a number.
+    eq("circle(9).tag", g.circle(9).tag, "Circle");
+
+    if (wrong.length > 0) throw new Error(`${wrong.length} wrong answer(s):\n  ${wrong.join("\n  ")}`);
+  } finally {
+    await Deno.remove(path);
+  }
 });

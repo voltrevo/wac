@@ -16,11 +16,11 @@
 //     deno run -A packages/wacc/tools/waccxMain.ts check main.wac
 //
 // Commands: `check`, `compile`, `run`, `bindgen`. The last writes TypeScript that calls the module,
-// for the types this generator covers — the numbers, `bool`, `string` and the numeric arrays — and
-// names on stderr what it declined.
+// for the types this generator covers — the numbers, `bool`, `string`, the numeric arrays, and the
+// structs and enums a host can hold — and names on stderr what it declined.
 
 import { readGraph, type WacxCap } from "wac/wacx.ts";
-import { generate, parseSigs, unsupported } from "./waccBindgen.ts";
+import { generate, parseBindTypes, parseSigs, unsupported } from "./waccBindgen.ts";
 import { wacDiag, type DiagError } from "wac/wacDiag.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -38,6 +38,7 @@ Exit codes: 0 success, 1 a compile or usage error, 2 the program trapped.`;
 type WaccApi = {
   diagnoseFiles: (paths: string[], sources: string[], entry: string) => string;
   exportSigsFiles: (paths: string[], sources: string[], entry: string) => string;
+  bindTypesFiles: (paths: string[], sources: string[], entry: string) => string;
   emitFiles: (paths: string[], sources: string[], entry: string) => Uint8Array;
   blockedFiles: (paths: string[], sources: string[], entry: string) => string;
 };
@@ -136,12 +137,13 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   // signature; one handed glue missing a function finds out at the call site.
   if (command === "bindgen") {
     const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
-    const declined = unsupported(sigs);
+    const types = parseBindTypes(api.bindTypesFiles(paths, sources, entry));
+    const declined = unsupported(sigs, types);
     if (declined.length > 0) {
       cap.err(`waccx bindgen: not bound yet — ${declined.join("; ")}`);
     }
     const outPath = entry.replace(/\.wac$/, "") + ".gen.ts";
-    await cap.writeFile(outPath, new TextEncoder().encode(generate(wasm, sigs)));
+    await cap.writeFile(outPath, new TextEncoder().encode(generate(wasm, sigs, types)));
     return { code: 0 };
   }
 

@@ -13,7 +13,7 @@ import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
          errNoSuchExport } from "./check.wac";
 import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, emitLinkedCovered,
-         covTableLinked, exportSigsLinked, blockedLinked, namesLinked,
+         covTableLinked, exportSigsLinked, bindTypesLinked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -136,6 +136,11 @@ export u8[] emitFilesCovered(string[] paths, string[] sources, string entry) {
  */
 export string exportSigsFiles(string[] paths, string[] sources, string entry) {
   return exportSigsLinked(paths, sources, entry);
+}
+
+/** The structs and enums a host can hold — see `bindTypesLinked` for the shape. */
+export string bindTypesFiles(string[] paths, string[] sources, string entry) {
+  return bindTypesLinked(paths, sources, entry);
 }
 
 /** What each counter is: `index\tline\tcol\tkind` per line, in counter order. */

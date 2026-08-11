@@ -168,7 +168,7 @@ have never appeared in a status line: they are invisible to every rung.
 | CLI: `check`, `compile`, `run` | done, `deno task waccx` |
 | CLI: `bindgen` | done — `waccx bindgen main.wac` writes `main.gen.ts` |
 | bind helpers in the module | done — memory, arrays, structs, enums, strings, methods, statics, and callbacks through an import section |
-| bindgen — generating the host glue | **started** — the numbers, `bool`, `string` and the numeric arrays cross; structs, enums and callbacks do not yet, and are named rather than skipped |
+| bindgen — generating the host glue | the numbers, `bool`, `string`, the numeric arrays, and structs and enums as classes; **callbacks** do not cross yet, and are named rather than skipped |
 | host imports (an import section) | done — `wac.cb<j>` per callback signature |
 | coverage instrumentation | done — a counter per branch point, `__cov_init/_len/_get`, and a table saying what each counter is |
 | constant folding | **not needed** — the same programs work by another route; see below |

@@ -15,7 +15,7 @@ import { lex, Lexed, tokenStride } from "./lex.wac";
 import { floatLit, parseInt } from "./lit.wac";
 import { P, parseProgram } from "./parse.wac";
 import {
-  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, NamedArg, Param, Program, Stmt,
+  Arm, Decl, DeclKind, Expr, ExprKind, Lvalue, LvalueKind, Method, NamedArg, Param, Program, Stmt,
   StmtKind, Ty, TyKind,
 } from "./ast.wac";
 import {
@@ -1873,6 +1873,126 @@ export string covTableLinked(string[] paths, string[] sources, string entry) {
   Env env = Env.create();
   return covTableOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
                     names, filePaths);
+}
+
+/**
+ * The structs and enums a host can hold, and what it can do with them.
+ *
+ * The *bind set* — the same types the emitter writes helpers for, because glue for anything else
+ * would call a function that is not there. Each line carries the helper's own name as well as the
+ * wac one: a monomorphisation binds as `Vec__packages_std_src_vec$string`, and a generator that
+ * rebuilt that spelling from the wac name would be reimplementing `mangleType` by eye.
+ *
+ *     S<TAB>Name<TAB>bindName<TAB>field:type,field:type
+ *     E<TAB>Name<TAB>bindName<TAB>Variant:field:type|field:type;Variant:
+ *     M<TAB>bindName<TAB>method<TAB>this|static<TAB>ret<TAB>param,param
+ */
+export string bindTypesLinked(string[] paths, string[] sources, string entry) {
+  i32[] starts = i32[512]();
+  i32[] edges = i32[4096]();
+  string[] names = string[4096]();
+  string[] filePaths = string[512]();
+  string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
+  if (blob == "") { return ""; }
+  u8[] src = blob.toBytes();
+  Lexed lexed = lex(src);
+  P p = P.create(src, lexed.tokens, lexed.tokenCount);
+  Program prog = parseProgram(p);
+  Env env = Env.create();
+  for (i32 i = 0; i < starts.len(); i++) {
+    if (starts[i] == 0) { continue; }
+    env.fileFirstLine[env.fileCount] = starts[i];
+    if (env.fileCount < env.filePaths.len() && i >= 1 && i - 1 < filePaths.len()) {
+      env.filePaths[env.fileCount] = filePaths[i - 1];
+    }
+    env.fileCount = env.fileCount + 1;
+  }
+  for (i32 e = 0; e < edges[0]; e++) {
+    if (env.importCount >= env.importFrom.len()) { continue; }
+    env.importFrom[env.importCount] = edges[e * 2 + 1];
+    env.importTo[env.importCount] = edges[e * 2 + 2];
+    string pair = e < names.len() ? names[e] : "";
+    i32 sp = pair.indexOf(" ");
+    env.importNames[env.importCount] = sp < 0 ? pair : pair.slice(0, sp);
+    env.importDecls[env.importCount] = sp < 0 ? pair : pair.slice(sp + 1, pair.len());
+    env.importCount = env.importCount + 1;
+  }
+  collectDeclarations(env, src, lexed, prog);
+  assignGlobals(env, src, lexed);
+  settleEmittable(env, src, lexed, prog);
+
+  string[] bindStructs = string[64]();
+  i32 n = collectBindStructs(env, src, lexed, prog, bindStructs);
+  string out = "";
+  for (i32 i = 0; i < n; i++) {
+    string name = bindStructs[i];
+    // **The name the helpers were exported under.** A plain struct keeps its own — `$bind$s_Point_new`
+    // — and only a monomorphisation is qualified and mangled. `collectBindStructs` holds no
+    // instances, so this set is the plain half; saying `bindTypeSpelling` here would have qualified
+    // every one of them and sent the glue looking for helpers nobody exported.
+    string bind = name;
+    if (env.isEnumName(name)) {
+      string line = "E\t" + name + "\t" + bind + "\t";
+      bool first = true;
+      for (i32 v = 0; v < env.variantCount; v++) {
+        if (env.variantOwners[v] != name) { continue; }
+        if (!first) { line = line + ";"; }
+        first = false;
+        line = line + env.variantNames[v] + ":";
+        for (i32 k = 0; k < env.variantArity[v]; k++) {
+          if (k > 0) { line = line + "|"; }
+          i32 slot = env.variantSlot[v] + k;
+          line = line + payloadFieldName(env.fieldNameAt(name, slot)) + ":" +
+                 env.fieldTypeAt(name, slot);
+        }
+      }
+      out = out + line + "\n";
+    } else {
+      if (!bindableStruct(env, name)) { continue; }
+      string line = "S\t" + name + "\t" + bind + "\t";
+      i32 fc = env.fieldCountOf(name);
+      for (i32 f = 0; f < fc; f++) {
+        if (f > 0) { line = line + ","; }
+        line = line + env.fieldNameAt(name, f) + ":" + env.fieldTypeAt(name, f);
+      }
+      out = out + line + "\n";
+    }
+    // The methods, under the names the module exports them by.
+    for (i32 d = 0; d < prog.decls.len(); d++) {
+      match (prog.decls[d].kind) {
+        case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
+          out = out + methodLines(env, src, lexed, bind, name, methods);
+        }
+        case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+          if (typeParams.len() > 0) { continue; }
+          if (nameKeyOf(env, src, lexed, nameTok) != name) { continue; }
+          out = out + methodLines(env, src, lexed, bind, name, methods);
+        }
+        else: { }
+      }
+    }
+  }
+  return out;
+}
+
+/** One `M` line per method the module actually emitted for this owner. */
+string methodLines(Env env, u8[] src, Lexed lexed, string bind, string owner, Method[] methods) {
+  string out = "";
+  for (i32 m = 0; m < methods.len(); m++) {
+    string mn = tokenTextOf(src, lexed, methods[m].nameTok);
+    i32 at = env.funcAt(owner + "." + mn);
+    if (at < 0 || env.funcIndex[at] < 0) { continue; }
+    string line = "M\t" + bind + "\t" + mn + "\t" + (methods[m].hasThis ? "this" : "static") +
+                  "\t" + typeOfTyName(env, src, lexed, methods[m].returnType) + "\t";
+    for (i32 i = 0; i < methods[m].params.len(); i++) {
+      if (i > 0) { line = line + ","; }
+      line = line + typeOfTyName(env, src, lexed, methods[m].params[i].type);
+    }
+    out = out + line + "\n";
+  }
+  return out;
 }
 
 /**
