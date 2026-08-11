@@ -22,9 +22,73 @@ Done means: `deno task test` stands up a Tor network with no C in it, publishes 
 it, fetches a page from that service through a three-hop circuit, and tears it down — and separately,
 each of our components works inside a chutney network of real tors.
 
-What it is **not**: a production relay. No traffic accounting, no bandwidth self-measurement, no DoS
-defences, no `MetricsPort`, no operator ergonomics. It is not something to run on the public network,
-and the client README's *What is not here* already lists why the client alone is not either.
+What it is **not**, *yet*: a production relay. No traffic accounting, no bandwidth self-measurement,
+no DoS defences, no `MetricsPort`, no operator ergonomics. The client README's *What is not here*
+lists why the client alone is not one either.
+
+**"Yet" is the operator's word, 2026-08-11.** Asked whether this is ever meant to touch the real
+network, the answer was *yes, eventually*. That does not change what is true today — everything here
+is verified offline or against a locally built tor — and it changes what the gaps below **mean**:
+they are a list that has to close, not a list of things we decided against. What has to close is
+written down in the next section rather than left for whoever proposes the first real connection.
+
+## Before it carries a stranger's traffic
+
+Not a roadmap and not a schedule. It is the set of statements that must be *true and demonstrated*
+before this code is pointed at the public network, written now because the cost of writing it later
+is that somebody argues each one at the moment they want to skip it.
+
+Each is phrased so that it can be answered with evidence rather than with an opinion.
+
+**1. The guard algorithm is proposal 271, not two of its properties.** Today: no rotation on failure
+and no rotation when every guard fails at once, which is the pair that matters for a testnet. Missing:
+the sampled set aged on a schedule, and a confirmed list kept apart from a primary list. A client
+that picks fresh entry guards under an attacker's pressure is the classic deanonymisation, and it is
+the one gap here that hurts *our* user rather than the network.
+
+**2. Circuit padding exists, or its absence is stated to the user.** There is none. A relay that never
+pads is distinguishable and a client that never pads is more fingerprintable than a real one. If
+padding is not implemented by then, the SOCKS proxy says so at startup rather than leaving it in a
+README.
+
+**3. Stream isolation is by credential, not by port.** `SocksPort` isolation today is "a different
+port is a different circuit". Real clients isolate by SOCKS username/password so that two tabs cannot
+be linked. Anything that carries somebody else's browsing needs this.
+
+**4. An onion service does not publish its revision counter in the clear.** We do; tor encrypts it
+with an order-preserving cipher. Ours tells anyone who fetches the descriptor when the service last
+published, which is a timing side channel about the operator, not about the protocol.
+`packages/tor/INTEROP.md` records it as a disclosure — it becomes a defect the day a real service
+uses it.
+
+**5. The relay refuses work rather than dying under it.** `MAX_CONNS` and `MAX_CIRCS` are memory
+caps, and the ring budget added for wac-mono 0091 stops the deadlock — neither is a DoS defence. A
+public relay is attacked from the first hour: it needs a rate limit, and it needs to be measured
+under one.
+
+**6. The timing claims are narrowed by measurement, not by hope.** `packages/crypto` measures
+`chachaBlock`, `poly1305` and the x25519 ladder as uniform under its own trace; `bcryptPbkdf` leaks
+by construction, Ed25519 signing has never been measured, and — the sentence that matters —
+"uniform under a dynamic wasm-level trace is not a proof of constant time". Carrying a stranger's
+traffic means either measuring the rest or saying plainly which keys are exposed to a timing
+attacker.
+
+**7. Key handling is described.** Where a relay's identity key lives, what happens on restart, who
+can read it, and what an operator is expected to back up. None of that is written down, and a relay
+whose identity key is a file beside the binary is an operator surprise.
+
+**8. Somebody who did not write it has read it.** Nothing here has been reviewed. That is stated in
+`packages/ssh`'s README and it is equally true of this stack. A review is not a gate we can pass
+ourselves.
+
+**9. The sandbox is opened deliberately.** The proxy allowlist is by domain and the directory
+authorities are IP-addressed, so the real network is unreachable from this container by construction.
+That wall comes down by the operator's decision and not by anybody's convenience — and when it does,
+`~/notes/security/`'s rule still holds for anything we find in C tor on the way.
+
+**What none of this asks for**: bandwidth self-measurement, `MetricsPort`, traffic accounting, or
+operator ergonomics. A relay can carry traffic honestly without them, and they are the difference
+between "safe to run" and "pleasant to run".
 
 ## Why this is reachable
 
@@ -414,7 +478,9 @@ The client's own limitations — guard algorithm, circuit padding, isolation by 
 - **The proxy allowlist.** The real network is unreachable from this container: authorities are
   IP-addressed and the allowlist is by domain. Everything above is local, which is fine for all seven
   steps — but it means "works against the real network" is never demonstrated, and that should be said
-  rather than assumed.
+  rather than assumed. **No longer only an open question**: the operator confirmed on 2026-08-11 that
+  the real network is an eventual destination, so opening the wall is a step with conditions rather
+  than a hypothetical — see *Before it carries a stranger's traffic*.
 - **Where the launcher's network description lives.** Chutney uses Python network files; ours could be
   JSON read by a Deno harness, or a wac program. Decide at step 5, when there is something to launch.
 
