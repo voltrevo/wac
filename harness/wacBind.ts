@@ -82,7 +82,8 @@ async function bindKey(entry: string, files: Map<string, string>): Promise<strin
  * wrong answer.
  *
  * **This is the emitter under test and nothing else.** The interface metadata is still the
- * reference's, because `wacc` has no bindgen; a green run says its code is right, not that it could
+ * reference's — wacc has a bindgen of its own now, and this deliberately does not use it, so what a
+ * green run says is that its code is right, not that it could
  * have produced the bindings. Opt-in, so a normal suite run is untouched.
  */
 async function waccWasm(files: Map<string, string>, entry: string): Promise<Uint8Array | null> {

@@ -1,0 +1,186 @@
+// The self-hosted compiler, in a tab: wac in, wasm out, and nothing else in the path.
+//
+//   deno task app:build packages/wacc/example/waccpage.wac --target browser -o page/index.html
+//
+// The playground on the website runs the **reference** compiler — TypeScript, bundled as JavaScript.
+// This page runs `wacc`: the compiler written in wac, compiled to WebAssembly by the reference, and
+// then doing the compiling itself. Paste a program and the bytes that come back were produced by a
+// compiler that is itself a wasm module in this tab.
+//
+// ## What this does not show, and why
+//
+// **Not the fixpoint.** "wacc compiles wacc" means compiling its own ten sources, and those import
+// `std`, `bytes`, `fmt` and more — the transitive closure is dozens of files. `emitFiles` takes the
+// file set from its caller because a wasm module has no filesystem, so a page would have to be handed
+// all of them; drop a subset and the honest answer is `an import of a file that was not supplied`,
+// which is the same thing the corpus test reports for the three files it cannot finish.
+//
+// **And not the second stage.** A fixpoint is stage B compiling the sources again to make stage C and
+// the two agreeing byte for byte. Running B means instantiating a module this program just produced,
+// and instantiating wasm is not something a wac program can do — there is no capability for it, which
+// is the same reason a page cannot open a socket. `packages/wacc/test/fixpointEmit.test.ts` is where
+// that claim is settled, and it is settled by running it rather than by asserting it here.
+//
+// So what this is: the compiler, self-hosted, running on what you give it. The size and the SHA-256
+// of the module it emits are checkable against `waccx emit` on the same input, on your machine.
+
+import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { sha256 } from "../../crypto/src/sha256.wac";
+import { blocked, emitFiles } from "../src/api.wac";
+
+/** Where this page came from. A demonstration nobody can rebuild is a screenshot. */
+const string SOURCE =
+  "https://github.com/voltrevo/wac/blob/master/packages/wacc/example/waccpage.wac";
+
+const string SAMPLE =
+  "// wacc is compiling this, in your browser.\n" +
+  "//\n" +
+  "// `main` takes no capability, so the module it emits imports nothing at all —\n" +
+  "// an empty import section, not merely nothing it happens to use.\n" +
+  "\n" +
+  "i32 fib(i32 n) {\n" +
+  "  if (n < 2) { return n; }\n" +
+  "  return fib(n - 1) + fib(n - 2);\n" +
+  "}\n" +
+  "\n" +
+  "export i32 main() {\n" +
+  "  return fib(20);\n" +
+  "}\n";
+
+string hexOf(u8[] b) { return string.fromBytes(encode(b)); }
+
+export i32 page(Core core, Cli cli, Page page) {
+  page.title("wac: the self-hosted compiler, in a tab").wait();
+  page.render(
+    "<style>" +
+    "  :root { --ink: #f7f9f9; --slab: #fff; --line: #dbe4e3; --text: #0b1a1d;" +
+    "          --dim: #5b7073; --key: #0e8c78; --bad: #c2410c; }" +
+    "  @media (prefers-color-scheme: dark) {" +
+    "    :root { --ink: #0b1416; --slab: #101f23; --line: #1e363c; --text: #dce8e7;" +
+    "            --dim: #8ba3a4; --key: #46d9c0; --bad: #fb923c; } }" +
+    "  body { background: var(--ink); color: var(--text); }" +
+    "  #tool { max-width: 50rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }" +
+    "  h1 { font-size: 1.35rem; margin: 0 0 .3rem; letter-spacing: -0.02em; }" +
+    "  p.sub { margin: 0 0 1.4rem; color: var(--dim); font-size: .95rem; max-width: 40rem; }" +
+    "  code { font-family: ui-monospace, monospace; font-size: .9em; }" +
+    "  textarea { width: 100%; box-sizing: border-box; min-height: 15rem; resize: vertical;" +
+    "             background: var(--slab); color: var(--text); border: 1px solid var(--line);" +
+    "             border-radius: 6px; padding: .8rem; font: 13px/1.6 ui-monospace, monospace; }" +
+    "  textarea:focus { outline: 2px solid var(--key); outline-offset: 1px; }" +
+    "  #row { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; margin: .9rem 0; }" +
+    "  button { font: inherit; font-size: .88rem; padding: .3rem .8rem; cursor: pointer;" +
+    "           color: var(--text); background: var(--slab); border: 1px solid var(--line);" +
+    "           border-radius: 5px; }" +
+    "  button:hover { border-color: var(--key); color: var(--key); }" +
+    "  input[type=file] { font: inherit; font-size: .85rem; color: var(--dim); }" +
+    "  dl { display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.1rem;" +
+    "       margin: 1.4rem 0 0; align-items: baseline; }" +
+    "  dt { color: var(--dim); font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; }" +
+    "  dd { margin: 0; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums;" +
+    "       word-break: break-all; }" +
+    "  dd#sha { color: var(--key); font-size: .82rem; line-height: 1.5; }" +
+    "  #why { color: var(--bad); white-space: pre-wrap; font-family: ui-monospace, monospace;" +
+    "         font-size: .82rem; margin-top: .7rem; }" +
+    "  .dim { color: var(--dim); }" +
+    "  footer { margin-top: 2.2rem; font-size: .85rem; color: var(--dim); }" +
+    "  footer a { color: var(--key); }" +
+    "</style>" +
+    "<div id=\"tool\">" +
+    "  <h1>the self-hosted compiler, in a tab</h1>" +
+    "  <p class=\"sub\">The playground on this site runs the <em>reference</em> compiler, which is" +
+    "    TypeScript. This page runs <code>wacc</code> — the compiler written in wac, compiled to" +
+    "    WebAssembly, doing the compiling itself. Check the answer with <code>waccx emit</code> on" +
+    "    the same input.</p>" +
+    "  <textarea id=\"src\" spellcheck=\"false\"></textarea>" +
+    "  <div id=\"row\">" +
+    "    <button id=\"go\">compile</button>" +
+    "    <input type=\"file\" id=\"f\" accept=\".wac\">" +
+    "    <span id=\"note\" class=\"dim\">or drop a .wac file anywhere on this page</span>" +
+    "  </div>" +
+    "  <dl>" +
+    "    <dt>source</dt><dd><b id=\"inlen\">0</b> bytes</dd>" +
+    "    <dt>wasm</dt><dd><b id=\"outlen\">0</b> bytes</dd>" +
+    "    <dt>sha-256</dt><dd id=\"sha\"></dd>" +
+    "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms</dd>" +
+    "  </dl>" +
+    "  <div id=\"why\"></div>" +
+    "  <footer>The compiler, the hash and this page are wac. " +
+    "    <a href=\"" + SOURCE + "\">source</a>. The <em>fixpoint</em> — wacc compiling its own ten" +
+    "    sources, twice, to the same bytes — is not shown here: it needs the whole import closure," +
+    "    and running the second stage means instantiating a module this page just produced, which" +
+    "    no wac program can do. <code>test/fixpointEmit.test.ts</code> settles that by running it." +
+    "  </footer>" +
+    "</div>"
+  ).wait();
+  page.on("#go", "click").wait();
+  page.setValue("src", SAMPLE).wait();
+
+  Pending<Event> ev = page.nextEvent();
+  Pending<Picked> file = page.nextFile();
+
+  compile(core, page, SAMPLE, "sample.wac");
+
+  while (true) {
+    i32 which = core.waitAny(i32[](ev.id, file.id), -1);
+    if (which < 0) { return 0; }
+
+    if (which == 1) {
+      Picked f = file.wait();
+      file = page.nextFile();
+      if (!f.ok) {
+        page.setText("note", "could not read it: " + f.error).wait();
+        continue;
+      }
+      string text = string.fromBytes(f.bytes);
+      page.setValue("src", text).wait();
+      page.setText("note", f.name).wait();
+      compile(core, page, text, f.name);
+      continue;
+    }
+
+    Event e = ev.wait();
+    ev = page.nextEvent();
+    if (e.kind == "click" && e.id == "go") {
+      // Read back rather than remembered: the textarea is the source of truth once a reader has
+      // typed in it, and holding a copy here would compile what was loaded instead of what is there.
+      string text = page.getValue("src").wait();
+      compile(core, page, text, "typed.wac");
+    }
+  }
+}
+
+/**
+ * Compile one file, and say what came back.
+ *
+ * `emitFiles` answers an empty module rather than throwing when it cannot finish — a compiler that
+ * traps takes the page with it — so an empty result is the signal to ask `blocked` what stopped it.
+ * That is the same pair the corpus test uses, and the reason its report can say *why* each of the
+ * three files it cannot finish is unfinished rather than only counting them.
+ */
+void compile(Core core, Page page, string text, string name) {
+  page.setText("inlen", itoa(text.toBytes().len())).wait();
+  page.setText("why", "").wait();
+
+  string[] paths = string[1]();
+  string[] sources = string[1]();
+  paths[0] = name;
+  sources[0] = text;
+
+  i64 began = core.monotonicNanos().wait();
+  u8[] out = emitFiles(paths, sources, name);
+  i64 took = (core.monotonicNanos().wait() - began) / 1000000;
+
+  page.setText("ms", itoa(took as@ i32)).wait();
+  page.setText("outlen", itoa(out.len())).wait();
+
+  if (out.len() == 0) {
+    page.setText("sha", "").wait();
+    string why = blocked(text.toBytes());
+    page.setText("why", why == "" ? "wacc emitted nothing and gave no reason, which is a bug worth "
+      + "reporting" : why).wait();
+    return;
+  }
+  page.setText("sha", hexOf(sha256(out))).wait();
+}

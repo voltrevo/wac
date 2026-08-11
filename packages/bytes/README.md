@@ -116,9 +116,11 @@ hands `cli.readChunk` to them directly, so a capability world and two pure algor
 had to name one type — and `bytes` was the only package below all of them.
 
 That reasoning still holds and now points somewhere else. wac has no closures, so two declarations
-of `Read` can never be converted into each other; being below everything in *this* repo is not
-enough once `platform` is a repo of its own. So `Read` is in `core`, the module the compiler ships,
-which is the only place with one identity everywhere:
+of `Read` can never be converted into each other, and a funcref signature names it by *type* — which
+means one identity everywhere or no interoperation at all. So `Read` is in `core`, the module the
+compiler ships. (This was argued from a second repo for the capability layer, which is
+[not happening](../../issues/system/closed/0092-the-capability-layer-should-be-its-own-repo.md); the
+identity argument is the one that never needed it.)
 
 ```wac
 import { Read } from core;

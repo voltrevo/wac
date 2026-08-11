@@ -224,7 +224,7 @@ a variant construction at all.
 
 **Rung 4's other half has been run: the repository's own tests, against code wacc emitted.**
 `harness/wacBind.ts` takes the wasm from wacc when `WAC_WASM_FROM=wacc` is set, keeping the
-reference's bindgen metadata — wacc has no bindgen — so what is under test is the emitter and nothing
+reference's bindgen metadata — wacc's own bindgen is not what is under test — so what is under test is the emitter and nothing
 else. `packages/wacc/tools/runOnWacc.ts` runs every package that way and counts:
 
     34 of 34 packages pass their own suite on wacc-emitted code (1,663 tests)
@@ -481,8 +481,12 @@ checker error reports at an expression and nothing records how far that expressi
 length at each of 135 call sites, which is the same sweep the annotation was and much less of a win:
 the annotation was the sentence, and this is only the underline.
 
-`bindgen` is absent from `waccx` because wacc has no bindgen at all, which is the other thing standing
-between this and a compiler anyone could use.
+`waccx bindgen` writes the glue that calls a wacc module and names what it declined — `test/waccx.test.ts`
+drives it. What is still true is that **nothing runs a package through that glue**: `harness/wacBind.ts`
+takes wacc's *code* and keeps the reference's metadata, so a green package says the emitter is right and
+not that the bindgen is. Making the swap is the thing standing between this and a compiler anyone could
+use, and it is a different sentence from the one this paragraph carried, which said there was no bindgen
+at all.
 
 **Rung 3 (type checker) is the open one**, and what it is measured against changed on 2026-08-09.
 

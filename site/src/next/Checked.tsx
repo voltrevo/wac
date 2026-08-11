@@ -42,6 +42,17 @@ export default function Checked() {
           Where an implementation exists to talk to, it is the test. Not a fixture captured from it
           once — the real thing, running, with our bytes going into it and its bytes coming back.
         </P>
+        <P>
+          <Lead>Most of these re-run on every suite run; some were witnessed once.</Lead> The
+          distinction is worth more than the word <em>live</em> on its own, because a row nothing
+          re-runs can rot silently and read exactly like one that cannot.{" "}
+          {m({ children: "packages/tor" })}&rsquo;s own interop table draws it cell by cell — <Lead>seven of its fifteen</Lead> are re-run by{" "}
+          {m({ children: "ctor_live.test.ts" })} and {m({ children: "packages/tls" })}&rsquo;s two
+          interop files, and <Lead>eight are by hand</Lead>: the six onion-service cells and our
+          client&rsquo;s two directions against C tor relays. The reason is mechanical rather than
+          principled — the wac test network cannot start a C tor — and it is stated here for the same
+          reason it is stated there.
+        </P>
         <Table
           head={["the oracle", "what it settles"]}
           rows={[
