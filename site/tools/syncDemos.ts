@@ -40,6 +40,14 @@ const DEMOS: Demo[] = [
     what: "packages/sh with a keyboard: pipelines, loops, redirection into a filesystem that survives a reload",
   },
   {
+    file: "desk.html",
+    entry: "packages/box/example/desk.wac",
+    grants: ["--allow-read", "--allow-write"],
+    what:
+      "a window manager written in wac over the same system: the terminal is one window, /proc is " +
+      "another, and `cd` in one changes what the files window lists",
+  },
+  {
     file: "hash.html",
     entry: "packages/box/example/hash.wac",
     grants: [],

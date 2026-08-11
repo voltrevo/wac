@@ -5,6 +5,7 @@ has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0103](open/0103-wacc-emits-no-javascript-bindings-so-the-glue-is-still-typescript.md) | wacc emits no JavaScript bindings, so a wacc-compiled module still needs the reference's glue beside it — wacc only, the reference is bootstrap-bound | missing feature | not implemented |
 | [0102](open/0102-nine-packages-cannot-be-bound-by-waccs-own-bindgen.md) | nine packages cannot be bound by wacc's own bindgen — 25 of 34 with the whole binding from wacc | missing feature | compile error |
 | [0101](open/0101-wacc-emits-no-name-section-so-a-stack-trace-is-numbers.md) | wacc emits no name section, so a trap in its code is a stack of numbers | missing feature | not implemented |
 | [0088](open/0088-a-generic-enum-variant-cannot-name-its-type-arguments.md) | a generic enum's variant cannot name its type arguments, and a generic struct can | missing feature | compile error |
@@ -26,7 +27,7 @@ has been fixed and why.
 
 ## Closed
 
-102 issues, 84 closed.
+103 issues, 84 closed.
 
 Most of the closed ones came from porting `wacc`'s AST to sum types and then probing shapes
 that port does not reach. Twelve typechecked cleanly and then failed at instantiation or ran

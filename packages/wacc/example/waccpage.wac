@@ -26,6 +26,8 @@
 
 import { Cli, Core, Event, Page, Pending, Picked } from "../../platform/src/platform.wac";
 import { itoa } from "../../fmt/src/itoa.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Vec } from "../../std/src/vec.wac";
 import { encode } from "../../codec/src/hex.wac";
 import { sha256 } from "../../crypto/src/sha256.wac";
 import { blocked, emitFiles } from "../src/api.wac";
@@ -37,8 +39,8 @@ const string SOURCE =
 const string SAMPLE =
   "// wacc is compiling this, in your browser.\n" +
   "//\n" +
-  "// `main` takes no capability, so the module it emits imports nothing at all —\n" +
-  "// an empty import section, not merely nothing it happens to use.\n" +
+  "// `main` takes no function parameter, so the module below has no import\n" +
+  "// section at all — not `nothing it happens to use`, absent.\n" +
   "\n" +
   "i32 fib(i32 n) {\n" +
   "  if (n < 2) { return n; }\n" +
@@ -49,7 +51,86 @@ const string SAMPLE =
   "  return fib(20);\n" +
   "}\n";
 
+const string ONE_FN =
+  "// One function parameter, and one import appears: `wac.cb0`, the dispatcher\n" +
+  "// the host calls back through. Nothing else about the program changed.\n" +
+  "\n" +
+  "export i32 twice(fn[i32(i32)] f) {\n" +
+  "  return f(2) + f(3);\n" +
+  "}\n";
+
+const string TWO_FN =
+  "// Two exports, both taking a function of the same shape — and still *one*\n" +
+  "// import. The dispatcher is per signature, not per parameter, which is the\n" +
+  "// part that surprises people. Change one to fn[i32(i32,i32)] and a second\n" +
+  "// appears.\n" +
+  "\n" +
+  "export i32 a(fn[i32(i32)] f) { return f(1); }\n" +
+  "export i32 b(fn[i32(i32)] g) { return g(2); }\n";
+
 string hexOf(u8[] b) { return string.fromBytes(encode(b)); }
+
+/** A LEB128 unsigned integer at `at`, and where it ended. */
+i32 uleb(u8[] b, i32[] at) {
+  i32 out = 0;
+  i32 shift = 0;
+  while (at[0] < b.len()) {
+    i32 c = b[at[0]];
+    at[0] = at[0] + 1;
+    out = out | ((c & 127) << shift);
+    if ((c & 128) == 0) { break; }
+    shift = shift + 7;
+  }
+  return out;
+}
+
+/** A length-prefixed name at `at`. */
+string wasmName(u8[] b, i32[] at) {
+  i32 n = uleb(b, at);
+  Buf out = Buf.create();
+  for (i32 i = 0; i < n && at[0] < b.len(); i++) {
+    out.push(b[at[0]]);
+    at[0] = at[0] + 1;
+  }
+  return out.toStr();
+}
+
+/**
+ * Every import the module declares, as `module.field`.
+ *
+ * **This is the claim the whole system rests on, read off the binary rather than asserted.** A wac
+ * module can only call a function it was handed as a parameter, so a `main` that takes none has no
+ * way to reach the world — and the evidence is not "nothing it uses", it is section 2 being absent.
+ * Walking the sections is twenty lines: id, LEB size, skip, and stop at the one numbered 2.
+ */
+Vec<string> importsOf(u8[] wasm) {
+  Vec<string> names = Vec.create();
+  // 8 bytes of magic and version, then a sequence of sections.
+  i32[] at = i32[1]();
+  at[0] = 8;
+  while (at[0] < wasm.len()) {
+    i32 id = wasm[at[0]];
+    at[0] = at[0] + 1;
+    i32 size = uleb(wasm, at);
+    i32 end = at[0] + size;
+    if (id == 2) {
+      i32 count = uleb(wasm, at);
+      for (i32 i = 0; i < count; i++) {
+        string mod = wasmName(wasm, at);
+        string field = wasmName(wasm, at);
+        // The descriptor: a byte saying what kind, then its index. Only the byte is needed to walk
+        // past it, and every import wac emits is a function.
+        i32 kind = wasm[at[0]];
+        at[0] = at[0] + 1;
+        uleb(wasm, at);
+        names.push(mod + "." + field);
+      }
+      return names;
+    }
+    at[0] = end;
+  }
+  return names;
+}
 
 export i32 page(Core core, Cli cli, Page page) {
   page.title("wac: the self-hosted compiler, in a tab").wait();
@@ -92,10 +173,17 @@ export i32 page(Core core, Cli cli, Page page) {
     "  <p class=\"sub\">The playground on this site runs the <em>reference</em> compiler, which is" +
     "    TypeScript. This page runs <code>wacc</code> — the compiler written in wac, compiled to" +
     "    WebAssembly, doing the compiling itself. Check the answer with <code>waccx emit</code> on" +
-    "    the same input.</p>" +
+    "    the same input. The <em>imports</em> line is the one to watch: a wac module can only call a" +
+    "    function it was handed, so a program that takes none has no import section at all — and" +
+    "    the three buttons below show the rule the site states, read off the binary rather than" +
+    "    asserted. Two exports taking the same shape of function still import <em>one</em>" +
+    "    dispatcher; make their signatures differ and a second appears.</p>" +
     "  <textarea id=\"src\" spellcheck=\"false\"></textarea>" +
     "  <div id=\"row\">" +
     "    <button id=\"go\">compile</button>" +
+    "    <button id=\"plain\">no function parameter</button>" +
+    "    <button id=\"one\">one function parameter</button>" +
+    "    <button id=\"two\">two exports, one signature</button>" +
     "    <input type=\"file\" id=\"f\" accept=\".wac\">" +
     "    <span id=\"note\" class=\"dim\">or drop a .wac file anywhere on this page</span>" +
     "  </div>" +
@@ -104,6 +192,7 @@ export i32 page(Core core, Cli cli, Page page) {
     "    <dt>wasm</dt><dd><b id=\"outlen\">0</b> bytes</dd>" +
     "    <dt>sha-256</dt><dd id=\"sha\"></dd>" +
     "    <dt>took</dt><dd class=\"dim\"><span id=\"ms\">0</span> ms</dd>" +
+    "    <dt>imports</dt><dd><b id=\"impn\">0</b> <span id=\"imps\" class=\"dim\"></span></dd>" +
     "  </dl>" +
     "  <div id=\"why\"></div>" +
     "  <footer>The compiler, the hash and this page are wac. " +
@@ -115,6 +204,9 @@ export i32 page(Core core, Cli cli, Page page) {
     "</div>"
   ).wait();
   page.on("#go", "click").wait();
+  page.on("#plain", "click").wait();
+  page.on("#one", "click").wait();
+  page.on("#two", "click").wait();
   page.setValue("src", SAMPLE).wait();
 
   Pending<Event> ev = page.nextEvent();
@@ -142,7 +234,19 @@ export i32 page(Core core, Cli cli, Page page) {
 
     Event e = ev.wait();
     ev = page.nextEvent();
-    if (e.kind == "click" && e.id == "go") {
+    if (e.kind == "click" && e.id == "plain") {
+      page.setValue("src", SAMPLE).wait();
+      compile(core, page, SAMPLE, "sample.wac");
+    } else if (e.kind == "click" && e.id == "one") {
+      // **The point of the page, in one click.** The only difference between these programs is a
+      // parameter, and the import section follows it — which is what "a capability is an argument"
+      // means when you read the binary instead of the prose.
+      page.setValue("src", ONE_FN).wait();
+      compile(core, page, ONE_FN, "sample.wac");
+    } else if (e.kind == "click" && e.id == "two") {
+      page.setValue("src", TWO_FN).wait();
+      compile(core, page, TWO_FN, "sample.wac");
+    } else if (e.kind == "click" && e.id == "go") {
       // Read back rather than remembered: the textarea is the source of truth once a reader has
       // typed in it, and holding a copy here would compile what was loaded instead of what is there.
       string text = page.getValue("src").wait();
@@ -183,4 +287,17 @@ void compile(Core core, Page page, string text, string name) {
     return;
   }
   page.setText("sha", hexOf(sha256(out))).wait();
+
+  Vec<string> imports = importsOf(out);
+  page.setText("impn", itoa(imports.len())).wait();
+  if (imports.len() == 0) {
+    page.setText("imps", "— no import section at all, which is what a `main` taking no capability "
+      + "compiles to").wait();
+  } else {
+    string list = "";
+    for (i32 i = 0; i < imports.len(); i++) {
+      list = list + (i == 0 ? "— " : ", ") + imports.get(i);
+    }
+    page.setText("imps", list).wait();
+  }
 }

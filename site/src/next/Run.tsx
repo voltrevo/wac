@@ -29,6 +29,19 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
       `packages/sh with a keyboard in front of it, and all ${TOTALS.applets} packages/box applets as commands — sort, sha256sum, gzip, cut, diff, shuf — with pipelines, loops, variables, history, and redirection into a filesystem that survives a reload.`,
   },
   {
+    file: `${ASSETS}desk.html`,
+    key: "desk",
+    title: "A desktop, in a tab",
+    src: `${BLOB}/packages/box/example/desk.wac`,
+    what:
+      "design/0001's eighth and last step: a window manager written in wac, over the same system the " +
+      "shell above runs on. A window is markup rather than pixels — a terminal drawn with drawPixels " +
+      "would mean reimplementing text layout, selection and the caret to get something worse than the " +
+      "browser already has. The manager re-renders the frame and lets content through per-window, " +
+      "which is why typing does not flicker. Type `cd /home/wac` in the terminal and the files window " +
+      "follows it.",
+  },
+  {
     file: `${ASSETS}hash.html`,
     key: "hash",
     title: "Hash and compress, as you type",
@@ -63,11 +76,11 @@ const DEMOS: { file: string; title: string; what: string; src: string; key: stri
     src: `${BLOB}/packages/wacc/example/waccpage.wac`,
     what:
       "The playground below runs the *reference* compiler, which is TypeScript. This one runs wacc: " +
-      "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. Paste a " +
-      "program and the bytes that come back were produced by a compiler that is a wasm module in the " +
-      "same tab. What it does not show is the fixpoint — that needs the whole import closure, and " +
-      "running the second stage means instantiating a module the page just produced, which no wac " +
-      "program can do.",
+      "the compiler written in wac, compiled to WebAssembly, doing the compiling itself. It also " +
+      "reads the import section back out of what it just emitted, which is the one claim this whole " +
+      "system rests on: a module that takes no function parameter has no import section at all. " +
+      "Three buttons show the rule — none, one, and two exports sharing a signature, which still " +
+      "import a single dispatcher because it is per signature rather than per parameter.",
   },
 ];
 
