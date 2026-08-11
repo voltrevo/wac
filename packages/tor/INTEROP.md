@@ -22,6 +22,8 @@ difference is the whole point:
 | --- | --- |
 | **pinned** | pure functions against bytes C tor wrote, or against C tor's own parser called directly. Committed vectors, so the suite checks it on every run with no tor present. |
 | **live** | a C tor process was on the other side of a socket and the thing worked. |
+| **(suite)** | …and something re-runs it: `test/ctor_live.test.ts` starts a real C tor beside the wac network on every run, and `packages/tls`'s two interop files run OpenSSL and rustls. Rot here goes red. |
+| **(by hand)** | …and nothing re-runs it. Witnessed on the date at the top, and able to rot silently — which is what *The limit that remains* is about. |
 | **ours only** | our code on both sides. Real evidence that the pieces compose; no evidence that either agrees with tor. Recorded as such rather than counted as green. |
 | **—** | not done. |
 
@@ -30,14 +32,14 @@ difference is the whole point:
 | component | we → tor | tor → we |
 | --- | --- | --- |
 | RSA signing (`rsagen`, `rsaSignPkcs1`) | **pinned** — byte-identical to node's, and OpenSSL accepts the keys | n/a |
-| X.509 (`derwrite`, `x509gen`) | **pinned** — OpenSSL verifies what we generate | **live** — our TLS client reads OpenSSL's and rustls's |
-| TLS 1.3 (`packages/tls`) | **live** — OpenSSL and rustls complete a handshake with our server | **live** — our client completes one with both, and with C tor's TLS |
-| link handshake (`relaylink`) | **live** — a C tor completes a link handshake with our relay | **live** — our client completes one with a C tor relay |
-| CREATE2 / EXTEND2 (`relaycircuit`) | **live** — a C tor builds a three-hop circuit through our relays | **live** — our client builds circuits through C tor relays |
+| X.509 (`derwrite`, `x509gen`) | **pinned** — OpenSSL verifies what we generate | **live (suite)** — our TLS client reads OpenSSL's and rustls's |
+| TLS 1.3 (`packages/tls`) | **live (suite)** — OpenSSL and rustls complete a handshake with our server | **live (suite)** — our client completes one with both; with C tor's own TLS, by hand |
+| link handshake (`relaylink`) | **live (suite)** — a C tor completes a link handshake with our relay | **live (by hand)** — our client completes one with a C tor relay |
+| CREATE2 / EXTEND2 (`relaycircuit`) | **live (suite)** — a C tor builds a three-hop circuit through our relays | **live (by hand)** — our client builds circuits through C tor relays |
 | ntor (`ntor.wac`) | **pinned** — `test-ntor-cl` derives the same 92 bytes, KH included | **pinned** — same vector, other direction |
-| streams (`RELAY_BEGIN`, data) | **live** — `stream 5129 open to …:8087`, 5004 bytes byte-identical | **live** — `curl --socks5-hostname` through our client |
+| streams (`RELAY_BEGIN`, data) | **live (suite)** — a C tor's SocksPort through our relays, 6900 bytes byte-identical | **live (by hand)** — `curl --socks5-hostname` through our client |
 | router descriptors (`routerdesc`) | **pinned** — tor's own parser accepts ours | **pinned** — we read tor's, from `capture-routerdesc.py` |
-| votes and consensus (`vote`, `consensusgen`) | **live** — a C tor bootstraps from our authority, both flavours | **pinned** — we verify consensuses tor produced |
+| votes and consensus (`vote`, `consensusgen`) | **live (suite)** — a C tor bootstraps from our authority, both flavours | **pinned** — we verify consensuses tor produced |
 | microdescriptors (`microdesc`) | **pinned** — accepted by tor's parser | **pinned** — `capture-microdesc.py` |
 | onion addresses, blinding (`onionaddr`, `hsblind`) | n/a | **pinned** — `capture-blind.py`, tor's `ed25519_keypair_blind` |
 | HSDir hash ring (`hsdir`) | n/a | **pinned** — the directories a real service uploaded to, from its own logs |
@@ -46,9 +48,9 @@ difference is the whole point:
 | ESTABLISH_INTRO (`hsservice`) | **pinned** — tor's parser accepts ours | **pinned** — we accept tor's and refuse its seven mutations |
 | INTRODUCE1/2 (`hsintro`, `hsintroduce`) | **pinned** — tor built the cells we parse | **pinned** — same cells, our parser |
 | hs-ntor (`hsntor`) | **pinned** — both halves against `capture-hsntor.py` | **pinned** — same |
-| introduction point, relay side (`introrelay`) | **live** — a C tor client's INTRODUCE1 relayed to our service | **live** — same exchange |
-| rendezvous point, relay side (`rendrelay`) | **live** — a C tor client established a cookie here and our service joined it | **live** — same exchange |
-| onion service hosting (`hsserviced`) | **live** — `curl --socks5-hostname` through C tor returned our page | n/a |
+| introduction point, relay side (`introrelay`) | **live (by hand)** — a C tor client's INTRODUCE1 relayed to our service | **live (by hand)** — same exchange |
+| rendezvous point, relay side (`rendrelay`) | **live (by hand)** — a C tor client established a cookie here and our service joined it | **live (by hand)** — same exchange |
+| onion service hosting (`hsserviced`) | **live (by hand)** — `curl --socks5-hostname` through C tor returned our page, four attempts in ten ([0107](../../issues/system/open/0107-a-c-tor-fetching-from-our-onion-service-times-out-intermittently.md)) | n/a |
 
 ## Step 6's own condition, met
 
@@ -98,11 +100,16 @@ which tells anyone who fetches a descriptor when the service last published.
 ## The limit that remains
 
 `network.wac` **cannot start a C tor** — `Cli.spawn` takes a worker bundle and this world has no
-capability for running an arbitrary binary. So the C half of every live row above is run by hand and
-is not in the suite. That is deliberate and it is the reason these rows can rot without anything going
-red.
+capability for running an arbitrary binary. That is why a live row can rot without anything going
+red, and it was true of **every** one of them until 2026-08-07.
 
-That was true of *every* row until 2026-08-07, and it is now true of most of them.
+It is true of **8 of the 15 live cells** now, and the matrix says which each one is: a cell reads
+`(suite)` when something re-runs it — `ctor_live.test.ts` for the tor rows, `packages/tls`'s two
+interop files for the TLS ones — and `(by hand)` when nothing does. The eight are the six
+onion-service cells and our client's two directions against C tor relays. The column said `live`
+throughout until 2026-08-11, so the distinction this table exists to keep lived only in the
+paragraphs below it — including the one that says `live` "is not a claim about reliability, and this
+table has never distinguished the two before".
 
 `test/network_tor.test.ts` stands the whole wac network up on every run — three relays, an authority,
 an onion service, a client, a descriptor published and a page fetched through a rendezvous. That
