@@ -97,21 +97,31 @@ worse than one that says which:
   done: `[include]` and `includeIf` are not followed, `$GIT_CONFIG_SYSTEM`, `$GIT_CONFIG_GLOBAL` and
   `GIT_CONFIG_NOSYSTEM` are not read, and the `/etc/gitconfig` level is read but **not tested**, since a
   suite cannot write `/etc`.
-- **A thin pack can be completed from the local store; no program fetches incrementally.** `indexPack`
+- **A thin pack is fetched, completed and written; the network half is not done.** `indexPack`
   answers `Thin` with the base names a pack is missing, `completeThin` reads those out of a repository —
   loose or packed — and `completePack` appends them, which is what `git index-pack --fix-thin` does. It
   works by appending because a delta's base only has to be *somewhere* in the pack, which is also why it
   needs no callback: wac has no closures. Measured against the command that adjudicates it, twice:
   `git index-pack` refuses the thin pack with `unresolved delta` and accepts the completed one. What is
-  still missing is the program — nothing sends `have`s over the network and completes the reply, so
-  `gitclone` and `gitfetch` send none and never receive a thin pack. There is no `git fetch` or
-  `git pull` here — and **a deepening fetch would not exercise the completion**, which is worth knowing
-  before writing one. Measured against GitHub: `deepen 3` with a `have` for the tip we already hold comes
-  back with 794 objects and 1.6MB, every delta an `ofs-delta` and not one `ref-delta`. A server re-sends
-  the whole object set for the new depth rather than deltifying against what a shallow client claims. A
-  thin pack needs a **moved ref in a complete history**, which cannot be arranged against a repository we
-  do not control — so the thin path is exercised against a local `git upload-pack`, which does produce
-  one, and cannot be exercised against GitHub at all.
+  `example/gitpull.wac` is the program that sends `have`s and repairs what comes back — `gitpull request`
+  writes the want/have request, `gitpull apply` completes the reply against the local store, writes the
+  pack and its index, and records the tip in `FETCH_HEAD`. Against real `git upload-pack` over a pipe the
+  reply **is** thin: plain `git index-pack` refuses it with `unresolved delta`, `git fsck --strict`
+  accepts the repository afterwards, and `git rev-parse FETCH_HEAD` resolves to the commit we asked for.
+  The test asserts git's refusal of the raw pack *before* comparing anything of ours, because a server
+  that had sent whole objects would make the repair never run and nothing would say so — confirmed by
+  removing the `have` and watching that assertion fire.
+
+  **A deepening fetch does not exercise the completion**, which is worth keeping: measured against GitHub,
+  `deepen 3` with a `have` for the tip we already hold comes back with 794 objects and 1.6MB, every delta
+  an `ofs-delta` and not one `ref-delta` — a server re-sends the whole object set for the new depth rather
+  than deltifying against what a shallow client claims. This page used to conclude from that that a thin
+  pack could not be arranged here at all. That was wrong: it is a fact about *deepening*, not about the
+  protocol, and an incremental fetch of a moved ref produces one immediately.
+
+  Still missing: `gitpull` speaks over files and a pipe, not HTTP, so nothing fetches incrementally
+  *over the network*; the branch is deliberately not moved, because fast-forwarding a ref is not fetching
+  and there is no merge here.
 - **A push works against `git receive-pack` — create and fast-forward, carrying only what is missing — and
   not against a host that wants credentials.** `src/receive.wac` builds the update commands and reads the
   report; `example/gitpush.wac` writes the request on standard output so it pipes straight into
