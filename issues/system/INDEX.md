@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0137](open/0137-a-symlink-capability-needs-a-confinement-rule-before-an-implementation.md) | a symlink capability needs a confinement rule before an implementation: its contents are a path, and every rule we have is expressed as a path | missing feature | not implemented |
 | [0136](open/0136-the-suite-leaves-its-temp-directories-behind-and-the-disk-filled.md) | the suite leaves temp directories behind — 2,300 of them, and the disk filled | bug | no error |
 | [0135](open/0135-a-background-job-runs-the-name-as-an-external-program-so-no-builtin-can-be-backgrounded.md) | a background job runs the name as an external program, so no builtin can be backgrounded | bug | wrong answer |
 | [0134](open/0134-the-fs-coverage-ratchet-has-been-red-since-remote-arrived.md) | the `fs` coverage ratchet has been red since `Remote` arrived — 92 branch points measured nowhere | task | no error |
@@ -28,7 +29,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-148 issues, 132 closed.
+149 issues, 132 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was

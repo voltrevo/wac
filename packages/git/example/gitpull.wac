@@ -1,0 +1,258 @@
+// `gitpull` — an incremental fetch: ask for what we lack, and repair the thin pack that comes back.
+//
+//     gitpull request <repo-dir> <ref> <advertisement-file>   the want/have request, on standard output
+//     gitpull apply   <repo-dir> <ref> <reply-file>           the server's answer, written into the repository
+//
+// Every other program here fetches into an empty directory. This one fetches into a repository that
+// already has objects, which changes the conversation in the one way that matters: the client says what
+// it *has*, and the server is then free to send deltas against those objects rather than whole ones.
+// A pack whose bases are not inside it is a **thin pack**, and `git index-pack` refuses one — so it has
+// to be repaired against the local store before it is written. `completeThin` does that repair and until
+// now had no caller: step 7 built the repair and nothing sent a thin pack at it.
+//
+// ## Why two subcommands rather than one program
+//
+// The conversation is request-then-reply over one connection, and this program does not hold the
+// connection — the caller does, exactly as `gitpush` works. So the phases are two runs with an explicit
+// **verb**, not one run that changes behaviour depending on how many arguments it was given. That second
+// shape is the bug where one flag means two things and the unknown case silently becomes the other.
+//
+// ## What a `have` is, and why sending one is the whole point
+//
+//     -> want <sha> thin-pack ofs-delta …            what we lack
+//     -> 0000
+//     -> have <sha>                                  what we already hold
+//     -> done
+//     <- ACK <sha> common / ACK <sha>
+//     <- PACK…                                       possibly thin
+//
+// **The `have` is what makes the pack thin.** Send none and the server has nothing to delta against and
+// must send whole objects; send one and it may deltify against it, which is smaller on the wire and
+// unreadable on its own. Measured rather than assumed: against `git upload-pack` with one `have`, the
+// reply is a pack that plain `git index-pack` refuses with `pack has 2 unresolved deltas`, and that
+// `git index-pack --fix-thin --stdin` accepts in a repository holding the bases.
+//
+// This is also the correction to something `packages/git`'s README used to say. A thin pack was recorded
+// as unarrangeable here, which was true of the case that had been tried — a *deepen* against GitHub,
+// which returns whole objects — and not true of an incremental fetch, which is a different conversation.
+
+import { Cli, Change, Core, FileResult } from "../../platform/src/platform.wac";
+import { Fs } from "../../fs/src/fs.wac";
+import { Buf } from "../../bytes/src/buf.wac";
+import { Vec } from "../../std/src/vec.wac";
+import { encode } from "../../codec/src/hex.wac";
+import { itoa } from "../../fmt/src/itoa.wac";
+import { PackIndex, writeIdx } from "../src/idx.wac";
+import { Indexed, indexPack } from "../src/pack.wac";
+import { Ad, AdRef, Advertised, Reply, findPack, offers, parseAdvertisement,
+         wantRequest } from "../src/fetch.wac";
+import { Completion, RepoAt, completeThin, head as headOf, openRepo, readObject } from "../src/repo.wac";
+
+string hexOf(u8[] name) { return string.fromBytes(encode(name)); }
+
+/** The target `ref` has on the far end, or none — read from the advertisement bytes. */
+u8[] advertisedTarget(u8[] advertisement, string ref) {
+  match (parseAdvertisement(advertisement)) {
+    case Garbled(why): { return u8[0](); }
+    case Said(ad): {
+      for (i32 i = 0; i < ad.refs.len(); i++) {
+        if (ad.refs.get(i).name == ref) { return ad.refs.get(i).target; }
+      }
+      return u8[0]();
+    }
+  }
+}
+
+export i32 main(Core core, Cli cli) {
+  i32 n = cli.argCount().wait();
+  if (n < 4) {
+    core.warn("usage: gitpull request <repo-dir> <ref> <advertisement-file>");
+    core.warn("       gitpull apply   <repo-dir> <ref> <advertisement-file> <reply-file>");
+    return 2;
+  }
+  string verb = string.fromBytes(cli.arg(0).wait());
+  string root = string.fromBytes(cli.arg(1).wait());
+  string ref = string.fromBytes(cli.arg(2).wait());
+  string path = string.fromBytes(cli.arg(3).wait());
+
+  Fs fs = Fs.onHost(cli, 0);
+  string gitDir = root + "/.git";
+  FileResult input = fs.readFile(path);
+  if (!input.ok) {
+    core.warn("gitpull: cannot read " + path);
+    return 1;
+  }
+
+  match (openRepo(fs, gitDir, root)) {
+    case NoRepo(why): {
+      core.warn("gitpull: " + why);
+      return 1;
+    }
+    case Opened(repo): {
+      if (verb == "request") {
+        u8[] want = advertisedTarget(input.bytes, ref);
+        if (want.len() == 0) {
+          core.warn("gitpull: the advertisement does not name " + ref);
+          return 1;
+        }
+        bool wantsOfs = false;
+        bool wantsThin = false;
+        match (parseAdvertisement(input.bytes)) {
+          case Garbled(why): {
+            core.warn("gitpull: the advertisement is not one: " + why);
+            return 1;
+          }
+          case Said(ad): {
+            wantsOfs = offers(ad, "ofs-delta");
+            wantsThin = offers(ad, "thin-pack");
+          }
+        }
+        // **Already there is not an error, and it is not a fetch either.** git says "Already up to
+        // date" and asks for nothing; a request naming a want we already hold would make the server
+        // answer with an empty pack, which `indexPack` would then have to treat as a failure.
+        u8[]? mine = headOf(repo);
+        if (!(mine is null) && hexOf(mine!) == hexOf(want)) {
+          core.warn("gitpull: already up to date");
+          return 3;
+        }
+
+        Vec<u8[]> wants = Vec.create();
+        wants.push(want);
+        // **What we have, which is what invites a thin pack.** One `have` is enough to make the point
+        // and is what a real client starts with: git sends a window of recent commits and negotiates.
+        // Only what is actually in the object store is claimed — claiming an object we do not hold
+        // would make the server delta against it and produce a pack we cannot repair.
+        Vec<u8[]> haves = Vec.create();
+        if (!(mine is null)) {
+          match (readObject(repo, mine!)) {
+            case Absent(why): { }
+            case Found(kind, data): { haves.push(mine!); }
+          }
+        }
+        if (haves.len() == 0) {
+          core.warn("gitpull: this repository has no commit to offer, so a fetch here is a clone");
+          return 1;
+        }
+
+        string caps = "agent=wac/0";
+        if (wantsOfs) { caps = "ofs-delta " + caps; }
+        // `thin-pack` is asked for **deliberately**: it is what permits the server to deltify against
+        // the `have` above, and repairing the result is this program's reason to exist.
+        if (wantsThin) { caps = "thin-pack " + caps; }
+        if (!cli.write(wantRequest(wants, haves, caps, 0))) {
+          core.warn("gitpull: cannot write the request");
+          return 1;
+        }
+        return 0;
+      }
+
+      if (verb != "apply") {
+        core.warn("gitpull: expected `request` or `apply`, got " + verb);
+        return 2;
+      }
+      if (n < 5) {
+        core.warn("usage: gitpull apply <repo-dir> <ref> <advertisement-file> <reply-file>");
+        return 2;
+      }
+      // `input` is the advertisement for both verbs; the reply is the fifth argument.
+      u8[] tip = advertisedTarget(input.bytes, ref);
+      if (tip.len() == 0) {
+        core.warn("gitpull: the advertisement does not name " + ref);
+        return 1;
+      }
+      FileResult answer = fs.readFile(string.fromBytes(cli.arg(4).wait()));
+      if (!answer.ok) {
+        core.warn("gitpull: cannot read the reply");
+        return 1;
+      }
+
+      u8[] pack = u8[0]();
+      match (findPack(answer.bytes)) {
+        case NoPack(why): {
+          core.warn("gitpull: " + why);
+          return 1;
+        }
+        case Packfile(bytes): { pack = bytes; }
+      }
+
+      // **The repair, and the branch this program exists for.** `Built` means the server sent whole
+      // objects after all, which is legal and happens when it has nothing to delta against; `Thin`
+      // means it deltified against what we claimed, and the bases have to be appended from the local
+      // store before any of it can be indexed.
+      u8[] whole = pack;
+      i32 appended = 0;
+      match (indexPack(pack)) {
+        case Unindexable(why): {
+          core.warn("gitpull: the pack could not be indexed: " + why);
+          return 1;
+        }
+        case Built(idx): { }
+        case Thin(bases): {
+          appended = bases.len();
+          match (completeThin(repo, pack)) {
+            case Missing(why): {
+              core.warn("gitpull: the thin pack wants an object this repository does not have: " + why);
+              return 1;
+            }
+            // Damaged rather than thin — a different failure, and worth a different sentence: the
+            // first says the conversation went wrong, this says the bytes did.
+            case Unusable(why): {
+              core.warn("gitpull: the pack is damaged: " + why);
+              return 1;
+            }
+            case Complete(fixed): { whole = fixed; }
+          }
+        }
+      }
+
+      // Written under the name git gives a pack: the stem is its own trailing checksum, which the
+      // *completed* pack has rather than the thin one — appending objects changes it.
+      u8[] checksum = u8[20]();
+      for (i32 i = 0; i < 20; i++) { checksum[i] = whole[whole.len() - 20 + i]; }
+      string stem = gitDir + "/objects/pack/pack-" + hexOf(checksum);
+      match (indexPack(whole)) {
+        case Unindexable(why): {
+          core.warn("gitpull: the completed pack could not be indexed: " + why);
+          return 1;
+        }
+        case Thin(bases): {
+          core.warn("gitpull: the pack is still thin after completion, wanting " + itoa(bases.len()));
+          return 1;
+        }
+        case Built(idx): {
+          Change wrotePack = fs.writeFile(stem + ".pack", whole);
+          if (!wrotePack.ok()) {
+            core.warn("gitpull: cannot write the pack: " + wrotePack.message);
+            return 1;
+          }
+          Change wroteIdx = fs.writeFile(stem + ".idx", writeIdx(idx, checksum));
+          if (!wroteIdx.ok()) {
+            core.warn("gitpull: cannot write the index: " + wroteIdx.message);
+            return 1;
+          }
+          core.log(itoa(idx.count) + " objects in " + itoa(whole.len()) + " bytes, "
+            + itoa(appended) + " base(s) appended from the local store");
+
+          // **`FETCH_HEAD`, which is what makes this a fetch rather than an object import.** git writes
+          // the fetched tip here and leaves the branch alone; moving `refs/heads/…` is what a merge or a
+          // fast-forward does, and neither is written here — a client that moves a ref without checking
+          // what it used to hold is how somebody's commit gets discarded, which is the rule `gitpush`
+          // follows on the other side of the same protocol.
+          //
+          // The tip comes from the advertisement, because the reply does not carry it: the ACK lines name
+          // the object we *had* in common, not the one we asked for. That is why `apply` is given the
+          // advertisement as well as the answer.
+          Buf line = Buf.create();
+          line.pushAll(encode(tip));
+          line.pushAll(("\t\t" + ref + "\n").toBytes());
+          Change wroteFetchHead = fs.writeFile(gitDir + "/FETCH_HEAD", line.bytes());
+          if (!wroteFetchHead.ok()) {
+            core.warn("gitpull: cannot write FETCH_HEAD: " + wroteFetchHead.message);
+            return 1;
+          }
+        }
+      }
+      return 0;
+    }
+  }
+}
