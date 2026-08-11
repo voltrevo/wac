@@ -1,6 +1,6 @@
 # 0100 — the boundary names a struct by its spelling, so two same-named structs are one to a host
 
-- **Status:** open
+- **Status:** open — **two of the three are fixed**, see below; what is left is wacc
 - **Claimed by:** (nobody yet — add yourself before working it)
 - **Reported by:** agent-b
 - **Date:** 2026-08-11
@@ -76,3 +76,25 @@ emit and every generated file, and the wacc change touches its bind sites and it
 Nothing in the repository declares the same struct name in two modules that both cross the boundary,
 which is why none of this has been felt. That absence is worth distrusting: it is what hid the whole
 family until GitHub wac#9 was reported from outside.
+
+## Progress, 2026-08-11 — parts 1 and 2 are fixed in `b1ad3005`
+
+Fixed while closing `0081`, which was the same root arriving from the other side: an imported alias
+made a signature say `P` where the table said `Point`.
+
+Every type in the metadata is spelled through one map from type index to the name the struct table
+is keyed by, so an exported signature now says `S__a` and `S__b` and a lookup cannot answer with the
+wrong struct (part 2). A display name that two of them share falls back to the unique `bind` name
+for **both**, so the glue declares `S__a` and `S__b` rather than `S` twice (part 1).
+
+`compiler/wacBindgen.test.ts` runs the generated glue for that program and checks each function
+comes back as the class for *its* struct — `a()` has no `z`, `b()` has no `x` — which is the wrong
+answer this pair exists to rule out.
+
+**Part 3 is still open, and it is the whole of what is left:** wacc names the second declaration of a
+name with a counter (`$bind$s_S@2_new`, the first keeping the bare `S`) where the reference now names
+both by their file. So the two compilers disagree about what a host should call these, and wacc's
+spelling depends on which declaration was met first — which is what the native manifest cannot
+tolerate, since it keys a struct by this name. wacc already has `qualifiedName(env, name)`, which
+turns its key into the reference's spelling; what it lacks is knowing that a bare name is *ambiguous*
+rather than that this declaration was the second one.

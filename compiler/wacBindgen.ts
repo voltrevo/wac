@@ -133,7 +133,22 @@ let outFuncrefsByType: Map<string, WacCallback & { index: number }> = new Map();
  * `Pending<string>` both `Pending_string`, and the generated module then declared the same
  * class twice and would not bundle.
  */
-function className(s: { display: string }): string {
+/**
+ * Set when two of them would otherwise be called the same thing, keyed by `bind`.
+ *
+ * A class is named for what the author wrote, and two modules may each have written `S` — which
+ * generated `export class S` twice, in a file that then does not compile. The `bind` name is
+ * already unique per struct, so it is what the collision falls back to [issue 0100].
+ */
+let classOverride = new Map<string, string>();
+
+function className(s: { display: string; bind?: string }): string {
+  const over = s.bind !== undefined ? classOverride.get(s.bind) : undefined;
+  if (over !== undefined) return over;
+  return classNameOf(s);
+}
+
+function classNameOf(s: { display: string }): string {
   // `$` joins the parts, not `_`, because the result has to be distinguishable from a name somebody
   // typed: `Box<i32>` reduced to `Box_i32` is a struct an author may also declare, and then the
   // generated module has two `export class Box_i32` and does not compile. wac's lexer rejects `$`
@@ -799,6 +814,21 @@ function latin1(bytes: Uint8Array): string {
  */
 export function wacBindgen(compiled: WacCompiled): string {
   const base64 = btoa(latin1(compiled.wasm));
+  // Two structs the author called the same thing get their unique `bind` names as classes — both
+  // of them, so neither keeps a name that would mean either one.
+  classOverride = new Map();
+  {
+    const byClass = new Map<string, { bind: string }[]>();
+    for (const e of [...compiled.structs, ...compiled.enums]) {
+      const k = classNameOf(e);
+      const at = byClass.get(k);
+      if (at) at.push(e); else byClass.set(k, [e]);
+    }
+    for (const members of byClass.values()) {
+      if (members.length < 2) continue;
+      for (const m of members) classOverride.set(m.bind, m.bind);
+    }
+  }
   // The struct table is consulted by `tsType` and the conversions, which are called from
   // everywhere below.
   structsByWac = new Map(compiled.structs.map((s) => [s.wac, s]));
