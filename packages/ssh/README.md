@@ -448,8 +448,13 @@ design/0001 step 4, and the half of it that belongs to a server. `sshd -i image`
 client's key against **each user's own `~/.ssh/authorized_keys` inside the image**, sets `Fs.user`
 to whoever it matched, and starts the session in that user's home with `$USER` and `$HOME` from
 the same `/etc/passwd` the key was found through — one table rather than a second idea of it.
-A key allowed by the server-wide `-a` file alone belongs to nobody in particular and gets root,
-which is what every caller that predates this already had.
+A key allowed by the server-wide `-a` file alone belongs to nobody in particular, and **once the
+image has a user table it is refused** rather than served as root — wac-mono 0126, decided
+2026-08-11. Until then it used to have the run of every image the server offered, which is
+defensible (the file is the operator's) and is not what the design says: with `-i`, users are data in
+the image. The boundary is the table rather than the `-i`, because an image with no `/etc/passwd` has
+nobody to outrank and that is how every image starts — so the `-a` key is the whole policy until the
+first user exists, and without `-i` nothing about it changes.
 
 `packages/fs` is what enforces the answer: `mode` and `owner` are recorded on every node and
 checked against `Fs.user`. So the criterion is a test rather than a claim — **two keys land in two

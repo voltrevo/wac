@@ -1061,6 +1061,10 @@ testBounded({
         "chmod 700 /home/grace/.ssh; chown grace /home/grace/.ssh",
         "chmod 600 /home/grace/.ssh/authorized_keys; chown grace /home/grace/.ssh/authorized_keys",
       ].join("; ");
+      // **This session is the other half of 0126's rule**, and it is why the boundary is the user
+      // table rather than the `-i`: the image starts empty, so there is nobody to outrank, and the
+      // server-wide key is the whole policy exactly as it is with no image at all. Refusing here
+      // would mean a fresh image could never be entered to create its first user.
       const built = await realSsh(s, build);
       if (built.code !== 0) throw new Error(`building the image failed: ${built.stderr}`);
       // **The server is stopped the moment that session returns**, with no second connection in
@@ -1105,23 +1109,26 @@ testBounded({
           throw new Error(`expected a permission error, got ${JSON.stringify(other.stderr)}`);
         }
 
-        // **A third key, which the image knows nothing about, is root** — deliberately, and pinned
-        // here because nothing pinned it. `authenticate` maps a key allowed by the server's own `-a`
-        // file to `root` when no user's `authorized_keys` names it, so it has the run of the image:
-        // it reads both secrets, and its `$USER` is empty rather than `root`, which makes a session
-        // with every privilege look like a login that went half wrong.
+        // **A third key, which the image knows nothing about, is refused** — issues/system/0126,
+        // decided 2026-08-11. It used to be `root`: `authenticate` mapped a key allowed by the
+        // server's own `-a` file to `root` when no user's `authorized_keys` named it, so it had the
+        // run of the image — it read both secrets, with an empty `$USER`, which made a session with
+        // every privilege look like a login that went half wrong.
         //
-        // The argument for it is that the `-a` file is the *server operator's*, and whoever can write
-        // it already controls the process. The argument against is that with `-i` the design says
-        // users are data in the image and this key is not in it. That is issues/system/0126 and the
-        // decision is not this test's to make — what this test does is make the behaviour something
-        // somebody has to change on purpose.
-        const harnessKey = await realSsh(live, "echo USER=[$USER]; cat /home/ada/secret; cat /home/grace/secret");
-        if (harnessKey.stdout !== "USER=[]\nthe difference engine\nthe first compiler\n") {
+        // The argument for that was that the `-a` file is the *server operator's* and whoever can
+        // write it already controls the process. The argument against, which won: with `-i` the
+        // design says users are data in the image (D5) and this key is not in it. This test is where
+        // the old behaviour was pinned so that changing it had to be deliberate, and this is the
+        // deliberate change.
+        const harnessKey = await realSsh(live, "echo USER=[$USER]; cat /home/ada/secret");
+        if (!harnessKey.stderr.includes("Permission denied")) {
           throw new Error(
-            `the server-wide key's privileges changed; if that was deliberate, 0126 is the place: ` +
+            `a key that names no user in the image was admitted; 0126 says it is refused: ` +
               JSON.stringify(harnessKey.stdout + harnessKey.stderr),
           );
+        }
+        if (harnessKey.stdout !== "") {
+          throw new Error(`refused and yet it ran something: ${JSON.stringify(harnessKey.stdout)}`);
         }
 
         // **The system can be asked who you are**, which it could not until now: a session with

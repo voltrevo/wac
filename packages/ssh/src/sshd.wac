@@ -8,7 +8,9 @@
 //
 //     -p  port to listen on, default 2222
 //     -h  host private key, default $HOME/.ssh/ssh_host_ed25519_key
-//     -a  authorized keys file, default $HOME/.ssh/authorized_keys
+//     -a  authorized keys file, default $HOME/.ssh/authorized_keys — the whole policy without `-i`,
+//         and with `-i` only until the image has an `/etc/passwd`: once it does, a key that names no
+//         user in it is refused rather than served as root (wac-mono 0126)
 //     -1  serve one connection and exit
 //
 // ## This is not an sshd
@@ -266,7 +268,7 @@ bool serve(Core core, Cli cli, i32 sock, PrivateKey host, Options o, Fs fs) {
   // a login worked or failed depending on *who happened to connect before*: grace with a 0700 `.ssh`
   // could not log in after ada, and could before her.
   fs.setUser("root");
-  string who = authenticate(conn, cli, sessionId, o, fs);
+  string who = authenticate(conn, cli, core, sessionId, o, fs);
   if (who == "") {
     if (conn.failed()) { core.warn("sshd: " + conn.error); }
     conn.sendPacket(disconnect(byApplication(), "no supported authentication methods".toBytes()));
@@ -390,7 +392,7 @@ u8[] hostPublicPoint(PrivateKey host) {
  * A name rather than a boolean because a session belongs to somebody — design/0001 step 4 — and the
  * server cannot ask again later: the key that proved it is gone by then.
  */
-string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
+string authenticate(Conn conn, Cli cli, Core core, u8[] sessionId, Options o, Fs fs) {
   u8[] request = conn.readPacket();
   if (conn.failed()) { return ""; }
   if (request[0] != 5) { conn.fail("expected a service request"); return ""; }
@@ -418,12 +420,20 @@ string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
 
     // The image's users first, each against their own file, then the server-wide one. `who` stays empty
     // for the second: a key allowed by `-a` alone belongs to nobody in particular, which is exactly what
-    // the filesystem's unset user means.
+    // the filesystem's unset user means — and the return below turns that empty name into `root`.
     //
-    // **And then the return below turns that empty name into `root`**, deliberately, so what the
-    // sentence describes is not what a session gets. That is `issues/system/0126`: a key in the
-    // server's own `-a` file has the run of every image it serves, which is defensible — it is the
-    // operator's file — and is a decision nothing had written down or pinned.
+    // **Which is refused once the image has a user table.** wac-mono 0126, decided 2026-08-11: with
+    // `-i`, users are data in the image (design/0001 D5) and the `-a` file is not part of that data, so
+    // a key the image knows nothing about does not get the run of it. An operator who wants in puts
+    // their key in a user's `~/.ssh/authorized_keys` inside the image.
+    //
+    // **The boundary is the table, not the `-i`.** An image that has no `/etc/passwd` has nobody to
+    // escalate over, and it is how every image starts: `sshd -i fresh.wacimg` boots an empty world, and
+    // refusing there would mean no way in to create the first user. So the rule is exactly "there is
+    // somebody to outrank, and this key is not one of them". Without `-i` nothing changes at all —
+    // `/etc/passwd` on a host mount is the *machine's* table and says nothing about who may log in
+    // here, which is why `hasTable` asks about the image rather than about the file.
+    bool hasTable = o.image != "" && users.len() > 0;
     string who = "";
     bool named = false;
     for (i32 u = 0; u < users.len() && !named; u++) {
@@ -436,9 +446,21 @@ string authenticate(Conn conn, Cli cli, u8[] sessionId, Options o, Fs fs) {
         else: {}
       }
     }
-    match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
-      case Ok: { named = true; }
-      else: {}
+    if (!hasTable) {
+      match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
+        case Ok: { named = true; }
+        else: {}
+      }
+    } else if (!named) {
+      // Said once per key rather than silently, because "publickey denied" from the client end looks
+      // the same as a wrong key and an operator would otherwise have no way to tell.
+      match (lookUp(allowed, "ssh-ed25519".toBytes(), a.publicBlob)) {
+        case Ok: {
+          core.warn("sshd: a key from " + o.authorizedKeys + " names no user in this image — refused; "
+                  + "put it in that user's ~/.ssh/authorized_keys instead (wac-mono 0126)");
+        }
+        else: {}
+      }
     }
     // The signature is checked against bytes we rebuild, never against the client's account of
     // what it signed, and only after the key is one we would accept at all.
