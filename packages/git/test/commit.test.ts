@@ -43,7 +43,7 @@ let exePath: string | null = null;
 async function gitci(): Promise<string> {
   if (exePath === null) {
     exePath = await Deno.makeTempFile({ prefix: "gitci-" });
-    await buildApp("packages/git/example/gitci.wac", exePath, { read: true, write: true });
+    await buildApp("packages/git/example/gitci.wac", exePath, { read: true, write: true, env: true });
     await Deno.chmod(exePath, 0o755);
   }
   return exePath;
@@ -69,6 +69,10 @@ async function repo(): Promise<{ dir: string; git: (a: string[]) => Promise<{ ou
     return { out: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim(), code: r.code };
   };
   await git(["init", "-q", "-b", "main"]);
+  // **`gitci` reads `user.name` and `user.email` and refuses without them**, as git does — so the fixture
+  // has to configure an identity rather than relying on a built-in one.
+  await git(["config", "user.name", "Ada Lovelace"]);
+  await git(["config", "user.email", "ada@example.com"]);
   return { dir, git };
 }
 
@@ -87,7 +91,16 @@ async function populate(dir: string): Promise<string[]> {
 }
 
 async function run(exe: string, args: string[]): Promise<{ out: string; err: string; code: number }> {
-  const r = await new Deno.Command(exe, { args, stdout: "piped", stderr: "piped" }).output();
+  // `GIT_AUTHOR_DATE` is git's own lever for a reproducible commit, and `gitci` honours it for the same
+  // reason: without it the clock is used and two runs of one tree produce different commits. Every `git`
+  // invocation in this file already sets it; this is the same value.
+  const r = await new Deno.Command(exe, {
+    args,
+    stdout: "piped",
+    stderr: "piped",
+    env: { GIT_AUTHOR_DATE: "1700000000 +0000", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" },
+    clearEnv: true,
+  }).output();
   return { out: dec.decode(r.stdout).trim(), err: dec.decode(r.stderr).trim(), code: r.code };
 }
 
@@ -128,7 +141,10 @@ Deno.test({
 
       // What git reads back out of the commit is what we wrote into it.
       const body = (await git(["cat-file", "commit", made])).out;
-      assert(body.includes("author wac <wac@example.com> 1700000000 +0000"), `author line missing from:\n${body}`);
+      assert(
+        body.includes("author Ada Lovelace <ada@example.com> 1700000000 +0000"),
+        `the author line is not the configured identity at the pinned time:\n${body}`,
+      );
       assert(body.endsWith("second, by wac"), `the message is not at the end of:\n${body}`);
       assert((await git(["log", "-1", "--format=%s"])).out === "second, by wac", "git shows a different subject");
     } finally {
@@ -192,4 +208,27 @@ addEventListener("unload", () => {
       Deno.removeSync(exePath);
     } catch { /* already gone */ }
   }
+});
+
+Deno.test({
+  name: "an unset identity is refused, and no commit is made",
+  ignore: !haveGit,
+  fn: async () => {
+    // **A commit is signed, and inventing a name to put on it is the one thing a tool must not do.** git
+    // refuses here with "Please tell me who you are"; this refuses too, and the assertion that matters is
+    // the second one — that nothing was written, rather than that a message was printed.
+    const { dir, git } = await repo();
+    try {
+      await git(["config", "--unset", "user.name"]);
+      await git(["config", "--unset", "user.email"]);
+      await Deno.writeTextFile(`${dir}/a.txt`, "one\n");
+      const r = await run(await gitci(), [dir, "no author"]);
+      assert(r.code !== 0, `gitci committed without an identity: ${r.out}`);
+      assert(r.err.includes("user.name"), `the refusal does not name what is missing: ${JSON.stringify(r.err)}`);
+      const log = await git(["log", "--oneline"]);
+      assert(log.code !== 0, `a commit was made anyway: ${log.out}`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });
