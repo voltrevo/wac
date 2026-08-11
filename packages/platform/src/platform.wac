@@ -44,6 +44,13 @@
  * burn a slot per call and die on the seventeenth outstanding read. So one resolver is
  * registered per signature and the `id` selects which call it is for.
  *
+ * **The same table caught the host out a second time**, which is worth knowing before anyone
+ * economises on either side of it: a worker that runs a *second* program used to build a second
+ * `Core` and `Cli`, three more `fn[void(i32)]` each time, and failed on the fifth run with the
+ * message this paragraph predicts. `host/entry.ts` builds them once and re-points the bridge
+ * instead (wac-mono 0076). Registration is by identity, so the fix is exactly "pass the same
+ * function again".
+ *
  * This comment used to say "wac has no closures, so whatever `.wait()` calls has to be
  * inside the ticket". The first half is true and the second does not follow — context can
  * travel *beside* a funcref, as an unbound method reference with the receiver as its first

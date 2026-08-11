@@ -4,7 +4,7 @@ Every package, what it is, and every program you can build. **Generated — do n
 Run `deno task map` after adding a package or an entry point; `deno task map -- --check`
 runs in the suite, so a stale map is a failing test rather than a document nobody trusts.
 
-34 packages, 92,402 lines of wac, 1665 tests,
+34 packages, 92,596 lines of wac, 1665 tests,
 53 command-line programs and 5 browser pages.
 
 ## Packages
@@ -22,14 +22,14 @@ In dependency order: nothing here imports anything below it.
 | [`fmt`](packages/fmt/) | Numbers to and from text. | 1,199 | 27 | `bytes` |
 | [`gzip`](packages/gzip/) | gzip (RFC 1952) and DEFLATE (RFC 1951) written in wac. | 1,994 | 83 | `bytes` |
 | [`platform`](packages/platform/) | A capability world for wac applications, so a program can be written **entirely in wac** — no TypeScript of its own — and still read files, tell… | 4,375 | 149 | `bytes` |
-| [`regex`](packages/regex/) | A backtracking regular expression engine, with JavaScript's semantics. | 1,515 | 21 | `bytes` |
+| [`regex`](packages/regex/) | A backtracking regular expression engine, with JavaScript's semantics — and the two POSIX dialects `grep` reads, translated into them rather than… | 1,515 | 21 | `bytes` |
 | [`stream`](packages/stream/) | Run a wac transform as a `ReadableStream`/`WritableStream` pair, so it consumes input as it arrives instead of taking the whole thing at once. | 97 | 14 | `bytes` `unicode` |
 | [`url`](packages/url/) | A WHATWG URL parser: parse, serialize, and resolve a reference against a base. | 1,219 | 27 | `bytes` `std` |
-| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 17,480 | 92 | `bytes` |
+| [`wacc`](packages/wacc/) | Porting the wac compiler to wac, so it can eventually compile itself. | 17,665 | 92 | `bytes` |
 | [`zstd`](packages/zstd/) | Zstandard (RFC 8878) in wac. | 3,038 | 48 | `bytes` |
 | [`abi`](packages/abi/) | The contract ABI, in wac: how a call's arguments become calldata and how returned bytes become values. | 560 | 9 | `fmt` |
 | [`crypto`](packages/crypto/) | The hashes, AEADs, curves and one KEM the rest of this repo is built on — written in wac, calling nothing. | 5,790 | 150 | `bignum` |
-| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,193 | 39 | `bytes` `fmt` `gzip` `platform` `std` |
+| [`fs`](packages/fs/) | A filesystem that belongs to the system rather than to the host. | 3,202 | 39 | `bytes` `fmt` `gzip` `platform` `std` |
 | [`http`](packages/http/) | HTTP/1.1: parsing requests and responses, and writing both. | 1,003 | 29 | `bytes` `codec` `fmt` `platform` |
 | [`json`](packages/json/) | JSON (RFC 8259) parsing and serialization, written in wac. | 955 | 51 | `bytes` `fmt` `std` |
 | [`rlp`](packages/rlp/) | Recursive Length Prefix — the Ethereum execution layer's serialisation, in wac. | 317 | 8 | `fmt` |

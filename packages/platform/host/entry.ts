@@ -11,7 +11,7 @@
 // true in both — the worker bundle has its own entry now, but the check guards the
 // message handler below and getting it wrong would fail silently.
 
-import { bridgeOf, newBridge } from "./layout.ts";
+import { type Bridge, bridgeOf, newBridge } from "./layout.ts";
 import { serveHostCalls } from "./respond.ts";
 import { denoWorld } from "./deno.ts";
 import { cliOf, coreOf } from "./provider.ts";
@@ -21,8 +21,15 @@ import { cliOf, coreOf } from "./provider.ts";
  *
  * `main(Core, Cli) -> i32` is the whole contract. It was a struct with `start` and `run`
  * first, which bought nothing: a program that runs once and exits has no state to keep
- * between calls, so the struct was ceremony around a function. A *service*, called
- * repeatedly, will want the struct — and can have it then.
+ * between calls, so the struct was ceremony around a function.
+ *
+ * This went on to say "a *service*, called repeatedly, will want the struct — and can have it
+ * then." **A worker calls `main` repeatedly now (wac-mono 0076) and wanted no struct at all**: wac
+ * has no module-level variables, so nothing can survive one call into the next whatever shape the
+ * entry point has. What repeated calls did need was on this side of the boundary — see
+ * `runAsWorker`, which builds the capabilities once because the funcref table cannot afford a
+ * second set. A service that keeps state *between* requests is still a different shape, and
+ * `packages/server`'s `serve(u8[], i64) -> Served` is what it looks like today.
  */
 export type AppModule = {
   Core: { of(...a: unknown[]): unknown };
@@ -90,7 +97,9 @@ let deliver: ((s: Start) => void) | null = null;
 if (onWorker()) {
   (self as unknown as { onmessage: ((e: MessageEvent) => void) | null }).onmessage = (e) => {
     const s = e.data as Start;
-    if (deliver !== null) deliver(s);
+    // Cleared as it fires: a resolver that has already run cannot answer the *next* wait, and a
+    // looping worker has a next wait.
+    if (deliver !== null) { const d = deliver; deliver = null; d(s); }
     else buffered = s;
   };
   // "This bundle parsed and evaluated." Sent before the application has done anything, and before
@@ -101,8 +110,23 @@ if (onWorker()) {
   (self as unknown as { postMessage(m: unknown): void }).postMessage({ ready: true });
 }
 
-function firstMessage(): Promise<Start> {
-  if (buffered !== null) return Promise.resolve(buffered);
+/**
+ * The next start message, which is usually the only one.
+ *
+ * **Usually, not always.** A worker ran `main` once and returned, so anything that wanted to run a
+ * program twice paid a whole new worker — a new bundle parse and a new wasm compile, 41ms a run for
+ * `packages/sh` and 67ms for `packages/box`, times every case in a differential (issue 0076).
+ * Waiting for another message costs nothing when none comes, and a parent finished with a worker
+ * terminates it exactly as before.
+ *
+ * `buffered` is cleared as it is taken, or a second call answers with the first run's bridge.
+ */
+function nextMessage(): Promise<Start> {
+  if (buffered !== null) {
+    const s = buffered;
+    buffered = null;
+    return Promise.resolve(s);
+  }
   return new Promise<Start>((res) => { deliver = res; });
 }
 
@@ -185,10 +209,20 @@ export async function runLauncher(workerSource: string, grants: Grants = {}): Pr
 
 async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
   const worker = self as unknown as { postMessage(m: Result): void };
-  const start = await firstMessage();
-  {
+  // **One bridge and one set of capabilities for the life of this worker**, however many programs it
+  // runs. `main` may be called more than once because wac has no module-level variables — a
+  // program's whole state is reachable from its own frame and gone when it returns — but the
+  // *capabilities* must not be rebuilt per run: bindgen registers one wasm function per host
+  // function and only sixteen per signature can be live, so a fifth run used to fail with "at most
+  // 16 distinct fn[void(i32)] functions can be passed to this module". So the bridge is re-pointed
+  // at each run's buffer instead (`Bridge.rebind`), and `Core` and `Cli` are built once.
+  let b: Bridge | undefined;
+  let world: { core: unknown; cli: unknown } | undefined;
+  for (;;) {
+    const start = await nextMessage();
     {
-      const b = bridgeOf(start.sab);
+      if (b === undefined) b = bridgeOf(start.sab);
+      else if (b.sab !== start.sab) b.rebind(start.sab);
       try {
         if (typeof app.main !== "function") {
           throw new Error("an application must export `main(Core, Cli) -> i32`");
@@ -197,7 +231,8 @@ async function runAsWorker(app: AppModule, cov?: Coverage): Promise<void> {
         // instrumented function traps on its first branch, and the message names the program under
         // test rather than the missing call. `harness/wacCoverage.ts` learnt the same thing.
         if (cov !== undefined) (app as unknown as { __cov_init?: () => void }).__cov_init?.();
-        const code = app.main(coreOf(b, app), cliOf(b, app));
+        if (world === undefined) world = { core: coreOf(b, app), cli: cliOf(b, app) };
+        const code = app.main(world.core, world.cli);
         if (cov !== undefined) dumpCoverage(app, cov);
         worker.postMessage({ ok: true, code });
       } catch (err) {

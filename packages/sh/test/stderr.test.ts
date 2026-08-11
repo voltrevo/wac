@@ -46,9 +46,26 @@ globalThis.addEventListener("unload", () => {
 const shell = `${tmp}/wacsh`;
 await buildApp("packages/box/src/bin/sh.wac", shell, { read: true, write: true, env: true });
 
+/**
+ * What `cmd -c script` says on standard error, or a failure if the bound fired.
+ *
+ * **A fired bound is not an empty message**, and this returned one for both. `timeout` answers 124
+ * when it had to kill, and a killed shell has written nothing — so a gate on a loaded machine
+ * reported `got: "" want: "sh: [: b: binary operator expected"`, which reads as a diagnostic this
+ * shell has stopped printing rather than as a shell that never got to print it. Every other place in
+ * this repository that bounds a subprocess this way carries `hung: r.code === 124`; this was the one
+ * that did not, and it cost a red gate to notice.
+ *
+ * Twenty seconds is not a deadline, it is a bound on wedging: `harness/bounded.ts` makes the same
+ * argument at greater length, and the load average goes in the message because it is the difference
+ * between "this machine was busy" and "this program hangs".
+ */
+/** The bound, in seconds, named once so the message below cannot state a different one. */
+const BOUND_S = "20";
+
 function stderrOf(cmd: string, script: string, cwd: string): string {
   const r = new Deno.Command("timeout", {
-    args: ["20", cmd, "-c", script],
+    args: [BOUND_S, cmd, "-c", script],
     cwd,
     stdin: "null",
     stdout: "piped",
@@ -56,6 +73,14 @@ function stderrOf(cmd: string, script: string, cwd: string): string {
     env: { LC_ALL: "C", PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin", HOME: cwd },
     clearEnv: true,
   }).outputSync();
+  if (r.code === 124) {
+    const load = Deno.loadavg().map((n) => n.toFixed(2)).join(" ");
+    throw new Error(
+      `${cmd} -c ${JSON.stringify(script)} was killed by its ${BOUND_S}s bound rather than answering ` +
+        `(load ${load}). That is a hang or a machine under load, and either way it is not the empty ` +
+        `diagnostic this used to report it as.`,
+    );
+  }
   return new TextDecoder().decode(r.stderr).trimEnd();
 }
 

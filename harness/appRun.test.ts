@@ -48,6 +48,25 @@ Deno.test("appRun: the worker and the executable agree, argument for argument", 
   }
 });
 
+Deno.test("appRun: one worker runs a program more often than the funcref table has room", async () => {
+  // **Twelve runs, because it used to die at the fifth.** A worker serves repeated runs now
+  // (wac-mono 0076), and the trap on the way there was that rebuilding `Core` and `Cli` for each run
+  // registers wasm functions that are never released: bindgen allows sixteen live per signature, a
+  // world costs three of `fn[void(i32)]`, and the fifth run failed with
+  //
+  //     wac: at most 16 distinct fn[void(i32)] functions can be passed to this module
+  //
+  // — as -1 and empty output, which reads like a program that printed nothing rather than a host
+  // that ran out of table. `entry.ts` builds the world once and `Bridge.rebind` points it at each
+  // run's buffer; this is what says so.
+  const box = await appRunner(BOX, { read: true });
+  for (let i = 0; i < 12; i++) {
+    const r = await box.run(["echo", `run${i}`]);
+    eq(r.out, `run${i}\n`, `run ${i} of 12`);
+    eq(r.code, 0, `run ${i} exit code`);
+  }
+});
+
 Deno.test("appRun: a filter reads the standard input it is given", async () => {
   const box = await appRunner(BOX, { read: true });
   const r = await box.run(["rev"], { stdin: "abc\ndef\n" });
