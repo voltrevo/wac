@@ -57,8 +57,10 @@ import {
   FAULT_NOT_GRANTED,
   Faulted,
   STAT_BYTES,
+  STAT_EXEC,
   STAT_FAULT,
   changeBytes,
+  FAULT_UNSUPPORTED,
   changed,
   faultOf,
   phraseOf,
@@ -757,6 +759,10 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
     // The Origin Private File System has no symbolic links, so this *is* `stat`, and `isSymlink`
     // stays false. That is true rather than a stand-in — and it is why `tar` can refuse links in a
     // page as well, without knowing which host it is on.
+    //
+    // `isExecutable` stays false for the same kind of reason and is left at its zero rather than
+    // written: OPFS has no mode bits, so nothing in a page is executable and saying so is the answer
+    // rather than a gap. Writing it is the half that has to refuse — see `SET_EXECUTABLE` below.
     [OP.LINK_STAT]: (p) => statBytes(unstr(p)),
 
     [OP.READ_DIR]: async (p) => {
@@ -816,6 +822,18 @@ export function browserWorld(opts: BrowserWorldOptions = {}): Handlers {
         const src = await resolve(from, false);
         await src.dir.removeEntry(src.name);
       }, describeAsPhrase);
+    },
+
+    // **The capability is present and the backing refuses**, which is a different statement from the
+    // capability being absent and the reason it is `FAULT_UNSUPPORTED` rather than `FAULT_NOT_GRANTED`.
+    // The Origin Private File System has no mode bits: there is nothing here to set, so a page cannot
+    // make a file executable and nothing in a page is executable to begin with — which is why
+    // `Stat.isExecutable` is answered false rather than left unimplemented. 0117 added the word for
+    // exactly this, and a caller that only checked "did it fail" would report the file's fault instead.
+    [OP.SET_EXECUTABLE]: () => {
+      const no = writeRefused();
+      if (no !== null) return no;
+      return changeBytes(FAULT_UNSUPPORTED, "a page's filesystem has no mode bits");
     },
 
     [OP.OPEN_INPUT]: async (p) => {

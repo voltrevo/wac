@@ -57,7 +57,7 @@ work in a terminal would be a lie, which is the whole reason these are separate 
 | | `readStdin`, `write`, `writeErr` | — |
 | | `openInput`, `readChunk`, `outputError` | `--allow-read` for a file |
 | | `readFile`, `stat`, `linkStat`, `readDir` | `--allow-read` |
-| | `writeFile`, `mkdir`, `remove`, `rename` | `--allow-write` |
+| | `writeFile`, `mkdir`, `remove`, `rename`, `setExecutable` | `--allow-write` |
 | | `openOutput` (to a file) | `--allow-write` |
 | | `connect`, `listen`, `accept`, `recv`, `send`, `closeSocket` | `--allow-net` |
 | | `spawn`, `spawnSelf`, `closeFeed`, `exitCode` | — (the child gets what you pass, never more) |
@@ -756,6 +756,7 @@ What the translation costs is the interesting part, and it is not the plumbing:
 | `write` | appends the exact bytes to the page |
 | `readFile`, `writeFile`, `stat`, `readDir`, `mkdir`, `remove`, `openInput`, `readChunk`, `openOutput` | the Origin Private File System |
 | `rename` | **a copy and a delete, so not atomic** |
+| `setExecutable` | **refused** — OPFS has no mode bits, so `FAULT_UNSUPPORTED`: the capability is here and the backing cannot |
 | `readStdin` | always empty |
 | `env` | every variable unset |
 | `connect`, `listen`, `accept`, `recv`, `send` | **refused** |

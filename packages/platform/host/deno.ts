@@ -29,6 +29,7 @@ import {
   FAULT_NOT_GRANTED,
   Faulted,
   STAT_BYTES,
+  STAT_EXEC,
   STAT_FAULT,
   changeBytes,
   changed,
@@ -590,7 +591,8 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         dv.setBigInt64(3, BigInt(st.size), true);
         dv.setBigInt64(11, BigInt(st.mtime?.getTime() ?? 0), true);
         // `stat` follows, so what it describes is never itself a link. `linkStat` is the one that
-        // answers that, and it is the only difference between these two handlers.
+        // answers that, and the symlink flag is the only field these two handlers disagree about.
+        out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
       } catch (e) {
         // Absence stays absence — zeroes and `FAULT_NONE`. Anything else says which way it failed, so a
         // name this runtime cannot express is not reported as a file that is not there.
@@ -614,6 +616,9 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
         dv.setBigInt64(3, BigInt(st.size), true);
         dv.setBigInt64(11, BigInt(st.mtime?.getTime() ?? 0), true);
         out[19] = st.isSymlink ? 1 : 0;
+        // Owner-execute, `0o100`. `mode` is null on a platform without POSIX bits, which reads as not
+        // executable — the same answer the browser gives, and a true one rather than a stand-in.
+        out[STAT_EXEC] = ((st.mode ?? 0) & 0o100) !== 0 ? 1 : 0;
       } catch (e) {
         out[STAT_FAULT] = statFault(e, path);
       }
@@ -904,6 +909,25 @@ export function denoWorld(opts: DenoWorldOptions = {}): Handlers {
       // The source first: a rename fails on whichever name the host cannot express, and reporting the
       // destination for a source it could not read would send the reader to the wrong half.
       return changed(() => onPath(from, () => onPath(to, () => Deno.rename(from, to))));
+    },
+    [OP.SET_EXECUTABLE]: (p) => {
+      if (!opts.fs?.write) return changeBytes(FAULT_NOT_GRANTED, "filesystem write not granted to this application");
+      const path = P(unstr(p.subarray(1)));
+      const on = p[0] === 1;
+      // **Read the mode, change the one bit, write it back** — rather than setting a whole mode. A
+      // `chmod(0o755)` would also grant read and write to everyone, which is not what the caller asked
+      // for and is a wider change than the capability describes.
+      //
+      // The execute bits follow read: `0o111` masked by wherever read is already granted, so a file
+      // readable only by its owner becomes executable only by its owner. That is what `chmod +x` does,
+      // and copying `git`'s behaviour here matters because a checkout's modes are compared against it.
+      return changed(() =>
+        onPath(path, async () => {
+          const mode = (await Deno.lstat(path)).mode ?? 0o644;
+          const bits = on ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
+          await Deno.chmod(path, bits & 0o7777);
+        })
+      );
     },
   };
 }

@@ -96,6 +96,14 @@ const COVERAGE: Record<string, Cover> = {
   MKDIR: { where: "native_hostfs: `mkdir d2; ls; rmdir d2`" },
   REMOVE: { where: "native_hostfs: `rm made`" },
   RENAME: { where: "native_hostfs: `mv f moved`" },
+  SET_EXECUTABLE: {
+    gap: "no two-host comparison. The one caller is a git checkout, and its oracle is `git status` " +
+      "over a real repository — `packages/git/test/checkout.test.ts` requires an executable to come " +
+      "out executable and the porcelain to be empty, which is a sharper check than two hosts " +
+      "agreeing but runs on one of them. Worth pairing when native_hostfs next grows a case: the " +
+      "arithmetic is duplicated three times (Deno, Node, Rust) and only the Deno copy is exercised, " +
+      "so a wrong mask in the other two would not be caught here. issues/system/0132",
+  },
   OPEN_INPUT: { where: "native_hostfs: `cat < f`, refused with no grant" },
   OPEN_OUTPUT: { where: "native_hostfs: `echo new > made`" },
   READ_CHUNK: {

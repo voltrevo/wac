@@ -134,7 +134,7 @@ Change resolveChange(i32 id) {
 }
 
 /** Only the two programs under `/bin` exist, which is what makes a `$WACPATH` search decide. */
-Stat resolveStat(i32 id) { return Stat.of(id == 1, id == 1, false, 0, 0, false, 0); }
+Stat resolveStat(i32 id) { return Stat.of(id == 1, id == 1, false, 0, 0, false, false, 0); }
 
 /** Nothing here is a symbolic link, which a fake filesystem is entitled to say. */
 Pending<Stat> fakeLinkStat(string path) { return fakeStat(path); }
@@ -184,6 +184,12 @@ Pending<Change> fakeRemove(string path, bool recursive) {
 }
 Pending<Change> fakeRename(string from, string to) {
   return Pending.of(FAULT_NONE(), resolveChange, alwaysSettled, ignoreDrop);
+}
+// The mode capability this probe has to declare because `Cli` carries it. A file that is not there
+// faults, like `fakeRemove`, so a caller cannot tell the two stubs apart by accident.
+Pending<Change> fakeSetExecutable(string path, bool on) {
+  return Pending.of(present(path) ? FAULT_NONE() : FAULT_NOT_FOUND(), resolveChange, alwaysSettled,
+                    ignoreDrop);
 }
 Pending<Change> fakeOpenInput(string path) {
   return Pending.of(FAULT_NONE(), resolveChange, alwaysSettled, ignoreDrop);
@@ -308,7 +314,7 @@ Pending<Captured> fakePopChild() {
 
 Cli fakeCli() {
   return Cli.of(fakeArgCount, fakeArg, fakeEnv, fakeStdin, fakeWrite, fakeWriteErr, fakeReadFile, fakeWriteFile,
-                fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeOpenInput,
+                fakeStat, fakeLinkStat, fakeReadDir, fakeMkdir, fakeRemove, fakeRename, fakeSetExecutable, fakeOpenInput,
                 fakeReadChunk, fakeOutputError, fakeOpenOutput, fakeConnect, fakeListen, fakeAccept, fakeRecv,
                 fakeSend, fakeCloseSocket, fakeSpawn, fakeSpawnSelf, fakeCloseFeed, fakeExitCode,
                 fakeCwd, fakePushChild, fakePopChild);

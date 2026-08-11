@@ -764,6 +764,19 @@ export struct Stat {
   bool isSymlink;
 
   /**
+   * Whether the owner-execute bit is set.
+   *
+   * **One bit, not a mode**, for the reason `Cli.setExecutable` gives. It is what distinguishes git's
+   * `100644` from its `100755`, and building a tree from a working tree cannot tell them apart without it
+   * — every blob was recorded as `100644`, which made a commit of an executable record a mode change
+   * nobody asked for. issues/system/0132.
+   *
+   * **False where the host has no mode bits**, which is a true answer rather than a stand-in: a browser's
+   * OPFS does not have them, so nothing there is executable and saying so is correct.
+   */
+  bool isExecutable;
+
+  /**
    * Why this is not an answer, or `FAULT_NONE` when it is.
    *
    * **Absence is an answer, not a fault.** A path that is simply not there gives `exists = false` with
@@ -796,8 +809,8 @@ export struct Stat {
   i32 fault;
 
   Stat of(bool exists, bool isFile, bool isDir, i64 size, i64 modifiedMillis, bool isSymlink,
-          i32 fault) {
-    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, fault);
+          bool isExecutable, i32 fault) {
+    return Stat(exists, isFile, isDir, size, modifiedMillis, isSymlink, isExecutable, fault);
   }
 
   /**
@@ -1129,6 +1142,27 @@ export struct Cli {
   fn[Pending<Change>(string, bool)] mkdir;
   fn[Pending<Change>(string, bool)] remove;
   fn[Pending<Change>(string, string)] rename;
+
+  /**
+   * Make a file executable, or stop it being one.
+   *
+   * **One bit rather than a mode, and that is a decision rather than a shortcut** —
+   * issues/system/0132. Three reasons, in the order they mattered:
+   *
+   *   - git's two regular-file modes, `100644` and `100755`, differ only in this bit. Symlink and
+   *     gitlink are entry *kinds*, not permissions. Nothing in this repository needs the rest of a
+   *     POSIX mode, and a surface that promised one would be promising something no caller wants.
+   *   - a browser's OPFS has no mode bits at all. With one bit the browser host answers
+   *     `FAULT_UNSUPPORTED` — the capability is present and the *backing* refuses, which is a
+   *     distinction this vocabulary can make since 0117. A general `chmod(path, mode)` there would be
+   *     unanswerable rather than merely unsupported.
+   *   - widening later is additive; narrowing later removes something callers depend on. The cheaper
+   *     mistake to make is the narrow one.
+   *
+   * `Stat.isExecutable` is the reading half, and the two together are what let a checkout produce a
+   * working tree `git status` calls clean.
+   */
+  fn[Pending<Change>(string, bool)] setExecutable;
 
   /**
    * Streaming input: `openInput` chooses the source, `readChunk` pulls from it.
@@ -1464,6 +1498,7 @@ export struct Cli {
     fn[Pending<Change>(string, bool)] mkdir,
     fn[Pending<Change>(string, bool)] remove,
     fn[Pending<Change>(string, string)] rename,
+    fn[Pending<Change>(string, bool)] setExecutable,
     fn[Pending<Change>(string)] openInput,
     fn[Read()] readChunk,
     fn[Pending<string>()] outputError,
@@ -1484,7 +1519,7 @@ export struct Cli {
   ) {
     return Cli(
       argCount, arg, env, readStdin, write, writeErr, readFile, writeFile, stat, linkStat, readDir,
-      mkdir, remove, rename, openInput, readChunk, outputError, openOutput,
+      mkdir, remove, rename, setExecutable, openInput, readChunk, outputError, openOutput,
       connect, listen, accept, recv, send, closeSocket, spawn, spawnSelf, closeFeed, exitCode, cwd,
       pushChild, popChild
     );

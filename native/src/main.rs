@@ -121,6 +121,7 @@ enum Cap {
     Mkdir,
     Remove,
     Rename,
+    SetExecutable,
     OpenInput,
     OpenOutput,
     OutputError,
@@ -897,6 +898,7 @@ fn capability_for(owner: &str, field: &str) -> Cap {
         ("Cli", "mkdir") => Cap::Mkdir,
         ("Cli", "remove") => Cap::Remove,
         ("Cli", "rename") => Cap::Rename,
+        ("Cli", "setExecutable") => Cap::SetExecutable,
         ("Cli", "openInput") => Cap::OpenInput,
         ("Cli", "openOutput") => Cap::OpenOutput,
         ("Cli", "outputError") => Cap::OutputError,
@@ -1533,7 +1535,7 @@ fn dispatch(
                 return settle_now(
                     caller,
                     Kind::Stat,
-                    Outcome::Stat(false, false, false, 0, 0, false, FAULT_NOT_GRANTED),
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NOT_GRANTED),
                     results,
                 );
             }
@@ -1561,15 +1563,21 @@ fn dispatch(
                         m.len() as i64,
                         millis,
                         m.file_type().is_symlink(),
+                        // Owner-execute, `0o100`. `PermissionsExt` is unix-only; this host is built for
+                        // wasmtime on unix, and the mode is what the wac struct's one bit comes from.
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            m.permissions().mode() & 0o100 != 0
+                        },
                         FAULT_NONE,
                     )
                 }
                 // **Absent is not a failure.** `exists: false` with no fault is what "there is nothing
                 // here" means; a fault would make every caller that merely asked treat it as an error.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    Outcome::Stat(false, false, false, 0, 0, false, FAULT_NONE)
+                    Outcome::Stat(false, false, false, 0, 0, false, false, FAULT_NONE)
                 }
-                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, stat_fault(&e)),
+                Err(e) => Outcome::Stat(false, false, false, 0, 0, false, false, stat_fault(&e)),
             };
             return settle_now(caller, Kind::Stat, outcome, results);
         }
@@ -1648,6 +1656,30 @@ fn dispatch(
             let to_p = resolve(caller, &to);
             let outcome = match std::fs::rename(from_p, to_p) {
                 Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+            };
+            return settle_now(caller, Kind::Change, outcome, results);
+        }
+        Cap::SetExecutable => {
+            let path = read_string(caller, &params[1])?;
+            let on = matches!(arg(2), Val::I32(n) if n != 0);
+            if !caller.data().grants.write {
+                return settle_now(caller, Kind::Change, denied_write_change(), results);
+            }
+            let p = resolve(caller, &path);
+            // Read the mode, change the one bit, write it back — the execute bits following read, which
+            // is `chmod +x`'s rule and the same arithmetic the two JavaScript hosts do. Setting a whole
+            // mode would also widen read and write, which the capability does not describe.
+            use std::os::unix::fs::PermissionsExt;
+            let outcome = match std::fs::metadata(&p) {
+                Ok(m) => {
+                    let mode = m.permissions().mode() & 0o7777;
+                    let bits = if on { mode | ((mode & 0o444) >> 2) } else { mode & !0o111 };
+                    match std::fs::set_permissions(&p, std::fs::Permissions::from_mode(bits)) {
+                        Ok(()) => Outcome::Change(FAULT_NONE, String::new()),
+                        Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
+                    }
+                }
                 Err(e) => Outcome::Change(fault_of(&e), e.to_string()),
             };
             return settle_now(caller, Kind::Change, outcome, results);
@@ -1756,8 +1788,8 @@ fn dispatch(
                 (Kind::FileResult, Outcome::FileResult(ok, bytes, err, fault)) => {
                     make_file_result(caller, ok, &bytes, &err, fault)?
                 }
-                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, fault)) => {
-                    make_stat(caller, e, f, d, size, m, link, fault)?
+                (Kind::Stat, Outcome::Stat(e, f, d, size, m, link, exec, fault)) => {
+                    make_stat(caller, e, f, d, size, m, link, exec, fault)?
                 }
                 (Kind::Names, Outcome::Names(None)) => Val::AnyRef(None),
                 (Kind::Names, Outcome::Names(Some(names))) => make_string_array(caller, &names)?,
@@ -1972,6 +2004,7 @@ fn make_stat(
     size: i64,
     modified: i64,
     is_symlink: bool,
+    is_executable: bool,
     fault: i32,
 ) -> Result<Val, wasmtime::Error> {
     let f = export_func(caller, "$bind$sm_Stat_of")?;
@@ -1985,6 +2018,7 @@ fn make_stat(
             Val::I64(size),
             Val::I64(modified),
             Val::I32(is_symlink as i32),
+            Val::I32(is_executable as i32),
             Val::I32(fault),
         ],
     )?;

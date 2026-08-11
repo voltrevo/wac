@@ -31,7 +31,7 @@ import {
   unstr,
 } from "./call.ts";
 import { OP } from "./ops.ts";
-import { FAULT_OTHER } from "./faults.ts";
+import { FAULT_OTHER, STAT_EXEC } from "./faults.ts";
 
 const EMPTY = new Uint8Array(0);
 const SLOT_BITS = Math.ceil(Math.log2(SLOTS));
@@ -202,17 +202,18 @@ export function cliOf(
   const stat = (id: number) => {
     try {
       const out = collect(b, unpack(id));
-      // exists, isFile, isDir as bytes, then size and mtime as little-endian i64s, then isSymlink, then
-      // the fault — each appended rather than inserted, so the offsets above never had to move.
+      // exists, isFile, isDir as bytes, then size and mtime as little-endian i64s, then isSymlink, the
+      // fault, and isExecutable — each appended rather than inserted, so the offsets above never had to
+      // move. That is why the newest field sits past the fault rather than beside the flag it belongs with.
       const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
       return cls.Stat.of(
         out[0] === 1, out[1] === 1, out[2] === 1,
         dv.getBigInt64(3, true), dv.getBigInt64(11, true),
-        out[19] === 1, out[20] ?? 0,
+        out[19] === 1, out[STAT_EXEC] === 1, out[20] ?? 0,
       );
     } catch {
       // The bridge itself failed, which is not absence — `FAULT_OTHER`, because nothing said better.
-      return cls.Stat.of(false, false, false, 0n, 0n, false, FAULT_OTHER);
+      return cls.Stat.of(false, false, false, 0n, 0n, false, false, FAULT_OTHER);
     }
   };
   const dirNames = (id: number) => {
@@ -445,6 +446,10 @@ export function cliOf(
     (path: string, recursive: boolean) => T.change(submit(b, OP.REMOVE, flagged(recursive, path))),
     /*= rename */
     (from: string, to: string) => T.change(submit(b, OP.RENAME, twoPaths(from, to))),
+    /*= setExecutable */
+    // Same `flagged` encoding as `mkdir` and `remove`: one bool, one path. The bool is "should it be
+    // executable", not "toggle" — a toggle would make the result depend on what was there.
+    (path: string, on: boolean) => T.change(submit(b, OP.SET_EXECUTABLE, flagged(on, path))),
 
     /*= openInput */
     // `change`, not `outcome`, for the same reason `openOutput` uses it: a category the caller can put

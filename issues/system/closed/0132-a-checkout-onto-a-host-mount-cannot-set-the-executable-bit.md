@@ -1,7 +1,8 @@
 # 0132 — a checkout onto a host mount cannot set the executable bit
 
-- **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Status:** closed
+- **Claimed by:** agent-c
+- **Fixed in:** `Cli.setExecutable` and `Stat.isExecutable`, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-11
 - **Kind:** missing feature
@@ -81,3 +82,55 @@ thing. Which of the two is right is the decision.
 **Not blocked on this:** `design/system/0005` step 4's criterion is stated as `git status --porcelain`
 empty after our checkout. It is met on a tree with no executable file, and the design note now records
 that and points here, rather than claiming the step outright or weakening the criterion quietly.
+
+## Fixed — the narrow option, and why that was the decision
+
+`Cli` gained **`setExecutable(path, bool)`** and `Stat` gained **`isExecutable`**. One bit each way,
+not a `chmod` and not a mode, which is the choice this issue asked somebody to make:
+
+- git's two regular-file modes differ only in that bit. Symlink and gitlink are entry *kinds*, not
+  permissions, so nothing here wants the rest of a POSIX mode.
+- `mkdir` and `remove` are already `(string, bool) -> Change`; `setExecutable` is the same shape,
+  whereas `chmod(path, i32)` would import a permission model the surface does not otherwise have.
+- a page's OPFS has no mode bits. With one bit the browser answers `FAULT_UNSUPPORTED` — capability
+  present, backing refuses, which is the distinction 0117 added the word for. A general `chmod`
+  there would be unanswerable rather than merely unsupported.
+- widening later is additive; narrowing later takes something away. The narrow mistake is cheaper.
+
+Implemented on all four hosts: Deno and Node read-modify-write the one bit (execute follows read,
+which is `chmod +x`'s rule rather than a mode chosen here), the native host does the same through
+`PermissionsExt`, and the browser refuses. `STAT_BYTES` went 21 → 22 with `isExecutable` **appended
+past the fault byte**, because moving the fault is what silently misreads a reply on a host that was
+not recompiled — `packages/platform/test/unnameable.test.ts` used to pin "the fault is last" and now
+pins the offsets themselves, which is the invariant that was actually meant.
+
+`packages/fs` grew **`setExecutable` beside `chmod`** rather than widening `chmod`. The first attempt did
+widen it — a host mount applied the owner-execute bit of the mode and answered success — and
+`packages/box`'s own test caught it: `chmod` there is a user-facing command, and `chmod 600 secret`
+reporting success while leaving the file world-readable is a worse answer than `not implemented`. So
+`chmod` on a host mount still refuses, `setExecutable` promises exactly one bit and delivers it, and the
+git checkout calls the narrow one. The child protocol gained `ASK_SET_EXECUTABLE` for the same reason it
+could not reuse `ASK_CHMOD`: `Stat` carries one bit, not a mode, so a child cannot compute what to send.
+
+### What adjudicates it
+
+Both halves have real-git oracles rather than a claim:
+
+- **writing** — `packages/git/test/checkout.test.ts`: an executable in the tree checks out
+  executable, `git status --porcelain` is **empty**, `git diff --summary` is empty, and the bit is
+  checked on disk as well as in the index, since a wrong index and a wrong file agree with each
+  other. That test previously asserted the *opposite* and was written to fail loudly when this
+  landed, which is what happened.
+- **reading** — `packages/git/test/commit.test.ts`: a tree built from a working tree records
+  `100755` for an executable and `100644` for a plain file, per `git ls-tree`. It was watched to
+  fail first, on exactly that assertion.
+- **the clone** — `packages/git/test/clone.test.ts` against real GitHub now requires an empty
+  porcelain, and asserts the clone's index holds at least one `100755` entry so that removing the
+  tolerance did not just make the check vacuous.
+
+### Still not done
+
+No two-host comparison of `SET_EXECUTABLE`; it is a `gap` entry in
+`packages/platform/test/conformance.test.ts` with the reason. The mask arithmetic exists three times
+— Deno, Node, Rust — and only the Deno copy is exercised, so a wrong mask in the other two would not
+be caught. That is worth a `native_hostfs` case next time one is added.
