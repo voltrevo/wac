@@ -1,35 +1,54 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 400" width="1160" height="400"
-     role="img" aria-label="wac — a C-family language for WebAssembly GC, and the systems stack written in it">
+     role="img" aria-label="$ wac_ — a C-family language for WebAssembly GC, and a whole new stack written in it">
   <title>wac</title>
 
-  <!-- The site's own palette: near-black ground, hairlines rather than panels, one accent.
-       Deliberately no gradient and no glow — site/src/next/tokens.ts calls the look a spec sheet,
-       and a banner that fronted it with atmosphere would be the one thing on the page doing that. -->
+  <defs>
+    <!-- The front page's masthead gradient, `Home.tsx`'s `linear-gradient(104deg, …)`, with the same
+         four stops at the same offsets. CSS measures the angle clockwise from "to top", so 104deg is
+         a direction of (sin, -cos) = (0.97, 0.24) on screen — mostly across, tipped slightly down.
+         `userSpaceOnUse` rather than the default, because the default maps the gradient to the
+         bounding box of whatever references it, and that box is a different width for `wac` in one
+         renderer's monospace than another's. The coordinates are the measured glyph box — 206 to
+         339 across, tipped 33 down over that run — so the last stop lands on the last stroke of the
+         `c` rather than somewhere past it. Measured rather than guessed: the first version ran the
+         ramp to 404 and the purple end fell off the text entirely. -->
+    <linearGradient id="mast" gradientUnits="userSpaceOnUse" x1="206" y1="110" x2="339" y2="143">
+      <stop offset="0.02" stop-color="#5eead4"/>
+      <stop offset="0.26" stop-color="#67e8f9"/>
+      <stop offset="0.58" stop-color="#818cf8"/>
+      <stop offset="0.86" stop-color="#c084fc"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Near-black ground, and no glow: site/src/next/tokens.ts calls the look a spec sheet, and the
+       gradient below is the one place the site spends colour. Two of them would compete. -->
   <rect width="1160" height="400" fill="#0a0b0e"/>
 
-  <!-- Fonts are named the way the site names them, ending in the generic `monospace` so a renderer
-       that has none of the others still gets the right shape. Nothing here is loaded from anywhere:
-       an SVG in a README is rendered without network access, so a webfont would silently fall back. -->
+  <!-- The rule the masthead stands against — 2px, solid, at 85%, exactly as the page has it. It is
+       solid *because* the wordmark is not: the comment in Home.tsx says the two must not compete. -->
+  <rect x="88" y="62" width="2" height="204" rx="1" fill="#e8eaed" opacity="0.85"/>
+
   <g font-family="ui-monospace, SFMono-Regular, &quot;Cascadia Code&quot;, &quot;JetBrains Mono&quot;, Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, monospace">
 
-    <!-- The wordmark, as `Wordmark` in site/src/next/ui.tsx renders it: bold, tight tracking,
-         and the underscore in the accent — a cursor rather than a punctuation mark. -->
-    <text x="88" y="160" font-size="92" font-weight="700" letter-spacing="-2.8" fill="#e8eaed">wac<tspan fill="#5eead4">_</tspan></text>
+    <!-- `$ wac_`, as the page renders it: the prompt faint and unbolded, the name in the gradient,
+         the underscore in the accent because it is a cursor rather than punctuation. -->
+    <text x="118" y="158" font-size="96" font-weight="700" letter-spacing="-3.8">
+      <tspan fill="#5e6878" font-weight="400">$</tspan><tspan fill="#5e6878"> </tspan><tspan fill="url(#mast)">wac</tspan><tspan fill="#5eead4">_</tspan>
+    </text>
 
-    <!-- The line the README and the site's own description both open with, so the three agree. -->
-    <text x="92" y="224" font-size="25" fill="#8b95a5">A C-family language for WebAssembly GC,</text>
-    <text x="92" y="258" font-size="25" fill="#8b95a5">and the systems stack written in it.</text>
+    <!-- The page's own sentence, wrapped by hand because SVG has no line breaking. -->
+    <text x="118" y="216" font-size="25" fill="#c2c8d2">A C-family language for WebAssembly GC —</text>
+    <text x="118" y="250" font-size="25" fill="#c2c8d2">and a whole new stack written in it.</text>
 
-    <rect x="92" y="300" width="976" height="1" fill="#1f242e"/>
+    <rect x="118" y="300" width="950" height="1" fill="#1f242e"/>
 
-    <!-- Facts, in monospace because they are facts — the same three the front page leads with.
-         Structural rather than counted, and deliberately: these are invariants somebody would have
-         to decide to break, where a line total or a test total drifts on its own and would rot here
-         with nothing checking it. "It compiles itself" was the third and is not here, because it is
-         true only with the caveat the front page carries — wacc reaches a fixpoint, and the
-         self-hosted compiler is still not the one that builds this repository. -->
-    <text x="92" y="350" font-size="21" fill="#5e6878">dependencies <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
-    <text x="374" y="350" font-size="21" fill="#5e6878">TypeScript in the packages <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
-    <text x="836" y="350" font-size="21" fill="#5e6878">LLVM, binaryen <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
+    <!-- Facts, in monospace because they are facts. Structural rather than counted, deliberately:
+         these are invariants somebody would have to decide to break, where a line total or a test
+         total drifts on its own and would rot here with nothing checking it. "It compiles itself"
+         is not among them — it is true only with the caveat the front page carries, that wacc
+         reaches a fixpoint and is still not the compiler that builds this repository. -->
+    <text x="118" y="348" font-size="21" fill="#5e6878">dependencies <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
+    <text x="392" y="348" font-size="21" fill="#5e6878">TypeScript in the packages <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
+    <text x="846" y="348" font-size="21" fill="#5e6878">LLVM, binaryen <tspan fill="#e8eaed" font-weight="700">0</tspan></text>
   </g>
 </svg>
