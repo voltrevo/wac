@@ -38,6 +38,8 @@ function isCollected(name: string): boolean {
 }
 
 /** Directories the runner never walks, so what is in them cannot be collected. */
+import { declaresTest } from "../harness/testRegistrars.ts";
+
 const SKIP = new Set([".git", "node_modules", ".cache", "dist", "target"]);
 
 async function* walk(dir: string): AsyncGenerator<string> {
@@ -55,19 +57,11 @@ Deno.test("every file the test runner will import declares a test", async () => 
     const name = path.slice(path.lastIndexOf("/") + 1);
     if (!isCollected(name)) continue;
     const source = await Deno.readTextFile(path);
-    // Declaring a test is what makes an imported module a test rather than a script the runner happens
-    // to execute. Two spellings count, and the second is not a loophole: `wacTestRun` registers a
-    // `Deno.test` per exported `test_*` function in a wac file, so a file that calls it declares tests
-    // by delegation — thirty-odd of this repo's test files are one line of exactly that.
-    //
-    // `testBounded` is the third, and the same argument: it is `Deno.test` with a deadline on the
-    // whole case (issue 0106), so a file whose every case is bounded contains no literal `Deno.test(`
-    // at all. Three did the moment the exclusive lane was converted, and this guard is what said so —
-    // which is the check working, not a loophole being opened. Anything that *registers* a test
-    // belongs on this list; anything that merely mentions one does not.
-    if (
-      source.includes("Deno.test(") || source.includes("wacTestRun(") || source.includes("testBounded(")
-    ) continue;
+    // Declaring a test is what makes an imported module a test rather than a script the runner
+    // happens to execute. The spellings live in `harness/testRegistrars.ts` rather than here,
+    // because `tools/map.ts` needs the same list to count with and the two went out of step once —
+    // `testBounded` was added here and not there, and 28 tests went missing from MAP.
+    if (declaresTest(source)) continue;
     offenders.push(path);
   }
   assertEquals(
