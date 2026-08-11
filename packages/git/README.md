@@ -172,7 +172,11 @@ worse than one that says which:
   create one at all — the same missing-capability shape as the bit above, one step worse. git reports
   ` T`, a typechange against the worktree; the index we write records mode 40960 and agrees with `HEAD`,
   so the disagreement is on disk only. Counted, reported by `gitco`, and pinned by a test whose fixture
-  contains a symlink and asserts that it does.
+  contains a symlink and asserts that it does. **This one is a decision rather than work**, and is filed
+  as [0137](../../issues/system/open/0137-a-symlink-capability-needs-a-confinement-rule-before-an-implementation.md):
+  a symlink is the one filesystem object whose contents are a path, every confinement rule this system
+  has is expressed as a path, and the resolution happens below us — so the capability cannot be added
+  without first saying what a target is allowed to name.
 - **A gitlink checks out as the empty directory git leaves, and no submodule is fetched.** Mode `160000`
   names a commit that lives in the submodule's own repository, so it is not here and never will be.
   `checkout` makes the directory and records the gitlink in the index, which is what git does for a
