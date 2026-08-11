@@ -1,0 +1,11 @@
+// expect: answers f = 1
+// why: the arm that matches is the only one that runs, whatever follows it
+export i32 f() {
+  i32 n = 0;
+  switch (1) {
+    case 1: { n = n + 1; }
+    case 2: { n = n + 10; }
+    default: { n = n + 100; }
+  }
+  return n;
+}

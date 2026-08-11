@@ -5,6 +5,7 @@ record of what has been fixed and why.
 
 | # | summary | kind | symptom |
 |---|---|---|---|
+| [0131](open/0131-two-suite-runs-two-different-one-off-failures.md) | the full suite fails one test per run, a different one each time | bug | wrong answer |
 | [0130](open/0130-local-outside-a-function-is-fatal-in-bash-and-a-diagnostic-here.md) | `local` outside a function is fatal in bash and a diagnostic here — a failed special builtin should end the script | bug | wrong answer |
 | [0129](open/0129-every-built-executable-carries-a-floor-that-has-grown-seven-fold.md) | every built executable carries a floor that has grown seven-fold — a `wc` is 347 KiB | performance | no error |
 | [0128](open/0128-the-native-half-of-the-two-host-differential-times-out-under-load.md) | the native half of the two-host differential times out under load, and passes alone | bug | wrong answer |
@@ -28,7 +29,7 @@ own roadmap lives in its README. This tracker is for what crosses those lines.
 
 ## Closed
 
-142 issues, 126 closed.
+143 issues, 126 closed.
 
 The count is checked against the directory by `compiler/wacSpec.test.ts`, which reads both
 trackers. It did not read this one until 2026-08-09, and the first thing it found was
