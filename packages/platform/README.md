@@ -11,10 +11,15 @@ deno task app packages/platform/example/wc.wac --allow-read -- README.md
 **builds and runs** — a shortcut rather than a second runtime.
 
 This document is long because the surface is. If you are here to **write a program**, the next
-section is the whole of what you need: what a capability world is, and the table of what a
-program may ask for. If you are here to **ship one**, skip to *Building an executable*. If
-something is behaving differently on one host than another, *Calls are tickets* and *The
-browser* are where the surprises live.
+section is the whole of what you need: what a capability world is, then the table of what a program
+may ask for, then one family per subsection — [what a failure looks like](#when-a-capability-fails),
+[output](#output-exact-bytes-and-lines-about-the-program),
+[reading a stream](#reading-a-stream-rather-than-the-whole-file),
+[files](#files-and-directories), [sockets](#sockets),
+[children](#children-inside-this-program-and-outside-it). If you are here to **ship one**, skip to
+[*Building an executable*](#building-an-executable). If something is behaving differently on one host
+than another, [*Calls are tickets*](#calls-are-tickets) and [*The browser*](#the-browser) are where
+the surprises live.
 
 A package of [wac-mono](../../README.md) — see the root README for layout and how to run
 things. All commands run from the repo root.
@@ -22,7 +27,7 @@ things. All commands run from the repo root.
 ## The idea
 
 wac has no ambient access. There is no import a program can name, no global reaching
-outside, so an application can only touch what it is handed. The two structs in
+outside, so an application can only touch what it is handed. The capability structs in
 `src/platform.wac` are therefore not a convention but a **complete statement of what a
 program can do**:
 
@@ -36,19 +41,12 @@ the filesystem. Nothing else is reachable, because there is nowhere else to reac
 An interactive browser application exports `page(Core, Cli, Page)` instead, and the entry
 point's name is how a program says which kind it is. A module may export both.
 
-It was a struct with `start` and `run` at first. That bought nothing: a program that runs
-once and exits has no state to keep between calls, so the struct was ceremony around a
-function. The line that stood here for months went on: "a *service*, called repeatedly,
-will want one — and can have it then." **That has now been tried, and it was wrong about
-where the difficulty lives.** `harness/appRun.ts` runs one program twelve times in a single
-worker, and `main` needed no `start`/`run` split to allow it: wac has no module-level
-variables, so a program's whole state is reachable from `main`'s frame and is gone when it
-returns — calling it again cannot carry anything across. What *did* have to change was on
-the host side, and is described under [Writing one](#writing-one).
-
 `Core` is what every host provides — clock, monotonic clock, secure random, output. `Cli`
 is arguments, the standard streams and the filesystem, which a browser has none of; that
 split is why it is a second struct rather than more fields.
+
+`Page` is a third profile and only a browser provides it. A page capability that pretended to
+work in a terminal would be a lie, which is the whole reason these are separate structs.
 
 | | capability | grant |
 |---|---|---|
@@ -67,6 +65,12 @@ split is why it is a second struct rather than more fields.
 | | `pushChild`, `popChild` | — (a child *inside* this program, with this program's authority) |
 | `Page` | `render`, `setText`, `setValue`, `setStyle`, `getValue`, `on`, `nextEvent`, `title` | browser only |
 | | `drawPixels`, `nextFile`, `offerDownload` | browser only |
+
+`packages/box` is the widest consumer of all this — 65 applets in one program, and the differential
+suite that keeps them honest. The rest of this section is one subsection per family of capability,
+and the argument for why each is the shape it is.
+
+### When a capability fails
 
 **Anything that can fail says why.** `writeFile`, `mkdir`, `remove` and `rename` answer a **`Change`**:
 a fault category and the host's own words. A `bool` could report that a write failed and never what
@@ -129,44 +133,13 @@ repo of its own, and two declarations of `Read` can never be converted into each
 import { Read } from core;
 ```
 
+### Output: exact bytes, and lines about the program
+
 `write` keeps its `bool` and has `outputError()` beside it, because its two outcomes are *not* the
 same shape of question: a reader that went away is a normal ending a filter should exit 0 on, and a
-failed write is not. That one is a companion on purpose rather than by inertia.
-
-`stat` follows symbolic links, so it describes what a name leads to; `linkStat` describes the name.
-Both questions are real — `find` wants the first, `tar` wants the second — and a flag would have made
-every caller decide something most of them do not care about.
-
-`Stat` carries a **fault**, and the split is narrow on purpose: *absence is an answer*, so a path with
-nothing at it gives `exists = false` with `FAULT_NONE`. A fault means the question could not be
-*reached*: `FAULT_DENIED` where the world has no read capability, and `FAULT_NOT_REPRESENTABLE` for a
-name the host cannot express. Before it, both arrived as `exists = false` — a program with no read grant
-was told a file was not there, which it had no way to tell from a file it was not allowed to look at.
-Callers read `st.answered()` before trusting `exists`, and `faultWords(fault)` turns the category into
-the words the real tools use. wac-mono 0065.
-
-The one fault that arrives with the facts *intact* is `FAULT_NOT_A_DIR` — `f/g` where `f` is a file.
-`exists = false` is exactly right there, so `st.answered()` stays true and `test -e f/g` is plain false
-as bash has it; the category rides along only so that the three tools which report an absence to a
-person can say which kind it was. `ls f/g`, `cd f/g` and `stat f/g` said "No such file or directory"
-where GNU says "Not a directory" for as long as it was thrown away, and every other operation printed
-the host's errno — `Not a directory (os error 20)`, with the resolved *host* path after it for the ones
-that mutate. `st.words(otherwise)` is the lookup; `packages/box/test/notdir.test.ts` compares the whole
-family against GNU on a host mount, in an image, and under both hosts.
-
-`pushChild` and `popChild` need no grant because they add no authority: they change what `arg`,
-`readChunk`, `write`, `log`, `warn` and every path mean *for the program itself*, between two
-calls it makes. A shell uses them to run a program and keep its output — see
-[`example/inside.wac`](example/inside.wac), and `packages/box`'s applets running inside
-`packages/sh`. They are emphatically **not** isolation: the child is the same wasm instance with
-the same grants, and the thing with a real boundary is `spawn`.
-
-`waitAny` is in `Core` because it grants nothing — it cannot start work, only notice that some
-has finished — and `spawn` needs no grant of its own for the same reason the child's grants are
-an argument to it: what a child may do is a subset of what its parent already had.
-
-`Page` is a third profile and only a browser provides it. A page capability that pretended to
-work in a terminal would be a lie, which is the whole reason these are separate structs.
+failed write is not. That one is a companion on purpose rather than by inertia — the
+distinction the `inputError` above failed, since asking after the fact is not the same as being
+unable to ignore it.
 
 **`readStdin`, `write` and `writeErr` need no grant**, for the same reason `arg` does not: what the
 user pipes in and what the program prints are the user's own doing, not a reach into
@@ -182,6 +155,8 @@ client could reproduce standard output exactly and standard error not at all, si
 `warn` inserts a newline at every packet boundary and buffering to the end loses the order. Both
 `packages/sh` and `packages/ssh` used to flush the whole error stream at the end with its trailing
 newline shaved off by hand; both now write it when it happens. Issue 0014.
+
+### Reading a stream rather than the whole file
 
 **`openInput` and `readChunk` are the incremental half.** Everything else answers with the
 whole of something, which is fine for a filename and wrong for a pipe: `cat` of a large
@@ -216,9 +191,49 @@ What genuinely cannot stream is what has to see everything before it can answer 
 `sort`, `tac`. Each applet's header says which it is and why, which is the copy that stays
 current; an enumeration here went stale twice.
 
+### Files and directories
+
+`stat` follows symbolic links, so it describes what a name leads to; `linkStat` describes the name.
+Both questions are real — `find` wants the first, `tar` wants the second — and a flag would have made
+every caller decide something most of them do not care about.
+
+`Stat` carries a **fault**, and the split is narrow on purpose: *absence is an answer*, so a path with
+nothing at it gives `exists = false` with `FAULT_NONE`. A fault means the question could not be
+*reached*: `FAULT_DENIED` where the world has no read capability, and `FAULT_NOT_REPRESENTABLE` for a
+name the host cannot express. Before it, both arrived as `exists = false` — a program with no read grant
+was told a file was not there, which it had no way to tell from a file it was not allowed to look at.
+Callers read `st.answered()` before trusting `exists`, and `faultWords(fault)` turns the category into
+the words the real tools use. wac-mono 0065.
+
+The one fault that arrives with the facts *intact* is `FAULT_NOT_A_DIR` — `f/g` where `f` is a file.
+`exists = false` is exactly right there, so `st.answered()` stays true and `test -e f/g` is plain false
+as bash has it; the category rides along only so that the three tools which report an absence to a
+person can say which kind it was. `ls f/g`, `cd f/g` and `stat f/g` said "No such file or directory"
+where GNU says "Not a directory" for as long as it was thrown away, and every other operation printed
+the host's errno — `Not a directory (os error 20)`, with the resolved *host* path after it for the ones
+that mutate. `st.words(otherwise)` is the lookup; `packages/box/test/notdir.test.ts` compares the whole
+family against GNU on a host mount, in an image, and under both hosts.
+
+**`mkdir`, `remove` and `rename` are one tier, not three conveniences.** `writeFile`
+alone cannot express a safe update: it truncates and then fills, so a reader arriving in
+between sees a half-written file and a crash leaves one. With `rename` an application can
+write beside its target and move it into place, which on every filesystem this runs on is
+atomic — `packages/box`'s `lib/safe.wac` is that, in fifteen lines, and `cp` uses it. Both
+recursive forms (`mkdir -p`, `rm -r`) have to be asked for, because the recursive form is
+the one that can destroy something it was not pointed at.
+
+What is still missing is metadata: there is no way to set a modification time, so `touch`
+creates an empty file and leaves an existing one exactly alone rather than rewriting it to
+move its mtime. The applet says so instead of pretending.
+
+`example/hexdump.wac` exercises the difference: `hexdump < file` reads standard input and
+writes exact bytes, and `hexdump <dir>` lists a directory through `stat` and `readDir`.
+
+### Sockets
+
 **Sockets are handles, not a current-socket.** `openInput` and `openOutput` are
 one-at-a-time because the transforms take `fn[u8[]()]`, which has no parameter to carry a
-a transform expects; an `i32` in a struct has no such problem, and a server needs a
+handle into — that is the shape a transform expects; an `i32` in a struct has no such problem, and a server needs a
 listener and a connection open at the same time, so a current-socket could not express it.
 
 **`listen` takes the address to bind, and it is not optional.** It took a port alone until issue
@@ -252,23 +267,30 @@ The payoff is that `packages/server` and `packages/http` needed no changes at al
 count out — so `box serve` is a thirty-line socket loop and nothing in that package knows
 a socket exists.
 
-**`mkdir`, `remove` and `rename` are one tier, not three conveniences.** `writeFile`
-alone cannot express a safe update: it truncates and then fills, so a reader arriving in
-between sees a half-written file and a crash leaves one. With `rename` an application can
-write beside its target and move it into place, which on every filesystem this runs on is
-atomic — `packages/box`'s `lib/safe.wac` is that, in fifteen lines, and `cp` uses it. Both
-recursive forms (`mkdir -p`, `rm -r`) have to be asked for, because the recursive form is
-the one that can destroy something it was not pointed at.
+### Children, inside this program and outside it
 
-What is still missing is metadata: there is no way to set a modification time, so `touch`
-creates an empty file and leaves an existing one exactly alone rather than rewriting it to
-move its mtime. The applet says so instead of pretending.
+`pushChild` and `popChild` need no grant because they add no authority: they change what `arg`,
+`readChunk`, `write`, `log`, `warn` and every path mean *for the program itself*, between two
+calls it makes. A shell uses them to run a program and keep its output — see
+[`example/inside.wac`](example/inside.wac), and `packages/box`'s applets running inside
+`packages/sh`. They are emphatically **not** isolation: the child is the same wasm instance with
+the same grants, and the thing with a real boundary is `spawn`.
 
-`example/hexdump.wac` exercises the difference: `hexdump < file` reads standard input and
-writes exact bytes, and `hexdump <dir>` lists a directory through `stat` and `readDir`.
+`waitAny` is in `Core` because it grants nothing — it cannot start work, only notice that some
+has finished — and `spawn` needs no grant of its own for the same reason the child's grants are
+an argument to it: what a child may do is a subset of what its parent already had.
 
-`packages/box` is the widest consumer of all this — forty-two applets in one program, and
-the differential suite that keeps them honest.
+### Why the entry point is a function, not a session
+
+It was a struct with `start` and `run` at first. That bought nothing: a program that runs
+once and exits has no state to keep between calls, so the struct was ceremony around a
+function. The line that stood here for months went on: "a *service*, called repeatedly,
+will want one — and can have it then." **That has now been tried, and it was wrong about
+where the difficulty lives.** `harness/appRun.ts` runs one program twelve times in a single
+worker, and `main` needed no `start`/`run` split to allow it: wac has no module-level
+variables, so a program's whole state is reachable from `main`'s frame and is gone when it
+returns — calling it again cannot carry anything across. What *did* have to change was on
+the host side, and is described under [Writing one](#writing-one).
 
 ## Building an executable
 
@@ -583,7 +605,7 @@ of programs and nothing to have put one there. So a page could spawn and had not
 Every built program already carries its own bundle: the launcher holds it as a string, because that is
 how it started the program. `spawnSelf(args, grants)` runs it again with different arguments, needing
 no file, no path and no grant of its own — and a program whose `main` dispatches on argv is therefore
-sixty programs. That is what `packages/box` is: `box sort` is `box` reading its first argument.
+65 programs. That is what `packages/box` is: `box sort` is `box` reading its first argument.
 
 ```wac
 Child kid = cli.spawnSelf(string[]("sort", "-n"), GRANT_READ).wait();
@@ -943,10 +965,6 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
 
 ## What is not here yet
 
-- **`spawn` on Node.** Deno only. `host/children.ts` takes `startWorld` as a parameter
-  precisely so Node can follow without editing it, and nobody has written that side.
-  Browser is a separate question: `Worker` exists there, but a page has no filesystem to
-  read a bundle from, so what `spawn` should even take is undecided.
 - **A service shape.** `main(Core, Cli) -> i32` is the CLI application and
   `page(Core, Cli, Page) -> i32` is the interactive one, and each *call* runs a program and
   returns — a worker will now serve several such calls, but that is the launcher's business
@@ -967,6 +985,20 @@ have a seam rather than a mode, but the seam is in rather than retrofitted.
   transitive, and the interesting artefact turned out to be the other one, where a child is
   a wac program with grants its parent chose.
 
-Three things this section used to list are done: the browser provider (`--target browser`, and it
+Four things this section used to list are done: the browser provider (`--target browser`, and it
 now runs in one, see `test/browser_live.test.ts`), outbound network (`connect`/`listen`/`accept`),
-and **the fourth host** — see below.
+**the fourth host** — see below — and **`spawn` on every host**.
+
+That last one is worth spelling out, because this section described the shape of the fix and then
+kept claiming the fix had not happened. It read: "`spawn` on Node. Deno only. `host/children.ts`
+takes `startWorld` as a parameter precisely so Node can follow without editing it, and nobody has
+written that side. Browser is a separate question: `Worker` exists there, but a page has no
+filesystem to read a bundle from, so what `spawn` should even take is undecided." Somebody wrote
+that side. All three JavaScript hosts now spawn through the one `spawnChild`, differing only in how
+a worker is made — `blobWorker` for Deno and the browser, an `eval`'d source string for Node — and
+`test/spawn.test.ts`'s "Node spawns the same way, from the same code" builds a runner and a child
+for Node and runs them. The browser question was answered rather than left undecided, and the answer
+was **`spawnSelf`**: a tab still has no directory of bundles, so a program spawns *itself* with
+different arguments — see [Spawning](#spawning) above. What is left of it is not a capability but a
+filesystem: no page has a directory of worker bundles, so a `$WACPATH` program off a path does not
+run in a tab. Nobody has asked for one.

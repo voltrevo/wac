@@ -70,7 +70,7 @@ in `box sha256sum`.
 
 `packages/sh` with a keyboard in front of it: quoting, parameter expansion, command substitution,
 arithmetic, pipelines, redirection, `&&`/`||`, `if`/`while`/`for`/`case`, functions, subshells,
-globbing, the built-ins including `cd`, `pwd`, `ls`, `mkdir` and `rm` — and all sixty applets from
+globbing, the built-ins including `cd`, `pwd`, `ls`, `mkdir` and `rm` — and all 65 applets from
 this package. Up and Down walk a 64-entry history; `clear` empties the screen.
 
 It opens on a session rather than on an empty prompt: three commands run through the same
@@ -118,5 +118,5 @@ that, in a real Chromium.
 
 ## The rest of `box`
 
-These two are the browser pages. `box` itself is a single executable with sixty-odd applets in
+These two are the browser pages. `box` itself is a single executable with 65 applets in
 `../src/applets/` — see [`../README.md`](../README.md).
