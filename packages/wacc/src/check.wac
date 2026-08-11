@@ -837,24 +837,36 @@ export struct C {
   string[] renameTo;
   i32 renameCount;
 
-  C create(u8[] src, i32[] toks, i32 capacity) {
-    return C(src, toks, string[capacity](), string[capacity](), bool[capacity](),
-             bool[capacity](), 0,
-             string[capacity](), 0,
-             string[capacity](), i32[capacity](), i32[capacity](), 0,
+  /**
+   * Two capacities, because the tables here hold two different things.
+   *
+   * `locals` sizes the four that are *per function* — the name table and what goes beside it, which
+   * `clearScope` empties between functions, so it only ever holds one body's worth. `decls` sizes
+   * everything else: structs, fields, methods, variants, functions, which accumulate across every
+   * file the entry imports.
+   *
+   * They were one number, and it was the entry file's token count. Sizing both by the closure's
+   * tokens fixed the overflow (`issues/lang/0098`) and cost 230 MB, because a token is the wrong
+   * unit for a table that holds declarations — `issues/lang/0099`.
+   */
+  C create(u8[] src, i32[] toks, i32 locals, i32 decls) {
+    return C(src, toks, string[locals](), string[locals](), bool[locals](),
+             bool[locals](), 0,
+             string[decls](), 0,
+             string[decls](), i32[decls](), i32[decls](), 0,
              0,
-             string[capacity](), string[capacity](),
-             string[capacity](), i32[capacity](), i32[capacity](), 0, bool[capacity](), 0,
-             string[capacity](), string[capacity](), bool[capacity](), bool[capacity](),
-             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](), 0, 0,
-             string[capacity](), string[capacity](), string[capacity](), bool[capacity](), 0,
-             string[capacity](), string[capacity](), i32[capacity](), i32[capacity](),
-             string[capacity](), bool[capacity](), string[capacity](), i32[capacity](),
-             i32[capacity](), 0, 0, 0,
+             string[decls](), string[decls](),
+             string[decls](), i32[decls](), i32[decls](), 0, bool[decls](), 0,
+             string[decls](), string[decls](), bool[decls](), bool[decls](),
+             string[decls](), string[decls](), i32[decls](), i32[decls](), 0, 0,
+             string[decls](), string[decls](), string[decls](), bool[decls](), 0,
+             string[decls](), string[decls](), i32[decls](), i32[decls](),
+             string[decls](), bool[decls](), string[decls](), i32[decls](),
+             i32[decls](), 0, 0, 0,
              0, "",
-             i32[capacity * 3](), string[capacity](), 0, false, false, string[16](), 0, "",
-             string[capacity](), string[capacity](), i32[capacity](), bool[capacity](), 0,
-             string[capacity](), string[capacity](), 0);
+             i32[decls * 3](), string[decls](), 0, false, false, string[16](), 0, "",
+             string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
+             string[decls](), string[decls](), 0);
   }
 
   /** The name this file's import gave to a type the declaring file calls something else. */
@@ -5318,7 +5330,7 @@ void checkDuplicates(C c, Program prog) {
 }
 
 export i32[] checkProgram(u8[] src, i32[] toks, i32 tokenCount, Program prog) {
-  C c = C.create(src, toks, tokenCount);
+  C c = C.create(src, toks, tokenCount, tokenCount);
   checkModule(c, prog);
   return errorsOf(c);
 }

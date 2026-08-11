@@ -12,7 +12,7 @@ import { Program } from "./ast.wac";
 import { Pr, printProgram } from "./print.wac";
 import { C, checkModule, checkProgram, declareModule, errorsOf, notesOf,
          errNoSuchExport } from "./check.wac";
-import { emitModule, emitBlocked, emitNames, emitLinked, blockedLinked, namesLinked,
+import { emitModule, emitBlocked, emitNames, emitLinked, emitLinkedChecked, blockedLinked, namesLinked,
          sourceOf, tokenTextOf, resolveImport, numText } from "./emit.wac";
 
 /** Lex, parse, and render the AST in canonical form. */
@@ -106,6 +106,17 @@ export string names(u8[] src) {
  */
 export u8[] emitFiles(string[] paths, string[] sources, string entry) {
   return emitLinked(paths, sources, entry);
+}
+
+/**
+ * The same module with `--checked` arithmetic: `+`, `-` and `*` on an integer trap where the value
+ * does not fit, instead of wrapping.
+ *
+ * A separate entry point rather than a parameter, because every existing caller wants the default
+ * and the flag is the *build's* — whole-module, as the reference has it.
+ */
+export u8[] emitFilesChecked(string[] paths, string[] sources, string entry) {
+  return emitLinkedChecked(paths, sources, entry);
 }
 
 /** Why a linked module was not emitted in full, or `""`. */
@@ -224,25 +235,62 @@ export i32[] dumpTypeErrorsFiles(string[] paths, string[] sources, string entry)
 }
 
 /** The checker, run over an import graph, with its tables still in hand for whatever wants them. */
+/**
+ * How many rows a file will add to the checker's module-wide tables.
+ *
+ * One per declaration, plus what a struct or an enum brings with it: its fields, its methods, its
+ * variants and each variant's payload. Counted from the parse rather than estimated from the text,
+ * because the whole point of `issues/lang/0099` is that a guess in either direction is a defect —
+ * too small overflows silently, too large costs hundreds of megabytes. The `+ 8` is slack for the
+ * rows a declaration adds beside itself, like an enum's tag.
+ */
+i32 declarationsIn(u8[] src, Lexed lexed, Program prog) {
+  i32 n = 8;
+  for (i32 d = 0; d < prog.decls.len(); d++) {
+    n = n + 8;
+    match (prog.decls[d].kind) {
+      case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
+        n = n + fields.len() + methods.len() * 2 + typeParams.len();
+        for (i32 m = 0; m < methods.len(); m++) { n = n + methods[m].params.len(); }
+      }
+      case EnumDecl(nameTok, variants, exported, methods, typeParams): {
+        n = n + variants.len() * 2 + methods.len() * 2 + typeParams.len();
+        for (i32 v = 0; v < variants.len(); v++) { n = n + variants[v].fields.len(); }
+        for (i32 m = 0; m < methods.len(); m++) { n = n + methods[m].params.len(); }
+      }
+      case Func(nameTok, returnType, params, body, exported, typeParams): {
+        n = n + params.len() + typeParams.len();
+      }
+      else: { }
+    }
+  }
+  return n;
+}
+
 C checkFiles(string[] paths, string[] sources, string entry) {
   u8[] esrc = sourceOf(paths, sources, entry).toBytes();
   Lexed elexed = lex(esrc);
   P ep = P.create(esrc, elexed.tokens, elexed.tokenCount);
   Program eprog = parseProgram(ep);
-  // **Sized for what will go in it, not for the file it starts from.** Every table in `C` is
-  // `capacity` long, and the capacity was the *entry's* token count — while the loop below fills it
-  // with the declarations of every file the entry imports. A small file with a large closure
-  // therefore ran out of room silently: `packages/sh/src/sh.wac` is a hundred lines and pulls in
-  // `exec.wac`, so `Shell`'s later fields were never registered and `sh.externalSpawnable = true`
-  // came back as *no such field* — a false alarm, which is the one direction this package treats as
-  // absolute. Counted by lexing the contributors first; they are lexed again below, which is a few
-  // milliseconds against a wrong answer. `issues/lang/0098`.
-  i32 capacity = elexed.tokenCount;
+  // **Sized for what will go in it, and in the unit it goes in.** The tables here hold two kinds of
+  // thing: the name table is per *function* and `clearScope` empties it between them, while structs,
+  // fields, methods, variants and functions accumulate across every file the entry imports. So the
+  // first is the entry's own token count — only its bodies are walked — and the second is a count of
+  // the declarations each contributing file actually contributes.
+  //
+  // It was one number, and it was the entry's tokens; a small file with a large closure ran out of
+  // room silently and answered *no such field* about correct code (`issues/lang/0098`). Sizing both
+  // by the closure's *tokens* fixed that and cost 230 MB of peak resident set, because a token is
+  // the wrong unit for a table of declarations (`issues/lang/0099`).
+  i32 declCap = declarationsIn(esrc, elexed, eprog);
   for (i32 i = 0; i < paths.len(); i++) {
     if (paths[i] == entry) { continue; }
-    capacity = capacity + lex(sources[i].toBytes()).tokenCount;
+    u8[] csrc = sources[i].toBytes();
+    Lexed clexed = lex(csrc);
+    P cp = P.create(csrc, clexed.tokens, clexed.tokenCount);
+    declCap = declCap + declarationsIn(csrc, clexed, parseProgram(cp));
   }
-  C c = C.create(esrc, elexed.tokens, capacity);
+  C c = C.create(esrc, elexed.tokens, elexed.tokenCount, declCap);
 
   // **Which names, and from which file.** Filtering by name alone is not enough: `rlp.wac` exports a
   // `decode` and so does `codec/src/hex.wac`, and a closure holding both let the wrong one answer —

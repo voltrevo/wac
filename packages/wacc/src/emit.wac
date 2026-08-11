@@ -1285,6 +1285,14 @@ export struct Env {
   /** The reason the last `canEmit` gave, which is how `settleEmittable` learns it. */
   string lastWhy;
 
+  /**
+   * `--checked`: add/sub/mul trap instead of wrapping.
+   *
+   * Whole-module, as the reference has it — the flag is the build's, not a type's — and off by
+   * default, where the bytes must be exactly what they were.
+   */
+  bool checked;
+
   Env create() {
     return Env(string[2048](), string[2048](), 0, 0, 0, -1, -1, string[1024](), 0, string[4096](), 0,
                string[256](), string[256](), 0, "", "", string[64](), 0, string[512](), string[512](), 0, false,
@@ -1298,7 +1306,7 @@ export struct Env {
                string[8192](), i32[8192](), string[8192](), 0,
                string[2048](), string[2048](), i32[2048](), i32[2048](), i32[2048](), 0, false, false, "",
                string[1024](), i32[1024](), null, false, string[4096](),
-               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "");
+               string[32](), 0, Ty?[16384](), string[512](), string[16384](), "", false);
   }
 
   /** Which linked file a line belongs to; 0 when nothing was linked. */
@@ -1831,15 +1839,24 @@ bool grewTypesWhileEmitting(u8[] src, i32 entryDecls, i32[] starts, i32[] edges,
  * is the same reason the reference takes a map rather than a directory. A path it names and the
  * caller did not supply is a bare module rather than a wrong one.
  */
+/** `--checked`: the same module with trapping arithmetic. */
+export u8[] emitLinkedChecked(string[] paths, string[] sources, string entry) {
+  return emitLinkedWith(paths, sources, entry, true);
+}
+
 export u8[] emitLinked(string[] paths, string[] sources, string entry) {
+  return emitLinkedWith(paths, sources, entry, false);
+}
+
+u8[] emitLinkedWith(string[] paths, string[] sources, string entry, bool checked) {
   i32[] starts = i32[512]();
   i32[] edges = i32[4096]();
   string[] names = string[4096]();
   string[] filePaths = string[512]();
   string blob = linkFiles(paths, sources, entry, starts, edges, names, filePaths);
   if (blob == "") { return bareModule(); }
-  return emitModuleOf(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges, names,
-                      filePaths);
+  return emitModuleOfWith(blob.toBytes(), declCountOf(sourceOf(paths, sources, entry)), starts, edges,
+                          names, filePaths, checked);
 }
 
 /** A module with nothing in it, for the cases where emitting anything would be a guess. */
@@ -1894,11 +1911,17 @@ void emitStructFields(B types, Env env, string owner) {
 
 u8[] emitModuleOf(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
                   string[] filePaths) {
+  return emitModuleOfWith(src, entryDecls, starts, edges, names, filePaths, false);
+}
+
+u8[] emitModuleOfWith(u8[] src, i32 entryDecls, i32[] starts, i32[] edges, string[] names,
+                      string[] filePaths, bool checked) {
   Lexed lexed = lex(src);
   P p = P.create(src, lexed.tokens, lexed.tokenCount);
   Program prog = parseProgram(p);
 
   Env env = Env.create();
+  env.checked = checked;
 
   // The file table first: every key handed out below is derived from it, and a registration made
   // before it is loaded would be scoped to file 0 whatever line it is on.
@@ -3466,7 +3489,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
         if (cases[i].value is null) { continue; }
         emitExprAt(fb, src, lexed, env, subject, st);
         emitExprAt(fb, src, lexed, env, cases[i].value!, st);
-        emitBinary(fb, kEq(), st);
+        emitBinary(fb, env, kEq(), st);
         fb.byte(4);
         fb.byte(64);
         env.depth = env.depth + 1;
@@ -3505,7 +3528,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.byte(32);
           fb.u32leb(at);
           if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), t);
+          emitBinary(fb, env, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), t);
           fb.byte(33);
           fb.u32leb(at);
         }
@@ -3532,7 +3555,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.u32leb(env.structType(ot4));
           fb.u32leb(slot4);
           if (valType(ft4) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), ft4);
+          emitBinary(fb, env, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), ft4);
           fb.byte(251);
           fb.u32leb(5);
           fb.u32leb(env.structType(ot4));
@@ -3554,7 +3577,7 @@ void emitStmt(B fb, u8[] src, Lexed lexed, Env env, Stmt s) {
           fb.byte(32); fb.u32leb(i4);
           emitArrayGet(fb, env, bt4);
           if (valType(et4) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-          emitBinary(fb, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), et4);
+          emitBinary(fb, env, lexed.tokens[op * tokenStride()] == kInc() ? kPlus() : kMinus(), et4);
           fb.byte(251);
           fb.u32leb(14);
           fb.u32leb(env.arrayType(bt4));
@@ -3635,17 +3658,17 @@ void emitCompound(B fb, Env env, i32 k, string t) {
   // **All eleven**, by name. Four of them were written as raw numbers 58 to 61, which covered the
   // arithmetic and silently ignored the bitwise ones — `result ^= x` emitted its two operands and no
   // operator, leaving a value on the stack that wasm noticed at the end of the function.
-  if (k == kPlusEq()) { emitBinary(fb, kPlus(), t); }
-  if (k == kMinusEq()) { emitBinary(fb, kMinus(), t); }
-  if (k == kStarEq()) { emitBinary(fb, kStar(), t); }
-  if (k == kSlashEq()) { emitBinary(fb, kSlash(), t); }
-  if (k == kPercentEq()) { emitBinary(fb, kPercent(), t); }
-  if (k == kAndEq()) { emitBinary(fb, kAnd(), t); }
-  if (k == kOrEq()) { emitBinary(fb, kOr(), t); }
-  if (k == kCaretEq()) { emitBinary(fb, kCaret(), t); }
-  if (k == kShlEq()) { emitBinary(fb, kShl(), t); }
-  if (k == kShrEq()) { emitBinary(fb, kShr(), t); }
-  if (k == kShrUEq()) { emitBinary(fb, kShrU(), t); }
+  if (k == kPlusEq()) { emitBinary(fb, env, kPlus(), t); }
+  if (k == kMinusEq()) { emitBinary(fb, env, kMinus(), t); }
+  if (k == kStarEq()) { emitBinary(fb, env, kStar(), t); }
+  if (k == kSlashEq()) { emitBinary(fb, env, kSlash(), t); }
+  if (k == kPercentEq()) { emitBinary(fb, env, kPercent(), t); }
+  if (k == kAndEq()) { emitBinary(fb, env, kAnd(), t); }
+  if (k == kOrEq()) { emitBinary(fb, env, kOr(), t); }
+  if (k == kCaretEq()) { emitBinary(fb, env, kCaret(), t); }
+  if (k == kShlEq()) { emitBinary(fb, env, kShl(), t); }
+  if (k == kShrEq()) { emitBinary(fb, env, kShr(), t); }
+  if (k == kShrUEq()) { emitBinary(fb, env, kShrU(), t); }
 }
 
 /**
@@ -3676,13 +3699,13 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
       fb.byte(32); fb.u32leb(at);
       if (prefix) {
         if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-        emitBinary(fb, kind, t);
+        emitBinary(fb, env, kind, t);
         fb.byte(34); fb.u32leb(at);        // local.tee — the new value is the answer
         return;
       }
       fb.byte(32); fb.u32leb(at);          // the old value stays underneath
       if (valType(t) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-      emitBinary(fb, kind, t);
+      emitBinary(fb, env, kind, t);
       fb.byte(33); fb.u32leb(at);
     }
     case LField(base, nameTok): {
@@ -3704,7 +3727,7 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
       fb.byte(32); fb.u32leb(b);
       fb.byte(251); fb.u32leb(2); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
       if (valType(ft) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-      emitBinary(fb, kind, ft);
+      emitBinary(fb, env, kind, ft);
       if (prefix) { fb.byte(34); fb.u32leb(v); }
       fb.byte(251); fb.u32leb(5); fb.u32leb(env.structType(ot)); fb.u32leb(slot);
       if (prefix) { fb.byte(32); fb.u32leb(v); }
@@ -3731,7 +3754,7 @@ void emitIncrExpr(B fb, u8[] src, Lexed lexed, Env env, Lvalue rawTarget, i32 op
       fb.byte(32); fb.u32leb(i);
       emitArrayGet(fb, env, bt);
       if (valType(et) == 126) { fb.byte(66); fb.i64leb(1); } else { fb.byte(65); fb.i32leb(1); }
-      emitBinary(fb, kind, et);
+      emitBinary(fb, env, kind, et);
       if (prefix) { fb.byte(34); fb.u32leb(v2); }
       fb.byte(251); fb.u32leb(14); fb.u32leb(env.arrayType(bt));
       if (prefix) { fb.byte(32); fb.u32leb(v2); }
@@ -3931,7 +3954,7 @@ void emitExprAt(B fb, u8[] src, Lexed lexed, Env env, Expr e, string want) {
       // is converted rather than assumed. `emitExprAt` only steers *literals*; a typed local ignores
       // it and arrives as itself.
       emitAt(fb, src, lexed, env, right, ot);
-      emitBinary(fb, k, ot);
+      emitBinary(fb, env, k, ot);
     }
     case Construct(ctype, args, named): {
       match (ctype.kind) {
@@ -4591,8 +4614,130 @@ string operandType(u8[] src, Lexed lexed, Env env, Expr left, Expr right) {
  * comparisons each have a `_u` twin that an unsigned type would want instead, and choosing between
  * them is the first thing a second numeric type will need.
  */
-void emitBinary(B fb, i32 k, string t) {
+/** Whether this is an integer type, which is what `--checked` has anything to say about. */
+bool isIntType(string t) {
+  return t == "i32" || t == "u32" || t == "i64" || t == "u64";
+}
+
+/**
+ * A checked add, subtract or multiply: operands on the stack, result on the stack, `unreachable`
+ * where the value does not fit.
+ *
+ * The identities are the reference's (`compiler/wacEmitFunc.ts`), and so is the reasoning for each:
+ * add and sub test signs, a 32-bit multiply widens to 64 and range-checks, and a 64-bit multiply
+ * verifies by division because that is obviously correct. Two things in the last one are load-bearing
+ * and were learned there the hard way — the signed form guards `MIN / -1` separately, and the
+ * zero-divisor test is a *branch* rather than an `and`, since wasm evaluates both sides of an `and`
+ * and the division would trap on every `0 * x`.
+ *
+ * The scratch locals are per function and reused: a nested checked operation has finished with
+ * them by the time the outer one stores its operands.
+ */
+void emitCheckedArith(B fb, Env env, i32 k, string t) {
+  bool is64 = t == "i64" || t == "u64";
+  bool uns = t == "u32" || t == "u64";
+  string wide = is64 ? "i64" : "i32";
+  i32 a = env.scratchNamed("chkA", wide);
+  i32 b = env.scratchNamed("chkB", wide);
+  i32 sres = env.scratchNamed("chkS", wide);
+  i32 s64 = env.scratchNamed("chk64", "i64");
+
+  i32 xorOp = is64 ? 133 : 115;
+  i32 andOp = is64 ? 131 : 113;
+  i32 ltS = is64 ? 83 : 72;
+  i32 ltU = is64 ? 84 : 73;
+
+  fb.byte(33); fb.u32leb(b);                       // local.set b
+  fb.byte(33); fb.u32leb(a);                       // local.set a
+  fb.byte(32); fb.u32leb(a);
+  fb.byte(32); fb.u32leb(b);
+  if (k == kPlus()) { fb.byte(is64 ? 124 : 106); }
+  if (k == kMinus()) { fb.byte(is64 ? 125 : 107); }
+  if (k == kStar()) { fb.byte(is64 ? 126 : 108); }
+  fb.byte(33); fb.u32leb(sres);                    // s = a op b, stashed rather than left
+
+  if (k == kStar()) {
+    if (!is64) {
+      // Redo the multiply at 64 bits and compare — exact, and no division.
+      fb.byte(32); fb.u32leb(a); fb.byte(uns ? 173 : 172);
+      fb.byte(32); fb.u32leb(b); fb.byte(uns ? 173 : 172);
+      fb.byte(126);                                // i64.mul
+      fb.byte(33); fb.u32leb(s64);
+      fb.byte(32); fb.u32leb(s64);
+      fb.byte(66); fb.i64leb(uns ? 4294967295 : 2147483647);
+      fb.byte(85);                                 // i64.gt_s
+      fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+      fb.byte(32); fb.u32leb(s64);
+      fb.byte(66); fb.i64leb(uns ? 0 : -2147483648);
+      fb.byte(83);                                 // i64.lt_s
+      fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+      fb.byte(32); fb.u32leb(sres);
+      return;
+    }
+    if (!uns) {
+      // `i64.div_s` traps on MIN / -1, so that pair is refused before the division below.
+      fb.byte(32); fb.u32leb(a); fb.byte(66); fb.i64leb(-1); fb.byte(81);
+      fb.byte(32); fb.u32leb(b); fb.byte(66); fb.i64leb(-9223372036854775808); fb.byte(81);
+      fb.byte(113);                                // i32.and — two i32 comparisons
+      fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+      fb.byte(32); fb.u32leb(b); fb.byte(66); fb.i64leb(-1); fb.byte(81);
+      fb.byte(32); fb.u32leb(a); fb.byte(66); fb.i64leb(-9223372036854775808); fb.byte(81);
+      fb.byte(113);
+      fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+    }
+    // A branch, not an `and`: the division traps on a zero divisor, and `and` evaluates both sides.
+    fb.byte(32); fb.u32leb(a);
+    fb.byte(80);                                   // i64.eqz
+    fb.byte(69);                                   // i32.eqz  — i.e. a != 0
+    fb.byte(4); fb.byte(64);
+    fb.byte(32); fb.u32leb(sres);
+    fb.byte(32); fb.u32leb(a);
+    fb.byte(uns ? 128 : 127);                      // i64.div_u / i64.div_s
+    fb.byte(32); fb.u32leb(b);
+    fb.byte(82);                                   // i64.ne
+    fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+    fb.byte(11);
+    fb.byte(32); fb.u32leb(sres);
+    return;
+  }
+
+  if (uns) {
+    // Unsigned: an add overflows exactly when the sum is below an operand, a subtract when the
+    // subtrahend exceeds the minuend.
+    if (k == kPlus()) {
+      fb.byte(32); fb.u32leb(sres); fb.byte(32); fb.u32leb(a); fb.byte(ltU);
+    } else {
+      fb.byte(32); fb.u32leb(a); fb.byte(32); fb.u32leb(b); fb.byte(ltU);
+    }
+    fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+    fb.byte(32); fb.u32leb(sres);
+    return;
+  }
+  // Signed: an add overflows when the operands agree in sign and the sum differs; a subtract when
+  // they differ in sign and the result differs from the minuend.
+  fb.byte(32); fb.u32leb(a);
+  fb.byte(32); fb.u32leb(k == kPlus() ? sres : b);
+  fb.byte(xorOp);
+  fb.byte(32); fb.u32leb(k == kPlus() ? b : a);
+  fb.byte(32); fb.u32leb(sres);
+  fb.byte(xorOp);
+  fb.byte(andOp);
+  if (is64) { fb.byte(66); fb.i64leb(0); } else { fb.byte(65); fb.i32leb(0); }
+  fb.byte(ltS);
+  fb.byte(4); fb.byte(64); fb.byte(0); fb.byte(11);
+  fb.byte(32); fb.u32leb(sres);
+}
+
+void emitBinary(B fb, Env env, i32 k, string t) {
   bool u = isUnsigned(t);
+  // **`--checked`**: `+`, `-` and `*` on an integer trap instead of wrapping. Everything else is
+  // unchanged, and with the flag off not a byte moves — the instrument must not disturb what it is
+  // not measuring, which the test asserts by comparing the two builds.
+  if (env.checked && isIntType(t) &&
+      (k == kPlus() || k == kMinus() || k == kStar())) {
+    emitCheckedArith(fb, env, k, t);
+    return;
+  }
   if (isFloat(t)) {
     // The float opcodes are a block of their own rather than a suffix on the integer ones, and `f32`
     // and `f64` are two blocks 20 apart. Neither has a signed/unsigned distinction: a float has one
