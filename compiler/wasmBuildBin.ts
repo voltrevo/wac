@@ -780,7 +780,7 @@ function buildTypeCtxFull(
   // Bind helpers come after the builtin helpers
   const partialCtx = { ...base, orderedArrayElems, orderedSigs, helperIdx };
   const { structs: bindStructs, enums: bindEnums } = reachableBinds(result, partialCtx);
-  const bindAlias = bindAliases(bindStructs, bindEnums);
+  const bindAlias = bindTypeKeys(bindStructs, bindEnums);
   const bindBaseIdx = base.funcBase + numUserFuncs + helpers.length;
   const bindHelpers = buildBindHelpers(
     result, { ...partialCtx, bindStructs, bindEnums, bindAlias, bindBaseIdx });
@@ -1171,7 +1171,7 @@ export function bindName(structName: string): string {
  * struct rather than of the order they were met in, which is what the manifest needs — it has no
  * other way to tell two structs apart, so a counter would leave it ambiguous in a new way.
  */
-function bindAliases(structs: StructEntry[], enums: EnumEntry[]): Map<number, string> {
+export function bindTypeKeys(structs: StructEntry[], enums: EnumEntry[]): Map<number, string> {
   const alias = new Map<number, string>();
   // Structs and enums are grouped apart because their helpers are prefixed apart: a struct `S` is
   // `$bind$s_S_*` and an enum `S` is `$bind$e_S_*`, so those two never collide with each other.
@@ -1185,11 +1185,11 @@ function bindAliases(structs: StructEntry[], enums: EnumEntry[]): Map<number, st
       const at = byName.get(k);
       if (at) at.push(g); else byName.set(k, [g]);
     }
-    for (const [bare, members] of byName) {
+    for (const members of byName.values()) {
       for (const m of members) {
         alias.set(m.idx, members.length === 1
-          ? bare
-          : bindName(`${m.name}__${m.file.replace(/\.wac$/, "").replace(/[^A-Za-z0-9]/g, "_")}`));
+          ? m.name
+          : `${m.name}__${m.file.replace(/\.wac$/, "").replace(/[^A-Za-z0-9]/g, "_")}`);
       }
     }
   }
@@ -1429,7 +1429,7 @@ function buildBindHelpers(
   for (const s of ctx.bindStructs) {
     const fields = ctx.structFields.get(`@${s.typeIndex}`) ?? [];
     const sref = [0x64, ...sleb(s.typeIndex)];
-    const safe = ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name);
+    const safe = bindName(ctx.bindAlias.get(s.typeIndex) ?? s.name);
 
     // `new`: every field in declaration order, inherited ones first.
     const newParams: number[] = [];
@@ -1475,7 +1475,7 @@ function buildBindHelpers(
   for (const en of ctx.bindEnums) {
     const baseIdx = en.base.typeIndex;
     const bref = [0x64, ...sleb(baseIdx)];
-    const eSafe = ctx.bindAlias.get(en.base.typeIndex) ?? bindName(en.name);
+    const eSafe = bindName(ctx.bindAlias.get(en.base.typeIndex) ?? en.name);
     const tagField = (ctx.structFields.get(`@${baseIdx}`) ?? [])
       .find((f) => f.name === ENUM_TAG_FIELD);
     if (!tagField) continue;
@@ -2335,7 +2335,7 @@ function buildExportSection(result: ResolveResult, ctx: WasmTypeCtxFull): number
         const isStatic = fe.origin.kind === "method" && !fe.origin.decl.hasThis;
         const prefix = isStatic ? "$bind$sm_" : "$bind$m_";
         const nameBytes = new TextEncoder().encode(
-          `${prefix}${ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name)}_${mname}`);
+          `${prefix}${bindName(ctx.bindAlias.get(s.typeIndex) ?? s.name)}_${mname}`);
         entries.push([...uleb(nameBytes.length), ...nameBytes, 0x00, ...uleb(fe.funcIndex + ctx.funcBase)]);
       }
     }
@@ -2783,6 +2783,8 @@ export function wasmBindMeta(
   boxed: string[];
   /** Funcref signatures handed out, each with the helper that calls one. */
   funcrefs: BindCallbackInfo[];
+  /** What a type name in this metadata calls each struct, by type index — see `bindTypeKeys`. */
+  typeKeys: Map<number, string>;
   /** Whether the module can leave a `trap` message for the host to read. */
   trapMessages: boolean;
 } {
@@ -2806,8 +2808,8 @@ export function wasmBindMeta(
     return methods;
   };
   const enums: BindEnumInfo[] = ctx.bindEnums.map((en) => ({
-    bind: ctx.bindAlias.get(en.base.typeIndex) ?? bindName(en.name),
-    wac: en.name,
+    bind: bindName(ctx.bindAlias.get(en.base.typeIndex) ?? en.name),
+    wac: ctx.bindAlias.get(en.base.typeIndex) ?? en.name,
     display: result.genericDisplay.get(en.name) ?? en.name,
     variants: en.variants.map((v) => ({
       name: v.name,
@@ -2827,8 +2829,8 @@ export function wasmBindMeta(
   }));
   const structs = ctx.bindStructs.map((s) => {
     return {
-      bind: ctx.bindAlias.get(s.typeIndex) ?? bindName(s.name),
-      wac: s.name,
+      bind: bindName(ctx.bindAlias.get(s.typeIndex) ?? s.name),
+      wac: ctx.bindAlias.get(s.typeIndex) ?? s.name,
       display: result.genericDisplay.get(s.name) ?? s.name,
       fields: (ctx.structFields.get(`@${s.typeIndex}`) ?? [])
         .map((f) => ({ name: f.name, type: f.type, isConst: f.isConst })),
@@ -2851,7 +2853,13 @@ export function wasmBindMeta(
     suffix: arrBindSuffix(t.elem),
     fill: needsFill(t.elem, ctx),
   }));
-  return { structs, enums, callbacks, arrays, boxed, funcrefs, trapMessages: ctx.trapGlobalIdx >= 0 };
+  return {
+    structs, enums, callbacks, arrays, boxed, funcrefs,
+    trapMessages: ctx.trapGlobalIdx >= 0,
+    // What a *type* in the metadata calls each struct, by type index. `extractExports` spells its
+    // signatures through this so a parameter's type and the struct table agree on one string.
+    typeKeys: ctx.bindAlias,
+  };
 }
 
 /**

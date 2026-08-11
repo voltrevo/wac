@@ -182,29 +182,44 @@ export type CompileResult =
 
 // ── Type name serialization ───────────────────────────────────────────────────
 
-/** Serialize a WacType to a human-readable type name string. */
-export function typeStr(t: WacType): string {
+/**
+ * Serialize a WacType to a human-readable type name string.
+ *
+ * `keys` maps a struct's type index to what the metadata calls it, and is how a *written* name
+ * becomes an identity. Without it a signature carries whatever the use site spelled: an imported
+ * alias made `export P mk()` record its return type as `P` while the struct table said `Point`,
+ * and bindgen — which looks a signature's type up in that table — answered *"return type 'P' not
+ * yet supported"* [issue 0081, GitHub wac#10]. Two modules each declaring an `S` are the same
+ * confusion from the other side [issue 0100].
+ *
+ * Optional because the parser and the tests serialize types with no module around them, and a
+ * written name is the right answer there.
+ */
+export function typeStr(t: WacType, keys?: Map<number, string>): string {
   switch (t.kind) {
     case "prim":     return t.name;
-    case "struct":   return t.name;
-    case "array":    return `${typeStr(t.elem)}[]`;
-    case "nullable": return `${typeStr(t.inner)}?`;
+    case "struct": {
+      const idx = (t as { resolvedTypeIndex?: number }).resolvedTypeIndex;
+      return (idx !== undefined ? keys?.get(idx) : undefined) ?? t.name;
+    }
+    case "array":    return `${typeStr(t.elem, keys)}[]`;
+    case "nullable": return `${typeStr(t.inner, keys)}?`;
     case "funcref": {
-      const ps = t.params.map(typeStr).join(", ");
-      return `fn[${typeStr(t.ret)}(${ps})]`;
+      const ps = t.params.map((x) => typeStr(x, keys)).join(", ");
+      return `fn[${typeStr(t.ret, keys)}(${ps})]`;
     }
   }
 }
 
 // ── Export metadata extraction ────────────────────────────────────────────────
 
-function extractExports(result: ResolveResult): WacExport[] {
+function extractExports(result: ResolveResult, keys: Map<number, string>): WacExport[] {
   const out: WacExport[] = [];
   for (const f of result.funcs) {
     if (!f.exportName) continue;
     if (f.filePath !== result.entryPath) continue;
-    const ps = funcParams(f).map(p => ({ name: p.name, type: typeStr(p.type) }));
-    out.push({ name: f.exportName, params: ps, ret: typeStr(funcReturnType(f)) });
+    const ps = funcParams(f).map(p => ({ name: p.name, type: typeStr(p.type, keys) }));
+    out.push({ name: f.exportName, params: ps, ret: typeStr(funcReturnType(f), keys) });
   }
   return out;
 }
@@ -286,8 +301,12 @@ export function wacCompile(
     : undefined;
   const wasm = wasmBuildBin(resolveResult, programs,
     { coverage, checked: options.checked, names: options.names });
-  const exports = extractExports(resolveResult);
   const meta = wasmBindMeta(resolveResult, programs);
+  const exports = extractExports(resolveResult, meta.typeKeys);
+  // One spelling for every type in this metadata: `keys` turns a written name into the identity
+  // the struct table is keyed by, so a field, a parameter and an export all say the same thing
+  // about the same struct [issues 0081, 0100].
+  const keys = meta.typeKeys;
   const enums: WacEnum[] = meta.enums.map((e) => ({
     bind: e.bind,
     wac: e.wac,
@@ -295,12 +314,12 @@ export function wacCompile(
     variants: e.variants.map((v) => ({
       name: v.name,
       tag: v.tag,
-      fields: v.fields.map((f) => ({ name: f.name, type: typeStr(f.type) })),
+      fields: v.fields.map((f) => ({ name: f.name, type: typeStr(f.type, keys) })),
     })),
     methods: e.methods.map((m) => ({
       name: m.name,
-      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
-      ret: typeStr(m.ret),
+      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type, keys) })),
+      ret: typeStr(m.ret, keys),
       isStatic: m.isStatic,
     })),
   }));
@@ -308,34 +327,34 @@ export function wacCompile(
     bind: s.bind,
     wac: s.wac,
     display: s.display,
-    fields: s.fields.map((f) => ({ name: f.name, type: typeStr(f.type), isConst: f.isConst })),
+    fields: s.fields.map((f) => ({ name: f.name, type: typeStr(f.type, keys), isConst: f.isConst })),
     methods: s.methods.map((m) => ({
       name: m.name,
-      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type) })),
-      ret: typeStr(m.ret),
+      params: m.params.map((p) => ({ name: p.name, type: typeStr(p.type, keys) })),
+      ret: typeStr(m.ret, keys),
       isStatic: m.isStatic,
     })),
   }));
   const callbacks: WacCallback[] = meta.callbacks.map((c) => ({
     helper: c.helper,
     field: c.field,
-    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }),
-    params: c.params.map(typeStr),
-    ret: typeStr(c.ret),
+    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }, keys),
+    params: c.params.map((t) => typeStr(t, keys)),
+    ret: typeStr(c.ret, keys),
     slots: c.slots,
   }));
   const arrays: WacArray[] = meta.arrays.map((a) => ({
-    type: typeStr(a.type),
-    elem: typeStr(a.elem),
+    type: typeStr(a.type, keys),
+    elem: typeStr(a.elem, keys),
     suffix: a.suffix,
     fill: a.fill,
   }));
   const funcrefs: WacCallback[] = meta.funcrefs.map((c) => ({
     helper: c.helper,
     field: c.field,
-    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }),
-    params: c.params.map(typeStr),
-    ret: typeStr(c.ret),
+    type: typeStr({ kind: "funcref", params: c.params, ret: c.ret, line: 0, col: 0 }, keys),
+    params: c.params.map((t) => typeStr(t, keys)),
+    ret: typeStr(c.ret, keys),
     slots: c.slots,
   }));
   return {
