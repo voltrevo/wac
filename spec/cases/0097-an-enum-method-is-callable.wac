@@ -1,0 +1,15 @@
+// expect: answers f = 4
+// why: an enum declares methods like a struct does, and `this` in one is the enum value
+// from: packages/git/src/object.wac, whose `Kind.word` the emitter declined
+enum Kind {
+  Blob,
+  Tree
+
+  string word(const this) {
+    return match (this) { case Blob: "blob", case Tree: "tree" };
+  }
+}
+export i32 f() {
+  Kind k = Kind.Blob;
+  return k.word().len();
+}
