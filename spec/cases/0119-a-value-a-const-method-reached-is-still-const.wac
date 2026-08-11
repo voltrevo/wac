@@ -1,0 +1,17 @@
+// expect: refused
+// why: the other half of the same rule — a method that hands back what the receiver holds hands back something const
+// from: issues/lang/0060
+struct Inner { i32 x; }
+struct Outer {
+  Inner i;
+  Inner peek(const this) { return this.i; }
+  void poke(const this) {
+    Inner got = this.peek();
+    got.x = 9;
+  }
+}
+export i32 f() {
+  Outer o = Outer(Inner(1));
+  o.poke();
+  return o.i.x;
+}

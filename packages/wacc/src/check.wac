@@ -848,6 +848,20 @@ export struct C {
   i32 renameCount;
 
   /**
+   * Each method's body, so a call site can ask what its `return`s hand back.
+   *
+   * `const this` makes what the receiver *reaches* const, and a call through a const receiver has to
+   * inherit that — an accessor handing back a field is a way to launder it. But a method whose every
+   * `return` constructs a value out of copies reaches nothing, and treating its result as const is
+   * what stopped `Counter copy = this.clone(); copy.bump();` from compiling [issue 0060].
+   *
+   * The body rather than the answer, because the answer needs the field types of whatever is being
+   * constructed and the declaration pass runs before the types it would ask about are all known —
+   * asking there reported 38 working files against a position in the linked blob.
+   */
+  Stmt[][] methodBodies;
+
+  /**
    * Two capacities, because the tables here hold two different things.
    *
    * `locals` sizes the four that are *per function* — the name table and what goes beside it, which
@@ -876,7 +890,8 @@ export struct C {
              0, "",
              i32[decls * 3](), string[decls](), i32[decls](), 0, false, false, string[16](), 0, "",
              string[decls](), string[decls](), i32[decls](), bool[decls](), 0,
-             string[decls](), string[decls](), 0);
+             string[decls](), string[decls](), 0,
+             Stmt[][decls](fill: Stmt[]()));
   }
 
   /** The name this file's import gave to a type the declaring file calls something else. */
@@ -1089,8 +1104,9 @@ export struct C {
 
   /** Record one method of one struct. */
   void declareMethod(this, string owner, string name, bool isStatic, bool isConst, string ret,
-                     string[] params) {
+                     string[] params, Stmt[] body) {
     if (this.methodCount >= this.methodNames.len()) { return; }
+    this.methodBodies[this.methodCount] = body;
     this.methodParamAt[this.methodCount] = this.methodParamTotal;
     this.methodParamCount[this.methodCount] = params.len();
     for (i32 i = 0; i < params.len(); i++) {
@@ -1120,6 +1136,11 @@ export struct C {
       if (this.methodOwners[i] == owner && this.methodNames[i] == name) { return i; }
     }
     return -1;
+  }
+
+  /** The body of the method at `at`, or an empty one. See `methodBodies`. */
+  Stmt[] methodBodyAt(this, i32 at) {
+    return at >= 0 && at < this.methodCount ? this.methodBodies[at] : Stmt[]();
   }
 
   /** Which entry holds `owner.name`, following the inheritance chain, or -1. */
@@ -3484,6 +3505,86 @@ bool callsAFunction(C c, Expr e) {
  * refused by the reference, and knowing that needs to track where `c` came from, which is flow
  * analysis rather than a walk. That case stays uncaught, and uncaught is the safe direction.
  */
+/** Is this type one a write can reach shared state through — a struct, an enum or an array? */
+bool mutableRefName(C c, string t) {
+  string at = endsWith(t, "?") ? t.slice(0, t.len() - 1) : t;
+  return isArrayName(at) || c.isStruct(at) || c.isEnum(at);
+}
+
+/**
+ * Can a value this expression produces be reached from anywhere the caller already holds?
+ *
+ * A construction is a new object, which is not enough on its own: `Box(this.i)` is a fresh `Box`
+ * whose field is the receiver's, and writing through it writes through the const reference. So a
+ * field that could hold a reference has to be built from something fresh in turn, while a field that
+ * cannot — an `i32`, a `string` — is a copy and may be built from anything. That is what makes
+ * `Counter(this.n)` fresh and `Box(this.i)` not [issue 0060].
+ *
+ * Everything else is not fresh, a nested call and a named construction included: a syntactic
+ * question with a conservative default, not an escape analysis.
+ */
+bool freshValue(C c, Expr e) {
+  match (e.kind) {
+    case ArrNew(elem, size, fill, elements): {
+      if (!mutableRefName(c, typeOfTy(c, elem))) { return true; }   // one copy per element
+      for (i32 i = 0; i < elements.len(); i++) {
+        if (!freshValue(c, elements[i])) { return false; }
+      }
+      if (fill is not null) { return freshValue(c, fill!); }
+      return true;
+    }
+    case Construct(ctype, args, named): {
+      if (named.len() > 0) { return false; }
+      string t = typeOfTy(c, ctype);
+      i32 n = c.constructArity(t);
+      for (i32 i = 0; i < n && i < args.len(); i++) {
+        if (!mutableRefName(c, c.constructFieldAt(t, i))) { continue; }   // a copy, whatever built it
+        if (!freshValue(c, args[i])) { return false; }
+      }
+      return true;
+    }
+    else: { return false; }
+  }
+}
+
+/**
+ * Does every `return` in this body hand back something freshly built?
+ *
+ * A body with no `return` answers yes, which costs nothing: the question is only ever asked about a
+ * call whose value is used, and a method that returns a value has a `return`.
+ */
+bool returnsOnlyFresh(C c, Stmt[] body) {
+  for (i32 i = 0; i < body.len(); i++) {
+    match (body[i].kind) {
+      case Return(value): {
+        if (value is not null) {
+          if (!freshValue(c, value!)) { return false; }
+        }
+      }
+      case If(cond, then, els): {
+        if (!returnsOnlyFresh(c, then)) { return false; }
+        if (!returnsOnlyFresh(c, els)) { return false; }
+      }
+      case While(wcond, wbody): { if (!returnsOnlyFresh(c, wbody)) { return false; } }
+      case For(init, fcond, update, fbody): { if (!returnsOnlyFresh(c, fbody)) { return false; } }
+      case DoWhile(dbody, dcond): { if (!returnsOnlyFresh(c, dbody)) { return false; } }
+      case Block(bbody): { if (!returnsOnlyFresh(c, bbody)) { return false; } }
+      case Switch(subject, cases): {
+        for (i32 k = 0; k < cases.len(); k++) {
+          if (!returnsOnlyFresh(c, cases[k].body)) { return false; }
+        }
+      }
+      case Match(msubject, arms): {
+        for (i32 k = 0; k < arms.len(); k++) {
+          if (!returnsOnlyFresh(c, arms[k].body)) { return false; }
+        }
+      }
+      else: { }
+    }
+  }
+  return true;
+}
+
 bool constExpr(C c, Expr e) {
   match (e.kind) {
     case Ident(tok): { return c.isConstName(tokenText(c, tok)); }
@@ -3496,7 +3597,14 @@ bool constExpr(C c, Expr e) {
     // type — a method called on something const returns something const.
     case Call(callee, args): {
       match (callee.kind) {
-        case Member(obj, nameTok): { return constExpr(c, obj); }
+        case Member(obj, nameTok): {
+          if (!constExpr(c, obj)) { return false; }
+          // …unless the method can only be handing back something it built out of copies, which
+          // reaches nothing the receiver holds [issue 0060].
+          i32 mi = c.methodAt(typeOfExpr(c, obj), tokenText(c, nameTok));
+          if (mi < 0) { return true; }
+          return !returnsOnlyFresh(c, c.methodBodyAt(mi));
+        }
         else: { return false; }
       }
     }
@@ -5470,7 +5578,8 @@ export void declareModule(C c, Program prog, string[] only) {
           bool gen = typeParams.len() > 0;
           c.declareMethod(ename, tokenText(c, methods[mi].nameTok),
                           !methods[mi].hasThis, methods[mi].thisConst,
-                          gen ? typeNone() : typeOfTy(c, methods[mi].returnType), emps);
+                          gen ? typeNone() : typeOfTy(c, methods[mi].returnType), emps,
+                          methods[mi].body);
         }
       }
       case StructDecl(nameTok, parentTok, fields, methods, exported, isConst, typeParams): {
@@ -5506,7 +5615,8 @@ export void declareModule(C c, Program prog, string[] only) {
           }
           c.declareMethod(name, tokenText(c, methods[i].nameTok),
                           !methods[i].hasThis, methods[i].thisConst,
-                          typeOfTy(c, methods[i].returnType), mps);
+                          typeOfTy(c, methods[i].returnType), mps,
+                          methods[i].body);
         }
       }
       else: { }

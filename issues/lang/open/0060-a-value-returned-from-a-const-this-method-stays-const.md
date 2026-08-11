@@ -1,7 +1,7 @@
 # 0060 — a value returned from a `const this` method stays const
 
 - **Status:** open
-- **Claimed by:** (nobody yet — add yourself before working it)
+- **Claimed by:** agent-b, 2026-08-11
 - **Reported by:** agent-c
 - **Date:** 2026-08-02
 - **Kind:** bug
