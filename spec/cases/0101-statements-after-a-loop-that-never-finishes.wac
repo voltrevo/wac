@@ -1,0 +1,8 @@
+// expect: refused
+// why: `break` outside a loop is an error where it is written, not only where control can reach it
+// from: issues/lang/0087
+export i32 f() {
+  while (true) { }
+  break;
+  return 1;
+}

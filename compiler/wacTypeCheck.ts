@@ -827,8 +827,14 @@ function checkBlock(block: Block, env: VarEnv, ctx: Ctx): boolean {
   let terminated = false;
   const localEnv: VarEnv = new Map(env);
   for (const stmt of block.stmts) {
-    if (terminated) break;  // unreachable statements — skip silently
-    terminated = checkStmt(stmt, localEnv, ctx);
+    // **Unreachable statements are checked like any other.** They cannot run, but the rules are
+    // about the program rather than about its live paths: `break` outside a loop is an error
+    // wherever it is written [§wac-break-noloop-p3kn7wp], and a name must be declared before it is
+    // used. Skipping them left the emitter to walk statements nothing had checked, which is how
+    // `while (true) { } break;` reached `lctx.breakTarget` with an empty loop stack and threw a
+    // `TypeError` out of the compiler instead of a diagnostic [issue 0087].
+    const t = checkStmt(stmt, localEnv, ctx);
+    terminated = terminated || t;
   }
   return terminated;
 }
@@ -1062,8 +1068,8 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
       const ok = checkMatchArms(stmt.subject, stmt.arms, env, ctx, stmt, (arm, armEnv) => {
         let terminated = false;
         for (const st of arm.body) {
-          if (terminated) break;
-          terminated = checkStmt(st, armEnv, ctx);
+          const t = checkStmt(st, armEnv, ctx);  // unreachable ones too — see checkBlock
+          terminated = terminated || t;
         }
         if (!terminated) allReturn = false;
       });
@@ -1100,8 +1106,8 @@ function checkStmt(stmt: Stmt, env: VarEnv, ctx: Ctx): boolean {
         const caseEnv: VarEnv = new Map(env);
         let caseTerminated = false;
         for (const s of c.body) {
-          if (caseTerminated) break;
-          caseTerminated = checkStmt(s, caseEnv, ctx);
+          const t = checkStmt(s, caseEnv, ctx);  // unreachable ones too — see checkBlock
+          caseTerminated = caseTerminated || t;
         }
         if (!caseTerminated) allReturn = false;
       }
