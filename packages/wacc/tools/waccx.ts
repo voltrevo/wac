@@ -16,11 +16,12 @@
 //     deno run -A packages/wacc/tools/waccxMain.ts check main.wac
 //
 // Commands: `check`, `compile`, `run`, `bindgen`. The last writes TypeScript that calls the module,
-// for the types this generator covers — the numbers, `bool`, `string`, the numeric arrays, and the
-// structs and enums a host can hold — and names on stderr what it declined.
+// for the types this generator covers — the numbers, `bool`, `string`, the numeric arrays, the
+// structs and enums a host can hold, and a callback it hands in — and names on stderr what it
+// declined.
 
 import { readGraph, type WacxCap } from "wac/wacx.ts";
-import { generate, parseBindTypes, parseSigs, unsupported } from "./waccBindgen.ts";
+import { generate, parseBindTypes, parseCallbacks, parseSigs, unsupported } from "./waccBindgen.ts";
 import { wacDiag, type DiagError } from "wac/wacDiag.ts";
 import { wacBind } from "../../../harness/wacBind.ts";
 
@@ -137,13 +138,15 @@ export async function waccx(argv: string[], cap: WacxCap): Promise<WaccxResult> 
   // signature; one handed glue missing a function finds out at the call site.
   if (command === "bindgen") {
     const sigs = parseSigs(api.exportSigsFiles(paths, sources, entry));
-    const types = parseBindTypes(api.bindTypesFiles(paths, sources, entry));
-    const declined = unsupported(sigs, types);
+    const wire = api.bindTypesFiles(paths, sources, entry);
+    const types = parseBindTypes(wire);
+    const cbs = parseCallbacks(wire);
+    const declined = unsupported(sigs, types, cbs);
     if (declined.length > 0) {
       cap.err(`waccx bindgen: not bound yet — ${declined.join("; ")}`);
     }
     const outPath = entry.replace(/\.wac$/, "") + ".gen.ts";
-    await cap.writeFile(outPath, new TextEncoder().encode(generate(wasm, sigs, types)));
+    await cap.writeFile(outPath, new TextEncoder().encode(generate(wasm, sigs, types, cbs)));
     return { code: 0 };
   }
 

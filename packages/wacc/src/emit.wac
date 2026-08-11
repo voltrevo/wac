@@ -1924,6 +1924,19 @@ export string bindTypesLinked(string[] paths, string[] sources, string entry) {
   string[] bindStructs = string[64]();
   i32 n = collectBindStructs(env, src, lexed, prog, bindStructs);
   string out = "";
+  // **The callbacks, in the order the imports are numbered.** `cb0` is this line's `0`, and a host
+  // that supplies its dispatchers in another order would answer the wrong callback. The same walk
+  // the emitter uses, so the two cannot drift.
+  env.cbSigCount = collectCallbackSigs(env, src, lexed, prog);
+  for (i32 j = 0; j < env.cbSigCount; j++) {
+    string cb = env.cbSigs[j];
+    string line = "C\t" + numText(j) + "\t" + sigReturn(cb) + "\t";
+    for (i32 i = 0; i < sigParamCount(cb); i++) {
+      if (i > 0) { line = line + ","; }
+      line = line + sigParamAt(cb, i);
+    }
+    out = out + line + "\t" + cb + "\n";
+  }
   for (i32 i = 0; i < n; i++) {
     string name = bindStructs[i];
     // **The name the helpers were exported under.** A plain struct keeps its own — `$bind$s_Point_new`
