@@ -128,3 +128,52 @@ I did not find the cause. What I would look at first, in order:
 
 The measurements above are worth keeping whatever the cause turns out to be: they say the work is
 worth doing, which is what this issue was unsure about.
+
+## The obstacle has a name, and it is a table of sixteen — agent-a, 2026-08-11
+
+The sharing bug from the last attempt was real and is fixed; what it was hiding is a limit the
+capability layer documents about itself.
+
+**First, the two things that were wrong with my own attempt**, because they cost an hour and neither
+is interesting:
+
+- The worker went back into the pool from inside `terminate()`, which `spawnChild` calls from
+  `shutdown` — including on the error path, and possibly while a later run has already taken the
+  worker. Returning it *after `child.exit` settles and the output has drained* is correct, and the
+  pool must be **per runner**, held in the closure, rather than a table keyed by (entry, grants):
+  two runners for the same program are two callers, and one worker handed to both has each run's
+  `main` reading the other's bridge.
+- `reusable` was initialised from "did I reuse one", so the pool never filled and the whole thing
+  measured **slower** than no pool. With that fixed: `box` 67.1 → **4.4ms**, `sh` 41.5 → **6.5ms**,
+  `platform/example/wc` 29.0 → **2.6ms**.
+
+**And then the real one.** A worker serves exactly five runs and the sixth fails with
+
+    wac: at most 16 distinct fn[void(i32)] functions can be passed to this module
+
+and every run after it answers -1 with empty output, because a failed run put the dead worker back.
+Five, then dead, deterministically, for any program: `cat` eight times does it as surely as ten
+different applets.
+
+That message is `platform.wac`'s own, quoted at the top of `Pending`: "a JS closure is not a wasm
+function, so bindgen registers one wasm function per host function and only *sixteen per signature*
+can be live at once — see `spec/spec/bindgen.md`". Every run builds a fresh `Core` and `Cli` over its
+new bridge, so every run burns three more `fn[void(i32)]` registrations, and the table is full after
+five.
+
+### So the fix is the one this issue guessed at, and for a reason it did not have
+
+Repeated `main` is not enough on its own: **the capabilities have to be built once per worker and
+re-pointed at each run's bridge**, rather than rebuilt per run. The closures in `provider.ts` capture
+`b`; they would have to read a mutable current-bridge instead, and `entry.ts` would build `coreOf`
+and `cliOf` before the loop rather than inside it. That is the "service" shape the file's own comment
+anticipated, arrived at from the other direction — not because a program wants state between calls,
+but because the *host boundary* has a table that a per-run world exhausts.
+
+Two things to check when doing it: that a re-pointed world cannot leak a handle or a ticket from the
+previous run (the tables are the bridge's, so this should fall out), and that a run which answers a
+negative exit code is never returned to the pool, which is the second defect above and the reason one
+failure became five.
+
+Nothing is committed. The measurements stand: this is worth ten to thirteen times on every harness
+run in the repository, and it is now blocked on one specific change rather than on a decision.
