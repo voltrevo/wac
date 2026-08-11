@@ -64,7 +64,7 @@ Structs with methods and subtyping, monomorphised generics, enums with payloads 
 cost — `as` lossless, `as!` checked, `as~` lossy, `as@` raw.
 
 The collector owns the heap, so there is no allocator to write and no linear memory in the artifact.
-The compiler is about 16,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
+The compiler is about 18,000 lines of TypeScript with no LLVM, no binaryen and nothing to install,
 and it runs in a browser as readily as on a command line.
 
 [`spec/tour.wac`](spec/tour.wac) is the whole language in one annotated file that compiles and
@@ -89,17 +89,19 @@ stage A   wacc, built by the TypeScript compiler
 stage B   wacc, built by stage A
 stage C   wacc, as stage B compiles it
 
-B == C    10 sources, 173,946 bytes, identical
+B == C    11 sources, 266,164 bytes, identical
 ```
 
 Every rung was checked against the TypeScript compiler before the next was started — token streams,
 syntax trees, then diagnostics at exact positions. The type checker was finished against four
-independent corpora, the newest being this repository's own 341 wac files, with no false alarm among
-them.
+independent corpora, the newest being this repository's own **354** wac files, with no false alarm
+among them.
 
-It is not finished. The emitter compiles 334 of those 341 files whole, and that number goes down as
-well as up, because the corpus is the live repository and code written for other reasons arrives
-using things the emitter has not reached yet. Everything here is still built with the TypeScript
+It is not finished. The emitter compiles **346 of those 354** files whole, eight partially and none
+invalidly — and that number goes down as well as up, because the corpus is the live repository and
+code written for other reasons arrives using things the emitter has not reached yet. The four numbers
+in this section are printed by the rungs that produce them (`deno test -A packages/wacc/test/`), and
+were last read on 2026-08-11; they said 341, 334, 10 and 173,946 when the corpus was smaller. Everything here is still built with the TypeScript
 compiler today: it is the seed, and the self-hosted one is not yet the compiler of record.
 
 ## Tor
@@ -126,7 +128,7 @@ proved against that header: a node returns the value *and* the path through the 
 it, and a value somebody altered cannot produce a path that still hashes to the root. Worked all the
 way through, that is `vitalik.eth` resolving without trust.
 
-## 34 packages, 89k lines of wac, no dependencies
+## 35 packages, 96k lines of wac, no dependencies
 
 In dependency order, nothing importing anything above it. No C, no libc, no runtime library, and no
 third-party code in any package's `src/`.
